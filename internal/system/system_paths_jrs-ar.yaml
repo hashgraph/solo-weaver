@@ -1,0 +1,42 @@
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/gc.log"
+  actions: 
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/eventStreamRecover"
+  actions: 
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/accountBalancesOriginal"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/lifecycle"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/jdb"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/logs"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory

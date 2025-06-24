@@ -1,0 +1,6 @@
+node_id:
+app_version:
+image_id: main
+java_heap_min: 32g
+java_heap_max: 150g
+java_version: 1.17.0
