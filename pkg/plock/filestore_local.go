@@ -17,10 +17,7 @@
 package plock
 
 import (
-	"fmt"
-	"github.com/cockroachdb/errors"
-	"golang.hedera.com/solo-provisioner/pkg/erx"
-	"io/fs"
+	erx "github.com/joomcode/errorx"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,19 +76,12 @@ func (lfs *localFileStore) validateWorkDir(workDir string) error {
 
 	dirInfo, err := os.Stat(workDir)
 	if err != nil {
-		return erx.NewIllegalArgumentError(
-			err,
-			"workDir",
-			"workDir is required and must be a valid directory path",
-			workDir)
+		return erx.IllegalArgument.
+			New("workDir is required and must be a valid directory path: %s", workDir).WithUnderlyingErrors(err)
 	}
 
 	if !dirInfo.IsDir() {
-		return erx.NewIllegalArgumentError(
-			&os.PathError{Op: "Verify path is dir", Path: workDir, Err: errors.New("path is not a directory")},
-			"workDir",
-			"workDir is required and must be a valid directory path",
-			workDir)
+		return erx.IllegalArgument.New("workDir is required and must be a valid directory path: %s", workDir)
 	}
 
 	permission := dirInfo.Mode().Perm()
@@ -99,11 +89,8 @@ func (lfs *localFileStore) validateWorkDir(workDir string) error {
 		return nil
 	}
 
-	return erx.NewIllegalArgumentError(
-		fs.ErrPermission,
-		"workDir",
-		fmt.Sprintf("Directory must have rwx access for the owner, found: %s", permission.String()),
-		workDir)
+	return erx.IllegalArgument.
+		New("Directory '%s' must have rwx access for the owner, found: %s", workDir, permission.String())
 
 }
 
@@ -113,7 +100,7 @@ func (lfs *localFileStore) SetWorkDir(dirName string) error {
 
 	err := lfs.validateWorkDir(dirName)
 	if err != nil {
-		return erx.NewIllegalArgumentError(err, "dirName", "invalid work directory", dirName)
+		return erx.IllegalArgument.New("invalid work directory: %s", dirName).WithUnderlyingErrors(err)
 	}
 
 	lfs.workDir = dirName
@@ -166,18 +153,16 @@ func (lfs *localFileStore) Link(oldFile string, newFile string) (os.FileInfo, er
 	fullPath := lfs.FullPath(newFile)
 	err := os.Link(old, fullPath)
 	if err != nil {
-		return nil, erx.NewLockError(
-			err,
-			fmt.Sprintf("Error creating a hard link of the oldFile '%s' using the newFile '%s'", oldFile, newFile),
-		)
+		return nil, erx.IllegalState.
+			New("Error creating a hard link of the oldFile '%s' using the newFile '%s'", oldFile, newFile).
+			WithUnderlyingErrors(err)
 	}
 
 	fileInfo, err := lfs.Stat(newFile)
 	if err != nil {
-		return nil, erx.NewLockError(
-			err,
-			fmt.Sprintf("Error fetching the fileInfo for newFile '%s'", newFile),
-		)
+		return nil, erx.IllegalState.
+			New("Error fetching the fileInfo for newFile '%s'", newFile).
+			WithUnderlyingErrors(err)
 	}
 	return fileInfo, nil
 }
@@ -191,7 +176,7 @@ func (lfs *localFileStore) Link(oldFile string, newFile string) (os.FileInfo, er
 func (lfs *localFileStore) List(dirPath string, substr string, maxCount int) ([]os.FileInfo, error) {
 	dir, err := os.Open(dirPath)
 	if err != nil {
-		return nil, erx.NewIllegalArgumentError(err, "dirPath", "Could not open the dirPath", dirPath)
+		return nil, erx.IllegalArgument.New("Could not open the dirPath: %s", dirPath).WithUnderlyingErrors(err)
 	}
 	defer dir.Close()
 

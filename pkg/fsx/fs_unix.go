@@ -28,7 +28,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 
-	"golang.hedera.com/solo-provisioner/pkg/erx"
+	erx "github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/pkg/security"
 	"golang.hedera.com/solo-provisioner/pkg/security/principal"
 )
@@ -202,7 +202,7 @@ func (m *unixManager) CopyFile(src string, dst string, overwrite bool) error {
 	}
 
 	if !sfi.Mode().IsRegular() {
-		return erx.NewIllegalArgumentError(nil, "src", "source path is not a file", src)
+		return erx.IllegalArgument.New("source path is not a file: %s", src)
 	}
 
 	// Check to see if dst exists
@@ -356,12 +356,12 @@ func (m *unixManager) ReadPermissions(path string) (fs.FileMode, error) {
 func (m *unixManager) WriteOwner(path string, user principal.User, group principal.Group, recursive bool) error {
 	uid, err := strconv.Atoi(user.Uid())
 	if err != nil {
-		return erx.NewIllegalArgumentError(nil, "uid", "UID must be an integer", user.Uid())
+		return erx.IllegalArgument.New("UID must be an integer: %s", user.Uid())
 	}
 
 	gid, err := strconv.Atoi(group.Gid())
 	if err != nil {
-		return erx.NewIllegalArgumentError(nil, "gid", "GID must be an integer", group.Gid())
+		return erx.IllegalArgument.New("GID must be an integer: %s", group.Gid())
 	}
 
 	if m.IsSymbolicLink(path) {

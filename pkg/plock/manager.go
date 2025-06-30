@@ -17,9 +17,8 @@
 package plock
 
 import (
-	"fmt"
+	erx "github.com/joomcode/errorx"
 	"github.com/mitchellh/go-ps"
-	"golang.hedera.com/solo-provisioner/pkg/erx"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,11 +44,7 @@ func NewLockManager(workDir string) (LockManager, error) {
 // newLockManagerWithStore returns an instance of plockManager with the given store
 func newLockManagerWithStore(store fileStore) (*plockManager, error) {
 	if store == nil {
-		return nil, erx.NewIllegalArgumentError(
-			nil,
-			"store",
-			"file store cannot be nil",
-			store)
+		return nil, erx.IllegalArgument.New("file store cannot be nil: %s", store)
 	}
 
 	return &plockManager{
@@ -71,7 +66,8 @@ func (pm *plockManager) GetWorkDir() string {
 func (pm *plockManager) Discover(maxCount int) (map[int]*Info, error) {
 	list, err := pm.store.List(pm.GetWorkDir(), LockFileExtension, maxCount)
 	if err != nil {
-		return nil, erx.NewLockError(err, fmt.Sprintf("Could not read file list from work directory: %s", pm.GetWorkDir()))
+		return nil, erx.IllegalState.New("Could not read file list from work directory: %s", pm.GetWorkDir()).
+			WithUnderlyingErrors(err)
 	}
 
 	locks := map[int]*Info{}
@@ -103,7 +99,8 @@ func (pm *plockManager) DiscoverStaleLocks(maxCount int) (map[int]*Info, error) 
 func (pm *plockManager) DiscoverByPID(pid int) ([]*Info, error) {
 	fileList, err := pm.store.List(pm.GetWorkDir(), plockPidFileSuffix(pid), -1)
 	if err != nil {
-		return nil, erx.NewLockError(err, fmt.Sprintf("Could not read file list from work directory: %s", pm.GetWorkDir()))
+		return nil, erx.IllegalState.New("Could not read file list from work directory: %s", pm.GetWorkDir()).
+			WithUnderlyingErrors(err)
 	}
 
 	var locks []*Info
@@ -120,7 +117,8 @@ func (pm *plockManager) DiscoverByPID(pid int) ([]*Info, error) {
 func (pm *plockManager) DiscoverByLockName(lockName string) (*Info, error) {
 	list, err := pm.store.List(pm.GetWorkDir(), lockName, -1)
 	if err != nil {
-		return nil, erx.NewLockError(err, fmt.Sprintf("Could not read file list from work directory: %s", pm.GetWorkDir()))
+		return nil, erx.IllegalArgument.New("Could not read file list from work directory: %s", pm.GetWorkDir()).
+			WithUnderlyingErrors(err)
 	}
 
 	for _, file := range list {
@@ -130,19 +128,19 @@ func (pm *plockManager) DiscoverByLockName(lockName string) (*Info, error) {
 		}
 	}
 
-	return nil, erx.NewLockError(nil, fmt.Sprintf("Could not find lock with name: %s", lockName))
+	return nil, erx.IllegalArgument.New("Could not find lock with name: %s", lockName)
 }
 
 func (pm *plockManager) ResetStaleLock(info Info) error {
 	if !isStalePID(info.PID) {
-		return erx.NewLockError(nil, fmt.Sprintf("Lock's PID is not stale and cannot be reset: %s", strconv.Itoa(info.PID)))
+		return erx.IllegalArgument.New("Lock's PID is not stale and cannot be reset: %s", strconv.Itoa(info.PID))
 	}
 
 	pidFileName := plockPidFilename(info.Name, info.PID)
 	if pm.store.Exists(pidFileName) {
 		err := pm.store.Delete(pidFileName)
 		if err != nil {
-			return erx.NewLockError(err, fmt.Sprintf("Could not remove pid file: %s", info.PidFilePath))
+			return erx.IllegalState.New("Could not remove pid file: %s", info.PidFilePath).WithUnderlyingErrors(err)
 		}
 	}
 
@@ -150,7 +148,7 @@ func (pm *plockManager) ResetStaleLock(info Info) error {
 	if pm.store.Exists(lockFileName) {
 		err := pm.store.Delete(lockFileName)
 		if err != nil {
-			return erx.NewLockError(err, fmt.Sprintf("Could not remove lock file: %s", info.LockFilePath))
+			return erx.IllegalState.New("Could not remove lock file: %s", info.LockFilePath).WithUnderlyingErrors(err)
 		}
 	}
 
@@ -204,17 +202,17 @@ func (pm *plockManager) ResetLock(pid int, killable []string) error {
 		}
 	}
 
-	return erx.NewLockError(
-		nil,
-		fmt.Sprintf("ResetLock cannot be applied for executable: %s with active PID: %d", process.Executable(), pid),
-	)
+	return erx.IllegalState.
+		New("ResetLock cannot be applied for executable: %s with active PID: %d", process.Executable(), pid)
 }
 
 // getFileModifiedAt returns the file modification time
 func (pm *plockManager) getFileModifiedAt(fileName string) (*time.Time, error) {
 	fileInfo, err := pm.store.Stat(fileName)
 	if err != nil {
-		return nil, erx.NewLockError(err, fmt.Sprintf("Cannot read the file info for corresponding PID file: %s", fileName))
+		return nil, erx.IllegalArgument.
+			New("Cannot read the file info for corresponding PID file: %s", fileName).
+			WithUnderlyingErrors(err)
 	}
 	modifiedAt := fileInfo.ModTime()
 
@@ -225,7 +223,8 @@ func (pm *plockManager) getFileModifiedAt(fileName string) (*time.Time, error) {
 func (pm *plockManager) pidFileToLockInfo(pidFilePath string) (*Info, error) {
 	workDir, lockName, pid, err := splitPidFilePath(pidFilePath)
 	if err != nil {
-		return nil, erx.NewLockError(err, fmt.Sprintf("Cannot parse PidFilePath: %s", pidFilePath))
+		return nil, erx.IllegalArgument.New("Cannot parse PidFilePath: %s", pidFilePath).
+			WithUnderlyingErrors(err)
 	}
 
 	if pid > 0 { // only process when there is a valid PID
@@ -249,5 +248,5 @@ func (pm *plockManager) pidFileToLockInfo(pidFilePath string) (*Info, error) {
 		}, nil
 	}
 
-	return nil, erx.NewLockError(nil, fmt.Sprintf("invalid pid lock file path: %s", pidFilePath))
+	return nil, erx.IllegalArgument.New("invalid pid lock file path: %s", pidFilePath)
 }

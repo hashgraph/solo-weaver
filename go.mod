@@ -3,16 +3,14 @@ module golang.hedera.com/solo-provisioner
 go 1.20
 
 require (
-	github.com/Masterminds/semver v1.5.0
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
-	github.com/automa-saga/automa v0.2.1
 	github.com/cockroachdb/errors v1.9.1
 	github.com/cockroachdb/redact v1.1.3
 	github.com/codeclysm/extract/v3 v3.1.0
 	github.com/docker/go-units v0.5.0
 	github.com/fsnotify/fsnotify v1.6.0
-	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0
+	github.com/joomcode/errorx v1.2.0
 	github.com/mitchellh/go-ps v1.0.0
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/pkg/errors v0.9.1
@@ -41,6 +39,7 @@ require (
 	github.com/getsentry/sentry-go v0.20.0 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.15.2 // indirect
 	github.com/h2non/filetype v1.1.3 // indirect
@@ -64,11 +63,9 @@ require (
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect
-	github.com/uptrace/opentelemetry-go-extra/otelutil v0.1.21 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/internal/retry v1.14.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric v0.37.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.19.0 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/sys v0.12.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
