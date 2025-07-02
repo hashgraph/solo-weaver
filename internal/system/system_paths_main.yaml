@@ -1,0 +1,22 @@
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/hedera.crt"
+  actions: 
+    - ignoreIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/hedera.key"
+  actions: 
+    - ignoreIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/output"
+  actions: 
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+

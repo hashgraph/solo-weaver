@@ -1,0 +1,154 @@
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/config.txt"
+  actions: 
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/settings.txt"
+  actions: 
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/settingsUsed.txt"
+  actions: 
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/log4j2.xml"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: file
+- path: "{{.HederaAppDir}}/accountBalances"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/accountBalances/archive"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/eventStreams"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/eventStreams/archive"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/recordStreams"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/recordStreams/archive"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/config"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/diskFs"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/keys"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/onboard"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/stats"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/saved"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/upgrade"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/upgrade/current"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/upgrade/previous"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
+- path: "{{.HederaAppDir}}/services-hedera/HapiApp2.0/data/upgrade/pending"
+  actions:
+    - createIfMissing
+  owner: hedera
+  group: hedera
+  mode: 0755
+  type: directory
