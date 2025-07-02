@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/joomcode/errorx"
 	"howett.net/plist"
 	"os/exec"
 	"strconv"
@@ -30,9 +31,8 @@ type dsclGroupInfo struct {
 	Members  []string `plist:"dsAttrTypeStandard:GroupMembership"`
 }
 
-func dsclEnumerateUsers() ([]*unixUser, error) {
+func dsclEnumerateUsers() ([]*unixUser, *errorx.Error) {
 	userNames, err := dsclEnumerateEntities(dsclEntityTypeUser)
-
 	if err != nil {
 		return nil, err
 	}
@@ -44,14 +44,14 @@ func dsclEnumerateUsers() ([]*unixUser, error) {
 			return nil, err
 		}
 
-		uid, err := strconv.Atoi(user.UniqueID[0])
-		if err != nil {
-			return nil, err
+		uid, e := strconv.Atoi(user.UniqueID[0])
+		if e != nil {
+			return nil, errorx.IllegalFormat.New("Invalid UID for user %s: %v", userName, e).WithUnderlyingErrors(e)
 		}
 
-		gid, err := strconv.Atoi(user.PrimaryGroupID[0])
-		if err != nil {
-			return nil, err
+		gid, e := strconv.Atoi(user.PrimaryGroupID[0])
+		if e != nil {
+			return nil, errorx.IllegalFormat.New("Invalid GID for user %s: %v", userName, e).WithUnderlyingErrors(e)
 		}
 
 		users[i] = &unixUser{
@@ -67,7 +67,7 @@ func dsclEnumerateUsers() ([]*unixUser, error) {
 	return users, nil
 }
 
-func dsclEnumerateGroups() ([]*unixGroup, error) {
+func dsclEnumerateGroups() ([]*unixGroup, *errorx.Error) {
 	groupNames, err := dsclEnumerateEntities(dsclEntityTypeGroup)
 
 	if err != nil {
@@ -81,9 +81,9 @@ func dsclEnumerateGroups() ([]*unixGroup, error) {
 			return nil, err
 		}
 
-		gid, err := strconv.Atoi(group.UniqueID[0])
-		if err != nil {
-			return nil, err
+		gid, e := strconv.Atoi(group.UniqueID[0])
+		if e != nil {
+			return nil, errorx.IllegalFormat.New("Invalid GID for group %s", groupName).WithUnderlyingErrors(e)
 		}
 
 		if group.Members == nil {
@@ -100,7 +100,7 @@ func dsclEnumerateGroups() ([]*unixGroup, error) {
 	return groups, nil
 }
 
-func dsclEnumerateEntities(entityType string) ([]string, error) {
+func dsclEnumerateEntities(entityType string) ([]string, *errorx.Error) {
 	command := &exec.Cmd{
 		Path: directoryServicesCmd,
 		Args: []string{
@@ -111,9 +111,9 @@ func dsclEnumerateEntities(entityType string) ([]string, error) {
 		},
 	}
 
-	output, err := command.Output()
-	if err != nil {
-		return nil, err
+	output, e := command.Output()
+	if e != nil {
+		return nil, errorx.Decorate(e, "Failed to execute dscl command").WithUnderlyingErrors(e)
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(output))
@@ -126,8 +126,8 @@ func dsclEnumerateEntities(entityType string) ([]string, error) {
 			continue
 		}
 
-		if strings.Contains(line, "error: DS") {
-			return nil, fmt.Errorf("dscl error: %s", line)
+		if strings.Contains(line, "*errorx.Error: DS") {
+			return nil, errorx.IllegalState.New("dscl Error: %s", line)
 		}
 
 		if strings.HasPrefix(line, "#") {
@@ -140,35 +140,35 @@ func dsclEnumerateEntities(entityType string) ([]string, error) {
 	return list, nil
 }
 
-func dsclGetUserInfo(name string) (*dsclUserInfo, error) {
+func dsclGetUserInfo(name string) (*dsclUserInfo, *errorx.Error) {
 	output, err := dsclGetEntityInfo(dsclEntityTypeUser, name)
 	if err != nil {
 		return nil, err
 	}
 
 	var info dsclUserInfo
-	if _, err = plist.Unmarshal(output, &info); err != nil {
-		return nil, err
+	if _, e := plist.Unmarshal(output, &info); e != nil {
+		return nil, errorx.IllegalFormat.New("Failed to unmarshal dscl user info for %s", name).WithUnderlyingErrors(e)
 	}
 
 	return &info, nil
 }
 
-func dsclGetGroupInfo(name string) (*dsclGroupInfo, error) {
+func dsclGetGroupInfo(name string) (*dsclGroupInfo, *errorx.Error) {
 	output, err := dsclGetEntityInfo(dsclEntityTypeGroup, name)
 	if err != nil {
 		return nil, err
 	}
 
 	var info dsclGroupInfo
-	if _, err = plist.Unmarshal(output, &info); err != nil {
-		return nil, err
+	if _, e := plist.Unmarshal(output, &info); e != nil {
+		return nil, errorx.IllegalFormat.New("Failed to unmarshal dscl group info for %s", name).WithUnderlyingErrors(e)
 	}
 
 	return &info, nil
 }
 
-func dsclGetEntityInfo(entityType string, name string) ([]byte, error) {
+func dsclGetEntityInfo(entityType string, name string) ([]byte, *errorx.Error) {
 	command := &exec.Cmd{
 		Path: directoryServicesCmd,
 		Args: []string{
@@ -180,9 +180,9 @@ func dsclGetEntityInfo(entityType string, name string) ([]byte, error) {
 		},
 	}
 
-	output, err := command.Output()
-	if err != nil {
-		return nil, err
+	output, e := command.Output()
+	if e != nil {
+		return nil, errorx.Decorate(e, "Failed to execute dscl command").WithUnderlyingErrors(e)
 	}
 
 	return output, nil

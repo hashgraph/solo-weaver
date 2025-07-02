@@ -22,7 +22,7 @@ package common
 import (
 	"bytes"
 	_ "embed"
-	"github.com/cockroachdb/errors"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"golang.hedera.com/solo-provisioner/internal/models"
 	"golang.hedera.com/solo-provisioner/internal/version"
@@ -109,7 +109,7 @@ func loadIntegrityCheckInfo(nmtPaths *paths.Paths) (*integrityCheckInfo, error) 
 	for i, p := range checkList.MandatoryFolders {
 		parsedPath, err = parseTemplatedPaths(p, nmtPaths)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to parse path %q", p)
+			return nil, errorx.IllegalArgument.New(err, "failed to parse path %q", p)
 		}
 
 		checkList.MandatoryFolders[i] = parsedPath
@@ -119,7 +119,7 @@ func loadIntegrityCheckInfo(nmtPaths *paths.Paths) (*integrityCheckInfo, error) 
 	for i, p := range checkList.MandatoryFiles {
 		parsedPath, err = parseTemplatedPaths(p, nmtPaths)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to parse path %q", p)
+			return nil, errorx.IllegalArgument.New(err, "failed to parse path %q", p)
 		}
 
 		checkList.MandatoryFiles[i] = parsedPath
@@ -222,13 +222,13 @@ func (ic *integrityChecker) CheckEnvironmentIntegrity() error {
 	for _, prog := range ic.checks.MandatoryPrograms {
 		progPath, err := ic.programDetector.DetectExecutablePath(prog.Name)
 		if err != nil {
-			return errors.Wrapf(err, "failed to find path to the program %q", prog.Name)
+			return errorx.IllegalArgument.New(err, "failed to find path to the program %q", prog.Name)
 		}
 
 		progVersion, err := ic.programDetector.DetectProgramVersion(progPath, prog.VersionDetection)
 		if err != nil {
 			if !prog.VersionRequirements.Optional {
-				return errors.Wrapf(err, "failed to detect program %q version with spec %q",
+				return errorx.IllegalArgument.New(err, "failed to detect program %q version with spec %q",
 					progPath, prog.VersionDetection)
 			}
 			continue
@@ -244,7 +244,7 @@ func (ic *integrityChecker) CheckEnvironmentIntegrity() error {
 			//check for gnu ver
 			err2 := version.CheckMinVersionRequirement(progVersion, prog.VersionRequirements.GnuMinVersion)
 			if err2 != nil {
-				return errors.Wrapf(err, "program version %q failed to meet requirements %q",
+				return errorx.IllegalArgument.New(err, "program version %q failed to meet requirements %q",
 					progVersion, prog.VersionRequirements)
 			}
 		}
@@ -262,7 +262,7 @@ func (ic *integrityChecker) CheckEnvironmentIntegrity() error {
 func (ic *integrityChecker) checkOwnership(path string) error {
 	owner, ownerGroup, err := ic.fm.ReadOwner(path)
 	if err != nil {
-		err = errors.Wrapf(err, "failed to read ownership info for path %q", path)
+		err = errorx.IllegalArgument.New(err, "failed to read ownership info for path %q", path)
 		ic.logger.Error().
 			Str(logFields.path, path).
 			Err(err).
@@ -291,7 +291,7 @@ func (ic *integrityChecker) checkOwnership(path string) error {
 func (ic *integrityChecker) checkPermissions(path string, perms fs.FileMode) error {
 	fileMode, err := ic.fm.ReadPermissions(path)
 	if err != nil {
-		return errors.Wrapf(err, "failed to read permission info for %q", path)
+		return errorx.IllegalArgument.New(err, "failed to read permission info for %q", path)
 	}
 
 	if fileMode != perms {
@@ -358,7 +358,7 @@ func WithProgramDetector(pd software.ProgramDetector) IntegrityCheckerOption {
 func NewIntegrityChecker(nmtPaths paths.Paths, opts ...IntegrityCheckerOption) (IntegrityChecker, error) {
 	checkList, err := loadIntegrityCheckInfo(&nmtPaths)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to load integrity check list")
+		return nil, errorx.IllegalArgument.New(err, "failed to load integrity check list")
 	}
 
 	ic := &integrityChecker{

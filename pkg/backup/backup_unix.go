@@ -2,7 +2,7 @@ package backup
 
 import (
 	"fmt"
-	erx "github.com/joomcode/errorx"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 	"golang.hedera.com/solo-provisioner/pkg/security/principal"
@@ -81,7 +81,7 @@ func NewManager(opts ...Option) (Manager, error) {
 func WithPrincipalManager(pm principal.Manager) Option {
 	return func(manager *unixManager) error {
 		if pm == nil {
-			return erx.IllegalArgument.New("principal manager cannot be nil")
+			return errorx.IllegalArgument.New("principal manager cannot be nil")
 		}
 
 		manager.pm = pm
@@ -92,7 +92,7 @@ func WithPrincipalManager(pm principal.Manager) Option {
 func WithFileSystemManager(fs fsx.Manager) Option {
 	return func(manager *unixManager) error {
 		if fs == nil {
-			return erx.IllegalArgument.New("fs manager cannot be nil")
+			return errorx.IllegalArgument.New("fs manager cannot be nil")
 		}
 
 		manager.fs = fs
@@ -103,7 +103,7 @@ func WithFileSystemManager(fs fsx.Manager) Option {
 func WithConfiguration(cfg *Backup) Option {
 	return func(manager *unixManager) error {
 		if cfg == nil {
-			return erx.IllegalArgument.New("config cannot be nil")
+			return errorx.IllegalArgument.New("config cannot be nil")
 		}
 
 		manager.cfg = cfg
@@ -195,7 +195,7 @@ func (m *unixManager) CreateVersionAt(targetPath string, date time.Time) (*Versi
 
 func (m *unixManager) DeleteVersion(version *Version) error {
 	if version == nil {
-		return erx.IllegalArgument.New("the version argument must not be nil")
+		return errorx.IllegalArgument.New("the version argument must not be nil")
 	}
 
 	cvi, err := m.extractCurrentVersionInfo(filepath.Join(version.RootPath, version.Name))
@@ -204,7 +204,7 @@ func (m *unixManager) DeleteVersion(version *Version) error {
 	}
 
 	if cvi.Path == version.Path {
-		return erx.IllegalArgument.New("the version to delete is the current version")
+		return errorx.IllegalArgument.New("the version to delete is the current version")
 	}
 
 	_, exists, err := m.fs.PathExists(version.Path)
@@ -261,7 +261,7 @@ func (m *unixManager) extractCurrentVersionInfo(targetPath string) (*Version, er
 func (m *unixManager) extractVersionDate(vi *Version) error {
 	date, err := m.parseFileDate(vi.Name, vi.Path)
 	if err != nil {
-		return erx.IllegalArgument.New("the symbolic link target is not a valid backup version: %s", vi.Path)
+		return errorx.IllegalArgument.New("the symbolic link target is not a valid backup version: %s", vi.Path)
 	}
 
 	vi.Date = *date
@@ -276,13 +276,13 @@ func (m *unixManager) parseFileDate(prefix string, fileName string) (*time.Time,
 
 	groups := exp.FindStringSubmatch(fileName)
 	if groups == nil || len(groups) != 2 {
-		return nil, erx.IllegalArgument.New("the file or directory name is not a valid backup version: %s", fileName)
+		return nil, errorx.IllegalArgument.New("the file or directory name is not a valid backup version: %s", fileName)
 	}
 
 	dateStr := groups[1]
 	date, err := time.Parse(backupTimeFormat, dateStr)
 	if err != nil {
-		return nil, erx.IllegalArgument.New("the file or directory name contains an invalid datetime: %s", fileName)
+		return nil, errorx.IllegalArgument.New("the file or directory name contains an invalid datetime: %s", fileName)
 	}
 
 	return &date, nil
@@ -310,7 +310,7 @@ func (m *unixManager) createBackupPath(cv *Version, t time.Time, exactTimeRequir
 		if !exists {
 			return backupPath, &ft, nil
 		} else if exactTimeRequired {
-			return "", nil, erx.IllegalArgument.New("the requested time is already taken: %s", t)
+			return "", nil, errorx.IllegalArgument.New("the requested time is already taken: %s", t)
 		}
 
 		// If the originally requested time is already taken, we try to find a free time slot by adding a second to the time
@@ -318,7 +318,7 @@ func (m *unixManager) createBackupPath(cv *Version, t time.Time, exactTimeRequir
 		time.Sleep(time.Duration(25) * time.Millisecond)
 	}
 
-	return "", nil, erx.IllegalArgument.New("unable to create a unique backup path: %s", t)
+	return "", nil, errorx.IllegalArgument.New("unable to create a unique backup path: %s", t)
 }
 
 func (m *unixManager) cloneFileWithAccess(src string, dst string) error {
@@ -570,12 +570,12 @@ func (m *unixManager) createNewVersion(cvi *Version, t time.Time, exactTimeRequi
 func (m *unixManager) enableSnapshotSupport(targetPath string, t time.Time) (*Version, error) {
 	_, ok, err := m.fs.PathExists(targetPath)
 	if err != nil || !ok {
-		return nil, erx.IllegalArgument.New("the target path does not exist: %s", targetPath)
+		return nil, errorx.IllegalArgument.New("the target path does not exist: %s", targetPath)
 	}
 
 	parentDir := filepath.Dir(targetPath)
 	if !m.fs.IsDirectory(parentDir) {
-		return nil, erx.IllegalArgument.New("the parent directory does not exist: %s", targetPath)
+		return nil, errorx.IllegalArgument.New("the parent directory does not exist: %s", targetPath)
 	}
 
 	targetName := filepath.Base(targetPath)
@@ -608,7 +608,7 @@ func (m *unixManager) createVersionInternal(targetPath string, t time.Time, exac
 				Err(err).
 				Msg("Snapshot: Failure Enabling Snapshot Support For Source Path")
 
-			return nil, erx.IllegalArgument.
+			return nil, errorx.IllegalArgument.
 				New("failed to enable snapshot support to the target path: %s", targetPath).
 				WithUnderlyingErrors(err)
 		}

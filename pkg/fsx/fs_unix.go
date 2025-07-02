@@ -26,9 +26,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/cockroachdb/errors"
-
-	erx "github.com/joomcode/errorx"
+	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/pkg/security"
 	"golang.hedera.com/solo-provisioner/pkg/security/principal"
 )
@@ -79,7 +77,7 @@ func WithPrincipalManager(pm principal.Manager) Option {
 func (m *unixManager) PathExists(path string) (os.FileInfo, bool, error) {
 	pi, err := os.Lstat(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if os.IsNotExist(err) {
 			return nil, false, nil
 		}
 
@@ -150,7 +148,7 @@ func (m *unixManager) CreateDirectory(path string, recursive bool) error {
 
 	_, exists, err := m.PathExists(path)
 	if err != nil {
-		return NewFileSystemError(err, "invalid path", path)
+		return FileSystemError.New("invalid path %q", path).WithUnderlyingErrors(err)
 	}
 
 	if exists {
@@ -160,7 +158,9 @@ func (m *unixManager) CreateDirectory(path string, recursive bool) error {
 	parentDir := filepath.Dir(path)
 	pfi, exists, err := m.PathExists(parentDir)
 	if err != nil {
-		return NewFileSystemError(err, "parent directory is not a valid path", parentDir)
+		return FileSystemError.
+			New("parent directory is not a valid path %q", parentDir).
+			WithUnderlyingErrors(err)
 	}
 
 	if exists && !pfi.Mode().IsDir() {
@@ -175,10 +175,10 @@ func (m *unixManager) CreateDirectory(path string, recursive bool) error {
 		}
 
 		if retError {
-			return NewFileTypeError(nil, Directory, parentDir)
+			return FileTypeError.New("parent path %q is not a directory", parentDir)
 		}
 	} else if !exists && !recursive {
-		return NewFileNotFoundError(nil, parentDir)
+		return FileNotFound.New("parent path %q not found", parentDir)
 	}
 
 	if recursive {
@@ -188,7 +188,7 @@ func (m *unixManager) CreateDirectory(path string, recursive bool) error {
 	}
 
 	if err != nil {
-		return NewFileSystemError(err, "failed to create directory", path)
+		return FileSystemError.New("failed to create a directory %q", path).WithUnderlyingErrors(err)
 	}
 
 	return nil
@@ -198,17 +198,17 @@ func (m *unixManager) CopyFile(src string, dst string, overwrite bool) error {
 	// Ensure src exists and is a file
 	sfi, exists, err := m.PathExists(src)
 	if err != nil || !exists {
-		return NewFileNotFoundError(err, src)
+		return FileNotFound.New("source file %q not found", src).WithUnderlyingErrors(err)
 	}
 
 	if !sfi.Mode().IsRegular() {
-		return erx.IllegalArgument.New("source path is not a file: %s", src)
+		return errorx.IllegalArgument.New("source path is not a file: %s", src)
 	}
 
 	// Check to see if dst exists
 	dfi, exists, err := m.PathExists(dst)
 	if err != nil {
-		return NewFileSystemError(err, "destination path is not a valid path", dst)
+		return FileSystemError.New("destination path is not a valid path: %s", dst).WithUnderlyingErrors(err)
 	}
 
 	// If dst exists and is the same file as src, return
@@ -221,7 +221,7 @@ func (m *unixManager) CopyFile(src string, dst string, overwrite bool) error {
 	if exists {
 		// If dst exists as a file and overwrite is not enabled, return an error
 		if dfi.Mode().IsRegular() && !overwrite {
-			return NewFileAlreadyExistsError(nil, dst)
+			return FileAlreadyExists.New("destination file %q already exists, overwrite is disabled.", dst)
 		}
 
 		if dfi.Mode().IsRegular() {
@@ -235,11 +235,11 @@ func (m *unixManager) CopyFile(src string, dst string, overwrite bool) error {
 		} else if dfi.Mode()&os.ModeSymlink != 0 {
 			// if dst exists as a symlink, remove the symlink and copy the file.
 			if err := os.Remove(dst); err != nil {
-				return NewFileSystemError(err, "failed to remove symlink", dst)
+				return FileSystemError.New("failed to remove symlink %q", dst)
 			}
 		} else {
 			// if dst exists as something else, return an error.
-			return NewFileAlreadyExistsError(nil, dst)
+			return FileAlreadyExists.New("destination path %q already exists and is not a file or directory", dst)
 		}
 	} else {
 		// If dst does not exist, create the file.
@@ -248,13 +248,13 @@ func (m *unixManager) CopyFile(src string, dst string, overwrite bool) error {
 	}
 
 	// Ensure dstParent exists and is a directory
-	dpfi, exists, err := m.PathExists(dstParent)
+	info, exists, err := m.PathExists(dstParent)
 	if err != nil {
-		return NewFileSystemError(err, "destination parent path is not a valid path", dstParent)
+		return FileSystemError.New("destination parent path is not a valid path: %s", dstParent).WithUnderlyingErrors(err)
 	} else if !exists {
-		return NewFileNotFoundError(nil, dstParent)
-	} else if !dpfi.Mode().IsDir() {
-		return NewFileTypeError(nil, Directory, dstParent)
+		return FileNotFound.New("destination parent path %q not found", dstParent)
+	} else if !info.Mode().IsDir() {
+		return FileSystemError.New("destination parent path %q is not a directory", dstParent)
 	}
 
 	return copyFileContents(src, filepath.Join(dstParent, dstFileName))
@@ -263,7 +263,7 @@ func (m *unixManager) CopyFile(src string, dst string, overwrite bool) error {
 func (m *unixManager) CreateSymbolicLink(src string, dst string, overwrite bool) error {
 	sfi, exists, err := m.PathExists(src)
 	if err != nil {
-		return NewFileNotFoundError(err, src)
+		return FileNotFound.New("source file %q not found", src)
 	}
 
 	brokenLink := false
@@ -280,7 +280,7 @@ func (m *unixManager) CreateSymbolicLink(src string, dst string, overwrite bool)
 
 	if !brokenLink {
 		if !sfi.Mode().IsRegular() && !sfi.Mode().IsDir() {
-			return NewFileTypeError(nil, FileOrDirectory, src)
+			return FileTypeError.New("source file %q is not a directory", src)
 		}
 	}
 
@@ -289,7 +289,7 @@ func (m *unixManager) CreateSymbolicLink(src string, dst string, overwrite bool)
 	}
 
 	if err = os.Symlink(src, dst); err != nil {
-		return NewFileSystemError(err, "failed to create symlink", dst)
+		return FileSystemError.New("failed to create symlink: %s", dst).WithUnderlyingErrors(err)
 	}
 
 	return nil
@@ -298,11 +298,11 @@ func (m *unixManager) CreateSymbolicLink(src string, dst string, overwrite bool)
 func (m *unixManager) CreateHardLink(src string, dst string, overwrite bool) error {
 	sfi, exists, err := m.PathExists(src)
 	if err != nil || !exists {
-		return NewFileNotFoundError(err, src)
+		return FileNotFound.New("source file %q not found", src)
 	}
 
 	if !sfi.Mode().IsRegular() {
-		return NewFileTypeError(nil, File, src)
+		return FileTypeError.New("source path %q is not a regular file", src)
 	}
 
 	if err = m.checkAndOverwritePath(dst, overwrite); err != nil {
@@ -310,7 +310,7 @@ func (m *unixManager) CreateHardLink(src string, dst string, overwrite bool) err
 	}
 
 	if err = os.Link(src, dst); err != nil {
-		return NewFileSystemError(err, "failed to create hard link", dst)
+		return FileSystemError.New("failed to create hard link: %s", dst).WithUnderlyingErrors(err)
 	}
 
 	return nil
@@ -319,7 +319,7 @@ func (m *unixManager) CreateHardLink(src string, dst string, overwrite bool) err
 func (m *unixManager) ReadOwner(path string) (principal.User, principal.Group, error) {
 	fileInfo, err := os.Lstat(path)
 	if err != nil {
-		return nil, nil, NewFileSystemError(err, "failed to stat path", path)
+		return nil, nil, FileSystemError.New("failed to stat path: %s", path).WithUnderlyingErrors(err)
 	}
 
 	var uid string
@@ -328,7 +328,7 @@ func (m *unixManager) ReadOwner(path string) (principal.User, principal.Group, e
 		uid = strconv.FormatUint(uint64(stat.Uid), 10)
 		gid = strconv.FormatUint(uint64(stat.Gid), 10)
 	} else {
-		return nil, nil, NewFileSystemError(nil, "error getting file owner and group", path)
+		return nil, nil, FileSystemError.New("error getting file owner and group: %s", path)
 	}
 
 	user, err := m.pm.LookupUserById(uid)
@@ -347,7 +347,7 @@ func (m *unixManager) ReadOwner(path string) (principal.User, principal.Group, e
 func (m *unixManager) ReadPermissions(path string) (fs.FileMode, error) {
 	fileInfo, err := os.Lstat(path)
 	if err != nil {
-		return 0, NewFileSystemError(err, "failed to stat path", path)
+		return 0, FileSystemError.New("failed to stat path; %s", path).WithUnderlyingErrors(err)
 	}
 
 	return fileInfo.Mode().Perm(), nil
@@ -356,12 +356,12 @@ func (m *unixManager) ReadPermissions(path string) (fs.FileMode, error) {
 func (m *unixManager) WriteOwner(path string, user principal.User, group principal.Group, recursive bool) error {
 	uid, err := strconv.Atoi(user.Uid())
 	if err != nil {
-		return erx.IllegalArgument.New("UID must be an integer: %s", user.Uid())
+		return errorx.IllegalArgument.New("UID must be an integer: %s", user.Uid())
 	}
 
 	gid, err := strconv.Atoi(group.Gid())
 	if err != nil {
-		return erx.IllegalArgument.New("GID must be an integer: %s", group.Gid())
+		return errorx.IllegalArgument.New("GID must be an integer: %s", group.Gid())
 	}
 
 	if m.IsSymbolicLink(path) {
@@ -377,7 +377,7 @@ func (m *unixManager) WriteOwner(path string, user principal.User, group princip
 	if recursive {
 		stat, err := os.Lstat(path)
 		if err != nil {
-			return NewFileSystemError(err, "failed to stat path", path)
+			return FileSystemError.New("failed to stat path: %s", path).WithUnderlyingErrors(err)
 		}
 
 		if stat.IsDir() {
@@ -416,7 +416,7 @@ func (m *unixManager) WritePermissions(path string, perms fs.FileMode, recursive
 	if recursive {
 		stat, err := os.Lstat(path)
 		if err != nil {
-			return NewFileSystemError(err, "failed to stat path", path)
+			return FileSystemError.New("failed to stat path: %s", path).WithUnderlyingErrors(err)
 		}
 
 		if stat.IsDir() {
@@ -440,11 +440,11 @@ func (m *unixManager) WritePermissions(path string, perms fs.FileMode, recursive
 func (m *unixManager) ReadFile(path string, maxFileSize int64) ([]byte, error) {
 	fileInfo, exists, err := m.PathExists(path)
 	if err != nil || !exists {
-		return nil, NewFileNotFoundError(err, path)
+		return nil, FileNotFound.New("path %q not found", path)
 	}
 
 	if maxFileSize > 0 && fileInfo.Size() > maxFileSize {
-		return nil, errors.Newf("file size is larger than %q", maxFileSize)
+		return nil, errorx.IllegalArgument.New("file size is larger than %d bytes", maxFileSize)
 	}
 
 	if fileInfo.Size() <= 0 {
@@ -453,18 +453,20 @@ func (m *unixManager) ReadFile(path string, maxFileSize int64) ([]byte, error) {
 
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open file at %q", path)
+		return nil, errorx.IllegalArgument.New("failed to open file at %q", path).WithUnderlyingErrors(err)
 	}
-	defer file.Close()
+	defer Close(file)
 
 	buffer := make([]byte, fileInfo.Size())
 	totalRead, err := io.ReadAtLeast(file, buffer, len(buffer))
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to read from file %q", path)
+		return nil, errorx.IllegalArgument.New("failed to read from file %q", path).WithUnderlyingErrors(err)
 	}
 
 	if totalRead != len(buffer) {
-		return nil, errors.Wrapf(err, "failed to load full contents from file %q", path)
+		return nil, errorx.IllegalArgument.
+			New("failed to load full contents from file %q", path).
+			WithUnderlyingErrors(err)
 	}
 
 	return buffer, nil
@@ -473,22 +475,30 @@ func (m *unixManager) ReadFile(path string, maxFileSize int64) ([]byte, error) {
 func (m *unixManager) setupAccessForServiceUser(path string) error {
 	user, err := m.pm.LookupUserByName(security.ServiceAccountUserName)
 	if err != nil {
-		return errors.Wrapf(err, "failed to retrieve user %q", security.ServiceAccountUserName)
+		return errorx.IllegalArgument.
+			New("failed to retrieve user %q", security.ServiceAccountUserName).
+			WithUnderlyingErrors(err)
 	}
 
 	group, err := m.pm.LookupGroupByName(security.ServiceAccountGroupName)
 	if err != nil {
-		return errors.Wrapf(err, "failed to retrieve group %q", security.ServiceAccountGroupName)
+		return errorx.IllegalArgument.
+			New("failed to retrieve group %q", security.ServiceAccountGroupName).
+			WithUnderlyingErrors(err)
 	}
 
 	err = m.WriteOwner(path, user, group, false)
 	if err != nil {
-		return errors.Wrapf(err, "failed to set file owner (%s) and group(%s) to path: %q", user.Name(), group.Name(), path)
+		return errorx.IllegalArgument.
+			New("failed to set file owner (%s) and group(%s) to path: %q", user.Name(), group.Name(), path).
+			WithUnderlyingErrors(err)
 	}
 
 	err = m.WritePermissions(path, security.ACLFilePerms, false)
 	if err != nil {
-		return errors.Wrapf(err, "failed to set file permissions to %q", path)
+		return errorx.IllegalArgument.
+			New("failed to set file permissions to %q", path).
+			WithUnderlyingErrors(err)
 	}
 
 	return nil
@@ -497,17 +507,19 @@ func (m *unixManager) setupAccessForServiceUser(path string) error {
 func (m *unixManager) WriteFile(path string, payload []byte) error {
 	file, err := os.Create(path)
 	if err != nil {
-		return errors.Wrapf(err, "failed to open file at %q", path)
+		return errorx.IllegalArgument.New("failed to open file at %q", path).WithUnderlyingErrors(err)
 	}
-	defer file.Close()
+	defer Close(file)
 
 	n, err := file.Write(payload)
 	if err != nil {
-		return errors.Wrapf(err, "failed to write to file %q", path)
+		return errorx.IllegalArgument.New("failed to write to file %q", path).WithUnderlyingErrors(err)
 	}
 
 	if n != len(payload) {
-		return errors.Wrapf(err, "failed to write full payload to file %q", path)
+		return errorx.IllegalArgument.
+			New("failed to write full payload to file %q", path).
+			WithUnderlyingErrors(err)
 	}
 
 	// set file permission
@@ -517,18 +529,20 @@ func (m *unixManager) WriteFile(path string, payload []byte) error {
 func (m *unixManager) checkAndOverwritePath(path string, overwrite bool) error {
 	_, exists, err := m.PathExists(path)
 	if err != nil {
-		return NewFileSystemError(err, "destination path is not a valid path", path)
+		return FileSystemError.New("destination path is not a valid path: %s", path).WithUnderlyingErrors(err)
 	}
 
 	if exists {
 		if overwrite {
 			if err := os.Remove(path); err != nil {
 				if err := os.RemoveAll(path); err != nil {
-					return NewFileSystemError(err, "failed to remove existing path", path)
+					return FileSystemError.
+						New("failed to remove existing path: %s", path).
+						WithUnderlyingErrors(err)
 				}
 			}
 		} else {
-			return NewFileAlreadyExistsError(nil, path)
+			return FileAlreadyExists.New("destination path %q already exists, overwrite is disabled", path)
 		}
 	}
 
@@ -538,24 +552,24 @@ func (m *unixManager) checkAndOverwritePath(path string, overwrite bool) error {
 func copyFileContents(src, dst string) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
-		return NewFileSystemError(err, "failed to open the source file", src)
+		return FileSystemError.New("failed to open the source file: %s", src).WithUnderlyingErrors(err)
 	}
-	defer srcFile.Close()
+	defer Close(srcFile)
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
-		return NewFileSystemError(err, "failed to create the destination file", dst)
+		return FileSystemError.New("failed to create the destination file: %s", dst).WithUnderlyingErrors(err)
 	}
-	defer dstFile.Close()
+	defer Close(dstFile)
 
 	_, err = io.Copy(dstFile, srcFile)
 	if err != nil {
-		return NewFileSystemError(err, "failed to copy the file contents", src)
+		return FileSystemError.New("failed to copy the file contents: %s", src).WithUnderlyingErrors(err)
 	}
 
 	err = dstFile.Sync()
 	if err != nil {
-		return NewFileSystemError(err, "failed to sync the destination file", dst)
+		return FileSystemError.New("failed to sync the destination file: %s", dst).WithUnderlyingErrors(err)
 	}
 
 	return nil

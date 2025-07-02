@@ -20,8 +20,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"github.com/cockroachdb/errors"
 	"github.com/golang/mock/gomock"
+	"github.com/joomcode/errorx"
 	assertions "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/pkg/security"
@@ -46,14 +46,14 @@ func chmodPermNotationToFileMode(perms string) fs.FileMode {
 	return fs.FileMode(mode)
 }
 
-func assertFileOwnership(t *testing.T, fsManager Manager, path string, user principal.User, group principal.Group) {
+func assertFileOwnership(t *testing.T, fsManager Manager, path string, usr principal.User, grp principal.Group) {
 	t.Helper()
 	assert := assertions.New(t)
 
 	readUser, readGroup, err := fsManager.ReadOwner(path)
 	assert.NoError(err)
-	assert.Equal(user.Uid(), readUser.Uid())
-	assert.Equal(group.Gid(), readGroup.Gid())
+	assert.Equal(usr.Uid(), readUser.Uid())
+	assert.Equal(grp.Gid(), readGroup.Gid())
 }
 
 func setupTest(t *testing.T, pm principal.Manager) (*assertions.Assertions, Manager) {
@@ -74,15 +74,15 @@ func setupMockPrincipalManager(t *testing.T, ctrl *gomock.Controller) principal.
 	assert.NoError(err)
 
 	mockUser := principal.NewMockUser(ctrl)
-	group := principal.NewMockGroup(ctrl)
+	grp := principal.NewMockGroup(ctrl)
 	mockUser.EXPECT().Uid().Return(currentUser.Uid).AnyTimes()
 	mockUser.EXPECT().Name().Return(currentUser.Name).AnyTimes()
-	group.EXPECT().Gid().Return(currentUser.Gid).AnyTimes()
-	mockUser.EXPECT().PrimaryGroup().Return(group).AnyTimes()
+	grp.EXPECT().Gid().Return(currentUser.Gid).AnyTimes()
+	mockUser.EXPECT().PrimaryGroup().Return(grp).AnyTimes()
 
 	pm.EXPECT().LookupUserById(currentUser.Uid).Return(mockUser, nil).AnyTimes()
 	pm.EXPECT().LookupUserByName(currentUser.Username).Return(mockUser, nil).AnyTimes()
-	pm.EXPECT().LookupGroupById(currentUser.Gid).Return(group, nil).AnyTimes()
+	pm.EXPECT().LookupGroupById(currentUser.Gid).Return(grp, nil).AnyTimes()
 
 	return pm
 }
@@ -95,14 +95,14 @@ func setupMockPrincipalManagerForHedera(t *testing.T, ctrl *gomock.Controller) p
 	assert.NoError(err)
 
 	mockUser := principal.NewMockUser(ctrl)
-	group := principal.NewMockGroup(ctrl)
+	grp := principal.NewMockGroup(ctrl)
 	mockUser.EXPECT().Uid().Return(currentUser.Uid).AnyTimes()
 	mockUser.EXPECT().Name().Return(currentUser.Name).AnyTimes()
-	group.EXPECT().Gid().Return(currentUser.Gid).AnyTimes()
-	mockUser.EXPECT().PrimaryGroup().Return(group).AnyTimes()
+	grp.EXPECT().Gid().Return(currentUser.Gid).AnyTimes()
+	mockUser.EXPECT().PrimaryGroup().Return(grp).AnyTimes()
 
 	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(mockUser, nil).AnyTimes()
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName).Return(group, nil).AnyTimes()
+	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName).Return(grp, nil).AnyTimes()
 
 	return pm
 }
@@ -168,7 +168,7 @@ func TestUnixManager_IsFile(t *testing.T) {
 
 	tmpFile, err := os.CreateTemp(tmpDir, "test-file.*")
 	if assert.NoError(err) {
-		defer os.Remove(tmpFile.Name())
+		defer Remove(tmpFile.Name())
 	}
 
 	isFile := manager.IsRegularFile(path.Join(tmpDir, "non-existent"))
@@ -192,7 +192,7 @@ func TestUnixManager_IsHardLink(t *testing.T) {
 
 	tmpFile, err := os.CreateTemp(tmpDir, "test-file.*")
 	if assert.NoError(err) {
-		defer os.Remove(tmpFile.Name())
+		defer Remove(tmpFile.Name())
 	}
 
 	isHardLink := manager.IsHardLink(path.Join(tmpDir, "non-existent"))
@@ -208,7 +208,7 @@ func TestUnixManager_IsHardLink(t *testing.T) {
 	hardLinkPath := path.Join(tmpDir, "hard-link")
 	err = os.Link(tmpFile.Name(), hardLinkPath)
 	if assert.NoError(err) {
-		defer os.Remove(hardLinkPath)
+		defer Remove(hardLinkPath)
 	}
 
 	isHardLink = manager.IsHardLink(hardLinkPath)
@@ -226,7 +226,7 @@ func TestUnixManager_IsSymbolicLink(t *testing.T) {
 
 	tmpFile, err := os.CreateTemp(tmpDir, "test-file.*")
 	if assert.NoError(err) {
-		defer os.Remove(tmpFile.Name())
+		defer Remove(tmpFile.Name())
 	}
 
 	isSymbolicLink := manager.IsSymbolicLink(path.Join(tmpDir, "non-existent"))
@@ -242,7 +242,7 @@ func TestUnixManager_IsSymbolicLink(t *testing.T) {
 	symlinkPath := path.Join(tmpDir, "symlink")
 	err = os.Symlink(tmpFile.Name(), symlinkPath)
 	if assert.NoError(err) {
-		defer os.Remove(symlinkPath)
+		defer Remove(symlinkPath)
 	}
 
 	isSymbolicLink = manager.IsSymbolicLink(symlinkPath)
@@ -261,7 +261,7 @@ func TestUnixManager_CreateDirectory(t *testing.T) {
 	newDir := path.Join(tmpDir, "new-dir")
 	err := manager.CreateDirectory(newDir, false)
 	if assert.NoError(err) {
-		defer os.Remove(newDir)
+		defer Remove(newDir)
 	}
 	assert.DirExists(newDir)
 
@@ -273,7 +273,7 @@ func TestUnixManager_CreateDirectory(t *testing.T) {
 	// Assert recursive directory creation.
 	err = manager.CreateDirectory(missingParent, true)
 	if assert.NoError(err) {
-		defer os.Remove(path.Join(tmpDir, "missing-parent"))
+		defer Remove(path.Join(tmpDir, "missing-parent"))
 	}
 	assert.DirExists(missingParent)
 }
@@ -292,13 +292,13 @@ func TestUnixManager_CopyFile(t *testing.T) {
 
 	assert.NotEqual(originalHash, overwriteHash)
 
-	defer os.Remove(originalFile.Name())
-	defer os.Remove(overwriteFile.Name())
+	defer Remove(originalFile.Name())
+	defer Remove(overwriteFile.Name())
 
 	copiedFile := path.Join(tmpDir, "copied-file")
 	err := manager.CopyFile(originalFile.Name(), copiedFile, false)
 	if assert.NoError(err) {
-		defer os.Remove(copiedFile)
+		defer Remove(copiedFile)
 	}
 	assert.FileExists(copiedFile)
 	assertFileHash(t, copiedFile, originalHash)
@@ -323,13 +323,13 @@ func TestUnixManager_CreateHardLink(t *testing.T) {
 
 	assert.NotEqual(originalHash, overwriteHash)
 
-	defer os.Remove(originalFile.Name())
-	defer os.Remove(overwriteFile.Name())
+	defer Remove(originalFile.Name())
+	defer Remove(overwriteFile.Name())
 
 	hardLinkPath := path.Join(tmpDir, "hard-link")
 	err := manager.CreateHardLink(originalFile.Name(), hardLinkPath, false)
 	if assert.NoError(err) {
-		defer os.Remove(hardLinkPath)
+		defer Remove(hardLinkPath)
 	}
 	assert.FileExists(hardLinkPath)
 	assertFileHash(t, hardLinkPath, originalHash)
@@ -353,13 +353,13 @@ func TestUnixManager_CreateSymbolicLink(t *testing.T) {
 
 	assert.NotEqual(originalHash, overwriteHash)
 
-	defer os.Remove(originalFile.Name())
-	defer os.Remove(overwriteFile.Name())
+	defer Remove(originalFile.Name())
+	defer Remove(overwriteFile.Name())
 
 	symlinkPath := path.Join(tmpDir, "symlink")
 	err := manager.CreateSymbolicLink(originalFile.Name(), symlinkPath, false)
 	if assert.NoError(err) {
-		defer os.Remove(symlinkPath)
+		defer Remove(symlinkPath)
 	}
 	assert.FileExists(symlinkPath)
 	assertFileHash(t, symlinkPath, originalHash)
@@ -381,16 +381,16 @@ func TestUnixManager_ReadOwnerFromFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile, err := os.MkdirTemp(tmpDir, "read-owner")
 	assertions.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer RemoveAll(tmpDir)
 
 	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
 	pm := setupMockPrincipalManager(t, ctrl)
 	assert, manager := setupTest(t, pm)
 
-	user, group, err := manager.ReadOwner(tmpFile)
+	usr, grp, err := manager.ReadOwner(tmpFile)
 	if assert.NoError(err) {
-		assert.Equal(currenUser.Name, user.Name())
-		assert.Equal(currenUser.Gid, group.Gid())
+		assert.Equal(currenUser.Name, usr.Name())
+		assert.Equal(currenUser.Gid, grp.Gid())
 	}
 }
 
@@ -405,10 +405,10 @@ func TestUnixManager_ReadOwnerFromDirectory(t *testing.T) {
 	pm := setupMockPrincipalManager(t, ctrl)
 	assert, manager := setupTest(t, pm)
 
-	owner, group, err := manager.ReadOwner(t.TempDir())
+	owner, grp, err := manager.ReadOwner(t.TempDir())
 	if assert.NoError(err) {
 		assert.Equal(currenUser.Name, owner.Name())
-		assert.Equal(currenUser.Gid, group.Gid())
+		assert.Equal(currenUser.Gid, grp.Gid())
 	}
 }
 
@@ -475,7 +475,7 @@ func TestUnixManager_WriteOwner(t *testing.T) {
 	// Create a temporary file to use as the test path
 	tempFile, err := os.CreateTemp("", "testfile")
 	assert.NoError(err)
-	defer os.Remove(tempFile.Name())
+	defer Remove(tempFile.Name())
 
 	err = os.Chmod(tempFile.Name(), chmodPermNotationToFileMode("777"))
 	assert.NoError(err)
@@ -486,20 +486,20 @@ func TestUnixManager_WriteOwner(t *testing.T) {
 	g, err := user.LookupGroupId(u.Gid)
 	assert.NoError(err)
 
-	user, err := pm.LookupUserByName(u.Username)
+	usr, err := pm.LookupUserByName(u.Username)
 	assert.NoError(err)
 
-	group, err := pm.LookupGroupById(g.Gid)
+	grp, err := pm.LookupGroupById(g.Gid)
 	assert.NoError(err)
 
 	// Write the owner to the temporary file
-	err = manager.WriteOwner(tempFile.Name(), user, group, false)
+	err = manager.WriteOwner(tempFile.Name(), usr, grp, false)
 	if assert.NoError(err) {
 		// Check that the file owner is correct
 		fileInfo, err := os.Stat(tempFile.Name())
 		if assert.NoError(err) {
-			assert.Equal(user.Uid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Uid), 10))
-			assert.Equal(group.Gid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Gid), 10))
+			assert.Equal(usr.Uid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Uid), 10))
+			assert.Equal(grp.Gid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Gid), 10))
 		}
 	}
 }
@@ -512,11 +512,11 @@ func TestUnixManager_WriteOwnerBadUid(t *testing.T) {
 	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
-	user := principal.NewMockUser(ctrl)
-	user.EXPECT().Uid().Return("not_a_number")
-	user.EXPECT().Uid().Return("not_a_number")
+	usr := principal.NewMockUser(ctrl)
+	usr.EXPECT().Uid().Return("not_a_number")
+	usr.EXPECT().Uid().Return("not_a_number")
 
-	err := manager.WriteOwner("not_a_path", user, nil, false)
+	err := manager.WriteOwner("not_a_path", usr, nil, false)
 	assert.Error(err)
 }
 
@@ -528,13 +528,13 @@ func TestUnixManager_WriteOwnerBadGid(t *testing.T) {
 	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
-	user := principal.NewMockUser(ctrl)
-	user.EXPECT().Uid().Return("1234")
-	group := principal.NewMockGroup(ctrl)
-	group.EXPECT().Gid().Return("not_a_number")
-	group.EXPECT().Gid().Return("not_a_number")
+	usr := principal.NewMockUser(ctrl)
+	usr.EXPECT().Uid().Return("1234")
+	grp := principal.NewMockGroup(ctrl)
+	grp.EXPECT().Gid().Return("not_a_number")
+	grp.EXPECT().Gid().Return("not_a_number")
 
-	err := manager.WriteOwner("not_a_path", user, group, false)
+	err := manager.WriteOwner("not_a_path", usr, grp, false)
 	assert.Error(err)
 }
 
@@ -546,12 +546,14 @@ func TestUnixManager_WriteOwnerToFail(t *testing.T) {
 	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
-	user := principal.NewMockUser(ctrl)
-	user.EXPECT().Uid().Return("1234")
-	group := principal.NewMockGroup(ctrl)
-	group.EXPECT().Gid().Return("1234")
+	usr := principal.NewMockUser(ctrl)
+	usr.EXPECT().Uid().Return("1234").AnyTimes()
+	usr.EXPECT().Name().Return("user1").AnyTimes()
+	grp := principal.NewMockGroup(ctrl)
+	grp.EXPECT().Gid().Return("1234").AnyTimes()
+	grp.EXPECT().Name().Return("user-group").AnyTimes()
 
-	err := manager.WriteOwner("not_a_path", user, group, false)
+	err := manager.WriteOwner("not_a_path", usr, grp, false)
 	assert.Error(err)
 }
 
@@ -565,7 +567,7 @@ func TestUnixManager_WritePerms(t *testing.T) {
 
 	tempFile, err := os.CreateTemp("", "testfile")
 	assert.NoError(err)
-	defer os.Remove(tempFile.Name())
+	defer Remove(tempFile.Name())
 
 	originalPerms, err := manager.ReadPermissions(tempFile.Name())
 	rwxAllPerms := chmodPermNotationToFileMode("777")
@@ -671,20 +673,20 @@ func TestUnixManager_WriteOwnerRecursively(t *testing.T) {
 	currentUser, err := user.Current()
 	assert.NoError(err)
 
-	user, err := pm.LookupUserByName(currentUser.Username)
+	usr, err := pm.LookupUserByName(currentUser.Username)
 	assert.NoError(err)
 
-	group, err := pm.LookupGroupById(user.PrimaryGroup().Gid())
+	grp, err := pm.LookupGroupById(usr.PrimaryGroup().Gid())
 	assert.NoError(err)
 
-	err = manager.WriteOwner(tempDir, user, group, true)
+	err = manager.WriteOwner(tempDir, usr, grp, true)
 	assert.NoError(err)
 
-	assertFileOwnership(t, manager, tempDir, user, group)
-	assertFileOwnership(t, manager, tempFile1.Name(), user, group)
-	assertFileOwnership(t, manager, tempFile2.Name(), user, group)
-	assertFileOwnership(t, manager, tempDir2, user, group)
-	assertFileOwnership(t, manager, tempFile3.Name(), user, group)
+	assertFileOwnership(t, manager, tempDir, usr, grp)
+	assertFileOwnership(t, manager, tempFile1.Name(), usr, grp)
+	assertFileOwnership(t, manager, tempFile2.Name(), usr, grp)
+	assertFileOwnership(t, manager, tempDir2, usr, grp)
+	assertFileOwnership(t, manager, tempFile3.Name(), usr, grp)
 }
 
 func TestUnixManager_WriteOwnerRecursivelyBadUser(t *testing.T) {
@@ -695,11 +697,11 @@ func TestUnixManager_WriteOwnerRecursivelyBadUser(t *testing.T) {
 	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
-	user := principal.NewMockUser(ctrl)
-	user.EXPECT().Uid().Return("not_a_number")
-	user.EXPECT().Uid().Return("not_a_number")
+	usr := principal.NewMockUser(ctrl)
+	usr.EXPECT().Uid().Return("not_a_number")
+	usr.EXPECT().Uid().Return("not_a_number")
 
-	err := manager.WriteOwner("not_a_path", user, nil, true)
+	err := manager.WriteOwner("not_a_path", usr, nil, true)
 	assert.Error(err)
 }
 
@@ -711,13 +713,13 @@ func TestUnixManager_WriteOwnerRecursivelyBadGroup(t *testing.T) {
 	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
-	user := principal.NewMockUser(ctrl)
-	user.EXPECT().Uid().Return("1234")
-	group := principal.NewMockGroup(ctrl)
-	group.EXPECT().Gid().Return("not_a_number")
-	group.EXPECT().Gid().Return("not_a_number")
+	usr := principal.NewMockUser(ctrl)
+	usr.EXPECT().Uid().Return("1234")
+	grp := principal.NewMockGroup(ctrl)
+	grp.EXPECT().Gid().Return("not_a_number")
+	grp.EXPECT().Gid().Return("not_a_number")
 
-	err := manager.WriteOwner("not_a_path", user, group, true)
+	err := manager.WriteOwner("not_a_path", usr, grp, true)
 	assert.Error(err)
 }
 
@@ -763,7 +765,7 @@ func TestUnixManager_ReadFile_Failures(t *testing.T) {
 	// fail to read non-existing file
 	_, err := manager.ReadFile(tmpFile, int64(len(payload)))
 	assert.Error(err)
-	assert.True(errors.Is(err, &FileNotFoundError{}))
+	assert.True(errorx.IsOfType(err, FileNotFound))
 
 	// write the file
 	err = manager.WriteFile(tmpFile, payload)
@@ -776,13 +778,16 @@ func TestUnixManager_ReadFile_Failures(t *testing.T) {
 	// change permission so that it cannot be read
 	currentUser, err := user.Current()
 	assert.NoError(err)
-	if currentUser.Uid != "0" { // we can only test permission issue if the test is not run using root user
-		manager.WritePermissions(tmpFile, 0333, false)
+	if currentUser.Uid != "0" { // we can only test permission issue if the test is not run using root usr
+		err = manager.WritePermissions(tmpFile, 0333, false)
+		require.NoError(t, err)
+
 		_, err = manager.ReadFile(tmpFile, int64(len(payload)))
 		assert.Error(err)
 
 		// succeed with correct permission
-		manager.WritePermissions(tmpFile, security.ACLFilePerms, false)
+		err = manager.WritePermissions(tmpFile, security.ACLFilePerms, false)
+		require.NoError(t, err)
 		b, err := manager.ReadFile(tmpFile, int64(len(payload)))
 		assert.NoError(err)
 		assert.Equal(payload, b)
@@ -809,22 +814,22 @@ func TestUnixManager_WriteFile_Failures(t *testing.T) {
 	err := manager.WriteFile(invalidDir, payload)
 	assert.Error(err)
 
-	// fail on getting user
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(nil, errors.New("mock error"))
+	// fail on getting usr
+	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(nil, errorx.IllegalState.New("mock error"))
 	assert, manager = setupTest(t, pm)
 	err = manager.WriteFile(tmpFile, payload)
 	assert.Error(err)
 
-	// fail on getting group
-	user := principal.NewMockUser(ctrl)
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(user, nil)
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountUserName).Return(nil, errors.New("mock error"))
+	// fail on getting grp
+	usr := principal.NewMockUser(ctrl)
+	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(usr, nil)
+	pm.EXPECT().LookupGroupByName(security.ServiceAccountUserName).Return(nil, errorx.IllegalState.New("mock error"))
 	assert, manager = setupTest(t, pm)
 	err = manager.WriteFile(tmpFile, payload)
 	assert.Error(err)
 }
 
-// This integration test requires to be run using sudo and for hedera user to exist.
+// This integration test requires to be run using sudo and for hedera usr to exist.
 //
 // # It is designed to be run from simulated node container
 //
@@ -839,7 +844,7 @@ func TestUnixManager_WriteOwnerRecursivelyFromRoot_AsRoot(t *testing.T) {
 	currentUser, err := user.Current()
 	assertions.NoError(t, err)
 	if currentUser.Uid != "0" {
-		t.Skipf("skipping test that requires root user, found: %s", currentUser)
+		t.Skipf("skipping test that requires root usr, found: %s", currentUser)
 	}
 
 	pm, err := principal.NewManager()
@@ -880,11 +885,11 @@ func TestUnixManager_WriteOwnerRecursivelyFromRoot_AsRoot(t *testing.T) {
 	rootGroup, err := pm.LookupGroupById(rootUser.PrimaryGroup().Gid())
 	assert.NoError(err)
 
-	user, err := pm.LookupUserByName("hedera")
+	usr, err := pm.LookupUserByName("hedera")
 	if err != nil {
-		t.Skip("skipping test that requires hedera user")
+		t.Skip("skipping test that requires hedera usr")
 	}
-	group, err := pm.LookupGroupById(user.PrimaryGroup().Gid())
+	grp, err := pm.LookupGroupById(usr.PrimaryGroup().Gid())
 	assert.NoError(err)
 
 	tempDir, err := os.MkdirTemp("", "testdir")
@@ -915,14 +920,14 @@ func TestUnixManager_WriteOwnerRecursivelyFromRoot_AsRoot(t *testing.T) {
 	assertFileOwnership(t, manager, tempDir2, rootUser, rootGroup)
 	assertFileOwnership(t, manager, tempFile3.Name(), rootUser, rootGroup)
 
-	err = manager.WriteOwner(tempDir, user, group, true)
+	err = manager.WriteOwner(tempDir, usr, grp, true)
 	assert.NoError(err)
 
-	assertFileOwnership(t, manager, tempDir, user, group)
-	assertFileOwnership(t, manager, tempFile1.Name(), user, group)
-	assertFileOwnership(t, manager, tempFile2.Name(), user, group)
-	assertFileOwnership(t, manager, tempDir2, user, group)
-	assertFileOwnership(t, manager, tempFile3.Name(), user, group)
+	assertFileOwnership(t, manager, tempDir, usr, grp)
+	assertFileOwnership(t, manager, tempFile1.Name(), usr, grp)
+	assertFileOwnership(t, manager, tempFile2.Name(), usr, grp)
+	assertFileOwnership(t, manager, tempDir2, usr, grp)
+	assertFileOwnership(t, manager, tempFile3.Name(), usr, grp)
 }
 
 func createTestFile(t *testing.T, size uint) (*os.File, []byte, [32]byte) {

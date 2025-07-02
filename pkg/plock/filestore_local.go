@@ -17,7 +17,7 @@
 package plock
 
 import (
-	erx "github.com/joomcode/errorx"
+	"github.com/joomcode/errorx"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,12 +76,12 @@ func (lfs *localFileStore) validateWorkDir(workDir string) error {
 
 	dirInfo, err := os.Stat(workDir)
 	if err != nil {
-		return erx.IllegalArgument.
+		return errorx.IllegalArgument.
 			New("workDir is required and must be a valid directory path: %s", workDir).WithUnderlyingErrors(err)
 	}
 
 	if !dirInfo.IsDir() {
-		return erx.IllegalArgument.New("workDir is required and must be a valid directory path: %s", workDir)
+		return errorx.IllegalArgument.New("workDir is required and must be a valid directory path: %s", workDir)
 	}
 
 	permission := dirInfo.Mode().Perm()
@@ -89,7 +89,7 @@ func (lfs *localFileStore) validateWorkDir(workDir string) error {
 		return nil
 	}
 
-	return erx.IllegalArgument.
+	return errorx.IllegalArgument.
 		New("Directory '%s' must have rwx access for the owner, found: %s", workDir, permission.String())
 
 }
@@ -100,7 +100,7 @@ func (lfs *localFileStore) SetWorkDir(dirName string) error {
 
 	err := lfs.validateWorkDir(dirName)
 	if err != nil {
-		return erx.IllegalArgument.New("invalid work directory: %s", dirName).WithUnderlyingErrors(err)
+		return errorx.IllegalArgument.New("invalid work directory: %s", dirName).WithUnderlyingErrors(err)
 	}
 
 	lfs.workDir = dirName
@@ -153,14 +153,14 @@ func (lfs *localFileStore) Link(oldFile string, newFile string) (os.FileInfo, er
 	fullPath := lfs.FullPath(newFile)
 	err := os.Link(old, fullPath)
 	if err != nil {
-		return nil, erx.IllegalState.
+		return nil, errorx.IllegalState.
 			New("Error creating a hard link of the oldFile '%s' using the newFile '%s'", oldFile, newFile).
 			WithUnderlyingErrors(err)
 	}
 
 	fileInfo, err := lfs.Stat(newFile)
 	if err != nil {
-		return nil, erx.IllegalState.
+		return nil, errorx.IllegalState.
 			New("Error fetching the fileInfo for newFile '%s'", newFile).
 			WithUnderlyingErrors(err)
 	}
@@ -176,7 +176,7 @@ func (lfs *localFileStore) Link(oldFile string, newFile string) (os.FileInfo, er
 func (lfs *localFileStore) List(dirPath string, substr string, maxCount int) ([]os.FileInfo, error) {
 	dir, err := os.Open(dirPath)
 	if err != nil {
-		return nil, erx.IllegalArgument.New("Could not open the dirPath: %s", dirPath).WithUnderlyingErrors(err)
+		return nil, errorx.IllegalArgument.New("Could not open the dirPath: %s", dirPath).WithUnderlyingErrors(err)
 	}
 	defer dir.Close()
 

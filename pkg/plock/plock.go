@@ -18,7 +18,7 @@ package plock
 
 import (
 	"github.com/cockroachdb/errors"
-	erx "github.com/joomcode/errorx"
+	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/pkg/sanity"
 	"os"
 	"sync"
@@ -125,19 +125,19 @@ func (pl *plock) Acquire() error {
 
 	// if it is already acquired, it should have been released first
 	if pl.IsAcquired() {
-		return erx.IllegalState.New("Attempting to acquire the lock failed: lock '%s' is already acquired", pl.Info().String())
+		return errorx.IllegalState.New("Attempting to acquire the lock failed: lock '%s' is already acquired", pl.Info().String())
 	}
 
 	// CHECK: Check if the lockfile exists with name: {workDir}/{lockName}.plock, and if it does not exist then continue.
 	existingLock, _ := pl.manager.DiscoverByLockName(pl.name)
 	if existingLock != nil {
-		return erx.IllegalState.New("Attempting to acquire the lock failed: lockfile '%s' already exists", existingLock)
+		return errorx.IllegalState.New("Attempting to acquire the lock failed: lockfile '%s' already exists", existingLock)
 	}
 
 	// PREP: Create a tmp file with PID: {workDir}/{lockName}.{PID}.plock
 	pidFileInfo, err := pl.store.Create(pl.pidFileName)
 	if err != nil {
-		return erx.IllegalState.New("Failed to create PID file: %s", pl.pidFileName)
+		return errorx.IllegalState.New("Failed to create PID file: %s", pl.pidFileName)
 	}
 
 	// COMMIT: Hardlink the lockfile to the tmp file: {workDir}/{lockName}.plock -> {workDir}/{lockName}.{PID}.plock
@@ -147,14 +147,14 @@ func (pl *plock) Acquire() error {
 		if errors.Is(err, os.ErrExist) {
 			// ok, so we failed in the race to acquire the lock
 			existingLock, _ := pl.manager.DiscoverByLockName(pl.name)
-			return erx.IllegalState.
+			return errorx.IllegalState.
 				New("lock exists for: %s. Existing locks: %s", pl.store.FullPath(pl.lockFileName), existingLock).
 				WithUnderlyingErrors(err)
 
 		}
 
 		// unexpected IO error, this shouldn't happen
-		return erx.IllegalState.
+		return errorx.IllegalState.
 			New("unexpected error while acquiring lock: %s", pl.store.FullPath(pl.lockFileName)).
 			WithUnderlyingErrors(err)
 	}
@@ -165,7 +165,7 @@ func (pl *plock) Acquire() error {
 	if !os.SameFile(lockFileInfo, pidFileInfo) {
 		// we lost in the race somehow, so couldn't acquire the lock
 		existingLock, _ := pl.manager.DiscoverByLockName(pl.name)
-		return erx.IllegalState.
+		return errorx.IllegalState.
 			New("lock exists for: %s. Existing locks: %s", pl.store.FullPath(pl.lockFileName), existingLock)
 	}
 

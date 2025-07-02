@@ -2,7 +2,7 @@ package platform
 
 import (
 	"fmt"
-	"github.com/cockroachdb/errors"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"golang.hedera.com/solo-provisioner/pkg/backup"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
@@ -35,29 +35,29 @@ type platformManager struct {
 func (p *platformManager) InstallFilesFromPackage(extractedSDKPath string, extractedSDKDataPath string, isUpgrade bool) error {
 	if extractedSDKPath == "" || !p.fileSystemManager.IsDirectory(extractedSDKPath) {
 		errorMessage := fmt.Sprintf("%s: install files from package failed, extractedSDKPath is empty or not a directory [ extractedSDKPath = %s ]", logPrefix, extractedSDKPath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	if !isUpgrade && (extractedSDKDataPath == "" || !p.fileSystemManager.IsDirectory(extractedSDKDataPath)) {
 		errorMessage := fmt.Sprintf("%s: install files from package failed, extractedSDKDataPath is empty or not a directory and required for an install [ extractedSDKDataPath = %s ]", logPrefix, extractedSDKDataPath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	installPath, err := p.GetInstallRootPath()
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: install files from package failed, failed to get install path", logPrefix)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	if !p.fileSystemManager.IsDirectory(installPath) {
 		errorMessage := fmt.Sprintf("%s: install files from package failed, install path does not exist [ installPath = %s ]", logPrefix, installPath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	installDataPath := filepath.Join(installPath, dataDir)
 	if !p.fileSystemManager.IsDirectory(installDataPath) {
 		errorMessage := fmt.Sprintf("%s: install files from package failed, install data path does not exist [ installDataPath = %s ]", logPrefix, installDataPath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	p.logger.Info().
@@ -72,7 +72,7 @@ func (p *platformManager) InstallFilesFromPackage(extractedSDKPath string, extra
 			errorMessage := fmt.Sprintf("%s: install files from package failed, "+
 				"unable to install keys directory [ extractedSDKKeysPath = %s, installDataPath = %s, errorCode = %s ]",
 				logPrefix, extractedSDKKeysPath, installDataPath, err.Error())
-			return errors.Wrap(err, errorMessage)
+			return errorx.IllegalArgument.New(errorMessage)
 		}
 	} else {
 		p.logger.Info().
@@ -85,7 +85,7 @@ func (p *platformManager) InstallFilesFromPackage(extractedSDKPath string, extra
 		err := p.installFolderContentsFromPackage(extractedSDKConfigPath, installDataPath, configDir)
 		if err != nil {
 			errorMessage := fmt.Sprintf("%s: install files from package failed, unable to install config directory [ extractedSDKConfigPath = %s, installDataPath = %s, errorCode = %s ]", logPrefix, extractedSDKConfigPath, installDataPath, err.Error())
-			return errors.Wrap(err, errorMessage)
+			return errorx.IllegalArgument.New(errorMessage)
 		}
 	} else {
 		p.logger.Info().
@@ -96,7 +96,7 @@ func (p *platformManager) InstallFilesFromPackage(extractedSDKPath string, extra
 	err = p.installMiscFromPackage(extractedSDKPath, extractedSDKDataPath, installPath, installDataPath, isUpgrade)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: install files from package failed, unable to install misc directory [ extractedSDKPath = %s, extractedSDKDataPath = %s, installPath = %s, installDataPath = %s, errorCode = %s ]", logPrefix, extractedSDKPath, extractedSDKDataPath, installPath, installDataPath, err.Error())
-		return errors.Wrap(err, errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	return nil
@@ -106,11 +106,11 @@ func (p *platformManager) installMiscFromPackage(extractedSDKPath string, extrac
 	if !isUpgrade {
 		if !p.fileSystemManager.IsDirectory(installDataPath) {
 			errorMessage := fmt.Sprintf("%s: install misc from package failed, install data path %s does not exist", logPrefix, installDataPath)
-			return errors.New(errorMessage)
+			return errorx.IllegalArgument.New(errorMessage)
 		}
 		if !p.fileSystemManager.IsDirectory(extractedSDKDataPath) {
 			errorMessage := fmt.Sprintf("%s: install misc from package failed, extracted sdk data path %s does not exist", logPrefix, extractedSDKDataPath)
-			return errors.New(errorMessage)
+			return errorx.IllegalArgument.New(errorMessage)
 		}
 	}
 

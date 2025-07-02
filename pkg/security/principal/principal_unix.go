@@ -2,7 +2,7 @@ package principal
 
 import (
 	"fmt"
-	erx "github.com/joomcode/errorx"
+	"github.com/joomcode/errorx"
 	"runtime"
 	"strconv"
 	"strings"
@@ -60,15 +60,15 @@ func (u *unixUser) Groups() []Group {
 
 func (u *unixUser) Validate() error {
 	if len(strings.TrimSpace(u.name)) == 0 {
-		return erx.IllegalArgument.New("User name cannot be empty: %s", u.Name)
+		return errorx.IllegalArgument.New("User name cannot be empty: %s", u.name)
 	}
 
 	if u.uid == 0 && strings.TrimSpace(u.name) != "root" {
-		return erx.IllegalArgument.New("UID cannot be zero (0) for a non-root user: %s", u.gid)
+		return errorx.IllegalArgument.New("UID cannot be zero (0) for a non-root user: %d", u.uid)
 	}
 
 	if u.gid == 0 && strings.TrimSpace(u.name) != "root" {
-		return erx.IllegalArgument.New("GID cannot be zero (0) for a non-root user: %s", u.gid)
+		return errorx.IllegalArgument.New("GID cannot be zero (0) for a non-root user: %d", u.gid)
 	}
 
 	if len(strings.TrimSpace(u.homeDir)) == 0 {
@@ -114,11 +114,11 @@ func (g *unixGroup) Users() []User {
 
 func (g *unixGroup) Validate() error {
 	if len(strings.TrimSpace(g.name)) == 0 {
-		return erx.IllegalArgument.New("Group name cannot be empty: %s", g.name)
+		return errorx.IllegalArgument.New("Group name cannot be empty: %s", g.name)
 	}
 
 	if g.gid == 0 && strings.TrimSpace(g.name) != "root" {
-		return erx.IllegalArgument.New("GID cannot be zero (0) for a non-root group: %s", g.gid)
+		return errorx.IllegalArgument.New("GID cannot be zero (0) for a non-root group: %d", g.gid)
 	}
 
 	return nil

@@ -20,7 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"github.com/cockroachdb/errors"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -82,21 +82,24 @@ func (o *Otl) parseTlsConfig() (credentials.TransportCredentials, error) {
 	serverCerts := x509.NewCertPool()
 	b, err := os.ReadFile(o.otelConfig.Collector.TLS.CaFile)
 	if err != nil {
-		return nil, errors.Wrapf(err, "credentials: failed to load CA certificate %q",
-			o.otelConfig.Collector.TLS.CaFile)
+		return nil, errorx.IllegalArgument.
+			New("credentials: failed to load CA certificate %q", o.otelConfig.Collector.TLS.CaFile).
+			WithUnderlyingErrors(err)
 	}
 
 	if !serverCerts.AppendCertsFromPEM(b) {
-		return nil, errors.Wrapf(err, "credentials: failed to append CA certificate PEM %q",
-			o.otelConfig.Collector.TLS.CaFile)
+		return nil, errorx.IllegalArgument.
+			New("credentials: failed to append CA certificate PEM %q", o.otelConfig.Collector.TLS.CaFile).
+			WithUnderlyingErrors(err)
 	}
 
 	if o.otelConfig.Collector.TLS.CertFile != "" {
 		// setup mTLS if client cert file is specified
 		clientCert, err = tls.LoadX509KeyPair(o.otelConfig.Collector.TLS.CertFile, o.otelConfig.Collector.TLS.KeyFile)
 		if err != nil {
-			return nil, errors.Wrapf(err, "credentials: failed to load client certificate PEM %q",
-				o.otelConfig.Collector.TLS.CertFile)
+			return nil, errorx.IllegalArgument.
+				New("credentials: failed to load client certificate PEM %q",
+					o.otelConfig.Collector.TLS.CertFile).WithUnderlyingErrors(err)
 		}
 
 		// setup mTLS credentials
@@ -167,13 +170,13 @@ func (o *Otl) setupTracerProvider(res *resource.Resource) error {
 
 	clientOptions, err := o.setupTracerGrpcClientOption()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to setup tracer GRPC client options")
+		return errorx.IllegalArgument.New("Failed to setup tracer GRPC client options").WithUnderlyingErrors(err)
 	}
 
 	traceClient := otlptracegrpc.NewClient(clientOptions...)
 	traceExporter, err := otlptrace.New(ctx, traceClient)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to setup trace exporter")
+		return errorx.IllegalArgument.New("Failed to setup trace exporter").WithUnderlyingErrors(err)
 	}
 
 	spanProcessor := sdktrace.NewBatchSpanProcessor(traceExporter)
@@ -214,7 +217,7 @@ func (o *Otl) setupMeterProvider(res *resource.Resource) error {
 
 	clientOptions, err := o.setupMetricGrpcClientOption()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to setup metric GRPC client options")
+		return errorx.IllegalArgument.New("Failed to setup metric GRPC client options").WithUnderlyingErrors(err)
 	}
 
 	metricExp, err := otlpmetricgrpc.New(
@@ -223,7 +226,7 @@ func (o *Otl) setupMeterProvider(res *resource.Resource) error {
 	)
 
 	if err != nil {
-		return errors.Wrapf(err, "Failed to setup metric exporter")
+		return errorx.IllegalArgument.New("Failed to setup metric exporter").WithUnderlyingErrors(err)
 	}
 
 	meterProvider := sdkmetric.NewMeterProvider(
@@ -265,19 +268,19 @@ func (o *Otl) setup() error {
 		),
 	)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to create the collector resource")
+		return errorx.IllegalArgument.New("Failed to create the collector resource").WithUnderlyingErrors(err)
 	}
 
 	// setup trace provider
 	err = o.setupTracerProvider(res)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to setup tracer provider")
+		return errorx.IllegalArgument.New("Failed to setup tracer provider").WithUnderlyingErrors(err)
 	}
 
 	// setup meter provider
 	err = o.setupMeterProvider(res)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to setup meter provider")
+		return errorx.IllegalArgument.New("Failed to setup meter provider").WithUnderlyingErrors(err)
 	}
 
 	eventBus.Publish(TopicConnected, o.otelConfig.Collector.Endpoint)

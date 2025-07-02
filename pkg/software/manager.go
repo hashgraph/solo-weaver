@@ -19,7 +19,7 @@ package software
 import (
 	"context"
 	"github.com/cockroachdb/errors"
-	erx "github.com/joomcode/errorx"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	ver "golang.hedera.com/solo-provisioner/internal/version"
 	"golang.hedera.com/solo-provisioner/pkg/detect"
@@ -232,7 +232,7 @@ func (s *softwareManager) CheckState(ctx context.Context, def specs.SoftwareDefi
 	// get os specific software spec
 	softwareSpec, err := s.extractSoftwareSpecForOS(def)
 	if err != nil {
-		return erx.IllegalArgument.
+		return errorx.IllegalArgument.
 			New("software spec does not exist for the OS: %s", name).
 			WithUnderlyingErrors(err)
 	}

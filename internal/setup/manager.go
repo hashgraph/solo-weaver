@@ -20,8 +20,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"github.com/cockroachdb/errors"
 	extract "github.com/codeclysm/extract/v3"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"golang.hedera.com/solo-provisioner/internal/platform"
 	"golang.hedera.com/solo-provisioner/pkg/backup"
@@ -61,7 +61,7 @@ const (
 func (sm *setupManager) CreateStagingArea() error {
 	installWorkingDirectory, err := os.MkdirTemp("", "nmt_setup_workdir.*")
 	if err != nil {
-		return errors.Wrap(err, "failed to create working directory")
+		return errorx.IllegalArgument.New("failed to create working directory").WithUnderlyingErrors(err)
 	}
 
 	sm.installWorkingDirectory = installWorkingDirectory
@@ -92,7 +92,7 @@ func (sm *setupManager) Cleanup() error {
 	} else {
 		err := os.RemoveAll(sm.installWorkingDirectory)
 		if err != nil {
-			return errors.Wrap(err, "failed to remove working directory")
+			return errorx.IllegalState.New("failed to remove working directory").WithUnderlyingErrors(err)
 		}
 		sm.installWorkingDirectory = ""
 	}
@@ -106,12 +106,13 @@ func (sm *setupManager) extractedSDKPath() string {
 
 func (sm *setupManager) ExtractSDKArchive(ctx context.Context, sdkPackageFile string) error {
 	if sm.GetInstallWorkingDirectory() == "" {
-		return errors.New("working directory not set, staging area must be created as a prior step")
+		return errorx.IllegalArgument.New("working directory not set, staging area must be created as a prior step")
 	}
 
 	if !sm.fileSystemManager.IsRegularFile(sdkPackageFile) {
 		errorMessage := fmt.Sprintf("%s: SDK package file does not exist or is not a regular file [ path = '%s' ]", sm.logPrefix, sdkPackageFile)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
+
 	}
 
 	sm.logger.Info().
@@ -124,7 +125,7 @@ func (sm *setupManager) ExtractSDKArchive(ctx context.Context, sdkPackageFile st
 	err := sm.extractArchive(ctx, sdkPackageFile, extractedSDKPath)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to extract SDK package [ archive = '%s' ]", sm.logPrefix, sdkPackageFile)
-		return errors.Wrap(err, errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	sm.logger.Info().
@@ -140,27 +141,30 @@ func (sm *setupManager) extractArchive(ctx context.Context, sdkPackageFileName s
 	sdkPackageFileNameString := strings.ToLower(sdkPackageFileName)
 	if !strings.HasSuffix(sdkPackageFileNameString, ".tar") && !strings.HasSuffix(sdkPackageFileNameString, ".tar.gz") && !strings.HasSuffix(sdkPackageFileNameString, ".zip") {
 		errorMessage := fmt.Sprintf("%s: package file must be *.tar, *.tar.gz, or *.zip [ path = '%s' ]", sm.logPrefix, sdkPackageFileName)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	if !sm.fileSystemManager.IsDirectory(extractedSDKPath) {
 		err := sm.fileSystemManager.CreateDirectory(extractedSDKPath, true)
 		if err != nil {
 			errorMessage := fmt.Sprintf("%s: failed to create SDK package directory [ path = '%s' ]", sm.logPrefix, extractedSDKPath)
-			return errors.Wrap(err, errorMessage)
+			return errorx.IllegalState.New(errorMessage)
+
 		}
 	}
 
 	sdkPackageFile, err := os.Open(sdkPackageFileName)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to read SDK package file [ path = '%s' ]", sm.logPrefix, sdkPackageFileName)
-		return errors.Wrap(err, errorMessage)
+		return errorx.IllegalState.New(errorMessage)
+
 	}
 
 	err = extract.Archive(ctx, sdkPackageFile, extractedSDKPath, nil)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to extract SDK package file [ path = '%s' ]", sm.logPrefix, sdkPackageFileName)
-		return errors.Wrap(err, errorMessage)
+		return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
+
 	}
 
 	return nil
@@ -181,7 +185,7 @@ func (sm *setupManager) PrepareDocker(imageID string) error {
 	err := sm.prepareDockerImageBuild(dockerImageDestinationPath, imageID)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to prepare Docker Image Build Environment [ path = '%s' ]", sm.logPrefix, dockerImageDestinationPath)
-		return errors.Wrap(err, errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	sm.logger.Info().
@@ -195,26 +199,27 @@ func (sm *setupManager) PrepareDocker(imageID string) error {
 func (sm *setupManager) prepareDockerImageBuild(dockerImageDestinationPath string, imageID string) error {
 	if !sm.fileSystemManager.IsDirectory(sm.installWorkingDirectory) {
 		errorMessage := fmt.Sprintf("%s: prepare staging area has not been called, exiting", sm.logPrefix)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	if dockerImageDestinationPath == "" {
 		errorMessage := fmt.Sprintf("%s: dockerImageDestinationPath is empty", sm.logPrefix)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	if sm.fileSystemManager.IsDirectory(dockerImageDestinationPath) {
 		err := os.RemoveAll(dockerImageDestinationPath)
 		if err != nil {
 			errorMessage := fmt.Sprintf("%s: failed to cleanup of existing Docker Image Build Environment [ path = '%s' ]", sm.logPrefix, dockerImageDestinationPath)
-			return errors.Wrap(err, errorMessage)
+			return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
 		}
 	}
 
 	err := sm.fileSystemManager.CreateDirectory(dockerImageDestinationPath, true)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to create Docker Image Build Environment [ path = '%s' ]", sm.logPrefix, dockerImageDestinationPath)
-		return errors.Wrap(err, errorMessage)
+		return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
+
 	}
 
 	dockerImages := []string{
@@ -236,7 +241,8 @@ func (sm *setupManager) prepareDockerImageBuild(dockerImageDestinationPath strin
 		err = sm.copyEmbedDirectory(sourceFolder, dockerImageDestinationPath)
 		if err != nil {
 			errorMessage := fmt.Sprintf("%s: failed to copy Docker Image Build Environment [ imageName = '%s', sourceFolder = '%s' ]", sm.logPrefix, img, sourceFolder)
-			return errors.Wrap(err, errorMessage)
+			return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
+
 		}
 
 		imageSDKWorkingFolder := filepath.Join(imageWorkingFolder, sdkDirName)
@@ -250,7 +256,8 @@ func (sm *setupManager) prepareDockerImageBuild(dockerImageDestinationPath strin
 			err := sm.fileSystemManager.CreateDirectory(imageSDKWorkingFolder, true)
 			if err != nil {
 				errorMessage := fmt.Sprintf("%s: failed to create Docker Image Build Environment: creating missing SDK working folder [ imageName = '%s', errorCode = '%s' ]", sm.logPrefix, img, err.Error())
-				return errors.Wrap(err, errorMessage)
+				return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
+
 			}
 		}
 	}
@@ -312,24 +319,24 @@ func (sm *setupManager) handleWalkDir(imagesFolder embed.FS, path string, d fs2.
 func (sm *setupManager) StageSDK(sdkPackageFile string) error {
 	if !sm.fileSystemManager.IsDirectory(sm.installWorkingDirectory) {
 		errorMessage := fmt.Sprintf("%s: prepare staging area has not been called, exiting", sm.logPrefix)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	if !sm.fileSystemManager.IsRegularFile(sdkPackageFile) {
 		errorMessage := fmt.Sprintf("%s: SDK package file either does not exist or is not a regular file [ sdkPackageFile = '%s' ]", sm.logPrefix, sdkPackageFile)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	dockerImageDestinationPath := sm.dockerImageDestinationPath()
 	if !sm.fileSystemManager.IsDirectory(dockerImageDestinationPath) {
 		errorMessage := fmt.Sprintf("%s: docker image destination path doesn't exist, PrepareDocker() is required to be called as a predecessor [ dockerImageDestinationPath = '%s' ] ", sm.logPrefix, dockerImageDestinationPath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	extractedSDKPath := sm.extractedSDKPath()
 	if !sm.fileSystemManager.IsDirectory(extractedSDKPath) {
 		errorMessage := fmt.Sprintf("%s: extracted sdk destination path doesn't exist, ExtractSDKArchive() is required to be called as a predecessor [ extractedSDKPath = '%s' ] ", sm.logPrefix, extractedSDKPath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	sm.logger.Info().
@@ -365,7 +372,7 @@ func (sm *setupManager) prepareSDKFiles(sdkPackageFile string, extractedSDKPath 
 	networkNodePath := filepath.Join(dockerImageDestinationPath, sm.GetDockerNodeImageName())
 	if !sm.fileSystemManager.IsDirectory(networkNodePath) {
 		errorMessage := fmt.Sprintf("%s: network node path doesn't exist [ networkNodePath = '%s' ]", sm.logPrefix, networkNodePath)
-		return errors.New(errorMessage)
+		return errorx.IllegalArgument.New(errorMessage)
 	}
 
 	sm.logger.Debug().
@@ -382,26 +389,26 @@ func (sm *setupManager) prepareSDKFiles(sdkPackageFile string, extractedSDKPath 
 		err := sm.fileSystemManager.CreateDirectory(networkNodeSDKDataPath, true)
 		if err != nil {
 			errorMessage := fmt.Sprintf("%s: failed to create directory [ networkNodeSDKDataPath = '%s', errorCode = '%s' ]", sm.logPrefix, networkNodeSDKDataPath, err.Error())
-			return errors.New(errorMessage)
+			return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
 		}
 	}
 
 	extractedSDKDataPath, err := sm.extractedSDKDataPath(extractedSDKPath)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to get extracted sdk data path [ extractedSDKPath = '%s', errorCode = '%s' ]", sm.logPrefix, extractedSDKPath, err.Error())
-		return errors.Wrapf(err, errorMessage)
+		return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
 	}
 
 	err = sm.copySDKDataFiles(extractedSDKDataPath, networkNodeSDKDataPath)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to copy sdk data files [ extractedSDKDataPath = '%s', networkNodeSDKDataPath = '%s', errorCode = '%s' ]", sm.logPrefix, extractedSDKDataPath, networkNodeSDKDataPath, err.Error())
-		return errors.Wrapf(err, errorMessage)
+		return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
 	}
 
 	err = sm.platformManager.InstallFilesFromPackage(extractedSDKPath, extractedSDKDataPath, false)
 	if err != nil {
 		errorMessage := fmt.Sprintf("%s: failed to install sdk files from package [ extractedSDKPath = '%s', extractedSDKDataPath = '%s', errorCode = '%s' ]", sm.logPrefix, extractedSDKPath, extractedSDKDataPath, err.Error())
-		return errors.Wrapf(err, errorMessage)
+		return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
 	}
 
 	return nil
@@ -430,7 +437,7 @@ func (sm *setupManager) extractedSDKDataPath(extractedSDKPath string) (string, e
 	}
 
 	errorMessage := fmt.Sprintf("%s: unable to locate extracted SDK data path [ extractedSDKPath = '%s' ]", sm.logPrefix, extractedSDKPath)
-	return "", errors.New(errorMessage)
+	return "", errorx.IllegalArgument.New(errorMessage)
 }
 
 func (sm *setupManager) copySDKDataFiles(extractedSDKDataPath string, networkNodeSDKDataPath string) error {
@@ -444,13 +451,14 @@ func (sm *setupManager) copySDKDataFiles(extractedSDKDataPath string, networkNod
 
 		if !sm.fileSystemManager.IsDirectory(requiredDataFolderPath) {
 			errorMessage := fmt.Sprintf("%s: required data folder not found [ requiredDataFolderPath = '%s' ]", sm.logPrefix, requiredDataFolderPath)
-			return errors.New(errorMessage)
+			return errorx.IllegalState.New(errorMessage)
+
 		}
 
 		err := sm.backupManager.CopyTree(requiredDataFolderPath, networkNodeSDKDataPath)
 		if err != nil {
 			errorMessage := fmt.Sprintf("%s: failed to copy data folder [ requiredDataFolderPath = '%s', networkNodeSDKDataPath = '%s', errorCode = '%s' ]", sm.logPrefix, requiredDataFolderPath, networkNodeSDKDataPath, err.Error())
-			return errors.Wrapf(err, errorMessage)
+			return errorx.IllegalState.New(errorMessage).WithUnderlyingErrors(err)
 		}
 	}
 

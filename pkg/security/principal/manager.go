@@ -1,7 +1,7 @@
 package principal
 
 import (
-	"fmt"
+	"github.com/joomcode/errorx"
 	"sync/atomic"
 )
 
@@ -133,7 +133,7 @@ func (m *defaultManager) LookupGroupById(gid string) (Group, error) {
 // Refresh will evict all existing user and group cache entries and re-populate the cache.
 func (m *defaultManager) Refresh() error {
 	if m.provider == nil {
-		return fmt.Errorf("the supplied provider is nil but is required, cannot refresh the user and group cache")
+		return errorx.IllegalArgument.New("the supplied provider is nil but is required, cannot refresh the user and group cache")
 	}
 
 	// Clear all the caches and reset the initialized flag.
