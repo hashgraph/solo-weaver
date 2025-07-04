@@ -147,17 +147,25 @@ sudo mkdir -p ${PROVISIONER_HOME}/config
 # Setup Provisioner Sandbox
 sudo mkdir -p ${SANDBOX_DIR}
 sudo mkdir -p ${SANDBOX_DIR}/bin
-sudo mkdir -p ${SANDBOX_DIR}/etc/crio
+sudo mkdir -p ${SANDBOX_DIR}/etc/crio/keys
 sudo mkdir -p ${SANDBOX_DIR}/etc/default
+sudo mkdir -p ${SANDBOX_DIR}/etc/sysconfig
 sudo mkdir -p ${SANDBOX_DIR}/etc/provisioner
 sudo mkdir -p ${SANDBOX_DIR}/etc/containers/registries.conf.d
 sudo mkdir -p ${SANDBOX_DIR}/etc/cni/net.d
+sudo mkdir -p ${SANDBOX_DIR}/etc/nri/conf.d
 sudo mkdir -p ${SANDBOX_DIR}/etc/kubernetes/pki
-sudo mkdir -p ${SANDBOX_DIR}/var/lib/containerd
 sudo mkdir -p ${SANDBOX_DIR}/var/lib/etcd
+sudo mkdir -p ${SANDBOX_DIR}/var/lib/containers/storage
 sudo mkdir -p ${SANDBOX_DIR}/var/lib/kubelet
-sudo mkdir -p ${SANDBOX_DIR}/var/run
+sudo mkdir -p ${SANDBOX_DIR}/var/lib/crio
 sudo mkdir -p ${SANDBOX_DIR}/var/run/cilium
+sudo mkdir -p ${SANDBOX_DIR}/var/run/nri
+sudo mkdir -p ${SANDBOX_DIR}/var/run/containers/storage
+sudo mkdir -p ${SANDBOX_DIR}/var/run/crio/exits
+sudo mkdir -p ${SANDBOX_DIR}/var/logs/crio/pods
+sudo mkdir -p ${SANDBOX_DIR}/run/runc
+sudo mkdir -p ${SANDBOX_DIR}/run/crun
 sudo mkdir -p ${SANDBOX_DIR}/usr/libexec/crio
 sudo mkdir -p ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d
 sudo mkdir -p ${SANDBOX_DIR}/usr/local/bin
@@ -167,6 +175,7 @@ sudo mkdir -p ${SANDBOX_DIR}/usr/local/share/bash-completion/completions
 sudo mkdir -p ${SANDBOX_DIR}/usr/local/share/fish/completions
 sudo mkdir -p ${SANDBOX_DIR}/usr/local/share/zsh/site-functions
 sudo mkdir -p ${SANDBOX_DIR}/opt/cni/bin
+sudo mkdir -p ${SANDBOX_DIR}/opt/nri/plugins
 
 # Setup Ownership and Permissions
 sudo chown -R "${USER}:${GROUP}" "${PROVISIONER_HOME}"
@@ -186,6 +195,11 @@ fi
 sudo mount /etc/kubernetes
 sudo mount /var/lib/kubelet
 
+# Install dasel
+pushd "/tmp/provisioner/utils" >/dev/null 2>&1 || true
+sudo install -m 755 "dasel_${OS}_${ARCH}" "${SANDBOX_BIN}/dasel"
+popd >/dev/null 2>&1 || true
+
 # Install CRI-O
 sudo tar -C "/tmp/provisioner/cri-o/unpack" -zxvf "/tmp/provisioner/cri-o/cri-o.${ARCH}.v${CRIO_VERSION}.tar.gz"
 pushd "/tmp/provisioner/cri-o/unpack/cri-o" >/dev/null 2>&1 || true
@@ -197,9 +211,59 @@ sudo install -m 755 "/tmp/provisioner/kubernetes/kubeadm" "${SANDBOX_BIN}/kubead
 sudo install -m 755 "/tmp/provisioner/kubernetes/kubelet" "${SANDBOX_BIN}/kubelet"
 sudo install -m 755 "/tmp/provisioner/kubernetes/kubectl" "${SANDBOX_BIN}/kubectl"
 
+sudo ln -sf "${SANDBOX_BIN}/kubeadm" /usr/local/bin/kubeadm
+sudo ln -sf "${SANDBOX_BIN}/kubelet" /usr/local/bin/kubelet
+sudo ln -sf "${SANDBOX_BIN}/kubectl" /usr/local/bin/kubectl
+sudo ln -sf "${SANDBOX_BIN}/k9s" /usr/local/bin/k9s
+sudo ln -sf "${SANDBOX_BIN}/helm" /usr/local/bin/helm
+sudo ln -sf "${SANDBOX_BIN}/cilium" /usr/local/bin/cilium
+
 sudo mkdir -p ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d
 sudo cp "/tmp/provisioner/kubernetes/kubelet.service" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service"
 sudo cp "/tmp/provisioner/kubernetes/10-kubeadm.conf" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
+
+# Change kubelet service file to use the sandbox bin directory
+sudo sed -i "s|/usr/bin/kubelet|${SANDBOX_BIN}/kubelet|" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service"
+sudo sed -i "s|/usr/bin/kubelet|${SANDBOX_BIN}/kubelet|" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
+
+# Change CRI-O service file to use the sandbox bin directory
+sudo sed -i "s|/usr/local/bin/crio|${SANDBOX_LOCAL_BIN}/crio|" "${SANDBOX_DIR}/usr/lib/systemd/system/crio.service"
+sudo sed -i "s|/etc/sysconfig/crio|${SANDBOX_DIR}/etc/default/crio|" "${SANDBOX_DIR}/usr/lib/systemd/system/crio.service"
+
+cat <<EOF | sudo tee "${SANDBOX_DIR}/etc/default/crio" >/dev/null
+# /etc/default/crio
+
+# use "--enable-metrics" and "--metrics-port value"
+#CRIO_METRICS_OPTIONS="--enable-metrics"
+
+#CRIO_NETWORK_OPTIONS=
+#CRIO_STORAGE_OPTIONS=
+
+# CRI-O configuration directory
+CRIO_CONFIG_OPTIONS="--config-dir=${SANDBOX_DIR}/etc/crio/crio.conf.d"
+EOF
+
+# Update CRI-O configuration
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v runc '.crio.runtime.default_runtime'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/etc/crio/keys" '.crio.runtime.decryption_keys_path'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/exits" '.crio.runtime.container_exits_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio" '.crio.runtime.container_attach_socket_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run" '.crio.runtime.namespaces_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_LOCAL_BIN}/pinns" '.crio.runtime.pinns_path'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/run/runc" '.crio.runtime.runtimes.runc.runtime_root'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/run/crun" '.crio.runtime.runtimes.crun.runtime_root'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/crio.sock" '.crio.api.listen'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/crio.sock" '.crio.api.listen'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/lib/containers/storage" '.crio.root'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/containers/storage" '.crio.runroot'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/version" '.crio.version_file'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/logs/crio/pods" '.crio.log_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/lib/crio/clean.shutdown" '.crio.clean_shutdown_file'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/etc/cni/net.d/" '.crio.network.network_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/opt/cni/bin" -s 'crio.network.plugin_dirs.[]'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/opt/nri/plugins" '.crio.nri.nri_plugin_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/etc/nri/conf.d" '.crio.nri.nri_plugin_config_dir'
+sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/nri/nri.sock" '.crio.nri.nri_listen'
 
 # Install K9s
 sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/provisioner/kubernetes/k9s_${OS^}_${ARCH}.tar.gz" k9s
@@ -213,7 +277,6 @@ sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/provisioner/cilium/cilium-${OS}-${ARCH}.t
 # Setup Systemd Service SymLinks
 sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service
 sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d /usr/lib/systemd/system/kubelet.service.d
-sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/crio.service /usr/lib/systemd/system/crio.service
 
 # Enable and Start Services
 sudo systemctl daemon-reload
@@ -221,8 +284,8 @@ sudo systemctl enable crio kubelet
 sudo systemctl start crio kubelet
 
 # Torch prior KubeADM Configuration
-#sudo ${SANDBOX_BIN}/kubeadm reset --force || true
-#sudo rm -rf ${SANDBOX_DIR}/etc/kubernetes/* ${SANDBOX_DIR}/etc/cni/net.d/* ${SANDBOX_DIR}/var/lib/etcd/* || true
+sudo ${SANDBOX_BIN}/kubeadm reset --force || true
+sudo rm -rf ${SANDBOX_DIR}/etc/kubernetes/* ${SANDBOX_DIR}/etc/cni/net.d/* ${SANDBOX_DIR}/var/lib/etcd/* || true
 
 # Setup KubeADM Configuration
 kube_bootstrap_token="$(${SANDBOX_BIN}/kubeadm token generate)"
@@ -243,6 +306,7 @@ localAPIEndpoint:
   advertiseAddress: ${machine_ip}
   bindPort: 6443
 nodeRegistration:
+  criSocket: unix://${SANDBOX_DIR}/var/run/crio/crio.sock
   imagePullPolicy: IfNotPresent
   imagePullSerial: true
   name: $(hostname)
@@ -373,12 +437,9 @@ k8sClientRateLimit:
 
 # CNI Configuration
 cni:
-  cniBinPath: ${SANDBOX_DIR}/opt/cni/bin
-  cniConfPath: ${SANDBOX_DIR}/etc/cni/net.d
-
-# DaemonSet Configuration
-daemon:
-  runPath: ${SANDBOX_DIR}/var/run/cilium
+  binPath: ${SANDBOX_DIR}/opt/cni/bin
+  confPath: ${SANDBOX_DIR}/etc/cni/net.d
+  logFile: ${SANDBOX_DIR}/var/run/cilium/cilium-cni.log
 
 EOF
 
@@ -387,7 +448,7 @@ ${SANDBOX_BIN}/cilium install --version "${CILIUM_VERSION}" --values ${SANDBOX_D
 
 # Restart Container and Kubelet (fix for cilium CNI not initializing - CNI not ready error)
 sudo sysctl --system >/dev/null
-sudo systemctl restart containerd kubelet
+sudo systemctl restart kubelet crio
 
 ${SANDBOX_BIN}/cilium status --wait
 
