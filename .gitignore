@@ -341,3 +341,5 @@ internal/version/VERSION
 ### Generated Files ###
 **/mocks_generated.go
 unit-test-report.md
+test/data
+test/scripts/gen
