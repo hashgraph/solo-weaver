@@ -333,6 +333,11 @@ secring.*
 ### Go Dist Folder ###
 dist/
 /bin/
+
+### Application Version Info ###
 internal/version/COMMIT
 internal/version/VERSION
+
+### Generated Files ###
 **/mocks_generated.go
+unit-test-report.md
