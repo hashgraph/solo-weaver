@@ -1,7 +1,7 @@
 package os
 
 import (
-	"github.com/cockroachdb/errors"
+	"github.com/joomcode/errorx"
 	"log"
 	"os"
 	"os/signal"
@@ -51,22 +51,22 @@ type signalHandler struct {
 
 func (sh *signalHandler) Register(sig os.Signal, cb SignalCallback) error {
 	if sig == nil {
-		return errors.New("signal cannot be nil")
+		return errorx.IllegalArgument.New("signal cannot be nil")
 	}
 
 	if cb == nil {
-		return errors.New("callback function cannot be nil")
+		return errorx.IllegalArgument.New("callback function cannot be nil")
 	}
 
 	if !sh.IsActive() {
-		return errors.Newf("cannot register a callback for %s since handler is not active", sig)
+		return errorx.IllegalArgument.New("cannot register a callback for %s since handler is not active", sig)
 	}
 
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
 	if _, ok := sh.callbacks[sig]; ok {
-		return errors.Newf("callback already exists for %s", sig)
+		return errorx.IllegalArgument.New("callback already exists for %s", sig)
 	}
 
 	// store the callback

@@ -113,7 +113,7 @@ func dsclEnumerateEntities(entityType string) ([]string, *errorx.Error) {
 
 	output, e := command.Output()
 	if e != nil {
-		return nil, errorx.Decorate(e, "Failed to execute dscl command").WithUnderlyingErrors(e)
+		return nil, errorx.IllegalState.Wrap(e, "Failed to execute dscl command")
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(output))
@@ -182,7 +182,7 @@ func dsclGetEntityInfo(entityType string, name string) ([]byte, *errorx.Error) {
 
 	output, e := command.Output()
 	if e != nil {
-		return nil, errorx.Decorate(e, "Failed to execute dscl command").WithUnderlyingErrors(e)
+		return nil, errorx.IllegalState.Wrap(e, "Failed to execute dscl command")
 	}
 
 	return output, nil

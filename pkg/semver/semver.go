@@ -1,7 +1,7 @@
 /*
  * Copyright 2016-2022 Hedera Hashgraph, LLC
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Licensed under the Apache License, Semver 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -14,18 +14,18 @@
  * limitations under the License.
  */
 
-package version
+package semver
 
 import (
 	"bytes"
 	"fmt"
-	"github.com/cockroachdb/errors"
+	"github.com/joomcode/errorx"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// Version represents a Semantic Version.
+// Semver represents a Semantic Version.
 // It also exposes various version comparison functionalities.
 //
 // It uses Semantic Versioning specification to handle the version comparison logic.
@@ -40,30 +40,30 @@ import (
 // a preRelease-release part in the version, it will be considered lower precedence if major, minor, and patch are equal,
 // which adheres to spec https://semver.org/#spec-item-11. If both versions have preRelease-release part, preRelease
 // parts are compared lexicographically.
-type Version struct {
+type Semver struct {
 	// raw is the source version string before parsing
 	raw string
 
-	// versionStr denotes the string representation of Version after parsing
+	// versionStr denotes the string representation of Semver after parsing
 	versionStr string
 
-	// major represents the major part of the Version.
+	// major represents the major part of the Semver.
 	major uint64
 
-	// minor represents the minor part of the Version.
+	// minor represents the minor part of the Semver.
 	minor uint64
 
-	// patch represents the patch part of the Version.
+	// patch represents the patch part of the Semver.
 	patch uint64
 
-	// preRelease represents pre-release part of the Version separated by hyphen
+	// preRelease represents pre-release part of the Semver separated by hyphen
 	//
 	// https://semver.org/#spec-item-9
 	// Examples: 1.0.0-alpha, 1.0.0-beta.1, 1.0.0-rc.1, 1.0.0-rc.2+abd7, 1.0.0-0.3.7, 1.0.0-x.7.z.92, 1.0.0-x-y-z.--.
 	// preRelease release is compared lexicographically for simplicity.
 	preRelease string
 
-	// build represents the build section of the Version separated by plus sign.
+	// build represents the build section of the Semver separated by plus sign.
 	// It could be the commit sha, label or any other metadata.
 	// Note: during LessThan or GreaterThan comparisons, build part is ignored since lexicographical string comparison may
 	// not be valid.
@@ -72,7 +72,7 @@ type Version struct {
 
 // LessThan checks if it is less than the input version v2
 // Ref: https://semver.org/#spec-item-11
-func (v *Version) LessThan(v2 Version) bool {
+func (v *Semver) LessThan(v2 Semver) bool {
 	if v.major < v2.major {
 		return true
 	} else if v.major > v2.major {
@@ -102,57 +102,57 @@ func (v *Version) LessThan(v2 Version) bool {
 
 // EqualTo checks if it is equal to the input version
 // It performs a string comparison of the raw in full.
-func (v *Version) EqualTo(v2 Version) bool {
+func (v *Semver) EqualTo(v2 Semver) bool {
 	return v.raw == v2.raw
 }
 
 // LessOrEqual return true if it is less than or equal to the input version v2
 // This is just a wrapper function around LessThan and EqualTo
-func (v *Version) LessOrEqual(v2 Version) bool {
+func (v *Semver) LessOrEqual(v2 Semver) bool {
 	return v.LessThan(v2) || v.EqualTo(v2)
 }
 
 // GreaterOrEqual return true if it is greater than or equal to the input version v2
 // This is just a wrapper function around GreaterThan and EqualTo
-func (v *Version) GreaterOrEqual(v2 Version) bool {
+func (v *Semver) GreaterOrEqual(v2 Semver) bool {
 	return !v.LessThan(v2)
 }
 
 // GreaterThan checks if it is greater than the input version v2
 // Ref: https://semver.org/#spec-item-11
-func (v *Version) GreaterThan(v2 Version) bool {
+func (v *Semver) GreaterThan(v2 Semver) bool {
 	return !v.LessOrEqual(v2)
 }
 
 // isPreEqual checks if preRelease parts of the version is less than the input
 // preRelease release is compared lexicographically for simplicity.
-func (v *Version) isPreLessThan(pre string) bool {
+func (v *Semver) isPreLessThan(pre string) bool {
 	return v.preRelease < pre
 }
 
 // Raw returns the input version string
-func (v *Version) Raw() string {
+func (v *Semver) Raw() string {
 	return v.raw
 }
 
 // genVersionStr generates the version string formatted as SemVer
 // It generates string of the format: major.minor.patch-<pre>+<build>
 // Here `pre` and `build` parts are assumed to be optional
-func (v *Version) genVersionStr() error {
+func (v *Semver) genVersionStr() error {
 	var buffer bytes.Buffer
 
 	// version = major.minor.patch
 	_, err := buffer.WriteString(fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.patch))
 	if err != nil {
-		return errors.Wrapf(err, "failed to generate version string with major %q, minor %q and patch %q",
+		return errorx.IllegalFormat.Wrap(err, "failed to generate version string with major %q, minor %q and patch %q",
 			v.major, v.minor, v.patch)
 	}
 
-	// version = major.minior.patch-<pre>
+	// version = major.minor.patch-<pre>
 	if v.preRelease != "" {
 		_, err = buffer.WriteString("-" + v.preRelease)
 		if err != nil {
-			return errors.Wrapf(err, "failed to concatenate pre-release %q", v.preRelease)
+			return errorx.IllegalState.Wrap(err, "failed to concatenate pre-release %q", v.preRelease)
 		}
 	}
 
@@ -160,7 +160,7 @@ func (v *Version) genVersionStr() error {
 	if v.build != "" {
 		_, err = buffer.WriteString("+" + v.build)
 		if err != nil {
-			return errors.Wrapf(err, "failed to concatenate build %q", v.build)
+			return errorx.IllegalState.Wrap(err, "failed to concatenate build %q", v.build)
 		}
 	}
 
@@ -169,10 +169,10 @@ func (v *Version) genVersionStr() error {
 	return nil
 }
 
-func (v *Version) parseSemVer(str string) error {
+func (v *Semver) parseSemVer(str string) error {
 	matcher, err := regexp.Compile(RegexSemVer)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse semver regex %q", RegexSemVer)
+		return errorx.IllegalFormat.Wrap(err, "failed to parse semver regex %q", RegexSemVer)
 	}
 
 	match := matcher.FindStringSubmatch(str)
@@ -182,17 +182,17 @@ func (v *Version) parseSemVer(str string) error {
 
 		major, err = strconv.ParseUint(match[1], 10, strconv.IntSize)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse major part %q", match[1])
+			return errorx.IllegalFormat.Wrap(err, "failed to parse major part %q", match[1])
 		}
 
 		minor, err = strconv.ParseUint(match[2], 10, strconv.IntSize)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse minor part %q", match[2])
+			return errorx.IllegalFormat.Wrap(err, "failed to parse minor part %q", match[2])
 		}
 
 		patch, err = strconv.ParseUint(match[3], 10, strconv.IntSize)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse patch part %q", match[3])
+			return errorx.IllegalFormat.Wrap(err, "failed to parse patch part %q", match[3])
 		}
 
 		pre = match[4]
@@ -207,12 +207,12 @@ func (v *Version) parseSemVer(str string) error {
 		return v.genVersionStr()
 	}
 
-	return errors.Newf("failed to parse version string %q", str)
+	return errorx.IllegalFormat.New("failed to parse version string %q", str)
 }
 
 // parse parses the version string into its components
 // It allows parsing various formats such as: 219, v1, v1.1, 8.30 and SemVer
-func (v *Version) parse(str string) error {
+func (v *Semver) parse(str string) error {
 	var err error
 	str = strings.TrimLeft(str, "v") // trim "v" prefix
 
@@ -225,7 +225,7 @@ func (v *Version) parse(str string) error {
 		// support just a number e.g. 219, v1
 		v.major, err = strconv.ParseUint(str, 10, strconv.IntSize)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse major part %q", str)
+			return errorx.IllegalFormat.Wrap(err, "failed to parse major part %q", str)
 		}
 
 		return v.genVersionStr()
@@ -234,12 +234,12 @@ func (v *Version) parse(str string) error {
 		parts := strings.Split(str, ".")
 		v.major, err = strconv.ParseUint(parts[0], 10, strconv.IntSize)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse major part %q", parts[0])
+			return errorx.IllegalFormat.Wrap(err, "failed to parse major part %q", parts[0])
 		}
 
 		v.minor, err = strconv.ParseUint(parts[1], 10, strconv.IntSize)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse minor part %q", parts[1])
+			return errorx.IllegalFormat.Wrap(err, "failed to parse minor part %q", parts[1])
 		}
 
 		return v.genVersionStr()
@@ -249,13 +249,13 @@ func (v *Version) parse(str string) error {
 	return v.parseSemVer(str)
 }
 
-// NewVersion parses and returns an instance of Version if parsing of the input version string is successful
-func NewVersion(v string) (Version, error) {
+// NewSemver parses and returns an instance of Semver if parsing of the input version string is successful
+func NewSemver(v string) (Semver, error) {
 	v = strings.TrimSpace(v)
-	sv := Version{raw: v}
+	sv := Semver{raw: v}
 	err := sv.parse(v)
 	if err != nil {
-		return Version{}, errors.Wrapf(err, "failed to parse version %q", v)
+		return Semver{}, errorx.EnsureStackTrace(err)
 	}
 
 	return sv, nil
@@ -264,31 +264,31 @@ func NewVersion(v string) (Version, error) {
 // CheckVersionRequirements checks if a version is between the minimum and maximum version
 // if maximum is empty string, it will ignore checking for that version.
 func CheckVersionRequirements(progVersion string, minimum string, maximum string) error {
-	pVer, err := NewVersion(progVersion)
+	pVer, err := NewSemver(progVersion)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse program's version string %q", progVersion)
+		return errorx.EnsureStackTrace(err)
 	}
 
 	// check minimum version
-	minVer, err := NewVersion(minimum)
+	minVer, err := NewSemver(minimum)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse minimum version requirement %q", minimum)
+		return errorx.EnsureStackTrace(err)
 	}
 
 	if pVer.LessThan(minVer) {
-		return errors.Newf("program version %q is less than minimum required version %q",
+		return errorx.IllegalArgument.New("program version %q is less than minimum required version %q",
 			progVersion, minimum)
 	}
 
 	// check maximum version
 	if maximum != "" {
-		maxVer, err := NewVersion(maximum)
+		maxVer, err := NewSemver(maximum)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse maximum version requirement %q", maximum)
+			return errorx.EnsureStackTrace(err)
 		}
 
 		if pVer.GreaterThan(maxVer) {
-			return errors.Newf("program version %q is greater than maximum required version %q",
+			return errorx.IllegalArgument.New("program version %q is greater than maximum required version %q",
 				progVersion, maximum)
 		}
 	}
@@ -298,18 +298,18 @@ func CheckVersionRequirements(progVersion string, minimum string, maximum string
 
 // CheckMinVersionRequirement checks if a version meets the minimum version requirements
 func CheckMinVersionRequirement(progVersion string, minimum string) error {
-	pVer, err := NewVersion(progVersion)
+	pVer, err := NewSemver(progVersion)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse program's version string %q", progVersion)
+		return errorx.EnsureStackTrace(err)
 	}
 
-	minVer, err := NewVersion(minimum)
+	minVer, err := NewSemver(minimum)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse minimum version requirements %q", minimum)
+		return errorx.EnsureStackTrace(err)
 	}
 
 	if pVer.LessThan(minVer) {
-		return errors.Newf("program version %q is less than minimum required version %q",
+		return errorx.IllegalArgument.New("program version %q is less than minimum required version %q",
 			progVersion, minimum)
 	}
 
@@ -318,18 +318,18 @@ func CheckMinVersionRequirement(progVersion string, minimum string) error {
 
 // CheckMaxVersionRequirement checks if a version meets the maximum version requirements
 func CheckMaxVersionRequirement(progVersion string, maximum string) error {
-	pVer, err := NewVersion(progVersion)
+	pVer, err := NewSemver(progVersion)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse program's version string %q", progVersion)
+		return errorx.EnsureStackTrace(err)
 	}
 
-	maxVer, err := NewVersion(maximum)
+	maxVer, err := NewSemver(maximum)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse maximum version requirements %q", maximum)
+		return errorx.EnsureStackTrace(err)
 	}
 
 	if pVer.GreaterThan(maxVer) {
-		return errors.Newf("program version %q is greater than maximum required version %q",
+		return errorx.IllegalArgument.New("program version %q is greater than maximum required version %q",
 			progVersion, maximum)
 	}
 

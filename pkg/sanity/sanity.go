@@ -16,10 +16,10 @@
 
 package sanity
 
-import "errors"
+import "github.com/joomcode/errorx"
 
 var (
-	ErrInvalidFilename = errors.New("invalid filename")
+	ErrInvalidFilename = errorx.IllegalArgument.New("invalid filename")
 )
 
 // Alphanumeric ensures the input string to be ascii alphanumeric
