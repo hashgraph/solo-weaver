@@ -332,3 +332,7 @@ secring.*
 
 ### Go Dist Folder ###
 dist/
+/bin/
+internal/version/COMMIT
+internal/version/VERSION
+**/mocks_generated.go

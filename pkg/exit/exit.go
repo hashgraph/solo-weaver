@@ -61,6 +61,5 @@ const TemporaryFailure Code = 75
 const ProtocolError Code = 76
 const PermissionDenied Code = 77
 const ConfigurationError Code = 78
-const WatchTimeout Code = 79
 
 // Application specific exit code definitions.

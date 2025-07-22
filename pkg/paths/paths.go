@@ -26,20 +26,6 @@ import (
 	"strings"
 )
 
-// Paths reflects the general directory structure of an executable with log and config dir
-// It assumes the executable is in "bin" directory and the directory structure is as below
-// │├── app
-// │	├── bin
-// │	├── config
-// │	├── logs
-type Paths struct {
-	AppDir       string
-	WorkDir      string
-	LogDir       string
-	ConfigDir    string
-	HederaAppDir *HederaAppDir
-}
-
 // TrimFromPath removes any of the matching directory in the exclusions list
 // For example, for a location "/a/b/c/d/f" and exclusions = ["d", "e", "f"] it returns "/a/b/c"
 func TrimFromPath(fullPath string, exclusions []string) (string, error) {
