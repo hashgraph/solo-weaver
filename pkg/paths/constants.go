@@ -36,16 +36,6 @@ const (
 
 const DefaultMaxDepth = -1 // -1 denotes there is no limit
 
-// DirectoryNames defines various directory names for path discovery
-// Scout uses this in path discovery
-type DirectoryNames struct {
-	ConfigDirName      string
-	LogDirName         string
-	HgcAppDirName      string
-	NodeMgmtDirName    string
-	SkippedFolderNames []string
-}
-
 // defaultSkippedFolderNames lists the default folder that are skipped during app root path discovery
 // For example, we assume the work directory to be "bin" or "local", so the app directory is parent of such directory and
 // therefore the "bin" is trimmed from the work directory path (e.g "/a/b/c/bin") to retrieve the app root (e.g. "/a/b/c")

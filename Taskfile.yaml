@@ -241,7 +241,4 @@ tasks:
       - mockgen -source=pkg/plock/plock_api.go -self_package golang.hedera.com/solo-provisioner/pkg/plock -package plock > pkg/plock/mocks_generated.go
       - mockgen -source=pkg/security/principal/principal.go -self_package golang.hedera.com/solo-provisioner/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
       - mockgen -source=pkg/detect/detect.go -self_package golang.hedera.com/solo-provisioner/pkg/detect -package detect > pkg/detect/mocks_generated.go
-      - mockgen -source=pkg/software/software.go -self_package golang.hedera.com/solo-provisioner/pkg/software -package software > pkg/software/mocks_generated.go
-      - mockgen -source=pkg/backup/backup.go -self_package golang.hedera.com/solo-provisioner/pkg/backup -package backup > pkg/backup/mocks_generated.go
-      - mockgen -source=internal/platform/platform.go -self_package golang.hedera.com/solo-provisioner/internal/platform -package platform > internal/platform/mocks_generated.go
       - mockgen -source=pkg/fsx/fs.go -self_package golang.hedera.com/solo-provisioner/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
