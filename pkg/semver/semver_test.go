@@ -1,7 +1,7 @@
 /*
  * Copyright 2016-2022 Hedera Hashgraph, LLC
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Licensed under the Apache License, Semver 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package version
+package semver
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -23,15 +23,15 @@ import (
 	"testing"
 )
 
-func TestNewVersion(t *testing.T) {
+func TestNewSemver(t *testing.T) {
 	var testCases = []struct {
 		input  string
-		output Version
+		output Semver
 		errMsg string
 	}{
 		{
 			input: "",
-			output: Version{
+			output: Semver{
 				raw:        "",
 				major:      0,
 				minor:      0,
@@ -42,7 +42,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "219 ",
-			output: Version{
+			output: Semver{
 				raw:        "219",
 				major:      219, // support just a number used by some linux software such as systemctl
 				minor:      0,
@@ -53,7 +53,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "8.30",
-			output: Version{
+			output: Semver{
 				raw:        "8.30",
 				major:      8,
 				minor:      30,
@@ -64,7 +64,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1", // support v prefix
-			output: Version{
+			output: Semver{
 				raw:        "v1",
 				major:      1,
 				minor:      0,
@@ -75,7 +75,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1.1",
-			output: Version{
+			output: Semver{
 				raw:        "v1.1",
 				major:      1,
 				minor:      1,
@@ -86,7 +86,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1.1.2",
-			output: Version{
+			output: Semver{
 				raw:        "v1.1.2",
 				major:      1,
 				minor:      1,
@@ -97,7 +97,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "1.1.2",
-			output: Version{
+			output: Semver{
 				raw:        "1.1.2",
 				major:      1,
 				minor:      1,
@@ -108,7 +108,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "1.1.2-alpha.1",
-			output: Version{
+			output: Semver{
 				raw:        "1.1.2-alpha.1",
 				major:      1,
 				minor:      1,
@@ -119,7 +119,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1.1.2-beta.1",
-			output: Version{
+			output: Semver{
 				raw:        "v1.1.2-beta.1",
 				major:      1,
 				minor:      1,
@@ -130,7 +130,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1.1.2-rc.1",
-			output: Version{
+			output: Semver{
 				raw:        "v1.1.2-rc.1",
 				major:      1,
 				minor:      1,
@@ -141,7 +141,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1.1.2-rc1",
-			output: Version{
+			output: Semver{
 				raw:        "v1.1.2-rc1",
 				major:      1,
 				minor:      1,
@@ -152,7 +152,7 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input: "v1.1.2-rc.1.3+abdc6",
-			output: Version{
+			output: Semver{
 				raw:        "v1.1.2-rc.1.3+abdc6",
 				major:      1,
 				minor:      1,
@@ -163,28 +163,28 @@ func TestNewVersion(t *testing.T) {
 		},
 		{
 			input:  "a.2.3",
-			output: Version{},
-			errMsg: "failed to parse version",
+			output: Semver{},
+			errMsg: "failed to parse",
 		},
 		{
 			input:  "1.b.3",
-			output: Version{},
-			errMsg: "failed to parse version",
+			output: Semver{},
+			errMsg: "failed to parse",
 		},
 		{
 			input:  "1.2.c",
-			output: Version{},
-			errMsg: "failed to parse version",
+			output: Semver{},
+			errMsg: "failed to parse",
 		},
 		{
 			input:  "INVALID",
-			output: Version{},
-			errMsg: "failed to parse version",
+			output: Semver{},
+			errMsg: "failed to parse",
 		},
 	}
 
 	for _, test := range testCases {
-		v, err := NewVersion(test.input)
+		v, err := NewSemver(test.input)
 		if test.errMsg != "" {
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), test.errMsg)
@@ -196,7 +196,7 @@ func TestNewVersion(t *testing.T) {
 	}
 }
 
-func TestVersion_LessThan(t *testing.T) {
+func TestSemver_LessThan(t *testing.T) {
 	var testCases = []struct {
 		v1     string
 		v2     string
@@ -280,10 +280,10 @@ func TestVersion_LessThan(t *testing.T) {
 	}
 
 	for _, test := range testCases {
-		version1, err := NewVersion(test.v1)
+		version1, err := NewSemver(test.v1)
 		assert.NoError(t, err)
 
-		version2, err := NewVersion(test.v2)
+		version2, err := NewSemver(test.v2)
 		assert.NoError(t, err)
 
 		assert.Equal(t, test.output, version1.LessThan(version2))
@@ -291,7 +291,7 @@ func TestVersion_LessThan(t *testing.T) {
 	}
 }
 
-func TestVersion_GreaterThan(t *testing.T) {
+func TestSemver_GreaterThan(t *testing.T) {
 	var testCases = []struct {
 		v1     string
 		v2     string
@@ -375,10 +375,10 @@ func TestVersion_GreaterThan(t *testing.T) {
 	}
 
 	for _, test := range testCases {
-		version1, err := NewVersion(test.v1)
+		version1, err := NewSemver(test.v1)
 		assert.NoError(t, err)
 
-		version2, err := NewVersion(test.v2)
+		version2, err := NewSemver(test.v2)
 		assert.NoError(t, err)
 
 		val := version1.GreaterThan(version2)
@@ -386,7 +386,7 @@ func TestVersion_GreaterThan(t *testing.T) {
 	}
 }
 
-func TestCheckVersionRequirements(t *testing.T) {
+func TestCheckSemverRequirements(t *testing.T) {
 	var testCases = []struct {
 		v      string
 		min    string
@@ -433,19 +433,19 @@ func TestCheckVersionRequirements(t *testing.T) {
 			v:      "INVALID",
 			min:    "0.0.1",
 			max:    "0.0.2",
-			errMsg: "failed to parse program's version string",
+			errMsg: "failed to parse",
 		},
 		{
 			v:      "0.0.1",
 			min:    "INVALID",
 			max:    "0.0.2",
-			errMsg: "failed to parse minimum version requirement",
+			errMsg: "failed to parse",
 		},
 		{
 			v:      "0.0.1",
 			min:    "0.0.1",
 			max:    "INVALID",
-			errMsg: "failed to parse maximum version requirement",
+			errMsg: "failed to parse",
 		},
 	}
 
