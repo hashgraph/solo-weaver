@@ -2,7 +2,6 @@ package logx
 
 import (
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/pkgerrors"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"log"
@@ -54,7 +53,6 @@ func Initialize(cfg *LoggingConfig) error {
 		return err
 	}
 	zerolog.SetGlobalLevel(l)
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
 	console := zerolog.ConsoleWriter{
 		Out:        os.Stdout,

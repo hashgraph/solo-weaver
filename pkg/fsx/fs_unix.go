@@ -23,7 +23,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/joomcode/errorx"
@@ -577,4 +579,58 @@ func copyFileContents(src, dst string) error {
 
 func (m *unixManager) RemoveAll(path string) error {
 	return os.RemoveAll(path)
+}
+
+func (m *unixManager) ExcludeFromPath(path string, exclusions []string) (string, error) {
+	pathParts, finalPath := pathToComponents(path)
+
+	lastFoundIndex := -1
+
+	for i := len(pathParts) - 1; i >= 0; i-- {
+		if pathParts[i] != "" && slices.Contains(exclusions, pathParts[i]) {
+			// If we found an excluded folder, we will not include it in the final path
+			lastFoundIndex = i
+		}
+	}
+
+	if lastFoundIndex == 0 {
+		return "", FileNotFound.New("entire path contained excluded folder names: %s", filepath.Clean(path))
+	}
+
+	finalPath = append(finalPath, pathParts[0:lastFoundIndex]...)
+	return filepath.Join(finalPath...), nil
+}
+
+func (m *unixManager) FindParentPath(childPath string, parentDirName string) (string, error) {
+	pathParts, finalPath := pathToComponents(childPath)
+
+	found := false
+	for i := len(pathParts) - 1; i >= 0; i-- {
+		if pathParts[i] != "" && pathParts[i] == parentDirName {
+			finalPath = append(finalPath, pathParts[0:i+1]...)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return "", FileNotFound.New("no parent dir '%s' found in the given path '%s'",
+			parentDirName, filepath.Clean(childPath))
+	}
+
+	return filepath.Join(finalPath...), nil
+}
+
+func pathToComponents(path string) (components []string, finalPathBase []string) {
+	dir := filepath.Clean(path)
+	components = strings.Split(dir, string(os.PathSeparator))
+
+	if filepath.IsAbs(dir) {
+		// if the path is absolute, we need to keep the first part as os.PathSeparator
+		finalPathBase = []string{string(os.PathSeparator)}
+	} else {
+		finalPathBase = []string{}
+	}
+
+	return
 }

@@ -3,10 +3,8 @@ module golang.hedera.com/solo-provisioner
 go 1.23.0
 
 require (
-	github.com/cockroachdb/redact v1.1.6
 	github.com/golang/mock v1.6.0
 	github.com/joomcode/errorx v1.2.0
-	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1

@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"github.com/golang/mock/gomock"
 	"github.com/joomcode/errorx"
-	assertions "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	testify "github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/pkg/security"
 	"golang.hedera.com/solo-provisioner/pkg/security/principal"
 	"io/fs"
@@ -48,7 +48,7 @@ func chmodPermNotationToFileMode(perms string) fs.FileMode {
 
 func assertFileOwnership(t *testing.T, fsManager Manager, path string, usr principal.User, grp principal.Group) {
 	t.Helper()
-	assert := assertions.New(t)
+	assert := testify.New(t)
 
 	readUser, readGroup, err := fsManager.ReadOwner(path)
 	assert.NoError(err)
@@ -56,9 +56,9 @@ func assertFileOwnership(t *testing.T, fsManager Manager, path string, usr princ
 	assert.Equal(grp.Gid(), readGroup.Gid())
 }
 
-func setupTest(t *testing.T, pm principal.Manager) (*assertions.Assertions, Manager) {
+func setupTest(t *testing.T, pm principal.Manager) (*testify.Assertions, Manager) {
 	t.Helper()
-	assert := assertions.New(t)
+	assert := testify.New(t)
 
 	manager, err := NewManager(WithPrincipalManager(pm))
 	assert.NoError(err)
@@ -68,7 +68,7 @@ func setupTest(t *testing.T, pm principal.Manager) (*assertions.Assertions, Mana
 
 func setupMockPrincipalManager(t *testing.T, ctrl *gomock.Controller) principal.Manager {
 	pm := principal.NewMockManager(ctrl)
-	assert := assertions.New(t)
+	assert := testify.New(t)
 
 	currentUser, err := user.Current()
 	assert.NoError(err)
@@ -89,7 +89,7 @@ func setupMockPrincipalManager(t *testing.T, ctrl *gomock.Controller) principal.
 
 func setupMockPrincipalManagerForHedera(t *testing.T, ctrl *gomock.Controller) principal.Manager {
 	pm := principal.NewMockManager(ctrl)
-	assert := assertions.New(t)
+	assert := testify.New(t)
 
 	currentUser, err := user.Current()
 	assert.NoError(err)
@@ -112,7 +112,7 @@ func TestNewManager(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	assert.NotNil(manager)
 	assert.IsType(&unixManager{}, manager)
@@ -123,7 +123,7 @@ func TestUnixManager_PathExists(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
@@ -143,7 +143,7 @@ func TestUnixManager_IsDirectory(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
@@ -162,14 +162,13 @@ func TestUnixManager_IsFile(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
 	tmpFile, err := os.CreateTemp(tmpDir, "test-file.*")
-	if assert.NoError(err) {
-		defer Remove(tmpFile.Name())
-	}
+	assert.NoError(err)
+	defer Remove(tmpFile.Name())
 
 	isFile := manager.IsRegularFile(path.Join(tmpDir, "non-existent"))
 	assert.False(isFile)
@@ -186,14 +185,13 @@ func TestUnixManager_IsHardLink(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
 	tmpFile, err := os.CreateTemp(tmpDir, "test-file.*")
-	if assert.NoError(err) {
-		defer Remove(tmpFile.Name())
-	}
+	assert.NoError(err)
+	defer Remove(tmpFile.Name())
 
 	isHardLink := manager.IsHardLink(path.Join(tmpDir, "non-existent"))
 	assert.False(isHardLink)
@@ -207,9 +205,8 @@ func TestUnixManager_IsHardLink(t *testing.T) {
 	// Create a hard link to the file.
 	hardLinkPath := path.Join(tmpDir, "hard-link")
 	err = os.Link(tmpFile.Name(), hardLinkPath)
-	if assert.NoError(err) {
-		defer Remove(hardLinkPath)
-	}
+	assert.NoError(err)
+	defer Remove(hardLinkPath)
 
 	isHardLink = manager.IsHardLink(hardLinkPath)
 	assert.True(isHardLink)
@@ -220,14 +217,13 @@ func TestUnixManager_IsSymbolicLink(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
 	tmpFile, err := os.CreateTemp(tmpDir, "test-file.*")
-	if assert.NoError(err) {
-		defer Remove(tmpFile.Name())
-	}
+	assert.NoError(err)
+	defer Remove(tmpFile.Name())
 
 	isSymbolicLink := manager.IsSymbolicLink(path.Join(tmpDir, "non-existent"))
 	assert.False(isSymbolicLink)
@@ -241,9 +237,8 @@ func TestUnixManager_IsSymbolicLink(t *testing.T) {
 	// Create a symbolic link to the file.
 	symlinkPath := path.Join(tmpDir, "symlink")
 	err = os.Symlink(tmpFile.Name(), symlinkPath)
-	if assert.NoError(err) {
-		defer Remove(symlinkPath)
-	}
+	assert.NoError(err)
+	defer Remove(symlinkPath)
 
 	isSymbolicLink = manager.IsSymbolicLink(symlinkPath)
 	assert.True(isSymbolicLink)
@@ -254,15 +249,15 @@ func TestUnixManager_CreateDirectory(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
 	newDir := path.Join(tmpDir, "new-dir")
 	err := manager.CreateDirectory(newDir, false)
-	if assert.NoError(err) {
-		defer Remove(newDir)
-	}
+	assert.NoError(err)
+	defer Remove(newDir)
+
 	assert.DirExists(newDir)
 
 	missingParent := path.Join(tmpDir, "missing-parent", "new-dir")
@@ -272,9 +267,9 @@ func TestUnixManager_CreateDirectory(t *testing.T) {
 
 	// Assert recursive directory creation.
 	err = manager.CreateDirectory(missingParent, true)
-	if assert.NoError(err) {
-		defer Remove(path.Join(tmpDir, "missing-parent"))
-	}
+	assert.NoError(err)
+	defer Remove(path.Join(tmpDir, "missing-parent"))
+
 	assert.DirExists(missingParent)
 }
 
@@ -283,7 +278,7 @@ func TestUnixManager_CopyFile(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
@@ -297,9 +292,9 @@ func TestUnixManager_CopyFile(t *testing.T) {
 
 	copiedFile := path.Join(tmpDir, "copied-file")
 	err := manager.CopyFile(originalFile.Name(), copiedFile, false)
-	if assert.NoError(err) {
-		defer Remove(copiedFile)
-	}
+	assert.NoError(err)
+	defer Remove(copiedFile)
+
 	assert.FileExists(copiedFile)
 	assertFileHash(t, copiedFile, originalHash)
 
@@ -314,7 +309,7 @@ func TestUnixManager_CreateHardLink(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
@@ -328,9 +323,9 @@ func TestUnixManager_CreateHardLink(t *testing.T) {
 
 	hardLinkPath := path.Join(tmpDir, "hard-link")
 	err := manager.CreateHardLink(originalFile.Name(), hardLinkPath, false)
-	if assert.NoError(err) {
-		defer Remove(hardLinkPath)
-	}
+	assert.NoError(err)
+	defer Remove(hardLinkPath)
+
 	assert.FileExists(hardLinkPath)
 	assertFileHash(t, hardLinkPath, originalHash)
 
@@ -344,7 +339,7 @@ func TestUnixManager_CreateSymbolicLink(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 	tmpDir := t.TempDir()
 
@@ -358,9 +353,9 @@ func TestUnixManager_CreateSymbolicLink(t *testing.T) {
 
 	symlinkPath := path.Join(tmpDir, "symlink")
 	err := manager.CreateSymbolicLink(originalFile.Name(), symlinkPath, false)
-	if assert.NoError(err) {
-		defer Remove(symlinkPath)
-	}
+	assert.NoError(err)
+	defer Remove(symlinkPath)
+
 	assert.FileExists(symlinkPath)
 	assertFileHash(t, symlinkPath, originalHash)
 
@@ -375,41 +370,39 @@ func TestUnixManager_ReadOwnerFromFile(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	currenUser, err := user.Current()
-	assertions.NoError(t, err)
+	currentUser, err := user.Current()
+	testify.NoError(t, err)
 
 	tmpDir := t.TempDir()
 	tmpFile, err := os.MkdirTemp(tmpDir, "read-owner")
-	assertions.NoError(t, err)
+	testify.NoError(t, err)
 	defer RemoveAll(tmpDir)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	pm := setupMockPrincipalManager(t, ctrl)
 	assert, manager := setupTest(t, pm)
 
 	usr, grp, err := manager.ReadOwner(tmpFile)
-	if assert.NoError(err) {
-		assert.Equal(currenUser.Name, usr.Name())
-		assert.Equal(currenUser.Gid, grp.Gid())
-	}
+	assert.NoError(err)
+	assert.Equal(currentUser.Name, usr.Name())
+	assert.Equal(currentUser.Gid, grp.Gid())
 }
 
 func TestUnixManager_ReadOwnerFromDirectory(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	currenUser, err := user.Current()
-	assertions.NoError(t, err)
+	currentUser, err := user.Current()
+	testify.NoError(t, err)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	pm := setupMockPrincipalManager(t, ctrl)
 	assert, manager := setupTest(t, pm)
 
 	owner, grp, err := manager.ReadOwner(t.TempDir())
-	if assert.NoError(err) {
-		assert.Equal(currenUser.Name, owner.Name())
-		assert.Equal(currenUser.Gid, grp.Gid())
-	}
+	assert.NoError(err)
+	assert.Equal(currentUser.Name, owner.Name())
+	assert.Equal(currentUser.Gid, grp.Gid())
 }
 
 func TestUnixManager_ReadPermsFromFile(t *testing.T) {
@@ -417,13 +410,12 @@ func TestUnixManager_ReadPermsFromFile(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	perms, err := manager.ReadPermissions("/etc/passwd")
-	if assert.NoError(err) {
-		assert.Equal(chmodPermNotationToFileMode("644"), perms)
-	}
+	assert.NoError(err)
+	assert.Equal(chmodPermNotationToFileMode("644"), perms)
 }
 
 func TestUnixManager_ReadPermsFromDirectory(t *testing.T) {
@@ -431,13 +423,12 @@ func TestUnixManager_ReadPermsFromDirectory(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	perms, err := manager.ReadPermissions("/etc")
-	if assert.NoError(err) {
-		assert.Equal(chmodPermNotationToFileMode("755"), perms)
-	}
+	assert.NoError(err)
+	assert.Equal(chmodPermNotationToFileMode("755"), perms)
 }
 
 func TestUnixManager_ReadPermsFileNotFound(t *testing.T) {
@@ -445,7 +436,7 @@ func TestUnixManager_ReadPermsFileNotFound(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	_, err := manager.ReadPermissions("/xyz")
@@ -457,7 +448,7 @@ func TestUnixManager_ReadOwnerFileNotFound(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	_, _, err := manager.ReadOwner("/xyz")
@@ -469,7 +460,7 @@ func TestUnixManager_WriteOwner(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	// Create a temporary file to use as the test path
@@ -494,14 +485,12 @@ func TestUnixManager_WriteOwner(t *testing.T) {
 
 	// Write the owner to the temporary file
 	err = manager.WriteOwner(tempFile.Name(), usr, grp, false)
-	if assert.NoError(err) {
-		// Check that the file owner is correct
-		fileInfo, err := os.Stat(tempFile.Name())
-		if assert.NoError(err) {
-			assert.Equal(usr.Uid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Uid), 10))
-			assert.Equal(grp.Gid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Gid), 10))
-		}
-	}
+	assert.NoError(err)
+	// Check that the file owner is correct
+	fileInfo, err := os.Stat(tempFile.Name())
+	assert.NoError(err)
+	assert.Equal(usr.Uid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Uid), 10))
+	assert.Equal(grp.Gid(), strconv.FormatUint(uint64(fileInfo.Sys().(*syscall.Stat_t).Gid), 10))
 }
 
 func TestUnixManager_WriteOwnerBadUid(t *testing.T) {
@@ -509,7 +498,7 @@ func TestUnixManager_WriteOwnerBadUid(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	usr := principal.NewMockUser(ctrl)
@@ -525,7 +514,7 @@ func TestUnixManager_WriteOwnerBadGid(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	usr := principal.NewMockUser(ctrl)
@@ -543,7 +532,7 @@ func TestUnixManager_WriteOwnerToFail(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	usr := principal.NewMockUser(ctrl)
@@ -562,7 +551,7 @@ func TestUnixManager_WritePerms(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	tempFile, err := os.CreateTemp("", "testfile")
@@ -584,7 +573,7 @@ func TestUnixManager_WritePermsWithBadPerms(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	err := manager.WritePermissions("not_a_file", chmodPermNotationToFileMode("777"), false)
@@ -596,7 +585,7 @@ func TestUnixManager_WritePermsRecursively(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	tempDir, err := os.MkdirTemp("", "testdir2")
@@ -633,7 +622,7 @@ func TestUnixManager_WritePermsRecursivelyWithBadPerms(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	err := manager.WritePermissions("not_a_file", chmodPermNotationToFileMode("777"), true)
@@ -645,7 +634,7 @@ func TestUnixManager_WriteOwnerRecursively(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	tempDir, err := os.MkdirTemp("", "testdir")
@@ -694,7 +683,7 @@ func TestUnixManager_WriteOwnerRecursivelyBadUser(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	usr := principal.NewMockUser(ctrl)
@@ -710,7 +699,7 @@ func TestUnixManager_WriteOwnerRecursivelyBadGroup(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManager(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	usr := principal.NewMockUser(ctrl)
@@ -728,7 +717,7 @@ func TestUnixManager_ReadFile(t *testing.T) {
 	defer ctrl.Finish()
 	pm := setupMockPrincipalManagerForHedera(t, ctrl)
 
-	// Simplify repetitive assertions by avoiding the need to repeat the testing.T argument.
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
 
 	tmpFile := filepath.Join(t.TempDir(), "test")
@@ -842,43 +831,41 @@ func TestUnixManager_WriteFile_Failures(t *testing.T) {
 //   - sudo env PATH="$PATH" go test -v golang.hedera.com/solo-provisioner/pkg/fsx -run TestUnixManager_WriteOwnerRecursivelyFromRoot_IT
 func TestUnixManager_WriteOwnerRecursivelyFromRoot_AsRoot(t *testing.T) {
 	currentUser, err := user.Current()
-	assertions.NoError(t, err)
+	testify.NoError(t, err)
 	if currentUser.Uid != "0" {
 		t.Skipf("skipping test that requires root usr, found: %s", currentUser)
 	}
 
 	pm, err := principal.NewManager()
-	assertions.NoError(t, err)
+	testify.NoError(t, err)
 
 	assert, manager := setupTest(t, pm)
 
 	// check for root ownership of a /etc/passwd
 	etcOwner, etcOwnerGroup, err := manager.ReadOwner("/etc/passwd")
-	if assert.NoError(err) {
-		assert.Equal("root", etcOwner.Name())
+	assert.NoError(err)
+	assert.Equal("root", etcOwner.Name())
 
-		if runtime.GOOS == "darwin" {
-			assert.Equal("wheel", etcOwnerGroup.Name())
-		} else {
-			assert.Equal("root", etcOwnerGroup.Name())
-		}
-		assert.Equal(currentUser.Name, etcOwner.Name())
-		assert.Equal(currentUser.Gid, etcOwnerGroup.Gid())
+	if runtime.GOOS == "darwin" {
+		assert.Equal("wheel", etcOwnerGroup.Name())
+	} else {
+		assert.Equal("root", etcOwnerGroup.Name())
 	}
+	assert.Equal(currentUser.Name, etcOwner.Name())
+	assert.Equal(currentUser.Gid, etcOwnerGroup.Gid())
 
 	// check for root ownership of /etc directory
 	etcOwner, etcOwnerGroup, err = manager.ReadOwner("/etc")
-	if assert.NoError(err) {
-		assert.Equal("root", etcOwner.Name())
+	assert.NoError(err)
+	assert.Equal("root", etcOwner.Name())
 
-		if runtime.GOOS == "darwin" {
-			assert.Equal("wheel", etcOwnerGroup.Name())
-		} else {
-			assert.Equal("root", etcOwnerGroup.Name())
-		}
-		assert.Equal(currentUser.Name, etcOwner.Name())
-		assert.Equal(currentUser.Gid, etcOwnerGroup.Gid())
+	if runtime.GOOS == "darwin" {
+		assert.Equal("wheel", etcOwnerGroup.Name())
+	} else {
+		assert.Equal("root", etcOwnerGroup.Name())
 	}
+	assert.Equal(currentUser.Name, etcOwner.Name())
+	assert.Equal(currentUser.Gid, etcOwnerGroup.Gid())
 
 	rootUser, err := pm.LookupUserByName(currentUser.Username)
 	assert.NoError(err)
@@ -928,6 +915,80 @@ func TestUnixManager_WriteOwnerRecursivelyFromRoot_AsRoot(t *testing.T) {
 	assertFileOwnership(t, manager, tempFile2.Name(), usr, grp)
 	assertFileOwnership(t, manager, tempDir2, usr, grp)
 	assertFileOwnership(t, manager, tempFile3.Name(), usr, grp)
+}
+
+func TestUnixManager_ExcludeFromPath(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
+	assert, manager := setupTest(t, pm)
+
+	loc := filepath.Join("a", "b", "c", "d")
+	expected := filepath.Join("a", "b", "c") // only "d" will be trimmed
+	actual, err := manager.ExcludeFromPath(loc, []string{"d", "e"})
+	assert.NoError(err)
+	assert.Equal(expected, actual)
+
+	loc = filepath.Join(".", "a", "b", "c", "e", "d")
+	expected = filepath.Join(".", "a", "b", "c") // both "d" and "e will be trimmed
+	actual, err = manager.ExcludeFromPath(loc, []string{"d", "e"})
+	assert.NoError(err)
+	assert.Equal(expected, actual)
+
+	loc = filepath.Join(".", "a", "b", "c", "e", "d.exe")
+	expected = filepath.Join(".", "a", "b", "c") // "e" and "d.exe" will be trimmed
+	actual, err = manager.ExcludeFromPath(loc, []string{"d", "e"})
+	assert.NoError(err)
+	assert.Equal(expected, actual)
+
+	// try abs path
+	loc = fmt.Sprintf("%s%s", string(os.PathSeparator), filepath.Join(".", "a", "b", "c", "e", "d.exe"))
+	expected = fmt.Sprintf("%s%s", string(os.PathSeparator), filepath.Join(".", "a", "b", "c")) // "e" and "d.exe" will be trimmed
+	actual, err = manager.ExcludeFromPath(loc, []string{"d", "e"})
+	assert.NoError(err)
+	assert.Equal(expected, actual)
+
+	// error scenario with entire path being excluded
+	loc = filepath.Join("d", "e")
+	actual, err = manager.ExcludeFromPath(loc, []string{"d", "e"})
+	assert.Error(err)
+	assert.Equal("", actual)
+}
+
+func TestUnixManager_FindParent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+
+	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
+	assert, manager := setupTest(t, pm)
+
+	// if path ends with the parent name
+	result, err := manager.FindParentPath("/a/b/c/d/e", "e")
+	assert.NoError(err)
+	assert.Equal("/a/b/c/d/e", result)
+
+	// test immediate parent
+	result, err = manager.FindParentPath("/a/b/c/d/e", "d")
+	assert.NoError(err)
+	assert.Equal("/a/b/c/d", result)
+
+	// intermediate parent
+	result, err = manager.FindParentPath("/a/b/c/d/e", "c")
+	assert.NoError(err)
+	assert.Equal("/a/b/c", result)
+
+	// root parent
+	result, err = manager.FindParentPath("/a/b/c/d/e", "a")
+	assert.NoError(err)
+	assert.Equal("/a", result)
+
+	// no matching parent
+	result, err = manager.FindParentPath("/a/b/c/d/e", "INVALID")
+	assert.Error(err)
+	assert.Empty(result)
 }
 
 func createTestFile(t *testing.T, size uint) (*os.File, []byte, [32]byte) {
