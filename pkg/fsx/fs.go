@@ -102,4 +102,16 @@ type Manager interface {
 	// RemoveAll removes the path and its contents
 	// It is a wrapper of os.RemoveAll. This interface exists to help us mock the functionality during tests.
 	RemoveAll(path string) error
+
+	// ExcludeFromPath trims the path by removing the first occurrence, closest to the filesystem root,
+	// matching any excluded element from the path, and it's all children.
+	// For example, for a location "/a/b/c/d/f" and exclusions = ["d", "e", "f"] it returns "/a/b/c"
+	ExcludeFromPath(fullPath string, exclusions []string) (string, error)
+
+	// FindParentPath returns full path to the parent directory given the full path of a work(child) directory
+	// Here parentDirName can be any parent in the path.
+	//
+	// For example, for childDir = "/a/b/c/d/e" and parentDirName="c", it will return "/a/b/c"
+	// If the input is already the parent, it will return as it is
+	FindParentPath(childDir string, parentDirName string) (string, error)
 }
