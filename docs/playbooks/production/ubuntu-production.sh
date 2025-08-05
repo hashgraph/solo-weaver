@@ -104,6 +104,7 @@ sudo sysctl --system >/dev/null
 
 # Configure cgroupv2 of focal
 #sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"$/GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"/' /etc/default/grub
+#sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"$/GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"/' /etc/default/grub
 #sudo update-grub
 
 # Setup working directories
@@ -138,6 +139,9 @@ curl -sSLo "cilium-${OS}-${ARCH}.tar.gz.sha256sum" "https://github.com/cilium/ci
 sha256sum -c "cilium-${OS}-${ARCH}.tar.gz.sha256sum"
 popd >/dev/null 2>&1 || true
 
+# Ensure Cilium directory exists
+sudo mkdir -p /var/run/cilium
+
 # Setup Production Provisioner Folders
 sudo mkdir -p ${PROVISIONER_HOME}
 sudo mkdir -p ${PROVISIONER_HOME}/bin
@@ -165,7 +169,6 @@ sudo mkdir -p ${SANDBOX_DIR}/var/run/containers/storage
 sudo mkdir -p ${SANDBOX_DIR}/var/run/crio/exits
 sudo mkdir -p ${SANDBOX_DIR}/var/logs/crio/pods
 sudo mkdir -p ${SANDBOX_DIR}/run/runc
-sudo mkdir -p ${SANDBOX_DIR}/run/crun
 sudo mkdir -p ${SANDBOX_DIR}/usr/libexec/crio
 sudo mkdir -p ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d
 sudo mkdir -p ${SANDBOX_DIR}/usr/local/bin
@@ -192,8 +195,14 @@ if ! grep -q "/var/lib/kubelet" /etc/fstab; then
   echo "${SANDBOX_DIR}/var/lib/kubelet /var/lib/kubelet none bind,nofail 0 0" | sudo tee -a /etc/fstab >/dev/null
 fi
 
+if ! grep -q "/var/run/cilium" /etc/fstab; then
+  echo "${SANDBOX_DIR}/var/run/cilium /var/run/cilium none bind,nofail 0 0" | sudo tee -a /etc/fstab >/dev/null
+fi
+
+sudo systemctl daemon-reload
 sudo mount /etc/kubernetes
 sudo mount /var/lib/kubelet
+sudo mount /var/run/cilium
 
 # Install dasel
 pushd "/tmp/provisioner/utils" >/dev/null 2>&1 || true
@@ -251,7 +260,6 @@ sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.c
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run" '.crio.runtime.namespaces_dir'
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_LOCAL_BIN}/pinns" '.crio.runtime.pinns_path'
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/run/runc" '.crio.runtime.runtimes.runc.runtime_root'
-sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/run/crun" '.crio.runtime.runtimes.crun.runtime_root'
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/crio.sock" '.crio.api.listen'
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/crio.sock" '.crio.api.listen'
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/lib/containers/storage" '.crio.root'
@@ -277,6 +285,9 @@ sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/provisioner/cilium/cilium-${OS}-${ARCH}.t
 # Setup Systemd Service SymLinks
 sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service
 sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d /usr/lib/systemd/system/kubelet.service.d
+
+# Setup CRI-O Service SymLinks
+sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/crio.service /usr/lib/systemd/system/crio.service
 
 # Enable and Start Services
 sudo systemctl daemon-reload
@@ -439,7 +450,10 @@ k8sClientRateLimit:
 cni:
   binPath: ${SANDBOX_DIR}/opt/cni/bin
   confPath: ${SANDBOX_DIR}/etc/cni/net.d
-  logFile: ${SANDBOX_DIR}/var/run/cilium/cilium-cni.log
+
+# DaemonSet Configuration
+daemon:
+  runPath: ${SANDBOX_DIR}/var/run/cilium
 
 EOF
 
