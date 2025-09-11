@@ -15,13 +15,13 @@ readonly SANDBOX_DIR="${PROVISIONER_HOME}/sandbox"
 readonly SANDBOX_BIN="${SANDBOX_DIR}/bin"
 readonly SANDBOX_LOCAL_BIN="${SANDBOX_DIR}/usr/local/bin"
 
-readonly CRIO_VERSION="1.33.2"
-readonly KUBERNETES_VERSION="1.33.2"
+readonly CRIO_VERSION="1.33.4"
+readonly KUBERNETES_VERSION="1.33.4"
 readonly KREL_VERSION="v0.18.0"
-readonly K9S_VERSION="0.50.6"
-readonly HELM_VERSION="3.18.3"
-readonly CILIUM_CLI_VERSION="0.18.5"
-readonly CILIUM_VERSION="1.17.5"
+readonly K9S_VERSION="0.50.9"
+readonly HELM_VERSION="3.18.6"
+readonly CILIUM_CLI_VERSION="0.18.7"
+readonly CILIUM_VERSION="1.18.1"
 readonly METALLB_VERSION="0.15.2"
 readonly DASEL_VERSION="2.8.1"
 
@@ -39,7 +39,7 @@ sudo apt remove -y containerd containerd.io || true
 sudo apt install -y iptables
 
 # Install gpg package (if required)
-sudo apt install -y gpg
+sudo apt install -y gnupg2
 
 # Install Conntrack, EBTables, SoCat, and NFTables
 sudo apt install -y conntrack socat ebtables nftables
@@ -215,6 +215,9 @@ pushd "/tmp/provisioner/cri-o/unpack/cri-o" >/dev/null 2>&1 || true
 DESTDIR="${SANDBOX_DIR}" SYSTEMDDIR="/usr/lib/systemd/system" sudo -E "$(command -v bash)" ./install
 popd >/dev/null 2>&1 || true
 
+# Symlink CRI-O /etc/containers/registries.conf.d
+sudo ln -sf "${SANDBOX_DIR}/etc/containers" /etc/containers
+
 # Install Kubernetes
 sudo install -m 755 "/tmp/provisioner/kubernetes/kubeadm" "${SANDBOX_BIN}/kubeadm"
 sudo install -m 755 "/tmp/provisioner/kubernetes/kubelet" "${SANDBOX_BIN}/kubelet"
@@ -382,7 +385,7 @@ hubble:
   relay:
     enabled: true
   ui:
-    enabled: true
+    enabled: false
 
 # KubeProxy Replacement Config
 kubeProxyReplacement: true
