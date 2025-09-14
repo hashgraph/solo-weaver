@@ -45,7 +45,8 @@ func initConfig() {
 		cobra.CheckErr(err)
 	}
 
-	err = logx.Initialize(config.Get().Log)
+	logConfig := config.Get().Log
+	err = logx.Initialize(&logConfig)
 	if err != nil {
 		fmt.Println(err)
 		cobra.CheckErr(err)

@@ -10,16 +10,37 @@ import (
 
 // Config holds the global configuration for the application.
 type Config struct {
-	// Log contains logging-related configuration.
-	Log *logx.LoggingConfig
+	Log      logx.LoggingConfig `yaml:"log" json:"log"`
+	Versions VersionConfig      `yaml:"versions" json:"versions"`
 }
 
 var config = Config{
-	Log: &logx.LoggingConfig{
+	Log: logx.LoggingConfig{
 		Level:          "Info",
 		ConsoleLogging: true,
 		FileLogging:    false,
 	},
+	Versions: VersionConfig{
+		Crio:       "1.33.4",
+		Kubernetes: "1.33.4",
+		Krel:       "v0.18.0",
+		K9s:        "0.50.9",
+		Helm:       "3.18.6",
+		CiliumCli:  "0.18.7",
+		Cilium:     "1.18.1",
+		Metallb:    "2.8.1",
+	},
+}
+
+type VersionConfig struct {
+	Crio       string `yaml:"crio" json:"crio"`
+	Kubernetes string `yaml:"kubernetes" json:"kubernetes"`
+	Krel       string `yaml:"krel" json:"krel"`
+	K9s        string `yaml:"k9s" json:"k9s"`
+	Helm       string `yaml:"helm" json:"helm"`
+	CiliumCli  string `yaml:"ciliumCli" json:"ciliumCli"`
+	Cilium     string `yaml:"cilium" json:"cilium"`
+	Metallb    string `yaml:"metallb" json:"metallb"`
 }
 
 // Initialize loads the configuration from the specified file.
