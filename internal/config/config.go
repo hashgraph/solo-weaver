@@ -1,8 +1,9 @@
 package config
 
 import (
-	"fmt"
+	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/pkg/logx"
 	"os"
 	"strings"
@@ -51,6 +52,11 @@ type VersionConfig struct {
 // Returns:
 //   - An error if the configuration cannot be loaded.
 func Initialize(path string) error {
+	if path == "" {
+		return core.IllegalArgument.New("config file path cannot be empty").
+			WithProperty(errorx.PropertyPayload(), "--config")
+	}
+
 	viper.Reset()
 	viper.SetConfigFile(path)
 	viper.SetEnvPrefix("solo_provisioner")
@@ -58,11 +64,13 @@ func Initialize(path string) error {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("failed to read configuration file: %w", err)
+		return core.ConfigNotFound.Wrap(err, "failed to read config file: %s", path).
+			WithProperty(errorx.PropertyPayload(), path)
 	}
 
 	if err := viper.Unmarshal(&config); err != nil {
-		return fmt.Errorf("failed to unmarshal configuration: %w", err)
+		return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
+			WithProperty(errorx.PropertyPayload(), path)
 	}
 
 	return nil

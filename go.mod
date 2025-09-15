@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/automa-saga/automa v0.4.0
 	github.com/golang/mock v1.6.0
+	github.com/google/uuid v1.6.0
 	github.com/joomcode/errorx v1.2.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1

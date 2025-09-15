@@ -12,4 +12,5 @@ var (
 	SandboxHomeDir     = path.Join(ProvisionerHomeDir, "sandbox")
 	SandboxBinDir      = path.Join(SandboxHomeDir, "bin")
 	SandboxLocalBinDir = path.Join(SandboxHomeDir, "usr", "local", "bin")
+	DiagnosticsDir     = path.Join(ProvisionerTempDir, "diagnostics")
 )

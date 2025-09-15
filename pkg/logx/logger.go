@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"context"
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
@@ -41,13 +42,16 @@ type LoggingConfig struct {
 
 func init() {
 	StartTimer()
-	err := Initialize(&LoggingConfig{ConsoleLogging: true})
+	err := WithConfig(&LoggingConfig{
+		Level:          "debug",
+		ConsoleLogging: true,
+	}, nil)
 	if err != nil {
 		log.Fatalf("failed to initialize logging: %v", err)
 	}
 }
 
-func Initialize(cfg *LoggingConfig) error {
+func WithConfig(cfg *LoggingConfig, fields map[string]string) error {
 	l, err := zerolog.ParseLevel(cfg.Level)
 	if err != nil {
 		return err
@@ -73,15 +77,42 @@ func Initialize(cfg *LoggingConfig) error {
 	}
 
 	mw := zerolog.MultiLevelWriter(writers...)
-	logger = zerolog.New(mw).With().
+	c := zerolog.New(mw).
+		With().
 		Timestamp().
-		Int("pid", pid).
-		Logger()
+		Int("pid", pid)
 
+	for k, v := range fields {
+		c = c.Str(k, v)
+	}
+
+	logger = c.Logger()
 	return nil
 }
 
 func As() *zerolog.Logger {
+	return &logger
+}
+
+func WithContext(ctx context.Context, fields map[string]string) *zerolog.Logger {
+	c := zerolog.New(logger).
+		With().
+		Ctx(ctx)
+
+	if fields == nil {
+		fields = map[string]string{}
+	}
+
+	traceId := ctx.Value("traceId")
+	if traceId != nil {
+		fields["traceId"] = traceId.(string)
+	}
+
+	for k, v := range fields {
+		c = c.Str(k, v)
+	}
+
+	logger = c.Logger()
 	return &logger
 }
 
