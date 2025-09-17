@@ -71,7 +71,6 @@ func SetupDirectories() automa.Builder {
 		Steps(
 			SetupTempDirectoryStructure(),
 			SetupSandboxDirectoryStructure(),
-			SetupSandboxDirectoryStructure(),
 			SetupBindMountsDirectoryStructure(),
 			SetupProvisionerHomeDirectoryStructure(),
 		)
