@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/automa-saga/automa"
+	"github.com/joomcode/errorx"
 	"github.com/zcalusic/sysinfo"
 	"golang.hedera.com/solo-provisioner/pkg/logx"
 	"log"
@@ -18,7 +19,7 @@ func CheckSysInfoStep() automa.Builder {
 		}
 
 		if current.Uid != "0" {
-			return automa.StepFailureReport("check-os", automa.WithDetail("requires superuser privilege")), nil
+			return nil, errorx.IllegalState.New("requires superuser privilege")
 		}
 
 		var si sysinfo.SysInfo
