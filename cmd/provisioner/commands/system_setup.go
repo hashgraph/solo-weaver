@@ -9,15 +9,15 @@ import (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Setup a hardware for Hedera network components",
-	Long:  "Setup a hardware with Kubernetes cluster and solo operator to run Hedera network components",
+	Short: "Installs prerequisites for deploying Hedera network components",
+	Long:  "Installs the system prerequisites for deploying Hedera network components",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := cmd.ParseFlags(args); err != nil {
 			logx.As().Error().Err(err).Msg("Failed to parse flags")
 			os.Exit(1)
 		}
 
-		logx.As().Debug().Strs("args", args).Msg("Running solo provisioner setup")
+		logx.As().Debug().Strs("args", args).Msg("Running solo provisioner system setup")
 
 		runSetup(cmd.Context())
 	},

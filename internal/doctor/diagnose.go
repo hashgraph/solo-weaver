@@ -35,7 +35,7 @@ type ErrorDiagnosis struct {
 
 func toErrorCode(err error) int {
 	switch {
-	case errorx.IsOfType(err, core.IllegalArgument):
+	case errorx.IsOfType(err, errorx.IllegalArgument):
 		return 10400
 	default:
 		if errorx.HasTrait(err, errorx.NotFound()) {
@@ -56,14 +56,14 @@ func toErrorMessage(err error) (string, string) {
 
 func findResolution(err error) []string {
 	switch {
-	case errorx.IsOfType(err, core.IllegalArgument):
+	case errorx.IsOfType(err, errorx.IllegalArgument):
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
 			return []string{fmt.Sprintf("Ensure %q is provided.", arg.(string))}
 		}
 		return []string{fmt.Sprintf("Ensure all required arguments are provided.")}
 	case errorx.IsOfType(err, errorx.IllegalFormat):
 		return []string{"Ensure provided data is in correct format."}
-	case errorx.IsOfType(err, core.ConfigNotFound):
+	case errorx.IsOfType(err, config.NotFoundError):
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
 			return []string{fmt.Sprintf("Ensure configuration file %q exists, correctly formatted and is accessible", arg.(string))}
 		}
