@@ -475,6 +475,9 @@ ${SANDBOX_BIN}/helm install metallb metallb/metallb --version ${METALLB_VERSION}
   --set speaker.frr.enabled=false \
   --namespace metallb-system --create-namespace --atomic --wait
 
+# Wait for MetalLB Pods to be Running
+sleep 60
+
 # Deploy MetalLB Configuration
 cat <<EOF | ${SANDBOX_BIN}/kubectl apply -f -
 ---
