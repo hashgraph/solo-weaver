@@ -2,12 +2,11 @@ package commands
 
 import (
 	"context"
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-provisioner/internal/config"
 	"golang.hedera.com/solo-provisioner/internal/doctor"
-	"golang.hedera.com/solo-provisioner/internal/version"
-	"golang.hedera.com/solo-provisioner/pkg/logx"
 )
 
 // examples:
@@ -94,13 +93,13 @@ func initConfig(ctx context.Context) {
 	}
 
 	logConfig := config.Get().Log
-	err = logx.WithConfig(&logConfig, nil)
+	err = logx.Initialize(logConfig)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
 	}
 
-	logx.WithContext(ctx, map[string]string{
-		"commit":  version.Commit(),
-		"version": version.Number(),
-	}).Debug().Msg("Initialized configuration")
+	//logx.WithContext(ctx, map[string]string{
+	//	"commit":  version.Commit(),
+	//	"version": version.Number(),
+	//}).Debug().Msg("Initialized configuration")
 }

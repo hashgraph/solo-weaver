@@ -2,10 +2,10 @@ package commands
 
 import (
 	"context"
+	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-provisioner/internal/doctor"
 	"golang.hedera.com/solo-provisioner/internal/workflows"
-	"golang.hedera.com/solo-provisioner/pkg/logx"
 	"os"
 )
 

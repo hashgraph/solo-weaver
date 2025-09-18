@@ -1,9 +1,9 @@
 package config
 
 import (
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
-	"golang.hedera.com/solo-provisioner/pkg/logx"
 	"os"
 	"strings"
 )

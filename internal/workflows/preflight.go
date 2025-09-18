@@ -2,11 +2,10 @@ package workflows
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/zcalusic/sysinfo"
-	"golang.hedera.com/solo-provisioner/pkg/logx"
 	"log"
 	"os/user"
 )
@@ -24,12 +23,7 @@ func CheckSysInfoStep() automa.Builder {
 
 		var si sysinfo.SysInfo
 		si.GetSysInfo()
-		data, err := json.MarshalIndent(&si, "", "  ")
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		logx.As().Info().Str("system_info", string(data)).Msg("Retrieved system information")
+		logx.As().Info().Interface("system_info", si).Msg("Retrieved system information")
 
 		// TODO add required OS checks here
 
