@@ -30,7 +30,7 @@ func CheckSysInfoStep() automa.Builder {
 		return automa.StepSuccessReport("check-os"), nil
 	}))
 }
-func NewPreflightWorkflow() automa.Builder {
+func NewSystemSafetyCheckWorkflow() automa.Builder {
 	return automa.NewWorkFlowBuilder("preflight").Steps(
 		CheckSysInfoStep(),
 		//CheckDockerStep(),
@@ -39,6 +39,6 @@ func NewPreflightWorkflow() automa.Builder {
 
 func SetupWorkflow() automa.Builder {
 	return automa.NewWorkFlowBuilder("setup").Steps(
-		NewPreflightWorkflow(),
+		NewSystemSafetyCheckWorkflow(),
 	)
 }

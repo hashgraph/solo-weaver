@@ -7,10 +7,10 @@ import (
 	"os"
 )
 
-var setupCmd = &cobra.Command{
+var systemSetupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Installs prerequisites for deploying Hedera network components",
-	Long:  "Installs the system prerequisites for deploying Hedera network components",
+	Short: "Installs prerequisites and kubernetes for deploying Hedera network components",
+	Long:  "Installs the system prerequisites and kubernetes for deploying Hedera network components",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := cmd.ParseFlags(args); err != nil {
 			logx.As().Error().Err(err).Msg("Failed to parse flags")
@@ -19,9 +19,9 @@ var setupCmd = &cobra.Command{
 
 		logx.As().Debug().Strs("args", args).Msg("Running solo provisioner system setup")
 
-		runSetup(cmd.Context())
+		runSystemSetup(cmd.Context())
 	},
 }
 
-func runSetup(ctx context.Context) {
+func runSystemSetup(ctx context.Context) {
 }

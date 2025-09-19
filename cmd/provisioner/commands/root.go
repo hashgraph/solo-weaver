@@ -10,7 +10,7 @@ import (
 )
 
 // examples:
-// ./provisioner system preflight --node-type block-node | consensus-node | --type all | os | cpu | memory | disk | network
+// ./provisioner system check --node-type block-node | consensus-node | --type all | os | cpu | memory | disk | network
 // ./provisioner system benchmark --node-type block-node --type all | disk | cpu | memory --node-type block-node --output ./benchmark.yaml
 // ./provisioner system setup --node-type block-node
 // ./provisioner system upgrade --manifest ./upgrade-manifests
@@ -68,8 +68,8 @@ func Execute(ctx context.Context) error {
 	//_ = rootCmd.MarkPersistentFlagRequired("config")
 
 	// system command
-	systemCmd.AddCommand(preflightCmd)
-	systemCmd.AddCommand(setupCmd)
+	systemCmd.AddCommand(systemSafetyCheckCmd)
+	systemCmd.AddCommand(systemSetupCmd)
 
 	// block-node command
 	blockNodeCmd.AddCommand(blockNodeDeploy)
