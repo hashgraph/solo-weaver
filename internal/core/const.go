@@ -1,6 +1,8 @@
 package core
 
-import "path"
+import (
+	"path"
+)
 
 const (
 	DefaultFilePerm = 0755
@@ -13,4 +15,6 @@ var (
 	SandboxBinDir      = path.Join(SandboxHomeDir, "bin")
 	SandboxLocalBinDir = path.Join(SandboxHomeDir, "usr", "local", "bin")
 	DiagnosticsDir     = path.Join(ProvisionerTempDir, "diagnostics")
+	KubernetesDir      = "/etc/kubernetes"
+	KubeletDir         = "/var/lib/kubelet"
 )

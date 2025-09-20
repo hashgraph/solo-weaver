@@ -36,9 +36,3 @@ func NewSystemSafetyCheckWorkflow() automa.Builder {
 		//CheckDockerStep(),
 	)
 }
-
-func SetupWorkflow() automa.Builder {
-	return automa.NewWorkFlowBuilder("setup").Steps(
-		NewSystemSafetyCheckWorkflow(),
-	)
-}
