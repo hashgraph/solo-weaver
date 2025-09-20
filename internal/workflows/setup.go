@@ -11,7 +11,6 @@ func SetupWorkflow() automa.Builder {
 		NewSystemSafetyCheckWorkflow(),
 		steps.SetupHomeDirectoryStructure(),
 		steps.RefreshSystemPackageIndex(),
-		//steps.DisableSwap(),
 		steps.InstallSystemPackage("iptables", software.NewIptables),
 		steps.InstallSystemPackage("gnupg2", software.NewGnupg2),
 		//steps.InstallConntrack(),
