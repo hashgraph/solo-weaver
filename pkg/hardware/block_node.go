@@ -8,7 +8,3 @@ type blockNodeFull struct {
 	diskMin int64
 	diskMax int64
 }
-
-func (b *blockNodeFull) Cpu() int64 {
-
-}
