@@ -65,7 +65,7 @@ func findResolution(err error) []string {
 		return []string{"Ensure provided data is in correct format."}
 	case errorx.IsOfType(err, config.NotFoundError):
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
-			return []string{fmt.Sprintf("Ensure configuration file %q exists, correctly formatted and is accessible", arg.(string))}
+			return []string{fmt.Sprintf("Ensure configuration file %q exists, is correctly formatted and accessible", arg.(string))}
 		}
 		return []string{"Ensure configuration file exists and is accessible."}
 	default:
@@ -83,6 +83,7 @@ func takeProfilingSnapshots(ex error) map[string]string {
 	}
 
 	files := make(map[string]string)
+
 	// Error stack trace
 	stacktraceFile := filepath.Join(snapshotDir, "stacktrace-"+timestamp+".txt")
 	f, err := os.Create(stacktraceFile)

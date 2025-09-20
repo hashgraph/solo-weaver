@@ -73,7 +73,7 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 					Msgf("Package %q is installedByThisStep successfully", pkg.Name())
 				installedByThisStep = true
 			} else {
-				logx.As().Info().Msgf("Package %q is already installedByThisStep, skipping installation", pkg.Name())
+				logx.As().Info().Msgf("Package %q is already installed, skipping installation", pkg.Name())
 			}
 
 			return automa.StepSuccessReport(stepId), nil
@@ -99,7 +99,7 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 					Interface("package", info).
 					Msgf("Package %q is uninstalled successfully", pkg.Name())
 			} else {
-				logx.As().Info().Msgf("Package %q is not installedByThisStep, skipping uninstallation", pkg.Name())
+				logx.As().Info().Msgf("Package %q is not installed, skipping uninstallation", pkg.Name())
 			}
 
 			return automa.StepSuccessReport(stepId), nil

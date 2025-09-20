@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
         && apt-get install -y --no-install-recommends sudo systemd systemd-cron systemd-sysv dbus dbus-user-session \
-        && apt-get install -y --no-install-recommends openssl ca-certificates curl
+        && apt-get install -y --no-install-recommends openssl ca-certificates curl git
 
 # Install  Task(https://taskfile.dev/#/installation)
 RUN curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | sudo -E bash \
