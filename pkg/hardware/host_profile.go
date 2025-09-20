@@ -3,10 +3,20 @@ package hardware
 import (
 	"fmt"
 	"log"
+	"os"
+	"sync"
 
 	"github.com/jaypipes/ghw"
 	"github.com/zcalusic/sysinfo"
 )
+
+var once sync.Once
+
+func suppressGHWWarnings() {
+	once.Do(func() {
+		os.Setenv("GHW_DISABLE_WARNINGS", "1")
+	})
+}
 
 // HostProfile provides an abstraction over system information gathering
 // This interface allows for easier testing and separation of concerns
@@ -34,6 +44,9 @@ type DefaultHostProfile struct {
 
 // GetHostProfile creates a new DefaultHostProfile by gathering system information
 func GetHostProfile() HostProfile {
+	// Suppress warnings before any ghw operations
+	suppressGHWWarnings()
+
 	var si sysinfo.SysInfo
 	si.GetSysInfo()
 
