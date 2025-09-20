@@ -1,0 +1,237 @@
+package hardware
+
+import (
+	"testing"
+)
+
+// MockHostProfile is a testable implementation of HostProfile
+type MockHostProfile struct {
+	OSVendor       string
+	OSVersion      string
+	CPUCores       uint
+	TotalMemoryGB  uint64
+	TotalStorageGB uint64
+}
+
+// NewMockHostProfile creates a new MockHostProfile for testing
+func NewMockHostProfile(osVendor, osVersion string, cpuCores uint, memoryGB uint64, storageGB uint64) HostProfile {
+	return &MockHostProfile{
+		OSVendor:       osVendor,
+		OSVersion:      osVersion,
+		CPUCores:       cpuCores,
+		TotalMemoryGB:  memoryGB,
+		TotalStorageGB: storageGB,
+	}
+}
+
+func (m *MockHostProfile) GetOSVendor() string       { return m.OSVendor }
+func (m *MockHostProfile) GetOSVersion() string      { return m.OSVersion }
+func (m *MockHostProfile) GetCPUCores() uint         { return m.CPUCores }
+func (m *MockHostProfile) GetTotalMemoryGB() uint64  { return m.TotalMemoryGB }
+func (m *MockHostProfile) GetTotalStorageGB() uint64 { return m.TotalStorageGB }
+func (m *MockHostProfile) String() string            { return "MockHostProfile" }
+
+func TestMockHostProfile(t *testing.T) {
+	// Test MockHostProfile implementation
+	mock := NewMockHostProfile("ubuntu", "20.04", 8, 16, 500)
+
+	if mock.GetOSVendor() != "ubuntu" {
+		t.Errorf("Expected OS vendor 'ubuntu', got '%s'", mock.GetOSVendor())
+	}
+
+	if mock.GetOSVersion() != "20.04" {
+		t.Errorf("Expected OS version '20.04', got '%s'", mock.GetOSVersion())
+	}
+
+	if mock.GetCPUCores() != 8 {
+		t.Errorf("Expected 8 CPU cores, got %d", mock.GetCPUCores())
+	}
+
+	expectedMemory := uint64(16)
+	if mock.GetTotalMemoryGB() != expectedMemory {
+		t.Errorf("Expected %d GB of memory, got %d", expectedMemory, mock.GetTotalMemoryGB())
+	}
+
+	if mock.GetTotalStorageGB() != 500 {
+		t.Errorf("Expected 500 GB storage, got %d", mock.GetTotalStorageGB())
+	}
+}
+
+func TestNodeSpecWithMockHostProfile(t *testing.T) {
+	tests := []struct {
+		name              string
+		createSpec        func(HostProfile) Spec
+		actualHostProfile HostProfile
+		expectedOS        bool
+		expectedCPU       bool
+		expectedMem       bool
+		expectedStorage   bool
+	}{
+		{
+			name:              "Local node with sufficient resources",
+			createSpec:        NewLocalNodeSpec,
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 4, 2, 600),
+			expectedOS:        true,
+			expectedCPU:       true,
+			expectedMem:       true,
+			expectedStorage:   true,
+		},
+		{
+			name:              "Local node with insufficient CPU",
+			createSpec:        NewLocalNodeSpec,
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 0, 2, 600),
+			expectedOS:        true,
+			expectedCPU:       false,
+			expectedMem:       true,
+			expectedStorage:   true,
+		},
+		{
+			name:              "Block node with sufficient resources",
+			createSpec:        NewBlockNodeSpec,
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 16, 600),
+			expectedOS:        true,
+			expectedCPU:       true,
+			expectedMem:       true,
+			expectedStorage:   true,
+		},
+		{
+			name:              "Block node with insufficient memory",
+			createSpec:        NewBlockNodeSpec,
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 8, 600),
+			expectedOS:        true,
+			expectedCPU:       true,
+			expectedMem:       false,
+			expectedStorage:   true,
+		},
+		{
+			name:              "Consensus node with sufficient resources",
+			createSpec:        NewConsensusNodeSpec,
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 16, 32, 1200),
+			expectedOS:        true,
+			expectedCPU:       true,
+			expectedMem:       true,
+			expectedStorage:   true,
+		},
+		{
+			name:              "Consensus node with insufficient storage",
+			createSpec:        NewConsensusNodeSpec,
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 16, 32, 500),
+			expectedOS:        true,
+			expectedCPU:       true,
+			expectedMem:       true,
+			expectedStorage:   false,
+		},
+		{
+			name:              "Node with unsupported OS",
+			createSpec:        NewLocalNodeSpec,
+			actualHostProfile: NewMockHostProfile("windows", "10", 4, 2, 600),
+			expectedOS:        false,
+			expectedCPU:       true,
+			expectedMem:       true,
+			expectedStorage:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := tt.createSpec(tt.actualHostProfile)
+
+			osErr := spec.ValidateOS()
+			if (osErr == nil) != tt.expectedOS {
+				t.Errorf("OS validation expected %v, got error: %v", tt.expectedOS, osErr)
+			}
+
+			cpuErr := spec.ValidateCPU()
+			if (cpuErr == nil) != tt.expectedCPU {
+				t.Errorf("CPU validation expected %v, got error: %v", tt.expectedCPU, cpuErr)
+			}
+
+			memErr := spec.ValidateMemory()
+			if (memErr == nil) != tt.expectedMem {
+				t.Errorf("Memory validation expected %v, got error: %v", tt.expectedMem, memErr)
+			}
+
+			storageErr := spec.ValidateStorage()
+			if (storageErr == nil) != tt.expectedStorage {
+				t.Errorf("Storage validation expected %v, got error: %v", tt.expectedStorage, storageErr)
+			}
+		})
+	}
+}
+
+func TestOSValidation(t *testing.T) {
+	tests := []struct {
+		name           string
+		supportedOS    []string
+		systemOS       string
+		systemVersion  string
+		expectedResult bool
+	}{
+		{
+			name:           "Ubuntu 20 supports Ubuntu 18",
+			supportedOS:    []string{"Ubuntu 18"},
+			systemOS:       "ubuntu",
+			systemVersion:  "20.04",
+			expectedResult: true,
+		},
+		{
+			name:           "Ubuntu 16 does not support Ubuntu 18",
+			supportedOS:    []string{"Ubuntu 18"},
+			systemOS:       "ubuntu",
+			systemVersion:  "16.04",
+			expectedResult: false,
+		},
+		{
+			name:           "Debian 11 supports Debian 10",
+			supportedOS:    []string{"Debian 10"},
+			systemOS:       "debian",
+			systemVersion:  "11.2",
+			expectedResult: true,
+		},
+		{
+			name:           "Multiple supported OS - one matches",
+			supportedOS:    []string{"Ubuntu 18", "Debian 10"},
+			systemOS:       "debian",
+			systemVersion:  "11.2",
+			expectedResult: true,
+		},
+		{
+			name:           "Unsupported OS",
+			supportedOS:    []string{"Ubuntu 18", "Debian 10"},
+			systemOS:       "centos",
+			systemVersion:  "8",
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			systemInfo := NewMockHostProfile(tt.systemOS, tt.systemVersion, 4, 2, 500)
+			result := validateOS(tt.supportedOS, systemInfo)
+
+			if result != tt.expectedResult {
+				t.Errorf("OS validation expected %v, got %v", tt.expectedResult, result)
+			}
+		})
+	}
+}
+
+func TestIndividualNodeTypes(t *testing.T) {
+	// Test that each node type returns the correct node type string
+	mockHostProfile := NewMockHostProfile("ubuntu", "20.04", 16, 32, 1200)
+
+	localSpec := NewLocalNodeSpec(mockHostProfile)
+	if localSpec.GetNodeType() != "Local Node" {
+		t.Errorf("Expected Local Node type, got '%s'", localSpec.GetNodeType())
+	}
+
+	blockSpec := NewBlockNodeSpec(mockHostProfile)
+	if blockSpec.GetNodeType() != "Block Node" {
+		t.Errorf("Expected Block Node type, got '%s'", blockSpec.GetNodeType())
+	}
+
+	consensusSpec := NewConsensusNodeSpec(mockHostProfile)
+	if consensusSpec.GetNodeType() != "Consensus Node" {
+		t.Errorf("Expected Consensus Node type, got '%s'", consensusSpec.GetNodeType())
+	}
+}
