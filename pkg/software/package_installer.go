@@ -112,10 +112,14 @@ type PackageInstaller struct {
 	pkgManager syspkg.PackageManager
 }
 
+func (p *PackageInstaller) Name() string {
+	return p.pkgName
+}
+
 func (p *PackageInstaller) Install() (*syspkg.PackageInfo, error) {
 	_, err := p.pkgManager.Install([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to install package")
+		return nil, errorx.IllegalState.Wrap(err, "failed to install package: %s", p.pkgName)
 	}
 
 	return p.Info()
@@ -124,7 +128,7 @@ func (p *PackageInstaller) Install() (*syspkg.PackageInfo, error) {
 func (p *PackageInstaller) Uninstall() (*syspkg.PackageInfo, error) {
 	_, err := p.pkgManager.Delete([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.New("failed to uninstall package: %s", err.Error())
+		return nil, errorx.IllegalState.Wrap(err, "failed to uninstall package: %s", p.pkgName)
 	}
 
 	return p.Info()
@@ -138,7 +142,7 @@ func (p *PackageInstaller) Upgrade() (*syspkg.PackageInfo, error) {
 
 	_, err := pm.Upgrade([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.New("failed to upgrade package: %s", err.Error())
+		return nil, errorx.IllegalState.Wrap(err, "failed to upgrade package: %s", p.pkgName)
 	}
 
 	return p.Info()
@@ -156,7 +160,7 @@ func (p *PackageInstaller) IsInstalled() bool {
 func (p *PackageInstaller) Info() (*syspkg.PackageInfo, error) {
 	resp, err := p.pkgManager.ListInstalled(&p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.New("failed to list installed packages: %s", err.Error())
+		return nil, errorx.IllegalState.Wrap(err, "failed to list installed package: %s", p.pkgName)
 	}
 
 	var info syspkg.PackageInfo
@@ -172,7 +176,7 @@ func (p *PackageInstaller) Info() (*syspkg.PackageInfo, error) {
 	if !found {
 		info, err = p.pkgManager.GetPackageInfo(p.pkgName, &p.pkgOptions)
 		if err != nil {
-			return nil, errorx.IllegalState.New("failed to find package: %s", err.Error())
+			return nil, errorx.IllegalState.Wrap(err, "failed to find package: %s", p.pkgName)
 		}
 	}
 
