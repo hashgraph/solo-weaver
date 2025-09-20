@@ -1,7 +1,9 @@
 # Develop
 
-## Run tests
+To develop locally, you need to use the provided Docker setup as below:
 
-- Launch the container with `./launch.sh`
-- In a separate terminal, run `docker exec -it solo-provisioner-test`
-- Inside the container, run `/app/bin/provisioner-linux-arm64 system preflight --config /app/test/config.yaml `
+- Launch the container with `./launch-local.sh`
+- In a separate terminal
+    - Exec into the container: `docker exec -it solo-provisioner-local`
+    - Build: `cd /app && task build`
+    - Run: `task run -- system setup -c test/config/config.yaml`
