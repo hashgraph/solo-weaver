@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/automa-saga/automa v0.4.0
 	github.com/automa-saga/logx v0.1.0
+	github.com/bluet/syspkg v0.1.5
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
 	github.com/joomcode/errorx v1.2.0

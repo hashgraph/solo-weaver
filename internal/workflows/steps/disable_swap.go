@@ -7,6 +7,8 @@ import (
 	"os/exec"
 )
 
+// DisableSwap disables swap on the system
+// Essentially this is equivalent of running the `swapoff -a` command.
 func DisableSwap() automa.Builder {
 	return automa.NewStepBuilder("disable-swap", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
 		// Disable swap

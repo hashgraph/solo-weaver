@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-provisioner/internal/doctor"
@@ -34,6 +35,18 @@ func runSystemSetup(ctx context.Context) {
 	report, err := wb.Execute(ctx)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
+	}
+
+	if report.Status != automa.StatusSuccess {
+		for _, stepReport := range report.StepReports {
+			if stepReport.Error != nil {
+				logx.As().Error().Err(stepReport.Error).
+					Str("step", stepReport.Id).Msgf("Step %q failed", stepReport.Id)
+			}
+		}
+
+		logx.As().Error().Interface("report", report).Msg("System setup failed")
+		os.Exit(1)
 	}
 
 	logx.As().Info().Interface("report", report).Msg("System setup completed successfully")
