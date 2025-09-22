@@ -22,7 +22,7 @@ func NewBlockNodeSpec(hostProfile HostProfile) Spec {
 		minimalRequirements: BaselineRequirements{
 			MinCpuCores:    8,
 			MinMemoryGB:    16,
-			MinStorageGB:   500,
+			MinStorageGB:   5000,
 			MinSupportedOS: []string{"Ubuntu 18", "Debian 10"},
 		},
 	}

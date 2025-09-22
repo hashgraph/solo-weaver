@@ -88,7 +88,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		{
 			name:              "Block node with sufficient resources",
 			createSpec:        NewBlockNodeSpec,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 16, 600),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 16, 6000),
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
@@ -97,7 +97,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		{
 			name:              "Block node with insufficient memory",
 			createSpec:        NewBlockNodeSpec,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 8, 600),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 8, 6000),
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       false,
