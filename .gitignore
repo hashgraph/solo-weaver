@@ -357,7 +357,3 @@ internal/version/VERSION
 unit-test-report.md
 test/data
 test/scripts/gen
-
-### Project Specific ###
-provisioner
-config.yaml
