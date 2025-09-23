@@ -12,6 +12,7 @@ type MockHostProfile struct {
 	TotalMemoryGB     uint64
 	AvailableMemoryGB uint64
 	TotalStorageGB    uint64
+	NodeRunning       bool // Add this field to control the mock behavior
 }
 
 // NewMockHostProfile creates a new MockHostProfile for testing
@@ -26,7 +27,15 @@ func NewMockHostProfile(osVendor, osVersion string, cpuCores uint, memoryGB uint
 		TotalMemoryGB:     memoryGB,
 		AvailableMemoryGB: availableMemoryGB,
 		TotalStorageGB:    storageGB,
+		NodeRunning:       false, // Default to false
 	}
+}
+
+// NewMockHostProfileWithNodeStatus creates a new MockHostProfile with specific node running status
+func NewMockHostProfileWithNodeStatus(osVendor, osVersion string, cpuCores uint, memoryGB uint64, storageGB uint64, nodeRunning bool) HostProfile {
+	mock := NewMockHostProfile(osVendor, osVersion, cpuCores, memoryGB, storageGB).(*MockHostProfile)
+	mock.NodeRunning = nodeRunning
+	return mock
 }
 
 func (m *MockHostProfile) GetOSVendor() string          { return m.OSVendor }
@@ -36,6 +45,115 @@ func (m *MockHostProfile) GetTotalMemoryGB() uint64     { return m.TotalMemoryGB
 func (m *MockHostProfile) GetAvailableMemoryGB() uint64 { return m.AvailableMemoryGB }
 func (m *MockHostProfile) GetTotalStorageGB() uint64    { return m.TotalStorageGB }
 func (m *MockHostProfile) String() string               { return "MockHostProfile" }
+
+// IsNodeAlreadyRunning is a mock implementation for testing
+func (m *MockHostProfile) IsNodeAlreadyRunning() bool {
+	return m.NodeRunning
+}
+
+func TestIsNodeAlreadyRunning(t *testing.T) {
+	tests := []struct {
+		name        string
+		nodeRunning bool
+		expected    bool
+	}{
+		{
+			name:        "Node is running",
+			nodeRunning: true,
+			expected:    true,
+		},
+		{
+			name:        "Node is not running",
+			nodeRunning: false,
+			expected:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 8, 16, 500, tt.nodeRunning)
+
+			result := mock.IsNodeAlreadyRunning()
+			if result != tt.expected {
+				t.Errorf("Expected IsNodeAlreadyRunning() to return %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestNodeSpecValidationWithRunningNode(t *testing.T) {
+	tests := []struct {
+		name             string
+		createSpec       func(HostProfile) Spec
+		nodeRunning      bool
+		expectValidation bool
+		description      string
+	}{
+		{
+			name:             "Local node validation when node is not running",
+			createSpec:       NewLocalNodeSpec,
+			nodeRunning:      false,
+			expectValidation: true,
+			description:      "Should validate successfully when no node is running",
+		},
+		{
+			name:             "Local node validation when node is already running",
+			createSpec:       NewLocalNodeSpec,
+			nodeRunning:      true,
+			expectValidation: true, // Assuming validation doesn't fail just because node is running
+			description:      "Should still validate hardware requirements even if node is running",
+		},
+		{
+			name:             "Block node validation when node is not running",
+			createSpec:       NewBlockNodeSpec,
+			nodeRunning:      false,
+			expectValidation: true,
+			description:      "Should validate successfully when no node is running",
+		},
+		{
+			name:             "Consensus node validation when node is already running",
+			createSpec:       NewConsensusNodeSpec,
+			nodeRunning:      true,
+			expectValidation: true,
+			description:      "Should still validate hardware requirements even if node is running",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a mock with sufficient resources for all node types
+			mock := NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 16, 32, 6000, tt.nodeRunning)
+			spec := tt.createSpec(mock)
+
+			// Test that IsNodeAlreadyRunning returns the expected value
+			if mock.IsNodeAlreadyRunning() != tt.nodeRunning {
+				t.Errorf("Expected IsNodeAlreadyRunning() to return %v, got %v",
+					tt.nodeRunning, mock.IsNodeAlreadyRunning())
+			}
+
+			// Test that hardware validation still works regardless of node running status
+			osErr := spec.ValidateOS()
+			cpuErr := spec.ValidateCPU()
+			memErr := spec.ValidateMemory()
+			storageErr := spec.ValidateStorage()
+
+			if tt.expectValidation {
+				if osErr != nil {
+					t.Errorf("OS validation failed: %v", osErr)
+				}
+				if cpuErr != nil {
+					t.Errorf("CPU validation failed: %v", cpuErr)
+				}
+				if memErr != nil {
+					t.Errorf("Memory validation failed: %v", memErr)
+				}
+				if storageErr != nil {
+					t.Errorf("Storage validation failed: %v", storageErr)
+				}
+			}
+		})
+	}
+}
 
 func TestMockHostProfile(t *testing.T) {
 	// Test MockHostProfile implementation
@@ -61,6 +179,11 @@ func TestMockHostProfile(t *testing.T) {
 	if mock.GetTotalStorageGB() != 500 {
 		t.Errorf("Expected 500 GB storage, got %d", mock.GetTotalStorageGB())
 	}
+
+	// Test that default node running status is false
+	if mock.IsNodeAlreadyRunning() != false {
+		t.Errorf("Expected IsNodeAlreadyRunning() to return false by default, got %v", mock.IsNodeAlreadyRunning())
+	}
 }
 
 func TestNodeSpecWithMockHostProfile(t *testing.T) {
@@ -76,7 +199,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		{
 			name:              "Local node with sufficient resources",
 			createSpec:        NewLocalNodeSpec,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 4, 2, 600),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 4, 4, 600),
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
@@ -85,7 +208,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		{
 			name:              "Local node with insufficient CPU",
 			createSpec:        NewLocalNodeSpec,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 0, 2, 600),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 0, 4, 600),
 			expectedOS:        true,
 			expectedCPU:       false,
 			expectedMem:       true,
@@ -130,7 +253,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		{
 			name:              "Node with unsupported OS",
 			createSpec:        NewLocalNodeSpec,
-			actualHostProfile: NewMockHostProfile("windows", "10", 4, 2, 600),
+			actualHostProfile: NewMockHostProfile("windows", "10", 4, 4, 600),
 			expectedOS:        false,
 			expectedCPU:       true,
 			expectedMem:       true,
