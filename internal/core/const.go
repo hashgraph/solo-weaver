@@ -11,9 +11,9 @@ const (
 var (
 	ProvisionerTempDir = "/tmp/provisioner"
 	ProvisionerHomeDir = "/opt/provisioner"
-	SandboxHomeDir     = path.Join(ProvisionerHomeDir, "sandbox")
-	SandboxBinDir      = path.Join(SandboxHomeDir, "bin")
-	SandboxLocalBinDir = path.Join(SandboxHomeDir, "usr", "local", "bin")
+	SandboxDir         = path.Join(ProvisionerHomeDir, "sandbox")
+	SandboxBinDir      = path.Join(SandboxDir, "bin")
+	SandboxLocalBinDir = path.Join(SandboxDir, "usr", "local", "bin")
 	DiagnosticsDir     = path.Join(ProvisionerTempDir, "diagnostics")
 	KubernetesDir      = "/etc/kubernetes"
 	KubeletDir         = "/var/lib/kubelet"
