@@ -360,3 +360,4 @@ test/scripts/gen
 
 ### Configuration Files ###
 config.yaml
+docs/playbooks/production/dir-structure.txt
