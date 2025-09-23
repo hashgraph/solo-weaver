@@ -82,6 +82,7 @@ func Execute(ctx context.Context) error {
 	for _, config := range nodeTypeConfigs {
 		// Create commands for this node type
 		nodeCheckCmd := createNodeCheckCommand(config.Name)
+		nodeSetupCmd := createNodeSetupCommand(config.Name)
 		nodeSubCmd := createNodeSubcommand(config.Name)
 
 		// Add check and setup commands to node subcommand
