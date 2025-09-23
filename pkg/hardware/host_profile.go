@@ -71,41 +71,31 @@ func (d *DefaultHostProfile) GetOSVersion() string {
 
 // GetCPUCores returns the number of CPU cores
 func (d *DefaultHostProfile) GetCPUCores() uint {
-	// Use ghw for more accurate CPU information
+	// Use ghw for CPU information
 	cpu, err := ghw.CPU()
 	if err != nil {
-		log.Printf("Error getting CPU info from ghw: %v, falling back to sysinfo", err)
-		// Fallback to sysinfo
-		if d.sysInfo.CPU.Cpus == 0 {
-			return d.sysInfo.CPU.Threads
-		}
-		return d.sysInfo.CPU.Cpus
+		log.Printf("Error getting CPU info from ghw: %v", err)
+		return 0
 	}
 	return uint(cpu.TotalCores)
 }
 
 // GetTotalMemoryGB returns total system memory in GB
 func (d *DefaultHostProfile) GetTotalMemoryGB() uint64 {
-	// Use ghw for more accurate memory information
 	memory, err := ghw.Memory()
 	if err != nil {
-		log.Printf("Error getting memory info from ghw: %v, falling back to sysinfo", err)
-		// Fallback to sysinfo (convert KB to GB)
-		return uint64(d.sysInfo.Memory.Size) / (1024 * 1024)
+		log.Printf("Error getting memory info from ghw: %v", err)
+		return 0
 	}
 	return uint64(memory.TotalPhysicalBytes / (1024 * 1024 * 1024))
 }
 
 // GetTotalStorageGB returns total storage space in GB
 func (d *DefaultHostProfile) GetTotalStorageGB() uint64 {
-	// Use ghw for more accurate storage information
+	// Use ghw for storage information
 	block, err := ghw.Block()
 	if err != nil {
-		log.Printf("Error getting block info from ghw: %v, falling back to sysinfo", err)
-		// Fallback to sysinfo
-		if len(d.sysInfo.Storage) > 0 {
-			return uint64(d.sysInfo.Storage[0].Size)
-		}
+		log.Printf("Error getting block info from ghw: %v", err)
 		return 0
 	}
 	return uint64(block.TotalPhysicalBytes / (1024 * 1024 * 1024))
@@ -113,23 +103,15 @@ func (d *DefaultHostProfile) GetTotalStorageGB() uint64 {
 
 // GetAvailableMemoryGB returns available system memory in GB
 func (d *DefaultHostProfile) GetAvailableMemoryGB() uint64 {
-	// Use ghw for more accurate memory information
+	// Use ghw for memory information
 	memory, err := ghw.Memory()
 	if err != nil {
-		log.Printf("Error getting memory info from ghw: %v, falling back to sysinfo", err)
-		// Fallback to sysinfo - estimate available as ~80% of total
-		totalGB := uint64(d.sysInfo.Memory.Size) / (1024 * 1024)
-		return uint64(float64(totalGB) * 0.8)
+		log.Printf("Error getting memory info from ghw: %v", err)
+		return 0
 	}
 
-	// Calculate available memory (total - used)
-	totalGB := uint64(memory.TotalPhysicalBytes / (1024 * 1024 * 1024))
-	usedGB := uint64(memory.TotalUsableBytes / (1024 * 1024 * 1024))
-	if totalGB > usedGB {
-		return totalGB - usedGB
-	}
-	// Fallback: estimate available as ~80% of total
-	return uint64(float64(totalGB) * 0.8)
+	// Return usable memory as available memory
+	return uint64(memory.TotalUsableBytes / (1024 * 1024 * 1024))
 }
 
 // IsNodeAlreadyRunning checks if the node is already running by looking for a lock file
