@@ -357,3 +357,6 @@ internal/version/VERSION
 unit-test-report.md
 test/data
 test/scripts/gen
+
+### Configuration Files ###
+config.yaml
