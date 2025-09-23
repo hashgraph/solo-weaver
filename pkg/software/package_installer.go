@@ -2,16 +2,17 @@ package software
 
 import (
 	"bufio"
+	"os"
+	"runtime"
+	"strings"
+	"sync"
+
 	"github.com/automa-saga/logx"
 	"github.com/bluet/syspkg"
 	"github.com/bluet/syspkg/manager"
 	"github.com/bluet/syspkg/manager/apt"
 	"github.com/joomcode/errorx"
 	"github.com/pkg/errors"
-	"os"
-	"runtime"
-	"strings"
-	"sync"
 )
 
 var (

@@ -46,11 +46,24 @@ func (c *consensusNode) ValidateCPU() error {
 }
 
 // ValidateMemory validates memory requirements for consensus node
+// Checks both total and available memory to ensure the system has sufficient resources
 func (c *consensusNode) ValidateMemory() error {
 	totalMemoryGB := c.actualHostProfile.GetTotalMemoryGB()
+	availableMemoryGB := c.actualHostProfile.GetAvailableMemoryGB()
+
+	// Check total memory first
 	if int(totalMemoryGB) < c.minimalRequirements.MinMemoryGB {
-		return fmt.Errorf("memory does not meet %s requirements (minimum %d GB)", c.nodeType, c.minimalRequirements.MinMemoryGB)
+		return fmt.Errorf("total memory does not meet %s requirements (minimum %d GB, found %d GB total)",
+			c.nodeType, c.minimalRequirements.MinMemoryGB, totalMemoryGB)
 	}
+
+	// Check available memory (should be at least 80% of required minimum)
+	minAvailableMemoryGB := int(float64(c.minimalRequirements.MinMemoryGB) * 0.8)
+	if int(availableMemoryGB) < minAvailableMemoryGB {
+		return fmt.Errorf("available memory does not meet %s requirements (minimum %d GB available, found %d GB available out of %d GB total)",
+			c.nodeType, minAvailableMemoryGB, availableMemoryGB, totalMemoryGB)
+	}
+
 	return nil
 }
 
@@ -61,9 +74,7 @@ func (c *consensusNode) ValidateStorage() error {
 		return fmt.Errorf("storage does not meet %s requirements (minimum %d GB)", c.nodeType, c.minimalRequirements.MinStorageGB)
 	}
 	return nil
-}
-
-// GetBaselineRequirements returns the requirements for consensus node
+} // GetBaselineRequirements returns the requirements for consensus node
 func (c *consensusNode) GetBaselineRequirements() BaselineRequirements {
 	return c.minimalRequirements
 }

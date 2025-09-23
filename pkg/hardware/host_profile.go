@@ -30,9 +30,13 @@ type HostProfile interface {
 
 	// Memory information (in GB)
 	GetTotalMemoryGB() uint64
+	GetAvailableMemoryGB() uint64
 
 	// Storage information (in GB)
 	GetTotalStorageGB() uint64
+
+	// Application status
+	IsNodeAlreadyRunning() bool
 
 	String() string
 }
@@ -107,7 +111,48 @@ func (d *DefaultHostProfile) GetTotalStorageGB() uint64 {
 	return uint64(block.TotalPhysicalBytes / (1024 * 1024 * 1024))
 }
 
+// GetAvailableMemoryGB returns available system memory in GB
+func (d *DefaultHostProfile) GetAvailableMemoryGB() uint64 {
+	// Use ghw for more accurate memory information
+	memory, err := ghw.Memory()
+	if err != nil {
+		log.Printf("Error getting memory info from ghw: %v, falling back to sysinfo", err)
+		// Fallback to sysinfo - estimate available as ~80% of total
+		totalGB := uint64(d.sysInfo.Memory.Size) / (1024 * 1024)
+		return uint64(float64(totalGB) * 0.8)
+	}
+
+	// Calculate available memory (total - used)
+	totalGB := uint64(memory.TotalPhysicalBytes / (1024 * 1024 * 1024))
+	usedGB := uint64(memory.TotalUsableBytes / (1024 * 1024 * 1024))
+	if totalGB > usedGB {
+		return totalGB - usedGB
+	}
+	// Fallback: estimate available as ~80% of total
+	return uint64(float64(totalGB) * 0.8)
+}
+
+// IsNodeAlreadyRunning checks if the node is already running by looking for a lock file
+func (d *DefaultHostProfile) IsNodeAlreadyRunning() bool {
+	// Hardcoded lock file path - adjust this to match your application's lock file location
+	lockFilePath := "/var/run/solo-node.lock"
+
+	// Check if the lock file exists
+	if _, err := os.Stat(lockFilePath); os.IsNotExist(err) {
+		return false
+	}
+
+	// TODO: Could add additional validation here:
+	// - Check if the PID in the lock file is still running
+	// - Validate lock file format
+	// - Check file age to detect stale locks
+
+	return true
+}
+
 func (d *DefaultHostProfile) String() string {
-	return fmt.Sprintf("OS: %s %s, CPU: %d cores, Memory: %d GB, Storage: %d GB",
-		d.GetOSVendor(), d.GetOSVersion(), d.GetCPUCores(), d.GetTotalMemoryGB(), d.GetTotalStorageGB())
+	return fmt.Sprintf("OS: %s %s, CPU: %d cores, Memory: %d/%d GB (available/total), Storage: %d GB",
+		d.GetOSVendor(), d.GetOSVersion(), d.GetCPUCores(),
+		d.GetAvailableMemoryGB(), d.GetTotalMemoryGB(),
+		d.GetTotalStorageGB())
 }

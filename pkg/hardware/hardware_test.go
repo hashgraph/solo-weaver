@@ -6,30 +6,36 @@ import (
 
 // MockHostProfile is a testable implementation of HostProfile
 type MockHostProfile struct {
-	OSVendor       string
-	OSVersion      string
-	CPUCores       uint
-	TotalMemoryGB  uint64
-	TotalStorageGB uint64
+	OSVendor          string
+	OSVersion         string
+	CPUCores          uint
+	TotalMemoryGB     uint64
+	AvailableMemoryGB uint64
+	TotalStorageGB    uint64
 }
 
 // NewMockHostProfile creates a new MockHostProfile for testing
 func NewMockHostProfile(osVendor, osVersion string, cpuCores uint, memoryGB uint64, storageGB uint64) HostProfile {
+	// Estimate available memory as ~80% of total
+	availableMemoryGB := uint64(float64(memoryGB) * 0.8)
+
 	return &MockHostProfile{
-		OSVendor:       osVendor,
-		OSVersion:      osVersion,
-		CPUCores:       cpuCores,
-		TotalMemoryGB:  memoryGB,
-		TotalStorageGB: storageGB,
+		OSVendor:          osVendor,
+		OSVersion:         osVersion,
+		CPUCores:          cpuCores,
+		TotalMemoryGB:     memoryGB,
+		AvailableMemoryGB: availableMemoryGB,
+		TotalStorageGB:    storageGB,
 	}
 }
 
-func (m *MockHostProfile) GetOSVendor() string       { return m.OSVendor }
-func (m *MockHostProfile) GetOSVersion() string      { return m.OSVersion }
-func (m *MockHostProfile) GetCPUCores() uint         { return m.CPUCores }
-func (m *MockHostProfile) GetTotalMemoryGB() uint64  { return m.TotalMemoryGB }
-func (m *MockHostProfile) GetTotalStorageGB() uint64 { return m.TotalStorageGB }
-func (m *MockHostProfile) String() string            { return "MockHostProfile" }
+func (m *MockHostProfile) GetOSVendor() string          { return m.OSVendor }
+func (m *MockHostProfile) GetOSVersion() string         { return m.OSVersion }
+func (m *MockHostProfile) GetCPUCores() uint            { return m.CPUCores }
+func (m *MockHostProfile) GetTotalMemoryGB() uint64     { return m.TotalMemoryGB }
+func (m *MockHostProfile) GetAvailableMemoryGB() uint64 { return m.AvailableMemoryGB }
+func (m *MockHostProfile) GetTotalStorageGB() uint64    { return m.TotalStorageGB }
+func (m *MockHostProfile) String() string               { return "MockHostProfile" }
 
 func TestMockHostProfile(t *testing.T) {
 	// Test MockHostProfile implementation

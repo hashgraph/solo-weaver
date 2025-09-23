@@ -46,11 +46,24 @@ func (b *blockNode) ValidateCPU() error {
 }
 
 // ValidateMemory validates memory requirements for block node
+// Checks both total and available memory to ensure the system has sufficient resources
 func (b *blockNode) ValidateMemory() error {
 	totalMemoryGB := b.actualHostProfile.GetTotalMemoryGB()
+	availableMemoryGB := b.actualHostProfile.GetAvailableMemoryGB()
+
+	// Check total memory first
 	if int(totalMemoryGB) < b.minimalRequirements.MinMemoryGB {
-		return fmt.Errorf("memory does not meet %s requirements (minimum %d GB)", b.nodeType, b.minimalRequirements.MinMemoryGB)
+		return fmt.Errorf("total memory does not meet %s requirements (minimum %d GB, found %d GB total)",
+			b.nodeType, b.minimalRequirements.MinMemoryGB, totalMemoryGB)
 	}
+
+	// Check available memory (should be at least 80% of required minimum)
+	minAvailableMemoryGB := int(float64(b.minimalRequirements.MinMemoryGB) * 0.8)
+	if int(availableMemoryGB) < minAvailableMemoryGB {
+		return fmt.Errorf("available memory does not meet %s requirements (minimum %d GB available, found %d GB available out of %d GB total)",
+			b.nodeType, minAvailableMemoryGB, availableMemoryGB, totalMemoryGB)
+	}
+
 	return nil
 }
 
@@ -61,9 +74,7 @@ func (b *blockNode) ValidateStorage() error {
 		return fmt.Errorf("storage does not meet %s requirements (minimum %d GB)", b.nodeType, b.minimalRequirements.MinStorageGB)
 	}
 	return nil
-}
-
-// GetBaselineRequirements returns the requirements for block node
+} // GetBaselineRequirements returns the requirements for block node
 func (b *blockNode) GetBaselineRequirements() BaselineRequirements {
 	return b.minimalRequirements
 }

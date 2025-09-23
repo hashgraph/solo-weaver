@@ -46,11 +46,40 @@ func (l *localNode) ValidateCPU() error {
 }
 
 // ValidateMemory validates memory requirements for local node
+// Checks both total and available memory to ensure the system has sufficient resources
 func (l *localNode) ValidateMemory() error {
 	totalMemoryGB := l.actualHostProfile.GetTotalMemoryGB()
+	availableMemoryGB := l.actualHostProfile.GetAvailableMemoryGB()
+
+	// Check total memory first
 	if int(totalMemoryGB) < l.minimalRequirements.MinMemoryGB {
-		return fmt.Errorf("memory does not meet %s requirements (minimum %d GB)", l.nodeType, l.minimalRequirements.MinMemoryGB)
+		return fmt.Errorf("total memory does not meet %s requirements (minimum %d GB, found %d GB total)",
+			l.nodeType, l.minimalRequirements.MinMemoryGB, totalMemoryGB)
 	}
+
+	// Check if application is already running
+	isApplicationRunning := l.actualHostProfile.IsNodeAlreadyRunning()
+
+	systemBufferGB := 0.5 // 512MB buffer for system operations
+
+	if isApplicationRunning {
+		// If app is running, we just need enough for system operations
+		if float64(availableMemoryGB) < systemBufferGB {
+			return fmt.Errorf("insufficient available memory for system operations while %s is running (need %.1f GB, have %.1f GB available)",
+				l.nodeType, systemBufferGB, float64(availableMemoryGB))
+		}
+	} else {
+		// Fresh installation needs full requirement plus buffer
+		requiredAvailableGB := float64(l.minimalRequirements.MinMemoryGB) + systemBufferGB
+		if float64(availableMemoryGB) < requiredAvailableGB {
+			// Calculate how much memory might be used by existing processes
+			usedMemoryGB := totalMemoryGB - availableMemoryGB
+
+			return fmt.Errorf("insufficient available memory for fresh %s installation (need %.1f GB including system buffer, have %.1f GB available, %.1f GB currently used)",
+				l.nodeType, requiredAvailableGB, float64(availableMemoryGB), float64(usedMemoryGB))
+		}
+	}
+
 	return nil
 }
 
@@ -61,9 +90,7 @@ func (l *localNode) ValidateStorage() error {
 		return fmt.Errorf("storage does not meet %s requirements (minimum %d GB)", l.nodeType, l.minimalRequirements.MinStorageGB)
 	}
 	return nil
-}
-
-// GetBaselineRequirements returns the requirements for local node
+} // GetBaselineRequirements returns the requirements for local node
 func (l *localNode) GetBaselineRequirements() BaselineRequirements {
 	return l.minimalRequirements
 }
