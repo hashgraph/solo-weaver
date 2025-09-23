@@ -28,7 +28,8 @@ readonly DASEL_VERSION="2.8.1"
 # Update System Packages
 sudo apt update && sudo apt upgrade -y
 
-# Disable Swap
+# Disable Swap (necessary for kubeadm)
+# WARNING: This failed in docker container
 sudo sed -i.bak 's/^\(.*\sswap\s.*\)$/#\1\n/' /etc/fstab
 sudo swapoff -a
 
@@ -50,6 +51,7 @@ sudo systemctl enable nftables
 sudo systemctl start nftables
 
 # Install Kernel Modules
+# WARNING: This failed in docker container
 sudo modprobe overlay
 sudo modprobe br_netfilter
 echo "overlay" | sudo tee /etc/modules-load.d/overlay.conf
@@ -303,6 +305,8 @@ sudo rm -rf ${SANDBOX_DIR}/etc/kubernetes/* ${SANDBOX_DIR}/etc/cni/net.d/* ${SAN
 
 # Setup KubeADM Configuration
 kube_bootstrap_token="$(${SANDBOX_BIN}/kubeadm token generate)"
+
+# WARNING: ip not found in docker container
 machine_ip="$(ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}')"
 
 cat <<EOF | sudo tee ${SANDBOX_DIR}/etc/provisioner/kubeadm-init.yaml >/dev/null
@@ -369,6 +373,7 @@ EOF
 set -eo pipefail
 
 # Initialize Kubernetes Cluster
+# WARNING: This failed in docker container, probably because we couldn't disable swap earlier
 sudo ${SANDBOX_BIN}/kubeadm init --upload-certs --config ${SANDBOX_DIR}/etc/provisioner/kubeadm-init.yaml
 mkdir -p "${HOME}/.kube"
 sudo cp -f /etc/kubernetes/admin.conf "${HOME}/.kube/config"

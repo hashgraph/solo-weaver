@@ -238,5 +238,6 @@ tasks:
     cmds:
       - go install github.com/golang/mock/mockgen@v1.6.0
       # Generate mocks in the package it belongs. Note these generated mock files are not checked in.
-      - mockgen -source=pkg/security/principal/principal.go -self_package golang.hedera.com/solo-provisioner/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
-      - mockgen -source=pkg/fsx/fs.go -self_package golang.hedera.com/solo-provisioner/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
+      - mockgen -source=pkg/security/principal/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
+      - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
+      - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/software -package software> pkg/software/mocks_generated.go

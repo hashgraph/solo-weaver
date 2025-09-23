@@ -1,16 +1,17 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"github.com/google/uuid"
 	"golang.hedera.com/solo-provisioner/cmd/provisioner/commands"
-	"os"
+	"golang.hedera.com/solo-provisioner/internal/doctor"
 )
 
 func main() {
-
-	err := commands.Execute()
+	traceId := uuid.NewString()
+	ctx := context.WithValue(context.Background(), "traceId", traceId)
+	err := commands.Execute(ctx)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		doctor.CheckErr(ctx, err)
 	}
 }
