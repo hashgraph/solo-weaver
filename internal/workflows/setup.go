@@ -8,7 +8,7 @@ import (
 
 func SetupWorkflow() automa.Builder {
 	return automa.NewWorkFlowBuilder("setup").Steps(
-		NewSystemSafetyCheckWorkflow(),
+		// NewNodeSafetyCheckWorkflow(),
 		steps.SetupHomeDirectoryStructure(),
 		steps.RefreshSystemPackageIndex(),
 		steps.InstallSystemPackage("iptables", software.NewIptables),

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -10,23 +11,20 @@ import (
 )
 
 // examples:
-// ./provisioner system check --node-type block-node | consensus-node | --type all | os | cpu | memory | disk | network
-// ./provisioner system benchmark --node-type block-node --type all | disk | cpu | memory --node-type block-node --output ./benchmark.yaml
-// ./provisioner system setup --node-type block-node
-// ./provisioner system upgrade --manifest ./upgrade-manifests
-// ./provisioner system diagnose --output ./diagnostics --send
+// ./provisioner block node check
+// ./provisioner consensus node check
+// ./provisioner local node check
 
-// ./provisioner solo-operator deploy
-// ./provisioner solo-operator upgrade --manifest ./upgrade-manifest/solo-operator.yaml
+// Future commands (not yet implemented):
+// ./provisioner block node setup --config ./config.yaml
+// ./provisioner consensus node setup --manifest ./manifests/consensus-node.yaml
+// ./provisioner local node setup
 
-// ./provisioner consensus-node deploy --manifest ./manifests/consensus-node.yaml
-
-// ./provisioner block-node deploy --config ./config.yaml
-// ./provisioner block-node upgrade --manifest ./upgrade-manifests/block-node.yaml
-
-// ./provisioner mirror-node deploy --config ./config.yaml
-// ./provisioner relay deploy --config ./config.yaml
-// ./provisioner dashboard deploy --config ./config.yaml
+// NodeTypeConfig defines the configuration for a node type
+type NodeTypeConfig struct {
+	Name      string
+	ParentCmd *cobra.Command
+}
 
 // rootCmd represents the base command when called without any subcommands
 var (
@@ -39,18 +37,31 @@ var (
 		Long:  "Solo Provisioner - A user friendly tool to provision Hedera network components",
 	}
 
-	systemCmd = &cobra.Command{
-		Use:   "system",
-		Short: "Commands to manage and configure the system for Hedera network components",
-		Long:  "Commands to manage and configure the system for Hedera network components",
+	blockCmd = &cobra.Command{
+		Use:   "block",
+		Short: "Commands for block node type",
+		Long:  "Commands for block node type",
 	}
 
-	blockNodeCmd = &cobra.Command{
-		Use:   "block-node",
-		Short: "Commands to manage and configure block nodes",
-		Long:  "Commands to manage and configure block nodes",
+	consensusCmd = &cobra.Command{
+		Use:   "consensus",
+		Short: "Commands for consensus node type",
+		Long:  "Commands for consensus node type",
+	}
+
+	localCmd = &cobra.Command{
+		Use:   "local",
+		Short: "Commands for local node type",
+		Long:  "Commands for local node type",
 	}
 )
+
+// nodeTypeConfigs defines all supported node types and their configuration
+var nodeTypeConfigs = []NodeTypeConfig{
+	{Name: "block", ParentCmd: blockCmd},
+	{Name: "consensus", ParentCmd: consensusCmd},
+	{Name: "local", ParentCmd: localCmd},
+}
 
 // Execute executes the root command.
 func Execute(ctx context.Context) error {
@@ -67,15 +78,24 @@ func Execute(ctx context.Context) error {
 	// make flags mandatory
 	//_ = rootCmd.MarkPersistentFlagRequired("config")
 
-	// system command
-	systemCmd.AddCommand(systemSafetyCheckCmd)
-	systemCmd.AddCommand(systemSetupCmd)
+	// Setup node commands for each configured node type
+	for _, config := range nodeTypeConfigs {
+		// Create commands for this node type
+		nodeCheckCmd := createNodeCheckCommand(config.Name)
+		nodeSubCmd := createNodeSubcommand(config.Name)
 
-	// block-node command
-	blockNodeCmd.AddCommand(blockNodeDeploy)
+		// Add check and setup commands to node subcommand
+		nodeSubCmd.AddCommand(nodeCheckCmd)
+		nodeSubCmd.AddCommand(nodeSetupCmd)
 
-	rootCmd.AddCommand(systemCmd)
-	rootCmd.AddCommand(blockNodeCmd)
+		// Add node subcommand to the parent command
+		config.ParentCmd.AddCommand(nodeSubCmd)
+	}
+
+	// Add all node type commands to root
+	for _, config := range nodeTypeConfigs {
+		rootCmd.AddCommand(config.ParentCmd)
+	}
 
 	_, err := rootCmd.ExecuteContextC(ctx)
 	if err != nil {
@@ -102,4 +122,13 @@ func initConfig(ctx context.Context) {
 	//	"commit":  version.Commit(),
 	//	"version": version.Number(),
 	//}).Debug().Msg("Initialized configuration")
+}
+
+// createNodeSubcommand creates a "node" subcommand for a specific node type
+func createNodeSubcommand(nodeType string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "node",
+		Short: "Commands to manage and configure " + nodeType + " nodes",
+		Long:  "Commands to manage and configure " + nodeType + " nodes",
+	}
 }

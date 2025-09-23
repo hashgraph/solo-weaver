@@ -1,10 +1,36 @@
 package hardware
 
-import "github.com/zcalusic/sysinfo"
+import (
+	"fmt"
+)
+
+// NodeType represents a supported node type
+type NodeType string
+
+const (
+	NodeTypeLocal     NodeType = "local"
+	NodeTypeBlock     NodeType = "block"
+	NodeTypeConsensus NodeType = "consensus"
+)
 
 type Spec interface {
-	//Cpu(cpu ) boolean
-	//Memory(mem ghw.Memory) int64
-	Disk(size int64) int64
-	Check(si sysinfo.SysInfo) (bool, error)
+	ValidateOS() error
+	ValidateCPU() error
+	ValidateMemory() error
+	ValidateStorage() error
+
+	GetBaselineRequirements() BaselineRequirements
+	GetNodeType() string
+}
+
+type BaselineRequirements struct {
+	MinCpuCores    int
+	MinMemoryGB    int
+	MinStorageGB   int
+	MinSupportedOS []string
+}
+
+func (r BaselineRequirements) String() string {
+	return fmt.Sprintf("OS: %v, CPU: %d cores, Memory: %d GB, Storage: %d GB, ",
+		r.MinSupportedOS, r.MinCpuCores, r.MinMemoryGB, r.MinStorageGB)
 }
