@@ -11,27 +11,27 @@
 # NOTE: Must be placed last to ensure enforcement over all other rules
 
 # Protection Rules for Github Configuration Files and Actions Workflows
-/.github/                                       @hashgraph/release-engineering-managers
-/.github/workflows/                             @hashgraph/release-engineering-managers @hashgraph/platform-ci
+# /.github/                                       @hashgraph/release-engineering-managers
+# /.github/workflows/                             @hashgraph/release-engineering-managers @hashgraph/platform-ci
 
 
 # Codacy Tool Configurations
-/config/                                        @hashgraph/release-engineering-managers
-.remarkrc                                       @hashgraph/release-engineering-managers
+# /config/                                        @hashgraph/release-engineering-managers
+# .remarkrc                                       @hashgraph/release-engineering-managers
 
 # Semantic Release Configuration
-.releaserc                                      @hashgraph/release-engineering-managers
+# .releaserc                                      @hashgraph/release-engineering-managers
 
 # Self-protection for root CODEOWNERS files (this file should not exist and should definitely require approval)
-/CODEOWNERS                                     @hashgraph/release-engineering-managers
+# /CODEOWNERS                                     @hashgraph/release-engineering-managers
 
 # Protect the repository root files
-/README.md                                      @hashgraph/release-engineering-managers
-**/LICENSE                                      @hashgraph/release-engineering-managers
+# /README.md                                      @hashgraph/release-engineering-managers
+# **/LICENSE                                      @hashgraph/release-engineering-managers
 
 # CodeCov configuration
-**/codecov.yml                                  @hashgraph/release-engineering-managers
+# **/codecov.yml                                  @hashgraph/release-engineering-managers
 
 # Git Ignore definitions
-**/.gitignore                                   @hashgraph/release-engineering-managers
-**/.gitignore.*                                 @hashgraph/release-engineering-managers
+# **/.gitignore                                   @hashgraph/release-engineering-managers
+# **/.gitignore.*                                 @hashgraph/release-engineering-managers
