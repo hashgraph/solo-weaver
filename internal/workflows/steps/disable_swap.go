@@ -8,7 +8,6 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 	"os"
-	"os/exec"
 	"path"
 	"strings"
 )
@@ -20,9 +19,13 @@ const (
 	SwapOnStepId           = "swap-on"
 )
 
+// We are defining these package private variables to help with mocking for unit tests
+// these also helps to avoid hardcoding values
 var (
-	EtcBackupDir = path.Join(core.BackupDir, "etc")
-	FstabPath    = "/etc/fstab"
+	etcBackupDir    = path.Join(core.BackupDir, "etc")
+	etcDir          = "/etc"
+	fstabPath       = path.Join(etcDir, "fstab")
+	fstabBackupPath = path.Join(etcBackupDir, "fstab")
 )
 
 // BackupFstabFile backs up the /etc/fstab file to the backup directory (with rollback to restore it if needed)
@@ -35,7 +38,7 @@ func backupFstabFile() automa.Builder {
 			return nil, errorx.IllegalState.Wrap(err, "failed to create file system manager")
 		}
 
-		err = fm.CopyFile(FstabPath, path.Join(EtcBackupDir, "fstab"), false)
+		err = fm.CopyFile(fstabPath, etcBackupDir, false)
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to backup fstab")
 		}
@@ -53,7 +56,7 @@ func restoreFstabFile() automa.Builder {
 			return nil, errorx.IllegalState.Wrap(err, "failed to create file system manager")
 		}
 
-		err = fm.CopyFile(path.Join(EtcBackupDir, "fstab"), "/etc", true)
+		err = fm.CopyFile(fstabBackupPath, etcDir, true)
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to recover fstab from back")
 		}
@@ -68,12 +71,12 @@ func restoreFstabFile() automa.Builder {
 func commentSwapSettings() automa.Builder {
 	return automa.NewStepBuilder(CommentSwapFstabStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
 		// Read original file
-		input, err := os.ReadFile(FstabPath)
+		input, err := os.ReadFile(fstabPath)
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to read fstab")
 		}
 
-		info, err := os.Stat(FstabPath)
+		info, err := os.Stat(fstabPath)
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to stat fstab")
 		}
@@ -83,7 +86,7 @@ func commentSwapSettings() automa.Builder {
 		scanner := bufio.NewScanner(strings.NewReader(string(input)))
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.Contains(line, " swap ") {
+			if strings.Contains(line, " swap ") && !strings.HasPrefix(line, "#") {
 				line = "#" + line
 			}
 			output = append(output, line)
@@ -94,7 +97,7 @@ func commentSwapSettings() automa.Builder {
 		}
 
 		// Write modified file
-		err = os.WriteFile(FstabPath, []byte(strings.Join(output, "\n")+"\n"), info.Mode())
+		err = os.WriteFile(fstabPath, []byte(strings.Join(output, "\n")+"\n"), info.Mode())
 		if err != nil {
 			panic(err)
 		}
@@ -107,11 +110,9 @@ func commentSwapSettings() automa.Builder {
 // This does not have rollback behaviour, rather call swapOn to re-enable swap if needed
 func swapOff() automa.Builder {
 	return automa.NewStepBuilder(SwapOffStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		cmd := exec.Command("swapoff", "-a")
-		if err := cmd.Run(); err != nil {
+		if err := RunCmd("swapoff", "-a"); err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to disable swap")
 		}
-
 		return automa.StepSuccessReport(SwapOffStepId), nil
 	}))
 }
@@ -120,8 +121,7 @@ func swapOff() automa.Builder {
 // This does not have rollback behaviour, rather call swapOff to disable swap if needed
 func swapOn() automa.Builder {
 	return automa.NewStepBuilder(SwapOnStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		cmd := exec.Command("swapon", "-a")
-		if err := cmd.Run(); err != nil {
+		if err := RunCmd("swapon", "-a"); err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to enable swap")
 		}
 

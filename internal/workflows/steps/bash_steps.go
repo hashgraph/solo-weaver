@@ -1,17 +1,12 @@
 package steps
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
-	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"os"
-	"os/exec"
 	"runtime"
-	"strings"
 )
 
 var bashSteps *BashSteps
@@ -49,8 +44,8 @@ type BashSteps struct {
 }
 
 func NewBashSteps() *BashSteps {
-	machineIp, _ := bashCommandOutput(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
-	hostname, _ := bashCommandOutput("hostname")
+	machineIp, _ := runCmdOutput(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
+	hostname, _ := runCmdOutput("hostname")
 	kubeBootstrapToken := generateKubeadmToken() // e.g: "k7enhy.umvij8dtg59ksnqj"
 
 	return &BashSteps{
@@ -519,25 +514,6 @@ func (b *BashSteps) TorchPriorKubeAdmConfiguration() automa.Builder {
 		fmt.Sprintf("sudo rm -rf %s/etc/kubernetes/* %s/etc/cni/net.d/* %s/var/lib/etcd/* || true",
 			b.SandboxDir, b.SandboxDir, b.SandboxDir),
 	}, "")
-}
-
-func bashCommandOutput(script string) (string, error) {
-	out, err := exec.Command("bash", "-c", script).Output()
-	if err != nil {
-		return "", errorx.IllegalState.Wrap(err, "failed to execute bash command: %s", script)
-	}
-	val := strings.TrimSpace(string(out))
-	return val, nil
-}
-
-func generateKubeadmToken() string {
-	// 3 bytes = 6 hex chars, 8 bytes = 16 hex chars
-	r := make([]byte, 11)
-	_, err := rand.Read(r)
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%s.%s", hex.EncodeToString(r[:3]), hex.EncodeToString(r[3:]))
 }
 
 func (b *BashSteps) SetupKubeAdminConfiguration() automa.Builder {

@@ -1,18 +1,15 @@
 //go:build integration
-// +build integration
 
 package steps
 
 import (
 	"context"
-	"fmt"
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 	"testing"
 )
 
-func TestSetupClusterUsingBashCommands(t *testing.T) {
+func Test_BashScriptBasedClusterSetupWorkflow_Integration(t *testing.T) {
 	registry, err := BashScriptBasedStepRegistry()
 	require.NoError(t, err)
 
@@ -21,7 +18,7 @@ func TestSetupClusterUsingBashCommands(t *testing.T) {
 
 	report, err := wf.Execute(context.Background())
 	require.NoError(t, err)
-	b, _ := yaml.Marshal(report)
-	fmt.Printf("Workflow Execution Report:%s\n", b)
+
+	PrintWorkflowReport(report)
 	require.Equal(t, automa.StatusSuccess, report.Status)
 }
