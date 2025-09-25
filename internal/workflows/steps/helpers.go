@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// Note: All these function are set a variable so that we can mock as needed
+// Note: All these helper functions are set as variables so that we can mock as needed
 
 // PrintWorkflowReport prints the workflow execution report in YAML format
 var PrintWorkflowReport = func(report *automa.Report) {
@@ -25,8 +25,8 @@ var RunCmd = func(name string, args ...string) error {
 	return cmd.Run()
 }
 
-// bashCommandOutput runs a bash command and returns its trimmed output or an error
-var runCmdOutput = func(script string) (string, error) {
+// RunCmdOutput runs a bash command and returns its trimmed output or an error
+var RunCmdOutput = func(script string) (string, error) {
 	out, err := exec.Command("bash", "-c", script).Output()
 	if err != nil {
 		return "", errorx.IllegalState.Wrap(err, "failed to execute bash command: %s", script)

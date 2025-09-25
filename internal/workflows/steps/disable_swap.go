@@ -14,13 +14,14 @@ import (
 
 const (
 	BackupFstabStepId      = "backup-fstab"
+	RestoreFstabStepId     = "restore-fstab"
 	CommentSwapFstabStepId = "comment-swap-fstab"
 	SwapOffStepId          = "swap-off"
 	SwapOnStepId           = "swap-on"
 )
 
-// We are defining these package private variables to help with mocking for unit tests
-// these also helps to avoid hardcoding values
+// We are defining these package private variables to help with mocking for unit tests.
+// These also helps to avoid hardcoding values
 var (
 	etcBackupDir    = path.Join(core.BackupDir, "etc")
 	etcDir          = "/etc"
@@ -28,14 +29,18 @@ var (
 	fstabBackupPath = path.Join(etcBackupDir, "fstab")
 )
 
-// BackupFstabFile backs up the /etc/fstab file to the backup directory (with rollback to restore it if needed)
-// This does not overwrite existing backup (to preserve previous state if multiple calls are made)
+// BackupFstabFile backs up the /etc/fstab file to the backup directory
 // This does not have rollback behaviour, rather call restoreFstabFile to restore the file
+// This does not overwrite existing backup (to preserve previous state if multiple calls are made)
 func backupFstabFile() automa.Builder {
 	return automa.NewStepBuilder(BackupFstabStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
 		fm, err := fsx.NewManager()
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to create file system manager")
+		}
+
+		if err := os.MkdirAll(etcBackupDir, 0755); err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to create backup dir")
 		}
 
 		err = fm.CopyFile(fstabPath, etcBackupDir, false)
@@ -47,10 +52,10 @@ func backupFstabFile() automa.Builder {
 	}))
 }
 
-// RestoreFstabFile restores the /etc/fstab file from the backup directory (with rollback to re-backup if needed)
+// RestoreFstabFile restores the /etc/fstab file from the backup directory
 // This does not have rollback behaviour, rather call backupFstabFile to re-backup the file if needed
 func restoreFstabFile() automa.Builder {
-	return automa.NewStepBuilder(BackupFstabStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
+	return automa.NewStepBuilder(RestoreFstabStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
 		fm, err := fsx.NewManager()
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to create file system manager")
@@ -58,10 +63,10 @@ func restoreFstabFile() automa.Builder {
 
 		err = fm.CopyFile(fstabBackupPath, etcDir, true)
 		if err != nil {
-			return nil, errorx.IllegalState.Wrap(err, "failed to recover fstab from back")
+			return nil, errorx.IllegalState.Wrap(err, "failed to recover fstab from backup")
 		}
 
-		return automa.StepSuccessReport(BackupFstabStepId), nil
+		return automa.StepSuccessReport(RestoreFstabStepId), nil
 	}))
 }
 
@@ -99,7 +104,7 @@ func commentSwapSettings() automa.Builder {
 		// Write modified file
 		err = os.WriteFile(fstabPath, []byte(strings.Join(output, "\n")+"\n"), info.Mode())
 		if err != nil {
-			panic(err)
+			return nil, errorx.IllegalState.Wrap(err, "failed to write fstab")
 		}
 
 		return automa.StepSuccessReport(CommentSwapFstabStepId), nil
@@ -117,7 +122,7 @@ func swapOff() automa.Builder {
 	}))
 }
 
-// SwapOnStep disables swap on the system
+// SwapOnStep enables swap on the system
 // This does not have rollback behaviour, rather call swapOff to disable swap if needed
 func swapOn() automa.Builder {
 	return automa.NewStepBuilder(SwapOnStepId, automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {

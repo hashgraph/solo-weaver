@@ -47,7 +47,7 @@ func TestRunCmd_Failure(t *testing.T) {
 }
 
 func TestBashCommandOutput_Success(t *testing.T) {
-	out, err := runCmdOutput("echo hello")
+	out, err := RunCmdOutput("echo hello")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -57,7 +57,7 @@ func TestBashCommandOutput_Success(t *testing.T) {
 }
 
 func TestBashCommandOutput_Failure(t *testing.T) {
-	_, err := runCmdOutput("exit 1")
+	_, err := RunCmdOutput("exit 1")
 	if err == nil {
 		t.Errorf("expected error for failing command, got nil")
 	}

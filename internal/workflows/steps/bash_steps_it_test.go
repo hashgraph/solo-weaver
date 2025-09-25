@@ -10,8 +10,7 @@ import (
 )
 
 func Test_BashScriptBasedClusterSetupWorkflow_Integration(t *testing.T) {
-	registry, err := BashScriptBasedStepRegistry()
-	require.NoError(t, err)
+	registry := BashScriptBasedStepRegistry()
 
 	wf, err := registry.Of(SetupClusterStepId).Build()
 	require.NoError(t, err)
