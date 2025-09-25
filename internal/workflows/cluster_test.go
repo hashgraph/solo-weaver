@@ -1,15 +1,18 @@
+//go:build integration
+
 package workflows
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
+	"testing"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/internal/core"
-	"os"
-	"runtime"
-	"testing"
 )
 
 // testHelper mimics the bash script commands to help us create a test scenario for the

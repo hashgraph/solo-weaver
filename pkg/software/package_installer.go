@@ -1,18 +1,12 @@
 package software
 
 import (
-	"bufio"
-	"os"
-	"runtime"
-	"strings"
 	"sync"
 
-	"github.com/automa-saga/logx"
 	"github.com/bluet/syspkg"
 	"github.com/bluet/syspkg/manager"
 	"github.com/bluet/syspkg/manager/apt"
 	"github.com/joomcode/errorx"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -30,13 +24,8 @@ func GetPackageManager() (syspkg.PackageManager, error) {
 			return
 		}
 
-		pkgManagerName, err := DetectSystemPackageManager()
-		if err != nil {
-			initErr = err
-			return
-		}
-
-		pm, err := sysPackageManager.GetPackageManager(pkgManagerName)
+		// Let syspkg automatically detect the best available package manager
+		pm, err := sysPackageManager.GetPackageManager("") // Empty string returns first available
 		if err != nil {
 			initErr = errorx.IllegalState.New("failed to get package manager: %s", err.Error())
 			return
@@ -46,52 +35,6 @@ func GetPackageManager() (syspkg.PackageManager, error) {
 	})
 
 	return pkgManager, initErr
-}
-
-func DetectSystemPackageManager() (string, error) {
-	// Read the /etc/os-release file to determine the OS only if it is Linux
-	if _, err := os.Stat("/etc/os-release"); errors.Is(err, os.ErrNotExist) {
-		return "", errorx.IllegalState.New("unsupported operating system: %s", runtime.GOOS)
-	}
-
-	file, err := os.Open("/etc/os-release")
-	if err != nil {
-		return "", errorx.IllegalState.New("failed to open /etc/os-release: %s", err.Error())
-	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			logx.As().Warn().Err(err).Msg("failed to close /etc/os-release")
-		}
-	}(file)
-
-	scanner := bufio.NewScanner(file)
-	var id string
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "ID=") {
-			id = strings.TrimPrefix(line, "ID=")
-			id = strings.Trim(id, "\"")
-			break
-		}
-	}
-
-	switch id {
-	case "debian", "ubuntu":
-		return "apt", nil
-	case "fedora", "centos":
-		return "dnf", nil
-	case "alpine":
-		return "apk", nil
-	//case "opensuse", "suse":
-	//	return "zypper", nil
-	//case "flatpak":
-	//	return "flatpak", nil
-	//case "snap":
-	//	return "snap", nil
-	default:
-		return "unknown", errorx.IllegalState.New("unsupported or unknown Linux distribution: %s", id)
-	}
 }
 
 func RefreshPackageIndex() error {
@@ -159,29 +102,21 @@ func (p *PackageInstaller) IsInstalled() bool {
 }
 
 func (p *PackageInstaller) Info() (*syspkg.PackageInfo, error) {
-	resp, err := p.pkgManager.ListInstalled(&p.pkgOptions)
+	// Instead of using ListInstalled, use Find to get more reliable results
+	// as the current syspkg apt ListInstalled implementation does not check whether only the config of a package is there.
+	resp, err := p.pkgManager.Find([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to list installed package: %s", p.pkgName)
+		return nil, errorx.IllegalState.Wrap(err, "failed to find package: %s", p.pkgName)
 	}
 
-	var info syspkg.PackageInfo
-	var found bool
+	// go through the list and verify if the package is found
 	for _, pkg := range resp {
 		if pkg.Name == p.pkgName {
-			info = pkg
-			found = true
-			break
+			return &pkg, nil
 		}
 	}
 
-	if !found {
-		info, err = p.pkgManager.GetPackageInfo(p.pkgName, &p.pkgOptions)
-		if err != nil {
-			return nil, errorx.IllegalState.Wrap(err, "failed to find package: %s", p.pkgName)
-		}
-	}
-
-	return &info, nil
+	return nil, errorx.IllegalState.Wrap(err, "failed to find package: %s", p.pkgName)
 }
 
 func (p *PackageInstaller) Verify() error {
