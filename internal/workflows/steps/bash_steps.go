@@ -51,10 +51,7 @@ type BashSteps struct {
 func NewBashSteps() *BashSteps {
 	machineIp, _ := bashCommandOutput(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
 	hostname, _ := bashCommandOutput("hostname")
-	kubeBootstrapToken := "k7enhy.umvij8dtg59ksnqj" //  // bashCommandOutput(fmt.Sprintf("%s/kubeadm token generate", bashSteps.SandboxBinDir))
-	fmt.Printf("hostname: %s\n", hostname)
-	fmt.Printf("machine_ip: %s\n", machineIp)
-	fmt.Println("kube_bootstrap_token: ", kubeBootstrapToken)
+	kubeBootstrapToken := generateKubeadmToken() // e.g: "k7enhy.umvij8dtg59ksnqj"
 
 	return &BashSteps{
 		HomeDir:            os.Getenv("HOME"),
@@ -533,7 +530,7 @@ func bashCommandOutput(script string) (string, error) {
 	return val, nil
 }
 
-func (b *BashSteps) generateKubeadmToken() string {
+func generateKubeadmToken() string {
 	// 3 bytes = 6 hex chars, 8 bytes = 16 hex chars
 	r := make([]byte, 11)
 	_, err := rand.Read(r)
