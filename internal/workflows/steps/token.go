@@ -7,12 +7,11 @@ import (
 )
 
 // generateKubeadmToken generates a random kubeadm token in the format [a-z0-9]{6}.[a-z0-9]{16}
-var generateKubeadmToken = func() string {
-	// 3 bytes = 6 hex chars, 8 bytes = 16 hex chars
+func generateKubeadmToken() (string, error) {
 	r := make([]byte, 11)
 	_, err := rand.Read(r)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("failed to generate random bytes for kubeadm token: %w", err)
 	}
-	return fmt.Sprintf("%s.%s", hex.EncodeToString(r[:3]), hex.EncodeToString(r[3:]))
+	return fmt.Sprintf("%s.%s", hex.EncodeToString(r[:3]), hex.EncodeToString(r[3:])), nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
+	"github.com/automa-saga/logx"
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"os"
 	"runtime"
@@ -110,9 +111,26 @@ type bashScriptStep struct {
 }
 
 func initBashScriptSteps() bashScriptStep {
-	machineIp, _ := RunCmdOutput(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
-	hostname, _ := RunCmdOutput("hostname")
-	kubeBootstrapToken := generateKubeadmToken() // e.g: "k7enhy.umvij8dtg59ksnqj"
+	machineIp, err := RunCmdOutput(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
+	if err != nil {
+		machineIp = "0.0.0.0"
+		logx.As().Warn().Err(err).Str("machine_ip", machineIp).
+			Msg("failed to get machine IP, defaulting to 0.0.0.0")
+	}
+
+	hostname, err := RunCmdOutput("hostname")
+	if err != nil {
+		hostname = "localhost"
+		logx.As().Warn().Err(err).Str("localhost", hostname).
+			Msg("failed to get hostname, defaulting to localhost")
+	}
+
+	kubeBootstrapToken, err := generateKubeadmToken()
+	if err != nil {
+		kubeBootstrapToken = "abcdef.0123456789abcdef"
+		logx.As().Warn().Err(err).Str("token", kubeBootstrapToken).
+			Msg("failed to generate kubeadm token, defaulting to a static token: abcdef.0123456789abcdef")
+	}
 
 	return bashScriptStep{
 		HomeDir:            os.Getenv("HOME"),
