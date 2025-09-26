@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	DisableSwapStepId      = "disable-swap"
 	BackupFstabStepId      = "backup-fstab"
 	RestoreFstabStepId     = "restore-fstab"
 	CommentSwapFstabStepId = "comment-swap-fstab"
@@ -91,8 +92,14 @@ func commentSwapSettings() automa.Builder {
 		scanner := bufio.NewScanner(strings.NewReader(string(input)))
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.Contains(line, " swap ") && !strings.HasPrefix(line, "#") {
-				line = "#" + line
+			if !strings.HasPrefix(line, "#") {
+				fields := strings.Fields(line)
+				for _, field := range fields {
+					if field == "swap" {
+						line = "#" + line
+						break
+					}
+				}
 			}
 			output = append(output, line)
 		}
