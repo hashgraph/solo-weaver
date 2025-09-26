@@ -648,7 +648,7 @@ etcd:
   local:
     dataDir: %s/var/lib/etcd
 imageRepository: registry.k8s.io
-KubernetesVersion: "%s"
+kubernetesVersion: "%s"
 networking:
   dnsDomain: cluster.local
   serviceSubnet: 10.0.0.0/14

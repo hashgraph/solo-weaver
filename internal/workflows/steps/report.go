@@ -8,6 +8,10 @@ import (
 
 // PrintWorkflowReport prints the workflow execution report in YAML format
 var PrintWorkflowReport = func(report *automa.Report) {
-	b, _ := yaml.Marshal(report)
+	b, err := yaml.Marshal(report)
+	if err != nil {
+		fmt.Printf("Failed to marshal report: %v\n", err)
+		return
+	}
 	fmt.Printf("Workflow Execution Report:%s\n", b)
 }
