@@ -2,6 +2,7 @@ package os
 
 import (
 	"fmt"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
@@ -208,6 +209,19 @@ func TestSwapOff(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tt.wantInErr) {
 					t.Errorf("expected error containing %q, got %v", tt.wantInErr, err)
 				}
+
+				// Check error properties
+				pathProp, ok := errorx.ExtractProperty(err, PathProperty)
+				require.True(t, ok)
+				if pathProp != "/dev/swap" {
+					t.Errorf("expected PathProperty '/dev/swap', got %v", pathProp)
+				}
+
+				codeProp, ok := errorx.ExtractProperty(err, ReturnCodeProperty)
+				require.True(t, ok)
+				if codeProp != tt.wantCode {
+					t.Errorf("expected ReturnCodeProperty %d, got %v", tt.wantCode, codeProp)
+				}
 			} else if err != nil {
 				t.Errorf("expected nil error, got %v", err)
 			}
@@ -242,13 +256,25 @@ func TestSwapOn(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tt.wantInErr) {
 					t.Errorf("expected error containing %q, got %v", tt.wantInErr, err)
 				}
+
+				// Check error properties
+				pathProp, ok := errorx.ExtractProperty(err, PathProperty)
+				require.True(t, ok)
+				if pathProp != "/dev/swap" {
+					t.Errorf("expected PathProperty '/dev/swap', got %v", pathProp)
+				}
+
+				codeProp, ok := errorx.ExtractProperty(err, ReturnCodeProperty)
+				require.True(t, ok)
+				if codeProp != tt.wantCode {
+					t.Errorf("expected ReturnCodeProperty %d, got %v", tt.wantCode, codeProp)
+				}
 			} else if err != nil {
 				t.Errorf("expected nil error, got %v", err)
 			}
 		})
 	}
 }
-
 func TestSwapOff_Integration(t *testing.T) {
 	h, err := os.UserHomeDir()
 	require.NoError(t, err)

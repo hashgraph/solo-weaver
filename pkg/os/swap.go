@@ -168,7 +168,7 @@ func SwapOff(path string) (int, error) {
 			rex = errorx.IllegalState.Wrap(err, "%s: swapoff failed, cannot allocate memory", path).
 				WithProperty(PathProperty, path).
 				WithProperty(ReturnCodeProperty, SWAPOFF_EX_ENOMEM)
-			return SWAPOFF_EX_ENOMEM, err
+			return SWAPOFF_EX_ENOMEM, rex
 		default:
 			rex = errorx.IllegalState.Wrap(err, "%s: swapoff failed, unknown syscall error", path).
 				WithProperty(PathProperty, path).
