@@ -7,7 +7,8 @@ set -e
 VM_NAME="solo-provisioner-debian"
 VM_USER="${VM_USER:-provisioner}"
 
-SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:-$(pwd)/../.ssh/id_rsa_vm}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:-${SCRIPT_DIR}/../.ssh/id_rsa_vm}"
 
 if [ -z "$VM_HOST" ]; then
   echo "VM_HOST not set, trying to get it from utmctl..."
@@ -40,8 +41,18 @@ echo "🚀 Starting debug session on VM for '$COMMAND'..."
 
 # Kill any existing processes using port 2345
 echo "🔍 Checking for existing processes on port 2345..."
-CLEANUP_COMMAND="bash -c 'ss -tlpn 2>/dev/null | grep \":2345 \" | grep -o \"pid=[0-9]*\" | cut -d= -f2 | xargs -r kill 2>/dev/null; exit 0'"
-ssh $SSH_OPTS "$VM_USER@$VM_HOST" "${CLEANUP_COMMAND}" || true
+CLEANUP_COMMAND='
+cleanup_port_2345() {
+  local pids
+  pids=$(ss -tlpn 2>/dev/null | grep ":2345 " | grep -o "pid=[0-9]*" | cut -d= -f2)
+  if [ -n "$pids" ]; then
+    echo "Killing processes on port 2345: $pids"
+    kill $pids 2>/dev/null || true
+  fi
+}
+cleanup_port_2345
+'
+ssh $SSH_OPTS "$VM_USER@$VM_HOST" "$CLEANUP_COMMAND" || true
 echo "✅ Port 2345 cleanup completed"
 
 # Construct the dlv command

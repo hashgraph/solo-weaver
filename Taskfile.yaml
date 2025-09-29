@@ -9,7 +9,8 @@ vars:
   # VM configuration
   VM_NAME: "solo-provisioner-debian"
   VM_GOLDEN_NAME: "solo-provisioner-debian-golden"
-  VM_GOLDEN_IMAGE_URL: "https://example.com/path/to/golden-image.utm"  # Override with actual URL
+  # Set this to the actual URL or local path of your golden image (e.g., "https://storage.example.com/golden-image.utm" or "/path/to/golden-image.utm")
+  VM_GOLDEN_IMAGE_URL: ""  # REQUIRED: Set to your golden image location before running tasks
   VM_USER: "provisioner"
   SSH_PRIVATE_KEY: "{{.PWD}}/.ssh/id_rsa_vm"
   SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
@@ -389,7 +390,11 @@ tasks:
         echo "Downloading to temporary directory: $TEMP_DIR"
 
         # Download the golden image
-        curl -L -o "$TEMP_DIR/golden-image.utm" "{{.VM_GOLDEN_IMAGE_URL}}"
+        if ! curl -fL -o "$TEMP_DIR/golden-image.utm" "{{.VM_GOLDEN_IMAGE_URL}}"; then
+          echo "❌ Failed to download the golden VM image from {{.VM_GOLDEN_IMAGE_URL}}"
+          rm -rf "$TEMP_DIR"
+          exit 1
+        fi
 
         # Import the VM into UTM
         echo "Importing VM into UTM..."
