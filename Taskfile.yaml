@@ -6,6 +6,19 @@ vars:
   ARCH: [ amd64, arm64 ]
   GO_VERSION: 1.24.3
   LDFLAGS: "-w -s"
+  # VM configuration
+  VM_NAME: "solo-provisioner-debian"
+  VM_GOLDEN_NAME: "solo-provisioner-debian-golden"
+  VM_GOLDEN_IMAGE_URL: "https://example.com/path/to/golden-image.utm"  # Override with actual URL
+  VM_USER: "provisioner"
+  SSH_PRIVATE_KEY: "{{.PWD}}/.ssh/id_rsa_vm"
+  SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
+  UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
+  GET_VM_IP: |
+    get_vm_ip() {
+      utmctl ip-address "{{.VM_NAME}}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1
+    }
+
 tasks:
   clean:
     cmds:
@@ -188,6 +201,13 @@ tasks:
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
       - "go test -race -cover -json -tags='!integration' ./internal/... ./pkg/... ./cmd/... | go-testreport -output unit-test-report.md -vars 'Title:Unit Test Report'"
 
+  test:unit:verbose:
+    desc: "Run unit tests with verbose console output"
+    deps:
+      - "generate"
+    cmds:
+      - "go test -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
+
   test:coverage:
     cmds:
       - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
@@ -202,31 +222,6 @@ tasks:
       # Using go-testreport v0.3.2
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
       - "go test -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... | go-testreport -output integration-test-report.md -vars 'Title:Integration Test Report'"
-
-  test:unit:docker:
-    desc: "Run all unit tests in Docker container (useful for testing system-level functionality)"
-    dir: build
-    cmds:
-      - cmd: |
-          # Build and start container in background
-          docker build -t local/solo-provisioner-local:latest -f Dockerfile.local .
-          docker stop solo-provisioner-local 2>/dev/null || true
-          docker rm solo-provisioner-local 2>/dev/null || true
-          docker run -d --name solo-provisioner-local --privileged --cap-add=ALL \
-            -v "/sys/fs/cgroup:/sys/fs/cgroup:rw" \
-            -v "$(pwd)"/..:/app \
-            --network host \
-            local/solo-provisioner-local:latest tail -f /dev/null
-          
-          # Wait for container to be ready
-          sleep 2
-          
-          # Update package lists and run all unit tests as root inside the container
-          docker exec --user root solo-provisioner-local bash -c "
-            apt-get update && 
-            cd /app && 
-            task test:unit
-          "
 
   run:
     deps:
@@ -254,6 +249,7 @@ tasks:
     internal: true
     status:
       - "command -v go"
+      - "command -v dlv"
     platforms:
       - "linux/amd64"
       - "linux/arm64"
@@ -262,8 +258,9 @@ tasks:
       - "sudo mkdir -p /usr/local/go"
       - "sudo tar -C /usr/local -xzf go{{.GO_VERSION}}.{{OS}}-{{ARCH}}.tar.gz"
       - "rm -f go{{.GO_VERSION}}.{{OS}}-{{ARCH}}.tar.gz"
-      - "echo 'PATH=\"${PATH}:/usr/local/go/bin\"' | sudo tee /etc/profile.d/go.sh >/dev/null 2>&1"
+      - "echo 'PATH=\"${PATH}:/usr/local/go/bin:$HOME/go/bin\"' | sudo tee /etc/profile.d/go.sh >/dev/null 2>&1"
       - "source /etc/profile.d/go.sh"
+      - "source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@latest"
     generates:
       - "/usr/local/go/**"
 
@@ -276,43 +273,356 @@ tasks:
       - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/software -package software> pkg/software/mocks_generated.go
 
   # Remote debug tasks for Docker container debugging
-  debug:remote:
+  debug:container:
     desc: "Setup debug environment and show available debug commands"
     deps:
-      - "debug:remote:setup"
+      - "debug:container:setup"
     cmds:
       - |
         echo "🐛 Debug environment ready!"
         echo ""
         echo "Available debug commands:"
-        echo "  task debug:remote:test -- [package]   # Debug tests (package required)"
-        echo "  task debug:remote:app -- [args...]    # Debug provisioner application"
-        echo "  task debug:remote:stop                # Stop debug container"
+        echo "  task debug:container:test -- [package]   # Debug tests (package required)"
+        echo "  task debug:container:app -- [args...]    # Debug provisioner application"
+        echo "  task debug:container:stop                # Stop debug container"
         echo ""
 
-  debug:remote:setup:
+  debug:container:setup:
     desc: "Setup Docker container for remote debugging"
     dir: build
     cmds:
       - "./debug-setup.sh"
 
-  debug:remote:test:
+  debug:container:test:
     desc: "Start remote test debug server in Docker container (specify package with -- ./pkg/name)"
     deps:
-      - "debug:remote:setup"
+      - "debug:container:setup"
     dir: build
     cmds:
       - "./debug-run.sh test {{.CLI_ARGS}}"
 
-  debug:remote:app:
+  debug:container:app:
     desc: "Start remote application debug server in Docker container (pass args with -- after command)"
     deps:
-      - "debug:remote:setup"
+      - "debug:container:setup"
     dir: build
     cmds:
       - "./debug-run.sh app {{.CLI_ARGS}}"
 
-  debug:remote:stop:
+  debug:container:stop:
     desc: "Stop remote debug container"
     cmds:
       - "docker stop solo-provisioner-debug 2>/dev/null || true"
+
+  # VM Debugging Tasks
+  debug:vm:
+    desc: "Show available VM debug commands"
+    cmds:
+      - |
+        echo "🐛 VM Debug environment ready!"
+        echo ""
+        echo "Available debug commands:"
+        echo "  task debug:vm:test -- [package]   # Debug tests on the VM (package required)"
+        echo "  task debug:vm:app -- [args...]    # Debug provisioner application on the VM"
+        echo ""
+
+  debug:vm:test:
+    desc: "Start remote test debug server on the VM (specify package with -- ./pkg/name)"
+    dir: scripts
+    deps:
+      - "vm:start"
+    cmds:
+      - "./debug-vm-run.sh test {{.CLI_ARGS}}"
+
+  debug:vm:app:
+    desc: "Start remote application debug server on the VM (pass args with -- after command)"
+    dir: scripts
+    deps:
+      - "vm:start"
+    cmds:
+      - "./debug-vm-run.sh app {{.CLI_ARGS}}"
+
+  vm:ip:
+    cmds:
+      - "{{.GET_VM_IP}} echo $(get_vm_ip)"
+
+  # VM Management Tasks
+  vm:install:
+    desc: "Install UTM if not already installed"
+    cmds:
+      - |
+        if ! command -v utmctl >/dev/null 2>&1; then
+          echo "Installing UTM via Homebrew..."
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "Error: Homebrew is required to install UTM"
+            echo "Please install Homebrew first: https://brew.sh"
+            exit 1
+          fi
+          brew install --cask utm
+        else
+          echo "UTM is already installed"
+        fi
+
+  vm:setup:
+    desc: "Download and setup the pre-built golden VM image"
+    deps:
+      - vm:install
+    cmds:
+      - task: vm:download:golden
+
+  vm:download:golden:
+    desc: "Download pre-built golden VM image from URL"
+    cmds:
+      - |
+        echo "Checking if golden VM already exists..."
+
+        # Check if the golden VM already exists
+        if utmctl list 2>/dev/null | grep -q "{{.VM_GOLDEN_NAME}}"; then
+          echo "✓ Golden VM already exists, skipping download."
+          exit 0
+        fi
+
+        echo "Golden VM not found, downloading from {{.VM_GOLDEN_IMAGE_URL}}..."
+
+        # Create temporary directory for download
+        TEMP_DIR=$(mktemp -d)
+        echo "Downloading to temporary directory: $TEMP_DIR"
+
+        # Download the golden image
+        curl -L -o "$TEMP_DIR/golden-image.utm" "{{.VM_GOLDEN_IMAGE_URL}}"
+
+        # Import the VM into UTM
+        echo "Importing VM into UTM..."
+        open -a UTM
+        sleep 5
+
+        # Copy the VM to UTM directory and rename
+        cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+
+        # Clean up
+        rm -rf "$TEMP_DIR"
+
+        echo "✓ Golden VM downloaded and imported successfully!"
+
+  vm:reset:
+    desc: "Clone the golden VM to create a working instance with passwordless SSH"
+    cmds:
+      - |
+        # Generate SSH key if it doesn't exist
+        if [ ! -f "{{.SSH_PRIVATE_KEY}}" ]; then
+          echo "Generating SSH key for VM access..."
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f {{.SSH_PRIVATE_KEY}} -N ""
+          echo "✓ SSH key generated at {{.SSH_PRIVATE_KEY}}"
+        fi
+
+        echo "Cloning golden VM to working instance..."
+
+        # Check if golden VM exists
+        if ! utmctl list 2>/dev/null | grep -q "{{.VM_GOLDEN_NAME}}"; then
+          echo "Error: Golden VM '{{.VM_GOLDEN_NAME}}' not found. Run 'task vm:setup' first."
+          exit 1
+        fi
+
+        # Stop and delete existing working VM if it exists
+        if utmctl list 2>/dev/null | grep -q "{{.VM_NAME}}"; then
+          echo "Stopping and removing existing working VM..."
+          utmctl stop "{{.VM_NAME}}" 2>/dev/null || true
+          sleep 2
+          utmctl delete "{{.VM_NAME}}" 2>/dev/null || true
+        fi
+
+        # Clone the golden VM
+        echo "Cloning '{{.VM_GOLDEN_NAME}}' to '{{.VM_NAME}}'..."
+        utmctl clone "{{.VM_GOLDEN_NAME}}" --name "{{.VM_NAME}}"
+
+        echo "✓ VM cloned. Now starting it for initial configuration..."
+      - task: vm:start
+      - task: vm:configure
+      - cmd: echo "✓ VM reset and configured successfully."
+
+  vm:start:
+    desc: "Start the working VM instance"
+    deps:
+      - vm:ensure-exists
+    cmds:
+      - utmctl start --hide "{{.VM_NAME}}"
+      - |
+        echo "Waiting for VM to boot (checking every 5 seconds)..."
+
+        # Poll for VM to be ready with timeout
+        MAX_ATTEMPTS=24  # 24 * 5 seconds = 2 minutes max wait
+        ATTEMPT=0
+        
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          ATTEMPT=$((ATTEMPT + 1))
+
+          # Check if VM is running
+          if utmctl list 2>/dev/null | grep "{{.VM_NAME}}" | grep -q "started"; then
+            echo "✓ VM is running, checking if network is ready..."
+
+            VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+            if [ -n "$VM_IP" ]; then
+              echo "✓ VM started successfully and network is ready at $VM_IP!"
+              break
+            else
+              echo "VM is running but network not ready yet (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+            fi
+          else
+            echo "VM is starting... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+          fi
+
+          if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+            sleep 5
+          fi
+        done
+
+        # Final check
+        if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+          echo "⚠️  VM may not be fully ready after 2 minutes, but continuing..."
+        fi
+
+  vm:configure:
+    internal: true
+    desc: "Configure the VM with SSH, sudo, and mounts"
+    cmds:
+      - |
+        echo "Configuring SSH access..."
+        PUBLIC_KEY=$(cat {{.SSH_PUBLIC_KEY}})
+        # This command is complex because it needs to run as the non-root user 'provisioner'
+        # to ensure the authorized_keys file has the correct ownership and permissions.
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/su -l {{.VM_USER}} -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo '✓ SSH key configured for user {{.VM_USER}}'"
+      - |
+        echo "Configuring passwordless sudo for user {{.VM_USER}}..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "echo '{{.VM_USER}} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/{{.VM_USER}} && chmod 440 /etc/sudoers.d/{{.VM_USER}} && echo '✓ Passwordless sudo configured for user {{.VM_USER}}'"
+      - |
+        echo "Mounting shared directory..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "sudo mkdir -p /mnt/solo-provisioner && echo 'share   /mnt/solo-provisioner   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | sudo tee -a /etc/fstab && sudo mount -a && sudo chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-provisioner && echo '✓ Shared directory mounted at /mnt/solo-provisioner'"
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        echo "Installing development tools (Git, Task, Go, Delve) via SSH at $VM_IP..."
+
+        # Use SSH for more reliable execution
+        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+          set -e
+          echo 'Installing git, curl, and build tools...'
+          sudo apt-get update -qq
+          sudo apt-get install -y git curl build-essential gcc libc6-dev
+
+          # Install Task
+          if ! command -v task >/dev/null 2>&1; then
+            echo 'Installing Task...'
+            curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | sudo -E bash
+            sudo apt-get update -qq
+            sudo apt-get install -y task
+          else
+            echo 'Task already installed, skipping...'
+          fi
+
+          cd /mnt/solo-provisioner
+          task install:go
+
+          echo '✓ Development tools installed successfully!'
+        "
+
+  vm:ensure-exists:
+    desc: "Ensure the working VM exists, creating it if necessary"
+    internal: true
+    cmds:
+      - echo "VM '{{.VM_NAME}}' not found, creating it from golden image..."
+      - task: vm:reset
+    status:
+      - utmctl list 2>/dev/null | grep -w "{{.VM_NAME}}" | grep -q -v "{{.VM_GOLDEN_NAME}}"
+
+  vm:stop:
+    desc: "Stop the working VM instance"
+    cmds:
+      - |
+        echo "Stopping VM '{{.VM_NAME}}'..."
+
+        if utmctl list 2>/dev/null | grep -q "{{.VM_NAME}}"; then
+          utmctl stop "{{.VM_NAME}}"
+          echo "✓ VM stopped successfully!"
+        else
+          echo "VM '{{.VM_NAME}}' not found or already stopped."
+        fi
+
+  vm:ssh:
+    desc: "SSH into the running VM"
+    silent: true
+    interactive: true
+    deps:
+      - "vm:start"
+    cmds:
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+
+        echo "Connecting to VM at $VM_IP..."
+        env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-provisioner 2>/dev/null || true; exec \$SHELL -l"
+
+  vm:test:unit:
+    desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
+    deps:
+      - "vm:start"
+    cmds:
+      - cmd: |
+          VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+
+          echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
+
+          # Check if VM is accessible
+          if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
+            echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
+            exit 1
+          fi
+
+          # Install dependencies and run tests on the VM with verbose output
+          ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+            source /etc/profile.d/go.sh 2>/dev/null || true
+            cd /mnt/solo-provisioner && task test:unit:verbose
+          "
+
+  vm:status:
+    desc: "Show status of all VMs"
+    cmds:
+      - |
+        echo "VM Status:"
+        echo "=========="
+        utmctl list 2>/dev/null || echo "UTM not available or no VMs found"
+
+  vm:clean:
+    desc: "Stop and delete the working VM instance"
+    cmds:
+      - task: vm:stop
+      - |
+        echo "Deleting working VM '{{.VM_NAME}}'..."
+
+        if utmctl list 2>/dev/null | grep -q "{{.VM_NAME}}"; then
+          utmctl delete "{{.VM_NAME}}"
+          echo "✓ Working VM deleted successfully!"
+        else
+          echo "Working VM not found or already deleted."
+        fi
+
+  vm:recreate:golden:
+    desc: "Re-download the golden VM image"
+    cmds:
+      - task: vm:delete:golden
+      - task: vm:setup
+
+  vm:delete:golden:
+    desc: "Delete the golden VM"
+    cmds:
+      - |
+        echo "Deleting golden VM..."
+
+        if utmctl list 2>/dev/null | grep -q "{{.VM_GOLDEN_NAME}}"; then
+          echo "Found golden VM, deleting..."
+          utmctl stop "{{.VM_GOLDEN_NAME}}" 2>/dev/null || true
+          sleep 2
+          utmctl delete "{{.VM_GOLDEN_NAME}}"
+          echo "✓ Golden VM deleted successfully!"
+        else
+          echo "Golden VM not found or already deleted."
+        fi

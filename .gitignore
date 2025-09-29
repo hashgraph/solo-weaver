@@ -361,3 +361,7 @@ test/scripts/gen
 ### Configuration Files ###
 config.yaml
 docs/playbooks/production/dir-structure.txt
+
+### SSH Keys for connecting to local development VM###
+.ssh/
+

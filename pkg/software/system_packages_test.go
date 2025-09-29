@@ -155,6 +155,7 @@ func TestPackageCreation(t *testing.T) {
 // Test package manager detection
 func TestPackageManagerDetection(t *testing.T) {
 	requireLinux(t)
+	requireRoot(t) // RefreshPackageIndex requires root privileges
 
 	pm, err := GetPackageManager()
 	require.NoError(t, err, "failed to get package manager")
