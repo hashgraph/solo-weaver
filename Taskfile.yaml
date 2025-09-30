@@ -587,7 +587,7 @@ tasks:
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
-            cd /mnt/solo-provisioner && task test:unit:verbose
+            cd /mnt/solo-provisioner && task test:unit
           "
 
   vm:status:
