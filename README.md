@@ -74,6 +74,7 @@ The VM debugging setup expects a UTM golden image with the following configurati
 - **Bridge Interface:** en0
 - **Shared Directory:** {project_root}
 - **Default Username/Password:** provisioner/provisioner
+- **Default Root Password:** `password`
 - **Required packages:** sudo package installed
 
 #### Debugging Steps

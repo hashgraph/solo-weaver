@@ -203,6 +203,7 @@ tasks:
       - "go test -race -cover -json -tags='!integration' ./internal/... ./pkg/... ./cmd/... | go-testreport -output unit-test-report.md -vars 'Title:Unit Test Report'"
 
   test:unit:verbose:
+    internal: true
     desc: "Run unit tests with verbose console output"
     deps:
       - "generate"
