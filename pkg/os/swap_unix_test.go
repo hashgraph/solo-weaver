@@ -1,22 +1,42 @@
+//go:build linux
+
 package os
 
 import (
 	"fmt"
-	"github.com/joomcode/errorx"
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/joomcode/errorx"
+	"github.com/stretchr/testify/require"
 )
+
+func sudo(cmd *exec.Cmd) *exec.Cmd {
+	if os.Geteuid() == 0 {
+		return cmd
+	}
+
+	// Prepend sudo to the command
+	sudoCmd := exec.Command("sudo", append([]string{cmd.Path}, cmd.Args[1:]...)...)
+	sudoCmd.Stdout = cmd.Stdout
+	sudoCmd.Stderr = cmd.Stderr
+	sudoCmd.Stdin = cmd.Stdin
+	return sudoCmd
+}
 
 func TestParseProcSwaps_Normal(t *testing.T) {
 	tmp, err := os.CreateTemp("", "swaps")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		err := os.Remove(tmp.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp file: %v", err)
+		}
+	}()
 	swapsFileOrig := swapsFile
 	defer func() { swapsFile = swapsFileOrig }()
 	swapsFile = tmp.Name()
@@ -25,7 +45,7 @@ func TestParseProcSwaps_Normal(t *testing.T) {
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
 	}
-	tmp.Close()
+	require.NoError(t, tmp.Close())
 
 	swaps, err := parseProcSwaps()
 	if err != nil {
@@ -41,12 +61,17 @@ func TestParseProcSwaps_EmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		err := os.Remove(tmp.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp file: %v", err)
+		}
+	}()
 	swapsFileOrig := swapsFile
 	defer func() { swapsFile = swapsFileOrig }()
 	swapsFile = tmp.Name()
 
-	tmp.Close()
+	require.NoError(t, tmp.Close())
 	swaps, err := parseProcSwaps()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -72,7 +97,12 @@ func TestParseFstabSwaps_Normal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		err := os.Remove(tmp.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp file: %v", err)
+		}
+	}()
 	fstabFileOrig := fstabFile
 	defer func() { fstabFile = fstabFileOrig }()
 	fstabFile = tmp.Name()
@@ -86,7 +116,7 @@ func TestParseFstabSwaps_Normal(t *testing.T) {
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
 	}
-	tmp.Close()
+	require.NoError(t, tmp.Close())
 
 	swaps, err := parseFstabSwaps()
 	if err != nil {
@@ -102,12 +132,17 @@ func TestParseFstabSwaps_EmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		err := os.Remove(tmp.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp file: %v", err)
+		}
+	}()
 	fstabFileOrig := fstabFile
 	defer func() { fstabFile = fstabFileOrig }()
 	fstabFile = tmp.Name()
 
-	tmp.Close()
+	require.NoError(t, tmp.Close())
 	swaps, err := parseFstabSwaps()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -136,7 +171,12 @@ func TestParseFstabSwaps_CommentAndShortLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		err := os.Remove(tmp.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp file: %v", err)
+		}
+	}()
 	fstabFileOrig := fstabFile
 	defer func() { fstabFile = fstabFileOrig }()
 	fstabFile = tmp.Name()
@@ -149,7 +189,7 @@ not-enough-fields
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
 	}
-	tmp.Close()
+	require.NoError(t, tmp.Close())
 
 	swaps, err := parseFstabSwaps()
 	if err != nil {
@@ -181,100 +221,76 @@ func TestIsActiveSwap(t *testing.T) {
 	}
 }
 
-func TestSwapOff(t *testing.T) {
-	origSysSwapOff := sysSwapOff
-	defer func() { sysSwapOff = origSysSwapOff }()
-
+func TestHandleSyscallErr(t *testing.T) {
 	tests := []struct {
-		name      string
-		mockErr   error
-		wantCode  int
-		wantInErr string
+		name         string
+		inputErr     error
+		wantMsg      string
+		wantType     *errorx.Type
+		wantCodeProp int
 	}{
-		{"Success", nil, SWAPOFF_EX_OK, ""},
-		{"EPERM", syscall.EPERM, SWAPOFF_EX_USAGE, "not super user"},
-		{"ENOMEM", syscall.ENOMEM, SWAPOFF_EX_ENOMEM, "cannot allocate memory"},
-		{"UnknownSyscall", syscall.Errno(123), SWAPOFF_EX_FAILURE, "unknown syscall error"},
-		{"NonSyscall", fmt.Errorf("other error"), SWAPOFF_EX_FAILURE, "non syscall error"},
+		{
+			name:         "EPERM",
+			inputErr:     syscall.EPERM,
+			wantMsg:      "not super user",
+			wantType:     ErrSwapNotSuperUser,
+			wantCodeProp: SWAP_EX_USAGE,
+		},
+		{
+			name:         "ENOMEM",
+			inputErr:     syscall.ENOMEM,
+			wantMsg:      "cannot allocate memory",
+			wantType:     ErrSwapOutOfMemory,
+			wantCodeProp: SWAP_EX_ENOMEM,
+		},
+		{
+			name:         "UnknownSyscall",
+			inputErr:     syscall.Errno(123),
+			wantMsg:      "unknown syscall error",
+			wantType:     ErrSwapUnknownSyscall,
+			wantCodeProp: SWAP_EX_FAILURE,
+		},
+		{
+			name:         "NonSyscall",
+			inputErr:     fmt.Errorf("other error"),
+			wantMsg:      "non syscall error",
+			wantType:     ErrNonSyscallError,
+			wantCodeProp: SWAP_EX_FAILURE,
+		},
+		{
+			name:     "NilError",
+			inputErr: nil,
+			wantMsg:  "",
+			wantType: nil,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sysSwapOff = func(path string) error { return tt.mockErr }
-			code, err := SwapOff("/dev/swap")
-			if code != tt.wantCode {
-				t.Errorf("got code %d, want %d", code, tt.wantCode)
+			path := "/dev/swap"
+			err := handleSyscallErr(tt.inputErr, path, "swapon")
+			if tt.inputErr == nil {
+				require.Nil(t, err)
+				return
 			}
-			if tt.wantInErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantInErr) {
-					t.Errorf("expected error containing %q, got %v", tt.wantInErr, err)
-				}
-
-				// Check error properties
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantMsg)
+			if tt.wantType != nil {
+				require.True(t, errorx.IsOfType(err, tt.wantType))
+			}
+			// Check PathProperty
+			if tt.wantType != nil {
 				pathProp, ok := errorx.ExtractProperty(err, PathProperty)
 				require.True(t, ok)
-				if pathProp != "/dev/swap" {
-					t.Errorf("expected PathProperty '/dev/swap', got %v", pathProp)
-				}
-
-				codeProp, ok := errorx.ExtractProperty(err, ReturnCodeProperty)
+				require.Equal(t, path, pathProp)
+				codeProp, ok := errorx.ExtractProperty(err, SysErrorCodeProperty)
 				require.True(t, ok)
-				if codeProp != tt.wantCode {
-					t.Errorf("expected ReturnCodeProperty %d, got %v", tt.wantCode, codeProp)
-				}
-			} else if err != nil {
-				t.Errorf("expected nil error, got %v", err)
+				require.Equal(t, tt.wantCodeProp, codeProp)
 			}
 		})
 	}
 }
 
-func TestSwapOn(t *testing.T) {
-	origSysSwapOn := sysSwapOn
-	defer func() { sysSwapOn = origSysSwapOn }()
-
-	tests := []struct {
-		name      string
-		mockErr   error
-		wantCode  int
-		wantInErr string
-	}{
-		{"Success", nil, SWAPOFF_EX_OK, ""},
-		{"EPERM", syscall.EPERM, SWAPOFF_EX_USAGE, "not super user"},
-		{"UnknownSyscall", syscall.Errno(123), SWAPOFF_EX_FAILURE, "unknown syscall error"},
-		{"NonSyscall", fmt.Errorf("other error"), SWAPOFF_EX_FAILURE, "non syscall error"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sysSwapOn = func(path string, flags uintptr) error { return tt.mockErr }
-			code, err := SwapOn("/dev/swap", 0)
-			if code != tt.wantCode {
-				t.Errorf("got code %d, want %d", code, tt.wantCode)
-			}
-			if tt.wantInErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantInErr) {
-					t.Errorf("expected error containing %q, got %v", tt.wantInErr, err)
-				}
-
-				// Check error properties
-				pathProp, ok := errorx.ExtractProperty(err, PathProperty)
-				require.True(t, ok)
-				if pathProp != "/dev/swap" {
-					t.Errorf("expected PathProperty '/dev/swap', got %v", pathProp)
-				}
-
-				codeProp, ok := errorx.ExtractProperty(err, ReturnCodeProperty)
-				require.True(t, ok)
-				if codeProp != tt.wantCode {
-					t.Errorf("expected ReturnCodeProperty %d, got %v", tt.wantCode, codeProp)
-				}
-			} else if err != nil {
-				t.Errorf("expected nil error, got %v", err)
-			}
-		})
-	}
-}
 func TestSwapOff_Integration(t *testing.T) {
 	h, err := os.UserHomeDir()
 	require.NoError(t, err)
@@ -288,7 +304,9 @@ func TestSwapOff_Integration(t *testing.T) {
 
 	swapFile := f.Name()
 
-	out, err := exec.Command("dd", "if=/dev/zero", fmt.Sprintf("of=%s", swapFile), "bs=1M", "count=16").CombinedOutput()
+	out, err := exec.
+		Command("dd", "if=/dev/zero", fmt.Sprintf("of=%s", swapFile), "bs=1M", "count=16").
+		CombinedOutput()
 	if err != nil {
 		t.Fatalf("dd failed: %v, output: %s", err, out)
 	}
@@ -299,24 +317,24 @@ func TestSwapOff_Integration(t *testing.T) {
 	}
 
 	// mkswap
-	if out, err := exec.Command("mkswap", swapFile).CombinedOutput(); err != nil {
+	if out, err := sudo(exec.Command("/usr/sbin/mkswap", swapFile)).CombinedOutput(); err != nil {
 		t.Fatalf("mkswap failed: %v, output: %s", err, out)
 	}
 
 	// swapon
-	out, err = exec.Command("swapon", swapFile).CombinedOutput()
+	out, err = sudo(exec.Command("/usr/sbin/swapon", swapFile)).CombinedOutput()
 	if err != nil {
 		t.Fatalf("swapon failed: %v, output: %s", err, out)
 	}
 
 	// Now call SwapOff
-	code, err := SwapOff(swapFile)
-	if code != SWAPOFF_EX_OK || err != nil {
-		t.Fatalf("SwapOff failed: code=%d, err=%v", code, err)
+	err = SwapOff(swapFile)
+	if err != nil {
+		t.Fatalf("SwapOff failed: %v", err)
 	}
 
 	// Confirm swap is off
-	out, err = exec.Command("swapon", "--show=NAME").CombinedOutput()
+	out, err = sudo(exec.Command("/usr/sbin/swapon", "--show=NAME")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("swapon --show failed: %v, output: %s", err, out)
 	}
@@ -327,7 +345,7 @@ func TestSwapOff_Integration(t *testing.T) {
 	}
 
 	// Cleanup: swapoff and remove file
-	_ = exec.Command("swapoff", swapFile).Run()
+	_ = sudo(exec.Command("/usr/sbin/swapoff", swapFile)).Run()
 	_ = os.Remove(swapFile)
 }
 
@@ -350,7 +368,7 @@ func TestSwapOn_Integration(t *testing.T) {
 	err = exec.Command("chmod", "0600", swapFile).Run()
 	require.NoError(t, err, "chmod failed")
 
-	out, err = exec.Command("mkswap", swapFile).CombinedOutput()
+	out, err = sudo(exec.Command("/usr/sbin/mkswap", swapFile)).CombinedOutput()
 	require.NoError(t, err, "mkswap failed: %s", out)
 
 	// Call sysSwapOn directly (integration with syscall)
@@ -358,12 +376,12 @@ func TestSwapOn_Integration(t *testing.T) {
 	require.NoError(t, err, "sysSwapOn failed")
 
 	// Confirm swap is active
-	out, err = exec.Command("swapon", "--show=NAME").CombinedOutput()
+	out, err = sudo(exec.Command("/usr/sbin/swapon", "--show=NAME")).CombinedOutput()
 	require.NoError(t, err, "swapon --show failed: %s", out)
 	require.Contains(t, string(out), swapFile, "swap file not active")
 
 	// Cleanup: swapoff and remove file
-	_ = exec.Command("swapoff", swapFile).Run()
+	_ = sudo(exec.Command("/usr/sbin/swapoff", swapFile)).Run()
 	_ = os.Remove(swapFile)
 }
 
@@ -386,16 +404,21 @@ func TestSwapOnAll_Integration(t *testing.T) {
 	err = exec.Command("chmod", "0600", swapFile).Run()
 	require.NoError(t, err, "chmod failed")
 
-	out, err = exec.Command("mkswap", swapFile).CombinedOutput()
+	out, err = exec.Command("/usr/sbin/mkswap", swapFile).CombinedOutput()
 	require.NoError(t, err, "mkswap failed: %s", out)
 
 	// Write a temporary fstab with the swap file entry
 	tmpFstab, err := os.CreateTemp("", "fstab")
 	require.NoError(t, err)
-	defer os.Remove(tmpFstab.Name())
+	defer func() {
+		err := os.Remove(tmpFstab.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp fstab: %v", err)
+		}
+	}()
 	_, err = tmpFstab.WriteString(swapFile + " none swap sw 0 0\n")
 	require.NoError(t, err)
-	tmpFstab.Close()
+	require.NoError(t, tmpFstab.Close())
 
 	// Patch fstabFile for the test
 	fstabFileOrig := fstabFile
@@ -403,16 +426,16 @@ func TestSwapOnAll_Integration(t *testing.T) {
 	fstabFile = tmpFstab.Name()
 
 	// Run SwapOnAll
-	code, err := SwapOnAll()
-	require.Equal(t, SWAPOFF_EX_OK, code, "SwapOnAll failed: %v", err)
+	err = SwapOnAll()
+	require.NoError(t, err)
 
 	// Confirm swap is active
-	out, err = exec.Command("swapon", "--show=NAME").CombinedOutput()
+	out, err = exec.Command("/usr/sbin/swapon", "--show=NAME").CombinedOutput()
 	require.NoError(t, err, "swapon --show failed: %s", out)
 	require.Contains(t, string(out), swapFile, "swap file not active")
 
 	// Cleanup
-	_ = exec.Command("swapoff", swapFile).Run()
+	_ = exec.Command("/usr/sbin/swapoff", swapFile).Run()
 }
 
 func TestSwapOffAll_Integration(t *testing.T) {
@@ -434,19 +457,24 @@ func TestSwapOffAll_Integration(t *testing.T) {
 	err = exec.Command("chmod", "0600", swapFile).Run()
 	require.NoError(t, err, "chmod failed")
 
-	out, err = exec.Command("mkswap", swapFile).CombinedOutput()
+	out, err = exec.Command("/usr/sbin/mkswap", swapFile).CombinedOutput()
 	require.NoError(t, err, "mkswap failed: %s", out)
 
-	out, err = exec.Command("swapon", swapFile).CombinedOutput()
+	out, err = exec.Command("/usr/sbin/swapon", swapFile).CombinedOutput()
 	require.NoError(t, err, "swapon failed: %s", out)
 
 	// Write a temporary fstab with the swap file entry
 	tmpFstab, err := os.CreateTemp("", "fstab")
 	require.NoError(t, err)
-	defer os.Remove(tmpFstab.Name())
+	defer func() {
+		err := os.Remove(tmpFstab.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp fstab: %v", err)
+		}
+	}()
 	_, err = tmpFstab.WriteString(swapFile + " none swap sw 0 0\n")
 	require.NoError(t, err)
-	tmpFstab.Close()
+	require.NoError(t, tmpFstab.Close())
 
 	// Patch fstabFile for the test
 	fstabFileOrig := fstabFile
@@ -454,14 +482,14 @@ func TestSwapOffAll_Integration(t *testing.T) {
 	fstabFile = tmpFstab.Name()
 
 	// Run SwapOffAll
-	code, err := SwapOffAll()
-	require.Equal(t, SWAPOFF_EX_OK, code, "SwapOffAll failed: %v", err)
+	err = SwapOffAll()
+	require.NoError(t, err)
 
 	// Confirm swap is off
-	out, err = exec.Command("swapon", "--show=NAME").CombinedOutput()
+	out, err = exec.Command("/usr/sbin/swapon", "--show=NAME").CombinedOutput()
 	require.NoError(t, err, "swapon --show failed: %s", out)
 	require.NotContains(t, string(out), swapFile, "swap file still active")
 
 	// Cleanup
-	_ = exec.Command("swapoff", swapFile).Run()
+	_ = exec.Command("/usr/sbin/swapoff", swapFile).Run()
 }
