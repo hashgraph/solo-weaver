@@ -26,6 +26,9 @@ const (
 
 	FSTAB_LOCATION      = "/etc/fstab"
 	PROC_SWAPS_LOCATION = "/proc/swaps"
+
+	swapCommentPrefix = "#" // prefix used when commenting out swap lines in fstab (to distinguish from user comments
+
 )
 
 var (
@@ -246,4 +249,97 @@ func SwapOnAll() error {
 	}
 
 	return nil
+}
+
+// DisableSwap comments out any swap entries in /etc/fstab to disable swap on reboot
+// It finds lines in /etc/fstab containing the word "swap" and comments them out by prefixing with #
+// It then calls SwapOffAll to immediately disable any active swap
+// On error, it returns a wrapped errorx error with details.
+func DisableSwap() error {
+	// Read original file
+	input, err := os.ReadFile(fstabFile)
+	if err != nil {
+		return ErrFileInaccessible.Wrap(err, "failed to read fstab file: %s", fstabFile)
+	}
+
+	info, err := os.Stat(fstabFile)
+	if err != nil {
+		return ErrFileInaccessible.Wrap(err, "failed to stat fstab file: %s", fstabFile)
+	}
+
+	// Process lines
+	var output []string
+	scanner := bufio.NewScanner(strings.NewReader(string(input)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, swapCommentPrefix) {
+			fields := strings.Fields(line)
+			for _, field := range fields {
+				if field == "swap" {
+					line = swapCommentPrefix + line
+					break
+				}
+			}
+		}
+		output = append(output, line)
+	}
+
+	if err = scanner.Err(); err != nil {
+		return ErrFileRead.Wrap(err, "failed to scan fstab file: %s", fstabFile)
+	}
+
+	// Write modified file
+	err = os.WriteFile(fstabFile, []byte(strings.Join(output, "\n")+"\n"), info.Mode())
+	if err != nil {
+		return ErrFileWrite.Wrap(err, "failed to write fstab file: %s", fstabFile)
+	}
+
+	return SwapOffAll()
+}
+
+// EnableSwap uncomments any swap entries in /etc/fstab to enable swap on reboot
+// It finds lines in /etc/fstab that are commented out and contain the word "swap" and uncomments them by removing the leading #
+// It then calls SwapOnAll to immediately enable any swap entries found in /etc/fstab
+// On error, it returns a wrapped errorx error with details.
+func EnableSwap() error {
+	// Read original file
+	input, err := os.ReadFile(fstabFile)
+	if err != nil {
+		return ErrFileInaccessible.Wrap(err, "failed to read fstab file: %s", fstabFile)
+	}
+
+	info, err := os.Stat(fstabFile)
+	if err != nil {
+		return ErrFileInaccessible.Wrap(err, "failed to stat fstab file: %s", fstabFile)
+	}
+
+	// Process lines
+	var output []string
+	scanner := bufio.NewScanner(strings.NewReader(string(input)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, swapCommentPrefix) {
+			uncommented := strings.TrimPrefix(line, swapCommentPrefix)
+			fields := strings.Fields(uncommented)
+			for _, field := range fields {
+				if field == "swap" {
+					line = uncommented
+					break
+				}
+			}
+		}
+		output = append(output, line)
+	}
+
+	if err = scanner.Err(); err != nil {
+		return ErrFileRead.Wrap(err, "failed to scan fstab file: %s", fstabFile)
+	}
+
+	// Write modified file
+	err = os.WriteFile(fstabFile, []byte(strings.Join(output, "\n")+"\n"), info.Mode())
+	if err != nil {
+		return ErrFileWrite.Wrap(err, "failed to write fstab file: %s", fstabFile)
+	}
+
+	return SwapOnAll()
 }

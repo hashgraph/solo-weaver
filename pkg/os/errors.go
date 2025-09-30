@@ -14,6 +14,7 @@ var (
 	ErrSwapNotSuperUser   = ErrNamespace.NewType("not_super_user", SwapErrTrait)
 	ErrFileInaccessible   = ErrNamespace.NewType("file_inaccessible", FileErrTrait)
 	ErrFileRead           = ErrNamespace.NewType("file_read_error", FileErrTrait)
+	ErrFileWrite          = ErrNamespace.NewType("file_write_error", FileErrTrait)
 
 	PathProperty         = errorx.RegisterProperty("path")
 	SysErrorCodeProperty = errorx.RegisterProperty("sys_error_code")

@@ -292,37 +292,14 @@ func TestHandleSyscallErr(t *testing.T) {
 }
 
 func TestSwapOff_Integration(t *testing.T) {
-	h, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	// swapfile needs to be in ext4 or swapoff fails with "swapoff: /path: Invalid argument"
-	f, err := os.CreateTemp(h, "swap-test-")
-	require.NoError(t, err)
+	f := makeTestSwapFile(t)
 	defer func() {
 		_ = os.Remove(f.Name())
 	}()
-
 	swapFile := f.Name()
 
-	out, err := exec.
-		Command("dd", "if=/dev/zero", fmt.Sprintf("of=%s", swapFile), "bs=1M", "count=16").
-		CombinedOutput()
-	if err != nil {
-		t.Fatalf("dd failed: %v, output: %s", err, out)
-	}
-
-	err = exec.Command("chmod", "0600", swapFile).Run()
-	if err != nil {
-		t.Fatalf("chmod failed: %v", err)
-	}
-
-	// mkswap
-	if out, err := sudo(exec.Command("/usr/sbin/mkswap", swapFile)).CombinedOutput(); err != nil {
-		t.Fatalf("mkswap failed: %v, output: %s", err, out)
-	}
-
 	// swapon
-	out, err = sudo(exec.Command("/usr/sbin/swapon", swapFile)).CombinedOutput()
+	out, err := sudo(exec.Command("/usr/sbin/swapon", swapFile)).CombinedOutput()
 	if err != nil {
 		t.Fatalf("swapon failed: %v, output: %s", err, out)
 	}
@@ -386,26 +363,11 @@ func TestSwapOn_Integration(t *testing.T) {
 }
 
 func TestSwapOnAll_Integration(t *testing.T) {
-	h, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	// swapfile needs to be in ext4 or swapoff fails with "swapoff: /path: Invalid argument"
-	f, err := os.CreateTemp(h, "swap-test-")
-	require.NoError(t, err)
+	f := makeTestSwapFile(t)
 	defer func() {
 		_ = os.Remove(f.Name())
 	}()
-
 	swapFile := f.Name()
-
-	out, err := exec.Command("dd", "if=/dev/zero", "of="+swapFile, "bs=1M", "count=16").CombinedOutput()
-	require.NoError(t, err, "dd failed: %s", out)
-
-	err = exec.Command("chmod", "0600", swapFile).Run()
-	require.NoError(t, err, "chmod failed")
-
-	out, err = exec.Command("/usr/sbin/mkswap", swapFile).CombinedOutput()
-	require.NoError(t, err, "mkswap failed: %s", out)
 
 	// Write a temporary fstab with the swap file entry
 	tmpFstab, err := os.CreateTemp("", "fstab")
@@ -430,7 +392,7 @@ func TestSwapOnAll_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Confirm swap is active
-	out, err = exec.Command("/usr/sbin/swapon", "--show=NAME").CombinedOutput()
+	out, err := exec.Command("/usr/sbin/swapon", "--show=NAME").CombinedOutput()
 	require.NoError(t, err, "swapon --show failed: %s", out)
 	require.Contains(t, string(out), swapFile, "swap file not active")
 
@@ -438,16 +400,13 @@ func TestSwapOnAll_Integration(t *testing.T) {
 	_ = exec.Command("/usr/sbin/swapoff", swapFile).Run()
 }
 
-func TestSwapOffAll_Integration(t *testing.T) {
+func makeTestSwapFile(t *testing.T) *os.File {
 	h, err := os.UserHomeDir()
 	require.NoError(t, err)
 
 	// swapfile needs to be in ext4 or swapoff fails with "swapoff: /path: Invalid argument"
 	f, err := os.CreateTemp(h, "swap-test-")
 	require.NoError(t, err)
-	defer func() {
-		_ = os.Remove(f.Name())
-	}()
 
 	swapFile := f.Name()
 
@@ -460,7 +419,17 @@ func TestSwapOffAll_Integration(t *testing.T) {
 	out, err = exec.Command("/usr/sbin/mkswap", swapFile).CombinedOutput()
 	require.NoError(t, err, "mkswap failed: %s", out)
 
-	out, err = exec.Command("/usr/sbin/swapon", swapFile).CombinedOutput()
+	return f
+}
+
+func TestSwapOffAll_Integration(t *testing.T) {
+	f := makeTestSwapFile(t)
+	defer func() {
+		_ = os.Remove(f.Name())
+	}()
+	swapFile := f.Name()
+
+	out, err := exec.Command("/usr/sbin/swapon", swapFile).CombinedOutput()
 	require.NoError(t, err, "swapon failed: %s", out)
 
 	// Write a temporary fstab with the swap file entry
@@ -492,4 +461,56 @@ func TestSwapOffAll_Integration(t *testing.T) {
 
 	// Cleanup
 	_ = exec.Command("/usr/sbin/swapoff", swapFile).Run()
+}
+
+func TestDisableSwap_EnableSwap_Integration(t *testing.T) {
+	f := makeTestSwapFile(t)
+	defer func() {
+		_ = os.Remove(f.Name())
+	}()
+	swapFile := f.Name()
+
+	tmpFstab, err := os.CreateTemp("", "fstab")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Remove(tmpFstab.Name())
+		if err != nil {
+			t.Errorf("failed to remove temp fstab: %v", err)
+		}
+	}()
+
+	fstabContent := swapFile + " none swap sw 0 0\n"
+	_, err = tmpFstab.WriteString(fstabContent)
+	require.NoError(t, err)
+	require.NoError(t, tmpFstab.Close())
+
+	// Patch FSTAB_LOCATION for the test
+	origFstabLocation := FSTAB_LOCATION
+	defer func() { fstabFile = origFstabLocation }()
+	fstabFile = tmpFstab.Name()
+
+	// Enable swap (should uncomment, but file is not commented yet)
+	err = EnableSwap()
+	require.NoError(t, err)
+
+	// Check fstab content is unchanged (no commented lines to uncomment)
+	content, err := os.ReadFile(tmpFstab.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), swapFile+" none swap sw 0 0")
+
+	// Disable swap (should comment out swap line)
+	err = DisableSwap()
+	require.NoError(t, err)
+
+	content, err = os.ReadFile(tmpFstab.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), swapCommentPrefix+swapFile+" none swap sw 0 0")
+
+	// Enable swap again (should uncomment swap line)
+	err = EnableSwap()
+	require.NoError(t, err)
+
+	content, err = os.ReadFile(tmpFstab.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), swapFile+" none swap sw 0 0")
 }
