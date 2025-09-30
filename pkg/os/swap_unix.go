@@ -172,7 +172,7 @@ func handleSyscallErr(err error, path string, operationName string) error {
 		}
 	}
 
-	rex = ErrNonSyscallError.Wrap(err, "%s: %s failed, non syscall error", path, operationName).
+	rex = ErrNonSyscall.Wrap(err, "%s: %s failed, non syscall error", path, operationName).
 		WithProperty(PathProperty, path).
 		WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
 

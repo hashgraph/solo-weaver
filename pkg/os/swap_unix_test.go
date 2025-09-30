@@ -254,7 +254,7 @@ func TestHandleSyscallErr(t *testing.T) {
 			name:         "NonSyscall",
 			inputErr:     fmt.Errorf("other error"),
 			wantMsg:      "non syscall error",
-			wantType:     ErrNonSyscallError,
+			wantType:     ErrNonSyscall,
 			wantCodeProp: SWAP_EX_FAILURE,
 		},
 		{
