@@ -200,15 +200,88 @@ func TestDistributionPackageManagers(t *testing.T) {
 func TestPackageNotFound(t *testing.T) {
 	requireLinux(t)
 
-	// Try to create a package with a non-existent name
-	pkg, err := NewPackageInstaller(WithPackageName("nonexistent-package-name-12345"))
-	require.NoError(t, err, "package creation should succeed even for non-existent packages")
+	// Test with a non-existent package
+	pkg, err := NewPackageInstaller(WithPackageName("this-package-does-not-exist"))
+	require.NoError(t, err, "should be able to create installer for non-existent package")
+	require.False(t, pkg.IsInstalled(), "non-existent package should not be installed")
+}
 
-	// Should fail when trying to get info for non-existent package
-	info, err := pkg.Info()
-	if err == nil {
-		t.Logf("Unexpected success getting info for non-existent package: %+v", info)
-	} else {
-		t.Logf("Expected error for non-existent package: %v", err)
+// Test AutoRemove functionality
+func TestAutoRemove(t *testing.T) {
+	requireLinux(t)
+	requireRoot(t) // AutoRemove requires root privileges
+
+	dist := getDistribution(t)
+
+	// AutoRemove is only supported on apt-based systems
+	if dist != Ubuntu && dist != Debian {
+		t.Skipf("AutoRemove is only supported on apt-based systems, current distribution: %s", dist)
 	}
+
+	// Test that AutoRemove doesn't fail
+	err := AutoRemove()
+	require.NoError(t, err, "AutoRemove should not fail")
+}
+
+// Test AutoRemove on non-apt systems
+func TestAutoRemoveNonAptSystem(t *testing.T) {
+	requireLinux(t)
+	requireRoot(t)
+
+	dist := getDistribution(t)
+
+	// Only run this test on non-apt systems
+	if dist == Ubuntu || dist == Debian {
+		t.Skip("This test is for non-apt systems only")
+	}
+
+	// AutoRemove should fail on non-apt systems
+	err := AutoRemove()
+	require.Error(t, err, "AutoRemove should fail on non-apt systems")
+	require.Contains(t, err.Error(), "autoremove is only supported for apt package manager")
+}
+
+// Test AutoRemove without root privileges
+func TestAutoRemoveWithoutRoot(t *testing.T) {
+	requireLinux(t)
+
+	if os.Geteuid() == 0 {
+		t.Skip("This test requires non-root user")
+	}
+
+	dist := getDistribution(t)
+
+	// Only test on apt-based systems
+	if dist != Ubuntu && dist != Debian {
+		t.Skipf("AutoRemove is only supported on apt-based systems, current distribution: %s", dist)
+	}
+
+	// AutoRemove should fail without root privileges
+	err := AutoRemove()
+	require.Error(t, err, "AutoRemove should fail without root privileges")
+}
+
+// Test AutoRemove integration with package manager
+func TestAutoRemoveWithPackageManager(t *testing.T) {
+	requireLinux(t)
+	requireRoot(t)
+
+	dist := getDistribution(t)
+
+	// Only test on apt-based systems
+	if dist != Ubuntu && dist != Debian {
+		t.Skipf("AutoRemove is only supported on apt-based systems, current distribution: %s", dist)
+	}
+
+	// Get package manager and verify it's apt
+	pm, err := GetPackageManager()
+	require.NoError(t, err, "failed to get package manager")
+	require.NotNil(t, pm, "package manager should not be nil")
+
+	// Test that we can call AutoRemove multiple times without issues
+	err = AutoRemove()
+	require.NoError(t, err, "first AutoRemove should not fail")
+
+	err = AutoRemove()
+	require.NoError(t, err, "second AutoRemove should not fail")
 }
