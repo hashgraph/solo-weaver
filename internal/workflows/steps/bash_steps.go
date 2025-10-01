@@ -2,12 +2,13 @@ package steps
 
 import (
 	"fmt"
+	"os"
+	"runtime"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
 	"golang.hedera.com/solo-provisioner/internal/core"
-	"os"
-	"runtime"
 )
 
 // TODO: Move these constants to the appropriate step files once the implementation is done
@@ -111,14 +112,14 @@ type bashScriptStep struct {
 }
 
 func initBashScriptSteps() bashScriptStep {
-	machineIp, err := RunCmdOutput(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
+	machineIp, err := runCmd(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
 	if err != nil {
 		machineIp = "0.0.0.0"
 		logx.As().Warn().Err(err).Str("machine_ip", machineIp).
 			Msg("failed to get machine IP, defaulting to 0.0.0.0")
 	}
 
-	hostname, err := RunCmdOutput("hostname")
+	hostname, err := runCmd("hostname")
 	if err != nil {
 		hostname = "localhost"
 		logx.As().Warn().Err(err).Str("localhost", hostname).

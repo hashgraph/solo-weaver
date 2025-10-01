@@ -10,7 +10,7 @@ const (
 
 var (
 	ProvisionerTempDir = "/tmp/provisioner"
-	ProvisionerHomeDir = "/opt/solo/provisioner"
+	ProvisionerHomeDir = "/opt/provisioner"
 	BackupDir          = path.Join(ProvisionerHomeDir, "backup")
 	SandboxDir         = path.Join(ProvisionerHomeDir, "sandbox")
 	SandboxBinDir      = path.Join(SandboxDir, "bin")
