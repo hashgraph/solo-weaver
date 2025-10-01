@@ -7,7 +7,8 @@ set -e
 VM_NAME="solo-provisioner-debian"
 VM_USER="${VM_USER:-provisioner}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the absolute path to the project root (parent of scripts directory)
+SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:-${SCRIPT_DIR}/../.ssh/id_rsa_vm}"
 
 if [ -z "$VM_HOST" ]; then
@@ -59,11 +60,11 @@ echo "✅ Port 2345 cleanup completed"
 DLV_COMMAND="cd $VM_PROJECT_PATH && source /etc/profile.d/go.sh && unset GOFLAGS && export CGO_ENABLED=0 && "
 if [ "$COMMAND" == "test" ]; then
     # Build test binary manually with debug symbols and use dlv exec to support breakpoints
-    DLV_COMMAND+="go test -c -gcflags='all=-N -l' -o /tmp/test-binary ${ARGS[0]} && ~/go/bin/dlv exec /tmp/test-binary --listen=:2345 --headless=true --api-version=2 --accept-multiclient --continue=false -- -test.v"
+    DLV_COMMAND+="go test -c -gcflags='all=-N -l' -o /tmp/test-binary ${ARGS[0]} && sudo ~/go/bin/dlv exec /tmp/test-binary --listen=:2345 --headless=true --api-version=2 --accept-multiclient --continue=false -- -test.v"
 elif [ "$COMMAND" == "app" ]; then
     # Use exec mode instead of debug mode to avoid runtime issues
     # First build the binary, then run it with dlv exec
-    DLV_COMMAND+="go build -ldflags='-compressdwarf=false' -o /tmp/provisioner-debug ./cmd/provisioner && ~/go/bin/dlv exec /tmp/provisioner-debug --listen=:2345 --headless=true --api-version=2 --accept-multiclient -- ${ARGS[@]}"
+    DLV_COMMAND+="go build -ldflags='-compressdwarf=false' -o /tmp/provisioner-debug ./cmd/provisioner && sudo ~/go/bin/dlv exec /tmp/provisioner-debug --listen=:2345 --headless=true --api-version=2 --accept-multiclient -- ${ARGS[@]}"
 else
     echo "Invalid command: $COMMAND. Use 'test' or 'app'."
     exit 1
