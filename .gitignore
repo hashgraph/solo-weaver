@@ -254,7 +254,12 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 # Entire IDEA project folder
-.idea/
+.idea/*
+
+### IDE Configuration Files ###
+!.idea/sshConfigs.xml
+!.idea/remote-targets.xml
+
 
 ### Linux template
 *~
@@ -364,4 +369,3 @@ docs/playbooks/production/dir-structure.txt
 
 ### SSH Keys for connecting to local development VM###
 .ssh/
-
