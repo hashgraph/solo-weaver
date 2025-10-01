@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -93,6 +94,12 @@ func TestParseProcSwaps_FileNotFound(t *testing.T) {
 }
 
 func TestParseFstabSwaps_Normal(t *testing.T) {
+	f := makeTestSwapFile(t)
+	defer func() {
+		_ = os.Remove(f.Name())
+	}()
+	swapFile := f.Name()
+
 	tmp, err := os.CreateTemp("", "fstab")
 	if err != nil {
 		t.Fatal(err)
@@ -107,12 +114,12 @@ func TestParseFstabSwaps_Normal(t *testing.T) {
 	defer func() { fstabFile = fstabFileOrig }()
 	fstabFile = tmp.Name()
 
-	content := `
+	content := fmt.Sprintf(`
 # comment line
 /dev/sda1   none   swap   sw   0   0
 /dev/sda2   /mnt   ext4   defaults   0   0
-/swapfile   none   swap   sw   0   0
-`
+%s    none   swap   sw   0   0
+`, swapFile)
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +129,7 @@ func TestParseFstabSwaps_Normal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(swaps) != 2 || swaps[0] != "/dev/sda1" || swaps[1] != "/swapfile" {
+	if len(swaps) != 2 || swaps[0] != "/dev/sda1" || swaps[1] != swapFile {
 		t.Errorf("unexpected swaps: %v", swaps)
 	}
 }
@@ -504,7 +511,7 @@ func TestDisableSwap_EnableSwap_Integration(t *testing.T) {
 
 	content, err = os.ReadFile(tmpFstab.Name())
 	require.NoError(t, err)
-	require.Contains(t, string(content), swapCommentPrefix+swapFile+" none swap sw 0 0")
+	require.Contains(t, string(content), SwapCommentPrefix+swapFile+" none swap sw 0 0")
 
 	// Enable swap again (should uncomment swap line)
 	err = EnableSwap()
@@ -513,4 +520,159 @@ func TestDisableSwap_EnableSwap_Integration(t *testing.T) {
 	content, err = os.ReadFile(tmpFstab.Name())
 	require.NoError(t, err)
 	require.Contains(t, string(content), swapFile+" none swap sw 0 0")
+}
+
+func TestUpdateFstabFile(t *testing.T) {
+	// make a temp fstab file for testing
+	fstabFileOrig := fstabFile
+	defer func() {
+		fstabFile = fstabFileOrig
+	}()
+
+	// Define test lines
+	swapLine := "UUID=123 none swap sw 0 0"
+	commentedSwapLine := "#UUID=123 none swap sw 0 0"
+	unrelatedComment := "# swap was on /dev/vda4 during installation"
+	unrelatedLine := "/dev/sda1 / ext4 defaults 0 1"
+
+	cases := []struct {
+		name     string
+		input    []string
+		comment  bool
+		expected []string
+	}{
+		{
+			name: "Uncomment swap line",
+			input: []string{
+				commentedSwapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+			comment: false,
+			expected: []string{
+				swapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+		},
+		{
+			name: "Comment swap line",
+			input: []string{
+				swapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+			comment: true,
+			expected: []string{
+				commentedSwapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+		},
+		{
+			name: "Ignore unrelated comment with swap word",
+			input: []string{
+				unrelatedComment,
+				swapLine,
+			},
+			comment: true,
+			expected: []string{
+				unrelatedComment,
+				commentedSwapLine,
+			},
+		},
+		{
+			name: "Commented non-swap line remains unchanged",
+			input: []string{
+				"#/dev/sda1 / ext4 defaults 0 1",
+				"UUID=123 none swap sw 0 0",
+			},
+			comment: true,
+			expected: []string{
+				"#/dev/sda1 / ext4 defaults 0 1",
+				"#UUID=123 none swap sw 0 0",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp, err := os.CreateTemp("", "fstab-test")
+			require.NoError(t, err)
+			defer os.Remove(tmp.Name())
+
+			// Write input lines to temp file
+			require.NoError(t, os.WriteFile(tmp.Name(), []byte(strings.Join(tc.input, "\n")+"\n"), 0600))
+
+			fstabFile = tmp.Name()
+			if tc.comment {
+				err = updateFstabFile(commentOutSwapLine)
+			} else {
+				err = updateFstabFile(uncommentSwapLine)
+			}
+
+			require.NoError(t, err)
+
+			// Read back and compare
+			content, err := os.ReadFile(fstabFile)
+			require.NoError(t, err)
+			lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+			require.Equal(t, tc.expected, lines)
+		})
+	}
+}
+
+func TestResolveSpec_Integration(t *testing.T) {
+	h, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	tmpDir, err := os.MkdirTemp(h, "resolve-spec-test-")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	byUUIDDir := tmpDir + "/by-uuid"
+	byLabelDir := tmpDir + "/by-label"
+	require.NoError(t, os.Mkdir(byUUIDDir, 0755))
+	require.NoError(t, os.Mkdir(byLabelDir, 0755))
+
+	uuid := "test-uuid-123"
+	label := "test-label-abc"
+	uuidPath := byUUIDDir + "/" + uuid
+	labelPath := byLabelDir + "/" + label
+	require.NoError(t, os.WriteFile(uuidPath, []byte{}, 0600))
+	require.NoError(t, os.WriteFile(labelPath, []byte{}, 0600))
+
+	// Create dummy device files
+	devFile := tmpDir + "/devtest"
+	require.NoError(t, os.WriteFile(devFile, []byte{}, 0600))
+	devFile2 := tmpDir + "/devtest2"
+
+	require.NoError(t, os.Symlink(devFile, devFile2))
+
+	// Set the lookup path variables for the test
+	origUUIDPath := uuidLookupDir
+	origLabelPath := labelLookupDir
+	uuidLookupDir = byUUIDDir
+	labelLookupDir = byLabelDir
+	defer func() {
+		uuidLookupDir = origUUIDPath
+		labelLookupDir = origLabelPath
+	}()
+
+	res, err := resolveSpec("UUID=" + uuid)
+	require.NoError(t, err)
+	require.Equal(t, uuidPath, res)
+
+	res, err = resolveSpec("LABEL=" + label)
+	require.NoError(t, err)
+	require.Equal(t, labelPath, res)
+
+	res, err = resolveSpec(devFile2)
+	require.NoError(t, err)
+	require.Equal(t, devFile, res)
+
+	_, err = resolveSpec("UUID=doesnotexist")
+	require.Error(t, err)
+	_, err = resolveSpec("LABEL=doesnotexist")
+	require.Error(t, err)
 }
