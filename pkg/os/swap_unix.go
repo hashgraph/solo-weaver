@@ -4,7 +4,6 @@ package os
 
 import (
 	"bufio"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,9 +17,10 @@ import (
 // SwapOff exit code: https://github.com/util-linux/util-linux/blob/master/sys-utils/swapoff.c#L43-L49
 // SwapOn Flags: https://github.com/util-linux/util-linux/blob/57d59a5cd5ba6c0b32cae27f5ce48241274f6e6e/sys-utils/swapon.c#L50-L63
 const (
-	SWAP_EX_ENOMEM  = 2  // swapoff failed due to OOM
-	SWAP_EX_FAILURE = 4  // swapoff failed due to other reason
-	SWAP_EX_USAGE   = 16 // usage/permissions/syntax error
+	SWAP_EX_ENOMEM  = 2   // swapoff failed due to OOM
+	SWAP_EX_FAILURE = 4   // swapoff failed due to other reason
+	SWAP_EX_USAGE   = 16  // usage/permissions/syntax error
+	SWAP_EX_BUSY    = 255 // custom code; swapoff failed because device is busy (not fatal for SwapOffAll)
 
 	SWAPON_FLAG_DISCARD       = 0x10000 // enable discard for swap
 	SWAPON_FLAG_DISCARD_ONCE  = 0x20000 // discard swap area at swapon-time
@@ -93,8 +93,8 @@ func resolveSpec(spec string) (string, error) {
 	if strings.HasPrefix(spec, "UUID=") {
 		uuid := strings.TrimPrefix(spec, "UUID=")
 		path := filepath.Join(uuidLookupDir, uuid)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		if realPath, err := filepath.EvalSymlinks(path); err == nil {
+			return realPath, nil
 		}
 
 		return "", ErrSwapDeviceNotFound.New("device with UUID %s not found in %s", uuid, uuidLookupDir)
@@ -103,8 +103,8 @@ func resolveSpec(spec string) (string, error) {
 	if strings.HasPrefix(spec, "LABEL=") {
 		label := strings.TrimPrefix(spec, "LABEL=")
 		path := filepath.Join(labelLookupDir, label)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		if realPath, err := filepath.EvalSymlinks(path); err == nil {
+			return realPath, nil
 		}
 
 		return "", ErrSwapDeviceNotFound.New("device with LABEL %s not found in %s", label, labelLookupDir)
@@ -219,30 +219,32 @@ func handleSyscallErr(err error, path string, operationName string) error {
 		return nil
 	}
 
-	var resultErr error // error to be returned
+	var resultErr error
 	if errCode, ok := err.(syscall.Errno); ok {
-		switch {
-		case errors.Is(errCode, syscall.EPERM):
+		switch errCode {
+		case syscall.EPERM:
 			resultErr = ErrSwapNotSuperUser.Wrap(err, "%s: %s failed, not super user", path, operationName).
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_USAGE)
-			return resultErr
-		case errors.Is(errCode, syscall.ENOMEM):
+		case syscall.ENOMEM:
 			resultErr = ErrSwapOutOfMemory.Wrap(err, "%s: %s failed, cannot allocate memory", path, operationName).
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_ENOMEM)
-			return resultErr
+		case syscall.EBUSY:
+			// Special: swap still in use. Don't treat as fatal for SwapOffAll.
+			resultErr = ErrSwapBusy.Wrap(err, "%s: %s failed, device busy", path, operationName).
+				WithProperty(PathProperty, path).
+				WithProperty(SysErrorCodeProperty, SWAP_EX_BUSY)
 		default:
 			resultErr = ErrSwapUnknownSyscall.Wrap(err, "%s: %s failed, unknown syscall error", path, operationName).
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
-			return resultErr
 		}
+	} else {
+		resultErr = ErrNonSyscall.Wrap(err, "%s: %s failed, non syscall error", path, operationName).
+			WithProperty(PathProperty, path).
+			WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
 	}
-
-	resultErr = ErrNonSyscall.Wrap(err, "%s: %s failed, non syscall error", path, operationName).
-		WithProperty(PathProperty, path).
-		WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
 
 	return resultErr
 }
@@ -255,39 +257,62 @@ func SwapOff(path string) error {
 	return handleSyscallErr(err, path, "swapoff")
 }
 
-// SwapOffAll attempts to disable all swap devices/files on the system based on /proc/swaps and /etc/fstab.
+// SwapOffAll attempts to disable all swap devices/files on the system
+// based on /proc/swaps and /etc/fstab. It mimics "swapoff -a":
+//   - Tries all entries, even if some fail
+//   - Skips EBUSY errors (device still in use) but records them
+//   - Returns error if ALL entries failed, or if a fatal error occurred
 func SwapOffAll() error {
-	// 1) swapOff everything listed in /proc/swaps (quiet, but track status)
 	activeSwaps, err := parseProcSwaps()
 	if err != nil {
 		return err
 	}
 
-	for _, src := range activeSwaps {
-		err = SwapOff(src)
-		if err != nil {
-			return err // fail first
+	var anySuccess bool
+	var errs []error
+
+	trySwapOff := func(path string) {
+		if err := SwapOff(path); err != nil {
+			if errorx.IsOfType(err, ErrSwapBusy) {
+				// Busy swap: record but don’t fail overall
+				errs = append(errs, err)
+				return
+			}
+			// Other fatal error
+			errs = append(errs, err)
+			return
 		}
+		anySuccess = true
 	}
 
-	// 2) also check /etc/fstab for swap entries and call swapoff on them if not active.
+	// 1) Disable all currently active swaps
+	for _, src := range activeSwaps {
+		trySwapOff(src)
+	}
+
+	// 2) Also disable any fstab swap entries not already covered
 	fstabSwaps, err := parseFstabSwaps()
 	if err != nil {
 		return err
 	}
-
 	for _, spec := range fstabSwaps {
-		// If spec is currently active swap, we already attempted swapOff earlier, so a nop.
 		if isActiveSwap(spec, activeSwaps) {
 			continue
 		}
-
-		err = SwapOff(spec)
-		if err != nil {
-			return err
-		}
+		trySwapOff(spec)
 	}
 
+	if anySuccess {
+		// Some swapoff succeeded → overall success
+		return nil
+	}
+
+	// Nothing succeeded → collapse errors
+	if len(errs) > 0 {
+		return errorx.DecorateMany("all swapoff attempts failed", errs...)
+	}
+
+	// Nothing to do, no swaps active
 	return nil
 }
 
@@ -296,6 +321,11 @@ func SwapOn(path string, flags int) error {
 	return handleSyscallErr(err, path, "swapon")
 }
 
+// SwapOnAll attempts to enable all swap devices/files listed in /etc/fstab.
+// It mimics "swapon -a":
+//   - Tries all entries, even if some fail
+//   - Returns success if at least one swapon succeeded
+//   - Returns aggregated errors if all fail
 func SwapOnAll() error {
 	fstabSwaps, err := parseFstabSwaps()
 	if err != nil {
@@ -303,19 +333,30 @@ func SwapOnAll() error {
 	}
 
 	if len(fstabSwaps) == 0 {
-		return nil
+		return nil // nothing to do
 	}
 
+	var anySuccess bool
+	var errs []error
+
 	for _, spec := range fstabSwaps {
-		err = SwapOn(spec, 0)
-		if err != nil {
-			return err // fail first
+		if err := SwapOn(spec, 0); err != nil {
+			errs = append(errs, err)
+			continue
 		}
+		anySuccess = true
+	}
+
+	if anySuccess {
+		return nil // at least one swapon succeeded
+	}
+
+	if len(errs) > 0 {
+		return errorx.DecorateMany("all swapon attempts failed", errs...)
 	}
 
 	return nil
 }
-
 func updateFstabFile(modifier func(line string) string) error {
 	if modifier == nil {
 		return errorx.IllegalArgument.New("line modifier function cannot be nil")

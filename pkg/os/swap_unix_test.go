@@ -251,6 +251,13 @@ func TestHandleSyscallErr(t *testing.T) {
 			wantCodeProp: SWAP_EX_ENOMEM,
 		},
 		{
+			name:         "EBUSY",
+			inputErr:     syscall.EBUSY,
+			wantMsg:      "device busy",
+			wantType:     ErrSwapBusy,
+			wantCodeProp: SWAP_EX_BUSY,
+		},
+		{
 			name:         "UnknownSyscall",
 			inputErr:     syscall.Errno(123),
 			wantMsg:      "unknown syscall error",
@@ -305,6 +312,9 @@ func TestSwapOff_Integration(t *testing.T) {
 	}()
 	swapFile := f.Name()
 
+	err := sudo(exec.Command("/usr/sbin/swapoff", "-a")).Run()
+	require.NoError(t, err)
+
 	// swapon
 	out, err := sudo(exec.Command("/usr/sbin/swapon", swapFile)).CombinedOutput()
 	if err != nil {
@@ -322,10 +332,8 @@ func TestSwapOff_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("swapon --show failed: %v, output: %s", err, out)
 	}
-	if string(out) != "NAME\n" && !os.IsNotExist(err) {
-		if string(out) != "" && !os.IsNotExist(err) && string(out) != "NAME\n" {
-			t.Errorf("swap file still active: %s", out)
-		}
+	if strings.Contains(string(out), "swap-test") {
+		t.Errorf("swap file still active after SwapOff: %s", out)
 	}
 
 	// Cleanup: swapoff and remove file

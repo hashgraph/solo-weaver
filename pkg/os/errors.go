@@ -8,6 +8,7 @@ var (
 	SwapErrTrait = errorx.RegisterTrait("swap_error")
 	FileErrTrait = errorx.RegisterTrait("file_error")
 
+	ErrSwapBusy           = ErrNamespace.NewType("device_busy", SwapErrTrait)
 	ErrSwapOutOfMemory    = ErrNamespace.NewType("out_of_memory", SwapErrTrait)
 	ErrSwapUnknownSyscall = ErrNamespace.NewType("unknown_syscall", SwapErrTrait)
 	ErrNonSyscall         = ErrNamespace.NewType("non_syscall", SwapErrTrait)
