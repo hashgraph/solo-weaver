@@ -23,6 +23,20 @@ func RefreshSystemPackageIndex() automa.Builder {
 		}))
 }
 
+// AutoRemoveOrphanedPackages removes orphaned dependencies and frees disk space.
+// Essentially this is equivalent to running `apt autoremove -y` on Debian-based systems
+func AutoRemoveOrphanedPackages() automa.Builder {
+	return automa.NewStepBuilder("autoremove-orphaned-packages",
+		automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
+			err := software.AutoRemove()
+			if err != nil {
+				return nil, err
+			}
+			logx.As().Info().Msg("Orphaned packages removed successfully")
+			return automa.StepSuccessReport("autoremove-orphaned-packages"), nil
+		}))
+}
+
 // InstallSystemPackage installs a system package using the provided installer function.
 // The installer function should return a software.Package instance that knows how to install the package.
 // If the package is already installed, it will skip the installation.

@@ -46,6 +46,29 @@ func RefreshPackageIndex() error {
 	return pm.Refresh(&manager.Options{DryRun: false, Interactive: false, AssumeYes: true})
 }
 
+// AutoRemove removes orphaned dependencies to free disk space
+// This is equivalent to running `apt autoremove -y` on Debian-based systems
+func AutoRemove() error {
+	pm, err := GetPackageManager()
+	if err != nil {
+		return err
+	}
+
+	// Check if this is an apt package manager
+	aptPM, ok := pm.(*apt.PackageManager)
+	if !ok {
+		return errorx.IllegalState.New("autoremove is only supported for apt package manager")
+	}
+
+	// Use the AutoRemove method from the apt package manager
+	_, err = aptPM.AutoRemove(&manager.Options{DryRun: false, Interactive: false, AssumeYes: true})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to autoremove orphaned packages")
+	}
+
+	return nil
+}
+
 type option func(*PackageInstaller)
 
 // PackageInstaller is the default implementation of the Package interface that uses standard system package
