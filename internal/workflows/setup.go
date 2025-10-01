@@ -22,7 +22,7 @@ func NewNodeSetupWorkflow(nodeType string) automa.Builder {
 		steps.InstallSystemPackage("socat", software.NewSocat),
 		steps.InstallSystemPackage("nftables", software.NewNftables),
 		//steps.InstallKernelModules(),
-		//steps.RemoveExistingContainerd(),
+		steps.RemoveSystemPackage("containerd", software.NewContainerd),
 		//steps.RemoveUnusedSystemPackages(),
 	)
 }
