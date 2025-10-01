@@ -126,6 +126,10 @@ func TestNftablesInstallUninstall(t *testing.T) {
 	testPackageInstallUninstall(t, NewNftables, "nftables")
 }
 
+func TestContainerdInstallUninstall(t *testing.T) {
+	testPackageInstallUninstall(t, NewContainerd, "containerd")
+}
+
 // Test package creation without installation
 func TestPackageCreation(t *testing.T) {
 	requireLinux(t) // This will skip the test on non-Linux systems
@@ -140,6 +144,7 @@ func TestPackageCreation(t *testing.T) {
 		{"socat", NewSocat},
 		{"ebtables", NewEbtables},
 		{"nftables", NewNftables},
+		{"containerd", NewContainerd},
 	}
 
 	for _, pkg := range packages {

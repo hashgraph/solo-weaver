@@ -30,3 +30,7 @@ func NewEbtables() (Package, error) {
 func NewNftables() (Package, error) {
 	return NewPackageInstaller(WithPackageName("nftables"), WithPackageOptions(manager.Options{AssumeYes: true}))
 }
+
+func NewContainerd() (Package, error) {
+	return NewPackageInstaller(WithPackageName("containerd"), WithPackageOptions(manager.Options{AssumeYes: true}))
+}
