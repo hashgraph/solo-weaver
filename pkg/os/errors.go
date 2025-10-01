@@ -13,6 +13,7 @@ var (
 	ErrNonSyscall         = ErrNamespace.NewType("non_syscall", SwapErrTrait)
 	ErrSwapNotSuperUser   = ErrNamespace.NewType("not_super_user", SwapErrTrait)
 	ErrFileInaccessible   = ErrNamespace.NewType("file_inaccessible", FileErrTrait)
+	ErrSwapDeviceNotFound = ErrNamespace.NewType("device_not_found", SwapErrTrait)
 	ErrFileRead           = ErrNamespace.NewType("file_read_error", FileErrTrait)
 	ErrFileWrite          = ErrNamespace.NewType("file_write_error", FileErrTrait)
 

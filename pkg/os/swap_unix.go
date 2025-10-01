@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -25,22 +26,30 @@ const (
 	SWAPON_FLAG_DISCARD_ONCE  = 0x20000 // discard swap area at swapon-time
 	SWAPON_FLAG_DISCARD_PAGES = 0x40000 // discard page-clusters after use
 
-	ETC_LOCATION        = "/etc"
-	FSTAB_LOCATION      = "/etc/fstab"
-	PROC_SWAPS_LOCATION = "/proc/swaps"
+	ETC_LOCATION           = "/etc"
+	FSTAB_LOCATION         = "/etc/fstab"
+	PROC_SWAPS_LOCATION    = "/proc/swaps"
+	DISK_BY_UUID_LOCATION  = "/dev/disk/by-uuid"
+	DISK_BY_LABEL_LOCATION = "/dev/disk/by-label"
 
-	SwapCommentPrefix = "#" // prefix used when commenting out swap lines in fstab
+	SwapCommentPrefix  = "#" // prefix used when commenting out swap lines in fstab
+	swapEntryMinFields = 4
+	swapEntryTypeIndex = 2
+	swapEntryType      = "swap"
 )
 
 var (
 	// these are put in variables for easier testing/mocking
-	fstabFile = FSTAB_LOCATION
-	swapsFile = PROC_SWAPS_LOCATION
+	fstabFile      = FSTAB_LOCATION
+	swapsFile      = PROC_SWAPS_LOCATION
+	uuidLookupDir  = DISK_BY_UUID_LOCATION
+	labelLookupDir = DISK_BY_LABEL_LOCATION
 )
 
 // swapOn calls the swapon syscall on the given path with the given flags.
 // The return error is the errno from the syscall, or nil on success.
 // This is set as a variable for easier testing/mocking.
+// It assumes path is resolved/normalized (no UUID= or LABEL=)
 func sysSwapOn(path string, flags uintptr) error {
 	bp, err := unix.BytePtrFromString(path)
 	if err != nil {
@@ -57,6 +66,7 @@ func sysSwapOn(path string, flags uintptr) error {
 // sysSwapOff calls the swapoff syscall on the given path.
 // The return error is the errno from the syscall, or nil on success.
 // This is set as a variable for easier testing/mocking.
+// It assumes path is resolved/normalized (no UUID= or LABEL=)
 func sysSwapOff(path string) error {
 	bp, err := unix.BytePtrFromString(path)
 	if err != nil {
@@ -70,7 +80,45 @@ func sysSwapOff(path string) error {
 	return nil
 }
 
-// parseProcSwaps parses /proc/swaps and returns slice of swap source strings (first column).
+// resolveSpec resolves fstab specs like UUID=xxxx, LABEL=xxxx, or normal paths
+// to actual device paths. It returns the resolved path or an error if not found.
+// It uses /dev/disk/by-uuid and /dev/disk/by-label for lookups.
+// If the spec is already a path, it verifies it exists and returns the real path.
+// On error, it returns an empty string and a wrapped errorx error with details.
+func resolveSpec(spec string) (string, error) {
+	if spec == "" {
+		return "", errorx.IllegalArgument.New("spec cannot be empty")
+	}
+
+	if strings.HasPrefix(spec, "UUID=") {
+		uuid := strings.TrimPrefix(spec, "UUID=")
+		path := filepath.Join(uuidLookupDir, uuid)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+
+		return "", ErrSwapDeviceNotFound.New("device with UUID %s not found in %s", uuid, uuidLookupDir)
+	}
+
+	if strings.HasPrefix(spec, "LABEL=") {
+		label := strings.TrimPrefix(spec, "LABEL=")
+		path := filepath.Join(labelLookupDir, label)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+
+		return "", ErrSwapDeviceNotFound.New("device with LABEL %s not found in %s", label, labelLookupDir)
+	}
+
+	// Already a path
+	if realPath, err := filepath.EvalSymlinks(spec); err == nil {
+		return realPath, nil
+	}
+
+	return "", ErrSwapDeviceNotFound.New("failed to resolve device %s", spec)
+}
+
+// parseProcSwaps parses /proc/swaps and returns slice of normalized swap source strings.
 func parseProcSwaps() ([]string, error) {
 	f, err := os.Open(swapsFile)
 	if err != nil {
@@ -80,10 +128,8 @@ func parseProcSwaps() ([]string, error) {
 
 	var swaps []string
 	scanner := bufio.NewScanner(f)
-	// skip header line
 	if !scanner.Scan() {
-		// empty file/no header
-		return swaps, nil
+		return swaps, nil // empty file or missing header line; first line (header) is always skipped if present
 	}
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -91,14 +137,17 @@ func parseProcSwaps() ([]string, error) {
 		if len(fields) < 1 {
 			continue
 		}
-		// first field is the swap filename/device
-		swaps = append(swaps, fields[0])
+		dev := fields[0]
+		// Normalize symlinks
+		if real, err := filepath.EvalSymlinks(dev); err == nil {
+			dev = real
+		}
+		swaps = append(swaps, dev)
 	}
 
 	if err = scanner.Err(); err != nil {
 		return nil, ErrFileRead.Wrap(err, "failed to scan %s", swapsFile)
 	}
-
 	return swaps, nil
 }
 
@@ -118,10 +167,12 @@ func parseFstabSwaps() ([]string, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
+
 		// remove any comment portion
 		if i := strings.IndexByte(line, '#'); i >= 0 {
 			line = line[:i]
 		}
+
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
@@ -129,7 +180,12 @@ func parseFstabSwaps() ([]string, error) {
 		fsSpec := fields[0]
 		fsVfstype := fields[2]
 		if fsVfstype == "swap" {
-			swaps = append(swaps, fsSpec)
+			resolved, err := resolveSpec(fsSpec)
+			if err != nil {
+				return nil, err
+			}
+
+			swaps = append(swaps, resolved)
 		}
 	}
 
@@ -141,13 +197,21 @@ func parseFstabSwaps() ([]string, error) {
 }
 
 // check if a given spec is active swap by looking at /proc/swaps listing
+// it assumes both spec and activeSwaps are resolved/normalized paths (no UUID= or LABEL=)
 func isActiveSwap(spec string, activeSwaps []string) bool {
 	for _, s := range activeSwaps {
 		if s == spec {
 			return true
 		}
 	}
+
 	return false
+}
+
+// isSwapEntry returns true if the line is a valid swap entry in fstab.
+func isSwapEntry(line string) bool {
+	fields := strings.Fields(line)
+	return len(fields) >= swapEntryMinFields && fields[swapEntryTypeIndex] == swapEntryType
 }
 
 func handleSyscallErr(err error, path string, operationName string) error {
@@ -155,32 +219,32 @@ func handleSyscallErr(err error, path string, operationName string) error {
 		return nil
 	}
 
-	var rex error // error to be returned
+	var resultErr error // error to be returned
 	if errCode, ok := err.(syscall.Errno); ok {
 		switch {
 		case errors.Is(errCode, syscall.EPERM):
-			rex = ErrSwapNotSuperUser.Wrap(err, "%s: %s failed, not super user", path, operationName).
+			resultErr = ErrSwapNotSuperUser.Wrap(err, "%s: %s failed, not super user", path, operationName).
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_USAGE)
-			return rex
+			return resultErr
 		case errors.Is(errCode, syscall.ENOMEM):
-			rex = ErrSwapOutOfMemory.Wrap(err, "%s: %s failed, cannot allocate memory", path, operationName).
+			resultErr = ErrSwapOutOfMemory.Wrap(err, "%s: %s failed, cannot allocate memory", path, operationName).
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_ENOMEM)
-			return rex
+			return resultErr
 		default:
-			rex = ErrSwapUnknownSyscall.Wrap(err, "%s: %s failed, unknown syscall error", path, operationName).
+			resultErr = ErrSwapUnknownSyscall.Wrap(err, "%s: %s failed, unknown syscall error", path, operationName).
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
-			return rex
+			return resultErr
 		}
 	}
 
-	rex = ErrNonSyscall.Wrap(err, "%s: %s failed, non syscall error", path, operationName).
+	resultErr = ErrNonSyscall.Wrap(err, "%s: %s failed, non syscall error", path, operationName).
 		WithProperty(PathProperty, path).
 		WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
 
-	return rex
+	return resultErr
 }
 
 // SwapOff performs swapoff for a single path
@@ -256,6 +320,7 @@ func updateFstabFile(modifier func(line string) string) error {
 	if modifier == nil {
 		return errorx.IllegalArgument.New("line modifier function cannot be nil")
 	}
+
 	// Read original file
 	input, err := os.ReadFile(fstabFile)
 	if err != nil {
@@ -272,12 +337,9 @@ func updateFstabFile(modifier func(line string) string) error {
 	scanner := bufio.NewScanner(strings.NewReader(string(input)))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, SwapCommentPrefix) {
-			fields := strings.Fields(line)
-			// Only comment if the line is a valid swap entry (at least 4 fields and type is "swap")
-			if len(fields) >= 4 && fields[2] == "swap" {
-				line = modifier(line)
-			}
+		// Only comment if the line is a valid swap entry (at least 4 fields and type is "swap")
+		if isSwapEntry(line) {
+			line = modifier(line)
 		}
 		output = append(output, line)
 	}
@@ -295,6 +357,23 @@ func updateFstabFile(modifier func(line string) string) error {
 	return nil
 }
 
+func commentOutSwapLine(line string) string {
+	if isSwapEntry(line) && !strings.HasPrefix(line, SwapCommentPrefix) {
+		return SwapCommentPrefix + line
+	}
+	return line
+}
+
+func uncommentSwapLine(line string) string {
+	if strings.HasPrefix(line, SwapCommentPrefix) {
+		uncommented := strings.TrimLeft(line, SwapCommentPrefix)
+		if isSwapEntry(uncommented) {
+			return uncommented
+		}
+	}
+	return line
+}
+
 // DisableSwap comments out any swap entries in /etc/fstab to disable swap on reboot
 // It finds lines in /etc/fstab containing the word "swap" and comments them out by prefixing with #
 // It then calls SwapOffAll to immediately disable any active swap
@@ -304,9 +383,7 @@ func DisableSwap() error {
 		return err
 	}
 
-	return updateFstabFile(func(line string) string {
-		return SwapCommentPrefix + line
-	})
+	return updateFstabFile(commentOutSwapLine)
 }
 
 // EnableSwap uncomments any swap entries in /etc/fstab to enable swap on reboot
@@ -314,9 +391,7 @@ func DisableSwap() error {
 // It then calls SwapOnAll to immediately enable any swap entries found in /etc/fstab
 // On error, it returns a wrapped errorx error with details.
 func EnableSwap() error {
-	err := updateFstabFile(func(line string) string {
-		return strings.TrimPrefix(line, SwapCommentPrefix)
-	})
+	err := updateFstabFile(uncommentSwapLine)
 
 	if err != nil {
 		return err
