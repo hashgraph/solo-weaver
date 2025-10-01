@@ -256,6 +256,10 @@ func SwapOnAll() error {
 // It then calls SwapOffAll to immediately disable any active swap
 // On error, it returns a wrapped errorx error with details.
 func DisableSwap() error {
+	if err := SwapOffAll(); err != nil {
+		return err
+	}
+
 	// Read original file
 	input, err := os.ReadFile(fstabFile)
 	if err != nil {
@@ -294,7 +298,7 @@ func DisableSwap() error {
 		return ErrFileWrite.Wrap(err, "failed to write fstab file: %s", fstabFile)
 	}
 
-	return SwapOffAll()
+	return nil
 }
 
 // EnableSwap uncomments any swap entries in /etc/fstab to enable swap on reboot

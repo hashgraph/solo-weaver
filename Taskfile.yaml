@@ -19,7 +19,9 @@ vars:
     get_vm_ip() {
       utmctl ip-address "{{.VM_NAME}}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1
     }
-  GO: $(which go)
+  GO:
+    sh: |
+      command -v go
 
 tasks:
   clean:
