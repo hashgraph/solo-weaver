@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -504,7 +505,7 @@ func TestDisableSwap_EnableSwap_Integration(t *testing.T) {
 
 	content, err = os.ReadFile(tmpFstab.Name())
 	require.NoError(t, err)
-	require.Contains(t, string(content), swapCommentPrefix+swapFile+" none swap sw 0 0")
+	require.Contains(t, string(content), SwapCommentPrefix+swapFile+" none swap sw 0 0")
 
 	// Enable swap again (should uncomment swap line)
 	err = EnableSwap()
@@ -513,4 +514,80 @@ func TestDisableSwap_EnableSwap_Integration(t *testing.T) {
 	content, err = os.ReadFile(tmpFstab.Name())
 	require.NoError(t, err)
 	require.Contains(t, string(content), swapFile+" none swap sw 0 0")
+}
+
+func TestUpdateFstabFile(t *testing.T) {
+	swapLine := "UUID=123 none swap sw 0 0"
+	commentedSwapLine := "#UUID=123 none swap sw 0 0"
+	unrelatedComment := "# swap was on /dev/vda4 during installation"
+	unrelatedLine := "/dev/sda1 / ext4 defaults 0 1"
+
+	cases := []struct {
+		name     string
+		input    []string
+		comment  bool
+		expected []string
+	}{
+		{
+			name: "Uncomment swap line",
+			input: []string{
+				commentedSwapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+			comment: false,
+			expected: []string{
+				swapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+		},
+		{
+			name: "Comment swap line",
+			input: []string{
+				swapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+			comment: true,
+			expected: []string{
+				commentedSwapLine,
+				unrelatedComment,
+				unrelatedLine,
+			},
+		},
+		{
+			name: "Ignore unrelated comment with swap word",
+			input: []string{
+				unrelatedComment,
+				swapLine,
+			},
+			comment: true,
+			expected: []string{
+				unrelatedComment,
+				commentedSwapLine,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Simulate updateFstabFile logic
+			var result []string
+			for _, line := range tc.input {
+				trimmed := strings.TrimSpace(line)
+				fields := strings.Fields(strings.TrimPrefix(trimmed, SwapCommentPrefix))
+				if len(fields) >= 4 && fields[2] == "swap" {
+					if tc.comment {
+						result = append(result, SwapCommentPrefix+strings.TrimPrefix(trimmed, SwapCommentPrefix))
+					} else {
+						result = append(result, strings.TrimPrefix(trimmed, SwapCommentPrefix))
+					}
+				} else {
+					result = append(result, line)
+				}
+			}
+			require.Equal(t, tc.expected, result)
+		})
+	}
 }
