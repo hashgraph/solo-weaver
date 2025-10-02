@@ -523,7 +523,7 @@ tasks:
         echo "Checking if port 2222 is available..."
         if command lsof -t -i :2222 >/dev/null 2>&1; then
           echo "Port 2222 is in use, killing existing SSH connection..."
-          kill $(lsof -nP -t -iTCP:2222 -sTCP:LISTEN) || true
+          lsof -nP -t -iTCP:2222 -sTCP:LISTEN | xargs -r kill || true
           sleep 1
         else
           echo "✓ Port 2222 is available"
