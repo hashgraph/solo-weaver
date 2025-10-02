@@ -1,14 +1,12 @@
-//go:build linux
+//go:build integration
 
 package steps
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -41,7 +39,9 @@ func TestDisableSwap_Integration(t *testing.T) {
 	backupFstab, err := os.ReadFile(osx.FSTAB_LOCATION)
 	require.NoError(t, err)
 	defer func() {
-		err := os.WriteFile(osx.FSTAB_LOCATION, backupFstab, 0644)
+		err = os.WriteFile(osx.FSTAB_LOCATION, backupFstab, 0644)
+		require.NoError(t, err)
+		err = sudo(exec.Command("/usr/sbin/swapon", "-a")).Run()
 		require.NoError(t, err)
 	}()
 
@@ -56,24 +56,8 @@ func TestDisableSwap_Integration(t *testing.T) {
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "failed to append to fstab: %s", out)
 
-	// remove the fstabEntry from fstab
-	defer func() {
-		content, err := os.ReadFile(osx.FSTAB_LOCATION)
-		require.NoError(t, err)
-		newContent := ""
-		scanner := bufio.NewScanner(strings.NewReader(string(content)))
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.Contains(line, swapFile) {
-				newContent += line + "\n"
-			}
-		}
-		err = os.WriteFile(osx.FSTAB_LOCATION, []byte(newContent), 0644)
-		require.NoError(t, err)
-	}()
-
 	// Enable swap
-	err = osx.EnableSwap()
+	err = osx.SwapOn(swapFile, 0)
 	require.NoError(t, err)
 
 	// Run DisableSwap step
