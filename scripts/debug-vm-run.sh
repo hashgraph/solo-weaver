@@ -42,7 +42,7 @@ echo "🚀 Starting debug session on VM for '$COMMAND'..."
 
 # Kill any existing processes using port 2345
 echo "🔍 Checking for existing processes on port 2345..."
-ssh $SSH_OPTS "$VM_USER@$VM_HOST" "kill $(lsof -nP -t -iTCP:2345 -sTCP:LISTEN) 2>/dev/null || true" || true
+ssh $SSH_OPTS "$VM_USER@$VM_HOST" "lsof -nP -t -iTCP:2345 -sTCP:LISTEN | xargs -r kill 2>/dev/null || true" || true
 echo "✅ Port 2345 cleanup completed"
 
 # Construct the dlv command
