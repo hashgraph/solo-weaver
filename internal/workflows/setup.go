@@ -23,6 +23,6 @@ func NewNodeSetupWorkflow(nodeType string) automa.Builder {
 		steps.InstallSystemPackage("nftables", software.NewNftables),
 		//steps.InstallKernelModules(),
 		steps.RemoveSystemPackage("containerd", software.NewContainerd),
-		//steps.RemoveUnusedSystemPackages(),
+		steps.AutoRemoveOrphanedPackages(),
 	)
 }
