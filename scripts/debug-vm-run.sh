@@ -42,18 +42,7 @@ echo "🚀 Starting debug session on VM for '$COMMAND'..."
 
 # Kill any existing processes using port 2345
 echo "🔍 Checking for existing processes on port 2345..."
-CLEANUP_COMMAND='
-cleanup_port_2345() {
-  local pids
-  pids=$(ss -tlpn 2>/dev/null | grep ":2345 " | grep -o "pid=[0-9]*" | cut -d= -f2)
-  if [ -n "$pids" ]; then
-    echo "Killing processes on port 2345: $pids"
-    kill $pids 2>/dev/null || true
-  fi
-}
-cleanup_port_2345
-'
-ssh $SSH_OPTS "$VM_USER@$VM_HOST" "$CLEANUP_COMMAND" || true
+ssh $SSH_OPTS "$VM_USER@$VM_HOST" "lsof -nP -t -iTCP:2345 -sTCP:LISTEN | xargs -r kill 2>/dev/null || true" || true
 echo "✅ Port 2345 cleanup completed"
 
 # Construct the dlv command
