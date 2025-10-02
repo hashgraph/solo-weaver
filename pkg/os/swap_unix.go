@@ -93,8 +93,8 @@ func resolveSpec(spec string) (string, error) {
 	if strings.HasPrefix(spec, "UUID=") {
 		uuid := strings.TrimPrefix(spec, "UUID=")
 		path := filepath.Join(uuidLookupDir, uuid)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		if realPath, err := filepath.EvalSymlinks(path); err == nil {
+			return realPath, nil
 		}
 
 		return "", ErrSwapDeviceNotFound.New("device with UUID %s not found in %s", uuid, uuidLookupDir)
@@ -103,8 +103,8 @@ func resolveSpec(spec string) (string, error) {
 	if strings.HasPrefix(spec, "LABEL=") {
 		label := strings.TrimPrefix(spec, "LABEL=")
 		path := filepath.Join(labelLookupDir, label)
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		if realPath, err := filepath.EvalSymlinks(path); err == nil {
+			return realPath, nil
 		}
 
 		return "", ErrSwapDeviceNotFound.New("device with LABEL %s not found in %s", label, labelLookupDir)

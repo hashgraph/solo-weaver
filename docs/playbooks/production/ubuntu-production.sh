@@ -33,9 +33,6 @@ sudo apt update && sudo apt upgrade -y
 sudo sed -i.bak 's/^\(.*\sswap\s.*\)$/#\1\n/' /etc/fstab
 sudo swapoff -a
 
-# Remove existing containerd
-sudo apt remove -y containerd containerd.io || true
-
 # Install iptables
 sudo apt install -y iptables
 
