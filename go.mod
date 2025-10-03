@@ -15,12 +15,17 @@ require (
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/text v0.27.0
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
+	pault.ag/go/modprobe v0.2.0
 )
 
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/jaypipes/pcidb v1.1.1 // indirect
+	github.com/klauspost/compress v1.17.4 // indirect
+	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
+	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
+	pault.ag/go/topsort v0.1.1 // indirect
 )
 
 require (

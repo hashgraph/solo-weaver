@@ -21,8 +21,9 @@ func NewNodeSetupWorkflow(nodeType string) automa.Builder {
 		steps.InstallSystemPackage("ebtables", software.NewEbtables),
 		steps.InstallSystemPackage("socat", software.NewSocat),
 		steps.InstallSystemPackage("nftables", software.NewNftables),
-		//steps.InstallKernelModules(),
-		steps.RemoveSystemPackage("containerd", software.NewContainerd),
+		steps.InstallKernelModule("overlay"),
+		steps.InstallKernelModule("br_netfilter"),
 		steps.AutoRemoveOrphanedPackages(),
+		//steps.RemoveSystemPackage("containerd", software.NewContainerd),
 	)
 }
