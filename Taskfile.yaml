@@ -273,6 +273,7 @@ tasks:
       - mockgen -source=pkg/security/principal/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
       - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
       - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/software -package software> pkg/software/mocks_generated.go
+      - mockgen -source=pkg/kernel/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
 
   # Remote debug tasks for Docker container debugging
   debug:container:
@@ -642,6 +643,28 @@ tasks:
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-provisioner && sudo -E PATH=\"\$PATH\" task test:unit
+          "
+
+  vm:test:integration:
+    desc: "Run all integration tests in a UTM VM (useful for testing system-level functionality)"
+    deps:
+      - "vm:start"
+    cmds:
+      - cmd: |
+          VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+
+          echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
+
+          # Check if VM is accessible
+          if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
+            echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
+            exit 1
+          fi
+
+          # Install dependencies and run tests on the VM with verbose output
+          ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+            source /etc/profile.d/go.sh 2>/dev/null || true
+            cd /mnt/solo-provisioner && sudo -E PATH=\"\$PATH\" task test:integration
           "
 
   vm:status:
