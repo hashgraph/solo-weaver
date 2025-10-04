@@ -1,12 +1,13 @@
-//go:build integration
+//go:build mock_provisioner
 
 package steps
 
 import (
 	"context"
+	"testing"
+
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func Test_BashScriptBasedClusterSetupWorkflow_Integration(t *testing.T) {

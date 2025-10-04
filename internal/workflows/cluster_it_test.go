@@ -4,10 +4,11 @@ package workflows
 
 import (
 	"context"
+	"testing"
+
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
-	"testing"
 )
 
 func Test_NewSetupClusterWorkflow_Integration(t *testing.T) {
