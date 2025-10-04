@@ -13,7 +13,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/zcalusic/sysinfo v1.1.3
-	golang.org/x/text v0.27.0
+	golang.org/x/text v0.29.0
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
 	pault.ag/go/modprobe v0.2.0
 )
