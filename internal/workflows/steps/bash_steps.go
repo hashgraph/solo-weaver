@@ -578,7 +578,6 @@ func (b *bashScriptStep) SetupSystemdServiceSymlinks() automa.Builder {
 	return automa_steps.NewBashScriptStep(SetupSystemdServiceSymlinksStepId, []string{
 		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service", b.SandboxDir),
 		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service.d /usr/lib/systemd/system/kubelet.service.d", b.SandboxDir),
-		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/crio.service /usr/lib/systemd/system/crio.service", b.SandboxDir),
 	}, "")
 }
 

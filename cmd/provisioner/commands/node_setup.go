@@ -32,8 +32,8 @@ func createNodeSetupCommand(nodeType string) *cobra.Command {
 
 // runNodeSetup runs the setup workflow for a specific node type
 func runNodeSetup(ctx context.Context, nodeType string) {
-	// get an instance of setup workflow for the specific node type
-	wb, err := workflows.NewNodeSetupWorkflow(nodeType).Build()
+	// get an instance of cluster setup workflow for the specific node type
+	wb, err := workflows.NewSetupClusterWorkflow(nodeType).Build()
 	if err != nil {
 		doctor.CheckErr(ctx, err)
 	}
