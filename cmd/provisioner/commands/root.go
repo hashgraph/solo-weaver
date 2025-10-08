@@ -76,26 +76,26 @@ func Execute(ctx context.Context) error {
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "config.yaml", "config file path")
 
 	// make flags mandatory
-	//_ = rootCmd.MarkPersistentFlagRequired("config")
+	//_ = rootCmd.MarkPersistentFlagRequired("cfg")
 
 	// Setup node commands for each configured node type
-	for _, config := range nodeTypeConfigs {
+	for _, cfg := range nodeTypeConfigs {
 		// Create commands for this node type
-		nodeCheckCmd := createNodeCheckCommand(config.Name)
-		nodeSetupCmd := createNodeSetupCommand(config.Name)
-		nodeSubCmd := createNodeSubcommand(config.Name)
+		nodeCheckCmd := createNodeCheckCommand(cfg.Name)
+		nodeSetupCmd := createNodeSetupCommand(cfg.Name)
+		nodeSubCmd := createNodeSubcommand(cfg.Name)
 
 		// Add check and setup commands to node subcommand
 		nodeSubCmd.AddCommand(nodeCheckCmd)
 		nodeSubCmd.AddCommand(nodeSetupCmd)
 
 		// Add node subcommand to the parent command
-		config.ParentCmd.AddCommand(nodeSubCmd)
+		cfg.ParentCmd.AddCommand(nodeSubCmd)
 	}
 
 	// Add all node type commands to root
-	for _, config := range nodeTypeConfigs {
-		rootCmd.AddCommand(config.ParentCmd)
+	for _, cfg := range nodeTypeConfigs {
+		rootCmd.AddCommand(cfg.ParentCmd)
 	}
 
 	_, err := rootCmd.ExecuteContextC(ctx)

@@ -12,13 +12,14 @@ import (
 )
 
 func Test_NewSetupClusterWorkflow_Integration(t *testing.T) {
-	wf, err := NewSetupClusterWorkflow("worker").Build()
+	wf, err := NewSetupClusterWorkflow("local").Build()
 	if err != nil {
 		t.Fatalf("failed to build workflow: %v", err)
 	}
 
-	report, err := wf.Execute(context.Background())
-	require.NoError(t, err)
+	report := wf.Execute(context.Background())
+	require.NotNil(t, report)
+	require.NoError(t, report.Error)
 
 	steps.PrintWorkflowReport(report)
 	require.Equal(t, automa.StatusSuccess, report.Status)

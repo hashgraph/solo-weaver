@@ -14,20 +14,6 @@ import (
 	osx "golang.hedera.com/solo-provisioner/pkg/os"
 )
 
-func sudo(cmd *exec.Cmd) *exec.Cmd {
-	if os.Geteuid() == 0 {
-		return cmd
-	}
-
-	// Prepend sudo to the command
-	sudoCmd := exec.Command("sudo", append([]string{cmd.Path}, cmd.Args[1:]...)...)
-	sudoCmd.Stdout = cmd.Stdout
-	sudoCmd.Stderr = cmd.Stderr
-	sudoCmd.Stdin = cmd.Stdin
-
-	return sudoCmd
-}
-
 func TestDisableSwap_Integration(t *testing.T) {
 	// Create a test swap file
 	filePattern := "swap-test-*"
@@ -63,9 +49,9 @@ func TestDisableSwap_Integration(t *testing.T) {
 	// Run DisableSwap step
 	step, err := DisableSwap().Build()
 	require.NoError(t, err)
-	report, err := step.Execute(context.Background())
-	require.NoError(t, err)
+	report := step.Execute(context.Background())
 	require.NotNil(t, report)
+	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
 	// Check fstab content is commented

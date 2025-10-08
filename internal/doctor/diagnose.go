@@ -69,14 +69,14 @@ func findResolution(err error) []string {
 		}
 		return []string{"Ensure configuration file exists and is accessible."}
 	default:
-		return []string{"Check the error message for details or contact support"}
+		return []string{"Check error message for details or contact support"}
 	}
 }
 
 func takeProfilingSnapshots(ex error) map[string]string {
 	timestamp := time.Now().Format("20060102-150405")
 
-	snapshotDir := path.Join(core.DiagnosticsDir, timestamp)
+	snapshotDir := path.Join(core.Paths().DiagnosticsDir, timestamp)
 	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
 		log.Printf("failed to create logs directory: %v", err)
 		return nil

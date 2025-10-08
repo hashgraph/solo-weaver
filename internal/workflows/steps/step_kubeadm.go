@@ -6,19 +6,22 @@ import (
 )
 
 func InstallKubeadm() automa.Builder {
-	return automa.NewStepBuilder("install-kubeadm", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("install-kubeadm"), nil
-	}))
+	return automa.NewStepBuilder().WithId("install-kubeadm").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func ConfigureKubeadm() automa.Builder {
-	return automa.NewStepBuilder("configure-kubeadm", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("configure-kubeadm"), nil
-	}))
+	return automa.NewStepBuilder().WithId("configure-kubeadm").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func EnableAndStartKubeadm() automa.Builder {
-	return automa.NewStepBuilder("start-kubeadm", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("start-kubeadm"), nil
-	}))
+	return automa.NewStepBuilder().WithId("start-kubeadm").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }

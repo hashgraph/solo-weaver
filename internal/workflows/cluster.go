@@ -6,7 +6,8 @@ import (
 )
 
 func NewSetupClusterWorkflow(nodeType string) automa.Builder {
-	return automa.NewWorkFlowBuilder("setup-kubernetes").Steps(
+	return automa.NewWorkflowBuilder().
+		WithId("setup-kubernetes").Steps(
 		NewNodeSetupWorkflow(nodeType),
 		steps.DisableSwap(),
 		//steps.ConfigureSysctlForKubernetes(),

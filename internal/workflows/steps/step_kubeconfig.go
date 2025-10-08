@@ -6,7 +6,8 @@ import (
 )
 
 func ConfigureKubeconfigForAdminUser() automa.Builder {
-	return automa.NewStepBuilder("configure-kube-config", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("configure-kube-config"), nil
-	}))
+	return automa.NewStepBuilder().WithId("configure-kube-config").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
