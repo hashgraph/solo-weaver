@@ -38,9 +38,9 @@ func runNodeSetup(ctx context.Context, nodeType string) {
 		doctor.CheckErr(ctx, err)
 	}
 
-	report, err := wb.Execute(ctx)
-	if err != nil {
-		doctor.CheckErr(ctx, err)
+	report := wb.Execute(ctx)
+	if report.Error != nil {
+		doctor.CheckErr(ctx, report.Error)
 	}
 
 	// For each step that failed, run the doctor to diagnose the error
