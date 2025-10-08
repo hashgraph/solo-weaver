@@ -69,7 +69,7 @@ func cleanupKernelModule(t *testing.T, moduleName string) {
 
 	// Unload the module if it's currently loaded
 	if isModuleLoaded(t, moduleName) {
-		rmmodCmd := exec.Command("rmmod", moduleName)
+		rmmodCmd := exec.Command("/usr/sbin/rmmod", moduleName)
 		rmmodCmd = sudo(rmmodCmd)
 		if err := rmmodCmd.Run(); err != nil {
 			t.Logf("Warning: failed to unload module %s: %v", moduleName, err)
@@ -81,7 +81,7 @@ func cleanupKernelModule(t *testing.T, moduleName string) {
 func preLoadModule(t *testing.T, moduleName string) {
 	t.Helper()
 
-	modprobeCmd := exec.Command("modprobe", moduleName)
+	modprobeCmd := exec.Command("/usr/sbin/modprobe", moduleName)
 	modprobeCmd = sudo(modprobeCmd)
 	err := modprobeCmd.Run()
 	require.NoError(t, err, "Failed to pre-load module %s via modprobe", moduleName)
@@ -437,7 +437,7 @@ func Test_KernelModuleStep_RollbackOnFailure_Integration(t *testing.T) {
 
 	// Execute the workflow - should fail on the second step
 	report := workflow.Execute(context.Background())
-	require.NoError(t, report.Error, "Workflow should not fail but there should be failed step reports")
+	require.Error(t, report.Error, "Workflow should fail because of error")
 	require.Equal(t, automa.StatusFailed, report.Status,
 		"Workflow should have failed status")
 
@@ -468,7 +468,7 @@ func Test_KernelModuleStep_RollbackMixedScenario_Integration(t *testing.T) {
 	cleanupKernelModule(t, preExistingModule)
 	cleanupKernelModule(t, newModule)
 
-	// Pre-load and persist the first module to simulate pre-existing state
+	// Preload and persist the first module to simulate pre-existing state
 	preLoadAndPersistModule(t, preExistingModule)
 
 	// Verify initial state
@@ -491,7 +491,7 @@ func Test_KernelModuleStep_RollbackMixedScenario_Integration(t *testing.T) {
 
 	// Execute the workflow - should fail on the third step
 	report := workflow.Execute(context.Background())
-	require.NoError(t, report.Error, "Workflow should not fail but there should be failed step reports")
+	require.Error(t, report.Error, "Workflow should not fail for an error")
 	require.Equal(t, automa.StatusFailed, report.Status,
 		"Workflow should have failed status")
 

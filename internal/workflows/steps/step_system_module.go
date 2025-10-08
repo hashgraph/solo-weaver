@@ -56,7 +56,7 @@ func InstallKernelModule(name string) automa.Builder {
 			}
 
 			if !loadedByThisStep {
-				return automa.SuccessReport(stp)
+				return automa.SkippedReport(stp)
 
 			}
 
