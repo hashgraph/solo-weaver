@@ -1,42 +1,12 @@
 package steps
 
 import (
-	"context"
-	"github.com/automa-saga/automa"
 	"os"
 	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-// mockStep implements automa.Step for testing
-type mockStep struct {
-	id    string
-	state automa.StateBag
-}
-
-func (m *mockStep) Prepare(ctx context.Context) (context.Context, error) {
-	return ctx, nil
-}
-
-func (m *mockStep) Execute(ctx context.Context) *automa.Report {
-	return automa.SuccessReport(m)
-}
-
-func (m *mockStep) Rollback(ctx context.Context) *automa.Report {
-	return automa.SuccessReport(m)
-}
-
-func (m *mockStep) State() automa.StateBag {
-	if m.state == nil {
-		m.state = &automa.SyncStateBag{}
-	}
-
-	return m.state
-}
-
-func (m *mockStep) Id() string { return m.id }
 
 func sudo(cmd *exec.Cmd) *exec.Cmd {
 	if os.Geteuid() == 0 {

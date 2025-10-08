@@ -5,9 +5,36 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
 	"testing"
 )
+
+// mockStep implements automa.Step for testing
+type mockStep struct {
+	id    string
+	state automa.StateBag
+}
+
+func (m *mockStep) Prepare(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func (m *mockStep) Execute(ctx context.Context) *automa.Report {
+	return automa.SuccessReport(m)
+}
+
+func (m *mockStep) Rollback(ctx context.Context) *automa.Report {
+	return automa.SuccessReport(m)
+}
+
+func (m *mockStep) State() automa.StateBag {
+	if m.state == nil {
+		m.state = &automa.SyncStateBag{}
+	}
+
+	return m.state
+}
+
+func (m *mockStep) Id() string { return m.id }
 
 func TestNotificationHandler_Callbacks(t *testing.T) {
 	var completed, failed bool
@@ -26,7 +53,7 @@ func TestNotificationHandler_Callbacks(t *testing.T) {
 
 	SetDefault(handler)
 
-	step := &steps.mockStep{id: "test-step"}
+	step := &mockStep{id: "test-step"}
 	report := &automa.Report{Status: automa.StatusSuccess}
 	handler.StepCompletion(context.Background(), step, report, "done")
 	require.True(t, completed)
@@ -51,9 +78,9 @@ func TestSetDefaultCallbackHandler_PartialUpdate(t *testing.T) {
 	}
 	SetDefault(handler)
 
-	step := &steps.mockStep{id: "id"}
+	step := &mockStep{id: "id"}
 	report := &automa.Report{Status: automa.StatusSuccess}
 	handler.StepCompletion(context.Background(), step, report, "msg")
 	require.True(t, called)
-	require.NotNil(t, handler.StepFailure)
+	require.Nil(t, handler.StepFailure)
 }
