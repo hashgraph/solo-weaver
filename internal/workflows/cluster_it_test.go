@@ -12,7 +12,7 @@ import (
 )
 
 func Test_NewSetupClusterWorkflow_Integration(t *testing.T) {
-	wf, err := NewSetupClusterWorkflow("worker").Build()
+	wf, err := NewSetupClusterWorkflow("local").Build()
 	if err != nil {
 		t.Fatalf("failed to build workflow: %v", err)
 	}

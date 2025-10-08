@@ -38,7 +38,7 @@ func runNodeSafetyCheck(ctx context.Context, nodeType string) {
 		doctor.CheckErr(ctx, err)
 	}
 
-	report, err := wb.Execute(ctx)
+	report := wb.Execute(ctx)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
 	}
