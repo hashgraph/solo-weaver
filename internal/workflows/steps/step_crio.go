@@ -6,19 +6,22 @@ import (
 )
 
 func InstallCrio() automa.Builder {
-	return automa.NewStepBuilder("install-crio", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("install-crio"), nil
-	}))
+	return automa.NewStepBuilder().WithId("install-crio").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func ConfigureCrio() automa.Builder {
-	return automa.NewStepBuilder("configure-crio", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("configure-crio"), nil
-	}))
+	return automa.NewStepBuilder().WithId("configure-crio").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func EnableAndStartCrio() automa.Builder {
-	return automa.NewStepBuilder("start-crio", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("start-crio"), nil
-	}))
+	return automa.NewStepBuilder().WithId("start-crio").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }

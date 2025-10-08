@@ -6,7 +6,8 @@ import (
 )
 
 func InstallHelm() automa.Builder {
-	return automa.NewStepBuilder("install-helm", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("install-helm"), nil
-	}))
+	return automa.NewStepBuilder().WithId("install-helm").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }

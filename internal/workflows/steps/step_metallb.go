@@ -5,14 +5,16 @@ import (
 	"github.com/automa-saga/automa"
 )
 
-func HelmInstallMetallb() automa.Builder {
-	return automa.NewStepBuilder("install-metallb", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("install-metallb"), nil
-	}))
+func InstallMetalLB() automa.Builder {
+	return automa.NewStepBuilder().WithId("install-metallb").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func DeployMetallbConfig() automa.Builder {
-	return automa.NewStepBuilder("deploy-metallb-config", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("deploy-metallb-config"), nil
-	}))
+	return automa.NewStepBuilder().WithId("deploy-metallb-config").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }

@@ -5,6 +5,7 @@ package os
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,10 +35,8 @@ func TestSwapOff_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("swapon --show failed: %v, output: %s", err, out)
 	}
-	if string(out) != "NAME\n" && !os.IsNotExist(err) {
-		if string(out) != "" && !os.IsNotExist(err) && string(out) != "NAME\n" {
-			t.Errorf("swap file still active: %s", out)
-		}
+	if strings.Contains(string(out), swapFile) {
+		t.Errorf("swap file still active: %s", out)
 	}
 
 	// Cleanup: swapoff and remove file

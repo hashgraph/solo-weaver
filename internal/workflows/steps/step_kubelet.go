@@ -6,19 +6,22 @@ import (
 )
 
 func InstallKubelet() automa.Builder {
-	return automa.NewStepBuilder("install-kubelet", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("install-kubelet"), nil
-	}))
+	return automa.NewStepBuilder().WithId("install-kubelet").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func ConfigureKubelet() automa.Builder {
-	return automa.NewStepBuilder("configure-kubelet", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("configure-kubelet"), nil
-	}))
+	return automa.NewStepBuilder().WithId("configure-kubelet").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
 
 func EnableAndStartKubelet() automa.Builder {
-	return automa.NewStepBuilder("start-kublet", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("start-kubelet"), nil
-	}))
+	return automa.NewStepBuilder().WithId("start-kubelet").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }

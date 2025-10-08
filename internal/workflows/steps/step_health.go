@@ -6,7 +6,8 @@ import (
 )
 
 func CheckClusterHealth() automa.Builder {
-	return automa.NewStepBuilder("check-cluster-health", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("check-cluster-health"), nil
-	}))
+	return automa.NewStepBuilder().WithId("check-cluster-health").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }

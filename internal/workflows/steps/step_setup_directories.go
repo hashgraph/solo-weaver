@@ -1,16 +1,44 @@
 package steps
 
 import (
+	"context"
 	"github.com/automa-saga/automa"
-	"github.com/automa-saga/automa/automa_steps"
+	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/core"
-	"path"
+	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
-func SetupHomeDirectoryStructure() automa.Builder {
-	return automa_steps.NewMkdirStep("home_directories", []string{
-		path.Join(core.ProvisionerHomeDir, "bin"),
-		path.Join(core.ProvisionerHomeDir, "logs"),
-		path.Join(core.ProvisionerHomeDir, "config"),
-	}, core.DefaultFilePerm)
+func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
+	return automa.NewStepBuilder().WithId("home_directories").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if pp == nil {
+				return automa.FailureReport(stp, automa.WithError(errorx.IllegalArgument.New("provisioner path is nil")))
+			}
+
+			mg, err := fsx.NewManager()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			for _, dir := range pp.AllDirectories {
+				err := mg.CreateDirectory(dir, true)
+				if err != nil {
+					return automa.FailureReport(stp, automa.WithError(err))
+				}
+
+				err = mg.WritePermissions(dir, core.DefaultFilePerm, true)
+				if err != nil {
+					return automa.FailureReport(stp, automa.WithError(err))
+				}
+			}
+
+			return automa.SuccessReport(stp)
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup home directory structure")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Home directory structure setup successfully")
+		})
 }

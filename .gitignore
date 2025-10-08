@@ -369,3 +369,4 @@ docs/playbooks/production/dir-structure.txt
 
 ### SSH Keys for connecting to local development VM###
 .ssh/
+integration-test-report.md

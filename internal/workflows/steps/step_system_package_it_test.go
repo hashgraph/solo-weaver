@@ -15,20 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func sudo(cmd *exec.Cmd) *exec.Cmd {
-	if os.Geteuid() == 0 {
-		return cmd
-	}
-
-	// Prepend sudo to the command
-	sudoCmd := exec.Command("sudo", append([]string{cmd.Path}, cmd.Args[1:]...)...)
-	sudoCmd.Stdout = cmd.Stdout
-	sudoCmd.Stderr = cmd.Stderr
-	sudoCmd.Stdin = cmd.Stdin
-
-	return sudoCmd
-}
-
 // isModuleLoaded checks if a kernel module is currently loaded
 func isModuleLoaded(t *testing.T, moduleName string) bool {
 	t.Helper()
@@ -148,13 +134,13 @@ func Test_KernelModuleStep_Overlay_Integration(t *testing.T) {
 
 	// Build and execute just the kernel module step
 	step := InstallKernelModule(moduleName)
-	stepWorkflow, err := automa.NewWorkFlowBuilder("test-overlay-module").
+	stepWorkflow, err := automa.NewWorkflowBuilder().WithId("test-overlay-module").
 		Steps(step).
 		Build()
 	require.NoError(t, err, "Failed to build step workflow")
 
-	report, err := stepWorkflow.Execute(context.Background())
-	require.NoError(t, err, "Failed to execute overlay module step")
+	report := stepWorkflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to execute overlay module step")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"Overlay module step should complete successfully")
 
@@ -186,13 +172,13 @@ func Test_KernelModuleStep_BrNetfilter_Integration(t *testing.T) {
 
 	// Build and execute just the kernel module step
 	step := InstallKernelModule(moduleName)
-	stepWorkflow, err := automa.NewWorkFlowBuilder("test-br-netfilter-module").
+	stepWorkflow, err := automa.NewWorkflowBuilder().WithId("test-br-netfilter-module").
 		Steps(step).
 		Build()
 	require.NoError(t, err, "Failed to build step workflow")
 
-	report, err := stepWorkflow.Execute(context.Background())
-	require.NoError(t, err, "Failed to execute br_netfilter module step")
+	report := stepWorkflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to execute br_netfilter module step")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"br_netfilter module step should complete successfully")
 
@@ -227,7 +213,7 @@ func Test_KernelModulesStep_Combined_Integration(t *testing.T) {
 	}
 
 	// Build workflow with both kernel module steps
-	workflow, err := automa.NewWorkFlowBuilder("test-combined-modules").
+	workflow, err := automa.NewWorkflowBuilder().WithId("test-combined-modules").
 		Steps(
 			InstallKernelModule("overlay"),
 			InstallKernelModule("br_netfilter"),
@@ -235,8 +221,8 @@ func Test_KernelModulesStep_Combined_Integration(t *testing.T) {
 		Build()
 	require.NoError(t, err, "Failed to build combined workflow")
 
-	report, err := workflow.Execute(context.Background())
-	require.NoError(t, err, "Failed to execute combined module workflow")
+	report := workflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to execute combined module workflow")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"Combined module workflow should complete successfully")
 
@@ -277,13 +263,13 @@ func Test_KernelModuleStep_AlreadyLoaded_Integration(t *testing.T) {
 
 	// Build and execute the kernel module step
 	step := InstallKernelModule(moduleName)
-	stepWorkflow, err := automa.NewWorkFlowBuilder("test-already-loaded-module").
+	stepWorkflow, err := automa.NewWorkflowBuilder().WithId("test-already-loaded-module").
 		Steps(step).
 		Build()
 	require.NoError(t, err, "Failed to build step workflow")
 
-	report, err := stepWorkflow.Execute(context.Background())
-	require.NoError(t, err, "Failed to execute module step on already loaded module")
+	report := stepWorkflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to execute module step on already loaded module")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"Module step should complete successfully even when module is already loaded")
 
@@ -320,12 +306,12 @@ func Test_KernelModuleStep_AlreadyPersisted_Integration(t *testing.T) {
 
 	// Build and execute the kernel module step
 	step := InstallKernelModule(moduleName)
-	stepWorkflow, err := automa.NewWorkFlowBuilder("test-already-persisted-module").
+	stepWorkflow, err := automa.NewWorkflowBuilder().WithId("test-already-persisted-module").
 		Steps(step).
 		Build()
 	require.NoError(t, err, "Failed to build step workflow")
 
-	report, err := stepWorkflow.Execute(context.Background())
+	report := stepWorkflow.Execute(context.Background())
 	require.NoError(t, err, "Failed to execute module step on already persisted module")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"Module step should complete successfully even when module is already persisted")
@@ -363,13 +349,13 @@ func Test_KernelModuleStep_AlreadyLoadedAndPersisted_Integration(t *testing.T) {
 
 	// Build and execute the kernel module step
 	step := InstallKernelModule(moduleName)
-	stepWorkflow, err := automa.NewWorkFlowBuilder("test-already-setup-module").
+	stepWorkflow, err := automa.NewWorkflowBuilder().WithId("test-already-setup-module").
 		Steps(step).
 		Build()
 	require.NoError(t, err, "Failed to build step workflow")
 
-	report, err := stepWorkflow.Execute(context.Background())
-	require.NoError(t, err, "Failed to execute module step on already setup module")
+	report := stepWorkflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to execute module step on already setup module")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"Module step should complete successfully even when module is already loaded and persisted")
 
@@ -397,7 +383,7 @@ func Test_KernelModuleStep_IdempotencyCheck_Integration(t *testing.T) {
 
 	// Build the kernel module step
 	step := InstallKernelModule(moduleName)
-	stepWorkflow, err := automa.NewWorkFlowBuilder("test-idempotency-module").
+	stepWorkflow, err := automa.NewWorkflowBuilder().WithId("test-idempotency-module").
 		Steps(step).
 		Build()
 	require.NoError(t, err, "Failed to build step workflow")
@@ -405,8 +391,8 @@ func Test_KernelModuleStep_IdempotencyCheck_Integration(t *testing.T) {
 	// Execute the step multiple times to test idempotency
 	for i := 0; i < 3; i++ {
 		t.Run(fmt.Sprintf("execution_%d", i+1), func(t *testing.T) {
-			report, err := stepWorkflow.Execute(context.Background())
-			require.NoError(t, err, "Failed to execute module step on iteration %d", i+1)
+			report := stepWorkflow.Execute(context.Background())
+			require.NoError(t, report.Error, "Failed to execute module step on iteration %d", i+1)
 			require.Equal(t, automa.StatusSuccess, report.Status,
 				"Module step should complete successfully on iteration %d", i+1)
 
@@ -441,7 +427,7 @@ func Test_KernelModuleStep_RollbackOnFailure_Integration(t *testing.T) {
 		"Module %s should not be loaded initially", validModule)
 
 	// Build workflow with one valid and one invalid module step
-	workflow, err := automa.NewWorkFlowBuilder("test-rollback-on-failure").
+	workflow, err := automa.NewWorkflowBuilder().WithId("test-rollback-on-failure").
 		Steps(
 			InstallKernelModule(validModule),
 			InstallKernelModule(invalidModule), // This should fail
@@ -450,8 +436,8 @@ func Test_KernelModuleStep_RollbackOnFailure_Integration(t *testing.T) {
 	require.NoError(t, err, "Failed to build workflow")
 
 	// Execute the workflow - should fail on the second step
-	report, err := workflow.Execute(context.Background())
-	require.NoError(t, err, "Workflow should not fail but there should be failed step reports")
+	report := workflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Workflow should not fail but there should be failed step reports")
 	require.Equal(t, automa.StatusFailed, report.Status,
 		"Workflow should have failed status")
 
@@ -494,7 +480,7 @@ func Test_KernelModuleStep_RollbackMixedScenario_Integration(t *testing.T) {
 		"New module should not be loaded initially")
 
 	// Build workflow with modules and a failing step
-	workflow, err := automa.NewWorkFlowBuilder("test-rollback-mixed").
+	workflow, err := automa.NewWorkflowBuilder().WithId("test-rollback-mixed").
 		Steps(
 			InstallKernelModule(preExistingModule),               // Should be no-op
 			InstallKernelModule(newModule),                       // Should load the module
@@ -504,8 +490,8 @@ func Test_KernelModuleStep_RollbackMixedScenario_Integration(t *testing.T) {
 	require.NoError(t, err, "Failed to build workflow")
 
 	// Execute the workflow - should fail on the third step
-	report, err := workflow.Execute(context.Background())
-	require.NoError(t, err, "Workflow should not fail but there should be failed step reports")
+	report := workflow.Execute(context.Background())
+	require.NoError(t, report.Error, "Workflow should not fail but there should be failed step reports")
 	require.Equal(t, automa.StatusFailed, report.Status,
 		"Workflow should have failed status")
 

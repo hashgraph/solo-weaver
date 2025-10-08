@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-provisioner/pkg/kernel"
@@ -16,44 +17,65 @@ func InstallKernelModule(name string) automa.Builder {
 
 	loadedByThisStep := false
 
-	return automa.NewStepBuilder(stepId,
-		automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
+	return automa.NewStepBuilder().WithId(stepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			module, err := kernel.NewModule(name)
 			if err != nil {
-				return nil, err
+				return automa.FailureReport(stp, automa.WithError(
+					automa.StepExecutionError.Wrap(err, "failed to load kernel module: %s", name)))
 			}
 
 			alreadyLoaded, alreadyPersisted, err := module.IsLoaded()
 			if err != nil {
-				return nil, fmt.Errorf("failed to check if module %s is loaded: %w", name, err)
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.Wrap(err,
+							"failed to check if module %s is loaded", name)))
 			}
+
 			if alreadyLoaded && alreadyPersisted {
-				return automa.StepSuccessReport(stepId), nil
+				return automa.SuccessReport(stp)
 			}
 
 			err = module.Load(true)
 			if err != nil {
-				return nil, err
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.Wrap(err,
+							"failed to load and persist kernel module: %s", name)))
 			}
 			loadedByThisStep = true
 
-			return automa.StepSuccessReport(stepId), nil
-		}),
-		automa.WithOnRollback(func(ctx context.Context) (*automa.Report, error) {
+			return automa.SuccessReport(stp)
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			module, err := kernel.NewModule(name)
 			if err != nil {
-				return nil, err
+				return automa.FailureReport(stp, automa.WithError(
+					automa.StepExecutionError.Wrap(err, "failed to load kernel module: %s", name)))
 			}
 
 			if !loadedByThisStep {
-				return automa.StepSuccessReport(stepId), nil
+				return automa.SuccessReport(stp)
+
 			}
 
 			err = module.Unload(true)
 			if err != nil {
-				return nil, err
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.Wrap(err,
+							"failed to unload kernel module: %s", name)))
 			}
 
-			return automa.StepSuccessReport(stepId), nil
-		}))
+			return automa.SuccessReport(stp)
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, report *automa.Report) {
+			notify.As().StepFailure(ctx, stp, report,
+				fmt.Sprintf("Failed to load kernel module: %s", name))
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, report,
+				fmt.Sprintf("Kernel module %s loaded successfully", name))
+		})
 }

@@ -6,7 +6,8 @@ import (
 )
 
 func InstallKubectl() automa.Builder {
-	return automa.NewStepBuilder("install-kubectl", automa.WithOnExecute(func(ctx context.Context) (*automa.Report, error) {
-		return automa.StepSuccessReport("install-kubectl"), nil
-	}))
+	return automa.NewStepBuilder().WithId("install-kubectl").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
 }
