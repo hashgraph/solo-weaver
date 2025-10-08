@@ -208,7 +208,15 @@ tasks:
     deps:
       - "generate"
     cmds:
-      - "go test -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
+      - "go test -v -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
+
+  test:integration:verbose:
+    internal: true
+    desc: "Run integration tests with verbose console output"
+    deps:
+      - "generate"
+    cmds:
+      - "go test -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/..."
 
   test:coverage:
     cmds:
