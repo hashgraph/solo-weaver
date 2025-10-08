@@ -186,8 +186,7 @@ func RemoveSystemPackage(name string, installer func() (software.Package, error)
 
 				info, err := pkg.Uninstall()
 				if err != nil {
-					return automa.FailureReport(stp,
-						automa.WithError(automa.StepExecutionError.Wrap(err, "failed to uninstall package")))
+					return automa.FailureReport(stp, automa.WithError(err))
 				}
 
 				logx.As().Info().

@@ -312,7 +312,7 @@ func Test_KernelModuleStep_AlreadyPersisted_Integration(t *testing.T) {
 	require.NoError(t, err, "Failed to build step workflow")
 
 	report := stepWorkflow.Execute(context.Background())
-	require.NoError(t, err, "Failed to execute module step on already persisted module")
+	require.NoError(t, report.Error, "Failed to execute module step on already persisted module")
 	require.Equal(t, automa.StatusSuccess, report.Status,
 		"Module step should complete successfully even when module is already persisted")
 
@@ -338,7 +338,7 @@ func Test_KernelModuleStep_AlreadyLoadedAndPersisted_Integration(t *testing.T) {
 	// Cleanup before test
 	cleanupKernelModule(t, moduleName)
 
-	// Pre-load and persist the module manually
+	// Preload and persist the module manually
 	preLoadAndPersistModule(t, moduleName)
 
 	// Verify module is both loaded and persisted

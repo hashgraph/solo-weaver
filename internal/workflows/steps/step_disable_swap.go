@@ -29,8 +29,8 @@ func DisableSwap() automa.Builder {
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			err := osx.EnableSwap()
 			if err != nil {
-				return automa.FailureReport(stp, automa.
-					WithError(automa.StepExecutionError.Wrap(err, "failed to enable swap on rollback")))
+				return automa.FailureReport(stp,
+					automa.WithError(automa.StepExecutionError.Wrap(err, "failed to enable swap on rollback")))
 			}
 
 			return automa.SuccessReport(stp)

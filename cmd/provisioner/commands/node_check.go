@@ -39,8 +39,8 @@ func runNodeSafetyCheck(ctx context.Context, nodeType string) {
 	}
 
 	report := wb.Execute(ctx)
-	if err != nil {
-		doctor.CheckErr(ctx, err)
+	if report.Error != nil {
+		doctor.CheckErr(ctx, report.Error)
 	}
 
 	// For each step that failed, run the doctor to diagnose the error
