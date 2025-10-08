@@ -2,31 +2,29 @@ package software
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/joomcode/errorx"
 )
 
-// FileDownloader is the default implementation of the Downloader interface
-type FileDownloader struct {
+// Downloader is responsible for downloading a software package and check its integrity.
+type Downloader struct {
 	client  *http.Client
 	timeout time.Duration
 }
 
-// NewFileDownloader creates a new FileDownloader with default settings
-func NewFileDownloader() *FileDownloader {
-	return &FileDownloader{
+// NewDownloader creates a new Downloader with default settings
+func NewDownloader() *Downloader {
+	return &Downloader{
 		client: &http.Client{
 			Timeout: 30 * time.Minute, // Default timeout for large downloads
 		},
@@ -34,9 +32,9 @@ func NewFileDownloader() *FileDownloader {
 	}
 }
 
-// NewFileDownloaderWithTimeout creates a new FileDownloader with custom timeout
-func NewFileDownloaderWithTimeout(timeout time.Duration) *FileDownloader {
-	return &FileDownloader{
+// NewDownloaderWithTimeout creates a new Downloader with custom timeout
+func NewDownloaderWithTimeout(timeout time.Duration) *Downloader {
+	return &Downloader{
 		client: &http.Client{
 			Timeout: timeout,
 		},
@@ -45,108 +43,66 @@ func NewFileDownloaderWithTimeout(timeout time.Duration) *FileDownloader {
 }
 
 // Download downloads a file from the given URL to the specified destination
-func (fd *FileDownloader) Download(url, destination string) error {
+func (fd *Downloader) Download(url, destination string) error {
 	resp, err := fd.client.Get(url)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to download from URL: %s", url)
+		return NewDownloadError(err, url, 0)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return errorx.IllegalState.New("failed to download: HTTP %d %s", resp.StatusCode, resp.Status)
+		return NewDownloadError(nil, url, resp.StatusCode)
 	}
 
 	out, err := os.Create(destination)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create destination file: %s", destination)
+		return NewDownloadError(err, url, 0)
 	}
 	defer out.Close()
 
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to write downloaded content to file: %s", destination)
+		return NewDownloadError(err, url, 0)
 	}
 
 	return nil
 }
 
-// VerifyMD5 verifies the MD5 hash of a file
-func (fd *FileDownloader) VerifyMD5(filePath, expectedMD5 string) error {
+// checksum verifies the hash of a file
+// hashType is the hash function to use, e.g. md5.New(), sha256.New(), sha512.New()
+func (fd *Downloader) Checksum(filePath string, expectedHash string, hashFunction hash.Hash) error {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to open file for MD5 verification: %s", filePath)
+		return NewFileNotFoundError(filePath)
 	}
 	defer file.Close()
 
-	hash := md5.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to calculate MD5 hash for file: %s", filePath)
+	if _, err := io.Copy(hashFunction, file); err != nil {
+		return NewChecksumError(filePath, "unknown", expectedHash, "")
 	}
 
-	calculatedMD5 := fmt.Sprintf("%x", hash.Sum(nil))
-	if calculatedMD5 != expectedMD5 {
-		return errorx.IllegalState.New("MD5 hash mismatch for file %s: got %s, expected %s", filePath, calculatedMD5, expectedMD5)
-	}
-
-	return nil
-}
-
-// VerifySHA256 verifies the SHA256 hash of a file
-func (fd *FileDownloader) VerifySHA256(filePath, expectedSHA256 string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to open file for SHA256 verification: %s", filePath)
-	}
-	defer file.Close()
-
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to calculate SHA256 hash for file: %s", filePath)
-	}
-
-	calculatedSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
-	if calculatedSHA256 != expectedSHA256 {
-		return errorx.IllegalState.New("SHA256 hash mismatch for file %s: got %s, expected %s", filePath, calculatedSHA256, expectedSHA256)
-	}
-
-	return nil
-}
-
-// VerifySHA512 verifies the SHA512 hash of a file
-func (fd *FileDownloader) VerifySHA512(filePath, expectedSHA512 string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to open file for SHA512 verification: %s", filePath)
-	}
-	defer file.Close()
-
-	hash := sha512.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to calculate SHA512 hash for file: %s", filePath)
-	}
-
-	calculatedSHA512 := fmt.Sprintf("%x", hash.Sum(nil))
-	if calculatedSHA512 != expectedSHA512 {
-		return errorx.IllegalState.New("SHA512 hash mismatch for file %s: got %s, expected %s", filePath, calculatedSHA512, expectedSHA512)
+	calculatedHash := fmt.Sprintf("%x", hashFunction.Sum(nil))
+	if calculatedHash != expectedHash {
+		return NewChecksumError(filePath, "unknown", expectedHash, calculatedHash)
 	}
 
 	return nil
 }
 
 // ExtractTarGz extracts a tar.gz file
-func (fd *FileDownloader) ExtractTarGz(gzPath, destDir string) error {
+func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), fd.timeout)
 	defer cancel()
 
-	file, err := os.Open(gzPath)
+	file, err := os.Open(compressedFilePath)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to open tar.gz file: %s", gzPath)
+		return NewFileNotFoundError(compressedFilePath)
 	}
 	defer file.Close()
 
 	gz, err := gzip.NewReader(file)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create gzip reader for file: %s", gzPath)
+		return NewExtractionError(err, compressedFilePath, destDir)
 	}
 	defer gz.Close()
 
@@ -154,14 +110,14 @@ func (fd *FileDownloader) ExtractTarGz(gzPath, destDir string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return errorx.IllegalState.New("timeout while extracting tar.gz file: %s", gzPath)
+			return NewExtractionError(ctx.Err(), compressedFilePath, destDir)
 		default:
 			hdr, err := tarReader.Next()
 			if err == io.EOF {
 				return nil // End of archive
 			}
 			if err != nil {
-				return errorx.IllegalState.Wrap(err, "failed to read next file from tar.gz archive: %s", gzPath)
+				return NewExtractionError(err, compressedFilePath, destDir)
 			}
 
 			target := filepath.Join(destDir, hdr.Name)
@@ -169,70 +125,36 @@ func (fd *FileDownloader) ExtractTarGz(gzPath, destDir string) error {
 			case tar.TypeDir:
 				// Create directories
 				if err := os.MkdirAll(target, 0755); err != nil {
-					return errorx.IllegalState.Wrap(err, "failed to create directory from tar.gz archive: %s", target)
+					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 			case tar.TypeReg:
 				// Extract files
 				out, err := os.Create(target)
 				if err != nil {
-					return errorx.IllegalState.Wrap(err, "failed to create file from tar.gz archive: %s", target)
+					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 				if _, err := io.Copy(out, tarReader); err != nil {
 					out.Close()
-					return errorx.IllegalState.Wrap(err, "failed to write file from tar.gz archive: %s", target)
+					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 				out.Close()
 			default:
-				return errorx.IllegalState.New("unknown type flag in tar.gz archive: %c", hdr.Typeflag)
+				return NewExtractionError(fmt.Errorf("unknown type flag: %c", hdr.Typeflag), compressedFilePath, destDir)
 			}
 		}
 	}
 }
 
-// ExtractZip extracts a zip file
-func (fd *FileDownloader) ExtractZip(zipPath, destDir string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), fd.timeout)
-	defer cancel()
-
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to open zip file: %s", zipPath)
+// VerifyChecksum dynamically verifies the checksum of a file using the specified algorithm
+func (fd *Downloader) VerifyChecksum(filePath string, expectedValue string, algorithm string) error {
+	switch algorithm {
+	case "md5":
+		return fd.Checksum(filePath, expectedValue, md5.New())
+	case "sha256":
+		return fd.Checksum(filePath, expectedValue, sha256.New())
+	case "sha512":
+		return fd.Checksum(filePath, expectedValue, sha512.New())
+	default:
+		return NewChecksumError(filePath, algorithm, expectedValue, "")
 	}
-	defer r.Close()
-
-	for _, f := range r.File {
-		select {
-		case <-ctx.Done():
-			return errorx.IllegalState.New("timeout while extracting zip file: %s", zipPath)
-		default:
-			fpath := filepath.Join(destDir, f.Name)
-			switch f.FileInfo().Mode() & os.ModeType {
-			case os.ModeDir:
-				// Create directories
-				if err := os.MkdirAll(fpath, 0755); err != nil {
-					return errorx.IllegalState.Wrap(err, "failed to create directory from zip archive: %s", fpath)
-				}
-			default:
-				// Extract files
-				out, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-				if err != nil {
-					return errorx.IllegalState.Wrap(err, "failed to create file from zip archive: %s", fpath)
-				}
-				rc, err := f.Open()
-				if err != nil {
-					out.Close()
-					return errorx.IllegalState.Wrap(err, "failed to open file inside zip archive: %s", fpath)
-				}
-				_, err = io.Copy(out, rc)
-				rc.Close()
-				if err != nil {
-					out.Close()
-					return errorx.IllegalState.Wrap(err, "failed to write file from zip archive: %s", fpath)
-				}
-				out.Close()
-			}
-		}
-	}
-
-	return nil
 }

@@ -5,10 +5,11 @@ import (
 )
 
 const (
-	DefaultFilePerm        = 0755
-	DefaultProvisionerHome = "/opt/provisioner"
-	DefaultKubernetesDir   = "/etc/kubernetes"
-	DefaultKubeletDir      = "/var/lib/kubelet"
+	DefaultFilePerm         = 0755
+	DefaultProvisionerHome  = "/opt/provisioner"
+	DefaultKubernetesDir    = "/etc/kubernetes"
+	DefaultKubeletDir       = "/var/lib/kubelet"
+	DefaultUnpackFolderName = "unpack"
 )
 
 var (

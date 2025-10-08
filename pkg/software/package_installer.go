@@ -6,7 +6,6 @@ import (
 	"github.com/bluet/syspkg"
 	"github.com/bluet/syspkg/manager"
 	"github.com/bluet/syspkg/manager/apt"
-	"github.com/joomcode/errorx"
 )
 
 var (
@@ -20,14 +19,14 @@ func GetPackageManager() (syspkg.PackageManager, error) {
 		includeOptions := syspkg.IncludeOptions{AllAvailable: true}
 		sysPackageManager, err := syspkg.New(includeOptions)
 		if err != nil {
-			initErr = errorx.IllegalState.New("failed to initialize package manager: %s", err.Error())
+			initErr = NewInstallationError(err, "package-manager", "")
 			return
 		}
 
 		// Let syspkg automatically detect the best available package manager
 		pm, err := sysPackageManager.GetPackageManager("") // Empty string returns first available
 		if err != nil {
-			initErr = errorx.IllegalState.New("failed to get package manager: %s", err.Error())
+			initErr = NewInstallationError(err, "package-manager", "")
 			return
 		}
 
@@ -63,12 +62,12 @@ func AutoRemove() error {
 	// Check if the package manager supports AutoRemove
 	autoRemover, ok := pm.(AutoRemover)
 	if !ok {
-		return errorx.IllegalState.New("autoremove is only supported for apt package manager")
+		return NewInstallationError(nil, "autoremove", "")
 	}
 
 	_, err = autoRemover.AutoRemove(&manager.Options{DryRun: false, Interactive: false, AssumeYes: true})
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to autoremove orphaned packages")
+		return NewInstallationError(err, "autoremove", "")
 	}
 
 	return nil
@@ -91,7 +90,7 @@ func (p *PackageInstaller) Name() string {
 func (p *PackageInstaller) Install() (*syspkg.PackageInfo, error) {
 	_, err := p.pkgManager.Install([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to install package: %s", p.pkgName)
+		return nil, NewInstallationError(err, p.pkgName, "")
 	}
 
 	return p.Info()
@@ -100,7 +99,7 @@ func (p *PackageInstaller) Install() (*syspkg.PackageInfo, error) {
 func (p *PackageInstaller) Uninstall() (*syspkg.PackageInfo, error) {
 	_, err := p.pkgManager.Delete([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to uninstall package: %s", p.pkgName)
+		return nil, NewInstallationError(err, p.pkgName, "")
 	}
 
 	return p.Info()
@@ -109,12 +108,12 @@ func (p *PackageInstaller) Uninstall() (*syspkg.PackageInfo, error) {
 func (p *PackageInstaller) Upgrade() (*syspkg.PackageInfo, error) {
 	pm, ok := p.pkgManager.(*apt.PackageManager)
 	if !ok {
-		return nil, errorx.IllegalState.New("upgrade is only supported for apt package manager")
+		return nil, NewInstallationError(nil, p.pkgName, "")
 	}
 
 	_, err := pm.Upgrade([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to upgrade package: %s", p.pkgName)
+		return nil, NewInstallationError(err, p.pkgName, "")
 	}
 
 	return p.Info()
@@ -134,7 +133,7 @@ func (p *PackageInstaller) Info() (*syspkg.PackageInfo, error) {
 	// as the current syspkg apt ListInstalled implementation does not check whether only the config of a package is there.
 	resp, err := p.pkgManager.Find([]string{p.pkgName}, &p.pkgOptions)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to find package: %s", p.pkgName)
+		return nil, NewInstallationError(err, p.pkgName, "")
 	}
 
 	// go through the list and verify if the package is found
@@ -144,12 +143,12 @@ func (p *PackageInstaller) Info() (*syspkg.PackageInfo, error) {
 		}
 	}
 
-	return nil, errorx.IllegalState.Wrap(err, "failed to find package: %s", p.pkgName)
+	return nil, NewInstallationError(nil, p.pkgName, "")
 }
 
 func (p *PackageInstaller) Verify() error {
 	if !p.IsInstalled() {
-		return errorx.IllegalState.New("package is not installed")
+		return NewInstallationError(nil, p.pkgName, "")
 	}
 
 	return nil
