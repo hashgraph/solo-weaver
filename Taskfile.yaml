@@ -223,7 +223,8 @@ tasks:
     cmds:
       # Using go-testreport v0.3.2
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
-      - "go test -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... | go-testreport -output integration-test-report.md -vars 'Title:Integration Test Report'"
+      - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... > integration-test.json"
+      - "go-testreport -input integration-test.json -output integration-test-report.md -vars 'Title:Integration Test Report'"
 
   run:
     deps:
