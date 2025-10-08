@@ -122,13 +122,13 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 			}
 
 			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{
-				"package_name":           info.Name,
-				"package_version":        info.Version,
-				"package_status":         string(info.Status),
-				"package_manager":        info.PackageManager,
-				"package_arch":           info.Arch,
-				"package_category":       info.Category,
-				"package_latest_version": info.NewVersion,
+				"packageName":          info.Name,
+				"packageVersion":       info.Version,
+				"packageStatus":        string(info.Status),
+				"packageManager":       info.PackageManager,
+				"packageArch":          info.Arch,
+				"packageCategory":      info.Category,
+				"packageLatestVersion": info.NewVersion,
 			}))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {

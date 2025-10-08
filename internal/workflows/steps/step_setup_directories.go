@@ -7,6 +7,7 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
+	"strings"
 )
 
 func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
@@ -33,7 +34,10 @@ func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
 				}
 			}
 
-			return automa.SuccessReport(stp)
+			// add metadata about created directories
+			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{
+				"directories": strings.Join(pp.AllDirectories, ", "),
+			}))
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup home directory structure")

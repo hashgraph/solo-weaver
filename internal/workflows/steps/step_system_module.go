@@ -14,7 +14,6 @@ import (
 // On rollback, it unloads the module only if it was loaded by this step.
 func InstallKernelModule(name string) automa.Builder {
 	stepId := fmt.Sprintf("load-kernel-module-%s", name)
-
 	loadedByThisStep := false
 
 	return automa.NewStepBuilder().WithId(stepId).
@@ -33,8 +32,17 @@ func InstallKernelModule(name string) automa.Builder {
 							"failed to check if module %s is loaded", name)))
 			}
 
+			// Prepare metadata for reporting
+			meta := map[string]string{
+				"module":           name,
+				"status":           "loaded",
+				"loadedByThisStep": fmt.Sprintf("%t", loadedByThisStep),
+				"alreadyLoaded":    fmt.Sprintf("%t", alreadyLoaded),
+				"alreadyPersisted": fmt.Sprintf("%t", alreadyPersisted),
+			}
+
 			if alreadyLoaded && alreadyPersisted {
-				return automa.SuccessReport(stp)
+				return automa.SuccessReport(stp, automa.WithMetadata(meta))
 			}
 
 			err = module.Load(true)
@@ -44,9 +52,11 @@ func InstallKernelModule(name string) automa.Builder {
 						automa.StepExecutionError.Wrap(err,
 							"failed to load and persist kernel module: %s", name)))
 			}
-			loadedByThisStep = true
 
-			return automa.SuccessReport(stp)
+			loadedByThisStep = true
+			meta[string(LoadedByThisStep)] = fmt.Sprintf("%t", loadedByThisStep)
+
+			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			module, err := kernel.NewModule(name)
@@ -57,7 +67,6 @@ func InstallKernelModule(name string) automa.Builder {
 
 			if !loadedByThisStep {
 				return automa.SkippedReport(stp)
-
 			}
 
 			err = module.Unload(true)
