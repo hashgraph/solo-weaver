@@ -23,11 +23,10 @@ const (
 	InstallEBTablesStepId  = "install-ebtables"
 	InstallNFTablesStepId  = "install-nftables"
 
-	EnableStartNFTablesStepId    = "enable-start-nftables"
-	AutoRemovePackagesStepId     = "auto-remove-packages"
-	InstallKernelModulesStepId   = "install-kernel-modules"
-	ConfigureKernelModulesStepId = "configure-kernel-modules"
-	SetupWorkingDirsStepId       = "setup-working-dirs"
+	EnableStartNFTablesStepId  = "enable-start-nftables"
+	AutoRemovePackagesStepId   = "auto-remove-packages"
+	InstallKernelModulesStepId = "install-kernel-modules"
+	SetupWorkingDirsStepId     = "setup-working-dirs"
 
 	DownloadDaselStepId                  = "download-dasel"
 	DownloadCrioStepId                   = "download-crio"
@@ -235,9 +234,9 @@ func (b *bashScriptStep) InstallKernelModules() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) ConfigureKernelModules() automa.Builder {
+func (b *bashScriptStep) ConfigureSysctlForKubernetes() automa.Builder {
 	return automa.NewWorkflowBuilder().
-		WithId(ConfigureKernelModulesStepId).
+		WithId(ConfigureSysctlForKubernetesStepId).
 		Steps(
 			automa_steps.BashScriptStep("cleanup-sysctl-configs", []string{
 				`sudo rm -f /etc/sysctl.d/15-network-performance.conf || true`,
@@ -857,7 +856,7 @@ func initBashScriptBasedStepRegistry() (automa.Registry, error) {
 		bashSteps.EnableAndStartNFTables(),
 		bashSteps.AutoRemovePackages(),
 		bashSteps.InstallKernelModules(),
-		bashSteps.ConfigureKernelModules(),
+		bashSteps.ConfigureSysctlForKubernetes(),
 		bashSteps.DownloadDasel(),
 		bashSteps.DownloadCrio(),
 		bashSteps.DownloadKubernetesTools(),
@@ -916,7 +915,7 @@ func BashScriptBasedClusterSetupWorkflow() automa.Builder {
 			bashSteps.EnableAndStartNFTables(),
 			bashSteps.AutoRemovePackages(),
 			bashSteps.InstallKernelModules(),
-			bashSteps.ConfigureKernelModules(),
+			bashSteps.ConfigureSysctlForKubernetes(),
 			bashSteps.SetupBindMounts(),
 			bashSteps.DownloadDasel(),
 			bashSteps.InstallDasel(),

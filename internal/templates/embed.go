@@ -2,22 +2,32 @@ package templates
 
 import (
 	"embed"
+	"strings"
+
 	"github.com/joomcode/errorx"
 	"golang.org/x/text/encoding/unicode"
-	"strings"
 )
 
 //go:embed files/*
 var Files embed.FS
 
-func ReadAsString(name string) (string, error) {
+func Read(name string) ([]byte, error) {
 	if strings.TrimSpace(name) == "" {
-		return "", errorx.IllegalArgument.New("file name cannot be empty")
+		return nil, errorx.IllegalArgument.New("file name cannot be empty")
 	}
 
 	data, err := Files.ReadFile(name)
 	if err != nil {
-		return "", errorx.DataUnavailable.Wrap(err, "failed to read embedded file %s", name)
+		return nil, errorx.DataUnavailable.Wrap(err, "failed to read embedded file %s", name)
+	}
+
+	return data, nil
+}
+
+func ReadAsString(name string) (string, error) {
+	data, err := Read(name)
+	if err != nil {
+		return "", err // already wrapped
 	}
 
 	// validate that the file contents are UTF-8 before casting into string
@@ -27,6 +37,26 @@ func ReadAsString(name string) (string, error) {
 	}
 
 	return string(utf8Data), nil
+}
+
+func ReadDir(dir string) ([]string, error) {
+	if strings.TrimSpace(dir) == "" {
+		return nil, errorx.IllegalArgument.New("directory name cannot be empty")
+	}
+
+	entries, err := Files.ReadDir(dir)
+	if err != nil {
+		return nil, errorx.DataUnavailable.Wrap(err, "failed to read embedded directory %s", dir)
+	}
+
+	var fileNames []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			fileNames = append(fileNames, entry.Name())
+		}
+	}
+
+	return fileNames, nil
 }
 
 // Render renders a template with the given data and returns the result as a string.
