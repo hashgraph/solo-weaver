@@ -8,13 +8,23 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
 func Test_ConfigureSysctlForKubernetes_Integration(t *testing.T) {
+	// need to load nftables module first as sysctl config files depend on it
+	sf, err := automa.NewWorkflowBuilder().WithId("test").Steps(
+		InstallSystemPackage("nftables", software.NewNftables),
+	).Build()
+	require.NoError(t, err)
+	report := sf.Execute(context.Background())
+	require.NoError(t, report.Error)
+	require.Equal(t, automa.StatusSuccess, report.Status)
+
 	wf, err := ConfigureSysctlForKubernetes().Build()
 	require.NoError(t, err)
 
-	report := wf.Execute(context.Background())
+	report = wf.Execute(context.Background())
 	require.NoError(t, report.Error)
 	require.Equal(t, report.StepReports[0].Metadata["copied_files"],
 		"/etc/sysctl.d/75-inotify.conf, /etc/sysctl.d/75-k8s-networking.conf, /etc/sysctl.d/75-network-performance.conf")
