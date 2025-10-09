@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -66,19 +67,38 @@ func copySysctlConfigurationFiles() automa.Builder {
 		})
 }
 
+// restartSysctlService reloads sysctl settings to apply any changes made to the configuration files.
+// This is equivalent to running `sysctl --system`.
 func restartSysctlService() automa.Builder {
 	return automa.NewStepBuilder().WithId("restart-sysctl-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Reload sysctl settings
-			configFiles, err := templates.ReadDir(templates.SysctlConfigSourceDir)
+			dirEntries, err := os.ReadDir(templates.SysctlConfigDir)
 			if err != nil {
+				if os.IsNotExist(err) {
+					return automa.SkippedReport(stp, automa.WithDetail("no sysctl configuration files found"))
+				}
 				return automa.FailureReport(stp,
 					automa.WithError(
 						automa.StepExecutionError.Wrap(err, "failed to read sysctl configuration directory")))
 			}
 
-			for i := range configFiles {
-				configFiles[i] = path.Join(templates.SysctlConfigDestDir, configFiles[i])
+			var configFiles []string
+			for _, entry := range dirEntries {
+				if entry.IsDir() {
+					continue
+				}
+
+				// only add config files ending with .conf
+				if !strings.HasSuffix(entry.Name(), ".conf") {
+					continue
+				}
+
+				configFiles = append(configFiles, path.Join(templates.SysctlConfigDir, entry.Name()))
+			}
+
+			if len(configFiles) == 0 {
+				return automa.SkippedReport(stp, automa.WithDetail("no sysctl configuration files found"))
 			}
 
 			sort.Strings(configFiles)

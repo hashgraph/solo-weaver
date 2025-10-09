@@ -9,14 +9,14 @@ import (
 )
 
 const (
-	SysctlConfigSourceDir = "files/sysctl"
-	SysctlConfigDestDir   = "/etc/sysctl.d"
+	SysctlConfigTemplatesDir = "files/sysctl"
+	SysctlConfigDir          = "/etc/sysctl.d"
 )
 
 // use var to allow patching in tests
 var (
-	sysctlConfigSourceDir      = SysctlConfigSourceDir
-	sysctlConfigDestinationDir = SysctlConfigDestDir
+	sysctlConfigSourceDir      = SysctlConfigTemplatesDir
+	sysctlConfigDestinationDir = SysctlConfigDir
 )
 
 func CopyFile(src string, dst string) error {
