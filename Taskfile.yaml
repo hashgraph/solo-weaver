@@ -217,9 +217,13 @@ tasks:
       - "go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/..."
 
   test:coverage:
+    desc: "Run test coverage analysis. Use TEST_FILE to specify a specific test file, otherwise tests all packages"
+    vars:
+      TEST_PATHS:  '{{.TEST_PATHS | default "./internal/... ./pkg/... ./cmd/..."}}'
+      TEST_REGEX: '{{.TEST_REGEX | default "."}}'
     cmds:
       - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
-      - "go test -race -cover -json ./internal/... ./pkg/... ./cmd/... -coverprofile=./cover.out -covermode=atomic -coverpkg=./..."
+      - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./..."
       - "go-test-coverage --config=./.testcoverage.yml"
 
   test:integration:

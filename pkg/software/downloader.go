@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
 // Downloader is responsible for downloading a software package and check its integrity.
@@ -124,7 +126,7 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 			switch hdr.Typeflag {
 			case tar.TypeDir:
 				// Create directories
-				if err := os.MkdirAll(target, 0755); err != nil {
+				if err := os.MkdirAll(target, core.DefaultFilePerm); err != nil {
 					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 			case tar.TypeReg:

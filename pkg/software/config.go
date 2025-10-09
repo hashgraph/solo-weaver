@@ -3,6 +3,7 @@ package software
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"runtime"
 	"sort"
 	"text/template"
@@ -150,39 +151,64 @@ func (si *SoftwareItem) GetFilename(version string) (string, error) {
 }
 
 // GetLatestVersion returns the latest version available for this software item
+// Only supports semantic versions - returns error for non-semantic version formats
 func (si *SoftwareItem) GetLatestVersion() (string, error) {
 	if len(si.Versions) == 0 {
 		return "", NewVersionNotFoundError(si.Name, "any")
 	}
 
-	// If there's only one version, return it
+	// If there's only one version, return it if it's valid semantic version
 	if len(si.Versions) == 1 {
 		for version := range si.Versions {
-			return string(version), nil
+			versionStr := string(version)
+			if !isValidVersion(versionStr) {
+				return "", fmt.Errorf("version %s for software %s is not in semantic version format", versionStr, si.Name)
+			}
+			return versionStr, nil
 		}
 	}
 
-	// Collect all version strings
+	// Collect and validate all version strings
 	versions := make([]string, 0, len(si.Versions))
+
 	for version := range si.Versions {
-		versions = append(versions, string(version))
+		versionStr := string(version)
+		if !isValidVersion(versionStr) {
+			return "", fmt.Errorf("version %s for software %s is not in semantic version format", versionStr, si.Name)
+		}
+		versions = append(versions, versionStr)
 	}
 
 	// Sort versions using semantic version comparison
 	sort.Slice(versions, func(i, j int) bool {
-		// Parse versions and compare - newer versions come first (descending order)
-		versionI, errI := semver.NewSemver(versions[i])
-		versionJ, errJ := semver.NewSemver(versions[j])
-
-		// If parsing fails for either version, fall back to string comparison
-		if errI != nil || errJ != nil {
-			return versions[i] > versions[j]
+		// Use the semantic version comparator for sorting
+		result, err := compareVersions(versions[i], versions[j])
+		if err != nil {
+			// This shouldn't happen since we validated versions above, but handle gracefully
+			return false
 		}
-
-		// Return true if versionI is greater than versionJ (for descending sort)
-		return versionI.GreaterThan(versionJ)
+		return result
 	})
 
 	// Return the first (latest) version
 	return versions[0], nil
+}
+
+func compareVersions(version1, version2 string) (bool, error) {
+	v1, err1 := semver.NewSemver(version1)
+	v2, err2 := semver.NewSemver(version2)
+
+	if err1 != nil {
+		return false, fmt.Errorf("invalid semantic version format: %s", version1)
+	}
+	if err2 != nil {
+		return false, fmt.Errorf("invalid semantic version format: %s", version2)
+	}
+
+	return v1.GreaterThan(v2), nil
+}
+
+func isValidVersion(version string) bool {
+	_, err := semver.NewSemver(version)
+	return err == nil
 }

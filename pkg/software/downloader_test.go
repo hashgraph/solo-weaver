@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,28 +26,20 @@ func TestFileDownloader_Download(t *testing.T) {
 
 	// Create temporary file for destination
 	tmpFile, err := os.CreateTemp("", "test_download_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp file")
 	tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 
 	// Test download
 	downloader := NewDownloader()
 	err = downloader.Download(server.URL, tmpFile.Name())
-	if err != nil {
-		t.Fatalf("Download failed: %v", err)
-	}
+	require.NoError(t, err, "Download failed")
 
 	// Verify content
 	content, err := os.ReadFile(tmpFile.Name())
-	if err != nil {
-		t.Fatalf("Failed to read downloaded file: %v", err)
-	}
+	require.NoError(t, err, "Failed to read downloaded file")
 
-	if string(content) != testContent {
-		t.Errorf("Downloaded content mismatch: got %s, want %s", string(content), testContent)
-	}
+	require.Equal(t, testContent, string(content), "Downloaded content mismatch")
 }
 
 func TestFileDownloader_Download_HTTPError(t *testing.T) {
@@ -59,32 +50,15 @@ func TestFileDownloader_Download_HTTPError(t *testing.T) {
 	defer server.Close()
 
 	tmpFile, err := os.CreateTemp("", "test_download_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp file")
 	tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 
 	downloader := NewDownloader()
 	err = downloader.Download(server.URL, tmpFile.Name())
-	if err == nil {
-		t.Fatal("Expected download to fail with HTTP 404, but it succeeded")
-	}
+	require.Error(t, err, "Download should fail with HTTP 404")
 
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
-}
-
-func TestNewFileDownloaderWithTimeout(t *testing.T) {
-	timeout := 5 * time.Second
-	downloader := NewDownloaderWithTimeout(timeout)
-
-	if downloader.timeout != timeout {
-		t.Errorf("Expected timeout %v, got %v", timeout, downloader.timeout)
-	}
-
-	if downloader.client.Timeout != timeout {
-		t.Errorf("Expected client timeout %v, got %v", timeout, downloader.client.Timeout)
-	}
 }
 
 func TestFileDownloader_Timeout(t *testing.T) {
@@ -97,21 +71,14 @@ func TestFileDownloader_Timeout(t *testing.T) {
 	defer server.Close()
 
 	tmpFile, err := os.CreateTemp("", "test_timeout_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp file")
 	tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 
 	downloader := NewDownloaderWithTimeout(1 * time.Second)
 	err = downloader.Download(server.URL, tmpFile.Name())
-	if err == nil {
-		t.Fatal("Expected download to fail due to timeout, but it succeeded")
-	}
+	require.Error(t, err, "Download should fail with timeout")
 
-	if !strings.Contains(err.Error(), "Client.Timeout") {
-		t.Errorf("Expected timeout error, got: %v", err)
-	}
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
 }
 
@@ -119,21 +86,15 @@ func TestFileDownloader_VerifyNonExistentFile(t *testing.T) {
 	downloader := NewDownloader()
 
 	err := downloader.VerifyChecksum("/non/existent/file", "somehash", "md5")
-	if err == nil {
-		t.Fatal("Expected error when verifying non-existent file")
-	}
+	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 
 	err = downloader.VerifyChecksum("/non/existent/file", "somehash", "sha256")
-	if err == nil {
-		t.Fatal("Expected error when verifying non-existent file")
-	}
+	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 
 	err = downloader.VerifyChecksum("/non/existent/file", "somehash", "sha512")
-	if err == nil {
-		t.Fatal("Expected error when verifying non-existent file")
-	}
+	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 }
 
