@@ -8,18 +8,7 @@ import (
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
-const (
-	SysctlConfigTemplatesDir = "files/sysctl"
-	SysctlConfigDir          = "/etc/sysctl.d"
-)
-
-// use var to allow patching in tests
-var (
-	sysctlConfigSourceDir      = SysctlConfigTemplatesDir
-	sysctlConfigDestinationDir = SysctlConfigDir
-)
-
-func CopyFile(src string, dst string) error {
+func CopyTemplateFile(src string, dst string) error {
 	content, err := Read(src)
 	if err != nil {
 		return fsx.FileReadError.Wrap(err, "failed to read config file %s", src)
@@ -33,19 +22,18 @@ func CopyFile(src string, dst string) error {
 	return nil
 }
 
-// CopyFiles copies configuration files from the embedded templates to the destination directory.
+// CopyTemplateFiles copies configuration files from the embedded templates to the destination directory.
 // It overwrites existing files in the destination directory. It returns a list of copied files.
-func CopyFiles(SrcDir string, DestDir string) ([]string, error) {
+func CopyTemplateFiles(srcDir string, destDir string) ([]string, error) {
 	var copiedFiles []string
-	files, err := ReadDir(SrcDir)
+	files, err := ReadDir(srcDir)
 	if err != nil {
 		return copiedFiles, err
 	}
 
-	for _, file := range files {
-		src := path.Join(SrcDir, file)
-		dst := path.Join(DestDir, file)
-		err = CopyFile(src, dst)
+	for _, src := range files {
+		dst := path.Join(destDir, path.Base(src))
+		err = CopyTemplateFile(src, dst)
 		if err != nil {
 			return copiedFiles, err
 		}
@@ -55,21 +43,17 @@ func CopyFiles(SrcDir string, DestDir string) ([]string, error) {
 	return copiedFiles, nil
 }
 
-// CopySysctlConfigurationFiles copies sysctl configuration files from the embedded templates to the /etc/sysctl.d directory.
-// It overwrites existing files in the destination directory.
-func CopySysctlConfigurationFiles() ([]string, error) {
-	return CopyFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
-}
-
-func RemoveSysctlConfigurationFiles() ([]string, error) {
+// RemoveTemplateFiles removes configuration files from the destination directory that were copied from the source directory.
+// It returns a list of removed files.
+func RemoveTemplateFiles(srcDir string, destDir string) ([]string, error) {
 	var removedFiles []string
-	files, err := ReadDir(sysctlConfigSourceDir)
+	files, err := ReadDir(srcDir)
 	if err != nil {
 		return removedFiles, err
 	}
 
 	for _, file := range files {
-		dst := path.Join(sysctlConfigDestinationDir, file)
+		dst := path.Join(destDir, path.Base(file))
 		if _, err = os.Stat(dst); os.IsNotExist(err) {
 			continue // file does not exist, nothing to remove
 		}

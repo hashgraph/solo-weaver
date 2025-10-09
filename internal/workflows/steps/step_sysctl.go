@@ -4,16 +4,22 @@ import (
 	"context"
 	"os"
 	"path"
-	"sort"
 	"strings"
 
 	"github.com/automa-saga/automa"
-	sysctl "github.com/lorenzosaino/go-sysctl"
-	"golang.hedera.com/solo-provisioner/internal/templates"
+	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/internal/sysctl"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 )
 
-const ConfigureSysctlForKubernetesStepId = "configure-sysctl-for-kubernetes"
+const (
+	ConfigureSysctlForKubernetesStepId = "configure-sysctl-for-kubernetes"
+	SysCtlBackupFilename               = "sysctl.conf"
+	KeyBackupFile                      = "backup_file"
+	KeyReloadedFiles                   = "reloaded_files"
+	KeyCopiedFiles                     = "copied_files"
+	KeyRemovedFiles                    = "removed_files"
+)
 
 func ConfigureSysctlForKubernetes() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureSysctlForKubernetesStepId).
@@ -21,6 +27,28 @@ func ConfigureSysctlForKubernetes() automa.Builder {
 			copySysctlConfigurationFiles(),
 			restartSysctlService(),
 		).
+		// rollback needs to run in the same as execution order
+		// Therefore, we are defining custom rollback for this workflow
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			wf, ok := stp.(automa.Workflow)
+			if !ok {
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.New("step is not a workflow, cannot rollback")))
+			}
+
+			// rollback in the same order as execute as we need to remove files and then reload sysctl
+			for i, s := range wf.Steps() {
+				report := s.Rollback(ctx)
+				if report.Error != nil {
+					return automa.FailureReport(stp,
+						automa.WithError(
+							automa.StepExecutionError.Wrap(report.Error,
+								"failed to rollback step %d (%s) in workflow %s", i, s.Id(), stp.Id())))
+				}
+			}
+			return automa.SuccessReport(stp)
+		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, report *automa.Report) {
 			notify.As().StepFailure(ctx, stp, report, "Failed to configure sysctl for Kubernetes")
 		}).
@@ -32,7 +60,7 @@ func ConfigureSysctlForKubernetes() automa.Builder {
 func copySysctlConfigurationFiles() automa.Builder {
 	return automa.NewStepBuilder().WithId("copy-sysctl-files").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			copied, err := templates.CopySysctlConfigurationFiles()
+			copied, err := sysctl.CopyConfiguration()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
@@ -40,13 +68,13 @@ func copySysctlConfigurationFiles() automa.Builder {
 			}
 
 			meta := map[string]string{
-				"copied_files": strings.Join(copied, ", "),
+				KeyCopiedFiles: strings.Join(copied, ", "),
 			}
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			removed, err := templates.RemoveSysctlConfigurationFiles()
+			removed, err := sysctl.DeleteConfiguration()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
@@ -54,7 +82,7 @@ func copySysctlConfigurationFiles() automa.Builder {
 			}
 
 			meta := map[string]string{
-				"removed_files": strings.Join(removed, ", "),
+				KeyRemovedFiles: strings.Join(removed, ", "),
 			}
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
@@ -68,49 +96,60 @@ func copySysctlConfigurationFiles() automa.Builder {
 }
 
 // restartSysctlService reloads sysctl settings to apply any changes made to the configuration files.
-// This is equivalent to running `sysctl --system`.
+// It also creates a backup of the current sysctl settings before reloading.
+// In case of failure, it can rollback to the previous settings using the backup file.
 func restartSysctlService() automa.Builder {
 	return automa.NewStepBuilder().WithId("restart-sysctl-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// Reload sysctl settings
-			dirEntries, err := os.ReadDir(templates.SysctlConfigDir)
+			backupFile, err := sysctl.BackupConfiguration(path.Join(core.Paths().BackupDir, SysCtlBackupFilename))
 			if err != nil {
-				if os.IsNotExist(err) {
-					return automa.SkippedReport(stp, automa.WithDetail("no sysctl configuration files found"))
-				}
 				return automa.FailureReport(stp,
 					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "failed to read sysctl configuration directory")))
+						automa.StepExecutionError.Wrap(err, "failed to backup current sysctl settings")))
 			}
 
-			var configFiles []string
-			for _, entry := range dirEntries {
-				if entry.IsDir() {
-					continue
-				}
-
-				// only add config files ending with .conf
-				if !strings.HasSuffix(entry.Name(), ".conf") {
-					continue
-				}
-
-				configFiles = append(configFiles, path.Join(templates.SysctlConfigDir, entry.Name()))
-			}
-
-			if len(configFiles) == 0 {
-				return automa.SkippedReport(stp, automa.WithDetail("no sysctl configuration files found"))
-			}
-
-			sort.Strings(configFiles)
-
-			err = sysctl.LoadConfigAndApply(configFiles...)
+			configFiles, err := sysctl.ApplyConfiguration()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						automa.StepExecutionError.Wrap(err, "failed to reload sysctl settings")))
 			}
 
-			return automa.SuccessReport(stp)
+			meta := map[string]string{
+				KeyBackupFile:    backupFile,
+				KeyReloadedFiles: strings.Join(configFiles, ", "),
+			}
+
+			stp.State().Set(KeyBackupFile, backupFile)
+
+			return automa.SuccessReport(stp, automa.WithMetadata(meta))
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			backupFile := stp.State().String(KeyBackupFile)
+			if backupFile == "" {
+				return automa.SkippedReport(stp, automa.WithDetail("no backup file found in step state, cannot rollback"))
+			}
+
+			// check that backup file exists
+			if _, err := os.Stat(backupFile); os.IsNotExist(err) {
+				return automa.FailureReport(stp, automa.WithError(
+					automa.StepExecutionError.
+						New("backup file %s does not exist, cannot rollback", backupFile)))
+			}
+
+			// load settings from backup file
+			err := sysctl.RestoreConfiguration(backupFile)
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.Wrap(err, "failed to restore sysctl settings from backup file %s", backupFile)))
+			}
+
+			meta := map[string]string{
+				KeyBackupFile: backupFile,
+			}
+
+			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, report, "Sysctl service restarted")

@@ -19,10 +19,11 @@ func TestCopyConfigurationFiles(t *testing.T) {
 	err := os.MkdirAll(destDir, core.DefaultFilePerm)
 	require.NoError(t, err)
 
-	srcFiles, err := ReadDir(sysctlConfigSourceDir)
+	srcDir := "files/sysctl" // Ensure this points to the correct embedded files location
+	srcFiles, err := ReadDir(srcDir)
 	require.NoError(t, err)
 
-	copied, err := CopyFiles(sysctlConfigSourceDir, destDir)
+	copied, err := CopyTemplateFiles(srcDir, destDir)
 	require.NoError(t, err)
 	require.NotEmpty(t, copied)
 	require.Equal(t, len(copied), len(srcFiles))
@@ -56,23 +57,17 @@ func TestRemoveSysctlConfigurationFiles(t *testing.T) {
 	dstDir := filepath.Join(tmpDir, "dst")
 	require.NoError(t, os.MkdirAll(dstDir, 0o755))
 
-	// Patch global vars
-	origDst := sysctlConfigDestinationDir
-	sysctlConfigDestinationDir = dstDir
-	defer func() {
-		sysctlConfigDestinationDir = origDst
-	}()
-
-	srcFiles, err := ReadDir(sysctlConfigSourceDir)
+	srcDir := "files/sysctl" // Ensure this points to the correct embedded files location
+	srcFiles, err := ReadDir(srcDir)
 	require.NoError(t, err)
 
-	copied, err := CopyFiles(sysctlConfigSourceDir, dstDir)
+	copied, err := CopyTemplateFiles(srcDir, dstDir)
 	require.NoError(t, err)
 	require.NotEmpty(t, copied)
 	require.Equal(t, len(copied), len(srcFiles))
 
 	// Remove files
-	removed, err := RemoveSysctlConfigurationFiles()
+	removed, err := RemoveTemplateFiles(srcDir, dstDir)
 	require.NoError(t, err)
 	require.NotEmpty(t, removed)
 	require.Equal(t, len(removed), len(copied)) // Ensure all files are reported as removed
