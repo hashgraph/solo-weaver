@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSoftwareItem_GetLatestVersion(t *testing.T) {
+func TestGetLatestVersion(t *testing.T) {
 	tests := []struct {
 		name     string
 		item     SoftwareItem
@@ -64,7 +64,7 @@ func TestSoftwareItem_GetLatestVersion(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name: "versions with non-semantic format fallback to string comparison",
+			name: "versions with non-semantic format should return error",
 			item: SoftwareItem{
 				Name: "test-software",
 				Versions: map[Version]Platforms{
@@ -77,8 +77,64 @@ func TestSoftwareItem_GetLatestVersion(t *testing.T) {
 					"v0.1.0": {},
 				},
 			},
-			// The latest version should be "z"
-			expected: "z",
+			expected: "",
+			wantErr:  true,
+		},
+		{
+			name: "mixed semantic and non-semantic versions should return error",
+			item: SoftwareItem{
+				Name: "test-software",
+				Versions: map[Version]Platforms{
+					"1.0.0":  {},
+					"2.0.0":  {},
+					"latest": {},
+				},
+			},
+			expected: "",
+			wantErr:  true,
+		},
+		{
+			name: "all semantic versions should work correctly",
+			item: SoftwareItem{
+				Name: "test-software",
+				Versions: map[Version]Platforms{
+					"1.0.0":  {},
+					"1.1.0":  {},
+					"2.0.0":  {},
+					"1.10.0": {},
+				},
+			},
+			expected: "2.0.0",
+			wantErr:  false,
+		},
+		{
+			name: "versions with prereleases",
+			item: SoftwareItem{
+				Name: "test-software",
+				Versions: map[Version]Platforms{
+					"1.0.0-alpha.1": {},
+					"1.0.0-alpha.2": {},
+					"1.0.0-alpha.3": {},
+					"1.0.0-beta.1":  {},
+					"1.0.0-beta.2":  {},
+					"1.0.0-beta.3":  {},
+				},
+			},
+			expected: "1.0.0-beta.3",
+			wantErr:  false,
+		},
+		{
+			name: "versions with and without v prefix",
+			item: SoftwareItem{
+				Name: "test-software",
+				Versions: map[Version]Platforms{
+					"v1.0.0": {},
+					"1.0.0":  {},
+					"v2.0.0": {},
+					"2.1.0":  {},
+				},
+			},
+			expected: "2.1.0",
 			wantErr:  false,
 		},
 	}
@@ -98,7 +154,7 @@ func TestSoftwareItem_GetLatestVersion(t *testing.T) {
 	}
 }
 
-func TestCrioInstaller_UsesLatestVersion(t *testing.T) {
+func TestCrioInstallerVersionSelection(t *testing.T) {
 
 	//
 	// Given

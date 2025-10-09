@@ -1,4 +1,4 @@
-//go:build integration
+////go:build integration
 
 package software
 
@@ -239,4 +239,40 @@ func TestCrioInstaller_Extract_Success(t *testing.T) {
 	files, err := os.ReadDir(extractedFolder)
 	require.NoError(t, err, "Failed to read extracted folder")
 	require.Greater(t, len(files), 0, "No files found in extracted folder")
+}
+
+func TestCrioInstaller_Extract_Error(t *testing.T) {
+	setupTestEnvironment(t)
+
+	//
+	// Given
+	//
+
+	// Create a regular file where the directory should be created
+	conflictingFile := tmpFolder + "/cri-o/unpack"
+	os.MkdirAll(tmpFolder+"/cri-o", core.DefaultFilePerm)
+	err := os.WriteFile(conflictingFile, []byte("blocking file"), 0644)
+	require.NoError(t, err, "Failed to create blocking file")
+
+	// Override cleanup to remove the file we created
+	t.Cleanup(func() {
+		_ = os.Remove(conflictingFile)
+	})
+
+	//
+	// When
+	//
+	installer, err := NewCrioInstaller()
+	require.NoError(t, err, "Failed to create crio installer")
+	
+	err = installer.Download()
+	require.NoError(t, err, "Failed to download crio")
+
+	err = installer.Extract()
+
+	//
+	// Then
+	//
+	require.Error(t, err, "Extract should fail due to permission error")
+	require.True(t, errorx.IsOfType(err, ExtractionError), "Error should be of type ExtractError")
 }
