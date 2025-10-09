@@ -214,7 +214,7 @@ tasks:
     deps:
       - "generate"
     cmds:
-      - "go test -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/..."
+      - "go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/..."
 
   test:coverage:
     cmds:
@@ -270,6 +270,9 @@ tasks:
       - "echo 'PATH=\"${PATH}:/usr/local/go/bin:$HOME/go/bin\"' | sudo tee /etc/profile.d/go.sh >/dev/null 2>&1"
       - "source /etc/profile.d/go.sh"
       - "source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@latest"
+      # Set the Go toolchain to auto-upgrade to the latest version due to https://github.com/golang/go/issues/75031
+      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.0+auto"
+      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.0+auto"
     generates:
       - "/usr/local/go/**"
 

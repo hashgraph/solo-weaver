@@ -11,7 +11,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 		NewNodeSetupWorkflow(nodeType),
 		steps.DisableSwap(),
 		//steps.ConfigureSysctlForKubernetes(),
-		//steps.InstallCrio(),
+		steps.SetupCrio(),
 		//steps.InstallCilium(),
 		//steps.InstallKubelet(),
 		//steps.InstallKubeadm(),

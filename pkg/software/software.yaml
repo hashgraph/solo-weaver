@@ -1,0 +1,27 @@
+software:
+
+- name: cri-o
+  url: 'https://storage.googleapis.com/cri-o/artifacts/cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+  filename: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+  versions:
+    1.33.4:
+      linux:
+        amd64:
+          algorithm: 'sha256'
+          checksum: '8f6d14828659b85da7c83bad798d50c2f7e0311742615fb7ed305f77bab54e50'
+        arm64:
+          algorithm: 'sha256'
+          checksum: '6a04cb1ab2020508927d7237ff1174bb330211a1076683417b30642a9c8e4996'
+
+- name: kubeadm
+  url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubeadm'
+  filename: 'kubeadm'
+  versions:
+    1.33.4:
+      linux:
+        amd64:
+          algorithm: 'sha256'
+          checksum: '8f6d14828659b85da7c83bad798d50c2f7e0311742615fb7ed305f77bab54e50'
+        arm64:
+          algorithm: 'sha256'
+          checksum: '6a04cb1ab2020508927d7237ff1174bb330211a1076683417b30642a9c8e4996'

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bluet/syspkg/manager"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/pkg/hardware"
 )
@@ -99,7 +100,8 @@ func testPackageInstallUninstall(t *testing.T, createPackage func() (Package, er
 	// Test verification after uninstall
 	err = pkg.Verify()
 	require.Error(t, err, "package verification should fail after uninstallation")
-
+	// Check if it's an installation error when package is not installed
+	require.True(t, errorx.IsOfType(err, InstallationError), "Error should be of type InstallationError when package is not installed")
 }
 
 func TestIptablesInstallUninstall(t *testing.T) {

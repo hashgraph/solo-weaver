@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/joomcode/errorx"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFileDownloader_Download(t *testing.T) {
@@ -31,7 +34,7 @@ func TestFileDownloader_Download(t *testing.T) {
 	defer os.Remove(tmpFile.Name())
 
 	// Test download
-	downloader := NewFileDownloader()
+	downloader := NewDownloader()
 	err = downloader.Download(server.URL, tmpFile.Name())
 	if err != nil {
 		t.Fatalf("Download failed: %v", err)
@@ -62,122 +65,18 @@ func TestFileDownloader_Download_HTTPError(t *testing.T) {
 	tmpFile.Close()
 	defer os.Remove(tmpFile.Name())
 
-	downloader := NewFileDownloader()
+	downloader := NewDownloader()
 	err = downloader.Download(server.URL, tmpFile.Name())
 	if err == nil {
 		t.Fatal("Expected download to fail with HTTP 404, but it succeeded")
 	}
 
-	if !strings.Contains(err.Error(), "HTTP 404") {
-		t.Errorf("Expected error to contain 'HTTP 404', got: %v", err)
-	}
-}
-
-func TestFileDownloader_VerifyMD5(t *testing.T) {
-	// Create temporary file with known content
-	testContent := "Hello, World!"
-	tmpFile, err := os.CreateTemp("", "test_md5_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	_, err = tmpFile.WriteString(testContent)
-	if err != nil {
-		t.Fatalf("Failed to write test content: %v", err)
-	}
-	tmpFile.Close()
-
-	// Calculate expected MD5
-	hash := md5.New()
-	hash.Write([]byte(testContent))
-	expectedMD5 := fmt.Sprintf("%x", hash.Sum(nil))
-
-	// Test verification
-	downloader := NewFileDownloader()
-	err = downloader.VerifyMD5(tmpFile.Name(), expectedMD5)
-	if err != nil {
-		t.Fatalf("MD5 verification failed: %v", err)
-	}
-
-	// Test with wrong MD5
-	err = downloader.VerifyMD5(tmpFile.Name(), "wrongmd5hash")
-	if err == nil {
-		t.Fatal("Expected MD5 verification to fail with wrong hash, but it succeeded")
-	}
-}
-
-func TestFileDownloader_VerifySHA256(t *testing.T) {
-	// Create temporary file with known content
-	testContent := "Hello, World!"
-	tmpFile, err := os.CreateTemp("", "test_sha256_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	_, err = tmpFile.WriteString(testContent)
-	if err != nil {
-		t.Fatalf("Failed to write test content: %v", err)
-	}
-	tmpFile.Close()
-
-	// Calculate expected SHA256
-	hash := sha256.New()
-	hash.Write([]byte(testContent))
-	expectedSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
-
-	// Test verification
-	downloader := NewFileDownloader()
-	err = downloader.VerifySHA256(tmpFile.Name(), expectedSHA256)
-	if err != nil {
-		t.Fatalf("SHA256 verification failed: %v", err)
-	}
-
-	// Test with wrong SHA256
-	err = downloader.VerifySHA256(tmpFile.Name(), "wrongsha256hash")
-	if err == nil {
-		t.Fatal("Expected SHA256 verification to fail with wrong hash, but it succeeded")
-	}
-}
-
-func TestFileDownloader_VerifySHA512(t *testing.T) {
-	// Create temporary file with known content
-	testContent := "Hello, World!"
-	tmpFile, err := os.CreateTemp("", "test_sha512_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	_, err = tmpFile.WriteString(testContent)
-	if err != nil {
-		t.Fatalf("Failed to write test content: %v", err)
-	}
-	tmpFile.Close()
-
-	// Calculate expected SHA512
-	hash := sha512.New()
-	hash.Write([]byte(testContent))
-	expectedSHA512 := fmt.Sprintf("%x", hash.Sum(nil))
-
-	// Test verification
-	downloader := NewFileDownloader()
-	err = downloader.VerifySHA512(tmpFile.Name(), expectedSHA512)
-	if err != nil {
-		t.Fatalf("SHA512 verification failed: %v", err)
-	}
-
-	// Test with wrong SHA512
-	err = downloader.VerifySHA512(tmpFile.Name(), "wrongsha512hash")
-	if err == nil {
-		t.Fatal("Expected SHA512 verification to fail with wrong hash, but it succeeded")
-	}
+	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
 }
 
 func TestNewFileDownloaderWithTimeout(t *testing.T) {
 	timeout := 5 * time.Second
-	downloader := NewFileDownloaderWithTimeout(timeout)
+	downloader := NewDownloaderWithTimeout(timeout)
 
 	if downloader.timeout != timeout {
 		t.Errorf("Expected timeout %v, got %v", timeout, downloader.timeout)
@@ -188,21 +87,106 @@ func TestNewFileDownloaderWithTimeout(t *testing.T) {
 	}
 }
 
+func TestFileDownloader_Timeout(t *testing.T) {
+	// Create a test server that sleeps longer than the timeout
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("This should timeout"))
+	}))
+	defer server.Close()
+
+	tmpFile, err := os.CreateTemp("", "test_timeout_*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	downloader := NewDownloaderWithTimeout(1 * time.Second)
+	err = downloader.Download(server.URL, tmpFile.Name())
+	if err == nil {
+		t.Fatal("Expected download to fail due to timeout, but it succeeded")
+	}
+
+	if !strings.Contains(err.Error(), "Client.Timeout") {
+		t.Errorf("Expected timeout error, got: %v", err)
+	}
+	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
+}
+
 func TestFileDownloader_VerifyNonExistentFile(t *testing.T) {
-	downloader := NewFileDownloader()
+	downloader := NewDownloader()
 
-	err := downloader.VerifyMD5("/non/existent/file", "somehash")
+	err := downloader.VerifyChecksum("/non/existent/file", "somehash", "md5")
 	if err == nil {
 		t.Fatal("Expected error when verifying non-existent file")
 	}
+	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 
-	err = downloader.VerifySHA256("/non/existent/file", "somehash")
+	err = downloader.VerifyChecksum("/non/existent/file", "somehash", "sha256")
 	if err == nil {
 		t.Fatal("Expected error when verifying non-existent file")
 	}
+	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 
-	err = downloader.VerifySHA512("/non/existent/file", "somehash")
+	err = downloader.VerifyChecksum("/non/existent/file", "somehash", "sha512")
 	if err == nil {
 		t.Fatal("Expected error when verifying non-existent file")
 	}
+	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
+}
+
+func TestFileDownloader_VerifyChecksum(t *testing.T) {
+	// Create temporary file with known content
+	testContent := "Hello, World!"
+	tmpFile, err := os.CreateTemp("", "test_checksum_*.txt")
+	require.NoError(t, err, "Failed to create temp file")
+	defer os.Remove(tmpFile.Name())
+
+	_, err = tmpFile.WriteString(testContent)
+	require.NoError(t, err, "Failed to write test content to temp file")
+	tmpFile.Close()
+
+	downloader := NewDownloader()
+
+	// Test MD5 algorithm
+	hash := md5.New()
+	hash.Write([]byte(testContent))
+	expectedMD5 := fmt.Sprintf("%x", hash.Sum(nil))
+
+	err = downloader.VerifyChecksum(tmpFile.Name(), expectedMD5, "md5")
+	require.NoError(t, err, "MD5 verification through VerifyChecksum failed")
+
+	// Test SHA256 algorithm
+	hash256 := sha256.New()
+	hash256.Write([]byte(testContent))
+	expectedSHA256 := fmt.Sprintf("%x", hash256.Sum(nil))
+
+	err = downloader.VerifyChecksum(tmpFile.Name(), expectedSHA256, "sha256")
+	require.NoError(t, err, "SHA256 verification through VerifyChecksum failed")
+
+	// Test SHA512 algorithm
+	hash512 := sha512.New()
+	hash512.Write([]byte(testContent))
+	expectedSHA512 := fmt.Sprintf("%x", hash512.Sum(nil))
+
+	err = downloader.VerifyChecksum(tmpFile.Name(), expectedSHA512, "sha512")
+	require.NoError(t, err, "SHA512 verification through VerifyChecksum failed")
+
+	// Test with wrong checksum
+	err = downloader.VerifyChecksum(tmpFile.Name(), "wronghash", "sha256")
+	require.Error(t, err, "VerifyChecksum should fail with wrong checksum")
+	require.True(t, errorx.IsOfType(err, ChecksumError), "Error should be of type ChecksumError")
+
+	// Test with unsupported algorithm
+	err = downloader.VerifyChecksum(tmpFile.Name(), expectedSHA256, "sha1")
+	require.Error(t, err, "VerifyChecksum should fail with unsupported algorithm")
+	require.True(t, errorx.IsOfType(err, ChecksumError), "Error should be of type ChecksumError")
+
+	// Test with non-existent file
+	err = downloader.VerifyChecksum("/non/existent/file", expectedSHA256, "sha256")
+	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
+
+	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 }
