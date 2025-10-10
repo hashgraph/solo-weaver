@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -19,13 +20,14 @@ const (
 	KeyReloadedFiles                   = "reloaded_files"
 	KeyCopiedFiles                     = "copied_files"
 	KeyRemovedFiles                    = "removed_files"
+	KeyWarnings                        = "warnings"
 )
 
 func ConfigureSysctlForKubernetes() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureSysctlForKubernetesStepId).
 		Steps(
 			copySysctlConfigurationFiles(),
-			restartSysctlService(),
+			reloadSysctlSettings(),
 		).
 		// rollback needs to run in the same as execution order
 		// Therefore, we are defining custom rollback for this workflow
@@ -95,29 +97,58 @@ func copySysctlConfigurationFiles() automa.Builder {
 		})
 }
 
-// restartSysctlService reloads sysctl settings to apply any changes made to the configuration files.
+// reloadSysctlSettings reloads sysctl settings to apply any changes made to the configuration files.
 // It also creates a backup of the current sysctl settings before reloading.
 // In case of failure, it can rollback to the previous settings using the backup file.
-func restartSysctlService() automa.Builder {
+func reloadSysctlSettings() automa.Builder {
 	return automa.NewStepBuilder().WithId("restart-sysctl-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			backupFile, err := sysctl.BackupConfiguration(path.Join(core.Paths().BackupDir, SysCtlBackupFilename))
+			// we need to backup the settings we are going to modify because a full restore is not possible
+			// because of permission issues. Also from security and stability perspective, we should never modify settings
+			// that are not modified by our process.
+			// Therefore, we only backup the settings that are going to be modified by the configuration files. This
+			// will be the way to rollback to previous state in case of failure.
+			backupFile, err := sysctl.BackupSettings(path.Join(core.Paths().BackupDir, SysCtlBackupFilename))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						automa.StepExecutionError.Wrap(err, "failed to backup current sysctl settings")))
 			}
 
-			configFiles, err := sysctl.ApplyConfiguration()
+			configFiles, err := sysctl.LoadAllConfiguration()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						automa.StepExecutionError.Wrap(err, "failed to reload sysctl settings")))
 			}
 
+			desiredSettings, err := sysctl.DesiredCandidateSettings()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.Wrap(err, "failed to get desired candidate sysctl settings")))
+			}
+
+			currentSettings, err := sysctl.CurrentCandidateSettings()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(
+						automa.StepExecutionError.Wrap(err, "failed to get current candidate sysctl settings")))
+			}
+
+			// check that all desired settings are applied
+			var warnings []string
+			for k, v := range desiredSettings {
+				if currentSettings[k] != v {
+					warnings = append(warnings,
+						fmt.Sprintf("sysctl setting %s is %s but expected %s", k, currentSettings[k], v))
+				}
+			}
+
 			meta := map[string]string{
 				KeyBackupFile:    backupFile,
 				KeyReloadedFiles: strings.Join(configFiles, ", "),
+				KeyWarnings:      strings.Join(warnings, ","),
 			}
 
 			stp.State().Set(KeyBackupFile, backupFile)
@@ -138,7 +169,7 @@ func restartSysctlService() automa.Builder {
 			}
 
 			// load settings from backup file
-			err := sysctl.RestoreConfiguration(backupFile)
+			err := sysctl.RestoreSettings(backupFile)
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(

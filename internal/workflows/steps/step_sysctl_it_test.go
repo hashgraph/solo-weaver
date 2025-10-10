@@ -68,12 +68,12 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 
 	expectedTotalSettings := 31 // there are 31 settings in total
 
-	oldSettings, err := sysctl.CandidateSettings()
+	oldSettings, err := sysctl.CurrentCandidateSettings()
 	require.NoError(t, err)
 	require.Equal(t, expectedTotalSettings, len(oldSettings))
 
 	backupFile := path.Join(core.Paths().TempDir, "sysctl.conf")
-	backupFile, err = sysctl.BackupConfiguration(backupFile)
+	backupFile, err = sysctl.BackupSettings(backupFile)
 	require.NoError(t, err)
 	require.NotEmpty(t, backupFile)
 	require.FileExists(t, backupFile)
@@ -85,7 +85,7 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 
-	applied, err := sysctl.ApplyConfiguration()
+	applied, err := sysctl.LoadAllConfiguration()
 	require.NoError(t, err)
 	require.NotEmpty(t, applied)
 	require.Equal(t, len(files), len(applied))
@@ -95,7 +95,7 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 		require.Contains(t, applied, f)
 	}
 
-	newSettings, err := sysctl.CandidateSettings()
+	newSettings, err := sysctl.CurrentCandidateSettings()
 	require.NoError(t, err)
 	require.Equal(t, expectedTotalSettings, len(newSettings))
 
@@ -108,9 +108,10 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	}
 	require.True(t, foundNotEqual) // at least one setting must have changed
 
-	err = sysctl.RestoreConfiguration(backupFile)
+	err = sysctl.RestoreSettings(backupFile)
 	assert.NoError(t, err)
-	restoredSettings, err := sysctl.CandidateSettings()
+
+	restoredSettings, err := sysctl.CurrentCandidateSettings()
 	require.NoError(t, err)
 	require.Equal(t, expectedTotalSettings, len(restoredSettings)) // there are 31 settings in total
 

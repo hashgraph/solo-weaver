@@ -56,7 +56,7 @@ func Test_BackupSysctlConfiguration_Integration(t *testing.T) {
 		_ = os.Remove(backupFile)
 	}()
 
-	backupFile, err := BackupConfiguration(backupFile)
+	backupFile, err := BackupSettings(backupFile)
 	require.NoError(t, err)
 	require.NotEmpty(t, backupFile)
 	require.FileExists(t, backupFile)
