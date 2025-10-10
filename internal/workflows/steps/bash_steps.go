@@ -459,7 +459,7 @@ func (b *bashScriptStep) InstallCrio() automa.Builder {
 	}, fmt.Sprintf("%s/crio", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) InstallKubadm() automa.Builder {
+func (b *bashScriptStep) InstallKubeadm() automa.Builder {
 	return automa_steps.BashScriptStep(InstallKubeadmStepId, []string{
 		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubeadm\" \"%s/kubeadm\"", b.ProvisionerHomeDir, b.SandboxBinDir),
 		fmt.Sprintf("sudo ln -sf \"%s/kubeadm\" /usr/local/bin/kubeadm", b.SandboxBinDir),
@@ -984,7 +984,7 @@ func BashScriptBasedClusterSetupWorkflow() automa.Builder {
 			// kubeadm setup
 			bashSteps.DownloadKubeadm(),
 			bashSteps.DownloadKubeadmConfig(),
-			bashSteps.InstallKubadm(),
+			bashSteps.InstallKubeadm(),
 			bashSteps.TorchPriorKubeAdmConfiguration(),
 			bashSteps.ConfigureKubeadm(),
 

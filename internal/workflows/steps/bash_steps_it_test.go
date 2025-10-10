@@ -64,7 +64,7 @@ func Test_BashScriptBasedIndividualStepSequence_Integration(t *testing.T) {
 
 	// kubeadm setup
 	runAndTestStep(t, bashSteps.DownloadKubeadm())
-	runAndTestStep(t, bashSteps.InstallKubadm())
+	runAndTestStep(t, bashSteps.InstallKubeadm())
 	runAndTestStep(t, bashSteps.TorchPriorKubeAdmConfiguration())
 	runAndTestStep(t, bashSteps.DownloadKubeadmConfig())
 	runAndTestStep(t, bashSteps.ConfigureKubeadm())

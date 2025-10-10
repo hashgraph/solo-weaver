@@ -5,9 +5,9 @@ import (
 )
 
 func SetupKubeadm() automa.Builder {
-	return automa.NewWorkflowBuilder().WithId("setup-kubelet").Steps(
+	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").Steps(
 		bashSteps.DownloadKubeadm(),
-		bashSteps.InstallKubadm(),
+		bashSteps.InstallKubeadm(),
 		bashSteps.TorchPriorKubeAdmConfiguration(),
 		bashSteps.DownloadKubeadmConfig(),
 		bashSteps.ConfigureKubeadm(), // needed for kubelet
