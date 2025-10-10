@@ -29,13 +29,14 @@ func Test_ConfigureSysctlForKubernetes_Integration(t *testing.T) {
 
 	// cleanup
 	defer func() {
-		// revert setup
-		report := setup.Rollback(context.Background())
+		// revert sysctl changes
+		report := wf.Rollback(context.Background())
 		assert.NoError(t, report.Error) // assert failure won't stop cleanup
 
-		// revert sysctl changes
-		report = wf.Rollback(context.Background())
+		// revert setup
+		report = setup.Rollback(context.Background())
 		assert.NoError(t, report.Error) // assert failure won't stop cleanup
+
 	}()
 
 	// setup prerequisites
@@ -47,7 +48,7 @@ func Test_ConfigureSysctlForKubernetes_Integration(t *testing.T) {
 	report = wf.Execute(context.Background())
 	require.NoError(t, report.Error)
 	require.Equal(t, report.StepReports[0].Metadata["copied_files"],
-		"/etc/sysctl.d/75-inotify.conf, /etc/sysctl.d/75-k8s-networking.conf, /etc/sysctl.d/75-network-performance.conf")
+		"/etc/sysctl.d/75-inotify.conf, /etc/sysctl.d/75-k8s-networking.conf, /etc/sysctl.d/75-network-performance.conf, /etc/sysctl.d/99-kubernetes-cri.conf")
 	require.Equal(t, automa.StatusSuccess, report.Status)
 }
 
