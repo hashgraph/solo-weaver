@@ -2,6 +2,7 @@ package steps
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/automa-saga/automa"
@@ -139,11 +140,11 @@ func initBashScriptSteps() bashScriptStep {
 	}
 
 	return bashScriptStep{
-		HomeDir:            "/home/provisioner",
+		HomeDir:            os.Getenv("HOME"),
 		OS:                 runtime.GOOS,
 		ARCH:               runtime.GOARCH,
-		UID:                1000,
-		GID:                1000,
+		UID:                os.Geteuid(),
+		GID:                os.Getgid(),
 		ProvisionerHomeDir: core.Paths().HomeDir,
 		SandboxDir:         core.Paths().SandboxDir,
 		SandboxBinDir:      core.Paths().SandboxBinDir,
@@ -720,6 +721,7 @@ func (b *bashScriptStep) ConfigureKubeConfig() automa.Builder {
 		fmt.Sprintf("sudo cp -f %s/etc/kubernetes/admin.conf \"%s/.kube/config\"",
 			b.SandboxDir, b.HomeDir),
 		fmt.Sprintf("sudo chown \"%d:%d\" \"%s/.kube/config\"", b.UID, b.GID, b.HomeDir),
+		fmt.Sprintf("sleep 5"), // wait a bit
 	}, "")
 }
 

@@ -24,7 +24,15 @@ func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
 			}
 
 			for _, dir := range pp.AllDirectories {
-				err := mg.CreateDirectory(dir, true)
+				_, exists, err := mg.PathExists(dir)
+				if err != nil {
+					return automa.FailureReport(stp, automa.WithError(err))
+				} else if exists {
+					// directory already exists, skip
+					continue
+				}
+
+				err = mg.CreateDirectory(dir, true)
 				if err != nil {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}
