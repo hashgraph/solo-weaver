@@ -1,8 +1,9 @@
 package fsx
 
 import (
-	"github.com/joomcode/errorx"
 	"strconv"
+
+	"github.com/joomcode/errorx"
 )
 import "golang.hedera.com/solo-provisioner/pkg/security/principal"
 
@@ -14,6 +15,8 @@ var (
 	FileTypeError         = ErrorsNamespace.NewType("file_type_error")
 	OwnershipChangeError  = ErrorsNamespace.NewType("ownership_change_error")
 	PermissionChangeError = ErrorsNamespace.NewType("permission_change_error")
+	FileWriteError        = ErrorsNamespace.NewType("file_write_error")
+	FileReadError         = ErrorsNamespace.NewType("file_read_error")
 
 	pathProperty      = errorx.RegisterPrintableProperty("path")
 	userProperty      = errorx.RegisterPrintableProperty("user")

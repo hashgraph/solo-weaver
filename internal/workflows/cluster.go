@@ -10,7 +10,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 		WithId("setup-kubernetes").Steps(
 		NewNodeSetupWorkflow(nodeType),
 		steps.DisableSwap(),
-		//steps.ConfigureSysctlForKubernetes(),
+		steps.ConfigureSysctlForKubernetes(),
 		steps.SetupCrio(),
 		//steps.InstallCilium(),
 		//steps.InstallKubelet(),
