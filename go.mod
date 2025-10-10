@@ -3,7 +3,7 @@ module golang.hedera.com/solo-provisioner
 go 1.25.0
 
 require (
-	github.com/automa-saga/automa v0.5.0
+	github.com/automa-saga/automa v0.6.0
 	github.com/automa-saga/logx v0.1.0
 	github.com/bluet/syspkg v0.1.5
 	github.com/golang/mock v1.6.0
