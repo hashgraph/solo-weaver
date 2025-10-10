@@ -6,31 +6,44 @@ import (
 )
 
 func NewSetupClusterWorkflow(nodeType string) automa.Builder {
-	return automa.NewWorkflowBuilder().
-		WithId("setup-kubernetes").Steps(
-		NewNodeSetupWorkflow(nodeType),
-		steps.DisableSwap(),
-		steps.ConfigureSysctlForKubernetes(),
-		steps.SetupCrio(),
-		//steps.InstallCilium(),
-		//steps.InstallKubelet(),
-		//steps.InstallKubeadm(),
-		//steps.InstallKubectl(),
-		//steps.InstallHelm(),
-		//steps.InstallK9s(),
-		//steps.ConfigureKubelet(),
-		//steps.EnableAndStartKubelet(),
-		//steps.ConfigureKubeadm(),
-		//steps.EnableAndStartKubeadm(),
-		//steps.ConfigureKubeconfigForAdminUser(),
-		//steps.ConfigureCrio(),
-		//steps.EnableAndStartCrio(),
-		//steps.ConfigureCilium(),
-		//steps.EnableAndStartCilium(),
-		//steps.HelmInstallMetallb(),
-		//steps.DeployMetallbConfig(),
-		////steps.DeployMetricsServer(),
-		////steps.DeployCertManager(),
-		//steps.CheckClusterHealth(),
-	)
+	return automa.NewWorkflowBuilder().WithId("setup-kubernetes").
+		Steps(
+			// preflight & basic setup
+			NewNodeSetupWorkflow(nodeType),
+
+			// setup env for k8s
+			steps.DisableSwap(),
+			steps.InstallKernelModules(),
+			steps.ConfigureSysctlForKubernetes(),
+			steps.SetupBindMounts(),
+
+			// setup cli tools
+			steps.SetupKubectl(),
+			steps.SetupHelm(), // required by MetalLB setup, so we install it earlier
+			steps.SetupK9s(),
+
+			// CRI-O
+			steps.SetupCrio2(),
+			steps.EnableAndStartCrio2(),
+
+			// kubeadm
+			steps.SetupKubeadm(),
+
+			// kubelet
+			steps.SetupKubelet(),
+			steps.EnableAndStartKubelet(),
+
+			// init cluster
+			steps.InitCluster(),
+
+			// cilium CNI
+			steps.SetupCiliumCNI(),
+			steps.EnableAndStartCiliumCNI(),
+
+			// metalLB
+			steps.SetupMetalLB(),
+
+			// health check
+			steps.CheckClusterHealth(),
+		)
 }

@@ -3,11 +3,19 @@ package steps
 import (
 	"context"
 	"fmt"
+
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-provisioner/pkg/kernel"
 )
+
+func InstallKernelModules() automa.Builder {
+	return automa.NewWorkflowBuilder().WithId("install-kernel-modules").Steps(
+		InstallKernelModule("br_netfilter"),
+		InstallKernelModule("overlay"),
+	)
+}
 
 // InstallKernelModule ensures that a specific kernel module is loaded and persisted.
 // If the module is already loaded, it skips the loading process.

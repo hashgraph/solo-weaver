@@ -2,12 +2,13 @@ package steps
 
 import (
 	"context"
+	"strings"
+
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
-	"strings"
 )
 
 func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {

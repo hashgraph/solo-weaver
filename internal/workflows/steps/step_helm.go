@@ -1,13 +1,12 @@
 package steps
 
 import (
-	"context"
 	"github.com/automa-saga/automa"
 )
 
-func InstallHelm() automa.Builder {
-	return automa.NewStepBuilder().WithId("install-helm").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			return automa.SuccessReport(stp)
-		})
+func SetupHelm() automa.Builder {
+	return automa.NewWorkflowBuilder().WithId("setup-helm").Steps(
+		bashSteps.DownloadHelm(),
+		bashSteps.InstallHelm(),
+	)
 }
