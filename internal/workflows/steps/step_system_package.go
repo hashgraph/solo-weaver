@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"fmt"
+
 	"github.com/bluet/syspkg"
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
@@ -71,6 +72,11 @@ func AutoRemoveOrphanedPackages() automa.Builder {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
 			return automa.SuccessReport(stp)
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Removing orphaned packages")
+			return ctx, nil
+
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, report, "Orphaned packages removed successfully")
@@ -156,6 +162,11 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 			}
 
 			return automa.SuccessReport(stp)
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Installing package %q", name)
+			return ctx, nil
+
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, report,

@@ -2,13 +2,18 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/doctor"
 	"golang.hedera.com/solo-provisioner/internal/workflows"
+	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
 )
 
 // createNodeSetupCommand creates a setup command for a specific node type
@@ -52,5 +57,11 @@ func runNodeSetup(ctx context.Context, nodeType string) {
 		}
 	}
 
-	logx.As().Info().Interface("report", report).Str("nodeType", nodeType).Msg("Node setup completed successfully")
+	logx.As().Info().Str("nodeType", nodeType).Msg("Node setup completed successfully")
+
+	timestamp := time.Now().Format("20060102_150405")
+	reportPath := path.Join(core.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))
+	steps.PrintWorkflowReport(report, reportPath)
+
+	logx.As().Info().Str("report_path", reportPath).Msg("Setup report saved")
 }

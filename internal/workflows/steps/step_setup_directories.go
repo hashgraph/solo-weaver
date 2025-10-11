@@ -48,6 +48,10 @@ func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
 				"directories": strings.Join(pp.AllDirectories, ", "),
 			}))
 		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up home directory structure")
+			return ctx, nil
+		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup home directory structure")
 		}).

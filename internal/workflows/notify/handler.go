@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 )
@@ -9,6 +10,12 @@ import (
 // Default notification handler that logs to standard output
 // Caller may override using SetDefault
 var handler = &Handler{
+	StepStart: func(ctx context.Context, stp automa.Step, msg string, args ...interface{}) {
+		logx.As().Info().
+			Str("step_id", stp.Id()).
+			Msgf(msg, args...)
+
+	},
 	StepCompletion: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
 		logx.As().Info().
 			Str("step_id", stp.Id()).
@@ -26,6 +33,7 @@ var handler = &Handler{
 // Handler defines callbacks for step events
 // Caller may pass a custom handler to pass message to a channel or different logging mechanism or webhook (e.g. Slack).
 type Handler struct {
+	StepStart      func(ctx context.Context, stp automa.Step, msg string, args ...interface{})
 	StepCompletion func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
 	StepFailure    func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
 }
@@ -34,10 +42,15 @@ type Handler struct {
 // It only updates non-nil handlers to preserve existing defaults
 // Caller may pass a custom handler to pass message to a channel or different logging mechanism etc.
 func SetDefault(h *Handler) {
-	if handler.StepCompletion != nil {
+	if h.StepStart != nil {
+		handler.StepStart = h.StepStart
+	}
+
+	if h.StepCompletion != nil {
 		handler.StepCompletion = h.StepCompletion
 	}
-	if handler.StepFailure != nil {
+
+	if h.StepFailure != nil {
 		handler.StepFailure = h.StepFailure
 	}
 }
