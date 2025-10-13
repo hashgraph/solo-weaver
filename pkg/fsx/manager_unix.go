@@ -475,17 +475,17 @@ func (m *unixManager) ReadFile(path string, maxFileSize int64) ([]byte, error) {
 }
 
 func (m *unixManager) setupAccessForServiceUser(path string) error {
-	user, err := m.pm.LookupUserByName(security.ServiceAccountUserName)
+	user, err := m.pm.LookupUserByName(security.ServiceAccountUserName())
 	if err != nil {
 		return errorx.IllegalArgument.
-			New("failed to retrieve user %q", security.ServiceAccountUserName).
+			New("failed to retrieve user %q", security.ServiceAccountUserName()).
 			WithUnderlyingErrors(err)
 	}
 
-	group, err := m.pm.LookupGroupByName(security.ServiceAccountGroupName)
+	group, err := m.pm.LookupGroupByName(security.ServiceAccountGroupName())
 	if err != nil {
 		return errorx.IllegalArgument.
-			New("failed to retrieve group %q", security.ServiceAccountGroupName).
+			New("failed to retrieve group %q", security.ServiceAccountGroupName()).
 			WithUnderlyingErrors(err)
 	}
 

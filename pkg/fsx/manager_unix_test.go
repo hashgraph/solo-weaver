@@ -20,12 +20,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"github.com/golang/mock/gomock"
-	"github.com/joomcode/errorx"
-	"github.com/stretchr/testify/require"
-	testify "github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/pkg/security"
-	"golang.hedera.com/solo-provisioner/pkg/security/principal"
 	"io/fs"
 	"os"
 	"os/user"
@@ -35,6 +29,13 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/joomcode/errorx"
+	"github.com/stretchr/testify/require"
+	testify "github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/pkg/security"
+	"golang.hedera.com/solo-provisioner/pkg/security/principal"
 )
 
 func chmodPermNotationToFileMode(perms string) fs.FileMode {
@@ -101,8 +102,8 @@ func setupMockPrincipalManagerForHedera(t *testing.T, ctrl *gomock.Controller) p
 	grp.EXPECT().Gid().Return(currentUser.Gid).AnyTimes()
 	mockUser.EXPECT().PrimaryGroup().Return(grp).AnyTimes()
 
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(mockUser, nil).AnyTimes()
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName).Return(grp, nil).AnyTimes()
+	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(mockUser, nil).AnyTimes()
+	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName()).Return(grp, nil).AnyTimes()
 
 	return pm
 }
@@ -804,15 +805,15 @@ func TestUnixManager_WriteFile_Failures(t *testing.T) {
 	assert.Error(err)
 
 	// fail on getting usr
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(nil, errorx.IllegalState.New("mock error"))
+	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(nil, errorx.IllegalState.New("mock error"))
 	assert, manager = setupTest(t, pm)
 	err = manager.WriteFile(tmpFile, payload)
 	assert.Error(err)
 
 	// fail on getting grp
 	usr := principal.NewMockUser(ctrl)
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName).Return(usr, nil)
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountUserName).Return(nil, errorx.IllegalState.New("mock error"))
+	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(usr, nil)
+	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName()).Return(nil, errorx.IllegalState.New("mock error"))
 	assert, manager = setupTest(t, pm)
 	err = manager.WriteFile(tmpFile, payload)
 	assert.Error(err)

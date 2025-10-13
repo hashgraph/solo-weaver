@@ -2,6 +2,8 @@ package core
 
 import (
 	"path"
+
+	"golang.hedera.com/solo-provisioner/pkg/security"
 )
 
 const (
@@ -11,8 +13,18 @@ const (
 )
 
 var (
-	pp = NewProvisionerPaths(DefaultProvisionerHome)
+	pp     = NewProvisionerPaths(DefaultProvisionerHome)
+	svcAcc = security.ServiceAccount{
+		UserName:  "provisioner",
+		UserId:    "1000",
+		GroupName: "provisioner",
+		GroupId:   "1000",
+	}
 )
+
+func init() {
+	security.SetServiceAccount(svcAcc)
+}
 
 type ProvisionerPaths struct {
 	HomeDir        string
@@ -117,4 +129,8 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 
 func Paths() *ProvisionerPaths {
 	return pp
+}
+
+func ServiceAccount() security.ServiceAccount {
+	return svcAcc
 }
