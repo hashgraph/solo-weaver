@@ -85,3 +85,31 @@ func TestReadDir_NonExistentDir(t *testing.T) {
 		t.Errorf("expected error for missing directory, got %v", err)
 	}
 }
+
+func TestRender_KubeadmInitYAML(t *testing.T) {
+	data := KubeadmInitData{
+		KubeBootstrapToken: "testtoken",
+		SandboxDir:         "/sandbox",
+		MachineIP:          "1.2.3.4",
+		Hostname:           "testnode",
+		KubernetesVersion:  "v1.29.0",
+	}
+
+	// Use the actual Render function if it wraps text/template
+	rendered, err := Render("files/kubeadm/kubeadm-init.yaml", data)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Check that all template tags are replaced
+	if strings.Contains(rendered, "{{") || strings.Contains(rendered, "}}") {
+		t.Errorf("template tags not fully replaced")
+	}
+	if !strings.Contains(rendered, data.KubeBootstrapToken) ||
+		!strings.Contains(rendered, data.SandboxDir) ||
+		!strings.Contains(rendered, data.MachineIP) ||
+		!strings.Contains(rendered, data.Hostname) ||
+		!strings.Contains(rendered, data.KubernetesVersion) {
+		t.Errorf("expected values not found in rendered output")
+	}
+}

@@ -3,6 +3,7 @@ package templates
 import (
 	"path"
 	"strings"
+	"text/template"
 
 	"github.com/joomcode/errorx"
 	"golang.org/x/text/encoding/unicode"
@@ -57,5 +58,28 @@ func ReadDir(dir string) ([]string, error) {
 }
 
 // Render renders a template with the given data and returns the result as a string.
-// Use: https://github.com/hairyhenderson/gomplate
-//func Render()
+func Render(templateSrc string, data any) (string, error) {
+	// Read the template file
+	templateContent, err := ReadAsString(templateSrc)
+	if err != nil {
+		return "", errorx.DataUnavailable.Wrap(err, "failed to read template file %s", templateSrc)
+	}
+
+	// Create a new template and parse the content
+	tmpl, err := template.New("template").Parse(templateContent)
+	if err != nil {
+		return "", errorx.IllegalFormat.Wrap(err, "failed to parse template %s", templateSrc)
+	}
+
+	// Create a builder to capture the output
+	var builder strings.Builder
+
+	// Execute the template with the provided data
+	err = tmpl.Execute(&builder, data)
+	if err != nil {
+		return "", errorx.IllegalState.Wrap(err, "failed to execute template %s", templateSrc)
+	}
+
+	// Return the rendered template as a string
+	return builder.String(), nil
+}
