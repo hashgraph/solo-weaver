@@ -8,22 +8,24 @@ import (
 )
 
 func SetupCrio() automa.Builder {
-	crioInstaller, err := software.NewCrioInstaller()
-	if err != nil {
-		panic(err)
-	}
 
 	return automa.NewWorkflowBuilder().WithId("setup-crio").Steps(
-		installCrio(crioInstaller),
-		configureCrio(crioInstaller),
-		enableAndStartCrio(crioInstaller),
+		installCrio(software.NewCrioInstaller),
+		configureCrio(software.NewCrioInstaller),
+		enableAndStartCrio(software.NewCrioInstaller),
 	)
 }
 
-func installCrio(installer software.Software) automa.Builder {
+func installCrio(provider func() (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			err := installer.Download()
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Download()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -46,10 +48,16 @@ func installCrio(installer software.Software) automa.Builder {
 		})
 }
 
-func configureCrio(installer software.Software) automa.Builder {
+func configureCrio(provider func() (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			err := installer.Configure()
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Configure()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -59,10 +67,16 @@ func configureCrio(installer software.Software) automa.Builder {
 		})
 }
 
-func enableAndStartCrio(installer software.Software) automa.Builder {
+func enableAndStartCrio(provider func() (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("start-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			err := installer.Configure()
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Configure()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

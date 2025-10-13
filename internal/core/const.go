@@ -47,9 +47,9 @@ type ProvisionerPaths struct {
 	SandboxDirectories []string // all sandbox related directories
 
 	// Kubernetes related directories
-	KubernetesDir string
-	CrioDir       string
-	CiliumDir     string
+	KubeadmDir string
+	CrioDir    string
+	CiliumDir  string
 }
 
 func NewProvisionerPaths(home string) *ProvisionerPaths {
@@ -64,9 +64,9 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 		TempDir:        path.Join(home, "tmp"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 
-		KubernetesDir: path.Join(home, "kubernetes"),
-		CrioDir:       path.Join(home, "crio"),
-		CiliumDir:     path.Join(home, "cilium"),
+		KubeadmDir: path.Join(home, "kubeadm"),
+		CrioDir:    path.Join(home, "crio"),
+		CiliumDir:  path.Join(home, "cilium"),
 	}
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
@@ -117,7 +117,7 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 		pp.BackupDir,
 		pp.TempDir,
 		pp.DiagnosticsDir,
-		pp.KubernetesDir,
+		pp.KubeadmDir,
 		pp.CrioDir,
 		path.Join(pp.CrioDir, "unpack"),
 		pp.CiliumDir,

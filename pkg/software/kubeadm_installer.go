@@ -1,55 +1,199 @@
 package software
 
+import (
+	"path"
+	"strings"
+
+	"github.com/joomcode/errorx"
+	"golang.hedera.com/solo-provisioner/internal/core"
+)
+
+const (
+	kubeletServiceDir = "/usr/lib/systemd/system/kubelet.service.d"
+)
+
 type kubeadmInstaller struct {
+	*BaseInstaller
 }
 
+var _ Software = (*kubeadmInstaller)(nil)
+
+func NewKubeadmInstaller(selectedVersion string) (Software, error) {
+	baseInstaller, err := NewBaseInstaller("kubeadm", selectedVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	return &kubeadmInstaller{
+		BaseInstaller: baseInstaller,
+	}, nil
+}
+
+// Download downloads the kubeadm binary and configuration files
 func (ki *kubeadmInstaller) Download() error {
-	// Downloads and check the integrity of the downloaded package
+	// Download kubeadm binary using base implementation
+	if err := ki.BaseInstaller.Download(); err != nil {
+		return err
+	}
+
+	// Download kubeadm configuration files (specific to kubeadm)
+	if err := ki.downloadKubeadmConfigFiles(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (ki *kubeadmInstaller) downloadKubeadmConfigFiles() error {
+	downloadFolder := ki.GetDownloadFolder()
+	metadata := ki.GetMetadata()
+	fileManager := ki.GetFileManager()
+	downloader := ki.GetDownloader()
+
+	// Get config files for kubeadm from the software configuration
+	configs, err := metadata.GetConfigs(ki.GetVersion())
+	if err != nil {
+		return err
+	}
+
+	// Download the config file
+	for _, config := range configs {
+		configFile := path.Join(downloadFolder, config.Filename)
+
+		// Check if file already exists and verify checksum
+		_, exists, err := fileManager.PathExists(configFile)
+		if err == nil && exists {
+			// File exists, verify checksum
+			if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err == nil {
+				// File is already downloaded and valid
+				continue
+			}
+			// File exists but invalid checksum, remove it and re-download
+			if err := fileManager.RemoveAll(configFile); err != nil {
+				return err
+			}
+		}
+
+		// Download the config file
+		if err := downloader.Download(config.URL, configFile); err != nil {
+			return err
+		}
+
+		// Verify the downloaded config file's checksum
+		if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
 
 func (ki *kubeadmInstaller) Extract() error {
+	// Kubeadm might not need extraction
 	return nil
 }
 
 func (ki *kubeadmInstaller) Install() error {
+	// Install the kubeadm binary using the common logic
+	if err := ki.BaseInstaller.Install(); err != nil {
+		return err
+	}
 
-	// mv to sandbox
+	// Handle kubeadm-specific configuration file installation
+	fileManager := ki.GetFileManager()
+	metadata := ki.GetMetadata()
 
-	// installation/binary symlink
+	// Verify that the config file exists
+	configs, err := metadata.GetConfigs(ki.GetVersion())
+	if err != nil {
+		return err
+	}
+	if len(configs) == 0 {
+		return NewFileNotFoundError("10-kubeadm.conf")
+	}
+	if len(configs) > 1 {
+		return errorx.IllegalState.New("expected exactly one kubeadm config, but found %d", len(configs))
+	}
+
+	configFilename := configs[0].Filename
+
+	// Install the configuration file to the sandbox
+	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, kubeletServiceDir)
+	err = fileManager.CreateDirectory(sandboxKubeletServiceDir, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create kubelet service directory in sandbox")
+	}
+
+	kubeAdmConfSrc := path.Join(ki.GetDownloadFolder(), configFilename)
+	kubeadmConfDest := path.Join(sandboxKubeletServiceDir, configFilename)
+	err = fileManager.CopyFile(kubeAdmConfSrc, kubeadmConfDest, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to copy 10-kubeadm.conf to sandbox")
+	}
 
 	return nil
 }
 
-// Verify performs binary integrity check
 func (ki *kubeadmInstaller) Verify() error {
-	return nil
+	return ki.BaseInstaller.Verify()
 }
 
-// Checks the directories and highlevel contents in sandbox
-// and checks integrity/existence of binary symlink
 func (ki *kubeadmInstaller) IsInstalled() (bool, error) {
-	return false, nil
+	return ki.BaseInstaller.IsInstalled()
 }
 
 func (ki *kubeadmInstaller) Configure() error {
-	// default configuration
-	//	/etc/default/crio
+	fileManager := ki.GetFileManager()
+	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubeadm")
 
-	// service configuration
-	//	/usr/lib/systemd/system/crio.service
+	// Create symlink to /usr/local/bin for system-wide access
+	systemBinary := "/usr/local/bin/kubeadm"
 
-	// application configuration
-	// 	/etc/crio/crio.conf.d
+	// Create new symlink
+	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+	if err != nil {
+		return NewInstallationError(err, sandboxBinary, systemBinary)
+	}
 
-	// configuration service symlink
-	// 	/usr/lib/systemd/system/crio.service
+	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, kubeletServiceDir)
+	kubeadmConfDest := path.Join(sandboxKubeletServiceDir, "10-kubeadm.conf")
+
+	err = ki.replaceKubeletPath(kubeadmConfDest, path.Join(core.Paths().SandboxBinDir, "kubelet"))
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to replace kubelet path in 10-kubeadm.conf")
+	}
+
+	err = fileManager.CreateSymbolicLink(sandboxKubeletServiceDir, kubeletServiceDir, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create symlink for kubelet service directory")
+	}
 
 	return nil
 }
 
-// Checks default, service, application and configuration service symlinks
+// replaceKubeletPath replaces the kubelet path in the kubeadm configuration file
+func (ki *kubeadmInstaller) replaceKubeletPath(kubeadmFile string, newKubeletPath string) error {
+	fileManager := ki.GetFileManager()
+
+	input, err := fileManager.ReadFile(kubeadmFile, -1)
+	if err != nil {
+		return err
+	}
+
+	output := strings.ReplaceAll(string(input), "/usr/bin/kubelet", newKubeletPath)
+	err = fileManager.WriteFile(kubeadmFile, []byte(output))
+	if err != nil {
+		return err
+	}
+
+	err = fileManager.WritePermissions(kubeadmFile, 0644, false)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (ki *kubeadmInstaller) IsConfigured() (bool, error) {
 	return false, nil
 }

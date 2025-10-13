@@ -19,7 +19,6 @@ func SetupKubeadm() automa.Builder {
 		bashSteps.InstallKubeadm(),
 		bashSteps.TorchPriorKubeAdmConfiguration(), // we cannot write in pure Go because we need to run kubeadm binary
 		bashSteps.DownloadKubeadmConfig(),
-		configureKubeadm(), // this needs to happen before kubelet runs. So we are doing it here (not in InitCluster step)
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubeadm")
@@ -48,33 +47,6 @@ func InitCluster() automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Kubernetes cluster initialized successfully")
-		})
-}
-
-// configureKubeadm configures kubeadm to use the kubelet binary from the sandbox directory
-// It copies the 10-kubeadm.conf file to the sandbox directory and updates the kubelet path
-// It also creates a symlink from the sandbox directory to the systemd directory
-func configureKubeadm() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId(ConfigureKubeadmStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			err := kube.ConfigureKubeadm()
-			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "failed to configure kubeadm")))
-			}
-
-			return automa.SuccessReport(stp)
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring kubeadm")
-			return ctx, nil
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, report, "kubeadm configured successfully")
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, report *automa.Report) {
-			notify.As().StepFailure(ctx, stp, report, "Failed to configure kubeadm")
 		})
 }
 

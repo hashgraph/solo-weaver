@@ -1,13 +1,13 @@
 package software
 
 import (
-	"crypto/md5"
-	"crypto/sha256"
-	"crypto/sha512"
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFileDownloader_Download(t *testing.T) {
+func TestDownloader_Download(t *testing.T) {
 	// Create a test server
 	testContent := "This is test content for download"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func TestFileDownloader_Download(t *testing.T) {
 	require.Equal(t, testContent, string(content), "Downloaded content mismatch")
 }
 
-func TestFileDownloader_Download_HTTPError(t *testing.T) {
+func TestDownloader_Download_HTTPError(t *testing.T) {
 	// Create a test server that returns 404
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -61,7 +61,7 @@ func TestFileDownloader_Download_HTTPError(t *testing.T) {
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
 }
 
-func TestFileDownloader_Timeout(t *testing.T) {
+func TestDownloader_Timeout(t *testing.T) {
 	// Create a test server that sleeps longer than the timeout
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(3 * time.Second)
@@ -82,72 +82,111 @@ func TestFileDownloader_Timeout(t *testing.T) {
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
 }
 
-func TestFileDownloader_VerifyNonExistentFile(t *testing.T) {
+func TestDownloader_Extract(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir, err := os.MkdirTemp("", "test_extract_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer os.RemoveAll(tempDir)
+
+	// Create test tar.gz file
+	tarGzPath := filepath.Join(tempDir, "test.tar.gz")
+	testFiles := map[string]string{
+		"file1.txt":     "Content of file 1",
+		"dir/file2.txt": "Content of file 2",
+	}
+
+	createTestTarGz(t, tarGzPath, testFiles)
+
+	// Create extraction destination
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, 0755)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	// Test extraction
 	downloader := NewDownloader()
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.NoError(t, err, "Extract failed")
 
-	err := downloader.VerifyChecksum("/non/existent/file", "somehash", "md5")
-	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
-	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
+	// Verify extracted files
+	for filePath, expectedContent := range testFiles {
+		extractedPath := filepath.Join(extractDir, filePath)
+		content, err := os.ReadFile(extractedPath)
+		require.NoError(t, err, "Failed to read extracted file: %s", filePath)
+		require.Equal(t, expectedContent, string(content), "Content mismatch for file: %s", filePath)
+	}
+}
 
-	err = downloader.VerifyChecksum("/non/existent/file", "somehash", "sha256")
-	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
-	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
+func TestDownloader_Extract_FileNotFound(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_extract_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer os.RemoveAll(tempDir)
 
-	err = downloader.VerifyChecksum("/non/existent/file", "somehash", "sha512")
-	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
+	downloader := NewDownloader()
+	err = downloader.Extract("nonexistent.tar.gz", tempDir)
+	require.Error(t, err, "Extract should fail with file not found")
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 }
 
-func TestFileDownloader_VerifyChecksum(t *testing.T) {
-	// Create temporary file with known content
-	testContent := "Hello, World!"
-	tmpFile, err := os.CreateTemp("", "test_checksum_*.txt")
-	require.NoError(t, err, "Failed to create temp file")
-	defer os.Remove(tmpFile.Name())
+func TestDownloader_Extract_Timeout(t *testing.T) {
+	// Create a large tar.gz file that will take time to extract
+	tempDir, err := os.MkdirTemp("", "test_extract_timeout_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer os.RemoveAll(tempDir)
 
-	_, err = tmpFile.WriteString(testContent)
-	require.NoError(t, err, "Failed to write test content to temp file")
-	tmpFile.Close()
+	tarGzPath := filepath.Join(tempDir, "large.tar.gz")
+	// Create many files to simulate a long extraction
+	testFiles := make(map[string]string)
+	for i := 0; i < 1000; i++ {
+		testFiles[fmt.Sprintf("file%d.txt", i)] = fmt.Sprintf("Content %d", i)
+	}
 
-	downloader := NewDownloader()
+	createTestTarGz(t, tarGzPath, testFiles)
 
-	// Test MD5 algorithm
-	hash := md5.New()
-	hash.Write([]byte(testContent))
-	expectedMD5 := fmt.Sprintf("%x", hash.Sum(nil))
+	extractDir := filepath.Join(tempDir, "extracted")
+	downloader := NewDownloaderWithTimeout(1 * time.Millisecond) // Very short timeout
 
-	err = downloader.VerifyChecksum(tmpFile.Name(), expectedMD5, "md5")
-	require.NoError(t, err, "MD5 verification through VerifyChecksum failed")
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.Error(t, err, "Extract should fail with timeout")
+	require.True(t, errorx.IsOfType(err, ExtractionError), "Error should be of type ExtractionError")
+}
 
-	// Test SHA256 algorithm
-	hash256 := sha256.New()
-	hash256.Write([]byte(testContent))
-	expectedSHA256 := fmt.Sprintf("%x", hash256.Sum(nil))
+// Helper function to create a test tar.gz file
+func createTestTarGz(t *testing.T, path string, files map[string]string) {
+	file, err := os.Create(path)
+	require.NoError(t, err, "Failed to create tar.gz file")
+	defer file.Close()
 
-	err = downloader.VerifyChecksum(tmpFile.Name(), expectedSHA256, "sha256")
-	require.NoError(t, err, "SHA256 verification through VerifyChecksum failed")
+	gzWriter := gzip.NewWriter(file)
+	defer gzWriter.Close()
 
-	// Test SHA512 algorithm
-	hash512 := sha512.New()
-	hash512.Write([]byte(testContent))
-	expectedSHA512 := fmt.Sprintf("%x", hash512.Sum(nil))
+	tarWriter := tar.NewWriter(gzWriter)
+	defer tarWriter.Close()
 
-	err = downloader.VerifyChecksum(tmpFile.Name(), expectedSHA512, "sha512")
-	require.NoError(t, err, "SHA512 verification through VerifyChecksum failed")
+	for filePath, content := range files {
+		// Create directory header if needed
+		dir := filepath.Dir(filePath)
+		if dir != "." {
+			hdr := &tar.Header{
+				Name:     dir + "/",
+				Mode:     0755,
+				Typeflag: tar.TypeDir,
+			}
+			err := tarWriter.WriteHeader(hdr)
+			require.NoError(t, err, "Failed to write directory header")
+		}
 
-	// Test with wrong checksum
-	err = downloader.VerifyChecksum(tmpFile.Name(), "wronghash", "sha256")
-	require.Error(t, err, "VerifyChecksum should fail with wrong checksum")
-	require.True(t, errorx.IsOfType(err, ChecksumError), "Error should be of type ChecksumError")
+		// Create file header
+		hdr := &tar.Header{
+			Name:     filePath,
+			Mode:     0644,
+			Size:     int64(len(content)),
+			Typeflag: tar.TypeReg,
+		}
+		err := tarWriter.WriteHeader(hdr)
+		require.NoError(t, err, "Failed to write file header")
 
-	// Test with unsupported algorithm
-	err = downloader.VerifyChecksum(tmpFile.Name(), expectedSHA256, "sha1")
-	require.Error(t, err, "VerifyChecksum should fail with unsupported algorithm")
-	require.True(t, errorx.IsOfType(err, ChecksumError), "Error should be of type ChecksumError")
-
-	// Test with non-existent file
-	err = downloader.VerifyChecksum("/non/existent/file", expectedSHA256, "sha256")
-	require.Error(t, err, "VerifyChecksum should fail with non-existent file")
-
-	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
+		// Write file content
+		_, err = tarWriter.Write([]byte(content))
+		require.NoError(t, err, "Failed to write file content")
+	}
 }

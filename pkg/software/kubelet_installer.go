@@ -1,55 +1,48 @@
 package software
 
 type kubeletInstaller struct {
+	*BaseInstaller
+}
+
+var _ Software = (*kubeletInstaller)(nil)
+
+func NewKubeletInstaller(selectedVersion string) (Software, error) {
+	baseInstaller, err := NewBaseInstaller("kubelet", selectedVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	return &kubeletInstaller{
+		BaseInstaller: baseInstaller,
+	}, nil
 }
 
 func (ki *kubeletInstaller) Download() error {
-	// Downloads and check the integrity of the downloaded package
-
-	return nil
+	return ki.BaseInstaller.Download()
 }
 
 func (ki *kubeletInstaller) Extract() error {
+	// kubelet is typically a single binary, no extraction needed
 	return nil
 }
 
 func (ki *kubeletInstaller) Install() error {
-
-	// mv to sandbox
-
-	// installation/binary symlink
-
-	return nil
+	return ki.BaseInstaller.Install()
 }
 
-// Verify performs binary integrity check
 func (ki *kubeletInstaller) Verify() error {
-	return nil
+	return ki.BaseInstaller.Verify()
 }
 
-// Checks the directories and highlevel contents in sandbox
-// and checks integrity/existence of binary symlink
 func (ki *kubeletInstaller) IsInstalled() (bool, error) {
-	return false, nil
+	return ki.BaseInstaller.IsInstalled()
 }
 
 func (ki *kubeletInstaller) Configure() error {
-	// default configuration
-	//	/etc/default/crio
-
-	// service configuration
-	//	/usr/lib/systemd/system/crio.service
-
-	// application configuration
-	// 	/etc/crio/crio.conf.d
-
-	// configuration service symlink
-	// 	/usr/lib/systemd/system/crio.service
-
+	// kubelet-specific configuration logic
 	return nil
 }
 
-// Checks default, service, application and configuration service symlinks
 func (ki *kubeletInstaller) IsConfigured() (bool, error) {
 	return false, nil
 }

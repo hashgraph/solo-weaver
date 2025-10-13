@@ -217,7 +217,7 @@ tasks:
       - "go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/..."
 
   test:coverage:
-    desc: "Run test coverage analysis. Use TEST_FILE to specify a specific test file, otherwise tests all packages"
+    desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
     vars:
       TEST_PATHS:  '{{.TEST_PATHS | default "./internal/... ./pkg/... ./cmd/..."}}'
       TEST_REGEX: '{{.TEST_REGEX | default "."}}'

@@ -1,6 +1,6 @@
 module golang.hedera.com/solo-provisioner
 
-go 1.25.0
+go 1.25.2
 
 require (
 	github.com/automa-saga/automa v0.6.0
