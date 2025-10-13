@@ -2,12 +2,13 @@ package steps
 
 import (
 	"context"
+	"strings"
+
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
-	"strings"
 )
 
 func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
@@ -23,7 +24,15 @@ func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
 			}
 
 			for _, dir := range pp.AllDirectories {
-				err := mg.CreateDirectory(dir, true)
+				_, exists, err := mg.PathExists(dir)
+				if err != nil {
+					return automa.FailureReport(stp, automa.WithError(err))
+				} else if exists {
+					// directory already exists, skip
+					continue
+				}
+
+				err = mg.CreateDirectory(dir, true)
 				if err != nil {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}
@@ -38,6 +47,10 @@ func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
 			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{
 				"directories": strings.Join(pp.AllDirectories, ", "),
 			}))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up home directory structure")
+			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup home directory structure")

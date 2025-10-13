@@ -51,6 +51,10 @@ func ConfigureSysctlForKubernetes() automa.Builder {
 			}
 			return automa.SuccessReport(stp)
 		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Configuring sysctl for Kubernetes")
+			return ctx, nil
+		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, report *automa.Report) {
 			notify.As().StepFailure(ctx, stp, report, "Failed to configure sysctl for Kubernetes")
 		}).

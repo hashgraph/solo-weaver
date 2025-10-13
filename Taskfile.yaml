@@ -2,9 +2,9 @@ version: 3
 silent: false
 output: prefixed
 vars:
-  OS: [ linux, darwin ]
+  OS: [ linux ]
   ARCH: [ amd64, arm64 ]
-  GO_VERSION: 1.24.3
+  GO_VERSION: 1.25.2
   LDFLAGS: "-w -s"
   # VM configuration
   VM_NAME: "solo-provisioner-debian"

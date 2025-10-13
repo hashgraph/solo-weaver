@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 
 	"github.com/automa-saga/automa"
@@ -34,6 +35,11 @@ func DisableSwap() automa.Builder {
 			}
 
 			return automa.SuccessReport(stp)
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Disabling swap")
+			return ctx, nil
+
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, report *automa.Report) {
 			notify.As().StepFailure(ctx, stp, report, "Failed to disable swap")

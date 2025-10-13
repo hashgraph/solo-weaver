@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -42,14 +43,20 @@ const (
 	SetupSandboxFoldersStepId = "setup-sandbox-folders"
 	SetupBindMountsStepId     = "setup-bind-mounts"
 
-	InstallDaselStepId           = "install-dasel"
-	InstallCrioStepId            = "install-crio"
-	InstallKubernetesToolsStepId = "install-kubernetes-tools"
-	InstallK9sStepId             = "install-k9s"
-	InstallHelmStepId            = "install-helm"
-	InstallCiliumStepId          = "install-cilium"
-	InstallCiliumCNIStepId       = "install-cilium-cni"
-	InstallMetalLBStepId         = "install-metallb"
+	InstallDaselStepId   = "install-dasel"
+	InstallCrioStepId    = "install-crio"
+	InstallKubeadmStepId = "install-kubeadm"
+	InstallKubeletStepId = "install-kubelet"
+	InstallKubectlStepId = "install-kubectl"
+
+	InstallK9sStepId       = "install-k9s"
+	InstallHelmStepId      = "install-helm"
+	InstallCiliumStepId    = "install-cilium"
+	InstallCiliumCNIStepId = "install-cilium-cni"
+	InstallMetalLBStepId   = "install-metallb"
+
+	ConfigureKubeadmStepId = "configure-kubeadm"
+	ConfigureKubeletStepId = "configure-kubelet"
 
 	ConfigureSandboxKubeletSvcStepId   = "configure-kubelet-service"
 	ConfigureSandboxCrioStepId         = "configure-sandbox-crio"
@@ -58,11 +65,13 @@ const (
 	UpdateCrioConfStepId               = "update-crio-configuration"
 	SetupCrioSymlinkStepId             = "setup-crio-symlinks"
 	SetupSystemdServiceSymlinksStepId  = "setup-systemd-symlinks"
-	EnableStartServicesStepId          = "enable-start-services"
+	EnableStartCrioStepId              = "enable-start-crio"
+	EnableStartKubeletStepId           = "enable-start-kubelet"
+	DaemonReloadStepId                 = "daemon-reload-step"
 	TorchPriorKubeAdmConfigStepId      = "torch-prior-kubeadm-config"
-	SetupKubeAdminConfigStepId         = "setup-kubeadm-configuration"
+	ConfigureKubeadmInitStepId         = "configure-kubeadm-init"
 	SetBashPipeFailModeStepId          = "set-bash-pipefail-mode"
-	InitializeKubernetesClusterStepId  = "initialize-kubernetes-cluster"
+	InitClusterStepId                  = "init-cluster"
 	ConfigureCiliumCNIStepId           = "configure-cilium-cni"
 	EnforceCiliumCNIStepId             = "restart-crio-and-kubelet"
 	DeployMetallbConfigStepId          = "deploy-metallb-config"
@@ -72,8 +81,7 @@ const (
 
 // initialized in init()
 var (
-	bashSteps         bashScriptStep
-	bashStepsRegistry automa.Registry
+	bashSteps bashScriptStep
 )
 
 // bashScriptStep mimics and encapsulates the bash script commands to help us create a test scenario for the
@@ -136,7 +144,7 @@ func initBashScriptSteps() bashScriptStep {
 		HomeDir:            os.Getenv("HOME"),
 		OS:                 runtime.GOOS,
 		ARCH:               runtime.GOARCH,
-		UID:                os.Getuid(),
+		UID:                os.Geteuid(),
 		GID:                os.Getgid(),
 		ProvisionerHomeDir: core.Paths().HomeDir,
 		SandboxDir:         core.Paths().SandboxDir,
@@ -157,75 +165,75 @@ func initBashScriptSteps() bashScriptStep {
 	}
 }
 
-func (b *bashScriptStep) UpdateOS() automa.Builder {
+func (b *bashScriptStep) UpdateOS() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(UpdateOSStepId, []string{
 		"sudo apt-get update -y",
 	}, "")
 }
 
-func (b *bashScriptStep) DisableSwap() automa.Builder {
+func (b *bashScriptStep) DisableSwap() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DisableSwapStepId, []string{
 		`sudo sed -i.bak 's/^\(.*\sswap\s.*\)$/#\1\n/' /etc/fstab`,
 		`sudo swapoff -a`,
 	}, "")
 }
 
-func (b *bashScriptStep) RemoveContainerd() automa.Builder {
+func (b *bashScriptStep) RemoveContainerd() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(RemoveContainerdStepId, []string{
 		"sudo apt-get remove -y containerd containerd.io || true",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallIPTables() automa.Builder {
+func (b *bashScriptStep) InstallIPTables() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallIPTablesStepId, []string{
 		"sudo apt-get install -y iptables",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallGnupg2() automa.Builder {
+func (b *bashScriptStep) InstallGnupg2() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallGnupg2StepId, []string{
 		"sudo apt-get install -y gnupg2",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallConntrack() automa.Builder {
+func (b *bashScriptStep) InstallConntrack() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallConntrackStepId, []string{
 		"sudo apt-get install -y conntrack",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallSoCat() automa.Builder {
+func (b *bashScriptStep) InstallSoCat() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallSoCatStepId, []string{
 		"sudo apt-get install -y socat",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallEBTables() automa.Builder {
+func (b *bashScriptStep) InstallEBTables() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallEBTablesStepId, []string{
 		"sudo apt-get install -y ebtables",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallNFTables() automa.Builder {
+func (b *bashScriptStep) InstallNFTables() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallNFTablesStepId, []string{
 		"sudo apt-get install -y nftables",
 	}, "")
 }
 
-func (b *bashScriptStep) EnableAndStartNFTables() automa.Builder {
+func (b *bashScriptStep) EnableAndStartNFTables() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(EnableStartNFTablesStepId, []string{
 		"sudo systemctl enable nftables",
 		"sudo systemctl start nftables",
 	}, "")
 }
 
-func (b *bashScriptStep) AutoRemovePackages() automa.Builder {
+func (b *bashScriptStep) AutoRemovePackages() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(AutoRemovePackagesStepId, []string{
 		"sudo apt-get autoremove -y",
 	}, "")
 }
 
-func (b *bashScriptStep) InstallKernelModules() automa.Builder {
+func (b *bashScriptStep) InstallKernelModules() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallKernelModulesStepId, []string{
 		"sudo modprobe overlay",
 		"sudo modprobe br_netfilter",
@@ -234,7 +242,7 @@ func (b *bashScriptStep) InstallKernelModules() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) ConfigureSysctlForKubernetes() automa.Builder {
+func (b *bashScriptStep) ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId(ConfigureSysctlForKubernetesStepId).
 		Steps(
@@ -298,7 +306,7 @@ EOF`,
 		)
 }
 
-func (b *bashScriptStep) DownloadDasel() automa.Builder {
+func (b *bashScriptStep) DownloadDasel() *automa.StepBuilder {
 	daselFile := "dasel_" + b.OS + "_" + b.ARCH
 	return automa_steps.BashScriptStep(DownloadDaselStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://github.com/TomWright/dasel/releases/download/v%s/%s",
@@ -306,7 +314,7 @@ func (b *bashScriptStep) DownloadDasel() automa.Builder {
 	}, fmt.Sprintf("%s/utils", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadCrio() automa.Builder {
+func (b *bashScriptStep) DownloadCrio() *automa.StepBuilder {
 	crioFile := fmt.Sprintf("cri-o.%s.v%s.tar.gz", b.ARCH, b.CrioVersion)
 	return automa_steps.BashScriptStep(DownloadCrioStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://storage.googleapis.com/cri-o/artifacts/%s",
@@ -314,21 +322,7 @@ func (b *bashScriptStep) DownloadCrio() automa.Builder {
 	}, fmt.Sprintf("%s/crio", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadKubernetesTools() automa.Builder {
-	return automa.NewWorkflowBuilder().
-		WithId(DownloadKubernetesToolsStepId).
-		Steps(
-			b.DownloadKubeadm(),
-			b.DownloadKubelet(),
-			b.DownloadKubectl(),
-			b.DownloadK9s(),
-			b.DownloadHelm(),
-			b.DownloadDasel(),
-			b.DownloadKubernetesServiceFiles(),
-		)
-}
-
-func (b *bashScriptStep) DownloadKubeadm() automa.Builder {
+func (b *bashScriptStep) DownloadKubeadm() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadKubeAdmStepId, []string{
 		fmt.Sprintf("curl -sSLo kubeadm https://dl.k8s.io/release/v%s/bin/%s/%s/kubeadm",
 			b.KubernetesVersion, b.OS, b.ARCH),
@@ -336,7 +330,7 @@ func (b *bashScriptStep) DownloadKubeadm() automa.Builder {
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadKubelet() automa.Builder {
+func (b *bashScriptStep) DownloadKubelet() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadKubeletStepId, []string{
 		fmt.Sprintf("curl -sSLo kubelet https://dl.k8s.io/release/v%s/bin/%s/%s/kubelet",
 			b.KubernetesVersion, b.OS, b.ARCH),
@@ -344,7 +338,7 @@ func (b *bashScriptStep) DownloadKubelet() automa.Builder {
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadKubectl() automa.Builder {
+func (b *bashScriptStep) DownloadKubectl() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadKubectlStepId, []string{
 		fmt.Sprintf("curl -sSLo kubectl https://dl.k8s.io/release/v%s/bin/%s/%s/kubectl",
 			b.KubernetesVersion, b.OS, b.ARCH),
@@ -352,7 +346,7 @@ func (b *bashScriptStep) DownloadKubectl() automa.Builder {
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadK9s() automa.Builder {
+func (b *bashScriptStep) DownloadK9s() *automa.StepBuilder {
 	k9sFile := fmt.Sprintf("k9s_%s_%s.tar.gz", b.OS, b.ARCH)
 	return automa_steps.BashScriptStep(DownloadK9sStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://github.com/derailed/k9s/releases/download/v%s/%s",
@@ -360,7 +354,7 @@ func (b *bashScriptStep) DownloadK9s() automa.Builder {
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadHelm() automa.Builder {
+func (b *bashScriptStep) DownloadHelm() *automa.StepBuilder {
 	helmFile := fmt.Sprintf("helm-v%s-%s-%s.tar.gz", b.HelmVersion, b.OS, b.ARCH)
 	return automa_steps.BashScriptStep(DownloadHelmStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://get.helm.sh/%s",
@@ -368,16 +362,21 @@ func (b *bashScriptStep) DownloadHelm() automa.Builder {
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadKubernetesServiceFiles() automa.Builder {
+func (b *bashScriptStep) DownloadKubeletConfig() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadKubernetesServiceFilesStepId, []string{
 		fmt.Sprintf("curl -sSLo kubelet.service https://raw.githubusercontent.com/kubernetes/release/%s/cmd/krel/templates/latest/kubelet/kubelet.service",
 			b.KrelVersion),
+	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+}
+
+func (b *bashScriptStep) DownloadKubeadmConfig() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(DownloadKubernetesServiceFilesStepId, []string{
 		fmt.Sprintf("curl -sSLo 10-kubeadm.conf https://raw.githubusercontent.com/kubernetes/release/%s/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf",
 			b.KrelVersion),
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) DownloadCiliumCli() automa.Builder {
+func (b *bashScriptStep) DownloadCiliumCli() *automa.StepBuilder {
 	ciliumFile := fmt.Sprintf("cilium-%s-%s.tar.gz", b.OS, b.ARCH)
 	return automa_steps.BashScriptStep(DownloadCiliumStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://github.com/cilium/cilium-cli/releases/download/v%s/%s",
@@ -388,7 +387,7 @@ func (b *bashScriptStep) DownloadCiliumCli() automa.Builder {
 	}, fmt.Sprintf("%s/cilium", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) SetupSandboxFolders() automa.Builder {
+func (b *bashScriptStep) SetupSandboxFolders() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(SetupSandboxFoldersStepId, []string{
 		fmt.Sprintf("sudo mkdir -p %s/utils", b.ProvisionerHomeDir),
 		fmt.Sprintf("sudo mkdir -p %s/crio/unpack", b.ProvisionerHomeDir),
@@ -432,9 +431,9 @@ func (b *bashScriptStep) SetupSandboxFolders() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) SetupBindMounts() automa.Builder {
+func (b *bashScriptStep) SetupBindMounts() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(SetupBindMountsStepId, []string{
-		"sudo mkdir -p /etc/kubernetes /var/lib/kubelet /var/run/cilium",
+		"sudo mkdir -p /etc/kubernetes /var/lib/kubelet /var/run/cilium || true",
 		fmt.Sprintf("if ! grep -q '/etc/kubernetes' /etc/fstab; then echo '%s/etc/kubernetes /etc/kubernetes none bind,nofail 0 0' | sudo tee -a /etc/fstab >/dev/null; fi", b.SandboxDir),
 		fmt.Sprintf("if ! grep -q '/var/lib/kubelet' /etc/fstab; then echo '%s/var/lib/kubelet /var/lib/kubelet none bind,nofail 0 0' | sudo tee -a /etc/fstab >/dev/null; fi", b.SandboxDir),
 		fmt.Sprintf("if ! grep -q '/var/run/cilium' /etc/fstab; then echo '%s/var/run/cilium /var/run/cilium none bind,nofail 0 0' | sudo tee -a /etc/fstab >/dev/null; fi", b.SandboxDir),
@@ -445,14 +444,14 @@ func (b *bashScriptStep) SetupBindMounts() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) InstallDasel() automa.Builder {
+func (b *bashScriptStep) InstallDasel() *automa.StepBuilder {
 	daselFile := "dasel_" + b.OS + "_" + b.ARCH
 	return automa_steps.BashScriptStep(InstallDaselStepId, []string{
 		fmt.Sprintf("sudo install -m 755 %s %s/dasel", daselFile, b.SandboxBinDir),
 	}, fmt.Sprintf("%s/utils", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) InstallCrio() automa.Builder {
+func (b *bashScriptStep) InstallCrio() *automa.StepBuilder {
 	crioFile := fmt.Sprintf("cri-o.%s.v%s.tar.gz", b.ARCH, b.CrioVersion)
 	return automa_steps.BashScriptStep(InstallCrioStepId, []string{
 		fmt.Sprintf("sudo tar -C %s/crio/unpack -zxvf %s", b.ProvisionerHomeDir, crioFile),
@@ -462,35 +461,49 @@ func (b *bashScriptStep) InstallCrio() automa.Builder {
 	}, fmt.Sprintf("%s/crio", b.ProvisionerHomeDir))
 }
 
-// InstallKubernetesTools installs kubeadm, kubelet, kubectl, k9s, helm, cilium-cli and sets up the
-// TODO: split this step into separate steps
-func (b *bashScriptStep) InstallKubernetesTools() automa.Builder {
-	return automa_steps.BashScriptStep(InstallKubernetesToolsStepId, []string{
+func (b *bashScriptStep) InstallKubeadm() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(InstallKubeadmStepId, []string{
 		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubeadm\" \"%s/kubeadm\"", b.ProvisionerHomeDir, b.SandboxBinDir),
-		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubelet\" \"%s/kubelet\"", b.ProvisionerHomeDir, b.SandboxBinDir),
-		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubectl\" \"%s/kubectl\"", b.ProvisionerHomeDir, b.SandboxBinDir),
 		fmt.Sprintf("sudo ln -sf \"%s/kubeadm\" /usr/local/bin/kubeadm", b.SandboxBinDir),
+	}, "")
+}
+
+func (b *bashScriptStep) ConfigureKubeadm() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId(ConfigureKubeadmStepId).Steps(
+		automa_steps.BashScriptStep("install-kubeadm-conf", []string{
+			fmt.Sprintf("sudo mkdir -p %s/usr/lib/systemd/system/kubelet.service.d || true", b.SandboxDir),
+			fmt.Sprintf("sudo cp \"%s/kubernetes/10-kubeadm.conf\" \"%s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf\"", b.ProvisionerHomeDir, b.SandboxDir),
+			fmt.Sprintf("sudo sed -i 's|/usr/bin/kubelet|%s/kubelet|' %s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf", b.SandboxBinDir, b.SandboxDir),
+			fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service.d /usr/lib/systemd/system/kubelet.service.d", b.SandboxDir),
+		}, ""),
+		b.ConfigureKubeadmInit(),
+	)
+}
+
+func (b *bashScriptStep) InstallKubelet() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(InstallKubeletStepId, []string{
+		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubelet\" \"%s/kubelet\"", b.ProvisionerHomeDir, b.SandboxBinDir),
 		fmt.Sprintf("sudo ln -sf \"%s/kubelet\" /usr/local/bin/kubelet", b.SandboxBinDir),
-		fmt.Sprintf("sudo ln -sf \"%s/kubectl\" /usr/local/bin/kubectl", b.SandboxBinDir),
-		fmt.Sprintf("sudo ln -sf \"%s/k9s\" /usr/local/bin/k9s", b.SandboxBinDir),
-		fmt.Sprintf("sudo ln -sf \"%s/helm\" /usr/local/bin/helm", b.SandboxBinDir),
-		fmt.Sprintf("sudo ln -sf \"%s/cilium\" /usr/local/bin/cilium", b.SandboxBinDir),
-		fmt.Sprintf("sudo mkdir -p %s/usr/lib/systemd/system/kubelet.service.d", b.SandboxDir),
+	}, "")
+}
+
+func (b *bashScriptStep) ConfigureKubelet() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(ConfigureKubeletStepId, []string{
 		fmt.Sprintf("sudo cp \"%s/kubernetes/kubelet.service\" \"%s/usr/lib/systemd/system/kubelet.service\"", b.ProvisionerHomeDir, b.SandboxDir),
-		fmt.Sprintf("sudo cp \"%s/kubernetes/10-kubeadm.conf\" \"%s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf\"", b.ProvisionerHomeDir, b.SandboxDir),
+		fmt.Sprintf("sudo sed -i 's|/usr/bin/kubelet|%s/kubelet|' %s/usr/lib/systemd/system/kubelet.service", b.SandboxBinDir, b.SandboxDir),
+		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service", b.SandboxDir),
 	}, "")
 }
 
-func (b *bashScriptStep) ConfigureSandboxKubeletService() automa.Builder {
-	return automa_steps.BashScriptStep(ConfigureSandboxKubeletSvcStepId, []string{
-		fmt.Sprintf("sudo sed -i 's|/usr/bin/kubelet|%s/kubelet|' %s/usr/lib/systemd/system/kubelet.service",
-			b.SandboxBinDir, b.SandboxDir),
-		fmt.Sprintf("sudo sed -i 's|/usr/bin/kubelet|%s/kubelet|' %s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf",
-			b.SandboxBinDir, b.SandboxDir),
+func (b *bashScriptStep) InstallKubectl() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(InstallKubeletStepId, []string{
+		fmt.Sprintf("sudo mkdir -p \"%s/kubernetes/kubectl\" || true", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubectl\" \"%s/kubectl\"", b.ProvisionerHomeDir, b.SandboxBinDir),
+		fmt.Sprintf("sudo ln -sf \"%s/kubectl\" /usr/local/bin/kubectl", b.SandboxBinDir),
 	}, "")
 }
 
-func (b *bashScriptStep) ConfigureSandboxCrio() automa.Builder {
+func (b *bashScriptStep) ConfigureSandboxCrio() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId(ConfigureSandboxCrioStepId).
 		Steps(
@@ -504,7 +517,7 @@ func (b *bashScriptStep) ConfigureSandboxCrio() automa.Builder {
 		)
 }
 
-func (b *bashScriptStep) ConfigureSandboxCrioService() automa.Builder {
+func (b *bashScriptStep) ConfigureSandboxCrioService() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(ConfigureSandboxCrioSvcStepId, []string{
 		fmt.Sprintf("sudo sed -i 's|/usr/local/bin/crio|%s/crio|' %s/usr/lib/systemd/system/crio.service",
 			b.SandboxLocalBinDir, b.SandboxDir),
@@ -513,7 +526,7 @@ func (b *bashScriptStep) ConfigureSandboxCrioService() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) ConfigureSandboxCrioDefaults() automa.Builder {
+func (b *bashScriptStep) ConfigureSandboxCrioDefaults() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(ConfigureSandboxCrioDefaultsStepId, []string{
 		fmt.Sprintf(`cat <<EOF | sudo tee %s/etc/default/crio >/dev/null
 # /etc/default/crio
@@ -530,7 +543,7 @@ EOF`, b.SandboxDir, b.SandboxDir),
 	}, "")
 }
 
-func (b *bashScriptStep) UpdateCrioConfiguration() automa.Builder {
+func (b *bashScriptStep) UpdateCrioConfiguration() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(UpdateCrioConfStepId, []string{
 		fmt.Sprintf("sudo %s/dasel put -w toml -r toml -f \"%s/etc/crio/crio.conf.d/10-crio.conf\" -v runc '.crio.runtime.default_runtime'", b.SandboxBinDir, b.SandboxDir),
 		fmt.Sprintf("sudo %s/dasel put -w toml -r toml -f \"%s/etc/crio/crio.conf.d/10-crio.conf\" -v \"%s/etc/crio/keys\" '.crio.runtime.decryption_keys_path'", b.SandboxBinDir, b.SandboxDir, b.SandboxDir),
@@ -554,55 +567,73 @@ func (b *bashScriptStep) UpdateCrioConfiguration() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) SetupCrioServiceSymlinks() automa.Builder {
+func (b *bashScriptStep) SetupCrioServiceSymlinks() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(SetupCrioSymlinkStepId, []string{
 		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/crio.service /usr/lib/systemd/system/crio.service", b.SandboxDir),
 	}, "")
 }
 
-func (b *bashScriptStep) InstallK9s() automa.Builder {
+func (b *bashScriptStep) InstallK9s() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallK9sStepId, []string{
 		fmt.Sprintf("sudo tar -C %s -zxvf k9s_%s_%s.tar.gz k9s", b.SandboxBinDir, b.OS, b.ARCH),
+		fmt.Sprintf("sudo ln -sf \"%s/k9s\" /usr/local/bin/k9s", b.SandboxBinDir),
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) InstallHelm() automa.Builder {
+func (b *bashScriptStep) InstallHelm() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallHelmStepId, []string{
 		fmt.Sprintf("sudo tar -C %s -zxvf helm-v%s-%s-%s.tar.gz %s-%s/helm --strip-components 1",
 			b.SandboxBinDir, b.HelmVersion, b.OS, b.ARCH, b.OS, b.ARCH),
+		fmt.Sprintf("sudo ln -sf \"%s/helm\" /usr/local/bin/helm", b.SandboxBinDir),
 	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) InstallCiliumCli() automa.Builder {
+func (b *bashScriptStep) InstallCiliumCli() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallCiliumStepId, []string{
 		fmt.Sprintf("sudo tar -C %s -zxvf cilium-%s-%s.tar.gz", b.SandboxBinDir, b.OS, b.ARCH),
+		fmt.Sprintf("sudo ln -sf \"%s/cilium\" /usr/local/bin/cilium", b.SandboxBinDir),
 	}, fmt.Sprintf("%s/cilium", b.ProvisionerHomeDir))
 }
 
-func (b *bashScriptStep) SetupSystemdServiceSymlinks() automa.Builder {
+func (b *bashScriptStep) SetupSystemdServiceSymlinks() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(SetupSystemdServiceSymlinksStepId, []string{
 		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service", b.SandboxDir),
 		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service.d /usr/lib/systemd/system/kubelet.service.d", b.SandboxDir),
 	}, "")
 }
 
-func (b *bashScriptStep) EnableAndStartServices() automa.Builder {
-	return automa_steps.BashScriptStep(EnableStartServicesStepId, []string{
+func (b *bashScriptStep) DaemonReload() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(DaemonReloadStepId, []string{
 		"sudo systemctl daemon-reload",
-		"sudo systemctl enable crio kubelet",
-		"sudo systemctl start crio kubelet",
 	}, "")
 }
 
-func (b *bashScriptStep) TorchPriorKubeAdmConfiguration() automa.Builder {
+func (b *bashScriptStep) EnableAndStartCrio() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(EnableStartCrioStepId, []string{
+		"sudo systemctl daemon-reload",
+		"sudo systemctl enable crio",
+		"sudo systemctl start crio",
+	}, "")
+}
+
+func (b *bashScriptStep) EnableAndStartKubelet() *automa.StepBuilder {
+	return automa_steps.BashScriptStep(EnableStartKubeletStepId, []string{
+		"sudo systemctl daemon-reload",
+		"sudo systemctl enable kubelet",
+		"sudo systemctl start kubelet",
+	}, "")
+}
+
+func (b *bashScriptStep) TorchPriorKubeAdmConfiguration() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(TorchPriorKubeAdmConfigStepId, []string{
+		fmt.Sprintf(`sudo kill -9 $(sudo lsof -t -i :6443) || true; sleep 5;`), // Kill any process using port 6443 so that kubeadm reset can complete
 		fmt.Sprintf("sudo %s/kubeadm reset --force || true", b.SandboxBinDir),
 		fmt.Sprintf("sudo rm -rf %s/etc/kubernetes/* %s/etc/cni/net.d/* %s/var/lib/etcd/* || true",
 			b.SandboxDir, b.SandboxDir, b.SandboxDir),
 	}, "")
 }
 
-func (b *bashScriptStep) SetupKubeAdminConfiguration() automa.Builder {
+func (b *bashScriptStep) ConfigureKubeadmInit() *automa.StepBuilder {
 	configScript :=
 		fmt.Sprintf(`cat <<EOF | sudo tee %s/etc/provisioner/kubeadm-init.yaml >/dev/null\n
 apiVersion: kubeadm.k8s.io/v1beta4
@@ -665,31 +696,50 @@ controllerManager:
 EOF`, b.SandboxDir, b.KubeBootstrapToken, b.MachineIp, b.SandboxDir, b.Hostname, b.MachineIp, b.MachineIp,
 			b.SandboxDir, b.SandboxDir, b.KubernetesVersion)
 
-	return automa_steps.BashScriptStep(SetupKubeAdminConfigStepId, []string{
+	return automa_steps.BashScriptStep(ConfigureKubeadmInitStepId, []string{
 		configScript,
 	}, "")
 }
 
-func (b *bashScriptStep) SetPipeFailMode() automa.Builder {
-	return automa_steps.BashScriptStep(SetBashPipeFailModeStepId, []string{
-		"set -eo pipefail",
-	}, "")
+func (b *bashScriptStep) KubeadmConfigImagesPull() *automa.StepBuilder {
+	return automa_steps.BashScriptStep("kube-config-image-pull", []string{
+		fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/provisioner/kubeadm-init.yaml", b.SandboxBinDir, b.SandboxDir),
+	}, "").
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			logx.As().Info().Msg("Pulling kubeadm images, this may take a while...")
+			return ctx, nil
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
+			logx.As().Info().Msg("Kubeadm images pulled successfully.")
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, report *automa.Report) {
+			logx.As().Error().Msg("Failed to pull kubeadm images.")
+		})
+
 }
 
-func (b *bashScriptStep) InitializeKubernetesCluster() automa.Builder {
-	return automa_steps.BashScriptStep(InitializeKubernetesClusterStepId, []string{
-		fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/provisioner/kubeadm-init.yaml",
-			b.SandboxBinDir, b.SandboxDir),
+func (b *bashScriptStep) InitCluster() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId(InitClusterStepId).Steps(
+		b.KubeadmConfigImagesPull(),
+		automa_steps.BashScriptStep("kubeadm-init", []string{
+			fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/provisioner/kubeadm-init.yaml", b.SandboxBinDir, b.SandboxDir),
+		}, ""),
+	)
+}
+
+func (b *bashScriptStep) ConfigureKubeConfig() *automa.StepBuilder {
+	return automa_steps.BashScriptStep("configure-kube-config-dir", []string{
 		fmt.Sprintf("mkdir -p \"%s/.kube\"", b.HomeDir),
 		fmt.Sprintf("sudo cp -f %s/etc/kubernetes/admin.conf \"%s/.kube/config\"",
 			b.SandboxDir, b.HomeDir),
 		fmt.Sprintf("sudo chown \"%d:%d\" \"%s/.kube/config\"", b.UID, b.GID, b.HomeDir),
+		fmt.Sprintf("sleep 5"), // wait a bit
 	}, "")
 }
 
-func (b *bashScriptStep) ConfigureCiliumCNI() automa.Builder {
+func (b *bashScriptStep) ConfigureCiliumCNI() *automa.StepBuilder {
 	configScript := fmt.Sprintf(
-		`cat <<EOF | sudo tee %s/etc/provisioner/cilium-config.yaml >/dev/null
+		`set -eo pipefail; cat <<EOF | sudo tee %s/etc/provisioner/cilium-config.yaml >/dev/null
 # StepSecurity Required Features
 extraArgs:
   - --tofqdns-dns-reject-response-code=nameError
@@ -778,14 +828,14 @@ EOF`, b.SandboxDir, b.MachineIp, b.SandboxDir, b.SandboxDir, b.SandboxDir)
 	}, "")
 }
 
-func (b *bashScriptStep) InstallCiliumCNI() automa.Builder {
+func (b *bashScriptStep) InstallCiliumCNI() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallCiliumCNIStepId, []string{
 		fmt.Sprintf("sudo %s/cilium install --version \"%s\" --values %s/etc/provisioner/cilium-config.yaml",
 			b.SandboxBinDir, b.CiliumVersion, b.SandboxDir),
 	}, "")
 }
 
-func (b *bashScriptStep) EnforceCiliumCNI() automa.Builder {
+func (b *bashScriptStep) EnableAndStartCiliumCNI() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(EnforceCiliumCNIStepId, []string{
 		"sudo sysctl --system >/dev/null",
 		"sudo systemctl restart kubelet crio",
@@ -793,7 +843,7 @@ func (b *bashScriptStep) EnforceCiliumCNI() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) InstallMetalLB() automa.Builder {
+func (b *bashScriptStep) InstallMetalLB() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallMetalLBStepId, []string{
 		fmt.Sprintf("sudo %s/helm repo add metallb https://metallb.github.io/metallb", b.SandboxBinDir),
 		fmt.Sprintf("sudo %s/helm install metallb metallb/metallb --version %s \\\n"+
@@ -804,9 +854,9 @@ func (b *bashScriptStep) InstallMetalLB() automa.Builder {
 	}, "")
 }
 
-func (b *bashScriptStep) DeployMetallbConfiguration() automa.Builder {
+func (b *bashScriptStep) ConfigureMetalLB() *automa.StepBuilder {
 	configScript := fmt.Sprintf(
-		`cat <<EOF | %s/kubectl apply -f - 
+		`set -eo pipefail; cat <<EOF | %s/kubectl apply -f - 
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
@@ -841,72 +891,78 @@ EOF`, b.SandboxBinDir, b.MachineIp)
 	}, "")
 }
 
-func initBashScriptBasedStepRegistry() (automa.Registry, error) {
-	r := automa.NewRegistry()
-	err := r.Add(
-		bashSteps.SetupSandboxFolders(),
-		bashSteps.UpdateOS(),
-		bashSteps.DisableSwap(),
-		bashSteps.RemoveContainerd(),
-		bashSteps.InstallGnupg2(),
-		bashSteps.InstallConntrack(),
-		bashSteps.InstallSoCat(),
-		bashSteps.InstallEBTables(),
-		bashSteps.InstallNFTables(),
-		bashSteps.EnableAndStartNFTables(),
-		bashSteps.AutoRemovePackages(),
-		bashSteps.InstallKernelModules(),
-		bashSteps.ConfigureSysctlForKubernetes(),
-		bashSteps.DownloadDasel(),
-		bashSteps.DownloadCrio(),
-		bashSteps.DownloadKubernetesTools(),
-		bashSteps.DownloadCiliumCli(),
-		bashSteps.SetupBindMounts(),
-		bashSteps.InstallDasel(),
-		bashSteps.InstallCrio(),
-		bashSteps.InstallKubernetesTools(),
-		bashSteps.ConfigureSandboxKubeletService(),
-		bashSteps.ConfigureSandboxCrio(),
-		bashSteps.InstallK9s(),
-		bashSteps.InstallHelm(),
-		bashSteps.InstallCiliumCli(),
-		bashSteps.SetupSystemdServiceSymlinks(),
-		bashSteps.EnableAndStartServices(),
-		bashSteps.TorchPriorKubeAdmConfiguration(),
-		bashSteps.SetupKubeAdminConfiguration(),
-		bashSteps.SetPipeFailMode(),
-		bashSteps.InitializeKubernetesCluster(),
-		bashSteps.ConfigureCiliumCNI(),
-		bashSteps.InstallCiliumCNI(),
-		bashSteps.EnforceCiliumCNI(),
-		bashSteps.InstallMetalLB(),
-		bashSteps.DeployMetallbConfiguration(),
-		BashScriptBasedClusterSetupWorkflow(), // add the workflow as well
-	)
+// CheckClusterHealth performs a series of checks to ensure the Kubernetes cluster is healthy
+// This is a basic smoke tests to verify the cluster setup and can be extended as needed
+func (b *bashScriptStep) CheckClusterHealth() *automa.StepBuilder {
+	script := `
+set -e
 
-	if err != nil {
-		return nil, err
-	}
+# Check if kubectl can access the cluster
+kubectl get nodes
 
-	return r, nil
-}
+# Check all nodes are Ready
+kubectl get nodes --no-headers | awk '{print $2}' | grep -v Ready && exit 1
 
-// BashScriptBasedStepRegistry returns a registry containing all bash script based steps
-// External callers should use the registry to access various Steps as required rather than attempting to access
-// bashScriptStep struct or bashSteps directly
-func BashScriptBasedStepRegistry() automa.Registry {
-	return bashStepsRegistry
+# List of required namespaces
+namespaces="cilium-secrets default kube-node-lease kube-public kube-system metallb-system"
+
+for ns in $namespaces; do
+  status=$(kubectl get namespace $ns --no-headers 2>/dev/null | awk '{print $2}')
+  if [ "$status" != "Active" ]; then
+    echo "Namespace $ns is not Active or does not exist (status: $status)"
+    exit 1
+  fi
+done
+
+# List of pod name prefixes to check in kube-system
+prefixes="cilium- cilium-operator- coredns- etcd- hubble-relay- kube-apiserver- kube-controller-manager- kube-scheduler- metallb-controller- metallb-speaker-"
+
+for prefix in $prefixes; do
+  kubectl get pods -n kube-system --no-headers | awk -v p="$prefix" '$1 ~ "^"p {print $1, $2}' | while read name ready; do
+    if ! [[ "$ready" =~ ^([0-9]+)/\1$ ]]; then
+      echo "Pod $name is not fully ready ($ready)"
+      exit 1
+    fi
+  done
+done
+
+# List of required services in the format namespace:service
+services="default:kubernetes kube-system:hubble-peer kube-system:hubble-relay kube-system:kube-dns metallb-system:metallb-webhook-service"
+
+for svc in $services; do
+  ns=$(echo $svc | cut -d: -f1)
+  name=$(echo $svc | cut -d: -f2)
+  if ! kubectl get svc -n "$ns" "$name" --no-headers 2>/dev/null | grep -q .; then
+    echo "Service $name not found in namespace $ns"
+    exit 1
+  fi
+done
+
+# List of required CRDs
+crds="bfdprofiles.metallb.io bgpadvertisements.metallb.io bgppeers.metallb.io ciliumcidrgroups.cilium.io ciliumclusterwidenetworkpolicies.cilium.io ciliumendpoints.cilium.io ciliumidentities.cilium.io ciliuml2announcementpolicies.cilium.io ciliumloadbalancerippools.cilium.io ciliumnetworkpolicies.cilium.io ciliumnodeconfigs.cilium.io ciliumnodes.cilium.io ciliumpodippools.cilium.io communities.metallb.io ipaddresspools.metallb.io l2advertisements.metallb.io servicebgpstatuses.metallb.io servicel2statuses.metallb.io"
+
+for crd in $crds; do
+  if ! kubectl get crd "$crd" --no-headers 2>/dev/null | grep -q .; then
+    echo "CRD $crd not found"
+    exit 1
+  fi
+done
+
+echo "Cluster health check passed"
+`
+	return automa_steps.BashScriptStep("check-cluster-health", []string{
+		script,
+	}, "")
 }
 
 // BashScriptBasedClusterSetupWorkflow returns a workflow that sets up a Kubernetes cluster using bash scripts
-func BashScriptBasedClusterSetupWorkflow() automa.Builder {
+func BashScriptBasedClusterSetupWorkflow() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes-cluster").
 		Steps(
+			// setup steps
 			bashSteps.SetupSandboxFolders(),
 			bashSteps.UpdateOS(),
-			bashSteps.DisableSwap(),
-			bashSteps.RemoveContainerd(),
 			bashSteps.InstallGnupg2(),
 			bashSteps.InstallConntrack(),
 			bashSteps.InstallSoCat(),
@@ -914,31 +970,62 @@ func BashScriptBasedClusterSetupWorkflow() automa.Builder {
 			bashSteps.InstallNFTables(),
 			bashSteps.EnableAndStartNFTables(),
 			bashSteps.AutoRemovePackages(),
+
+			// setup env for k8s
+			bashSteps.DisableSwap(),
 			bashSteps.InstallKernelModules(),
 			bashSteps.ConfigureSysctlForKubernetes(),
 			bashSteps.SetupBindMounts(),
+
+			// Install CLI tools
+			bashSteps.DownloadKubectl(),
+			bashSteps.InstallKubectl(),
+			bashSteps.DownloadK9s(),
+			bashSteps.InstallK9s(),
+			bashSteps.DownloadHelm(),
+			bashSteps.InstallHelm(), // requires helm to install metallb
+
+			// In our Go based implementation we don't need this
 			bashSteps.DownloadDasel(),
 			bashSteps.InstallDasel(),
-			bashSteps.DownloadKubernetesTools(),
-			bashSteps.InstallKubernetesTools(),
-			bashSteps.InstallK9s(),
-			bashSteps.InstallHelm(),
+
+			// CRI-O setup
 			bashSteps.DownloadCrio(),
 			bashSteps.InstallCrio(),
 			bashSteps.ConfigureSandboxCrio(),
+			bashSteps.EnableAndStartCrio(),
+
+			// kubeadm setup
+			bashSteps.DownloadKubeadm(),
+			bashSteps.DownloadKubeadmConfig(),
+			bashSteps.InstallKubeadm(),
+			bashSteps.TorchPriorKubeAdmConfiguration(),
+			bashSteps.ConfigureKubeadm(),
+
+			// kubelet setup
+			// must be done after kubeadm config as kubelet.service.d requires the 10-kubeadm.conf file
+			bashSteps.DownloadKubelet(),
+			bashSteps.InstallKubelet(),
+			bashSteps.DownloadKubeletConfig(),
+			bashSteps.ConfigureKubelet(),
+			bashSteps.EnableAndStartKubelet(),
+
+			// init cluster
+			bashSteps.InitCluster(),
+			bashSteps.ConfigureKubeConfig(),
+
+			// Cilium CNI setup
 			bashSteps.DownloadCiliumCli(),
 			bashSteps.InstallCiliumCli(),
-			bashSteps.ConfigureSandboxKubeletService(),
-			bashSteps.SetupSystemdServiceSymlinks(),
-			bashSteps.EnableAndStartServices(),
-			bashSteps.TorchPriorKubeAdmConfiguration(),
-			bashSteps.SetupKubeAdminConfiguration(),
-			bashSteps.SetPipeFailMode(),
-			bashSteps.InitializeKubernetesCluster(),
 			bashSteps.ConfigureCiliumCNI(),
 			bashSteps.InstallCiliumCNI(),
-			bashSteps.EnforceCiliumCNI(),
+			bashSteps.EnableAndStartCiliumCNI(),
+
+			// MetalLB setup
 			bashSteps.InstallMetalLB(),
-			bashSteps.DeployMetallbConfiguration(),
+			bashSteps.ConfigureMetalLB(),
+
+			// Final health check
+			bashSteps.CheckClusterHealth(),
 		)
 }

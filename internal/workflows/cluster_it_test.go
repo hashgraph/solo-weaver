@@ -21,6 +21,6 @@ func Test_NewSetupClusterWorkflow_Integration(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error)
 
-	steps.PrintWorkflowReport(report)
+	steps.PrintWorkflowReport(report, "")
 	require.Equal(t, automa.StatusSuccess, report.Status)
 }

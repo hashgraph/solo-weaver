@@ -2,26 +2,41 @@ package steps
 
 import (
 	"context"
+
 	"github.com/automa-saga/automa"
+	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 )
 
-func InstallKubelet() automa.Builder {
-	return automa.NewStepBuilder().WithId("install-kubelet").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			return automa.SuccessReport(stp)
-		})
-}
-
-func ConfigureKubelet() automa.Builder {
-	return automa.NewStepBuilder().WithId("configure-kubelet").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			return automa.SuccessReport(stp)
+func SetupKubelet() automa.Builder {
+	return automa.NewWorkflowBuilder().WithId("setup-kubelet").
+		Steps(
+			bashSteps.DownloadKubelet(),
+			bashSteps.InstallKubelet(),
+			bashSteps.DownloadKubeletConfig(),
+			bashSteps.ConfigureKubelet(),
+		).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up kubelet")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup kubelet")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "kubelet setup successfully")
 		})
 }
 
 func EnableAndStartKubelet() automa.Builder {
-	return automa.NewStepBuilder().WithId("start-kubelet").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			return automa.SuccessReport(stp)
+	return bashSteps.EnableAndStartKubelet().
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Enabling and starting kubelet")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to enable and start kubelet")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "kubelet enabled and started successfully")
 		})
 }

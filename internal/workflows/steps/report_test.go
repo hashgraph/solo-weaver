@@ -2,9 +2,10 @@ package steps
 
 import (
 	"bytes"
-	"github.com/automa-saga/automa"
 	"os"
 	"testing"
+
+	"github.com/automa-saga/automa"
 )
 
 func TestPrintWorkflowReport(t *testing.T) {
@@ -16,7 +17,7 @@ func TestPrintWorkflowReport(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	PrintWorkflowReport(report)
+	PrintWorkflowReport(report, "")
 
 	_ = w.Close()
 	os.Stdout = old
