@@ -3,26 +3,26 @@ kind: InitConfiguration
 bootstrapTokens:
   - groups:
       - system:bootstrappers:kubeadm:default-node-token
-    token: ${kube_bootstrap_token}
+    token: {{.KubeBootstrapToken}}
     ttl: 720h0m0s
     usages:
       - signing
       - authentication
 localAPIEndpoint:
-  advertiseAddress: {{machine_ip}}
+  advertiseAddress: {{.MachineIP}}
   bindPort: 6443
 nodeRegistration:
-  criSocket: unix://${SANDBOX_DIR}/var/run/crio/crio.sock
+  criSocket: unix://{{.SandboxDir}}/var/run/crio/crio.sock
   imagePullPolicy: IfNotPresent
   imagePullSerial: true
-  name: {{hostname}}
+  name: {{.Hostname}}
   taints:
     - key: "node.cilium.io/agent-not-ready"
       value: "true"
       effect: "NoExecute"
   kubeletExtraArgs:
     - name: node-ip
-      value: ${machine_ip}
+      value: {{.MachineIP}}
 skipPhases:
   - addon/kube-proxy
 timeouts:
@@ -36,17 +36,17 @@ timeouts:
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-controlPlaneEndpoint: "${machine_ip}:6443"
-certificatesDir: ${SANDBOX_DIR}/etc/kubernetes/pki
+controlPlaneEndpoint: "{{.MachineIP}}:6443"
+certificatesDir: {{.SandboxDir}}/etc/kubernetes/pki
 caCertificateValidityPeriod: 87600h0m0s
 certificateValidityPeriod: 8760h0m0s
 encryptionAlgorithm: RSA-2048
 clusterName: k8s.main.gcp
 etcd:
   local:
-    dataDir: ${SANDBOX_DIR}/var/lib/etcd
+    dataDir: {{.SandboxDir}}/var/lib/etcd
 imageRepository: registry.k8s.io
-kubernetesVersion: ${KUBERNETES_VERSION}
+kubernetesVersion: {{.KubernetesVersion}}
 networking:
   dnsDomain: cluster.local
   serviceSubnet: 10.0.0.0/14

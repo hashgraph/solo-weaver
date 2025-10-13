@@ -10,6 +10,7 @@ import (
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
 	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/internal/kube"
 )
 
 // TODO: Move these constants to the appropriate step files once the implementation is done
@@ -133,7 +134,7 @@ func initBashScriptSteps() bashScriptStep {
 			Msg("failed to get hostname, defaulting to localhost")
 	}
 
-	kubeBootstrapToken, err := generateKubeadmToken()
+	kubeBootstrapToken, err := kube.GenerateKubeadmToken()
 	if err != nil {
 		kubeBootstrapToken = "abcdef.0123456789abcdef"
 		logx.As().Warn().Err(err).Str("token", kubeBootstrapToken).
