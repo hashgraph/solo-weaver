@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	// TODO retrieve from software package config
 	KubernetesVersion = "1.33.4"
 )
 
