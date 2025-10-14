@@ -35,10 +35,10 @@ func TestKubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet binary should exist in download folder")
 
-	// Check config file exists (kubelet.service)
+	// Check config file exists (10-kubelet.conf)
 	_, exists, err = fileManager.PathExists("/opt/provisioner/tmp/kubelet/kubelet.service")
 	require.NoError(t, err)
-	require.True(t, exists, "kubelet.service should exist in download folder")
+	require.True(t, exists, "10-kubelet.conf should exist in download folder")
 
 	//
 	// When - Install
@@ -78,14 +78,14 @@ func TestKubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	require.Equal(t, "/opt/provisioner/sandbox/bin/kubelet", linkTarget, "symlink should point to sandbox binary")
 
 	// Verify kubelet service directory symlink
-	_, exists, err = fileManager.PathExists("/usr/lib/systemd/system/kubelet.service")
+	_, exists, err = fileManager.PathExists("/usr/lib/systemd/system/kubelet.service.d")
 	require.NoError(t, err)
-	require.True(t, exists, "kubelet service symlink should exist")
+	require.True(t, exists, "kubelet service directory symlink should exist")
 
 	// Verify it's a symlink pointing to sandbox directory
-	linkTarget, err = os.Readlink("/usr/lib/systemd/system/kubelet.service")
+	linkTarget, err = os.Readlink("/usr/lib/systemd/system/kubelet.service.d")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service", linkTarget, "kubelet service directory symlink should point to sandbox directory")
+	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d", linkTarget, "kubelet service directory symlink should point to sandbox directory")
 
 	// Verify kubelet path replacement in config file
 	configContent, err := os.ReadFile("/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service")
