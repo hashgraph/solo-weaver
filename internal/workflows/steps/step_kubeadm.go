@@ -6,6 +6,7 @@ import (
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-provisioner/internal/kube"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
 const (
@@ -14,12 +15,11 @@ const (
 )
 
 func SetupKubeadm() automa.Builder {
-	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").Steps(
-		bashSteps.DownloadKubeadm(),
-		bashSteps.InstallKubeadm(),
-		bashSteps.TorchPriorKubeAdmConfiguration(), // we cannot write in pure Go because we need to run kubeadm binary
-		bashSteps.DownloadKubeadmConfig(),
-	).
+	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").
+		Steps(
+			installKubeadm(software.NewKubeadmInstaller),
+			configureKubeadm(software.NewKubeadmInstaller),
+		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubeadm")
 			return ctx, nil
@@ -29,6 +29,52 @@ func SetupKubeadm() automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm setup successfully")
+		})
+}
+
+func installKubeadm(provider func() (software.Software, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId("install-kubeadm").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Download()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+			err = installer.Install()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			return automa.SuccessReport(stp)
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
+}
+
+func configureKubeadm(provider func() (software.Software, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId("configure-kubeadm").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Configure()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			return automa.SuccessReport(stp)
 		})
 }
 

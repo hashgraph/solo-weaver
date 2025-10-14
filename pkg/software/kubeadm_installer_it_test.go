@@ -5,7 +5,6 @@ package software
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,7 +18,7 @@ func TestKubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	//
 	// Given
 	//
-	installer, err := NewKubeadmInstaller("")
+	installer, err := NewKubeadmInstaller()
 	require.NoError(t, err, "Failed to create kubeadm installer")
 
 	fileManager, err := fsx.NewManager()
@@ -99,40 +98,4 @@ func TestKubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	info, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0644), info.Mode().Perm(), "config file should have 0644 permissions")
-}
-
-func TestReplaceKubeletPath(t *testing.T) {
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err)
-
-	ki := kubeadmInstaller{
-		BaseInstaller: &BaseInstaller{
-			fileManager: fsxManager,
-		},
-	}
-
-	// Create a temp dir and file
-	tmpDir := t.TempDir()
-	origPath := filepath.Join(tmpDir, "10-kubeadm.conf")
-	origContent := "ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
-	if err := os.WriteFile(origPath, []byte(origContent), 0644); err != nil {
-		t.Fatalf("failed to write temp file: %v", err)
-	}
-
-	newKubeletPath := "/custom/bin/kubelet"
-	if err := ki.replaceKubeletPath(origPath, newKubeletPath); err != nil {
-		t.Fatalf("replaceKubeletPath failed: %v", err)
-	}
-
-	// Read back and check
-	updated, err := os.ReadFile(origPath)
-	if err != nil {
-		t.Fatalf("failed to read updated file: %v", err)
-	}
-	if !strings.Contains(string(updated), newKubeletPath) {
-		t.Errorf("expected file to contain new kubelet path %q, got %q", newKubeletPath, string(updated))
-	}
-	if strings.Contains(string(updated), "/usr/bin/kubelet") {
-		t.Errorf("old kubelet path still present in file")
-	}
 }
