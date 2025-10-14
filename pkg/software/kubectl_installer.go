@@ -49,7 +49,7 @@ func (ki *kubectlInstaller) Configure() error {
 	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubectl")
 
 	// Create symlink to /usr/local/bin for system-wide access
-	systemBinary := "/usr/local/bin/kubectl"
+	systemBinary := path.Join(core.SystemBinDir, "kubectl")
 
 	// Create new symlink
 	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)

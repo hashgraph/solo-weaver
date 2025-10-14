@@ -248,8 +248,8 @@ func TestVersionSelection(t *testing.T) {
 
 	// Create the BaseInstaller with mock data for testing
 	baseInstaller := &BaseInstaller{
-		softwareToBeInstalled: testSoftware,
-		versionToBeInstalled:  latestVersion,
+		software:             testSoftware,
+		versionToBeInstalled: latestVersion,
 	}
 
 	installer := &crioInstaller{
@@ -261,13 +261,13 @@ func TestVersionSelection(t *testing.T) {
 	//
 
 	// Verify that the versionToBeInstalled is valid (exists in the configuration and has checksums available)
-	checksum, err := installer.GetMetadata().GetChecksum(installer.GetVersion())
+	checksum, err := installer.Software().GetChecksum(installer.Version())
 	require.NoError(t, err, "Selected versionToBeInstalled should be valid and have checksums available for darwin/arm64")
 	assert.NotEmpty(t, checksum, "Checksum for the selected versionToBeInstalled should not be empty")
 	assert.Equal(t, "yzx567", checksum.Value, "Should return the correct checksum for darwin/arm64")
 
 	// Verify that the installer uses the latest versionToBeInstalled
-	assert.Equal(t, "1.27.0", installer.GetVersion(), "Installer should use the latest versionToBeInstalled (1.27.0)")
+	assert.Equal(t, "1.27.0", installer.Version(), "Installer should use the latest versionToBeInstalled (1.27.0)")
 
 	// Additional verification: ensure the versionToBeInstalled selection is semantic, not alphabetical
 	// Test with a versionToBeInstalled that would be "latest" alphabetically but not semantically

@@ -7,8 +7,6 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
-const systemdUnitFilesDir = "/usr/lib/systemd/system"
-
 type kubeletInstaller struct {
 	*BaseInstaller
 }
@@ -97,7 +95,7 @@ func (ki *kubeletInstaller) Install() error {
 	}
 
 	// Install the kubelet configuration files
-	err = ki.BaseInstaller.InstallConfigFiles(path.Join(core.Paths().SandboxDir, systemdUnitFilesDir))
+	err = ki.BaseInstaller.InstallConfigFiles(path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir))
 	if err != nil {
 		return err
 	}
@@ -118,7 +116,7 @@ func (ki *kubeletInstaller) Configure() error {
 	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubelet")
 
 	// Create symlink to /usr/local/bin for system-wide access
-	systemBinary := "/usr/local/bin/kubelet"
+	systemBinary := path.Join(core.SystemBinDir, "kubelet")
 
 	// Create new symlink
 	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
@@ -128,7 +126,7 @@ func (ki *kubeletInstaller) Configure() error {
 
 	// Replace strings in configuration file and create symlink
 
-	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, systemdUnitFilesDir)
+	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir)
 	kubeadmConfDest := path.Join(sandboxKubeletServiceDir, "kubelet.service")
 
 	err = ki.replaceAllInFile(kubeadmConfDest, "/usr/bin/kubelet", path.Join(core.Paths().SandboxBinDir, "kubelet"))
@@ -136,7 +134,7 @@ func (ki *kubeletInstaller) Configure() error {
 		return errorx.IllegalState.Wrap(err, "failed to replace kubelet path in kubelet.service")
 	}
 
-	err = fileManager.CreateSymbolicLink(kubeadmConfDest, path.Join(systemdUnitFilesDir, "kubelet.service"), true)
+	err = fileManager.CreateSymbolicLink(kubeadmConfDest, path.Join(core.SystemdUnitFilesDir, "kubelet.service"), true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create symlink for kubelet service directory")
 	}

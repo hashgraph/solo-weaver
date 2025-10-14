@@ -10,6 +10,8 @@ const (
 	DefaultFilePerm         = 0755
 	DefaultProvisionerHome  = "/opt/provisioner"
 	DefaultUnpackFolderName = "unpack"
+	SystemBinDir            = "/usr/local/bin"
+	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
 )
 
 var (

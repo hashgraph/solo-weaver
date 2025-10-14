@@ -12,18 +12,11 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
-func cleanUpCrio(t *testing.T) {
-	t.Helper()
-
-	err := os.RemoveAll(core.Paths().TempDir)
-	require.NoError(t, err)
-}
-
 func TestSetupCrio_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpCrio(t)
+	cleanUpTempDir(t)
 
 	//
 	// When
@@ -44,7 +37,7 @@ func TestSetupCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpCrio(t)
+	cleanUpTempDir(t)
 
 	step, err := SetupCrio().Build()
 	require.NoError(t, err)
@@ -73,7 +66,7 @@ func TestSetupCrio_PartiallyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpCrio(t)
+	cleanUpTempDir(t)
 
 	step, err := SetupCrio().Build()
 	require.NoError(t, err)

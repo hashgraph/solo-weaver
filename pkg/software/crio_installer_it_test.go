@@ -83,10 +83,10 @@ func TestCrioInstaller_Download_Fails(t *testing.T) {
 
 	wrongInstaller := &crioInstaller{
 		BaseInstaller: &BaseInstaller{
-			downloader:            NewDownloader(),
-			softwareToBeInstalled: item,
-			fileManager:           fsxManager,
-			versionToBeInstalled:  "invalidversion",
+			downloader:           NewDownloader(),
+			software:             item,
+			fileManager:          fsxManager,
+			versionToBeInstalled: "invalidversion",
 		},
 	}
 
@@ -130,10 +130,10 @@ func TestCrioInstaller_Download_ChecksumFails(t *testing.T) {
 
 	wrongInstaller := &crioInstaller{
 		BaseInstaller: &BaseInstaller{
-			downloader:            NewDownloader(),
-			softwareToBeInstalled: item,
-			fileManager:           fsxManager,
-			versionToBeInstalled:  "1.33.4", // This versionToBeInstalled might not exist or have wrong checksum
+			downloader:           NewDownloader(),
+			software:             item,
+			fileManager:          fsxManager,
+			versionToBeInstalled: "1.33.4", // This versionToBeInstalled might not exist or have wrong checksum
 		},
 	}
 
@@ -188,10 +188,10 @@ func TestCrioInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testin
 	installer := installerInterface.(*crioInstaller) // cast to crioInstaller to access private fields
 
 	// create empty file to emulate first download with wrong checksum
-	err = os.MkdirAll(installer.GetDownloadFolder(), core.DefaultFilePerm)
+	err = os.MkdirAll(installer.DownloadFolder(), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create download folder")
 
-	destinationFile, err := installer.GetDestinationFile()
+	destinationFile, err := installer.DestinationFile()
 	require.NoError(t, err, "Failed to get destination file path")
 
 	err = os.WriteFile(destinationFile, []byte(""), core.DefaultFilePerm)

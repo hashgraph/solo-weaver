@@ -77,7 +77,7 @@ func (ki *kubeadmInstaller) Configure() error {
 	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubeadm")
 
 	// Create symlink to /usr/local/bin for system-wide access
-	systemBinary := "/usr/local/bin/kubeadm"
+	systemBinary := path.Join(core.SystemBinDir, "kubeadm")
 
 	// Create new symlink
 	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)

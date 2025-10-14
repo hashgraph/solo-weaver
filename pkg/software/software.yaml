@@ -1,4 +1,4 @@
-# This file contains the list of softwares that are made of a binary and a config file.
+# This file contains the list of software that are made of a binary and a config file.
 software:
   
 - name: cri-o

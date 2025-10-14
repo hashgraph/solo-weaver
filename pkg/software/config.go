@@ -37,7 +37,7 @@ type platformProvider struct {
 	arch string
 }
 
-// withPlatform sets a custom platform for the software softwareToBeInstalled.
+// withPlatform sets a custom platform for the software software.
 // This is primarily used for testing purposes to simulate different OS and architecture combinations.
 func (si *SoftwareMetadata) withPlatform(currentOS, currentArch string) *SoftwareMetadata {
 	s := *si
@@ -45,7 +45,7 @@ func (si *SoftwareMetadata) withPlatform(currentOS, currentArch string) *Softwar
 	return &s
 }
 
-// getPlatform returns the platformProvider for the software softwareToBeInstalled.
+// getPlatform returns the platformProvider for the software software.
 // If no platformProvider is set, it returns the runtime's OS and architecture.
 func (si *SoftwareMetadata) getPlatform() platformProvider {
 	if si.platform == nil {
@@ -85,7 +85,7 @@ type Checksum struct {
 	Value     string `yaml:"checksum"`
 }
 
-// ConfigDetail represents a configuration file with its softwareToBeInstalled
+// ConfigDetail represents a configuration file with its software
 type ConfigDetail struct {
 	Name      string `yaml:"name"`
 	URL       string `yaml:"url"`

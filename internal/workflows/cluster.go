@@ -17,6 +17,10 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.ConfigureSysctlForKubernetes(),
 			steps.SetupBindMounts(),
 
+			// kubelet
+			steps.SetupKubelet(),
+			steps.EnableAndStartKubelet(),
+
 			// setup cli tools
 			steps.SetupKubectl(),
 			steps.SetupHelm(), // required by MetalLB setup, so we install it earlier
@@ -28,10 +32,6 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 
 			// kubeadm
 			steps.SetupKubeadm(),
-
-			// kubelet
-			steps.SetupKubelet(),
-			steps.EnableAndStartKubelet(),
 
 			// init cluster
 			steps.InitCluster(),
