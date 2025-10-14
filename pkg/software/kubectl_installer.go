@@ -1,13 +1,19 @@
 package software
 
+import (
+	"path"
+
+	"golang.hedera.com/solo-provisioner/internal/core"
+)
+
 type kubectlInstaller struct {
 	*BaseInstaller
 }
 
 var _ Software = (*kubectlInstaller)(nil)
 
-func NewKubectlInstaller(softwareVersion string) (Software, error) {
-	baseInstaller, err := NewBaseInstaller("kubectl", softwareVersion)
+func NewKubectlInstaller() (Software, error) {
+	baseInstaller, err := NewBaseInstaller("kubectl", "")
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +45,18 @@ func (ki *kubectlInstaller) IsInstalled() (bool, error) {
 }
 
 func (ki *kubectlInstaller) Configure() error {
-	// kubectl-specific configuration logic
+	fileManager := ki.FileManager()
+	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubectl")
+
+	// Create symlink to /usr/local/bin for system-wide access
+	systemBinary := "/usr/local/bin/kubectl"
+
+	// Create new symlink
+	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+	if err != nil {
+		return NewInstallationError(err, sandboxBinary, systemBinary)
+	}
+
 	return nil
 }
 
