@@ -328,7 +328,7 @@ func (b *bashScriptStep) DownloadKubeadm() *automa.StepBuilder {
 		fmt.Sprintf("curl -sSLo kubeadm https://dl.k8s.io/release/v%s/bin/%s/%s/kubeadm",
 			b.KubernetesVersion, b.OS, b.ARCH),
 		"sudo chmod +x kubeadm",
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/kubeadm", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadKubelet() *automa.StepBuilder {
@@ -336,7 +336,7 @@ func (b *bashScriptStep) DownloadKubelet() *automa.StepBuilder {
 		fmt.Sprintf("curl -sSLo kubelet https://dl.k8s.io/release/v%s/bin/%s/%s/kubelet",
 			b.KubernetesVersion, b.OS, b.ARCH),
 		"sudo chmod +x kubelet",
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/kubelet", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadKubectl() *automa.StepBuilder {
@@ -344,7 +344,7 @@ func (b *bashScriptStep) DownloadKubectl() *automa.StepBuilder {
 		fmt.Sprintf("curl -sSLo kubectl https://dl.k8s.io/release/v%s/bin/%s/%s/kubectl",
 			b.KubernetesVersion, b.OS, b.ARCH),
 		"sudo chmod +x kubectl",
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/kubectl", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadK9s() *automa.StepBuilder {
@@ -352,7 +352,7 @@ func (b *bashScriptStep) DownloadK9s() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadK9sStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://github.com/derailed/k9s/releases/download/v%s/%s",
 			k9sFile, b.K9sVersion, k9sFile),
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/k9s", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadHelm() *automa.StepBuilder {
@@ -360,21 +360,21 @@ func (b *bashScriptStep) DownloadHelm() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadHelmStepId, []string{
 		fmt.Sprintf("curl -sSLo %s https://get.helm.sh/%s",
 			helmFile, helmFile),
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/helm", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadKubeletConfig() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadKubernetesServiceFilesStepId, []string{
 		fmt.Sprintf("curl -sSLo kubelet.service https://raw.githubusercontent.com/kubernetes/release/%s/cmd/krel/templates/latest/kubelet/kubelet.service",
 			b.KrelVersion),
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/kubelet", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadKubeadmConfig() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(DownloadKubernetesServiceFilesStepId, []string{
 		fmt.Sprintf("curl -sSLo 10-kubeadm.conf https://raw.githubusercontent.com/kubernetes/release/%s/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf",
 			b.KrelVersion),
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/kubeadm", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) DownloadCiliumCli() *automa.StepBuilder {
@@ -392,7 +392,11 @@ func (b *bashScriptStep) SetupSandboxFolders() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(SetupSandboxFoldersStepId, []string{
 		fmt.Sprintf("sudo mkdir -p %s/utils", b.ProvisionerHomeDir),
 		fmt.Sprintf("sudo mkdir -p %s/crio/unpack", b.ProvisionerHomeDir),
-		fmt.Sprintf("sudo mkdir -p %s/kubernetes", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo mkdir -p %s/kubelet", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo mkdir -p %s/kubeadm", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo mkdir -p %s/kubectl", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo mkdir -p %s/k9s", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo mkdir -p %s/helm", b.ProvisionerHomeDir),
 		fmt.Sprintf("sudo mkdir -p %s/cilium", b.ProvisionerHomeDir),
 		fmt.Sprintf("sudo mkdir -p %s", b.ProvisionerHomeDir),
 		fmt.Sprintf("sudo mkdir -p %s/bin", b.ProvisionerHomeDir),
@@ -464,7 +468,7 @@ func (b *bashScriptStep) InstallCrio() *automa.StepBuilder {
 
 func (b *bashScriptStep) InstallKubeadm() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallKubeadmStepId, []string{
-		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubeadm\" \"%s/kubeadm\"", b.ProvisionerHomeDir, b.SandboxBinDir),
+		fmt.Sprintf("sudo install -m 755 \"%s/kubeadm/kubeadm\" \"%s/kubeadm\"", b.ProvisionerHomeDir, b.SandboxBinDir),
 		fmt.Sprintf("sudo ln -sf \"%s/kubeadm\" /usr/local/bin/kubeadm", b.SandboxBinDir),
 	}, "")
 }
@@ -473,7 +477,7 @@ func (b *bashScriptStep) ConfigureKubeadm() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureKubeadmStepId).Steps(
 		automa_steps.BashScriptStep("install-kubeadm-conf", []string{
 			fmt.Sprintf("sudo mkdir -p %s/usr/lib/systemd/system/kubelet.service.d || true", b.SandboxDir),
-			fmt.Sprintf("sudo cp \"%s/kubernetes/10-kubeadm.conf\" \"%s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf\"", b.ProvisionerHomeDir, b.SandboxDir),
+			fmt.Sprintf("sudo cp \"%s/kubeadm/10-kubeadm.conf\" \"%s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf\"", b.ProvisionerHomeDir, b.SandboxDir),
 			fmt.Sprintf("sudo sed -i 's|/usr/bin/kubelet|%s/kubelet|' %s/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf", b.SandboxBinDir, b.SandboxDir),
 			fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service.d /usr/lib/systemd/system/kubelet.service.d", b.SandboxDir),
 		}, ""),
@@ -483,14 +487,14 @@ func (b *bashScriptStep) ConfigureKubeadm() *automa.WorkflowBuilder {
 
 func (b *bashScriptStep) InstallKubelet() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallKubeletStepId, []string{
-		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubelet\" \"%s/kubelet\"", b.ProvisionerHomeDir, b.SandboxBinDir),
+		fmt.Sprintf("sudo install -m 755 \"%s/kubelet/kubelet\" \"%s/kubelet\"", b.ProvisionerHomeDir, b.SandboxBinDir),
 		fmt.Sprintf("sudo ln -sf \"%s/kubelet\" /usr/local/bin/kubelet", b.SandboxBinDir),
 	}, "")
 }
 
 func (b *bashScriptStep) ConfigureKubelet() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(ConfigureKubeletStepId, []string{
-		fmt.Sprintf("sudo cp \"%s/kubernetes/kubelet.service\" \"%s/usr/lib/systemd/system/kubelet.service\"", b.ProvisionerHomeDir, b.SandboxDir),
+		fmt.Sprintf("sudo cp \"%s/kubelet/kubelet.service\" \"%s/usr/lib/systemd/system/kubelet.service\"", b.ProvisionerHomeDir, b.SandboxDir),
 		fmt.Sprintf("sudo sed -i 's|/usr/bin/kubelet|%s/kubelet|' %s/usr/lib/systemd/system/kubelet.service", b.SandboxBinDir, b.SandboxDir),
 		fmt.Sprintf("sudo ln -sf %s/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service", b.SandboxDir),
 	}, "")
@@ -498,8 +502,8 @@ func (b *bashScriptStep) ConfigureKubelet() *automa.StepBuilder {
 
 func (b *bashScriptStep) InstallKubectl() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallKubeletStepId, []string{
-		fmt.Sprintf("sudo mkdir -p \"%s/kubernetes/kubectl\" || true", b.ProvisionerHomeDir),
-		fmt.Sprintf("sudo install -m 755 \"%s/kubernetes/kubectl\" \"%s/kubectl\"", b.ProvisionerHomeDir, b.SandboxBinDir),
+		fmt.Sprintf("sudo mkdir -p \"%s/kubectl/kubectl\" || true", b.ProvisionerHomeDir),
+		fmt.Sprintf("sudo install -m 755 \"%s/kubectl/kubectl\" \"%s/kubectl\"", b.ProvisionerHomeDir, b.SandboxBinDir),
 		fmt.Sprintf("sudo ln -sf \"%s/kubectl\" /usr/local/bin/kubectl", b.SandboxBinDir),
 	}, "")
 }
@@ -578,7 +582,7 @@ func (b *bashScriptStep) InstallK9s() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallK9sStepId, []string{
 		fmt.Sprintf("sudo tar -C %s -zxvf k9s_%s_%s.tar.gz k9s", b.SandboxBinDir, b.OS, b.ARCH),
 		fmt.Sprintf("sudo ln -sf \"%s/k9s\" /usr/local/bin/k9s", b.SandboxBinDir),
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/k9s", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) InstallHelm() *automa.StepBuilder {
@@ -586,7 +590,7 @@ func (b *bashScriptStep) InstallHelm() *automa.StepBuilder {
 		fmt.Sprintf("sudo tar -C %s -zxvf helm-v%s-%s-%s.tar.gz %s-%s/helm --strip-components 1",
 			b.SandboxBinDir, b.HelmVersion, b.OS, b.ARCH, b.OS, b.ARCH),
 		fmt.Sprintf("sudo ln -sf \"%s/helm\" /usr/local/bin/helm", b.SandboxBinDir),
-	}, fmt.Sprintf("%s/kubernetes", b.ProvisionerHomeDir))
+	}, fmt.Sprintf("%s/helm", b.ProvisionerHomeDir))
 }
 
 func (b *bashScriptStep) InstallCiliumCli() *automa.StepBuilder {
