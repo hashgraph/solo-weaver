@@ -4,26 +4,42 @@ import "github.com/bluet/syspkg"
 
 type Package interface {
 	Name() string
+
 	Install() (*syspkg.PackageInfo, error)
+
 	Uninstall() (*syspkg.PackageInfo, error)
+
 	Upgrade() (*syspkg.PackageInfo, error)
+
 	Info() (*syspkg.PackageInfo, error)
+
 	Verify() error
+
 	IsInstalled() bool
 }
 
 type Software interface {
+
+	// Download fetches the software artifacts,
+	// including the binary, and configuration files
 	Download() error
 
+	// Extract unpacks the downloaded files
 	Extract() error
 
+	// Install places the files in the sandbox destination
 	Install() error
 
+	// Verify checks the integrity of the binary
 	Verify() error
 
+	// IsInstalled checks the directories and high-level contents in sandbox
 	IsInstalled() (bool, error)
 
+	// Configure sets up configurations, services, and related symlinks
+	// It also fills the configuration files
 	Configure() error
 
+	// IsConfigured checks if the configuration has been done
 	IsConfigured() (bool, error)
 }

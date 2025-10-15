@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/core"
@@ -64,31 +63,6 @@ var GenerateKubeadmToken = func() (string, error) {
 	return fmt.Sprintf("%s.%s", part1, part2), nil
 }
 
-// replaceKubeletPath replaces the kubelet path in the kubeadm configuration file
-// kubeadmFile is the path to the kubeadm configuration file (e.g., /etc/systemd/system/kubelet.service.d/10-kubeadm.conf)
-// newKubeletPath is the new path to the kubelet binary (e.g., b.SandboxBinDir + "/kubelet")
-func replaceKubeletPath(kubeadmFile string, newKubeletPath string) error {
-	input, err := os.ReadFile(kubeadmFile)
-	if err != nil {
-		return err
-	}
-
-	output := strings.ReplaceAll(string(input), "/usr/bin/kubelet", newKubeletPath)
-	return os.WriteFile(kubeadmFile, []byte(output), 0644)
-}
-
-// createSymlink creates a symlink from sourceDir to targetDir
-// sourceDir is the source directory (e.g., b.SandboxDir + "/usr/lib/systemd/system/kubelet.service.d")
-// targetDir is the target symlink ("/usr/lib/systemd/system/kubelet.service.d")
-func createSymlink(sourceDir, targetDir string) error {
-	// Remove the target if it exists
-	if err := os.RemoveAll(targetDir); err != nil {
-		return err
-	}
-	// Create the symlink
-	return os.Symlink(sourceDir, targetDir)
-}
-
 // getCurrentUser retrieves the current user using the principal package
 func getCurrentUser() (principal.User, error) {
 	pm, err := principal.NewManager()
@@ -140,41 +114,6 @@ func getMachineIP() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no connected network interface found")
-}
-
-// ConfigureKubeadm configures kubeadm to use the kubelet binary from the sandbox directory
-// It copies the 10-kubeadm.conf file to the sandbox directory and updates the kubelet path
-// It also creates a symlink from the sandbox directory to the systemd directory
-func ConfigureKubeadm() error {
-	fm, err := fsx.NewManager()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create file manager")
-	}
-
-	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, "/usr/lib/systemd/system/kubelet.service.d")
-	err = fm.CreateDirectory(sandboxKubeletServiceDir, false)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create kubelet service directory in sandbox")
-	}
-
-	kubeAdmConfSrc := path.Join(core.Paths().KubernetesDir, "10-kubeadm.conf")
-	kubeadmConfDest := path.Join(sandboxKubeletServiceDir, "10-kubeadm.conf")
-	err = fm.CopyFile(kubeAdmConfSrc, kubeadmConfDest, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to copy 10-kubeadm.conf to sandbox")
-	}
-
-	err = replaceKubeletPath(kubeadmConfDest, path.Join(core.Paths().SandboxBinDir, "kubelet"))
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to replace kubelet path in 10-kubeadm.conf")
-	}
-
-	err = createSymlink(sandboxKubeletServiceDir, "/usr/lib/systemd/system/kubelet.service.d")
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create symlink for kubelet service directory")
-	}
-
-	return nil
 }
 
 // ConfigureKubeadmInit generates the kubeadm init configuration file

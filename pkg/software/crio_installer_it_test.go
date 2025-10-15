@@ -1,4 +1,4 @@
-////go:build integration
+//go:build integration
 
 package software
 
@@ -9,36 +9,20 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
-
-const (
-	tmpFolder = "/opt/provisioner/tmp"
-)
-
-// setupTestEnvironment creates a clean test environment and registers cleanup
-func setupTestEnvironment(t *testing.T) {
-	t.Helper()
-
-	// Clean up any existing test artifacts
-	_ = os.RemoveAll(tmpFolder)
-
-	// Register cleanup to run after test completes
-	t.Cleanup(func() {
-		_ = os.RemoveAll(tmpFolder)
-	})
-}
 
 func TestCrioInstaller_Download_Success(t *testing.T) {
 	setupTestEnvironment(t)
 
 	//
-	// When
+	// Given
 	//
 	installer, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
 
 	//
-	// Given
+	// When
 	//
 	err = installer.Download()
 
@@ -64,13 +48,13 @@ func TestCrioInstaller_Download_PermissionError(t *testing.T) {
 	})
 
 	//
-	// When
+	// Given
 	//
 	installer, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
 
 	//
-	// Given
+	// When
 	//
 	err = installer.Download()
 
@@ -86,7 +70,7 @@ func TestCrioInstaller_Download_Fails(t *testing.T) {
 	setupTestEnvironment(t)
 
 	//
-	// When
+	// Given
 	// Create an installer with invalid configuration by manipulating the struct directly
 	config, err := LoadSoftwareConfig()
 	require.NoError(t, err, "Failed to load software config")
@@ -94,14 +78,20 @@ func TestCrioInstaller_Download_Fails(t *testing.T) {
 	item, err := config.GetSoftwareByName("cri-o")
 	require.NoError(t, err, "Failed to find cri-o in config")
 
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err, "Failed to create fsx manager")
+
 	wrongInstaller := &crioInstaller{
-		downloader:            NewDownloader(),
-		softwareToBeInstalled: item,
-		version:               "invalidversion", // This version doesn't exist in config
+		BaseInstaller: &BaseInstaller{
+			downloader:           NewDownloader(),
+			software:             item,
+			fileManager:          fsxManager,
+			versionToBeInstalled: "invalidversion",
+		},
 	}
 
 	//
-	// Given
+	// When
 	//
 	err = wrongInstaller.Download()
 
@@ -117,30 +107,38 @@ func TestCrioInstaller_Download_ChecksumFails(t *testing.T) {
 	setupTestEnvironment(t)
 
 	//
-	// When
-	// Create an installer with a version that has wrong checksum
+	// Given
+	// Create an installer with a versionToBeInstalled that has wrong checksum
 	config, err := LoadSoftwareConfig()
 	require.NoError(t, err, "Failed to load software config")
 
 	item, err := config.GetSoftwareByName("cri-o")
 	require.NoError(t, err, "Failed to find cri-o in config")
-	item.Versions["1.33.4"] = Platforms{
-		"linux": {
-			"arm64": {
-				Algorithm: "sha256",
-				Value:     "invalidchecksum",
+	item.Versions["1.33.4"] = VersionDetails{
+		Binary: BinaryDetails{
+			"linux": {
+				"arm64": {
+					Algorithm: "sha256",
+					Value:     "invalidchecksum",
+				},
 			},
 		},
 	}
 
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err, "Failed to create fsx manager")
+
 	wrongInstaller := &crioInstaller{
-		downloader:            NewDownloader(),
-		softwareToBeInstalled: item,
-		version:               "1.33.4", // This version might not exist or have wrong checksum
+		BaseInstaller: &BaseInstaller{
+			downloader:           NewDownloader(),
+			software:             item,
+			fileManager:          fsxManager,
+			versionToBeInstalled: "1.33.4", // This versionToBeInstalled might not exist or have wrong checksum
+		},
 	}
 
 	//
-	// Given
+	// When
 	//
 	err = wrongInstaller.Download()
 
@@ -157,7 +155,7 @@ func TestCrioInstaller_Download_Idempotency_ExistingFile(t *testing.T) {
 	setupTestEnvironment(t)
 
 	//
-	// When
+	// Given
 	//
 	installer, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
@@ -166,7 +164,7 @@ func TestCrioInstaller_Download_Idempotency_ExistingFile(t *testing.T) {
 	require.NoError(t, err, "Failed to download crio")
 
 	//
-	// Given
+	// When
 	//
 
 	// Trigger Download again
@@ -182,7 +180,7 @@ func TestCrioInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testin
 	setupTestEnvironment(t)
 
 	//
-	// When
+	// Given
 	//
 	installerInterface, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
@@ -190,17 +188,17 @@ func TestCrioInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testin
 	installer := installerInterface.(*crioInstaller) // cast to crioInstaller to access private fields
 
 	// create empty file to emulate first download with wrong checksum
-	err = os.MkdirAll(installer.getDownloadFolder(), core.DefaultFilePerm)
+	err = os.MkdirAll(installer.DownloadFolder(), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create download folder")
 
-	destinationFile, err := installer.getDestinationFile()
+	destinationFile, err := installer.DestinationFile()
 	require.NoError(t, err, "Failed to get destination file path")
 
 	err = os.WriteFile(destinationFile, []byte(""), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create empty file")
 
 	//
-	// Given
+	// When
 	//
 	err = installer.Download()
 
@@ -217,13 +215,13 @@ func TestCrioInstaller_Extract_Success(t *testing.T) {
 	setupTestEnvironment(t)
 
 	//
-	// When
+	// Given
 	//
 	installer, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
 
 	//
-	// Given
+	// When
 	//
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download crio")
@@ -250,8 +248,9 @@ func TestCrioInstaller_Extract_Error(t *testing.T) {
 
 	// Create a regular file where the directory should be created
 	conflictingFile := tmpFolder + "/cri-o/unpack"
-	os.MkdirAll(tmpFolder+"/cri-o", core.DefaultFilePerm)
-	err := os.WriteFile(conflictingFile, []byte("blocking file"), 0644)
+	err := os.MkdirAll(tmpFolder+"/cri-o", core.DefaultFilePerm)
+	require.NoError(t, err, "Failed to create cri-o directory")
+	err = os.WriteFile(conflictingFile, []byte("blocking file"), 0644)
 	require.NoError(t, err, "Failed to create blocking file")
 
 	// Override cleanup to remove the file we created
@@ -264,7 +263,7 @@ func TestCrioInstaller_Extract_Error(t *testing.T) {
 	//
 	installer, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
-	
+
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download crio")
 

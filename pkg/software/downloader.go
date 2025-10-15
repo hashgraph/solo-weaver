@@ -4,11 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"crypto/md5"
-	"crypto/sha256"
-	"crypto/sha512"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -70,27 +66,6 @@ func (fd *Downloader) Download(url, destination string) error {
 	return nil
 }
 
-// checksum verifies the hash of a file
-// hashType is the hash function to use, e.g. md5.New(), sha256.New(), sha512.New()
-func (fd *Downloader) Checksum(filePath string, expectedHash string, hashFunction hash.Hash) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return NewFileNotFoundError(filePath)
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(hashFunction, file); err != nil {
-		return NewChecksumError(filePath, "unknown", expectedHash, "")
-	}
-
-	calculatedHash := fmt.Sprintf("%x", hashFunction.Sum(nil))
-	if calculatedHash != expectedHash {
-		return NewChecksumError(filePath, "unknown", expectedHash, calculatedHash)
-	}
-
-	return nil
-}
-
 // ExtractTarGz extracts a tar.gz file
 func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), fd.timeout)
@@ -144,19 +119,5 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				return NewExtractionError(fmt.Errorf("unknown type flag: %c", hdr.Typeflag), compressedFilePath, destDir)
 			}
 		}
-	}
-}
-
-// VerifyChecksum dynamically verifies the checksum of a file using the specified algorithm
-func (fd *Downloader) VerifyChecksum(filePath string, expectedValue string, algorithm string) error {
-	switch algorithm {
-	case "md5":
-		return fd.Checksum(filePath, expectedValue, md5.New())
-	case "sha256":
-		return fd.Checksum(filePath, expectedValue, sha256.New())
-	case "sha512":
-		return fd.Checksum(filePath, expectedValue, sha512.New())
-	default:
-		return NewChecksumError(filePath, algorithm, expectedValue, "")
 	}
 }

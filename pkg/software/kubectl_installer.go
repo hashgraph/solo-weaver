@@ -1,55 +1,65 @@
 package software
 
+import (
+	"path"
+
+	"golang.hedera.com/solo-provisioner/internal/core"
+)
+
 type kubectlInstaller struct {
+	*BaseInstaller
+}
+
+var _ Software = (*kubectlInstaller)(nil)
+
+func NewKubectlInstaller() (Software, error) {
+	baseInstaller, err := NewBaseInstaller("kubectl", "")
+	if err != nil {
+		return nil, err
+	}
+
+	return &kubectlInstaller{
+		BaseInstaller: baseInstaller,
+	}, nil
 }
 
 func (ki *kubectlInstaller) Download() error {
-	// Downloads and check the integrity of the downloaded package
-
-	return nil
+	return ki.BaseInstaller.Download()
 }
 
 func (ki *kubectlInstaller) Extract() error {
+	// kubectl is typically a single binary, no extraction needed
 	return nil
 }
 
 func (ki *kubectlInstaller) Install() error {
-
-	// mv to sandbox
-
-	// installation/binary symlink
-
-	return nil
+	return ki.BaseInstaller.Install()
 }
 
-// Verify performs binary integrity check
 func (ki *kubectlInstaller) Verify() error {
-	return nil
+	return ki.BaseInstaller.Verify()
 }
 
-// Checks the directories and highlevel contents in sandbox
-// and checks integrity/existence of binary symlink
 func (ki *kubectlInstaller) IsInstalled() (bool, error) {
-	return false, nil
+	return ki.BaseInstaller.IsInstalled()
 }
 
 func (ki *kubectlInstaller) Configure() error {
-	// default configuration
-	//	/etc/default/crio
+	fileManager := ki.FileManager()
+	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubectl")
 
-	// service configuration
-	//	/usr/lib/systemd/system/crio.service
+	// Create symlink to /usr/local/bin for system-wide access
+	systemBinary := path.Join(core.SystemBinDir, "kubectl")
 
-	// application configuration
-	// 	/etc/crio/crio.conf.d
-
-	// configuration service symlink
-	// 	/usr/lib/systemd/system/crio.service
+	// Create new symlink
+	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+	if err != nil {
+		return NewInstallationError(err, sandboxBinary, systemBinary)
+	}
 
 	return nil
 }
 
-// Checks default, service, application and configuration service symlinks
 func (ki *kubectlInstaller) IsConfigured() (bool, error) {
 	return false, nil
 }

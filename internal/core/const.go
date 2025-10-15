@@ -10,6 +10,8 @@ const (
 	DefaultFilePerm         = 0755
 	DefaultProvisionerHome  = "/opt/provisioner"
 	DefaultUnpackFolderName = "unpack"
+	SystemBinDir            = "/usr/local/bin"
+	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
 )
 
 var (
@@ -47,9 +49,13 @@ type ProvisionerPaths struct {
 	SandboxDirectories []string // all sandbox related directories
 
 	// Kubernetes related directories
-	KubernetesDir string
-	CrioDir       string
-	CiliumDir     string
+	KubeletDir string
+	KubectlDir string
+	KubeadmDir string
+	HelmDir    string
+	K9sDir     string
+	CrioDir    string
+	CiliumDir  string
 }
 
 func NewProvisionerPaths(home string) *ProvisionerPaths {
@@ -64,9 +70,13 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 		TempDir:        path.Join(home, "tmp"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 
-		KubernetesDir: path.Join(home, "kubernetes"),
-		CrioDir:       path.Join(home, "crio"),
-		CiliumDir:     path.Join(home, "cilium"),
+		KubeletDir: path.Join(home, "kubelet"),
+		KubectlDir: path.Join(home, "kubectl"),
+		KubeadmDir: path.Join(home, "kubeadm"),
+		HelmDir:    path.Join(home, "helm"),
+		K9sDir:     path.Join(home, "k9s"),
+		CrioDir:    path.Join(home, "crio"),
+		CiliumDir:  path.Join(home, "cilium"),
 	}
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
@@ -117,7 +127,11 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 		pp.BackupDir,
 		pp.TempDir,
 		pp.DiagnosticsDir,
-		pp.KubernetesDir,
+		pp.KubeletDir,
+		pp.KubectlDir,
+		pp.KubeadmDir,
+		pp.K9sDir,
+		pp.HelmDir,
 		pp.CrioDir,
 		path.Join(pp.CrioDir, "unpack"),
 		pp.CiliumDir,

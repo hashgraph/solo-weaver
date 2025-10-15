@@ -18,10 +18,11 @@ var (
 	FileNotFoundError     = ErrorsNamespace.NewType("file_not_found")
 	InstallationError     = ErrorsNamespace.NewType("installation_error")
 	ConfigurationError    = ErrorsNamespace.NewType("configuration_error")
+	FileSystemError       = ErrorsNamespace.NewType("filesystem_error")
 	TemplateError         = ErrorsNamespace.NewType("template_error")
 
 	softwareNameProperty = errorx.RegisterPrintableProperty("software_name")
-	versionProperty      = errorx.RegisterPrintableProperty("version")
+	versionProperty      = errorx.RegisterPrintableProperty("versionToBeInstalled")
 	urlProperty          = errorx.RegisterPrintableProperty("url")
 	filePathProperty     = errorx.RegisterPrintableProperty("file_path")
 	osProperty           = errorx.RegisterPrintableProperty("os")
@@ -35,14 +36,15 @@ var (
 const (
 	configLoadErrorMsg       = "failed to load software configuration"
 	softwareNotFoundErrorMsg = "software '%s' not found in configuration"
-	versionNotFoundErrorMsg  = "version '%s' not found for software '%s'"
-	platformNotFoundErrorMsg = "platform '%s/%s' not supported for software '%s' version '%s'"
+	versionNotFoundErrorMsg  = "versionToBeInstalled '%s' not found for software '%s'"
+	platformNotFoundErrorMsg = "platform '%s/%s' not supported for software '%s' versionToBeInstalled '%s'"
 	downloadErrorMsg         = "failed to download from URL '%s'"
 	checksumErrorMsg         = "checksum verification failed for file '%s' using algorithm '%s' [ expected = '%s', actual = '%s' ]"
 	extractionErrorMsg       = "failed to extract file '%s' to '%s'"
 	fileNotFoundErrorMsg     = "file not found: '%s'"
-	installationErrorMsg     = "failed to install software '%s' version '%s'"
+	installationErrorMsg     = "failed to install software '%s' versionToBeInstalled '%s'"
 	configurationErrorMsg    = "failed to configure software '%s'"
+	filesystemErrorMsg       = "filesystem error"
 	templateErrorMsg         = "failed to execute template for software '%s'"
 )
 
@@ -134,6 +136,11 @@ func NewConfigurationError(cause error, softwareName string) *errorx.Error {
 	}
 
 	return err
+}
+
+func NewFileSystemError(cause error) *errorx.Error {
+	return FileSystemError.New(filesystemErrorMsg).
+		WithUnderlyingErrors(cause)
 }
 
 func NewTemplateError(cause error, softwareName string) *errorx.Error {
