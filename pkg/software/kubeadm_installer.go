@@ -12,51 +12,30 @@ const (
 )
 
 type kubeadmInstaller struct {
-	*BaseInstaller
+	*baseInstaller
 }
 
-var _ Software = (*kubeadmInstaller)(nil)
-
-func NewKubeadmInstaller() (Software, error) {
-	baseInstaller, err := NewBaseInstaller("kubeadm", "")
+func NewKubeadmInstaller(opts ...InstallerOption) (Software, error) {
+	bi, err := newBaseInstaller("kubeadm", opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &kubeadmInstaller{
-		BaseInstaller: baseInstaller,
+		baseInstaller: bi,
 	}, nil
 }
 
-// Download downloads the kubeadm binary and configuration files
-func (ki *kubeadmInstaller) Download() error {
-	// Download kubeadm binary using base implementation
-	if err := ki.BaseInstaller.Download(); err != nil {
-		return err
-	}
-
-	// Download kubeadm configuration files (specific to kubeadm)
-	if err := ki.BaseInstaller.DownloadConfigFiles(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (ki *kubeadmInstaller) Extract() error {
-	// Kubeadm might not need extraction
-	return nil
-}
-
+// Install installs the kubeadm binary and configuration files in the sandbox folder
 func (ki *kubeadmInstaller) Install() error {
 	// Install the kubeadm binary using the common logic
-	err := ki.BaseInstaller.Install()
+	err := ki.baseInstaller.Install()
 	if err != nil {
 		return err
 	}
 
 	// Install the kubeadm configuration files
-	err = ki.BaseInstaller.InstallConfigFiles(path.Join(core.Paths().SandboxDir, kubeletServiceDir))
+	err = ki.installConfig(path.Join(core.Paths().SandboxDir, kubeletServiceDir))
 	if err != nil {
 		return err
 	}
@@ -64,29 +43,18 @@ func (ki *kubeadmInstaller) Install() error {
 	return nil
 }
 
-func (ki *kubeadmInstaller) Verify() error {
-	return ki.BaseInstaller.Verify()
-}
-
-func (ki *kubeadmInstaller) IsInstalled() (bool, error) {
-	return ki.BaseInstaller.IsInstalled()
-}
-
+// Configure configures the kubeadm binary,
+// updates 10-kubeadm.conf and create symlink for kubelet service directory
 func (ki *kubeadmInstaller) Configure() error {
-	fileManager := ki.FileManager()
-	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubeadm")
-
-	// Create symlink to /usr/local/bin for system-wide access
-	systemBinary := path.Join(core.SystemBinDir, "kubeadm")
-
-	// Create new symlink
-	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+	// Create the symlink for the kubeadm binary
+	err := ki.baseInstaller.Configure()
 	if err != nil {
-		return NewInstallationError(err, sandboxBinary, systemBinary)
+		return err
 	}
 
-	// Replace strings in configuration file and create symlink
+	fileManager := ki.fileManager
 
+	// Replace strings in configuration file and create symlink
 	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, kubeletServiceDir)
 	kubeadmConfDest := path.Join(sandboxKubeletServiceDir, "10-kubeadm.conf")
 
@@ -101,8 +69,4 @@ func (ki *kubeadmInstaller) Configure() error {
 	}
 
 	return nil
-}
-
-func (ki *kubeadmInstaller) IsConfigured() (bool, error) {
-	return false, nil
 }

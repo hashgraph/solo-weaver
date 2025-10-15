@@ -40,7 +40,7 @@ func EnableAndStartKubelet() automa.Builder {
 		})
 }
 
-func installKubelet(provider func() (software.Software, error)) automa.Builder {
+func installKubelet(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubelet").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -67,7 +67,7 @@ func installKubelet(provider func() (software.Software, error)) automa.Builder {
 		})
 }
 
-func configureKubelet(provider func() (software.Software, error)) automa.Builder {
+func configureKubelet(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubelet").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

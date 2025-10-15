@@ -16,7 +16,7 @@ func SetupCrio() automa.Builder {
 	)
 }
 
-func installCrio(provider func() (software.Software, error)) automa.Builder {
+func installCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -48,7 +48,7 @@ func installCrio(provider func() (software.Software, error)) automa.Builder {
 		})
 }
 
-func configureCrio(provider func() (software.Software, error)) automa.Builder {
+func configureCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -67,7 +67,7 @@ func configureCrio(provider func() (software.Software, error)) automa.Builder {
 		})
 }
 
-func enableAndStartCrio(provider func() (software.Software, error)) automa.Builder {
+func enableAndStartCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("start-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

@@ -15,7 +15,7 @@ func Test_BaseInstaller_replaceAllInFile(t *testing.T) {
 	require.NoError(t, err)
 
 	ki := kubeadmInstaller{
-		BaseInstaller: &BaseInstaller{
+		baseInstaller: &baseInstaller{
 			fileManager: fsxManager,
 		},
 	}

@@ -10,16 +10,32 @@ import (
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
-// BaseInstaller provides common functionality for all software installers
-type BaseInstaller struct {
+type InstallerOption func(*baseInstaller)
+
+func WithVersion(version string) InstallerOption {
+	return func(bi *baseInstaller) {
+		bi.versionToBeInstalled = version
+	}
+}
+
+// baseInstaller provides common functionality for all software installers
+// as well as helper functions for common operations.
+type baseInstaller struct {
 	downloader           *Downloader
 	software             *SoftwareMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
 }
 
-// NewBaseInstaller creates a new base installer with common setup
-func NewBaseInstaller(softwareName, selectedVersion string) (*BaseInstaller, error) {
+var _ Software = (*baseInstaller)(nil)
+
+// newBaseInstaller creates a new base installer with common setup
+// It returns the baseInstaller struct instead of the Software interface to allow for custom implementations
+// of the Software interface to access fields of the baseInstaller struct.
+// For example, the kubeadm and kubelet installer needs to access the receiver functions of the baseInstaller
+// struct to install and configure the .conf and .service files.
+// Packages other than software, such as internal/workflows, should use the Software interface instead.
+func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstaller, error) {
 	config, err := LoadSoftwareConfig()
 	if err != nil {
 		return nil, NewConfigLoadError(err)
@@ -30,41 +46,61 @@ func NewBaseInstaller(softwareName, selectedVersion string) (*BaseInstaller, err
 		return nil, err
 	}
 
-	if selectedVersion == "" {
-		selectedVersion, err = item.GetLatestVersion()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	fsxManager, err := fsx.NewManager()
 	if err != nil {
 		return nil, NewFileSystemError(err)
 	}
 
-	return &BaseInstaller{
-		downloader:           NewDownloader(),
-		software:             item,
-		fileManager:          fsxManager,
-		versionToBeInstalled: selectedVersion,
-	}, nil
+	bi := &baseInstaller{
+		downloader:  NewDownloader(),
+		software:    item,
+		fileManager: fsxManager,
+	}
+
+	for _, opt := range opts {
+		opt(bi)
+	}
+
+	if bi.versionToBeInstalled == "" {
+		bi.versionToBeInstalled, err = item.GetLatestVersion()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return bi, nil
 }
 
 // Download handles the common download logic with checksum verification
-func (b *BaseInstaller) Download() error {
-	downloadFolder := b.DownloadFolder()
+// It downloads not only the archive file but also the config files if available.
+func (b *baseInstaller) Download() error {
+	downloadFolder := b.downloadFolder()
 
 	// Create download folder if it doesn't exist
 	if err := b.fileManager.CreateDirectory(downloadFolder, true); err != nil {
 		return NewDownloadError(err, downloadFolder, 0)
 	}
 
+	err := b.downloadBinary()
+	if err != nil {
+		return err
+	}
+
+	err = b.downloadConfig()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *baseInstaller) downloadBinary() error {
 	downloadURL, err := b.software.GetDownloadURL(b.versionToBeInstalled)
 	if err != nil {
 		return err
 	}
 
-	destinationFile, err := b.DestinationFile()
+	destinationFile, err := b.destinationFilePath()
 	if err != nil {
 		return err
 	}
@@ -101,19 +137,19 @@ func (b *BaseInstaller) Download() error {
 	return nil
 }
 
-func (b *BaseInstaller) DownloadConfigFiles() error {
+func (b *baseInstaller) downloadConfig() error {
 	// Get config files for kubeadm from the software configuration
-	configs, err := b.Software().GetConfigs(b.Version())
+	configs, err := b.software.GetConfigs(b.Version())
 	if err != nil {
 		return err
 	}
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(b.DownloadFolder(), config.Filename)
+		configFile := path.Join(b.downloadFolder(), config.Filename)
 
 		// Check if file already exists and verify checksum
-		_, exists, err := b.FileManager().PathExists(configFile)
+		_, exists, err := b.fileManager.PathExists(configFile)
 		if err == nil && exists {
 			// File exists, verify checksum
 			if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err == nil {
@@ -121,13 +157,13 @@ func (b *BaseInstaller) DownloadConfigFiles() error {
 				continue
 			}
 			// File exists but invalid checksum, remove it and re-download
-			if err := b.FileManager().RemoveAll(configFile); err != nil {
+			if err := b.fileManager.RemoveAll(configFile); err != nil {
 				return err
 			}
 		}
 
 		// Download the config file
-		if err := b.Downloader().Download(config.URL, configFile); err != nil {
+		if err := b.downloader.Download(config.URL, configFile); err != nil {
 			return err
 		}
 
@@ -141,10 +177,10 @@ func (b *BaseInstaller) DownloadConfigFiles() error {
 }
 
 // Extract provides common extraction logic
-func (b *BaseInstaller) Extract() error {
-	downloadFolder := b.DownloadFolder()
+func (b *baseInstaller) Extract() error {
+	downloadFolder := b.downloadFolder()
 
-	compressedFile, err := b.DestinationFile()
+	compressedFile, err := b.destinationFilePath()
 	if err != nil {
 		return err
 	}
@@ -185,16 +221,15 @@ func (b *BaseInstaller) Extract() error {
 }
 
 // Install provides a basic install implementation for simple binary installations
-func (b *BaseInstaller) Install() error {
-	binaryFile, err := b.DestinationFile()
+// Differently than the Download() methods, it does not handle configuration files.
+func (b *baseInstaller) Install() error {
+	binaryFile, err := b.destinationFilePath()
 	if err != nil {
 		return err
 	}
 
-	fileManager := b.FileManager()
-
 	// Verify that the binary file exists
-	_, exists, err := fileManager.PathExists(binaryFile)
+	_, exists, err := b.fileManager.PathExists(binaryFile)
 	if err != nil || !exists {
 		return NewFileNotFoundError(binaryFile)
 	}
@@ -203,20 +238,20 @@ func (b *BaseInstaller) Install() error {
 	sandboxBinDir := core.Paths().SandboxBinDir
 
 	// Create sandbox bin directory if it doesn't exist
-	err = fileManager.CreateDirectory(sandboxBinDir, true)
+	err = b.fileManager.CreateDirectory(sandboxBinDir, true)
 	if err != nil {
 		return NewInstallationError(err, binaryFile, sandboxBinDir)
 	}
 
 	// Install binary to sandbox (copying directly from download location)
 	sandboxBinary := path.Join(sandboxBinDir, b.software.Name)
-	err = fileManager.CopyFile(binaryFile, sandboxBinary, true)
+	err = b.fileManager.CopyFile(binaryFile, sandboxBinary, true)
 	if err != nil {
 		return NewInstallationError(err, binaryFile, sandboxBinDir)
 	}
 
 	// Make the installed binary executable
-	err = fileManager.WritePermissions(sandboxBinary, core.DefaultFilePerm, false)
+	err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultFilePerm, false)
 	if err != nil {
 		return NewInstallationError(err, binaryFile, sandboxBinDir)
 	}
@@ -224,23 +259,25 @@ func (b *BaseInstaller) Install() error {
 	return nil
 }
 
-func (b *BaseInstaller) InstallConfigFiles(destinationDir string) error {
+// installConfig installs the config files into the sandbox at the given destination directory
+// It is exported for use by the kubeadm and kubelet installers.
+func (b *baseInstaller) installConfig(destinationDir string) error {
 	// Verify that the config file exists
-	configs, err := b.Software().GetConfigs(b.Version())
+	configs, err := b.software.GetConfigs(b.Version())
 	if err != nil {
 		return err
 	}
 
-	err = b.FileManager().CreateDirectory(destinationDir, true)
+	err = b.fileManager.CreateDirectory(destinationDir, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
 	}
 
 	// Install each config file into the sandbox
 	for _, config := range configs {
-		configSourcePath := path.Join(b.DownloadFolder(), config.Filename)
+		configSourcePath := path.Join(b.downloadFolder(), config.Filename)
 		configDestinationPath := path.Join(destinationDir, config.Filename)
-		err = b.FileManager().CopyFile(configSourcePath, configDestinationPath, true)
+		err = b.fileManager.CopyFile(configSourcePath, configDestinationPath, true)
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to copy %s into sandbox %s", configSourcePath, configDestinationPath)
 		}
@@ -250,9 +287,9 @@ func (b *BaseInstaller) InstallConfigFiles(destinationDir string) error {
 }
 
 // Verify provides a basic verify implementation
-func (b *BaseInstaller) Verify() error {
+func (b *baseInstaller) Verify() error {
 	// Basic verification - check if destination file exists and is valid
-	destinationFile, err := b.DestinationFile()
+	destinationFile, err := b.destinationFilePath()
 	if err != nil {
 		return err
 	}
@@ -270,9 +307,30 @@ func (b *BaseInstaller) Verify() error {
 	return VerifyChecksum(destinationFile, expectedChecksum.Value, expectedChecksum.Algorithm)
 }
 
+// Configure provides a basic configuration implementation
+func (b *baseInstaller) Configure() error {
+	sandboxBinary := path.Join(core.Paths().SandboxBinDir, b.software.Name)
+
+	// Create symlink to /usr/local/bin for system-wide access
+	systemBinary := path.Join(core.SystemBinDir, b.software.Name)
+
+	// Create new symlink
+	err := b.fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+	if err != nil {
+		return NewConfigurationError(err, b.software.Name)
+	}
+
+	return nil
+}
+
+// IsConfigured provides a basic configuration check
+func (b *baseInstaller) IsConfigured() (bool, error) {
+	return false, nil
+}
+
 // IsInstalled provides a basic installation check
-func (b *BaseInstaller) IsInstalled() (bool, error) {
-	destinationFile, err := b.DestinationFile()
+func (b *baseInstaller) IsInstalled() (bool, error) {
+	destinationFile, err := b.destinationFilePath()
 	if err != nil {
 		return false, err
 	}
@@ -283,8 +341,8 @@ func (b *BaseInstaller) IsInstalled() (bool, error) {
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
 // similar to the unix command `sed -i 's/old/new/g' file`
-func (b *BaseInstaller) replaceAllInFile(sourceFile string, old string, new string) error {
-	fileManager := b.FileManager()
+func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new string) error {
+	fileManager := b.fileManager
 
 	input, err := fileManager.ReadFile(sourceFile, -1)
 	if err != nil {
@@ -306,36 +364,21 @@ func (b *BaseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 	return nil
 }
 
-// DownloadFolder returns the download folder path for the software
-func (b *BaseInstaller) DownloadFolder() string {
+// downloadFolder returns the download folder path for the software
+func (b *baseInstaller) downloadFolder() string {
 	return path.Join(core.Paths().TempDir, b.software.Name)
 }
 
-// DestinationFile returns the full path where the downloaded file will be stored
-func (b *BaseInstaller) DestinationFile() (string, error) {
+// destinationFilePath returns the full path where the downloaded file will be stored
+func (b *baseInstaller) destinationFilePath() (string, error) {
 	filename, err := b.software.GetFilename(b.versionToBeInstalled)
 	if err != nil {
 		return "", err
 	}
-	return path.Join(b.DownloadFolder(), filename), nil
+	return path.Join(b.downloadFolder(), filename), nil
 }
 
 // Version returns the version being installed
-func (b *BaseInstaller) Version() string {
+func (b *baseInstaller) Version() string {
 	return b.versionToBeInstalled
-}
-
-// Software returns the software metadata
-func (b *BaseInstaller) Software() *SoftwareMetadata {
-	return b.software
-}
-
-// FileManager returns the file manager instance
-func (b *BaseInstaller) FileManager() fsx.Manager {
-	return b.fileManager
-}
-
-// Downloader returns the downloader instance
-func (b *BaseInstaller) Downloader() *Downloader {
-	return b.downloader
 }

@@ -8,94 +8,30 @@ import (
 )
 
 type kubeletInstaller struct {
-	*BaseInstaller
+	*baseInstaller
 }
 
-var _ Software = (*kubeletInstaller)(nil)
-
-func NewKubeletInstaller() (Software, error) {
-	baseInstaller, err := NewBaseInstaller("kubelet", "")
+func NewKubeletInstaller(opts ...InstallerOption) (Software, error) {
+	bi, err := newBaseInstaller("kubelet", opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &kubeletInstaller{
-		BaseInstaller: baseInstaller,
+		baseInstaller: bi,
 	}, nil
 }
 
-func (ki *kubeletInstaller) Download() error {
-	// Download kubeadm binary using base implementation
-	if err := ki.BaseInstaller.Download(); err != nil {
-		return err
-	}
-
-	// Download kubelet configuration files (specific to kubelet)
-	if err := ki.downloadKubeletConfigFiles(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (ki *kubeletInstaller) downloadKubeletConfigFiles() error {
-	downloadFolder := ki.DownloadFolder()
-	metadata := ki.Software()
-	fileManager := ki.FileManager()
-	downloader := ki.Downloader()
-
-	// Get config files for kubeadm from the software configuration
-	configs, err := metadata.GetConfigs(ki.Version())
-	if err != nil {
-		return err
-	}
-
-	// Download the config file
-	for _, config := range configs {
-		configFile := path.Join(downloadFolder, config.Filename)
-
-		// Check if file already exists and verify checksum
-		_, exists, err := fileManager.PathExists(configFile)
-		if err == nil && exists {
-			// File exists, verify checksum
-			if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err == nil {
-				// File is already downloaded and valid
-				continue
-			}
-			// File exists but invalid checksum, remove it and re-download
-			if err := fileManager.RemoveAll(configFile); err != nil {
-				return err
-			}
-		}
-
-		// Download the config file
-		if err := downloader.Download(config.URL, configFile); err != nil {
-			return err
-		}
-
-		// Verify the downloaded config file's checksum
-		if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (ki *kubeletInstaller) Extract() error {
-	// kubelet is typically a single binary, no extraction needed
-	return nil
-}
-
+// Install installs the kubelet binary and configuration files in the sandbox folder
 func (ki *kubeletInstaller) Install() error {
 	// Install the kubeadm binary using the common logic
-	err := ki.BaseInstaller.Install()
+	err := ki.baseInstaller.Install()
 	if err != nil {
 		return err
 	}
 
 	// Install the kubelet configuration files
-	err = ki.BaseInstaller.InstallConfigFiles(path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir))
+	err = ki.installConfig(path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir))
 	if err != nil {
 		return err
 	}
@@ -103,29 +39,18 @@ func (ki *kubeletInstaller) Install() error {
 	return nil
 }
 
-func (ki *kubeletInstaller) Verify() error {
-	return ki.BaseInstaller.Verify()
-}
-
-func (ki *kubeletInstaller) IsInstalled() (bool, error) {
-	return ki.BaseInstaller.IsInstalled()
-}
-
+// Configure configures the kubelet binary,
+// updates kubelet.service and create symlink in systemd unit directory
 func (ki *kubeletInstaller) Configure() error {
-	fileManager := ki.FileManager()
-	sandboxBinary := path.Join(core.Paths().SandboxBinDir, "kubelet")
-
-	// Create symlink to /usr/local/bin for system-wide access
-	systemBinary := path.Join(core.SystemBinDir, "kubelet")
-
-	// Create new symlink
-	err := fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+	// Create the symlink for the kubelet binary
+	err := ki.baseInstaller.Configure()
 	if err != nil {
-		return NewInstallationError(err, sandboxBinary, systemBinary)
+		return err
 	}
 
-	// Replace strings in configuration file and create symlink
+	fileManager := ki.fileManager
 
+	// Replace strings in configuration file and create symlink
 	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir)
 	kubeadmConfDest := path.Join(sandboxKubeletServiceDir, "kubelet.service")
 
@@ -140,8 +65,4 @@ func (ki *kubeletInstaller) Configure() error {
 	}
 
 	return nil
-}
-
-func (ki *kubeletInstaller) IsConfigured() (bool, error) {
-	return false, nil
 }
