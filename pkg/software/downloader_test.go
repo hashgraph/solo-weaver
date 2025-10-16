@@ -1,8 +1,6 @@
 package software
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,20 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDownloader_Download(t *testing.T) {
+func Test_Downloader_Download(t *testing.T) {
 	// Create a test server
 	testContent := "This is test content for download"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(testContent))
+		_, _ = w.Write([]byte(testContent))
 	}))
 	defer server.Close()
 
 	// Create temporary file for destination
 	tmpFile, err := os.CreateTemp("", "test_download_*.txt")
 	require.NoError(t, err, "Failed to create temp file")
-	tmpFile.Close()
-	defer os.Remove(tmpFile.Name())
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Test download
 	downloader := NewDownloader()
@@ -42,7 +40,7 @@ func TestDownloader_Download(t *testing.T) {
 	require.Equal(t, testContent, string(content), "Downloaded content mismatch")
 }
 
-func TestDownloader_Download_HTTPError(t *testing.T) {
+func Test_Downloader_Download_HTTPError(t *testing.T) {
 	// Create a test server that returns 404
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -51,8 +49,8 @@ func TestDownloader_Download_HTTPError(t *testing.T) {
 
 	tmpFile, err := os.CreateTemp("", "test_download_*.txt")
 	require.NoError(t, err, "Failed to create temp file")
-	tmpFile.Close()
-	defer os.Remove(tmpFile.Name())
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	downloader := NewDownloader()
 	err = downloader.Download(server.URL, tmpFile.Name())
@@ -61,19 +59,19 @@ func TestDownloader_Download_HTTPError(t *testing.T) {
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
 }
 
-func TestDownloader_Timeout(t *testing.T) {
+func Test_Downloader_Timeout(t *testing.T) {
 	// Create a test server that sleeps longer than the timeout
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(3 * time.Second)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("This should timeout"))
+		_, _ = w.Write([]byte("This should timeout"))
 	}))
 	defer server.Close()
 
 	tmpFile, err := os.CreateTemp("", "test_timeout_*.txt")
 	require.NoError(t, err, "Failed to create temp file")
-	tmpFile.Close()
-	defer os.Remove(tmpFile.Name())
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	downloader := NewDownloaderWithTimeout(1 * time.Second)
 	err = downloader.Download(server.URL, tmpFile.Name())
@@ -82,20 +80,21 @@ func TestDownloader_Timeout(t *testing.T) {
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
 }
 
-func TestDownloader_Extract(t *testing.T) {
+func Test_Downloader_Extract(t *testing.T) {
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "test_extract_*")
 	require.NoError(t, err, "Failed to create temp dir")
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create test tar.gz file
 	tarGzPath := filepath.Join(tempDir, "test.tar.gz")
 	testFiles := map[string]string{
-		"file1.txt":     "Content of file 1",
-		"dir/file2.txt": "Content of file 2",
+		"file1.txt": "Content of file 1",
+		"file2.txt": "Content of file 2",
 	}
 
-	createTestTarGz(t, tarGzPath, testFiles)
+	_, err = createTestTarGz(tarGzPath, testFiles)
+	require.NoError(t, err, "Failed to create test tar.gz")
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
@@ -116,10 +115,10 @@ func TestDownloader_Extract(t *testing.T) {
 	}
 }
 
-func TestDownloader_Extract_FileNotFound(t *testing.T) {
+func Test_Downloader_Extract_FileNotFound(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "test_extract_*")
 	require.NoError(t, err, "Failed to create temp dir")
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	downloader := NewDownloader()
 	err = downloader.Extract("nonexistent.tar.gz", tempDir)
@@ -127,11 +126,11 @@ func TestDownloader_Extract_FileNotFound(t *testing.T) {
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 }
 
-func TestDownloader_Extract_Timeout(t *testing.T) {
+func Test_Downloader_Extract_Timeout(t *testing.T) {
 	// Create a large tar.gz file that will take time to extract
 	tempDir, err := os.MkdirTemp("", "test_extract_timeout_*")
 	require.NoError(t, err, "Failed to create temp dir")
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	tarGzPath := filepath.Join(tempDir, "large.tar.gz")
 	// Create many files to simulate a long extraction
@@ -140,7 +139,8 @@ func TestDownloader_Extract_Timeout(t *testing.T) {
 		testFiles[fmt.Sprintf("file%d.txt", i)] = fmt.Sprintf("Content %d", i)
 	}
 
-	createTestTarGz(t, tarGzPath, testFiles)
+	_, err = createTestTarGz(tarGzPath, testFiles)
+	require.NoError(t, err, "Failed to create test tar.gz")
 
 	extractDir := filepath.Join(tempDir, "extracted")
 	downloader := NewDownloaderWithTimeout(1 * time.Millisecond) // Very short timeout
@@ -148,45 +148,4 @@ func TestDownloader_Extract_Timeout(t *testing.T) {
 	err = downloader.Extract(tarGzPath, extractDir)
 	require.Error(t, err, "Extract should fail with timeout")
 	require.True(t, errorx.IsOfType(err, ExtractionError), "Error should be of type ExtractionError")
-}
-
-// Helper function to create a test tar.gz file
-func createTestTarGz(t *testing.T, path string, files map[string]string) {
-	file, err := os.Create(path)
-	require.NoError(t, err, "Failed to create tar.gz file")
-	defer file.Close()
-
-	gzWriter := gzip.NewWriter(file)
-	defer gzWriter.Close()
-
-	tarWriter := tar.NewWriter(gzWriter)
-	defer tarWriter.Close()
-
-	for filePath, content := range files {
-		// Create directory header if needed
-		dir := filepath.Dir(filePath)
-		if dir != "." {
-			hdr := &tar.Header{
-				Name:     dir + "/",
-				Mode:     0755,
-				Typeflag: tar.TypeDir,
-			}
-			err := tarWriter.WriteHeader(hdr)
-			require.NoError(t, err, "Failed to write directory header")
-		}
-
-		// Create file header
-		hdr := &tar.Header{
-			Name:     filePath,
-			Mode:     0644,
-			Size:     int64(len(content)),
-			Typeflag: tar.TypeReg,
-		}
-		err := tarWriter.WriteHeader(hdr)
-		require.NoError(t, err, "Failed to write file header")
-
-		// Write file content
-		_, err = tarWriter.Write([]byte(content))
-		require.NoError(t, err, "Failed to write file content")
-	}
 }

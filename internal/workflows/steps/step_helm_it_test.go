@@ -12,7 +12,7 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
-func Test_StepCrio_Fresh_Integration(t *testing.T) {
+func Test_StepHelm_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
@@ -21,7 +21,7 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupHelm().Build()
 
 	//
 	// Then
@@ -33,13 +33,13 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, report.Status)
 }
 
-func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
+func Test_StepHelm_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
 	cleanUpTempDir(t)
 
-	step, err := SetupCrio().Build()
+	step, err := SetupHelm().Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -49,7 +49,7 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupCrio().Build()
+	step, err = SetupHelm().Build()
 
 	//
 	// Then
@@ -62,13 +62,13 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 
 }
 
-func Test_StepCrio_PartiallyInstalled_Integration(t *testing.T) {
+func Test_StepHelm_PartiallyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
 	cleanUpTempDir(t)
 
-	step, err := SetupCrio().Build()
+	step, err := SetupHelm().Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -81,7 +81,7 @@ func Test_StepCrio_PartiallyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupCrio().Build()
+	step, err = SetupHelm().Build()
 
 	//
 	// Then

@@ -12,8 +12,8 @@ import (
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
-func TestKubeadmInstaller_FullWorkflow_Success(t *testing.T) {
-	setupTestEnvironment(t)
+func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
+	resetTestEnvironment(t)
 
 	//
 	// Given

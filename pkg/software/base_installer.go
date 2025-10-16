@@ -1,6 +1,8 @@
 package software
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -146,7 +148,7 @@ func (b *baseInstaller) downloadConfig() error {
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(b.downloadFolder(), config.Filename)
+		configFile := path.Join(b.downloadFolder(), config.Name)
 
 		// Check if file already exists and verify checksum
 		_, exists, err := b.fileManager.PathExists(configFile)
@@ -223,15 +225,9 @@ func (b *baseInstaller) Extract() error {
 // Install provides a basic install implementation for simple binary installations
 // Differently than the Download() methods, it does not handle configuration files.
 func (b *baseInstaller) Install() error {
-	binaryFile, err := b.destinationFilePath()
+	binaryFilepath, err := b.binaryPath()
 	if err != nil {
 		return err
-	}
-
-	// Verify that the binary file exists
-	_, exists, err := b.fileManager.PathExists(binaryFile)
-	if err != nil || !exists {
-		return NewFileNotFoundError(binaryFile)
 	}
 
 	// Get sandbox bin directory from core paths
@@ -240,23 +236,48 @@ func (b *baseInstaller) Install() error {
 	// Create sandbox bin directory if it doesn't exist
 	err = b.fileManager.CreateDirectory(sandboxBinDir, true)
 	if err != nil {
-		return NewInstallationError(err, binaryFile, sandboxBinDir)
+		return NewInstallationError(err, binaryFilepath, sandboxBinDir)
 	}
 
 	// Install binary to sandbox (copying directly from download location)
-	sandboxBinary := path.Join(sandboxBinDir, b.software.Name)
-	err = b.fileManager.CopyFile(binaryFile, sandboxBinary, true)
+	binaryBasename := path.Base(binaryFilepath)
+	sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+	err = b.fileManager.CopyFile(binaryFilepath, sandboxBinary, true)
 	if err != nil {
-		return NewInstallationError(err, binaryFile, sandboxBinDir)
+		return NewInstallationError(err, binaryFilepath, sandboxBinDir)
 	}
 
 	// Make the installed binary executable
 	err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultFilePerm, false)
 	if err != nil {
-		return NewInstallationError(err, binaryFile, sandboxBinDir)
+		return NewInstallationError(err, binaryFilepath, sandboxBinDir)
 	}
 
 	return nil
+}
+
+// binaryPath returns the path to the main binary file after extraction
+// It verifies that the binary file exists and returns an error if not found.
+func (b *baseInstaller) binaryPath() (string, error) {
+	binaryFilename, err := b.software.GetFilename(b.versionToBeInstalled)
+	if err != nil {
+		return "", err
+	}
+
+	binaryFilepath := path.Join(b.downloadFolder(), binaryFilename)
+
+	// If the url ends with .tar.gz, we need to look into the unpacked folder
+	if strings.HasSuffix(b.software.URL, ".tar.gz") {
+		binaryFilepath = path.Join(b.downloadFolder(), core.DefaultUnpackFolderName, binaryFilename)
+	}
+
+	// Verify that the binary file exists
+	_, exists, err := b.fileManager.PathExists(binaryFilepath)
+	if err != nil || !exists {
+		return "", NewFileNotFoundError(binaryFilepath)
+	}
+
+	return binaryFilepath, nil
 }
 
 // installConfig installs the config files into the sandbox at the given destination directory
@@ -275,8 +296,8 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 
 	// Install each config file into the sandbox
 	for _, config := range configs {
-		configSourcePath := path.Join(b.downloadFolder(), config.Filename)
-		configDestinationPath := path.Join(destinationDir, config.Filename)
+		configSourcePath := path.Join(b.downloadFolder(), config.Name)
+		configDestinationPath := path.Join(destinationDir, config.Name)
 		err = b.fileManager.CopyFile(configSourcePath, configDestinationPath, true)
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to copy %s into sandbox %s", configSourcePath, configDestinationPath)
@@ -371,10 +392,22 @@ func (b *baseInstaller) downloadFolder() string {
 
 // destinationFilePath returns the full path where the downloaded file will be stored
 func (b *baseInstaller) destinationFilePath() (string, error) {
-	filename, err := b.software.GetFilename(b.versionToBeInstalled)
+	resolvedUrl, err := b.software.GetDownloadURL(b.versionToBeInstalled)
 	if err != nil {
 		return "", err
 	}
+
+	// Parse URL to extract the filename from its path
+	parsedURL, err := url.Parse(resolvedUrl)
+	if err != nil {
+		return "", NewDownloadError(err, resolvedUrl, 0)
+	}
+
+	filename := path.Base(parsedURL.Path)
+	if filename == "" || filename == "/" {
+		return "", NewDownloadError(fmt.Errorf("no filename component in URL path: %s", resolvedUrl), resolvedUrl, 0)
+	}
+
 	return path.Join(b.downloadFolder(), filename), nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFileDownloader_VerifyChecksum(t *testing.T) {
+func Test_IntegrityChecker_VerifyChecksum(t *testing.T) {
 	// Create temporary file with known content
 	testContent := "Hello, World!"
 	tmpFile, err := os.CreateTemp("", "test_checksum_*.txt")
