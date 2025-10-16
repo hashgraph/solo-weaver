@@ -15,11 +15,11 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.DisableSwap(),
 			steps.InstallKernelModules(),
 			steps.ConfigureSysctlForKubernetes(),
-			steps.SetupBindMounts(),
+			steps.SetupBindMounts(), // still using bash steps
 
 			// kubelet
 			steps.SetupKubelet(),
-			steps.EnableAndStartKubelet(),
+			steps.EnableAndStartKubelet(), // still using bash steps
 
 			// setup cli tools
 			steps.SetupKubectl(),
@@ -27,8 +27,8 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.SetupK9s(),
 
 			// CRI-O
-			steps.SetupCrio2(),
-			steps.EnableAndStartCrio2(),
+			steps.SetupCrio2(),          // still using bash steps
+			steps.EnableAndStartCrio2(), // still using bash steps
 
 			// kubeadm
 			steps.SetupKubeadm(),
@@ -37,13 +37,13 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.InitCluster(),
 
 			// cilium CNI
-			steps.SetupCiliumCNI(),
-			steps.EnableAndStartCiliumCNI(),
+			steps.SetupCiliumCNI(),          // still using bash steps
+			steps.EnableAndStartCiliumCNI(), // still using bash steps
 
 			// metalLB
-			steps.SetupMetalLB(),
+			steps.SetupMetalLB(), // still using bash steps
 
 			// health check
-			steps.CheckClusterHealth(),
+			steps.CheckClusterHealth(), // still using bash steps
 		)
 }
