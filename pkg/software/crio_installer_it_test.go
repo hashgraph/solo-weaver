@@ -9,7 +9,6 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
 func TestCrioInstaller_Download_Success(t *testing.T) {
@@ -72,23 +71,8 @@ func TestCrioInstaller_Download_Fails(t *testing.T) {
 	//
 	// Given
 	// Create an installer with invalid configuration by manipulating the struct directly
-	config, err := LoadSoftwareConfig()
-	require.NoError(t, err, "Failed to load software config")
-
-	item, err := config.GetSoftwareByName("cri-o")
-	require.NoError(t, err, "Failed to find cri-o in config")
-
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err, "Failed to create fsx manager")
-
-	wrongInstaller := &crioInstaller{
-		BaseInstaller: &BaseInstaller{
-			downloader:           NewDownloader(),
-			software:             item,
-			fileManager:          fsxManager,
-			versionToBeInstalled: "invalidversion",
-		},
-	}
+	wrongInstaller, err := NewCrioInstaller(WithVersion("invalidversion"))
+	require.NoError(t, err, "Failed to create crio installer with invalid version")
 
 	//
 	// When
@@ -125,22 +109,17 @@ func TestCrioInstaller_Download_ChecksumFails(t *testing.T) {
 		},
 	}
 
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err, "Failed to create fsx manager")
+	corruptedCrioInstaller, err := NewCrioInstaller(WithVersion("1.33.4"))
+	require.NoError(t, err, "Failed to create crio installer with corrupted version")
 
-	wrongInstaller := &crioInstaller{
-		BaseInstaller: &BaseInstaller{
-			downloader:           NewDownloader(),
-			software:             item,
-			fileManager:          fsxManager,
-			versionToBeInstalled: "1.33.4", // This versionToBeInstalled might not exist or have wrong checksum
-		},
-	}
+	//Inject corrupted baseInstaller into corruptedCrioInstaller
+	wrongInstaller := corruptedCrioInstaller.(*baseInstaller)
+	wrongInstaller.software = item
 
 	//
 	// When
 	//
-	err = wrongInstaller.Download()
+	err = corruptedCrioInstaller.Download()
 
 	//
 	// Then
@@ -185,13 +164,13 @@ func TestCrioInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testin
 	installerInterface, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create crio installer")
 
-	installer := installerInterface.(*crioInstaller) // cast to crioInstaller to access private fields
+	installer := installerInterface.(*baseInstaller) // cast to crioInstaller to access private fields
 
 	// create empty file to emulate first download with wrong checksum
-	err = os.MkdirAll(installer.DownloadFolder(), core.DefaultFilePerm)
+	err = os.MkdirAll(installer.downloadFolder(), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create download folder")
 
-	destinationFile, err := installer.DestinationFile()
+	destinationFile, err := installer.destinationFilePath()
 	require.NoError(t, err, "Failed to get destination file path")
 
 	err = os.WriteFile(destinationFile, []byte(""), core.DefaultFilePerm)

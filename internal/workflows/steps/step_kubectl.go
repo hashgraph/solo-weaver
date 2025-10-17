@@ -26,7 +26,7 @@ func SetupKubectl() automa.Builder {
 		})
 }
 
-func installKubectl(provider func() (software.Software, error)) automa.Builder {
+func installKubectl(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubectl").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -53,7 +53,7 @@ func installKubectl(provider func() (software.Software, error)) automa.Builder {
 		})
 }
 
-func configureKubectl(provider func() (software.Software, error)) automa.Builder {
+func configureKubectl(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubectl").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

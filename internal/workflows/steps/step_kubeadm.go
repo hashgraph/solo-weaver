@@ -32,7 +32,7 @@ func SetupKubeadm() automa.Builder {
 		})
 }
 
-func installKubeadm(provider func() (software.Software, error)) automa.Builder {
+func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubeadm").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -59,7 +59,7 @@ func installKubeadm(provider func() (software.Software, error)) automa.Builder {
 		})
 }
 
-func configureKubeadm(provider func() (software.Software, error)) automa.Builder {
+func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubeadm").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

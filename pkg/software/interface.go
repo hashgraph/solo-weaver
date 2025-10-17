@@ -19,7 +19,6 @@ type Package interface {
 }
 
 type Software interface {
-
 	// Download fetches the software artifacts,
 	// including the binary, and configuration files
 	Download() error
@@ -42,4 +41,7 @@ type Software interface {
 
 	// IsConfigured checks if the configuration has been done
 	IsConfigured() (bool, error)
+
+	// Version returns the version of the software to be installed
+	Version() string
 }
