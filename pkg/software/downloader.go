@@ -105,6 +105,11 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 			case tar.TypeReg:
+				// Ensure parent directory exists
+				if err := os.MkdirAll(filepath.Dir(target), core.DefaultFilePerm); err != nil {
+					return NewExtractionError(err, compressedFilePath, destDir)
+				}
+
 				// Extract files
 				out, err := os.Create(target)
 				if err != nil {
@@ -115,6 +120,11 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 				out.Close()
+
+				// Set file permissions from tar header
+				if err := os.Chmod(target, hdr.FileInfo().Mode()); err != nil {
+					return NewExtractionError(err, compressedFilePath, destDir)
+				}
 			default:
 				return NewExtractionError(fmt.Errorf("unknown type flag: %c", hdr.Typeflag), compressedFilePath, destDir)
 			}
