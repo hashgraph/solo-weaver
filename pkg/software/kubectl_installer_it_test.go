@@ -10,8 +10,8 @@ import (
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
-func TestKubectlInstaller_FullWorkflow_Success(t *testing.T) {
-	setupTestEnvironment(t)
+func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
+	resetTestEnvironment(t)
 
 	//
 	// Given
@@ -64,5 +64,5 @@ func TestKubectlInstaller_FullWorkflow_Success(t *testing.T) {
 	linkTarget, err := os.Readlink("/usr/local/bin/kubectl")
 	require.NoError(t, err)
 	require.Equal(t, "/opt/provisioner/sandbox/bin/kubectl", linkTarget, "symlink should point to sandbox binary")
-	
+
 }

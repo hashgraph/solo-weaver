@@ -13,7 +13,7 @@ import (
 )
 
 func TestKubeletInstaller_FullWorkflow_Success(t *testing.T) {
-	setupTestEnvironment(t)
+	resetTestEnvironment(t)
 
 	//
 	// Given
