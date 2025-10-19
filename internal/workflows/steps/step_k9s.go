@@ -4,22 +4,64 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
 func SetupK9s() automa.Builder {
+
 	return automa.NewWorkflowBuilder().WithId("setup-k9s").Steps(
-		bashSteps.DownloadK9s(),
-		bashSteps.InstallK9s(),
-	).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up k9s")
-			return ctx, nil
+		installK9s(software.NewK9sInstaller),
+		configureK9s(software.NewK9sInstaller),
+	)
+}
+
+func installK9s(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId("install-k9s").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Download()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+			err = installer.Extract()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+			err = installer.Install()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			return automa.SuccessReport(stp)
 		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup k9s")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "k9s setup successfully")
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
+}
+
+func configureK9s(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId("configure-k9s").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			err = installer.Configure()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
+
+			return automa.SuccessReport(stp)
 		})
 }
