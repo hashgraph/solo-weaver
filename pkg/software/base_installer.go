@@ -1,8 +1,6 @@
 package software
 
 import (
-	"fmt"
-	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -24,7 +22,7 @@ func WithVersion(version string) InstallerOption {
 // as well as helper functions for common operations.
 type baseInstaller struct {
 	downloader           *Downloader
-	software             *SoftwareMetadata
+	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
 }
@@ -38,12 +36,12 @@ var _ Software = (*baseInstaller)(nil)
 // struct to install and configure the .conf and .service files.
 // Packages other than software, such as internal/workflows, should use the Software interface instead.
 func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstaller, error) {
-	config, err := LoadSoftwareConfig()
+	config, err := LoadArtifactConfig()
 	if err != nil {
 		return nil, NewConfigLoadError(err)
 	}
 
-	item, err := config.GetSoftwareByName(softwareName)
+	item, err := config.GetArtifactByName(softwareName)
 	if err != nil {
 		return nil, err
 	}
@@ -74,21 +72,27 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 }
 
 // Download handles the common download logic with checksum verification
-// It downloads not only the archive file but also the config files if available.
+// It downloads all archives, binaries (with URLs), and config files if available.
 func (b *baseInstaller) Download() error {
 	downloadFolder := b.downloadFolder()
 
 	// Create download folder if it doesn't exist
-	if err := b.fileManager.CreateDirectory(downloadFolder, true); err != nil {
+	err := b.fileManager.CreateDirectory(downloadFolder, true)
+	if err != nil {
 		return NewDownloadError(err, downloadFolder, 0)
 	}
 
-	err := b.downloadBinary()
+	err = b.downloadArchives()
 	if err != nil {
 		return err
 	}
 
-	err = b.downloadConfig()
+	err = b.downloadBinaries()
+	if err != nil {
+		return err
+	}
+
+	err = b.downloadConfigs()
 	if err != nil {
 		return err
 	}
@@ -96,55 +100,181 @@ func (b *baseInstaller) Download() error {
 	return nil
 }
 
-func (b *baseInstaller) downloadBinary() error {
-	downloadURL, err := b.software.GetDownloadURL(b.versionToBeInstalled)
-	if err != nil {
-		return err
+// downloadArchives downloads all archives for the software version
+func (b *baseInstaller) downloadArchives() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
 	}
 
-	destinationFile, err := b.destinationFilePath()
-	if err != nil {
-		return err
+	// Download all archives
+	for _, archive := range versionInfo.Archives {
+		err := b.downloadAndVerifyArchive(archive)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Get expected checksum and algorithm from configuration
-	expectedChecksum, err := b.software.GetChecksum(b.versionToBeInstalled)
+	return nil
+}
+
+// downloadAndVerifyArchive downloads and verifies a single archive
+func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
+	platform := b.software.getPlatform()
+
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	// Resolve the archive URL
+	downloadURL, err := executeTemplate(archive.URL, data)
 	if err != nil {
-		return err
+		return NewTemplateError(err, b.software.Name)
+	}
+
+	// Resolve the archive name
+	archiveName, err := executeTemplate(archive.Name, data)
+	if err != nil {
+		return NewTemplateError(err, b.software.Name)
+	}
+
+	destinationFile := path.Join(b.downloadFolder(), archiveName)
+
+	// Get expected checksum for this archive
+	osInfo, exists := archive.PlatformChecksum[platform.os]
+	if !exists {
+		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
+	}
+
+	checksum, exists := osInfo[platform.arch]
+	if !exists {
+		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
 	}
 
 	// Check if file already exists and is valid
-	if _, exists, err := b.fileManager.PathExists(destinationFile); err == nil && exists {
+	_, exists, err = b.fileManager.PathExists(destinationFile)
+	if err == nil && exists {
 		// File exists, verify checksum
-		if err := VerifyChecksum(destinationFile, expectedChecksum.Value, expectedChecksum.Algorithm); err == nil {
+		err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
+		if err == nil {
 			// File is already downloaded and valid
 			return nil
 		}
 		// File exists but invalid checksum, remove it and re-download
-		if err := b.fileManager.RemoveAll(destinationFile); err != nil {
+		err = b.fileManager.RemoveAll(destinationFile)
+		if err != nil {
 			return NewDownloadError(err, downloadURL, 0)
 		}
 	}
 
-	// Download the file
-	if err := b.downloader.Download(downloadURL, destinationFile); err != nil {
+	// Download the archive
+	err = b.downloader.Download(downloadURL, destinationFile)
+	if err != nil {
 		return err
 	}
 
-	// Verify the downloaded file's checksum
-	if err := VerifyChecksum(destinationFile, expectedChecksum.Value, expectedChecksum.Algorithm); err != nil {
+	// Verify the downloaded archive's checksum
+	err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
+	if err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (b *baseInstaller) downloadConfig() error {
-	// Get config files for kubeadm from the software configuration
-	configs, err := b.software.GetConfigs(b.Version())
+// downloadBinaries downloads all binaries that have URLs (not from archives)
+func (b *baseInstaller) downloadBinaries() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	// Download all binaries that have URLs (not from archives)
+	for _, binary := range versionInfo.BinariesByURL() {
+		err := b.downloadAndVerifyBinary(binary)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// downloadAndVerifyBinary downloads and verifies a single binary (that has a URL)
+func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
+	platform := b.software.getPlatform()
+
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	// Resolve the binary URL
+	downloadURL, err := executeTemplate(binary.URL, data)
+	if err != nil {
+		return NewTemplateError(err, b.software.Name)
+	}
+
+	// Resolve the binary name
+	binaryName, err := executeTemplate(binary.Name, data)
+	if err != nil {
+		return NewTemplateError(err, b.software.Name)
+	}
+
+	destinationFile := path.Join(b.downloadFolder(), binaryName)
+
+	// Get expected checksum for this binary
+	osInfo, exists := binary.PlatformChecksum[platform.os]
+	if !exists {
+		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
+	}
+
+	checksum, exists := osInfo[platform.arch]
+	if !exists {
+		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
+	}
+
+	// Check if file already exists and is valid
+	_, exists, err = b.fileManager.PathExists(destinationFile)
+	if err == nil && exists {
+		// File exists, verify checksum
+		err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
+		if err == nil {
+			// File is already downloaded and valid
+			return nil
+		}
+		// File exists but invalid checksum, remove it and re-download
+		err = b.fileManager.RemoveAll(destinationFile)
+		if err != nil {
+			return NewDownloadError(err, downloadURL, 0)
+		}
+	}
+
+	// Download the binary
+	err = b.downloader.Download(downloadURL, destinationFile)
 	if err != nil {
 		return err
 	}
+
+	// Verify the downloaded binary's checksum
+	err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *baseInstaller) downloadConfigs() error {
+	// Get config files for kubeadm from the software configuration
+	versionInfo, exists := b.software.Versions[Version(b.Version())]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.Version())
+	}
+	configs := versionInfo.ConfigsByURL()
 
 	// Download the config file
 	for _, config := range configs {
@@ -154,23 +284,27 @@ func (b *baseInstaller) downloadConfig() error {
 		_, exists, err := b.fileManager.PathExists(configFile)
 		if err == nil && exists {
 			// File exists, verify checksum
-			if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err == nil {
+			err = VerifyChecksum(configFile, config.Value, config.Algorithm)
+			if err == nil {
 				// File is already downloaded and valid
 				continue
 			}
 			// File exists but invalid checksum, remove it and re-download
-			if err := b.fileManager.RemoveAll(configFile); err != nil {
+			err = b.fileManager.RemoveAll(configFile)
+			if err != nil {
 				return err
 			}
 		}
 
 		// Download the config file
-		if err := b.downloader.Download(config.URL, configFile); err != nil {
+		err = b.downloader.Download(config.URL, configFile)
+		if err != nil {
 			return err
 		}
 
 		// Verify the downloaded config file's checksum
-		if err := VerifyChecksum(configFile, config.Value, config.Algorithm); err != nil {
+		err = VerifyChecksum(configFile, config.Value, config.Algorithm)
+		if err != nil {
 			return err
 		}
 	}
@@ -180,33 +314,87 @@ func (b *baseInstaller) downloadConfig() error {
 
 // Extract provides common extraction logic
 func (b *baseInstaller) Extract() error {
-	downloadFolder := b.downloadFolder()
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
 
-	compressedFile, err := b.destinationFilePath()
+	downloadFolder := b.downloadFolder()
+	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+
+	// Check if extraction folder already exists and has content
+	entries, err := os.ReadDir(extractFolder)
+	if err == nil && len(entries) > 0 {
+		// Already extracted, verify binaries if they exist
+		err = b.verifyExtractedBinaries()
+		if err != nil {
+			// If verification fails, clean up and re-extract
+			err = b.fileManager.RemoveAll(extractFolder)
+			if err != nil {
+				return NewExtractionError(err, "", extractFolder)
+			}
+		} else {
+			// Verification passed, skip extraction
+			return nil
+		}
+	}
+
+	// Create extraction directory if it doesn't exist
+	err = b.fileManager.CreateDirectory(extractFolder, true)
+	if err != nil {
+		return NewExtractionError(err, "", extractFolder)
+	}
+
+	// Extract all archives
+	for _, archive := range versionInfo.Archives {
+		err = b.extractArchive(archive, extractFolder)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Verify checksums of extracted binaries
+	err = b.verifyExtractedBinaries()
 	if err != nil {
 		return err
 	}
 
-	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+	// Verify checksums of extracted configs
+	err = b.verifyExtractedConfigs()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// extractArchive extracts a single archive
+func (b *baseInstaller) extractArchive(archive ArchiveDetail, extractFolder string) error {
+	platform := b.software.getPlatform()
+
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	// Resolve the archive name
+	archiveName, err := executeTemplate(archive.Name, data)
+	if err != nil {
+		return NewTemplateError(err, b.software.Name)
+	}
+
+	compressedFile := path.Join(b.downloadFolder(), archiveName)
 
 	// Verify that the compressed file exists
-	if _, exists, err := b.fileManager.PathExists(compressedFile); err != nil || !exists {
+	_, exists, err := b.fileManager.PathExists(compressedFile)
+	if err != nil || !exists {
 		return NewFileNotFoundError(compressedFile)
 	}
 
-	// Check if extraction folder already exists and has content
-	if entries, err := os.ReadDir(extractFolder); err == nil && len(entries) > 0 {
-		// Already extracted, skip
-		return nil
-	}
-
-	// Create extraction directory if it doesn't exist
-	if err := b.fileManager.CreateDirectory(extractFolder, true); err != nil {
-		return NewExtractionError(err, compressedFile, extractFolder)
-	}
-
 	// Extract the compressed file
-	if err := b.downloader.Extract(compressedFile, extractFolder); err != nil {
+	err = b.downloader.Extract(compressedFile, extractFolder)
+	if err != nil {
 		return err
 	}
 
@@ -222,142 +410,409 @@ func (b *baseInstaller) Extract() error {
 	return nil
 }
 
-// Install provides a basic install implementation for simple binary installations
-// Differently than the Download() methods, it does not handle configuration files.
-func (b *baseInstaller) Install() error {
-	binaryFilepath, err := b.binaryPath()
-	if err != nil {
-		return err
+// verifyExtractedBinaries verifies the checksums of all binaries extracted from an archive
+func (b *baseInstaller) verifyExtractedBinaries() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
 	}
 
-	// Get sandbox bin directory from core paths
-	sandboxBinDir := core.Paths().SandboxBinDir
-
-	// Create sandbox bin directory if it doesn't exist
-	err = b.fileManager.CreateDirectory(sandboxBinDir, true)
-	if err != nil {
-		return NewInstallationError(err, binaryFilepath, sandboxBinDir)
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
 	}
 
-	// Install binary to sandbox (copying directly from download location)
-	binaryBasename := path.Base(binaryFilepath)
-	sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-	err = b.fileManager.CopyFile(binaryFilepath, sandboxBinary, true)
-	if err != nil {
-		return NewInstallationError(err, binaryFilepath, sandboxBinDir)
-	}
+	downloadFolder := b.downloadFolder()
+	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
 
-	// Make the installed binary executable
-	err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultFilePerm, false)
-	if err != nil {
-		return NewInstallationError(err, binaryFilepath, sandboxBinDir)
-	}
-
-	return nil
-}
-
-// binaryPath returns the path to the main binary file after extraction
-// It verifies that the binary file exists and returns an error if not found.
-func (b *baseInstaller) binaryPath() (string, error) {
-	binaryFilename, err := b.software.GetFilename(b.versionToBeInstalled)
-	if err != nil {
-		return "", err
-	}
-
-	binaryFilepath := path.Join(b.downloadFolder(), binaryFilename)
-
-	// If the url ends with .tar.gz, we need to look into the unpacked folder
-	if strings.HasSuffix(b.software.URL, ".tar.gz") {
-		binaryFilepath = path.Join(b.downloadFolder(), core.DefaultUnpackFolderName, binaryFilename)
-	}
-
-	// Verify that the binary file exists
-	_, exists, err := b.fileManager.PathExists(binaryFilepath)
-	if err != nil || !exists {
-		return "", NewFileNotFoundError(binaryFilepath)
-	}
-
-	return binaryFilepath, nil
-}
-
-// installConfig installs the config files into the sandbox at the given destination directory
-// It is exported for use by the kubeadm and kubelet installers.
-func (b *baseInstaller) installConfig(destinationDir string) error {
-	// Verify that the config file exists
-	configs, err := b.software.GetConfigs(b.Version())
-	if err != nil {
-		return err
-	}
-
-	err = b.fileManager.CreateDirectory(destinationDir, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
-	}
-
-	// Install each config file into the sandbox
-	for _, config := range configs {
-		configSourcePath := path.Join(b.downloadFolder(), config.Name)
-		configDestinationPath := path.Join(destinationDir, config.Name)
-		err = b.fileManager.CopyFile(configSourcePath, configDestinationPath, true)
+	// Verify each binary that comes from an archive
+	for _, binary := range versionInfo.BinariesByArchive() {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
 		if err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to copy %s into sandbox %s", configSourcePath, configDestinationPath)
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the binary's expected checksum
+		osInfo, exists := binary.PlatformChecksum[platform.os]
+		if !exists {
+			// If platform checksum is not available, skip verification for this binary
+			continue
+		}
+
+		checksum, exists := osInfo[platform.arch]
+		if !exists {
+			// If arch checksum is not available, skip verification for this binary
+			continue
+		}
+
+		// Construct the path to the extracted binary
+		binaryPath := path.Join(extractFolder, binaryName)
+
+		// Check if the binary exists
+		_, exists, err = b.fileManager.PathExists(binaryPath)
+		if err != nil || !exists {
+			return NewFileNotFoundError(binaryPath)
+		}
+
+		// Verify the binary's checksum
+		if err := VerifyChecksum(binaryPath, checksum.Value, checksum.Algorithm); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// Verify provides a basic verify implementation
-func (b *baseInstaller) Verify() error {
-	// Basic verification - check if destination file exists and is valid
-	destinationFile, err := b.destinationFilePath()
-	if err != nil {
-		return err
+// verifyExtractedConfigs verifies the checksums of all configs extracted from an archive
+func (b *baseInstaller) verifyExtractedConfigs() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
 	}
 
-	if _, exists, err := b.fileManager.PathExists(destinationFile); err != nil || !exists {
-		return NewFileNotFoundError(destinationFile)
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
 	}
 
-	// Verify checksum if available
-	expectedChecksum, err := b.software.GetChecksum(b.versionToBeInstalled)
-	if err != nil {
-		return err
-	}
+	downloadFolder := b.downloadFolder()
+	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
 
-	return VerifyChecksum(destinationFile, expectedChecksum.Value, expectedChecksum.Algorithm)
-}
+	// Verify each config that comes from an archive
+	for _, cfg := range versionInfo.ConfigsByArchive() {
+		// Resolve the config name using template
+		configName, err := executeTemplate(cfg.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
 
-// Configure provides a basic configuration implementation
-func (b *baseInstaller) Configure() error {
-	sandboxBinary := path.Join(core.Paths().SandboxBinDir, b.software.Name)
+		// Construct the path to the extracted cfg
+		configPath := path.Join(extractFolder, configName)
 
-	// Create symlink to /usr/local/bin for system-wide access
-	systemBinary := path.Join(core.SystemBinDir, b.software.Name)
+		// Check if the cfg exists
+		_, exists, err = b.fileManager.PathExists(configPath)
+		if err != nil || !exists {
+			return NewFileNotFoundError(configPath)
+		}
 
-	// Create new symlink
-	err := b.fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
-	if err != nil {
-		return NewConfigurationError(err, b.software.Name)
+		// Verify the cfg's checksum
+		if err := VerifyChecksum(configPath, cfg.Value, cfg.Algorithm); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// IsConfigured provides a basic configuration check
-func (b *baseInstaller) IsConfigured() (bool, error) {
-	return false, nil
+// Install provides a basic install implementation for simple binary installations
+// Differently than the Download() methods, it does not handle configuration files.
+func (b *baseInstaller) Install() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	// Get sandbox bin directory from core paths
+	sandboxBinDir := core.Paths().SandboxBinDir
+
+	// Create sandbox bin directory if it doesn't exist
+	err := b.fileManager.CreateDirectory(sandboxBinDir, true)
+	if err != nil {
+		return NewInstallationError(err, "", sandboxBinDir)
+	}
+
+	downloadFolder := b.downloadFolder()
+	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+
+	// Install all binaries
+	for _, binary := range versionInfo.Binaries {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		// Determine source path: check if binary comes from archive or was downloaded directly
+		var sourcePath string
+		if binary.Archive != "" {
+			// Binary is from an archive, look in extract folder
+			sourcePath = path.Join(extractFolder, binaryName)
+		} else {
+			// Binary was downloaded directly
+			sourcePath = path.Join(downloadFolder, binaryName)
+		}
+
+		// Verify that the binary file exists
+		_, exists, err := b.fileManager.PathExists(sourcePath)
+		if err != nil || !exists {
+			return NewFileNotFoundError(sourcePath)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+
+		// Copy binary to sandbox
+		err = b.fileManager.CopyFile(sourcePath, sandboxBinary, true)
+		if err != nil {
+			return NewInstallationError(err, sourcePath, sandboxBinDir)
+		}
+
+		// Make the installed binary executable
+		err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultFilePerm, false)
+		if err != nil {
+			return NewInstallationError(err, sourcePath, sandboxBinDir)
+		}
+	}
+
+	return nil
+}
+
+// installConfig installs the config files into the sandbox at the given destination directory
+// It is exported for use by the kubeadm and kubelet installers.
+func (b *baseInstaller) installConfig(destinationDir string) error {
+	// Verify that the config file exists
+	versionInfo, exists := b.software.Versions[Version(b.Version())]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.Version())
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	configs := versionInfo.GetConfigs()
+
+	err := b.fileManager.CreateDirectory(destinationDir, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
+	}
+
+	downloadFolder := b.downloadFolder()
+	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+
+	// Install each config file into the sandbox
+	for _, config := range configs {
+		// Resolve the config name using template
+		configName, err := executeTemplate(config.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		// Determine source path: check if binary comes from archive or was downloaded directly
+		var sourcePath string
+		if config.Archive != "" {
+			// Config is from an archive, look in extract folder
+			sourcePath = path.Join(extractFolder, configName)
+		} else {
+			// Binary was downloaded directly
+			sourcePath = path.Join(downloadFolder, configName)
+		}
+
+		// Verify that the config file exists
+		_, exists, err := b.fileManager.PathExists(sourcePath)
+		if err != nil || !exists {
+			return NewFileNotFoundError(sourcePath)
+		}
+
+		configDestinationPath := path.Join(destinationDir, config.Name)
+		err = b.fileManager.CopyFile(sourcePath, configDestinationPath, true)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to copy %s into sandbox %s", sourcePath, configDestinationPath)
+		}
+	}
+
+	return nil
+}
+
+// Configure provides a basic configuration implementation
+func (b *baseInstaller) Configure() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := core.Paths().SandboxBinDir
+
+	// Create symbolic links for all binaries
+	for _, binary := range versionInfo.Binaries {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+
+		// Create symlink to /usr/local/bin for system-wide access
+		err = b.fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
+		if err != nil {
+			return NewConfigurationError(err, binaryBasename)
+		}
+	}
+
+	return nil
 }
 
 // IsInstalled provides a basic installation check
 func (b *baseInstaller) IsInstalled() (bool, error) {
-	destinationFile, err := b.destinationFilePath()
-	if err != nil {
-		return false, err
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return false, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
 	}
 
-	_, exists, err := b.fileManager.PathExists(destinationFile)
-	return exists, err
+	// If there are no binaries defined, consider it not installed
+	if len(versionInfo.Binaries) == 0 {
+		return false, nil
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := core.Paths().SandboxBinDir
+
+	// Check all binaries exist in sandbox and have correct checksums
+	for _, binary := range versionInfo.Binaries {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return false, NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+
+		// Check if the binary exists in sandbox
+		_, exists, err := b.fileManager.PathExists(sandboxBinary)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return false, nil // Binary doesn't exist, not installed
+		}
+
+		// Get expected checksum for this binary
+		osInfo, exists := binary.PlatformChecksum[platform.os]
+		if !exists {
+			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
+		}
+
+		checksum, exists := osInfo[platform.arch]
+		if !exists {
+			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
+		}
+
+		// Verify the installed binary's checksum
+		if err := VerifyChecksum(sandboxBinary, checksum.Value, checksum.Algorithm); err != nil {
+			return false, nil // Checksum mismatch, not properly installed
+		}
+	}
+
+	return true, nil
+}
+
+// IsConfigured provides a basic configuration check
+func (b *baseInstaller) IsConfigured() (bool, error) {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return false, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	// If there are no binaries defined, consider it not configured
+	if len(versionInfo.Binaries) == 0 {
+		return false, nil
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := core.Paths().SandboxBinDir
+
+	// Check all symbolic links exist and point to valid binaries with correct checksums
+	for _, binary := range versionInfo.Binaries {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return false, NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+
+		// Check if the symbolic link exists in system bin directory
+		linkInfo, err := os.Readlink(systemBinary)
+		if err != nil {
+			return false, nil // Symbolic link doesn't exist or error reading it, not configured
+		}
+
+		// Verify the symbolic link points to the correct sandbox binary
+		if linkInfo != sandboxBinary {
+			return false, nil // Symbolic link points to wrong location, not properly configured
+		}
+
+		// Verify the target binary exists in sandbox
+		_, exists, err := b.fileManager.PathExists(sandboxBinary)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return false, nil // Target binary doesn't exist, not properly configured
+		}
+
+		// Get expected checksum for this binary
+		osInfo, exists := binary.PlatformChecksum[platform.os]
+		if !exists {
+			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
+		}
+
+		checksum, exists := osInfo[platform.arch]
+		if !exists {
+			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
+		}
+
+		// Verify the target binary's checksum
+		if err := VerifyChecksum(sandboxBinary, checksum.Value, checksum.Algorithm); err != nil {
+			return false, nil // Checksum mismatch, not properly configured
+		}
+	}
+
+	return true, nil
 }
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
@@ -390,28 +845,145 @@ func (b *baseInstaller) downloadFolder() string {
 	return path.Join(core.Paths().TempDir, b.software.Name)
 }
 
-// destinationFilePath returns the full path where the downloaded file will be stored
-func (b *baseInstaller) destinationFilePath() (string, error) {
-	resolvedUrl, err := b.software.GetDownloadURL(b.versionToBeInstalled)
-	if err != nil {
-		return "", err
-	}
-
-	// Parse URL to extract the filename from its path
-	parsedURL, err := url.Parse(resolvedUrl)
-	if err != nil {
-		return "", NewDownloadError(err, resolvedUrl, 0)
-	}
-
-	filename := path.Base(parsedURL.Path)
-	if filename == "" || filename == "/" {
-		return "", NewDownloadError(fmt.Errorf("no filename component in URL path: %s", resolvedUrl), resolvedUrl, 0)
-	}
-
-	return path.Join(b.downloadFolder(), filename), nil
-}
-
 // Version returns the version being installed
 func (b *baseInstaller) Version() string {
 	return b.versionToBeInstalled
+}
+
+// Uninstall removes the software from the sandbox and cleans up related files
+// This is the default implementation which assumes a simple binary installation
+// where the binaries are placed in the sandbox bin directory.
+// It removes symlinks in the system bin directory, binaries from sandbox bin directory,
+// and any downloaded files.
+// If the software has more complex installation steps, installers can override this method.
+func (b *baseInstaller) Uninstall() error {
+	// First, clean up any symlinks in the system bin directory that point to our sandbox
+	err := b.cleanupSymlinks()
+	if err != nil {
+		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+	}
+
+	// Remove the binaries from the sandbox bin directory
+	err = b.removeSandboxBinaries()
+	if err != nil {
+		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+	}
+
+	// Clean up download and extract directories for this software
+	downloadFolder := b.downloadFolder()
+	_, exists, err := b.fileManager.PathExists(downloadFolder)
+	if err != nil {
+		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+	}
+	if exists {
+		err = b.fileManager.RemoveAll(downloadFolder)
+		if err != nil {
+			return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+		}
+	}
+
+	return nil
+}
+
+// removeSandboxBinaries removes the binaries from the sandbox bin directory
+func (b *baseInstaller) removeSandboxBinaries() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := core.Paths().SandboxBinDir
+
+	// Remove each binary from the sandbox bin directory
+	for _, binary := range versionInfo.Binaries {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+
+		// Check if binary exists in sandbox bin directory
+		_, exists, err := b.fileManager.PathExists(sandboxBinary)
+		if err != nil {
+			continue // If we can't check, skip this one
+		}
+		if !exists {
+			continue // Binary doesn't exist, nothing to clean up
+		}
+
+		// Remove the binary from sandbox
+		err = b.fileManager.RemoveAll(sandboxBinary)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// cleanupSymlinks removes symlinks in the system bin directory that point to our sandbox binaries
+func (b *baseInstaller) cleanupSymlinks() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := core.Paths().SandboxBinDir
+
+	// Check each binary and remove its symlink if it exists
+	for _, binary := range versionInfo.Binaries {
+		// Resolve the binary name using template
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+
+		// Check if symlink exists in system bin directory
+		_, exists, err := b.fileManager.PathExists(systemBinary)
+		if err != nil {
+			continue // If we can't check, skip this one
+		}
+		if !exists {
+			continue // Symlink doesn't exist, nothing to clean up
+		}
+
+		// Verify the symlink points to our sandbox binary before removing
+		linkInfo, err := os.Readlink(systemBinary)
+		if err != nil {
+			continue // Can't read symlink, skip
+		}
+
+		// Only remove symlinks that point to our sandbox binary
+		if linkInfo == sandboxBinary {
+			err = b.fileManager.RemoveAll(systemBinary)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

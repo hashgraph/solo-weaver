@@ -13,8 +13,6 @@ type Package interface {
 
 	Info() (*syspkg.PackageInfo, error)
 
-	Verify() error
-
 	IsInstalled() bool
 }
 
@@ -29,8 +27,8 @@ type Software interface {
 	// Install places the files in the sandbox destination
 	Install() error
 
-	// Verify checks the integrity of the binary
-	Verify() error
+	// Uninstall removes the software from the sandbox and cleans up related files
+	Uninstall() error
 
 	// IsInstalled checks the directories and high-level contents in sandbox
 	IsInstalled() (bool, error)

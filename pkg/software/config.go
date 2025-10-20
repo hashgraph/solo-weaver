@@ -12,22 +12,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed software.yaml
-var softwareConfigFS embed.FS
+//go:embed artifact.yaml
+var artifactConfigFS embed.FS
 
 // Semantic types + enums
 
 type Version string
-type OS string
-type Arch string
 
 const (
-	OSLinux   OS = "linux"
-	OSDarwin  OS = "darwin"
-	OSWindows OS = "windows"
+	OSLinux   string = "linux"
+	OSDarwin  string = "darwin"
+	OSWindows string = "windows"
 
-	ArchAMD64 Arch = "amd64"
-	ArchARM64 Arch = "arm64"
+	ArchAMD64 string = "amd64"
+	ArchARM64 string = "arm64"
 )
 
 // platformProvider provides OS and architecture information.
@@ -37,59 +35,191 @@ type platformProvider struct {
 	arch string
 }
 
-// withPlatform sets a custom platform for the software software.
+// withPlatform sets a custom platform for the software artifact.
 // This is primarily used for testing purposes to simulate different OS and architecture combinations.
-func (si *SoftwareMetadata) withPlatform(currentOS, currentArch string) *SoftwareMetadata {
+func (si *ArtifactMetadata) withPlatform(currentOS, currentArch string) *ArtifactMetadata {
 	s := *si
 	s.platform = &platformProvider{os: currentOS, arch: currentArch}
 	return &s
 }
 
-// getPlatform returns the platformProvider for the software software.
+// getPlatform returns the platformProvider for the software artifact.
 // If no platformProvider is set, it returns the runtime's OS and architecture.
-func (si *SoftwareMetadata) getPlatform() platformProvider {
+func (si *ArtifactMetadata) getPlatform() platformProvider {
 	if si.platform == nil {
 		return platformProvider{runtime.GOOS, runtime.GOARCH}
 	}
 	return *si.platform
 }
 
-// SoftwareCollection represents the root configuration structure
-type SoftwareCollection struct {
-	Software []SoftwareMetadata `yaml:"software"`
+// ArtifactCollection represents the root configuration structure
+type ArtifactCollection struct {
+	Artifact []ArtifactMetadata `yaml:"artifact"`
 }
 
-// SoftwareMetadata represents a single software package configuration
-// with its versions which including binaries and configuration files
-type SoftwareMetadata struct {
+// ArtifactMetadata represents a single software artifact  configuration
+// with its versions which including archives, binaries and configuration files
+type ArtifactMetadata struct {
 	Name     string                     `yaml:"name"`
-	URL      string                     `yaml:"url"`
-	Filename string                     `yaml:"filename"`
 	Versions map[Version]VersionDetails `yaml:"versions"`
 	platform *platformProvider
 }
 
 // VersionDetails represents the structure for a specific versionToBeInstalled
-// including the binary and related configuration files
+// including the archive, binary and related configuration files
 type VersionDetails struct {
-	Binary  BinaryDetails  `yaml:"binary"`
-	Configs []ConfigDetail `yaml:"configs,omitempty"`
+	Archives []ArchiveDetail `yaml:"archives,omitempty"`
+	Binaries []BinaryDetail  `yaml:"binaries"`
+	Configs  []ConfigDetail  `yaml:"configs,omitempty"`
 }
 
-// BinaryDetails represents the platform-specific information for a versionToBeInstalled
-type BinaryDetails map[OS]map[Arch]Checksum
+// GetArchives retrieves all archives, sorted by name for consistent order
+func (v VersionDetails) GetArchives() []ArchiveDetail {
+	archives := make([]ArchiveDetail, len(v.Archives))
+	copy(archives, v.Archives)
 
-// Checksum contains platform-specific checksum information
-type Checksum struct {
-	Algorithm string `yaml:"algorithm"`
-	Value     string `yaml:"checksum"`
+	// Sort by name for consistent order
+	sort.Slice(archives, func(i, j int) bool {
+		return archives[i].Name < archives[j].Name
+	})
+
+	return archives
+}
+
+// GetBinaries retrieves all binaries, sorted by name for consistent order
+func (v VersionDetails) GetBinaries() []BinaryDetail {
+	binaries := make([]BinaryDetail, len(v.Binaries))
+	copy(binaries, v.Binaries)
+
+	// Sort by name for consistent order
+	sort.Slice(binaries, func(i, j int) bool {
+		return binaries[i].Name < binaries[j].Name
+	})
+
+	return binaries
+}
+
+// BinariesByURL returns only the binaries that are downloaded directly via URL
+func (v VersionDetails) BinariesByURL() []BinaryDetail {
+	downloadable := make([]BinaryDetail, 0)
+	for _, binary := range v.GetBinaries() {
+		if binary.URL != "" {
+			downloadable = append(downloadable, binary)
+		}
+	}
+	return downloadable
+}
+
+// BinariesByArchive returns only the binaries that are extracted from archives
+func (v VersionDetails) BinariesByArchive() []BinaryDetail {
+	extracted := make([]BinaryDetail, 0)
+	for _, binary := range v.GetBinaries() {
+		if binary.Archive != "" {
+			extracted = append(extracted, binary)
+		}
+	}
+	return extracted
+}
+
+// GetConfigs retrieves all configuration files, sorted by name for consistent order
+func (v VersionDetails) GetConfigs() []ConfigDetail {
+	configs := make([]ConfigDetail, len(v.Configs))
+	copy(configs, v.Configs)
+
+	// Sort by name for consistent order
+	sort.Slice(configs, func(i, j int) bool {
+		return configs[i].Name < configs[j].Name
+	})
+
+	return configs
+}
+
+// ConfigsByURL returns only the configuration files that are downloaded directly via URL
+func (v VersionDetails) ConfigsByURL() []ConfigDetail {
+	downloadable := make([]ConfigDetail, 0)
+	for _, config := range v.GetConfigs() {
+		if config.URL != "" && config.Archive == "" {
+			downloadable = append(downloadable, config)
+		}
+	}
+	return downloadable
+}
+
+// ConfigsByArchive returns only the configuration files that are extracted from archives
+func (v VersionDetails) ConfigsByArchive() []ConfigDetail {
+	extracted := make([]ConfigDetail, 0)
+	for _, config := range v.GetConfigs() {
+		if config.Archive != "" {
+			extracted = append(extracted, config)
+		}
+	}
+	return extracted
+}
+
+// GetArchiveByName retrieves a specific archive file by name
+func (v VersionDetails) GetArchiveByName(archiveName string) (*ArchiveDetail, error) {
+	for i := range v.Archives {
+		if v.Archives[i].Name == archiveName {
+			return &v.Archives[i], nil
+		}
+	}
+	return nil, fmt.Errorf("archive file '%s' not found", archiveName)
+}
+
+// GetBinaryByName retrieves a specific binary file by name
+func (v VersionDetails) GetBinaryByName(binaryName string) (*BinaryDetail, error) {
+	for i := range v.Binaries {
+		if v.Binaries[i].Name == binaryName {
+			return &v.Binaries[i], nil
+		}
+	}
+	return nil, fmt.Errorf("binary file '%s' not found", binaryName)
+}
+
+// GetConfigByName retrieves a specific configuration file by name
+func (v VersionDetails) GetConfigByName(configName string) (*ConfigDetail, error) {
+	for i := range v.Configs {
+		if v.Configs[i].Name == configName {
+			return &v.Configs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("configuration file '%s' not found", configName)
+}
+
+type ArchiveDetail struct {
+	Name             string `yaml:"name"`
+	URL              string `yaml:"url"`
+	PlatformChecksum `yaml:",inline"`
+}
+
+type BinaryDetail struct {
+	Name             string `yaml:"name"`
+	URL              string `yaml:"url,omitempty"`
+	Archive          string `yaml:"archive,omitempty"`
+	PlatformChecksum `yaml:",inline"`
 }
 
 // ConfigDetail represents a configuration file with its software
 type ConfigDetail struct {
 	Name      string `yaml:"name"`
 	URL       string `yaml:"url"`
-	Filename  string `yaml:"filename"`
+	Archive   string `yaml:"archive,omitempty"`
+	Algorithm string `yaml:"algorithm"`
+	Value     string `yaml:"checksum"`
+}
+
+// PlatformChecksum maps OS and ARCH to their respective checksums
+// Format: map[OS]map[ARCH]Checksum
+// e.g. in yaml format:
+//
+//	linux:
+//	  amd64:
+//	    algorithm: sha256
+//	    checksum: abcdef...
+type PlatformChecksum map[string]map[string]Checksum
+
+// Checksum contains platform-specific checksum information
+type Checksum struct {
 	Algorithm string `yaml:"algorithm"`
 	Value     string `yaml:"checksum"`
 }
@@ -101,14 +231,14 @@ type TemplateData struct {
 	ARCH    string
 }
 
-// LoadSoftwareConfig loads and parses the software.yaml configuration
-func LoadSoftwareConfig() (*SoftwareCollection, error) {
-	data, err := softwareConfigFS.ReadFile("software.yaml")
+// LoadArtifactConfig loads and parses the artifact.yaml configuration
+func LoadArtifactConfig() (*ArtifactCollection, error) {
+	data, err := artifactConfigFS.ReadFile("artifact.yaml")
 	if err != nil {
 		return nil, NewConfigLoadError(err)
 	}
 
-	var config SoftwareCollection
+	var config ArtifactCollection
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, NewConfigLoadError(err)
 	}
@@ -116,36 +246,14 @@ func LoadSoftwareConfig() (*SoftwareCollection, error) {
 	return &config, nil
 }
 
-// GetSoftwareByName finds a software item by name
-func (sc *SoftwareCollection) GetSoftwareByName(name string) (*SoftwareMetadata, error) {
-	for i, item := range sc.Software {
+// GetArtifactByName finds a artifact item by name
+func (sc *ArtifactCollection) GetArtifactByName(name string) (*ArtifactMetadata, error) {
+	for i, item := range sc.Artifact {
 		if item.Name == name {
-			return &sc.Software[i], nil
+			return &sc.Artifact[i], nil
 		}
 	}
 	return nil, NewSoftwareNotFoundError(name)
-}
-
-// GetChecksum retrieves the checksum for a specific versionToBeInstalled, OS, and architecture
-func (si *SoftwareMetadata) GetChecksum(version string) (Checksum, error) {
-	versionInfo, exists := si.Versions[Version(version)]
-	if !exists {
-		return Checksum{}, NewVersionNotFoundError(si.Name, version)
-	}
-
-	platform := si.getPlatform()
-
-	osInfo, exists := versionInfo.Binary[OS(platform.os)]
-	if !exists {
-		return Checksum{}, NewPlatformNotFoundError(si.Name, version, platform.os, "")
-	}
-
-	checksum, exists := osInfo[Arch(platform.arch)]
-	if !exists {
-		return Checksum{}, NewPlatformNotFoundError(si.Name, version, platform.os, platform.arch)
-	}
-
-	return checksum, nil
 }
 
 // executeTemplate executes a template string with the given data
@@ -163,67 +271,9 @@ func executeTemplate(templateStr string, data TemplateData) (string, error) {
 	return buf.String(), nil
 }
 
-// GetDownloadURL returns the download URL with template variables replaced
-func (si *SoftwareMetadata) GetDownloadURL(version string) (string, error) {
-	platform := si.getPlatform()
-
-	data := TemplateData{
-		VERSION: version,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-	result, err := executeTemplate(si.URL, data)
-	if err != nil {
-		return "", NewTemplateError(err, si.Name)
-	}
-	return result, nil
-}
-
-// GetFilename returns the filename with template variables replaced
-func (si *SoftwareMetadata) GetFilename(version string) (string, error) {
-	platform := si.getPlatform()
-
-	data := TemplateData{
-		VERSION: version,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-	result, err := executeTemplate(si.Filename, data)
-	if err != nil {
-		return "", NewTemplateError(err, si.Name)
-	}
-	return result, nil
-}
-
-// GetConfigs retrieves all configuration files for a specific versionToBeInstalled
-func (si *SoftwareMetadata) GetConfigs(version string) ([]ConfigDetail, error) {
-	versionInfo, exists := si.Versions[Version(version)]
-	if !exists {
-		return nil, NewVersionNotFoundError(si.Name, version)
-	}
-
-	return versionInfo.Configs, nil
-}
-
-// GetConfigByName retrieves a specific configuration file by name for a given versionToBeInstalled
-func (si *SoftwareMetadata) GetConfigByName(version, configName string) (*ConfigDetail, error) {
-	configs, err := si.GetConfigs(version)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, config := range configs {
-		if config.Name == configName {
-			return &config, nil
-		}
-	}
-
-	return nil, fmt.Errorf("configuration file '%s' not found for software '%s' versionToBeInstalled '%s'", configName, si.Name, version)
-}
-
 // GetLatestVersion returns the latest versionToBeInstalled available for this software item
 // Only supports semantic versions - returns error for non-semantic versionToBeInstalled formats
-func (si *SoftwareMetadata) GetLatestVersion() (string, error) {
+func (si *ArtifactMetadata) GetLatestVersion() (string, error) {
 	if len(si.Versions) == 0 {
 		return "", NewVersionNotFoundError(si.Name, "any")
 	}

@@ -146,14 +146,6 @@ func (p *PackageInstaller) Info() (*syspkg.PackageInfo, error) {
 	return nil, NewInstallationError(nil, p.pkgName, "")
 }
 
-func (p *PackageInstaller) Verify() error {
-	if !p.IsInstalled() {
-		return NewInstallationError(nil, p.pkgName, "")
-	}
-
-	return nil
-}
-
 func WithPackageName(name string) func(*PackageInstaller) {
 	return func(pb *PackageInstaller) {
 		pb.pkgName = name

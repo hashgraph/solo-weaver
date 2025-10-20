@@ -7,16 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetLatestVersion(t *testing.T) {
+func Test_Config_GetLatestVersion(t *testing.T) {
 	tests := []struct {
 		name     string
-		item     SoftwareMetadata
+		item     ArtifactMetadata
 		expected string
 		wantErr  bool
 	}{
 		{
 			name: "single versionToBeInstalled",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {},
@@ -27,7 +27,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "multiple versions - semantic ordering",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0":  {},
@@ -42,7 +42,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "versions with patch releases",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.33.4": {},
@@ -56,7 +56,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "no versions available",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name:     "test-software",
 				Versions: map[Version]VersionDetails{},
 			},
@@ -65,7 +65,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "versions with non-semantic format should return error",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"latest": {},
@@ -82,7 +82,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "mixed semantic and non-semantic versions should return error",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0":  {},
@@ -95,7 +95,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "all semantic versions should work correctly",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0":  {},
@@ -109,7 +109,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "versions with prereleases",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0-alpha.1": {},
@@ -125,7 +125,7 @@ func TestGetLatestVersion(t *testing.T) {
 		},
 		{
 			name: "versions with and without v prefix",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"v1.0.0": {},
@@ -154,78 +154,91 @@ func TestGetLatestVersion(t *testing.T) {
 	}
 }
 
-func TestVersionSelection(t *testing.T) {
+func Test_Config_VersionSelection(t *testing.T) {
 
 	//
 	// Given
 	//
 
 	// Create a mock software item with multiple versions to test versionToBeInstalled selection
-	mockSoftwareItem := &SoftwareMetadata{
-		Name:     "cri-o",
-		URL:      "https://example.com/crio-{{.VERSION}}.tar.gz",
-		Filename: "crio-{{.VERSION}}.tar.gz",
+	mockSoftwareItem := &ArtifactMetadata{
+		Name: "cri-o",
 		Versions: map[Version]VersionDetails{
 			"1.25.0": {
-				Binary: BinaryDetails{
-					"linux": {
-						"amd64": {
-							Algorithm: "sha256",
-							Value:     "abc123",
-						},
-					},
-					"darwin": {
-						"amd64": {
-							Algorithm: "sha256",
-							Value:     "def456",
-						},
-						"arm64": {
-							Algorithm: "sha256",
-							Value:     "ghi789",
+				Binaries: []BinaryDetail{
+					{
+						Name: "crio",
+						PlatformChecksum: PlatformChecksum{
+							"linux": {
+								"amd64": {
+									Algorithm: "sha256",
+									Value:     "abc123",
+								},
+							},
+							"darwin": {
+								"amd64": {
+									Algorithm: "sha256",
+									Value:     "def456",
+								},
+								"arm64": {
+									Algorithm: "sha256",
+									Value:     "ghi789",
+								},
+							},
 						},
 					},
 				},
 			},
 			"1.27.0": {
-				Binary: BinaryDetails{
-					"linux": {
-						"amd64": {
-							Algorithm: "sha256",
-							Value:     "stu901",
-						},
-						"arm64": {
-							Algorithm: "sha256",
-							Value:     "opq234",
-						},
-					},
-					"darwin": {
-						"amd64": {
-							Algorithm: "sha256",
-							Value:     "vwx234",
-						},
-						"arm64": {
-							Algorithm: "sha256",
-							Value:     "yzx567",
+				Binaries: []BinaryDetail{
+					{
+						Name: "crio",
+						PlatformChecksum: PlatformChecksum{
+							"linux": {
+								"amd64": {
+									Algorithm: "sha256",
+									Value:     "stu901",
+								},
+								"arm64": {
+									Algorithm: "sha256",
+									Value:     "opq234",
+								},
+							},
+							"darwin": {
+								"amd64": {
+									Algorithm: "sha256",
+									Value:     "vwx234",
+								},
+								"arm64": {
+									Algorithm: "sha256",
+									Value:     "yzx567",
+								},
+							},
 						},
 					},
 				},
 			},
 			"1.26.1": {
-				Binary: BinaryDetails{
-					"linux": {
-						"amd64": {
-							Algorithm: "sha256",
-							Value:     "jkl012",
-						},
-					},
-					"darwin": {
-						"amd64": {
-							Algorithm: "sha256",
-							Value:     "mno345",
-						},
-						"arm64": {
-							Algorithm: "sha256",
-							Value:     "pqr678",
+				Binaries: []BinaryDetail{
+					{
+						Name: "crio",
+						PlatformChecksum: PlatformChecksum{
+							"linux": {
+								"amd64": {
+									Algorithm: "sha256",
+									Value:     "jkl012",
+								},
+							},
+							"darwin": {
+								"amd64": {
+									Algorithm: "sha256",
+									Value:     "mno345",
+								},
+								"arm64": {
+									Algorithm: "sha256",
+									Value:     "pqr678",
+								},
+							},
 						},
 					},
 				},
@@ -257,9 +270,17 @@ func TestVersionSelection(t *testing.T) {
 	//
 
 	// Verify that the versionToBeInstalled is valid (exists in the configuration and has checksums available)
-	checksum, err := baseInstaller.software.GetChecksum(baseInstaller.Version())
-	require.NoError(t, err, "Selected versionToBeInstalled should be valid and have checksums available for darwin/arm64")
-	assert.NotEmpty(t, checksum, "Checksum for the selected versionToBeInstalled should not be empty")
+	// Get the first binary's checksum for darwin/arm64
+	versionInfo := baseInstaller.software.Versions[Version(baseInstaller.Version())]
+	require.NotEmpty(t, versionInfo.Binaries, "Should have binaries defined")
+
+	binary := versionInfo.Binaries[0]
+	osInfo, exists := binary.PlatformChecksum["darwin"]
+	require.True(t, exists, "Should have darwin platform")
+
+	checksum, exists := osInfo["arm64"]
+	require.True(t, exists, "Should have arm64 architecture")
+	require.NotEmpty(t, checksum, "Checksum for the selected versionToBeInstalled should not be empty")
 	assert.Equal(t, "yzx567", checksum.Value, "Should return the correct checksum for darwin/arm64")
 
 	// Verify that the installer uses the latest versionToBeInstalled
@@ -267,20 +288,30 @@ func TestVersionSelection(t *testing.T) {
 
 	// Additional verification: ensure the versionToBeInstalled selection is semantic, not alphabetical
 	// Test with a versionToBeInstalled that would be "latest" alphabetically but not semantically
-	mockItemWithNonSemanticOrder := &SoftwareMetadata{
+	mockItemWithNonSemanticOrder := &ArtifactMetadata{
 		Name: "cri-o",
 		Versions: map[Version]VersionDetails{
 			"1.9.0": {
-				Binary: BinaryDetails{
-					"darwin": {
-						"arm64": {Algorithm: "sha256", Value: "test1"},
+				Binaries: []BinaryDetail{
+					{
+						Name: "crio",
+						PlatformChecksum: PlatformChecksum{
+							"darwin": {
+								"arm64": {Algorithm: "sha256", Value: "test1"},
+							},
+						},
 					},
 				},
 			},
 			"1.10.0": {
-				Binary: BinaryDetails{
-					"darwin": {
-						"arm64": {Algorithm: "sha256", Value: "test2"},
+				Binaries: []BinaryDetail{
+					{
+						Name: "crio",
+						PlatformChecksum: PlatformChecksum{
+							"darwin": {
+								"arm64": {Algorithm: "sha256", Value: "test2"},
+							},
+						},
 					},
 				},
 			},
@@ -292,10 +323,10 @@ func TestVersionSelection(t *testing.T) {
 	assert.Equal(t, "1.10.0", semanticLatest, "Should choose 1.10.0 over 1.9.0 (semantic ordering, not alphabetical)")
 }
 
-func TestGetChecksum(t *testing.T) {
+func Test_Config_GetChecksum(t *testing.T) {
 	tests := []struct {
 		name        string
-		item        SoftwareMetadata
+		item        ArtifactMetadata
 		platform    struct{ os, arch string }
 		version     string
 		expectedErr bool
@@ -303,15 +334,20 @@ func TestGetChecksum(t *testing.T) {
 	}{
 		{
 			name: "valid versionToBeInstalled and platform - darwin/arm64",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
-						Binary: BinaryDetails{
-							"darwin": {
-								"arm64": {
-									Algorithm: "sha256",
-									Value:     "abc123",
+						Binaries: []BinaryDetail{
+							{
+								Name: "test-binary",
+								PlatformChecksum: PlatformChecksum{
+									"darwin": {
+										"arm64": {
+											Algorithm: "sha256",
+											Value:     "abc123",
+										},
+									},
 								},
 							},
 						},
@@ -328,15 +364,20 @@ func TestGetChecksum(t *testing.T) {
 		},
 		{
 			name: "valid versionToBeInstalled and platform - linux/amd64",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
-						Binary: BinaryDetails{
-							"linux": {
-								"amd64": {
-									Algorithm: "sha256",
-									Value:     "def456",
+						Binaries: []BinaryDetail{
+							{
+								Name: "test-binary",
+								PlatformChecksum: PlatformChecksum{
+									"linux": {
+										"amd64": {
+											Algorithm: "sha256",
+											Value:     "def456",
+										},
+									},
 								},
 							},
 						},
@@ -353,15 +394,20 @@ func TestGetChecksum(t *testing.T) {
 		},
 		{
 			name: "versionToBeInstalled not found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
-						Binary: BinaryDetails{
-							"darwin": {
-								"arm64": {
-									Algorithm: "sha256",
-									Value:     "abc123",
+						Binaries: []BinaryDetail{
+							{
+								Name: "test-binary",
+								PlatformChecksum: PlatformChecksum{
+									"darwin": {
+										"arm64": {
+											Algorithm: "sha256",
+											Value:     "abc123",
+										},
+									},
 								},
 							},
 						},
@@ -374,15 +420,20 @@ func TestGetChecksum(t *testing.T) {
 		},
 		{
 			name: "OS not found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
-						Binary: BinaryDetails{
-							"linux": {
-								"amd64": {
-									Algorithm: "sha256",
-									Value:     "abc123",
+						Binaries: []BinaryDetail{
+							{
+								Name: "test-binary",
+								PlatformChecksum: PlatformChecksum{
+									"linux": {
+										"amd64": {
+											Algorithm: "sha256",
+											Value:     "abc123",
+										},
+									},
 								},
 							},
 						},
@@ -395,15 +446,20 @@ func TestGetChecksum(t *testing.T) {
 		},
 		{
 			name: "architecture not found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
-						Binary: BinaryDetails{
-							"linux": {
-								"amd64": {
-									Algorithm: "sha256",
-									Value:     "abc123",
+						Binaries: []BinaryDetail{
+							{
+								Name: "test-binary",
+								PlatformChecksum: PlatformChecksum{
+									"linux": {
+										"amd64": {
+											Algorithm: "sha256",
+											Value:     "abc123",
+										},
+									},
 								},
 							},
 						},
@@ -418,34 +474,77 @@ func TestGetChecksum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use withPlatform to set a specific platform for testing
-			testItem := tt.item.withPlatform(tt.platform.os, tt.platform.arch)
-			result, err := testItem.GetChecksum(tt.version)
+			// Test accessing checksums directly from binary PlatformChecksum
+			versionInfo, exists := tt.item.Versions[Version(tt.version)]
+
+			if !exists {
+				if tt.expectedErr {
+					// Expected error for version not found
+					return
+				}
+				t.Fatalf("Version %s not found", tt.version)
+			}
+
+			if len(versionInfo.Binaries) == 0 {
+				if tt.expectedErr {
+					return
+				}
+				t.Fatal("No binaries found")
+			}
+
+			binary := versionInfo.Binaries[0]
+			osInfo, exists := binary.PlatformChecksum[tt.platform.os]
+
+			if !exists {
+				if tt.expectedErr {
+					// Expected error for OS not found
+					return
+				}
+				t.Fatalf("OS %s not found", tt.platform.os)
+			}
+
+			result, exists := osInfo[tt.platform.arch]
+
+			if !exists {
+				if tt.expectedErr {
+					// Expected error for arch not found
+					return
+				}
+				t.Fatalf("Arch %s not found", tt.platform.arch)
+			}
 
 			if tt.expectedErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expected, result)
+				t.Fatal("Expected error but got success")
 			}
+
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-func TestGetDownloadURL(t *testing.T) {
+func Test_Config_GetDownloadURL(t *testing.T) {
 	tests := []struct {
 		name        string
-		item        SoftwareMetadata
+		item        ArtifactMetadata
 		platform    struct{ os, arch string }
 		version     string
 		expectedErr bool
 		expectedURL string
 	}{
 		{
-			name: "valid template with versionToBeInstalled only",
-			item: SoftwareMetadata{
+			name: "valid template with version only - archive",
+			item: ArtifactMetadata{
 				Name: "test-software",
-				URL:  "https://example.com/{{.VERSION}}/software.tar.gz",
+				Versions: map[Version]VersionDetails{
+					"1.0.0": {
+						Archives: []ArchiveDetail{
+							{
+								Name: "software.tar.gz",
+								URL:  "https://example.com/{{.VERSION}}/software.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:    struct{ os, arch string }{"linux", "amd64"},
 			version:     "1.0.0",
@@ -454,9 +553,18 @@ func TestGetDownloadURL(t *testing.T) {
 		},
 		{
 			name: "template with all variables - linux/amd64",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
-				URL:  "https://example.com/{{.VERSION}}/{{.OS}}/{{.ARCH}}/software.tar.gz",
+				Versions: map[Version]VersionDetails{
+					"2.1.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software",
+								URL:  "https://example.com/{{.VERSION}}/{{.OS}}/{{.ARCH}}/software.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:    struct{ os, arch string }{"linux", "amd64"},
 			version:     "2.1.0",
@@ -465,9 +573,18 @@ func TestGetDownloadURL(t *testing.T) {
 		},
 		{
 			name: "template with all variables - darwin/arm64",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
-				URL:  "https://example.com/{{.VERSION}}/{{.OS}}/{{.ARCH}}/software.tar.gz",
+				Versions: map[Version]VersionDetails{
+					"2.1.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software",
+								URL:  "https://example.com/{{.VERSION}}/{{.OS}}/{{.ARCH}}/software.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:    struct{ os, arch string }{"darwin", "arm64"},
 			version:     "2.1.0",
@@ -476,9 +593,18 @@ func TestGetDownloadURL(t *testing.T) {
 		},
 		{
 			name: "template with all variables - windows/amd64",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
-				URL:  "https://example.com/{{.VERSION}}/{{.OS}}/{{.ARCH}}/software.tar.gz",
+				Versions: map[Version]VersionDetails{
+					"2.1.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software",
+								URL:  "https://example.com/{{.VERSION}}/{{.OS}}/{{.ARCH}}/software.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:    struct{ os, arch string }{"windows", "amd64"},
 			version:     "2.1.0",
@@ -487,9 +613,18 @@ func TestGetDownloadURL(t *testing.T) {
 		},
 		{
 			name: "invalid template syntax",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
-				URL:  "https://example.com/{{.VERSION/software.tar.gz", // missing closing }}
+				Versions: map[Version]VersionDetails{
+					"1.0.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software",
+								URL:  "https://example.com/{{.VERSION/software.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:    struct{ os, arch string }{"linux", "amd64"},
 			version:     "1.0.0",
@@ -501,7 +636,30 @@ func TestGetDownloadURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use withPlatform to set a specific platform for testing
 			testItem := tt.item.withPlatform(tt.platform.os, tt.platform.arch)
-			result, err := testItem.GetDownloadURL(tt.version)
+
+			// Get version info
+			versionInfo, exists := testItem.Versions[Version(tt.version)]
+			require.True(t, exists, "Version should exist")
+
+			// Get the URL template from either archives or binaries
+			var urlTemplate string
+			if len(versionInfo.Archives) > 0 {
+				urlTemplate = versionInfo.Archives[0].URL
+			} else if len(versionInfo.Binaries) > 0 {
+				urlTemplate = versionInfo.Binaries[0].URL
+			} else {
+				t.Fatal("No archives or binaries found")
+			}
+
+			// Execute template
+			platform := testItem.getPlatform()
+			data := TemplateData{
+				VERSION: tt.version,
+				OS:      platform.os,
+				ARCH:    platform.arch,
+			}
+
+			result, err := executeTemplate(urlTemplate, data)
 
 			if tt.expectedErr {
 				assert.Error(t, err)
@@ -513,20 +671,28 @@ func TestGetDownloadURL(t *testing.T) {
 	}
 }
 
-func TestGetFilename(t *testing.T) {
+func Test_Config_GetFilename(t *testing.T) {
 	tests := []struct {
 		name             string
-		item             SoftwareMetadata
+		item             ArtifactMetadata
 		platform         struct{ os, arch string }
 		version          string
 		expectedErr      bool
 		expectedFilename string
 	}{
 		{
-			name: "valid template with versionToBeInstalled only",
-			item: SoftwareMetadata{
-				Name:     "test-software",
-				Filename: "software-{{.VERSION}}.tar.gz",
+			name: "valid template with version only",
+			item: ArtifactMetadata{
+				Name: "test-software",
+				Versions: map[Version]VersionDetails{
+					"1.0.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software-{{.VERSION}}.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:         struct{ os, arch string }{"linux", "amd64"},
 			version:          "1.0.0",
@@ -535,9 +701,17 @@ func TestGetFilename(t *testing.T) {
 		},
 		{
 			name: "template with all variables - linux/amd64",
-			item: SoftwareMetadata{
-				Name:     "test-software",
-				Filename: "software-{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz",
+			item: ArtifactMetadata{
+				Name: "test-software",
+				Versions: map[Version]VersionDetails{
+					"2.1.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software-{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:         struct{ os, arch string }{"linux", "amd64"},
 			version:          "2.1.0",
@@ -546,9 +720,17 @@ func TestGetFilename(t *testing.T) {
 		},
 		{
 			name: "template with all variables - darwin/arm64",
-			item: SoftwareMetadata{
-				Name:     "test-software",
-				Filename: "software-{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz",
+			item: ArtifactMetadata{
+				Name: "test-software",
+				Versions: map[Version]VersionDetails{
+					"2.1.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software-{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:         struct{ os, arch string }{"darwin", "arm64"},
 			version:          "2.1.0",
@@ -557,9 +739,17 @@ func TestGetFilename(t *testing.T) {
 		},
 		{
 			name: "template with all variables - windows/amd64",
-			item: SoftwareMetadata{
-				Name:     "test-software",
-				Filename: "software-{{.VERSION}}-{{.OS}}-{{.ARCH}}.exe",
+			item: ArtifactMetadata{
+				Name: "test-software",
+				Versions: map[Version]VersionDetails{
+					"2.1.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software-{{.VERSION}}-{{.OS}}-{{.ARCH}}.exe",
+							},
+						},
+					},
+				},
 			},
 			platform:         struct{ os, arch string }{"windows", "amd64"},
 			version:          "2.1.0",
@@ -568,9 +758,17 @@ func TestGetFilename(t *testing.T) {
 		},
 		{
 			name: "invalid template syntax",
-			item: SoftwareMetadata{
-				Name:     "test-software",
-				Filename: "software-{{.VERSION.tar.gz", // missing closing }}
+			item: ArtifactMetadata{
+				Name: "test-software",
+				Versions: map[Version]VersionDetails{
+					"1.0.0": {
+						Binaries: []BinaryDetail{
+							{
+								Name: "software-{{.VERSION.tar.gz",
+							},
+						},
+					},
+				},
 			},
 			platform:    struct{ os, arch string }{"linux", "amd64"},
 			version:     "1.0.0",
@@ -582,7 +780,32 @@ func TestGetFilename(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use withPlatform to set a specific platform for testing
 			testItem := tt.item.withPlatform(tt.platform.os, tt.platform.arch)
-			result, err := testItem.GetFilename(tt.version)
+
+			// Get version info
+			versionInfo, exists := testItem.Versions[Version(tt.version)]
+			if !exists {
+				if tt.expectedErr {
+					return
+				}
+				t.Fatalf("Version %s not found", tt.version)
+			}
+
+			if len(versionInfo.Binaries) == 0 {
+				if tt.expectedErr {
+					return
+				}
+				t.Fatal("No binaries found")
+			}
+
+			// Resolve the binary name using template
+			platform := testItem.getPlatform()
+			data := TemplateData{
+				VERSION: tt.version,
+				OS:      platform.os,
+				ARCH:    platform.arch,
+			}
+
+			result, err := executeTemplate(versionInfo.Binaries[0].Name, data)
 
 			if tt.expectedErr {
 				assert.Error(t, err)
@@ -594,17 +817,17 @@ func TestGetFilename(t *testing.T) {
 	}
 }
 
-func TestGetConfigs(t *testing.T) {
+func Test_Config_GetConfigs(t *testing.T) {
 	tests := []struct {
 		name            string
-		item            SoftwareMetadata
+		item            ArtifactMetadata
 		version         string
 		expectedErr     bool
 		expectedConfigs []ConfigDetail
 	}{
 		{
 			name: "versionToBeInstalled with configs",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
@@ -612,14 +835,12 @@ func TestGetConfigs(t *testing.T) {
 							{
 								Name:      "config1",
 								URL:       "https://example.com/config1.yaml",
-								Filename:  "config1.yaml",
 								Algorithm: "sha256",
 								Value:     "abc123",
 							},
 							{
 								Name:      "config2",
 								URL:       "https://example.com/config2.yaml",
-								Filename:  "config2.yaml",
 								Algorithm: "sha256",
 								Value:     "def456",
 							},
@@ -633,14 +854,12 @@ func TestGetConfigs(t *testing.T) {
 				{
 					Name:      "config1",
 					URL:       "https://example.com/config1.yaml",
-					Filename:  "config1.yaml",
 					Algorithm: "sha256",
 					Value:     "abc123",
 				},
 				{
 					Name:      "config2",
 					URL:       "https://example.com/config2.yaml",
-					Filename:  "config2.yaml",
 					Algorithm: "sha256",
 					Value:     "def456",
 				},
@@ -648,7 +867,7 @@ func TestGetConfigs(t *testing.T) {
 		},
 		{
 			name: "versionToBeInstalled without configs",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
@@ -662,7 +881,7 @@ func TestGetConfigs(t *testing.T) {
 		},
 		{
 			name: "versionToBeInstalled not found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
@@ -677,22 +896,23 @@ func TestGetConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.item.GetConfigs(tt.version)
+			versionInfo, exists := tt.item.Versions[Version(tt.version)]
 
 			if tt.expectedErr {
-				assert.Error(t, err)
+				assert.False(t, exists)
 			} else {
-				assert.NoError(t, err)
+				assert.True(t, exists)
+				result := versionInfo.GetConfigs()
 				assert.Equal(t, tt.expectedConfigs, result)
 			}
 		})
 	}
 }
 
-func TestGetConfigByName(t *testing.T) {
+func Test_Config_GetConfigByName(t *testing.T) {
 	tests := []struct {
 		name           string
-		item           SoftwareMetadata
+		item           ArtifactMetadata
 		version        string
 		configName     string
 		expectedErr    bool
@@ -700,7 +920,7 @@ func TestGetConfigByName(t *testing.T) {
 	}{
 		{
 			name: "config found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
@@ -708,14 +928,12 @@ func TestGetConfigByName(t *testing.T) {
 							{
 								Name:      "config1",
 								URL:       "https://example.com/config1.yaml",
-								Filename:  "config1.yaml",
 								Algorithm: "sha256",
 								Value:     "abc123",
 							},
 							{
 								Name:      "config2",
 								URL:       "https://example.com/config2.yaml",
-								Filename:  "config2.yaml",
 								Algorithm: "sha256",
 								Value:     "def456",
 							},
@@ -729,14 +947,13 @@ func TestGetConfigByName(t *testing.T) {
 			expectedConfig: &ConfigDetail{
 				Name:      "config1",
 				URL:       "https://example.com/config1.yaml",
-				Filename:  "config1.yaml",
 				Algorithm: "sha256",
 				Value:     "abc123",
 			},
 		},
 		{
 			name: "config not found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
@@ -744,7 +961,6 @@ func TestGetConfigByName(t *testing.T) {
 							{
 								Name:      "config1",
 								URL:       "https://example.com/config1.yaml",
-								Filename:  "config1.yaml",
 								Algorithm: "sha256",
 								Value:     "abc123",
 							},
@@ -758,7 +974,7 @@ func TestGetConfigByName(t *testing.T) {
 		},
 		{
 			name: "versionToBeInstalled not found",
-			item: SoftwareMetadata{
+			item: ArtifactMetadata{
 				Name: "test-software",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {
@@ -774,7 +990,8 @@ func TestGetConfigByName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.item.GetConfigByName(tt.version, tt.configName)
+			versionDetail := tt.item.Versions[Version(tt.version)]
+			result, err := versionDetail.GetConfigByName(tt.configName)
 
 			if tt.expectedErr {
 				assert.Error(t, err)
@@ -786,16 +1003,14 @@ func TestGetConfigByName(t *testing.T) {
 	}
 }
 
-func TestSoftwareCollection_GetSoftwareByName(t *testing.T) {
-	collection := &SoftwareCollection{
-		Software: []SoftwareMetadata{
+func Test_Config_SoftwareCollection_GetSoftwareByName(t *testing.T) {
+	collection := &ArtifactCollection{
+		Artifact: []ArtifactMetadata{
 			{
 				Name: "software1",
-				URL:  "https://example.com/software1.tar.gz",
 			},
 			{
 				Name: "software2",
-				URL:  "https://example.com/software2.tar.gz",
 			},
 		},
 	}
@@ -821,7 +1036,7 @@ func TestSoftwareCollection_GetSoftwareByName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := collection.GetSoftwareByName(tt.softwareName)
+			result, err := collection.GetArtifactByName(tt.softwareName)
 
 			if tt.expectedErr {
 				assert.Error(t, err)
@@ -835,7 +1050,7 @@ func TestSoftwareCollection_GetSoftwareByName(t *testing.T) {
 	}
 }
 
-func TestTemplateExecution(t *testing.T) {
+func Test_Config_TemplateExecution(t *testing.T) {
 	tests := []struct {
 		name         string
 		templateStr  string
@@ -880,32 +1095,14 @@ func TestTemplateExecution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// We need to test the internal executeTemplate function indirectly
-			// by testing methods that use it, since it's not exported
-			item := SoftwareMetadata{
-				Name:     "test-software",
-				URL:      tt.templateStr,
-				Filename: tt.templateStr,
-			}
+			// Test template execution directly
+			result, err := executeTemplate(tt.templateStr, tt.data)
 
-			// Test URL template execution
-			urlResult, urlErr := item.GetDownloadURL(tt.data.VERSION)
 			if tt.expectedErr {
-				assert.Error(t, urlErr)
+				assert.Error(t, err)
 			} else {
-				assert.NoError(t, urlErr)
-				// Since GetDownloadURL uses runtime.GOOS/GOARCH, we can't test exact match
-				// but we can verify the versionToBeInstalled is substituted correctly
-				assert.Contains(t, urlResult, tt.data.VERSION)
-			}
-
-			// Test filename template execution
-			filenameResult, filenameErr := item.GetFilename(tt.data.VERSION)
-			if tt.expectedErr {
-				assert.Error(t, filenameErr)
-			} else {
-				assert.NoError(t, filenameErr)
-				assert.Contains(t, filenameResult, tt.data.VERSION)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedText, result)
 			}
 		})
 	}

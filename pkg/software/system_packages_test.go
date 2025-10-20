@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/bluet/syspkg/manager"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/pkg/hardware"
 )
@@ -85,9 +84,8 @@ func testPackageInstallUninstall(t *testing.T, createPackage func() (Package, er
 	require.NoError(t, err, "failed to get package info")
 	require.Equal(t, expectedName, verifyInfo.Name, "package name mismatch in info")
 
-	// Test verification
-	err = pkg.Verify()
-	require.NoError(t, err, "package verification should pass after installation")
+	// Test IsInstalled()
+	require.True(t, pkg.IsInstalled(), "IsInstalled should return true after installation")
 
 	// Test uninstallation
 	info, err = pkg.Uninstall()
@@ -97,11 +95,8 @@ func testPackageInstallUninstall(t *testing.T, createPackage func() (Package, er
 	require.NotEqual(t, manager.PackageStatusInstalled, info.Status, "package status should be empty after uninstallation")
 	require.False(t, pkg.IsInstalled(), "package should not be installed after uninstallation")
 
-	// Test verification after uninstall
-	err = pkg.Verify()
-	require.Error(t, err, "package verification should fail after uninstallation")
-	// Check if it's an installation error when package is not installed
-	require.True(t, errorx.IsOfType(err, InstallationError), "Error should be of type InstallationError when package is not installed")
+	// Test IsInstalled() after uninstall
+	require.False(t, pkg.IsInstalled(), "IsInstalled should return false after uninstallation")
 }
 
 func TestIptablesInstallUninstall(t *testing.T) {
