@@ -21,7 +21,7 @@ type Software interface {
 	// including the binary, and configuration files
 	Download() error
 
-	// Extract unpacks the downloaded files
+	// Extract unpacks the downloaded files under a temporary subdirectory called 'unpack'
 	Extract() error
 
 	// Install places the files in the sandbox destination
@@ -42,4 +42,7 @@ type Software interface {
 
 	// Version returns the version of the software to be installed
 	Version() string
+
+	// Cleanup removes temporary files created during download and extraction
+	Cleanup() error
 }

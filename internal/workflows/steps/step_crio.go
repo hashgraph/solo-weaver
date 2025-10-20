@@ -40,6 +40,11 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+			err = installer.Cleanup()
+			if err != nil {
+				return automa.FailureReport(stp,
+					automa.WithError(err))
+			}
 
 			return automa.SuccessReport(stp)
 		}).

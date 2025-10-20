@@ -62,6 +62,17 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.True(t, exists, "10-kubeadm.conf should exist in sandbox kubelet service directory")
 
 	//
+	// When - Cleanup
+	//
+	err = installer.Cleanup()
+	require.NoError(t, err, "Failed to cleanup kubeadm installation")
+
+	// Check download folder is cleaned up
+	_, exists, err = fileManager.PathExists("/opt/provisioner/tmp/kubeadm")
+	require.NoError(t, err)
+	require.False(t, exists, "kubeadm download temp folder should be cleaned up after installation")
+
+	//
 	// When - Configure
 	//
 	err = installer.Configure()

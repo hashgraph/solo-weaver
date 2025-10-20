@@ -987,3 +987,16 @@ func (b *baseInstaller) cleanupSymlinks() error {
 
 	return nil
 }
+
+// Cleanup performs any necessary cleanup after installation
+func (b *baseInstaller) Cleanup() error {
+	downloadFolder := b.downloadFolder()
+
+	// Clean up download and extract folders if installation succeeded
+	err := b.fileManager.RemoveAll(downloadFolder)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to clean up download folder %s after installation", downloadFolder)
+	}
+
+	return nil
+}

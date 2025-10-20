@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
 func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
@@ -18,6 +19,9 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	//
 	installer, err := NewCrioInstaller()
 	require.NoError(t, err, "Failed to create cri-o installer")
+
+	fileManager, err := fsx.NewManager()
+	require.NoError(t, err)
 
 	//
 	// When - Download
@@ -53,4 +57,14 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	//
 	// TODO - Install and Configure still needs to be implemented based on the install script provided by cri-o
 
+	//
+	// When - Cleanup
+	//
+	err = installer.Cleanup()
+	require.NoError(t, err, "Failed to cleanup crio installation")
+
+	// Check download folder is cleaned up
+	_, exists, err := fileManager.PathExists("/opt/provisioner/tmp/cri-o")
+	require.NoError(t, err)
+	require.False(t, exists, "crio download temp folder should be cleaned up after installation")
 }
