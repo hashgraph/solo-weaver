@@ -62,6 +62,17 @@ func TestKubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	require.True(t, exists, "kubelet.service should exist in sandbox kubelet service directory")
 
 	//
+	// When - Cleanup
+	//
+	err = installer.Cleanup()
+	require.NoError(t, err, "Failed to cleanup kubelet installation")
+
+	// Check download folder is cleaned up
+	_, exists, err = fileManager.PathExists("/opt/provisioner/tmp/kubelet")
+	require.NoError(t, err)
+	require.False(t, exists, "kubelet download temp folder should be cleaned up after installation")
+
+	//
 	// When - Configure
 	//
 	err = installer.Configure()

@@ -159,7 +159,6 @@ artifact:
               algorithm: 'sha256'
               checksum: 'c7550b38b3b7c9df31f7052432b5eb45e0cfec7238310de0133789598c2449e4'
 
-
 - name: k9s
   versions:
     0.50.9:
@@ -183,3 +182,27 @@ artifact:
             arm64:
               algorithm: 'sha256'
               checksum: '26bcae69dd653838db00a0e777aa52e87877c325a06ad6f625857604c02e9efc'
+
+- name: cilium
+  versions:
+    0.18.7:
+      archives:
+        - name: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://github.com/cilium/cilium-cli/releases/download/v{{.VERSION}}/cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '7f5ff96f1793ee389ef77435a72debf122f5ec253d41418fca99d2c21472016a' # from https://github.com/cilium/cilium-cli/releases/download/v0.18.7/cilium-linux-amd64.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'dbaa2ab4b1969f4402adf430d6a1bd914c5ab52475ec68f50b3af6fa7fe2fecc' # from https://github.com/cilium/cilium-cli/releases/download/v0.18.7/cilium-linux-arm64.tar.gz.sha256sum
+      binaries:
+        - name: 'cilium'
+          archive: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'd107d46fd1fd6ebf0a8903be0373aa8f052e82be47ab0cf36a2c588b1cde0883'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'

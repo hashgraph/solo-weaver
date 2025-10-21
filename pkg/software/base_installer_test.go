@@ -515,6 +515,42 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					require.NoError(t, err, "IsConfigured should not error after configuration")
 					require.True(t, isConfigured, "IsConfigured should return true after Configure() for scenario: %s", scenario.Description)
 				})
+
+				// Test Cleanup
+				t.Run("Cleanup", func(t *testing.T) {
+					resetTestEnvironment(t)
+					installer := newTestInstallerWithScenario(t, scenario)
+
+					// Download and extract first
+					err := installer.Download()
+					require.NoError(t, err, "Download should succeed")
+
+					if len(scenario.Archives) > 0 {
+						err = installer.Extract()
+						require.NoError(t, err, "Extract should succeed")
+					}
+
+					// Install binaries if they exist
+					if len(scenario.Binaries) > 0 {
+						err = installer.Install()
+						require.NoError(t, err, "Install should succeed")
+
+						// Now verify installation
+						isInstalled, err := installer.IsInstalled()
+						require.NoError(t, err, "IsInstalled should not error after installation")
+						require.True(t, isInstalled, "IsInstalled should return true after installation for scenario: %s", scenario.Description)
+					}
+
+					// Then cleanup
+					err = installer.Cleanup()
+					require.NoError(t, err, "Cleanup should succeed for scenario: %s", scenario.Description)
+
+					// Verify files under download folder were removed
+					downloadFolder := installer.downloadFolder()
+					_, err = os.Stat(downloadFolder)
+					require.True(t, os.IsNotExist(err), "Download folder should be removed after installation")
+				})
+
 			}
 		})
 	}

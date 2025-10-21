@@ -4,19 +4,29 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
-func SetupHelm() automa.Builder {
-
-	return automa.NewWorkflowBuilder().WithId("setup-helm").Steps(
-		installHelm(software.NewHelmInstaller),
-		configureHelm(software.NewHelmInstaller),
-	)
+func SetupCiliumCLI() automa.Builder {
+	return automa.NewWorkflowBuilder().WithId("setup-cilium-cli").Steps(
+		installCiliumCLI(software.NewCiliumInstaller),
+		configureCiliumCLI(software.NewCiliumInstaller),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up Cilium CLI")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Cilium CLI")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI setup successfully")
+		})
 }
 
-func installHelm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId("install-helm").
+func installCiliumCLI(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId("install-cilium-cli").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
 			if err != nil {
@@ -52,8 +62,8 @@ func installHelm(provider func(opts ...software.InstallerOption) (software.Softw
 		})
 }
 
-func configureHelm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId("configure-helm").
+func configureCiliumCLI(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId("configure-cilium-cli").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
 			if err != nil {

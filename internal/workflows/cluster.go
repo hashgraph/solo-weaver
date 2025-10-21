@@ -36,6 +36,9 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			// init cluster
 			steps.InitCluster(),
 
+			// cilium CLI
+			steps.SetupCiliumCLI(),
+
 			// cilium CNI
 			steps.SetupCiliumCNI(),          // still using bash steps
 			steps.EnableAndStartCiliumCNI(), // still using bash steps

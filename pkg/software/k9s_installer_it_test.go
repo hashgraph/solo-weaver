@@ -69,6 +69,17 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	require.Equal(t, os.FileMode(0755), info.Mode().Perm(), "k9s binary should have 0755 permissions")
 
 	//
+	// When - Cleanup
+	//
+	err = installer.Cleanup()
+	require.NoError(t, err, "Failed to cleanup k9s installation")
+
+	// Check download folder is cleaned up
+	_, exists, err = fileManager.PathExists("/opt/provisioner/tmp/k9s")
+	require.NoError(t, err)
+	require.False(t, exists, "k9s download temp folder should be cleaned up after installation")
+
+	//
 	// When - Configure
 	//
 	err = installer.Configure()

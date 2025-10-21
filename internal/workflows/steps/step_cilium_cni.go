@@ -8,9 +8,7 @@ import (
 )
 
 func SetupCiliumCNI() automa.Builder {
-	return automa.NewWorkflowBuilder().WithId("setup-cilium").Steps(
-		bashSteps.DownloadCiliumCli(),
-		bashSteps.InstallCiliumCli(),
+	return automa.NewWorkflowBuilder().WithId("setup-cilium-cni").Steps(
 		bashSteps.ConfigureCiliumCNI(),
 		bashSteps.InstallCiliumCNI(),
 	).
