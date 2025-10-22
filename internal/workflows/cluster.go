@@ -19,7 +19,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 
 			// kubelet
 			steps.SetupKubelet(),
-			steps.EnableAndStartKubelet(), // still using bash steps
+			steps.SetupSystemdService("kubelet"),
 
 			// setup cli tools
 			steps.SetupKubectl(),
@@ -27,8 +27,8 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.SetupK9s(),
 
 			// CRI-O
-			steps.SetupCrio2(),          // still using bash steps
-			steps.EnableAndStartCrio2(), // still using bash steps
+			steps.SetupCrio2(), // still using bash steps
+			steps.SetupSystemdService("crio"),
 
 			// kubeadm
 			steps.SetupKubeadm(),

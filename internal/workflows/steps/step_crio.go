@@ -12,7 +12,6 @@ func SetupCrio() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId("setup-crio").Steps(
 		installCrio(software.NewCrioInstaller),
 		configureCrio(software.NewCrioInstaller),
-		enableAndStartCrio(software.NewCrioInstaller),
 	)
 }
 
@@ -55,25 +54,6 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 
 func configureCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-crio").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
-			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
-			}
-
-			err = installer.Configure()
-			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
-			}
-
-			return automa.SuccessReport(stp)
-		})
-}
-
-func enableAndStartCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId("start-crio").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
 			if err != nil {
