@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
-	"golang.hedera.com/solo-provisioner/pkg/systemd"
-
 	"github.com/automa-saga/automa"
+	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-provisioner/pkg/os"
 )
 
 // SetupSystemdService enables and starts a systemd service by name
@@ -28,19 +27,19 @@ func SetupSystemdService(serviceName string) automa.Builder {
 			notify.As().StepCompletion(ctx, stp, rpt, fmt.Sprintf("%s enabled and started successfully", serviceName))
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			err := systemd.DaemonReload(ctx)
+			err := os.DaemonReload(ctx)
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
 
-			err = systemd.EnableService(ctx, serviceName)
+			err = os.EnableService(ctx, serviceName)
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
 
-			err = systemd.StartService(ctx, serviceName)
+			err = os.StartService(ctx, serviceName)
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

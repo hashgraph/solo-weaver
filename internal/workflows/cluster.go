@@ -3,6 +3,7 @@ package workflows
 import (
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
+	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
 func NewSetupClusterWorkflow(nodeType string) automa.Builder {
@@ -19,7 +20,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 
 			// kubelet
 			steps.SetupKubelet(),
-			steps.SetupSystemdService("kubelet"),
+			steps.SetupSystemdService(software.KubeletServiceName),
 
 			// setup cli tools
 			steps.SetupKubectl(),
@@ -28,7 +29,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 
 			// CRI-O
 			steps.SetupCrio2(), // still using bash steps
-			steps.SetupSystemdService("crio"),
+			steps.SetupSystemdService(software.CrioServiceName),
 
 			// kubeadm
 			steps.SetupKubeadm(),

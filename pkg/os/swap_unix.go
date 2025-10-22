@@ -4,13 +4,17 @@ package os
 
 import (
 	"bufio"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
+	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/joomcode/errorx"
 	"golang.org/x/sys/unix"
 )
@@ -366,7 +370,7 @@ func commentOutSwapLine(line string) string {
 
 func uncommentSwapLine(line string) string {
 	if strings.HasPrefix(line, SwapCommentPrefix) {
-		uncommented := strings.TrimLeft(line, SwapCommentPrefix)
+		uncommented := strings.TrimSpace(strings.TrimLeft(line, SwapCommentPrefix))
 		if isSwapEntry(uncommented) {
 			return uncommented
 		}
@@ -374,28 +378,185 @@ func uncommentSwapLine(line string) string {
 	return line
 }
 
-// DisableSwap comments out any swap entries in /etc/fstab to disable swap on reboot
-// It finds lines in /etc/fstab containing the word "swap" and comments them out by prefixing with #
-// It then calls SwapOffAll to immediately disable any active swap
-// On error, it returns a wrapped errorx error with details.
-func DisableSwap() error {
-	if err := SwapOffAll(); err != nil {
-		return err
+// getActiveSwapUnits queries systemd for all active swap units and returns their names.
+// It returns a slice of unit names (e.g., "dev-disk-by\\x2ddiskseq-1\\x2dpart4.swap")
+func getActiveSwapUnits(ctx context.Context) ([]string, error) {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return nil, ErrSystemdOperation.Wrap(err, "failed to connect to systemd")
+	}
+	defer conn.Close()
+
+	// List all units of type swap
+	units, err := conn.ListUnitsByPatternsContext(ctx, []string{"active"}, []string{"*.swap"})
+	if err != nil {
+		return nil, ErrSystemdOperation.Wrap(err, "failed to list swap units")
 	}
 
-	return updateFstabFile(commentOutSwapLine)
+	var swapUnits []string
+	for _, unit := range units {
+		swapUnits = append(swapUnits, unit.Name)
+	}
+
+	return swapUnits, nil
 }
 
-// EnableSwap uncomments any swap entries in /etc/fstab to enable swap on reboot
-// It finds lines in /etc/fstab that are commented out and contain the word "swap" and uncomments them by removing the leading #
-// It then calls SwapOnAll to immediately enable any swap entries found in /etc/fstab
-// On error, it returns a wrapped errorx error with details.
-func EnableSwap() error {
-	err := updateFstabFile(uncommentSwapLine)
-
+// maskSystemdSwapUnits masks all active systemd swap units to prevent auto-activation.
+// This is necessary because systemd can auto-generate swap units for partitions with
+// swap signatures, even if they're not listed in /etc/fstab.
+func maskSystemdSwapUnits(ctx context.Context) error {
+	// Get all active swap units from systemd
+	swapUnits, err := getActiveSwapUnits(ctx)
 	if err != nil {
 		return err
 	}
 
-	return SwapOnAll()
+	if len(swapUnits) == 0 {
+		return nil
+	}
+
+	// Collect errors that occur during masking
+	var maskErrors []string
+
+	// Mask each swap unit
+	for _, unitName := range swapUnits {
+		err = MaskUnit(ctx, unitName)
+		if err != nil {
+			// Check if this is a genuine error or just "already masked"
+			// systemd returns "Unit file is masked" error when trying to mask an already masked unit
+			if strings.Contains(err.Error(), "masked") || strings.Contains(err.Error(), "File exists") {
+				// Unit is already masked, safe to ignore
+				continue
+			}
+
+			// This is a real error (permission issue, systemd connection failure, etc.)
+			// Collect it but continue trying to mask other units
+			maskErrors = append(maskErrors, fmt.Sprintf("%s: %v", unitName, err))
+		}
+	}
+
+	// If we encountered any serious errors, return them
+	if len(maskErrors) > 0 {
+		return ErrSystemdOperation.New("failed to mask some swap units: %s", strings.Join(maskErrors, "; "))
+	}
+
+	return nil
+}
+
+// unmaskSystemdSwapUnits unmasks systemd swap units for devices listed in /etc/fstab.
+// This allows systemd to manage these swap units normally after EnableSwap is called.
+func unmaskSystemdSwapUnits(ctx context.Context) error {
+	// Get all swap units (both active and inactive) from systemd
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to connect to systemd")
+	}
+	defer conn.Close()
+
+	// List all swap units, not just active ones
+	units, err := conn.ListUnitsByPatternsContext(ctx, []string{}, []string{"*.swap"})
+	if err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to list swap units")
+	}
+
+	if len(units) == 0 {
+		return nil
+	}
+
+	// Collect errors that occur during unmasking
+	var unmaskErrors []string
+
+	// Unmask each swap unit
+	for _, unit := range units {
+		err = UnmaskUnit(ctx, unit.Name)
+		if err != nil {
+			// Check if this is a genuine error or just "not masked"
+			// systemd returns error when trying to unmask a unit that isn't masked
+			if strings.Contains(err.Error(), "not masked") || strings.Contains(err.Error(), "No such file") {
+				// Unit is not masked, safe to ignore
+				continue
+			}
+
+			// This is a real error (permission issue, systemd connection failure, etc.)
+			// Collect it but continue trying to unmask other units
+			unmaskErrors = append(unmaskErrors, fmt.Sprintf("%s: %v", unit.Name, err))
+		}
+	}
+
+	// If we encountered any serious errors, return them
+	if len(unmaskErrors) > 0 {
+		return ErrSystemdOperation.New("failed to unmask some swap units: %s", strings.Join(unmaskErrors, "; "))
+	}
+
+	return nil
+}
+
+// DisableSwap disables swap completely on the system.
+// It performs the following steps:
+// 1. Masks systemd swap units to prevent auto-activation
+// 2. Turns off all active swap (swapoff -a)
+// 3. Comments out swap entries in /etc/fstab to prevent reactivation on boot
+// 4. Reloads systemd daemon
+//
+// This ensures swap stays disabled even on systemd-based systems that auto-detect
+// swap partitions by their filesystem signature.
+func DisableSwap() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Step 1: Mask systemd swap units to prevent auto-activation
+	// This prevents systemd from reactivating swap partitions it detects
+	if err := maskSystemdSwapUnits(ctx); err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to mask systemd swap units")
+	}
+
+	// Step 2: Turn off all active swap
+	if err := SwapOffAll(); err != nil {
+		return err
+	}
+
+	// Step 3: Comment out swap entries in /etc/fstab
+	if err := updateFstabFile(commentOutSwapLine); err != nil {
+		return err
+	}
+
+	// Step 4: Reload systemd to pick up changes
+	if err := DaemonReload(ctx); err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to reload systemd daemon")
+	}
+
+	return nil
+}
+
+// EnableSwap re-enables swap on the system.
+// It performs the following steps:
+// 1. Uncomments swap entries in /etc/fstab
+// 2. Unmasks systemd swap units to allow auto-activation
+// 3. Reloads systemd daemon
+// 4. Activates all swap entries from /etc/fstab (swapon -a)
+func EnableSwap() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Step 1: Uncomment swap entries in /etc/fstab
+	if err := updateFstabFile(uncommentSwapLine); err != nil {
+		return err
+	}
+
+	// Step 2: Unmask systemd swap units
+	if err := unmaskSystemdSwapUnits(ctx); err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to unmask systemd swap units")
+	}
+
+	// Step 3: Reload systemd to pick up changes
+	if err := DaemonReload(ctx); err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to reload systemd daemon")
+	}
+
+	// Step 4: Activate all swap from /etc/fstab
+	if err := SwapOnAll(); err != nil {
+		return err
+	}
+
+	return nil
 }

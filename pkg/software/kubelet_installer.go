@@ -7,6 +7,8 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
+const KubeletServiceName = "kubelet"
+
 type kubeletInstaller struct {
 	*baseInstaller
 }

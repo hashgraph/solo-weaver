@@ -14,20 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func sudo(cmd *exec.Cmd) *exec.Cmd {
-	if os.Geteuid() == 0 {
-		return cmd
-	}
-
-	// Prepend sudo to the command
-	sudoCmd := exec.Command("sudo", append([]string{cmd.Path}, cmd.Args[1:]...)...)
-	sudoCmd.Stdout = cmd.Stdout
-	sudoCmd.Stderr = cmd.Stderr
-	sudoCmd.Stdin = cmd.Stdin
-	return sudoCmd
-}
-
-func TestParseProcSwaps_Normal(t *testing.T) {
+func Test_Swap_ParseProcSwaps_Normal(t *testing.T) {
 	tmp, err := os.CreateTemp("", "swaps")
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +44,7 @@ func TestParseProcSwaps_Normal(t *testing.T) {
 	}
 }
 
-func TestParseProcSwaps_EmptyFile(t *testing.T) {
+func Test_Swap_ParseProcSwaps_EmptyFile(t *testing.T) {
 	tmp, err := os.CreateTemp("", "swaps")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +69,7 @@ func TestParseProcSwaps_EmptyFile(t *testing.T) {
 	}
 }
 
-func TestParseProcSwaps_FileNotFound(t *testing.T) {
+func Test_Swap_ParseProcSwaps_FileNotFound(t *testing.T) {
 	swapsFileOrig := swapsFile
 	defer func() { swapsFile = swapsFileOrig }()
 	swapsFile = "/tmp/nonexistent_swaps_file"
@@ -93,7 +80,7 @@ func TestParseProcSwaps_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestParseFstabSwaps_Normal(t *testing.T) {
+func Test_Swap_ParseFstabSwaps_Normal(t *testing.T) {
 	f := makeTestSwapFile(t)
 	defer func() {
 		_ = os.Remove(f.Name())
@@ -134,7 +121,7 @@ func TestParseFstabSwaps_Normal(t *testing.T) {
 	}
 }
 
-func TestParseFstabSwaps_EmptyFile(t *testing.T) {
+func Test_Swap_ParseFstabSwaps_EmptyFile(t *testing.T) {
 	tmp, err := os.CreateTemp("", "fstab")
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +146,7 @@ func TestParseFstabSwaps_EmptyFile(t *testing.T) {
 	}
 }
 
-func TestParseFstabSwaps_FileNotFound(t *testing.T) {
+func Test_Swap_ParseFstabSwaps_FileNotFound(t *testing.T) {
 	fstabFileOrig := fstabFile
 	defer func() { fstabFile = fstabFileOrig }()
 	fstabFile = "/tmp/nonexistent_fstab_file"
@@ -173,7 +160,7 @@ func TestParseFstabSwaps_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestParseFstabSwaps_CommentAndShortLines(t *testing.T) {
+func Test_Swap_ParseFstabSwaps_CommentAndShortLines(t *testing.T) {
 	tmp, err := os.CreateTemp("", "fstab")
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +194,7 @@ not-enough-fields
 	}
 }
 
-func TestIsActiveSwap(t *testing.T) {
+func Test_Swap_IsActiveSwap(t *testing.T) {
 	tests := []struct {
 		spec        string
 		activeSwaps []string
@@ -228,7 +215,7 @@ func TestIsActiveSwap(t *testing.T) {
 	}
 }
 
-func TestHandleSyscallErr(t *testing.T) {
+func Test_Swap_HandleSyscallErr(t *testing.T) {
 	tests := []struct {
 		name         string
 		inputErr     error
@@ -298,29 +285,7 @@ func TestHandleSyscallErr(t *testing.T) {
 	}
 }
 
-func makeTestSwapFile(t *testing.T) *os.File {
-	h, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	// swapfile needs to be in ext4 or swapoff fails with "swapoff: /path: Invalid argument"
-	f, err := os.CreateTemp(h, "swap-test-")
-	require.NoError(t, err)
-
-	swapFile := f.Name()
-
-	out, err := exec.Command("dd", "if=/dev/zero", "of="+swapFile, "bs=1M", "count=16").CombinedOutput()
-	require.NoError(t, err, "dd failed: %s", out)
-
-	err = exec.Command("chmod", "0600", swapFile).Run()
-	require.NoError(t, err, "chmod failed")
-
-	out, err = exec.Command("/usr/sbin/mkswap", swapFile).CombinedOutput()
-	require.NoError(t, err, "mkswap failed: %s", out)
-
-	return f
-}
-
-func TestUpdateFstabFile(t *testing.T) {
+func Test_Swap_UpdateFstabFile(t *testing.T) {
 	// make a temp fstab file for testing
 	fstabFileOrig := fstabFile
 	defer func() {
@@ -418,4 +383,172 @@ func TestUpdateFstabFile(t *testing.T) {
 			require.Equal(t, tc.expected, lines)
 		})
 	}
+}
+
+func Test_Swap_CommentOutSwapLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid swap line",
+			input:    "/dev/vda4 none swap sw 0 0",
+			expected: "#/dev/vda4 none swap sw 0 0",
+		},
+		{
+			name:     "already commented",
+			input:    "#/dev/vda4 none swap sw 0 0",
+			expected: "#/dev/vda4 none swap sw 0 0",
+		},
+		{
+			name:     "non-swap line",
+			input:    "/dev/vda1 / ext4 defaults 0 0",
+			expected: "/dev/vda1 / ext4 defaults 0 0",
+		},
+		{
+			name:     "comment line",
+			input:    "# this is a comment",
+			expected: "# this is a comment",
+		},
+		{
+			name:     "swap with UUID",
+			input:    "UUID=12345 none swap sw 0 0",
+			expected: "#UUID=12345 none swap sw 0 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := commentOutSwapLine(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func Test_Swap_UncommentSwapLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "commented swap line",
+			input:    "#/dev/vda4 none swap sw 0 0",
+			expected: "/dev/vda4 none swap sw 0 0",
+		},
+		{
+			name:     "not commented",
+			input:    "/dev/vda4 none swap sw 0 0",
+			expected: "/dev/vda4 none swap sw 0 0",
+		},
+		{
+			name:     "commented non-swap line",
+			input:    "#/dev/vda1 / ext4 defaults 0 0",
+			expected: "#/dev/vda1 / ext4 defaults 0 0",
+		},
+		{
+			name:     "multiple hash signs",
+			input:    "##/dev/vda4 none swap sw 0 0",
+			expected: "/dev/vda4 none swap sw 0 0",
+		},
+		{
+			name:     "commented swap with spaces",
+			input:    "# /dev/vda4 none swap sw 0 0",
+			expected: "/dev/vda4 none swap sw 0 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := uncommentSwapLine(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func Test_Swap_IsSwapEntry(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected bool
+	}{
+		{
+			name:     "valid swap entry",
+			line:     "/dev/vda4 none swap sw 0 0",
+			expected: true,
+		},
+		{
+			name:     "valid swap with UUID",
+			line:     "UUID=12345 none swap sw 0 0",
+			expected: true,
+		},
+		{
+			name:     "ext4 filesystem",
+			line:     "/dev/vda1 / ext4 defaults 0 0",
+			expected: false,
+		},
+		{
+			name:     "comment",
+			line:     "# this is a comment",
+			expected: false,
+		},
+		{
+			name:     "empty line",
+			line:     "",
+			expected: false,
+		},
+		{
+			name:     "too few fields",
+			line:     "/dev/vda4 none",
+			expected: false,
+		},
+		{
+			name:     "swap with extra options",
+			line:     "/dev/vda4 none swap sw,pri=10 0 0",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSwapEntry(tt.line)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func sudo(cmd *exec.Cmd) *exec.Cmd {
+	if os.Geteuid() == 0 {
+		return cmd
+	}
+
+	// Prepend sudo to the command
+	sudoCmd := exec.Command("sudo", append([]string{cmd.Path}, cmd.Args[1:]...)...)
+	sudoCmd.Stdout = cmd.Stdout
+	sudoCmd.Stderr = cmd.Stderr
+	sudoCmd.Stdin = cmd.Stdin
+	return sudoCmd
+}
+
+func makeTestSwapFile(t *testing.T) *os.File {
+	h, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	// swapfile needs to be in ext4 or swapoff fails with "swapoff: /path: Invalid argument"
+	f, err := os.CreateTemp(h, "swap-test-")
+	require.NoError(t, err)
+
+	swapFile := f.Name()
+
+	out, err := exec.Command("dd", "if=/dev/zero", "of="+swapFile, "bs=1M", "count=16").CombinedOutput()
+	require.NoError(t, err, "dd failed: %s", out)
+
+	err = exec.Command("chmod", "0600", swapFile).Run()
+	require.NoError(t, err, "chmod failed")
+
+	out, err = exec.Command("/usr/sbin/mkswap", swapFile).CombinedOutput()
+	require.NoError(t, err, "mkswap failed: %s", out)
+
+	return f
 }
