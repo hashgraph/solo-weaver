@@ -1,6 +1,6 @@
 //go:build integration
 
-package systemd
+package os
 
 import (
 	"context"

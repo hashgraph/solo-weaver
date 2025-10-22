@@ -26,20 +26,6 @@ func SetupKubelet() automa.Builder {
 		})
 }
 
-func EnableAndStartKubelet() automa.Builder {
-	return bashSteps.EnableAndStartKubelet().
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Enabling and starting kubelet")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to enable and start kubelet")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubelet enabled and started successfully")
-		})
-}
-
 func installKubelet(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubelet").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
