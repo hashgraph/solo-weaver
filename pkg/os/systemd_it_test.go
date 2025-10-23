@@ -11,6 +11,7 @@ import (
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
 // Helper function to check if a unit is active
@@ -174,13 +175,13 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(unitFile, []byte(unitContent), 0644)
+	err := os.WriteFile(unitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Copy to systemd directory
 	systemdDir := "/etc/systemd/system"
 	systemdUnitFile := filepath.Join(systemdDir, "test-systemd-integration.service")
-	err = os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err = os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -258,7 +259,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err := os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -316,7 +317,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err := os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -388,7 +389,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err := os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -433,7 +434,7 @@ func Test_Systemd_ServiceInUsrLib_Integration(t *testing.T) {
 	usrLibDir := "/usr/lib/systemd/system"
 
 	// Ensure the directory exists
-	err := os.MkdirAll(usrLibDir, 0755)
+	err := os.MkdirAll(usrLibDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	systemdUnitFile := filepath.Join(usrLibDir, "test-systemd-usrlib.service")
@@ -449,7 +450,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err = os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err = os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -517,7 +518,7 @@ func Test_Systemd_ServiceInUsrLib_WithoutSuffix_Integration(t *testing.T) {
 	usrLibDir := "/usr/lib/systemd/system"
 
 	// Ensure the directory exists
-	err := os.MkdirAll(usrLibDir, 0755)
+	err := os.MkdirAll(usrLibDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	systemdUnitFile := filepath.Join(usrLibDir, "test-systemd-usrlib-nosuffix.service")
@@ -533,7 +534,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err = os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err = os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -662,7 +663,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err := os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 
@@ -726,7 +727,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(systemdUnitFile, []byte(unitContent), 0644)
+	err := os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 	defer os.Remove(systemdUnitFile)
 

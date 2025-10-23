@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
 func Test_SetupBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T) {
@@ -33,17 +34,17 @@ func Test_SetupBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create fstab file
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create sandbox directory
 	sourceDir := filepath.Join(tempDir, "source")
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create target parent directory
 	parentTargetDir := filepath.Join(tempDir, "target")
-	err = os.MkdirAll(parentTargetDir, 0755)
+	err = os.MkdirAll(parentTargetDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create BindMounts
@@ -55,16 +56,16 @@ func Test_SetupBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T) {
 
 	// Create source directories
 	for _, mount := range bindMounts {
-		err := os.MkdirAll(mount.Source, 0755)
+		err := os.MkdirAll(mount.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
 	// Create sample files in source directories
-	err = os.WriteFile(path.Join(bindMounts[0].Source, "kube_file.txt"), []byte("kubernetes data"), 0644)
+	err = os.WriteFile(path.Join(bindMounts[0].Source, "kube_file.txt"), []byte("kubernetes data"), core.DefaultFilePerm)
 	require.NoError(t, err)
-	err = os.WriteFile(path.Join(bindMounts[1].Source, "kubelet_file.txt"), []byte("kubelet data"), 0644)
+	err = os.WriteFile(path.Join(bindMounts[1].Source, "kubelet_file.txt"), []byte("kubelet data"), core.DefaultFilePerm)
 	require.NoError(t, err)
-	err = os.WriteFile(path.Join(bindMounts[2].Source, "cilium_file.txt"), []byte("cilium data"), 0644)
+	err = os.WriteFile(path.Join(bindMounts[2].Source, "cilium_file.txt"), []byte("cilium data"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Cleanup: unmount after test
@@ -183,19 +184,19 @@ func Test_RollbackBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T)
 	fstabFile = testFstab
 
 	// Create fstab file
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create source and target directories
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create a sample file in source
 	testFile := filepath.Join(sourceDir, "test_file.txt")
-	err = os.WriteFile(testFile, []byte("test data"), 0644)
+	err = os.WriteFile(testFile, []byte("test data"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -267,14 +268,14 @@ func Test_RollbackBindMountsWithFstab_Idempotent_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create fstab file
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create source and target directories
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -320,7 +321,7 @@ func Test_SetupAndRollback_MultipleMounts_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create fstab file
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create multiple bind mounts
@@ -332,7 +333,7 @@ func Test_SetupAndRollback_MultipleMounts_Integration(t *testing.T) {
 
 	// Create source directories
 	for _, mount := range mounts {
-		err = os.MkdirAll(mount.Source, 0755)
+		err = os.MkdirAll(mount.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -402,16 +403,16 @@ func Test_IsBindMountedWithFstab_NotMountedNoFstab_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create empty fstab
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create source and target directories
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(targetDir, 0755)
+	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -442,14 +443,14 @@ func Test_IsBindMountedWithFstab_MountedWithFstab_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create empty fstab
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create source and target directories
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -489,16 +490,16 @@ func Test_IsBindMountedWithFstab_MountedWithoutFstab_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create empty fstab
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create source and target directories
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(targetDir, 0755)
+	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -541,9 +542,9 @@ func Test_IsBindMountedWithFstab_NotMountedButInFstab_Integration(t *testing.T) 
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err := os.MkdirAll(sourceDir, 0755)
+	err := os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(targetDir, 0755)
+	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -560,7 +561,7 @@ func Test_IsBindMountedWithFstab_NotMountedButInFstab_Integration(t *testing.T) 
 		dump:    "0",
 		pass:    "0",
 	}
-	err = os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err = os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 	err = addFstabEntry(entry)
 	require.NoError(t, err)
@@ -588,14 +589,14 @@ func Test_IsBindMountedWithFstab_AfterUnmount_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create empty fstab
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create source and target directories
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err = os.MkdirAll(sourceDir, 0755)
+	err = os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -645,7 +646,7 @@ func Test_IsBindMountedWithFstab_MultipleBindMounts_Integration(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create empty fstab
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), 0644)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Create multiple bind mounts
@@ -664,7 +665,7 @@ func Test_IsBindMountedWithFstab_MultipleBindMounts_Integration(t *testing.T) {
 
 	// Create all source directories
 	for _, m := range []BindMount{mount1, mount2, mount3} {
-		err := os.MkdirAll(m.Source, 0755)
+		err := os.MkdirAll(m.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -675,7 +676,7 @@ func Test_IsBindMountedWithFstab_MultipleBindMounts_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Setup third mount only in fstab (no actual mount)
-	err = os.MkdirAll(mount3.Target, 0755)
+	err = os.MkdirAll(mount3.Target, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 	entry3 := fstabEntry{
 		source:  mount3.Source,

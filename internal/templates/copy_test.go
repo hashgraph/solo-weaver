@@ -16,7 +16,7 @@ func TestCopyConfigurationFiles(t *testing.T) {
 		_ = os.RemoveAll(tmpDir)
 	}()
 
-	err := os.MkdirAll(destDir, core.DefaultFilePerm)
+	err := os.MkdirAll(destDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	srcDir := "files/sysctl" // Ensure this points to the correct embedded files location

@@ -44,7 +44,7 @@ func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err, "Failed to create source directory %s", bm.Source)
 	}
 
@@ -120,7 +120,7 @@ func Test_SetupBindMounts_AlreadySetup_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -192,7 +192,7 @@ func Test_SetupBindMounts_PartiallySetup_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -265,7 +265,7 @@ func Test_SetupBindMounts_Rollback_Fresh_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -333,7 +333,7 @@ func Test_SetupBindMounts_Rollback_PreExisting_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -413,7 +413,7 @@ func Test_SetupBindMounts_Rollback_Mixed_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -488,7 +488,7 @@ func Test_SetupBindMounts_RollbackOnFailure_Integration(t *testing.T) {
 
 	// Ensure source directories exist for valid mounts
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -554,10 +554,10 @@ func Test_SetupBindMounts_RollbackIdempotent_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, 0755)
+		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
-	
+
 	// Execute workflow
 	workflow, err := SetupBindMounts().Build()
 	require.NoError(t, err)

@@ -37,7 +37,7 @@ func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}
 
-				err = mg.WritePermissions(dir, core.DefaultFilePerm, true)
+				err = mg.WritePermissions(dir, core.DefaultDirOrExecPerm, true)
 				if err != nil {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}

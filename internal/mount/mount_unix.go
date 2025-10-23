@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/joomcode/errorx"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	os2 "golang.hedera.com/solo-provisioner/pkg/os"
 	"golang.org/x/sys/unix"
 )
@@ -147,7 +148,7 @@ func setupBindMount(mount BindMount) error {
 	}
 
 	// Create target directory if it doesn't exist
-	if err := os.MkdirAll(mount.Target, 0755); err != nil {
+	if err := os.MkdirAll(mount.Target, core.DefaultDirOrExecPerm); err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to create directory %s", mount.Target)
 	}
 
@@ -301,7 +302,7 @@ func readFstab(fstabPath string) ([]*fstabEntry, []string, error) {
 func writeFstab(fstabPath string, lines []string) error {
 	// Get original file info for permissions
 	info, err := os.Stat(fstabPath)
-	var mode os.FileMode = 0644
+	var mode os.FileMode = core.DefaultFilePerm
 	if err == nil {
 		mode = info.Mode()
 	}

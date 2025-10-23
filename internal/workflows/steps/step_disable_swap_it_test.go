@@ -11,6 +11,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	osx "golang.hedera.com/solo-provisioner/pkg/os"
 )
 
@@ -25,7 +26,7 @@ func TestDisableSwap_Integration(t *testing.T) {
 	backupFstab, err := os.ReadFile(osx.FSTAB_LOCATION)
 	require.NoError(t, err)
 	defer func() {
-		err = os.WriteFile(osx.FSTAB_LOCATION, backupFstab, 0644)
+		err = os.WriteFile(osx.FSTAB_LOCATION, backupFstab, core.DefaultFilePerm)
 		require.NoError(t, err)
 		err = sudo(exec.Command("/usr/sbin/swapon", "-a")).Run()
 		require.NoError(t, err)

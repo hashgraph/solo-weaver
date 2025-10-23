@@ -49,12 +49,12 @@ func BackupSettings(backupFile string) (string, error) {
 		}
 	}
 
-	err = os.MkdirAll(path.Dir(backupFile), core.DefaultFilePerm)
+	err = os.MkdirAll(path.Dir(backupFile), core.DefaultDirOrExecPerm)
 	if err != nil {
 		return "", err
 	}
 
-	err = os.WriteFile(backupFile, []byte(strings.Join(lines, "\n")), 0644)
+	err = os.WriteFile(backupFile, []byte(strings.Join(lines, "\n")), core.DefaultFilePerm)
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +87,7 @@ func LoadAllConfiguration() ([]string, error) {
 func DesiredCandidateSettings() (map[string]string, error) {
 	// now load the settings from the template files and only keep a backup of those settings
 	tempDir := path.Join(core.Paths().TempDir, "templates", "sysctl")
-	err := os.MkdirAll(tempDir, core.DefaultFilePerm)
+	err := os.MkdirAll(tempDir, core.DefaultDirOrExecPerm)
 	if err != nil {
 		return nil, err
 	}

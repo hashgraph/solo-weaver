@@ -3,11 +3,6 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"github.com/automa-saga/logx"
-	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/config"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/version"
 	"log"
 	"os"
 	"path"
@@ -15,6 +10,12 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"time"
+
+	"github.com/automa-saga/logx"
+	"github.com/joomcode/errorx"
+	"golang.hedera.com/solo-provisioner/internal/config"
+	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/internal/version"
 )
 
 type ErrorDiagnosis struct {
@@ -77,7 +78,7 @@ func takeProfilingSnapshots(ex error) map[string]string {
 	timestamp := time.Now().Format("20060102-150405")
 
 	snapshotDir := path.Join(core.Paths().DiagnosticsDir, timestamp)
-	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+	if err := os.MkdirAll(snapshotDir, core.DefaultDirOrExecPerm); err != nil {
 		log.Printf("failed to create logs directory: %v", err)
 		return nil
 	}

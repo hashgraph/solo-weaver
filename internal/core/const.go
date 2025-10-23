@@ -7,7 +7,9 @@ import (
 )
 
 const (
-	DefaultFilePerm         = 0755
+	DefaultDirOrExecPerm = 0755 // for directories and executable files
+	DefaultFilePerm      = 0644 // for regular data/config files
+
 	DefaultProvisionerHome  = "/opt/provisioner"
 	DefaultUnpackFolderName = "unpack"
 	SystemBinDir            = "/usr/local/bin"

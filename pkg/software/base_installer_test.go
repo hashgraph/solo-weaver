@@ -664,9 +664,9 @@ func Test_BaseInstaller_Download_PermissionError(t *testing.T) {
 	// Create a regular file where the directory should be created
 	// This will cause MkdirAll to fail with permission/file exists error
 	conflictingFile := tmpFolder
-	err := os.MkdirAll("/opt/provisioner", core.DefaultFilePerm)
+	err := os.MkdirAll("/opt/provisioner", core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create /opt/provisioner directory")
-	err = os.WriteFile(conflictingFile, []byte("blocking file"), 0644)
+	err = os.WriteFile(conflictingFile, []byte("blocking file"), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create blocking file")
 
 	// Override cleanup to remove the file we created
@@ -779,12 +779,12 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testi
 	installer := newTestInstaller(t)
 
 	// create empty file to emulate first download with wrong checksum
-	err := os.MkdirAll(installer.downloadFolder(), core.DefaultFilePerm)
+	err := os.MkdirAll(installer.downloadFolder(), core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create download folder")
 
 	destinationFile := path.Join(installer.downloadFolder(), "test-artifact.tar.gz")
 
-	err = os.WriteFile(destinationFile, []byte(""), core.DefaultFilePerm)
+	err = os.WriteFile(destinationFile, []byte(""), core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create empty file")
 
 	//
@@ -837,9 +837,9 @@ func Test_BaseInstaller_Extract_Error(t *testing.T) {
 
 	// Create a regular file where the directory should be created
 	conflictingFile := tmpFolder + "/test-artifact/unpack"
-	err := os.MkdirAll(tmpFolder+"/test-artifact", core.DefaultFilePerm)
+	err := os.MkdirAll(tmpFolder+"/test-artifact", core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create cri-o directory")
-	err = os.WriteFile(conflictingFile, []byte("blocking file"), 0644)
+	err = os.WriteFile(conflictingFile, []byte("blocking file"), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create blocking file")
 
 	// Override cleanup to remove the file we created
@@ -881,7 +881,7 @@ func Test_BaseInstaller_replaceAllInFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	origPath := filepath.Join(tmpDir, "10-kubeadm.conf")
 	origContent := "ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
-	err = os.WriteFile(origPath, []byte(origContent), 0644)
+	err = os.WriteFile(origPath, []byte(origContent), core.DefaultFilePerm)
 	require.NoError(t, err, "failed to write temp file")
 
 	//
@@ -932,11 +932,11 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 
 	// Create sandbox directory structure
 	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultFilePerm)
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), 0755)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink in system bin directory
@@ -946,7 +946,7 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 
 	// Create download folder
 	downloadFolder := path.Join(core.Paths().TempDir, "test-software")
-	err = os.MkdirAll(downloadFolder, core.DefaultFilePerm)
+	err = os.MkdirAll(downloadFolder, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Verify everything exists before uninstall
@@ -1008,11 +1008,11 @@ func Test_BaseInstaller_Uninstall_CleanupSymlinksError(t *testing.T) {
 
 	// Create sandbox directory structure
 	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultFilePerm)
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), 0755)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink in system bin directory
@@ -1076,11 +1076,11 @@ func Test_BaseInstaller_Uninstall_RemoveSandboxFolderError(t *testing.T) {
 
 	// Create sandbox bin directory with a binary
 	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultFilePerm)
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), 0755)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Make the sandbox bin directory read-only
@@ -1139,16 +1139,16 @@ func Test_BaseInstaller_Uninstall_DownloadFolderCleanupError(t *testing.T) {
 
 	// Create software sandbox folder (should succeed)
 	softwareSandboxDir := path.Join(core.Paths().SandboxDir, "test-software")
-	err = os.MkdirAll(softwareSandboxDir, core.DefaultFilePerm)
+	err = os.MkdirAll(softwareSandboxDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create download folder with a file inside
 	downloadFolder := path.Join(core.Paths().TempDir, "test-software")
-	err = os.MkdirAll(downloadFolder, core.DefaultFilePerm)
+	err = os.MkdirAll(downloadFolder, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	testFile := path.Join(downloadFolder, "testfile")
-	err = os.WriteFile(testFile, []byte("test"), 0644)
+	err = os.WriteFile(testFile, []byte("test"), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Make the download folder read-only
@@ -1207,11 +1207,11 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 
 	// Create sandbox bin directory with a binary
 	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultFilePerm)
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), 0755)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Don't create download folder - it shouldn't exist
@@ -1315,20 +1315,20 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 
 	// Create sandbox directory structure
 	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultFilePerm)
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create binaries in sandbox
 	sandboxBinary1 := path.Join(sandboxBinDir, "binary1")
-	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), 0755)
+	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary2 := path.Join(sandboxBinDir, "binary2")
-	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), 0755)
+	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary3 := path.Join(sandboxBinDir, "binary3")
-	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), 0755)
+	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlinks for all binaries
@@ -1403,11 +1403,11 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 
 	// Create sandbox directory structure
 	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultFilePerm)
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), 0755)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink that points to our sandbox binary
@@ -1471,7 +1471,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOtherBinary(t *testing.T) {
 
 	// Create a different binary (not in our sandbox)
 	otherBinary := path.Join(t.TempDir(), "other-binary")
-	err = os.WriteFile(otherBinary, []byte("#!/bin/bash\necho 'other'\n"), 0755)
+	err = os.WriteFile(otherBinary, []byte("#!/bin/bash\necho 'other'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink that points to a different binary (not ours)

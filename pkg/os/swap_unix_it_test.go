@@ -13,6 +13,7 @@ import (
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
 func Test_Swap_SwapOff_Integration(t *testing.T) {
@@ -208,8 +209,8 @@ func Test_Swap_ResolveSpec_Integration(t *testing.T) {
 
 	byUUIDDir := tmpDir + "/by-uuid"
 	byLabelDir := tmpDir + "/by-label"
-	require.NoError(t, os.Mkdir(byUUIDDir, 0755))
-	require.NoError(t, os.Mkdir(byLabelDir, 0755))
+	require.NoError(t, os.Mkdir(byUUIDDir, core.DefaultDirOrExecPerm))
+	require.NoError(t, os.Mkdir(byLabelDir, core.DefaultDirOrExecPerm))
 
 	uuid := "test-uuid-123"
 	label := "test-label-abc"
