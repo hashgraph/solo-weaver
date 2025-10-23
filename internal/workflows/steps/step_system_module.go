@@ -10,23 +10,6 @@ import (
 	"golang.hedera.com/solo-provisioner/pkg/kernel"
 )
 
-func InstallKernelModules() automa.Builder {
-	return automa.NewWorkflowBuilder().WithId("install-kernel-modules").Steps(
-		InstallKernelModule("br_netfilter"),
-		InstallKernelModule("overlay"),
-	).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing required kernel modules")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install required kernel modules")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Required kernel modules installed successfully")
-		})
-}
-
 // InstallKernelModule ensures that a specific kernel module is loaded and persisted.
 // If the module is already loaded, it skips the loading process.
 // On rollback, it unloads the module only if it was loaded by this step.
@@ -53,7 +36,6 @@ func InstallKernelModule(name string) automa.Builder {
 			// Prepare metadata for reporting
 			meta := map[string]string{
 				"module":           name,
-				"status":           "loaded",
 				"loadedByThisStep": fmt.Sprintf("%t", loadedByThisStep),
 				"alreadyLoaded":    fmt.Sprintf("%t", alreadyLoaded),
 				"alreadyPersisted": fmt.Sprintf("%t", alreadyPersisted),

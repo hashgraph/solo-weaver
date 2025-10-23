@@ -14,9 +14,8 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 
 			// setup env for k8s
 			steps.DisableSwap(),
-			steps.InstallKernelModules(),
 			steps.ConfigureSysctlForKubernetes(),
-			steps.SetupBindMounts(), // still using bash steps
+			steps.SetupBindMounts(),
 
 			// kubelet
 			steps.SetupKubelet(),
