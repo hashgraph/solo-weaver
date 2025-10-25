@@ -54,7 +54,7 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	// Check binary permissions (should be executable)
 	info, err := os.Stat("/opt/provisioner/sandbox/bin/kubeadm")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0755), info.Mode().Perm(), "kubeadm binary should have 0755 permissions")
+	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "kubeadm binary should have 0755 permissions")
 
 	// Verify config file is copied to sandbox kubelet service directory
 	_, exists, err = fileManager.PathExists("/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
@@ -108,5 +108,5 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify config file permissions
 	info, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0644), info.Mode().Perm(), "config file should have 0644 permissions")
+	require.Equal(t, os.FileMode(core.DefaultFilePerm), info.Mode().Perm(), "config file should have 0644 permissions")
 }

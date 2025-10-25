@@ -11,6 +11,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
 func Test_Downloader_Download(t *testing.T) {
@@ -98,7 +99,7 @@ func Test_Downloader_Extract(t *testing.T) {
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, 0755)
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	// Test extraction

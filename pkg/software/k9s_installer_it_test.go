@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 )
 
@@ -66,7 +67,7 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	// Check binary permissions (should be executable)
 	info, err := os.Stat("/opt/provisioner/sandbox/bin/k9s")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0755), info.Mode().Perm(), "k9s binary should have 0755 permissions")
+	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "k9s binary should have 0755 permissions")
 
 	//
 	// When - Cleanup

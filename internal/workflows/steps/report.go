@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/automa-saga/automa"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,7 +20,7 @@ var PrintWorkflowReport = func(report *automa.Report, fileName string) {
 	}
 
 	if fileName != "" {
-		err := os.WriteFile(fileName, b, 0644)
+		err := os.WriteFile(fileName, b, core.DefaultFilePerm)
 		if err != nil {
 			fmt.Printf("Failed to write report to file: %v\n", err)
 			return

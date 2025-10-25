@@ -14,7 +14,7 @@ func CopyTemplateFile(src string, dst string) error {
 		return fsx.FileReadError.Wrap(err, "failed to read config file %s", src)
 	}
 
-	err = os.WriteFile(dst, content, core.DefaultFilePerm)
+	err = os.WriteFile(dst, content, core.DefaultDirOrExecPerm)
 	if err != nil {
 		return fsx.FileWriteError.Wrap(err, "failed to write config file %s", dst)
 	}

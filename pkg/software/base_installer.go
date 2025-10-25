@@ -571,7 +571,7 @@ func (b *baseInstaller) Install() error {
 		}
 
 		// Make the installed binary executable
-		err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultFilePerm, false)
+		err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultDirOrExecPerm, false)
 		if err != nil {
 			return NewInstallationError(err, sourcePath, sandboxBinDir)
 		}
@@ -832,7 +832,7 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 	}
 
 	// rw-r--r-- permissions that are typical for config and data files
-	err = fileManager.WritePermissions(sourceFile, 0644, false)
+	err = fileManager.WritePermissions(sourceFile, core.DefaultFilePerm, false)
 	if err != nil {
 		return err
 	}

@@ -101,12 +101,12 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 			switch hdr.Typeflag {
 			case tar.TypeDir:
 				// Create directories
-				if err := os.MkdirAll(target, core.DefaultFilePerm); err != nil {
+				if err := os.MkdirAll(target, core.DefaultDirOrExecPerm); err != nil {
 					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 			case tar.TypeReg:
 				// Ensure parent directory exists
-				if err := os.MkdirAll(filepath.Dir(target), core.DefaultFilePerm); err != nil {
+				if err := os.MkdirAll(filepath.Dir(target), core.DefaultDirOrExecPerm); err != nil {
 					return NewExtractionError(err, compressedFilePath, destDir)
 				}
 

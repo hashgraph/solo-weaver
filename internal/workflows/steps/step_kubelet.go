@@ -13,6 +13,7 @@ func SetupKubelet() automa.Builder {
 		Steps(
 			installKubelet(software.NewKubeletInstaller),
 			configureKubelet(software.NewKubeletInstaller),
+			SetupSystemdService("kubelet"),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubelet")
