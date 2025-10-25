@@ -72,11 +72,8 @@ func (ci *crioInstaller) Install() error {
 	srcDir := path.Join(ci.downloadFolder(), core.DefaultUnpackFolderName, "cri-o")
 	destDir := core.Paths().SandboxDir
 
-	// Adjust SYSCONFIGDIR if we're running on debian based distributions
-	sysconfigDir, err := adjustSysconfig(path.Join(srcDir, "etc", "crio"))
-	if err != nil {
-		return err
-	}
+	// Get SYSCONFIGDIR based on OS
+	sysconfigDir := getSysconfigDir()
 
 	// Ensure directories exist
 	dirs := []string{
@@ -144,7 +141,7 @@ func (ci *crioInstaller) Install() error {
 	}
 
 	// Copy CNI plugins
-	err = ci.copyCNIPlugins(srcDir, filepath.Join(destDir, optCniBinDir))
+	err := ci.copyCNIPlugins(srcDir, filepath.Join(destDir, optCniBinDir))
 	if err != nil {
 		return err
 	}
@@ -269,35 +266,20 @@ func patchConfig(path, destdir, bindir, libexecdir, etcdir string) error {
 	return os.WriteFile(path, []byte(content), core.DefaultFilePerm)
 }
 
-// adjustSysconfig adjusts the sysconfig directory based on the Linux distribution
-// Matching the shell script logic:
-// if dpkg -l >/dev/null 2>&1; then
-// SYSCONFIGDIR=${SYSCONFIGDIR:-$ETCDIR/default}
-// sed -i "s;sysconfig/crio;default/crio;g" etc/crio
-// else
-// SYSCONFIGDIR=${SYSCONFIGDIR:-$ETCDIR/sysconfig}
-// fi
-func adjustSysconfig(sourceEtcCrioFilePath string) (string, error) {
+// getSysconfigDir returns the sysconfig directory for the current OS
+// Unlike the shell install script, this function does not update the
+// contents of the crio file because the file will be rewritten during
+// Configure()
+func getSysconfigDir() string {
 	hostProfile := hardware.GetHostProfile()
 	vendor := strings.ToLower(hostProfile.GetOSVendor())
 
 	// Check if running on debian-based distribution
 	if strings.Contains(vendor, "debian") || strings.Contains(vendor, "ubuntu") {
-		b, err := os.ReadFile(sourceEtcCrioFilePath)
-		if err != nil {
-			return "", err
-		}
-		content := string(b)
-		content = strings.ReplaceAll(content, "sysconfig/crio", "default/crio")
-		err = os.WriteFile(sourceEtcCrioFilePath, []byte(content), core.DefaultFilePerm)
-		if err != nil {
-			return "", err
-		}
-
-		return filepath.Join(etcDir, "default"), nil
+		return filepath.Join(etcDir, "default")
 	}
 
-	return filepath.Join(etcDir, "sysconfig"), nil
+	return filepath.Join(etcDir, "sysconfig")
 }
 
 // Configure configures the cri-o after installation
