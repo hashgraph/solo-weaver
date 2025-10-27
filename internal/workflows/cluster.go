@@ -27,7 +27,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.SetupK9s(),
 
 			// CRI-O
-			steps.SetupCrio2(), // still using bash steps
+			steps.SetupCrio(),
 			steps.SetupSystemdService(software.CrioServiceName),
 
 			// kubeadm

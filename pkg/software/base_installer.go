@@ -565,16 +565,11 @@ func (b *baseInstaller) Install() error {
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
 
 		// Copy binary to sandbox
-		err = b.fileManager.CopyFile(sourcePath, sandboxBinary, true)
+		err = b.installFile(sourcePath, sandboxBinary, core.DefaultDirOrExecPerm)
 		if err != nil {
 			return NewInstallationError(err, sourcePath, sandboxBinDir)
 		}
 
-		// Make the installed binary executable
-		err = b.fileManager.WritePermissions(sandboxBinary, core.DefaultDirOrExecPerm, false)
-		if err != nil {
-			return NewInstallationError(err, sourcePath, sandboxBinDir)
-		}
 	}
 
 	return nil
@@ -932,6 +927,19 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 	return nil
 }
 
+// Cleanup performs any necessary cleanup after installation
+func (b *baseInstaller) Cleanup() error {
+	downloadFolder := b.downloadFolder()
+
+	// Clean up download and extract folders if installation succeeded
+	err := b.fileManager.RemoveAll(downloadFolder)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to clean up download folder %s after installation", downloadFolder)
+	}
+
+	return nil
+}
+
 // cleanupSymlinks removes symlinks in the system bin directory that point to our sandbox binaries
 func (b *baseInstaller) cleanupSymlinks() error {
 	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
@@ -988,14 +996,20 @@ func (b *baseInstaller) cleanupSymlinks() error {
 	return nil
 }
 
-// Cleanup performs any necessary cleanup after installation
-func (b *baseInstaller) Cleanup() error {
-	downloadFolder := b.downloadFolder()
-
-	// Clean up download and extract folders if installation succeeded
-	err := b.fileManager.RemoveAll(downloadFolder)
+// installFile copies a file with permissions using the fileManager
+// This is a helper method that can be used by any installer that needs to copy files
+// with specific permissions during installation.
+func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
+	// Copy file
+	err := b.fileManager.CopyFile(src, dst, true)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to clean up download folder %s after installation", downloadFolder)
+		return errorx.IllegalState.Wrap(err, "failed to copy %s to %s", src, dst)
+	}
+
+	// Set permissions
+	err = b.fileManager.WritePermissions(dst, perm, false)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to set permissions on %s", dst)
 	}
 
 	return nil
