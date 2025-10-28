@@ -21,7 +21,7 @@ func Test_StepCiliumCLI_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCiliumCLI().Build()
+	step, err := SetupCilium().Build()
 
 	//
 	// Then
@@ -39,7 +39,7 @@ func Test_StepCiliumCLI_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	cleanUpTempDir(t)
 
-	step, err := SetupCiliumCLI().Build()
+	step, err := SetupCilium().Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -49,7 +49,7 @@ func Test_StepCiliumCLI_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupCiliumCLI().Build()
+	step, err = SetupCilium().Build()
 
 	//
 	// Then
@@ -68,7 +68,7 @@ func Test_StepCiliumCLI_PartiallyInstalled_Integration(t *testing.T) {
 	//
 	cleanUpTempDir(t)
 
-	step, err := SetupCiliumCLI().Build()
+	step, err := SetupCilium().Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -81,7 +81,7 @@ func Test_StepCiliumCLI_PartiallyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupCiliumCLI().Build()
+	step, err = SetupCilium().Build()
 
 	//
 	// Then

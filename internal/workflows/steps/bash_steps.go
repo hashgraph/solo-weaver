@@ -835,7 +835,7 @@ EOF`, b.SandboxDir, b.MachineIp, b.SandboxDir, b.SandboxDir, b.SandboxDir)
 
 func (b *bashScriptStep) InstallCiliumCNI() *automa.StepBuilder {
 	return automa_steps.BashScriptStep(InstallCiliumCNIStepId, []string{
-		fmt.Sprintf("sudo %s/cilium install --version \"%s\" --values %s/etc/provisioner/cilium-config.yaml",
+		fmt.Sprintf("sudo %s/cilium install --wait --version \"%s\" --values %s/etc/provisioner/cilium-config.yaml",
 			b.SandboxBinDir, b.CiliumVersion, b.SandboxDir),
 	}, "")
 }

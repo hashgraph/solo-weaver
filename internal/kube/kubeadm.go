@@ -4,13 +4,13 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
-	"net"
 	"os"
 	"path"
 	"strconv"
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/internal/network"
 	"golang.hedera.com/solo-provisioner/internal/templates"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 	"golang.hedera.com/solo-provisioner/pkg/security/principal"
@@ -79,48 +79,11 @@ func getCurrentUser() (principal.User, error) {
 	return currentUser, nil
 }
 
-// getMachineIP retrieves the first non-loopback IP address of the machine
-func getMachineIP() (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-	for _, iface := range ifaces {
-		// check if the interface is up and not a loopback
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			ip = ip.To4()
-			if ip == nil {
-				continue // not an ipv4 address
-			}
-			return ip.String(), nil
-		}
-	}
-	return "", fmt.Errorf("no connected network interface found")
-}
-
 // ConfigureKubeadmInit generates the kubeadm init configuration file
 // It retrieves the machine IP, generates a kubeadm token, and gets the hostname
 // It then renders the kubeadm-init.yaml template with the retrieved values
 func ConfigureKubeadmInit(kubernetesVersion string) error {
-	machineIp, err := getMachineIP()
+	machineIp, err := network.GetMachineIP()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to get machine IP address")
 	}

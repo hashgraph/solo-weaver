@@ -8,24 +8,25 @@ import (
 	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
-func SetupCiliumCLI() automa.Builder {
+func SetupCilium() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId("setup-cilium-cli").Steps(
-		installCiliumCLI(software.NewCiliumInstaller),
-		configureCiliumCLI(software.NewCiliumInstaller),
+		installCilium(software.NewCiliumInstaller),
+		configureCilium(software.NewCiliumInstaller),
+		bashSteps.InstallCiliumCNI(), // we cannot write in pure Go because we need to run cilium binary
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up Cilium CLI")
+			notify.As().StepStart(ctx, stp, "Setting up Cilium")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Cilium CLI")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Cilium")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI setup successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Cilium setup successfully")
 		})
 }
 
-func installCiliumCLI(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installCilium(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-cilium-cli").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -62,7 +63,7 @@ func installCiliumCLI(provider func(opts ...software.InstallerOption) (software.
 		})
 }
 
-func configureCiliumCLI(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureCilium(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-cilium-cli").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
