@@ -96,4 +96,17 @@ func Test_CiliumInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "/opt/provisioner/sandbox/bin/cilium", linkTarget, "symlink should point to sandbox binary")
 
+	// Verify /opt/provisioner/sandbox/etc/provisioner/cilium-config.yaml contains valid ip address and sandbox folder
+	configFilePath := "/opt/provisioner/sandbox/etc/provisioner/cilium-config.yaml"
+	configContent, err := os.ReadFile(configFilePath)
+	require.NoError(t, err, "Failed to read cilium configuration file")
+
+	// Check ip address format - k8sServiceHost: 192.168.68.137
+	require.Regexp(t, regexp.MustCompile(`k8sServiceHost: (\d{1,3}\.){3}\d{1,3}`), string(configContent), "cilium configuration file should contain valid ip address")
+
+	// Check binPath, confPath and runPath
+	require.Regexp(t, regexp.MustCompile(`binPath: /opt/provisioner/sandbox/opt/cni/bin`), string(configContent), "cilium configuration file should contain correct binPath")
+	require.Regexp(t, regexp.MustCompile(`confPath: /opt/provisioner/sandbox/etc/cni/net.d`), string(configContent), "cilium configuration file should contain correct confPath")
+	require.Regexp(t, regexp.MustCompile(`runPath: /opt/provisioner/sandbox/var/run/cilium`), string(configContent), "cilium configuration file should contain correct runPath")
+
 }

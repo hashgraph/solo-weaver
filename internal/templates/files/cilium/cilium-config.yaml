@@ -1,0 +1,82 @@
+# StepSecurity Required Features
+extraArgs:
+  - --tofqdns-dns-reject-response-code=nameError
+
+# Hubble Support
+hubble:
+  relay:
+    enabled: true
+  ui:
+    enabled: false
+
+# KubeProxy Replacement Config
+kubeProxyReplacement: true
+k8sServiceHost: {{.MachineIP}}
+k8sServicePort: 6443
+
+# IP Version Support
+ipam:
+  mode: "kubernetes"
+k8s:
+  requireIPv4PodCIDR: true
+  requireIPv6PodCIDR: false
+ipv4:
+  enabled: true
+ipv6:
+  enabled: false
+
+# Routing Configuration
+routingMode: native
+autoDirectNodeRoutes: true
+#ipv4NativeRoutingCIDR: 10.128.0.0/20
+
+# Load Balancer Configuration
+loadBalancer:
+  mode: dsr
+  dsrDispatch: opt
+  algorithm: maglev
+  acceleration: "best-effort"
+  l7:
+    backend: disabled
+
+nodePort:
+  enabled: true
+
+hostPort:
+  enabled: true
+
+# BPF & IP Masquerading Support
+ipMasqAgent:
+  enabled: true
+  config:
+    nonMasqueradeCIDRs: []
+bpf:
+  masquerade: true
+  hostLegacyRouting: false
+  lbExternalClusterIP: true
+  preallocateMaps: true
+
+# Envoy DaemonSet Support
+envoy:
+  enabled: false
+
+# BGP Control Plane
+bgpControlPlane:
+  enabled: false
+
+# L2 Announcements
+l2announcements:
+  enabled: false
+k8sClientRateLimit:
+  qps: 100
+  burst: 150
+
+# CNI Configuration
+cni:
+  binPath: {{.SandboxDir}}/opt/cni/bin
+  confPath: {{.SandboxDir}}/etc/cni/net.d
+
+# DaemonSet Configuration
+daemon:
+  runPath: {{.SandboxDir}}/var/run/cilium
+
