@@ -944,18 +944,11 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 	err = os.Symlink(sandboxBinary, systemBinary)
 	require.NoError(t, err)
 
-	// Create download folder
-	downloadFolder := path.Join(core.Paths().TempDir, "test-software")
-	err = os.MkdirAll(downloadFolder, core.DefaultDirOrExecPerm)
-	require.NoError(t, err)
-
 	// Verify everything exists before uninstall
 	_, err = os.Lstat(systemBinary)
 	require.NoError(t, err, "Symlink should exist before uninstall")
 	_, err = os.Stat(sandboxBinary)
 	require.NoError(t, err, "Sandbox binary should exist before uninstall")
-	_, err = os.Stat(downloadFolder)
-	require.NoError(t, err, "Download folder should exist before uninstall")
 
 	//
 	// When
@@ -969,16 +962,19 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 	// Then
 	//
 
-	// Verify everything is cleaned up
+	// Verify only sandbox binary is removed, symlink should remain
 	_, err = os.Lstat(systemBinary)
-	require.True(t, os.IsNotExist(err), "Symlink should be removed after uninstall")
+	require.NoError(t, err, "Symlink should still exist after uninstall (not removed by Uninstall)")
 	_, err = os.Stat(sandboxBinary)
 	require.True(t, os.IsNotExist(err), "Sandbox binary should be removed after uninstall")
-	_, err = os.Stat(downloadFolder)
-	require.True(t, os.IsNotExist(err), "Download folder should be removed after uninstall")
+
+	// Clean up the symlink we created
+	t.Cleanup(func() {
+		_ = os.Remove(systemBinary)
+	})
 }
 
-func Test_BaseInstaller_Uninstall_CleanupSymlinksError(t *testing.T) {
+func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
 	resetTestEnvironment(t)
 
 	//
@@ -1015,74 +1011,6 @@ func Test_BaseInstaller_Uninstall_CleanupSymlinksError(t *testing.T) {
 	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
-	// Create symlink in system bin directory
-	systemBinary := path.Join(core.SystemBinDir, "test-binary")
-	err = os.Symlink(sandboxBinary, systemBinary)
-	require.NoError(t, err)
-
-	// Remove write permissions
-	cmd := exec.Command("chattr", "+i", core.SystemBinDir)
-	err = cmd.Run()
-	require.NoError(t, err, "Failed to make system bin directory read-only")
-
-	// Restore permissions after test
-	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.SystemBinDir).Run()
-		_ = os.Remove(systemBinary)
-	})
-
-	//
-	// When
-	//
-
-	// Execute uninstall - should fail due to read-only system bin directory
-	err = installer.Uninstall()
-
-	//
-	// Then
-	//
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, InstallationError))
-
-}
-
-func Test_BaseInstaller_Uninstall_RemoveSandboxFolderError(t *testing.T) {
-	resetTestEnvironment(t)
-
-	//
-	// Given
-	//
-
-	// Create a test installer with actual file manager
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err)
-
-	software := &ArtifactMetadata{
-		Name: "test-software",
-		Versions: map[Version]VersionDetails{
-			"1.0.0": {
-				Binaries: []BinaryDetail{
-					{Name: "test-binary"},
-				},
-			},
-		},
-	}
-
-	installer := &baseInstaller{
-		software:             software,
-		versionToBeInstalled: "1.0.0",
-		fileManager:          fsxManager,
-	}
-
-	// Create sandbox bin directory with a binary
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
-	require.NoError(t, err)
-
-	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
-	require.NoError(t, err)
-
 	// Make the sandbox bin directory read-only
 	cmd := exec.Command("chattr", "+i", sandboxBinDir)
 	err = cmd.Run()
@@ -1092,74 +1020,6 @@ func Test_BaseInstaller_Uninstall_RemoveSandboxFolderError(t *testing.T) {
 	t.Cleanup(func() {
 		_ = exec.Command("chattr", "-i", sandboxBinDir).Run()
 		_ = os.RemoveAll(sandboxBinary)
-	})
-
-	//
-	// When
-	//
-
-	// Execute uninstall - should fail due to read-only directory
-	err = installer.Uninstall()
-
-	//
-	// Then
-	//
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, InstallationError))
-
-}
-
-func Test_BaseInstaller_Uninstall_DownloadFolderCleanupError(t *testing.T) {
-	resetTestEnvironment(t)
-
-	//
-	// Given
-	//
-
-	// Create a test installer with actual file manager
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err)
-
-	software := &ArtifactMetadata{
-		Name: "test-software",
-		Versions: map[Version]VersionDetails{
-			"1.0.0": {
-				Binaries: []BinaryDetail{
-					{Name: "test-binary"},
-				},
-			},
-		},
-	}
-
-	installer := &baseInstaller{
-		software:             software,
-		versionToBeInstalled: "1.0.0",
-		fileManager:          fsxManager,
-	}
-
-	// Create software sandbox folder (should succeed)
-	softwareSandboxDir := path.Join(core.Paths().SandboxDir, "test-software")
-	err = os.MkdirAll(softwareSandboxDir, core.DefaultDirOrExecPerm)
-	require.NoError(t, err)
-
-	// Create download folder with a file inside
-	downloadFolder := path.Join(core.Paths().TempDir, "test-software")
-	err = os.MkdirAll(downloadFolder, core.DefaultDirOrExecPerm)
-	require.NoError(t, err)
-
-	testFile := path.Join(downloadFolder, "testfile")
-	err = os.WriteFile(testFile, []byte("test"), core.DefaultFilePerm)
-	require.NoError(t, err)
-
-	// Make the download folder read-only
-	cmd := exec.Command("chattr", "+i", downloadFolder)
-	err = cmd.Run()
-	require.NoError(t, err, "Failed to make download folder read-only")
-
-	// Restore permissions after test
-	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", downloadFolder).Run()
-		_ = os.RemoveAll(downloadFolder)
 	})
 
 	//
@@ -1356,13 +1216,13 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 	//
 	require.NoError(t, err)
 
-	// Verify all symlinks are removed
+	// Verify symlinks still exist (not removed by Uninstall)
 	_, err = os.Lstat(systemBinary1)
-	require.True(t, os.IsNotExist(err), "Symlink for binary1 should be removed")
+	require.NoError(t, err, "Symlink for binary1 should still exist after uninstall")
 	_, err = os.Lstat(systemBinary2)
-	require.True(t, os.IsNotExist(err), "Symlink for binary2 should be removed")
+	require.NoError(t, err, "Symlink for binary2 should still exist after uninstall")
 	_, err = os.Lstat(systemBinary3)
-	require.True(t, os.IsNotExist(err), "Symlink for binary3 should be removed")
+	require.NoError(t, err, "Symlink for binary3 should still exist after uninstall")
 
 	// Verify all sandbox binaries are removed
 	_, err = os.Stat(sandboxBinary1)
@@ -1371,6 +1231,13 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "Sandbox binary2 should be removed")
 	_, err = os.Stat(sandboxBinary3)
 	require.True(t, os.IsNotExist(err), "Sandbox binary3 should be removed")
+
+	// Clean up the symlinks we created
+	t.Cleanup(func() {
+		_ = os.Remove(systemBinary1)
+		_ = os.Remove(systemBinary2)
+		_ = os.Remove(systemBinary3)
+	})
 }
 
 func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
@@ -1432,16 +1299,22 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 	//
 	require.NoError(t, err)
 
-	// Verify symlink is removed
+	// Verify symlink still exists (not removed by Uninstall)
 	_, err = os.Lstat(systemBinary)
-	require.True(t, os.IsNotExist(err), "Symlink should be removed after uninstall")
+	require.NoError(t, err, "Symlink should still exist after uninstall (not removed by Uninstall)")
 
 	// Verify sandbox binary is removed
 	_, err = os.Stat(sandboxBinary)
 	require.True(t, os.IsNotExist(err), "Sandbox binary should be removed after uninstall")
+
+	// Clean up the symlink we created
+	t.Cleanup(func() {
+		_ = os.Remove(systemBinary)
+	})
 }
 
-func Test_BaseInstaller_Uninstall_SymlinkPointsToOtherBinary(t *testing.T) {
+// Tests for RestoreConfiguration method
+func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 	resetTestEnvironment(t)
 
 	//
@@ -1469,6 +1342,85 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOtherBinary(t *testing.T) {
 		fileManager:          fsxManager,
 	}
 
+	// Create sandbox directory structure
+	sandboxBinDir := core.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create symlink in system bin directory that points to our sandbox binary
+	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	err = os.Symlink(sandboxBinary, systemBinary)
+	require.NoError(t, err)
+
+	// Verify symlink exists and points to our binary before RestoreConfiguration
+	_, err = os.Lstat(systemBinary)
+	require.NoError(t, err, "Symlink should exist before RestoreConfiguration")
+	linkTarget, err := os.Readlink(systemBinary)
+	require.NoError(t, err)
+	require.Equal(t, sandboxBinary, linkTarget)
+
+	//
+	// When
+	//
+
+	// Execute RestoreConfiguration
+	err = installer.RestoreConfiguration()
+	require.NoError(t, err)
+
+	//
+	// Then
+	//
+
+	// Verify symlink is removed
+	_, err = os.Lstat(systemBinary)
+	require.True(t, os.IsNotExist(err), "Symlink should be removed after RestoreConfiguration")
+
+	// Verify sandbox binary still exists (RestoreConfiguration doesn't remove it)
+	_, err = os.Stat(sandboxBinary)
+	require.NoError(t, err, "Sandbox binary should still exist after RestoreConfiguration")
+}
+
+func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testing.T) {
+	resetTestEnvironment(t)
+
+	//
+	// Given
+	//
+
+	// Create a test installer with actual file manager
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err)
+
+	software := &ArtifactMetadata{
+		Name: "test-software",
+		Versions: map[Version]VersionDetails{
+			"1.0.0": {
+				Binaries: []BinaryDetail{
+					{Name: "test-binary"},
+				},
+			},
+		},
+	}
+
+	installer := &baseInstaller{
+		software:             software,
+		versionToBeInstalled: "1.0.0",
+		fileManager:          fsxManager,
+	}
+
+	// Create sandbox directory structure
+	sandboxBinDir := core.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
 	// Create a different binary (not in our sandbox)
 	otherBinary := path.Join(t.TempDir(), "other-binary")
 	err = os.WriteFile(otherBinary, []byte("#!/bin/bash\necho 'other'\n"), core.DefaultDirOrExecPerm)
@@ -1488,8 +1440,8 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOtherBinary(t *testing.T) {
 	// When
 	//
 
-	// Execute uninstall
-	err = installer.Uninstall()
+	// Execute RestoreConfiguration
+	err = installer.RestoreConfiguration()
 
 	//
 	// Then
@@ -1509,4 +1461,259 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOtherBinary(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Remove(systemBinary)
 	})
+}
+
+func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
+	resetTestEnvironment(t)
+
+	//
+	// Given
+	//
+
+	// Create a test installer with actual file manager
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err)
+
+	software := &ArtifactMetadata{
+		Name: "test-software",
+		Versions: map[Version]VersionDetails{
+			"1.0.0": {
+				Binaries: []BinaryDetail{
+					{Name: "binary1"},
+					{Name: "binary2"},
+					{Name: "subdir/binary3"},
+				},
+			},
+		},
+	}
+
+	installer := &baseInstaller{
+		software:             software,
+		versionToBeInstalled: "1.0.0",
+		fileManager:          fsxManager,
+	}
+
+	// Create sandbox directory structure
+	sandboxBinDir := core.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create binaries in sandbox
+	sandboxBinary1 := path.Join(sandboxBinDir, "binary1")
+	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	sandboxBinary2 := path.Join(sandboxBinDir, "binary2")
+	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	sandboxBinary3 := path.Join(sandboxBinDir, "binary3")
+	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create symlinks for all binaries that point to our sandbox binaries
+	systemBinary1 := path.Join(core.SystemBinDir, "binary1")
+	err = os.Symlink(sandboxBinary1, systemBinary1)
+	require.NoError(t, err)
+
+	systemBinary2 := path.Join(core.SystemBinDir, "binary2")
+	err = os.Symlink(sandboxBinary2, systemBinary2)
+	require.NoError(t, err)
+
+	systemBinary3 := path.Join(core.SystemBinDir, "binary3")
+	err = os.Symlink(sandboxBinary3, systemBinary3)
+	require.NoError(t, err)
+
+	//
+	// When
+	//
+
+	// Execute RestoreConfiguration
+	err = installer.RestoreConfiguration()
+
+	//
+	// Then
+	//
+	require.NoError(t, err)
+
+	// Verify all symlinks are removed
+	_, err = os.Lstat(systemBinary1)
+	require.True(t, os.IsNotExist(err), "Symlink for binary1 should be removed")
+	_, err = os.Lstat(systemBinary2)
+	require.True(t, os.IsNotExist(err), "Symlink for binary2 should be removed")
+	_, err = os.Lstat(systemBinary3)
+	require.True(t, os.IsNotExist(err), "Symlink for binary3 should be removed")
+
+	// Verify all sandbox binaries still exist
+	_, err = os.Stat(sandboxBinary1)
+	require.NoError(t, err, "Sandbox binary1 should still exist")
+	_, err = os.Stat(sandboxBinary2)
+	require.NoError(t, err, "Sandbox binary2 should still exist")
+	_, err = os.Stat(sandboxBinary3)
+	require.NoError(t, err, "Sandbox binary3 should still exist")
+}
+
+func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
+	resetTestEnvironment(t)
+
+	//
+	// Given
+	//
+
+	// Create a test installer with actual file manager
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err)
+
+	software := &ArtifactMetadata{
+		Name: "test-software",
+		Versions: map[Version]VersionDetails{
+			"1.0.0": {
+				Binaries: []BinaryDetail{
+					{Name: "test-binary"},
+				},
+			},
+		},
+	}
+
+	installer := &baseInstaller{
+		software:             software,
+		versionToBeInstalled: "1.0.0",
+		fileManager:          fsxManager,
+	}
+
+	// Create sandbox directory structure
+	sandboxBinDir := core.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create symlink in system bin directory
+	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	err = os.Symlink(sandboxBinary, systemBinary)
+	require.NoError(t, err)
+
+	// Remove write permissions from system bin directory
+	cmd := exec.Command("chattr", "+i", core.SystemBinDir)
+	err = cmd.Run()
+	require.NoError(t, err, "Failed to make system bin directory read-only")
+
+	// Restore permissions after test
+	t.Cleanup(func() {
+		_ = exec.Command("chattr", "-i", core.SystemBinDir).Run()
+		_ = os.Remove(systemBinary)
+	})
+
+	//
+	// When
+	//
+
+	// Execute RestoreConfiguration - should fail due to read-only system bin directory
+	err = installer.RestoreConfiguration()
+
+	//
+	// Then
+	//
+	require.Error(t, err)
+	require.True(t, errorx.IsOfType(err, InstallationError))
+}
+
+func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
+	resetTestEnvironment(t)
+
+	//
+	// Given
+	//
+
+	// Create a test installer with actual file manager
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err)
+
+	software := &ArtifactMetadata{
+		Name: "test-software",
+		Versions: map[Version]VersionDetails{
+			"1.0.0": {
+				Binaries: []BinaryDetail{
+					{Name: "test-binary"},
+				},
+			},
+		},
+	}
+
+	installer := &baseInstaller{
+		software:             software,
+		versionToBeInstalled: "2.0.0", // Version not in metadata
+		fileManager:          fsxManager,
+	}
+
+	//
+	// When
+	//
+
+	// Execute RestoreConfiguration with non-existent version
+	err = installer.RestoreConfiguration()
+
+	//
+	// Then
+	//
+	require.Error(t, err)
+	require.True(t, errorx.IsOfType(err, InstallationError))
+}
+
+func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
+	resetTestEnvironment(t)
+
+	//
+	// Given
+	//
+
+	// Create a test installer with actual file manager
+	fsxManager, err := fsx.NewManager()
+	require.NoError(t, err)
+
+	software := &ArtifactMetadata{
+		Name: "test-software",
+		Versions: map[Version]VersionDetails{
+			"1.0.0": {
+				Binaries: []BinaryDetail{
+					{Name: "test-binary"},
+				},
+			},
+		},
+	}
+
+	installer := &baseInstaller{
+		software:             software,
+		versionToBeInstalled: "1.0.0",
+		fileManager:          fsxManager,
+	}
+
+	// Create sandbox directory structure but no symlinks
+	sandboxBinDir := core.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Don't create any symlinks
+
+	//
+	// When
+	//
+
+	// Execute RestoreConfiguration - should succeed even with no symlinks
+	err = installer.RestoreConfiguration()
+
+	//
+	// Then
+	//
+	require.NoError(t, err)
+
+	// Verify sandbox binary still exists
+	_, err = os.Stat(sandboxBinary)
+	require.NoError(t, err, "Sandbox binary should still exist")
 }

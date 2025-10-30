@@ -32,12 +32,12 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 
 			// kubeadm
 			steps.SetupKubeadm(),
-
 			// init cluster
 			steps.InitCluster(),
 
-			// cilium CLI
+			// cilium
 			steps.SetupCilium(),
+			steps.StartCilium(),
 
 			// metalLB
 			steps.SetupMetalLB(), // still using bash steps

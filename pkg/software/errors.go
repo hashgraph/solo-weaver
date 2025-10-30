@@ -18,6 +18,7 @@ var (
 	FileNotFoundError     = ErrorsNamespace.NewType("file_not_found")
 	InstallationError     = ErrorsNamespace.NewType("installation_error")
 	ConfigurationError    = ErrorsNamespace.NewType("configuration_error")
+	CleanupError          = ErrorsNamespace.NewType("cleanup_error")
 	FileSystemError       = ErrorsNamespace.NewType("filesystem_error")
 	TemplateError         = ErrorsNamespace.NewType("template_error")
 
@@ -44,6 +45,7 @@ const (
 	fileNotFoundErrorMsg     = "file not found: '%s'"
 	installationErrorMsg     = "failed to install software '%s' versionToBeInstalled '%s'"
 	configurationErrorMsg    = "failed to configure software '%s'"
+	cleanupErrorMsg          = "failed to clean up download folder %s after installation"
 	filesystemErrorMsg       = "filesystem error"
 	templateErrorMsg         = "failed to execute template for software '%s'"
 )
@@ -130,6 +132,17 @@ func NewInstallationError(cause error, softwareName, version string) *errorx.Err
 func NewConfigurationError(cause error, softwareName string) *errorx.Error {
 	err := ConfigurationError.New(configurationErrorMsg, softwareName).
 		WithProperty(softwareNameProperty, softwareName)
+
+	if cause != nil {
+		err = err.WithUnderlyingErrors(cause)
+	}
+
+	return err
+}
+
+func NewCleanupError(cause error, downloadFolder string) *errorx.Error {
+	err := CleanupError.New(cleanupErrorMsg, downloadFolder).
+		WithProperty(filePathProperty, downloadFolder)
 
 	if cause != nil {
 		err = err.WithUnderlyingErrors(cause)

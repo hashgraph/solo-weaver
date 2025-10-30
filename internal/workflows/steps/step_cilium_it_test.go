@@ -12,7 +12,7 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
-func Test_StepCiliumCLI_Fresh_Integration(t *testing.T) {
+func Test_StepCilium_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
@@ -33,7 +33,7 @@ func Test_StepCiliumCLI_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, report.Status)
 }
 
-func Test_StepCiliumCLI_AlreadyInstalled_Integration(t *testing.T) {
+func Test_StepCilium_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
@@ -62,7 +62,7 @@ func Test_StepCiliumCLI_AlreadyInstalled_Integration(t *testing.T) {
 
 }
 
-func Test_StepCiliumCLI_PartiallyInstalled_Integration(t *testing.T) {
+func Test_StepCilium_PartiallyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//

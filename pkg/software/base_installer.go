@@ -848,33 +848,27 @@ func (b *baseInstaller) Version() string {
 // Uninstall removes the software from the sandbox and cleans up related files
 // This is the default implementation which assumes a simple binary installation
 // where the binaries are placed in the sandbox bin directory.
-// It removes symlinks in the system bin directory, binaries from sandbox bin directory,
-// and any downloaded files.
+// It removes binaries from sandbox bin directory.
 // If the software has more complex installation steps, installers can override this method.
 func (b *baseInstaller) Uninstall() error {
-	// First, clean up any symlinks in the system bin directory that point to our sandbox
+	// Remove the binaries from the sandbox bin directory
+	err := b.removeSandboxBinaries()
+	if err != nil {
+		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+	}
+
+	return nil
+}
+
+// RestoreConfiguration restores the configuration of the software after an uninstall
+// This is the default implementation which assumes a simple binary installation
+// where the binaries are placed in the sandbox bin directory.
+// It removes symbolic links from sandbox bin directory.
+// If the software has more complex installation steps, installers can override this method.
+func (b *baseInstaller) RestoreConfiguration() error {
 	err := b.cleanupSymlinks()
 	if err != nil {
 		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
-	}
-
-	// Remove the binaries from the sandbox bin directory
-	err = b.removeSandboxBinaries()
-	if err != nil {
-		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
-	}
-
-	// Clean up download and extract directories for this software
-	downloadFolder := b.downloadFolder()
-	_, exists, err := b.fileManager.PathExists(downloadFolder)
-	if err != nil {
-		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
-	}
-	if exists {
-		err = b.fileManager.RemoveAll(downloadFolder)
-		if err != nil {
-			return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
-		}
 	}
 
 	return nil
@@ -934,7 +928,7 @@ func (b *baseInstaller) Cleanup() error {
 	// Clean up download and extract folders if installation succeeded
 	err := b.fileManager.RemoveAll(downloadFolder)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to clean up download folder %s after installation", downloadFolder)
+		return NewCleanupError(err, downloadFolder)
 	}
 
 	return nil

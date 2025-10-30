@@ -12,7 +12,6 @@ func SetupCilium() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId("setup-cilium-cli").Steps(
 		installCilium(software.NewCiliumInstaller),
 		configureCilium(software.NewCiliumInstaller),
-		bashSteps.InstallCiliumCNI(), // we cannot write in pure Go because we need to run cilium binary
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up Cilium")
@@ -79,5 +78,21 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 			}
 
 			return automa.SuccessReport(stp)
+		})
+}
+
+func StartCilium() automa.Builder {
+	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
+		bashSteps.InstallCiliumCNI(), // we cannot write in pure Go because we need to run cilium binary
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Starting Cilium")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to start Cilium")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Cilium started successfully")
 		})
 }
