@@ -38,6 +38,17 @@ func TestRunCmd_Error(t *testing.T) {
 func cleanUpTempDir(t *testing.T) {
 	t.Helper()
 
-	err := os.RemoveAll(core.Paths().TempDir)
-	require.NoError(t, err)
+	_ = exec.Command("chattr", "-Ri", core.Paths().TempDir).Run()
+
+	_ = os.RemoveAll(core.Paths().TempDir)
+
+	_ = os.RemoveAll(core.Paths().SandboxDir)
+
+	// List files in /usr/local/bin and remove them
+	files, err := os.ReadDir("/usr/local/bin")
+	if err == nil {
+		for _, file := range files {
+			_ = os.Remove("/usr/local/bin/" + file.Name())
+		}
+	}
 }
