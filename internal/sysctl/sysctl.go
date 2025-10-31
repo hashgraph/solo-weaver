@@ -244,7 +244,9 @@ func PathFromKey(key string) ([]string, error) {
 	sysctlPaths := []string{DefaultPath}
 	parts := strings.Split(key, ".")
 	for _, p := range parts {
-		var dirs []string
+		var newPaths []string
+
+		// handle wildcard and append matching paths
 		if strings.Contains(p, "*") {
 			prefix := strings.TrimSuffix(p, "*")
 
@@ -256,18 +258,14 @@ func PathFromKey(key string) ([]string, error) {
 
 				for _, entry := range entries {
 					if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
-						dirs = append(dirs, entry.Name())
+						sysctlPath := filepath.Join(sp, entry.Name())
+						newPaths = append(newPaths, sysctlPath)
 					}
 				}
 			}
 		} else {
-			dirs = []string{p}
-		}
-
-		var newPaths []string
-		for _, dir := range dirs {
 			for _, sp := range sysctlPaths {
-				sysctlPath := filepath.Join(sp, dir)
+				sysctlPath := filepath.Join(sp, p)
 				newPaths = append(newPaths, sysctlPath)
 			}
 		}
