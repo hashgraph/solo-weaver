@@ -3,15 +3,18 @@ package sysctl
 import (
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/joomcode/errorx"
 	"github.com/lorenzosaino/go-sysctl"
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/templates"
 )
 
 const (
+	DefaultPath   = sysctl.DefaultPath
 	TemplatesDir  = "files/sysctl"
 	EtcSysctlDir  = "/etc/sysctl.d"
 	EtcSysctlConf = "/etc/sysctl.conf"
@@ -203,10 +206,90 @@ func LoadConfigurationFrom(configFiles []string) ([]string, error) {
 	// so we pass an empty slice to LoadConfigAndApply
 	// if configFiles is empty, LoadConfigAndApply will use /etc/sysctl.conf
 	// as per its implementation
-	err = sysctl.LoadConfigAndApply(configFiles...)
+	err = applyConfigs(configFiles...)
 	if err != nil {
 		return configFiles, err
 	}
 
 	return configFiles, nil
+}
+
+// applyConfigs sets sysctl values from a list of sysctl configuration files.
+// The values in the rightmost files take priority.
+// If no file is specified, values are read from /etc/sysctl.conf.
+func applyConfigs(files ...string) error {
+	config, err := sysctl.LoadConfig(files...)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "could not read configuration from files %v", files)
+	}
+	for k, v := range config {
+		if err := Set(k, v); err != nil {
+			return errorx.InternalError.Wrap(err, "could not set %s = %s", k, v)
+		}
+	}
+	return nil
+}
+
+// Set updates the value of a sysctl.
+func Set(key, value string) error {
+	sysctlPaths, err := PathFromKey(key)
+	if err != nil {
+		return err
+	}
+
+	for _, sysctlPath := range sysctlPaths {
+		if err := os.WriteFile(sysctlPath, []byte(value), 0o644); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to set %s", sysctlPath)
+		}
+	}
+
+	return nil
+}
+
+// PathFromKey returns the sysctl file path for a given key.
+// It supports patterns with '*' for interface names, e.g. net.ipv4.conf.lxc*.rp_filter
+// Only suffix wildcards are supported. If no wildcard is present, it returns the full path for the given key.
+// If no matching paths are found for a pattern, it returns empty array
+func PathFromKey(key string) ([]string, error) {
+	key = strings.TrimPrefix(key, "-")
+	if key == "" {
+		return nil, errorx.IllegalArgument.New("key cannot be empty")
+	}
+
+	// No wildcard: direct mapping
+	if !strings.Contains(key, "*") {
+		return []string{filepath.Join(DefaultPath, strings.ReplaceAll(key, ".", "/"))}, nil
+	}
+
+	parts := strings.Split(key, ".")
+	paths := []string{DefaultPath}
+
+	for _, part := range parts {
+		var nextPaths []string
+		if strings.Contains(part, "*") {
+			prefix := strings.TrimSuffix(part, "*")
+			for _, base := range paths {
+				entries, err := os.ReadDir(base)
+				if err != nil {
+					return nil, err
+				}
+				for _, entry := range entries {
+					if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+						nextPaths = append(nextPaths, filepath.Join(base, entry.Name()))
+					}
+				}
+			}
+		} else {
+			for _, base := range paths {
+				nextPaths = append(nextPaths, filepath.Join(base, part))
+			}
+		}
+
+		paths = nextPaths
+		if len(paths) == 0 {
+			break // no matching paths found
+		}
+	}
+
+	return paths, nil
 }
