@@ -1,8 +1,10 @@
 package sysctl
 
 import (
+	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -12,6 +14,7 @@ import (
 )
 
 const (
+	DefaultPath   = sysctl.DefaultPath
 	TemplatesDir  = "files/sysctl"
 	EtcSysctlDir  = "/etc/sysctl.d"
 	EtcSysctlConf = "/etc/sysctl.conf"
@@ -203,10 +206,90 @@ func LoadConfigurationFrom(configFiles []string) ([]string, error) {
 	// so we pass an empty slice to LoadConfigAndApply
 	// if configFiles is empty, LoadConfigAndApply will use /etc/sysctl.conf
 	// as per its implementation
-	err = sysctl.LoadConfigAndApply(configFiles...)
+	err = applyConfigs(configFiles...)
 	if err != nil {
 		return configFiles, err
 	}
 
 	return configFiles, nil
+}
+
+// applyConfigs sets sysctl values from a list of sysctl configuration files.
+// The values in the rightmost files take priority.
+// If no file is specified, values are read from /etc/sysctl.conf.
+func applyConfigs(files ...string) error {
+	config, err := sysctl.LoadConfig(files...)
+	if err != nil {
+		return fmt.Errorf("could not read configuration from files: %v", err)
+	}
+	for k, v := range config {
+		if err := Set(k, v); err != nil {
+			return fmt.Errorf("could not set %s = %s: %v", k, v, err)
+		}
+	}
+	return nil
+}
+
+// PathFromKey returns the sysctl file path for a given key.
+// It supports patterns with '*' for interface names, e.g. net.ipv4.conf.lxc*.rp_filter
+// Only suffix wildcards are supported. If no wildcard is present, it returns the full path for the given key.
+// If no matching paths are found for a pattern, it returns an empty slice.
+func PathFromKey(key string) ([]string, error) {
+	key = strings.TrimPrefix(key, "-") // remove leading '-' if present
+	if !strings.Contains(key, "*") {
+		// Not a pattern, replace . with / and return full path
+		return []string{filepath.Join(DefaultPath, strings.Replace(key, ".", "/", -1))}, nil
+	}
+
+	sysctlPaths := []string{DefaultPath}
+	parts := strings.Split(key, ".")
+	for _, p := range parts {
+		var dirs []string
+		if strings.Contains(p, "*") {
+			prefix := strings.TrimSuffix(p, "*")
+
+			for _, sp := range sysctlPaths {
+				entries, err := os.ReadDir(sp)
+				if err != nil {
+					return nil, err
+				}
+
+				for _, entry := range entries {
+					if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+						dirs = append(dirs, entry.Name())
+					}
+				}
+			}
+		} else {
+			dirs = []string{p}
+		}
+
+		var newPaths []string
+		for _, dir := range dirs {
+			for _, sp := range sysctlPaths {
+				sysctlPath := filepath.Join(sp, dir)
+				newPaths = append(newPaths, sysctlPath)
+			}
+		}
+
+		sysctlPaths = newPaths
+	}
+
+	return sysctlPaths, nil
+}
+
+// Set updates the value of a sysctl.
+func Set(key, value string) error {
+	sysctlPaths, err := PathFromKey(key)
+	if err != nil {
+		return err
+	}
+
+	for _, sysctlPath := range sysctlPaths {
+		if err := os.WriteFile(sysctlPath, []byte(value), 0o644); err != nil {
+			return fmt.Errorf("failed to set %s: %w", sysctlPath, err)
+		}
+	}
+
+	return nil
 }

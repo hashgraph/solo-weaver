@@ -72,3 +72,26 @@ func Test_BackupSysctlConfiguration_Integration(t *testing.T) {
 	s := string(data)
 	require.Equal(t, 29, len(strings.Split(s, "\n"))) // we are setting 31 configuration items
 }
+
+func Test_PathFromKey(t *testing.T) {
+	results, err := PathFromKey("net.ipv4.ip_forward")
+	require.NoError(t, err)
+	require.Equal(t, []string{"/proc/sys/net/ipv4/ip_forward"}, results)
+
+	results, err = PathFromKey("net.ipv4.conf.lxc*.rp_filter")
+	require.NoError(t, err)
+	require.LessOrEqual(t, 1, len(results))
+
+	results, err = PathFromKey("-net.ipv4.ip_forward")
+	require.NoError(t, err)
+	require.Equal(t, []string{"/proc/sys/net/ipv4/ip_forward"}, results)
+}
+
+func Test_LoadAllConfiguration_Integration(t *testing.T) {
+	configFiles, err := LoadAllConfiguration()
+	require.NoError(t, err)
+	require.NotEmpty(t, configFiles)
+	results, err := LoadConfigurationFrom(configFiles)
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+}
