@@ -123,7 +123,7 @@ func Test_StepHelm_PartiallyInstalled_Integration(t *testing.T) {
 	require.Empty(t, report.StepReports[0].Metadata[CleanedUpByThisStep])
 
 	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyInstalled])
+	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 }
 
@@ -428,7 +428,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
-	// Verify binary files were removed installed
+	// Verify binary files were removed
 	_, err = os.Stat("/opt/provisioner/sandbox/bin/helm")
 	require.Error(t, err)
 }
@@ -501,7 +501,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
-	// Verify binary files were removed installed
+	// Verify binary files were removed
 	_, err = os.Stat("/opt/provisioner/sandbox/bin/helm")
 	require.Error(t, err)
 }

@@ -5,11 +5,15 @@ package steps
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path"
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
 func Test_StepKubectl_Fresh_Integration(t *testing.T) {
@@ -31,6 +35,14 @@ func Test_StepKubectl_Fresh_Integration(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
+
+	require.Empty(t, report.StepReports[0].Metadata[AlreadyInstalled])
+	require.Equal(t, "true", report.StepReports[0].Metadata[DownloadedByThisStep])
+	require.Equal(t, "true", report.StepReports[0].Metadata[InstalledByThisStep])
+	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
+	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
+	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
+
 }
 
 func Test_StepKubectl_AlreadyInstalled_Integration(t *testing.T) {
@@ -60,6 +72,15 @@ func Test_StepKubectl_AlreadyInstalled_Integration(t *testing.T) {
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
+	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
+	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
+	require.Empty(t, report.StepReports[0].Metadata[DownloadedByThisStep])
+	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
+	require.Empty(t, report.StepReports[0].Metadata[CleanedUpByThisStep])
+
+	require.Equal(t, automa.StatusSkipped, report.StepReports[1].Status)
+	require.Equal(t, "true", report.StepReports[1].Metadata[AlreadyConfigured])
+	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 }
 
 func Test_StepKubectl_PartiallyInstalled_Integration(t *testing.T) {
@@ -75,20 +96,335 @@ func Test_StepKubectl_PartiallyInstalled_Integration(t *testing.T) {
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
-	err = os.RemoveAll(core.Paths().TempDir)
+	err = os.RemoveAll("/usr/local/bin/kubectl")
 	require.NoError(t, err)
 
 	//
 	// When
 	//
 	step, err = SetupKubectl().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
 
 	//
 	// Then
 	//
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
 	require.NotNil(t, report)
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
+
+	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
+	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
+	require.Empty(t, report.StepReports[0].Metadata[DownloadedByThisStep])
+	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
+	require.Empty(t, report.StepReports[0].Metadata[CleanedUpByThisStep])
+
+	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
+	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
+	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
+}
+
+func Test_StepKubectl_Rollback_Fresh_Integration(t *testing.T) {
+	//
+	// Given
+	//
+	cleanUpTempDir(t)
+
+	//
+	// When
+	//
+	step, err := SetupKubectl().Build()
+
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+
+	require.NotNil(t, report)
+	require.NoError(t, report.Error)
+	require.Equal(t, automa.StatusSuccess, report.Status)
+
+	require.Equal(t, "true", report.StepReports[0].Metadata[DownloadedByThisStep])
+	require.Equal(t, "true", report.StepReports[0].Metadata[InstalledByThisStep])
+	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
+
+	//
+	// When - Rollback
+	//
+	rollbackReport := step.Rollback(context.Background())
+
+	//
+	// Then
+	//
+	require.NoError(t, rollbackReport.Error)
+	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+
+	// Verify download folder for kubectl is removed
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	require.Error(t, err)
+
+	// Verify binary files are removed
+	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	require.Error(t, err)
+}
+
+func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
+	//
+	// Given
+	//
+	cleanUpTempDir(t)
+
+	// Make the download directory read-only
+	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create download directory")
+	cmd := exec.Command("chattr", "+i", core.Paths().TempDir)
+	err = cmd.Run()
+	require.NoError(t, err, "Failed to make download directory read-only")
+
+	// Restore permissions after test
+	t.Cleanup(func() {
+		_ = exec.Command("chattr", "-i", core.Paths().TempDir).Run()
+	})
+
+	//
+	// When
+	//
+	step, err := SetupKubectl().Build()
+	require.NoError(t, err)
+
+	//
+	// When - Rollback
+	//
+
+	report := step.Execute(context.Background())
+
+	require.NotNil(t, report)
+
+	// Check errorx error type
+	require.Error(t, report.Error)
+
+	// Confirm errorx error type is DownloadError
+	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.Equal(t, automa.StatusFailed, report.Status)
+
+	//
+	// Then
+	//
+	rollbackReport := report.StepReports[0].Rollback
+
+	require.NoError(t, rollbackReport.Error)
+	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+
+	// Verify download folder for kubectl was not created
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	require.Error(t, err)
+
+	// Confirm binary files were not created
+	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	require.Error(t, err)
+}
+
+func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
+	//
+	// Given
+	//
+	cleanUpTempDir(t)
+
+	// Make the sandbox directory read-only
+	sandboxDir := path.Join(core.Paths().SandboxDir, "bin")
+
+	err := os.MkdirAll(sandboxDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create sandbox bin directory")
+	cmd := exec.Command("chattr", "+i", sandboxDir)
+	err = cmd.Run()
+	require.NoError(t, err, "Failed to make sandbox binary directory read-only")
+
+	// Restore permissions after test
+	t.Cleanup(func() {
+		_ = exec.Command("chattr", "-i", sandboxDir).Run()
+	})
+
+	//
+	// When
+	//
+	step, err := SetupKubectl().Build()
+	require.NoError(t, err)
+
+	//
+	// When - Rollback
+	//
+
+	report := step.Execute(context.Background())
+
+	require.NotNil(t, report)
+
+	// Check errorx error type
+	require.Error(t, report.Error)
+
+	// Confirm errorx error type is DownloadError
+	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.Equal(t, automa.StatusFailed, report.Status)
+
+	//
+	// Then
+	//
+	rollbackReport := report.StepReports[0].Rollback
+
+	require.NoError(t, rollbackReport.Error)
+	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+
+	// Verify download folder is still around when there is an error
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	require.NoError(t, err)
+
+	// Verify downloaded binary is still around
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl/kubectl")
+	require.NoError(t, err)
+
+	// Verify binary files were not installed
+	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	require.Error(t, err)
+}
+
+func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
+	//
+	// Given
+	//
+	cleanUpTempDir(t)
+
+	// Create an unremovable directory under download folder
+	unremovableDir := path.Join(core.Paths().TempDir, "kubectl", "unremovable")
+
+	err := os.MkdirAll(unremovableDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create unremovable directory")
+	cmd := exec.Command("chattr", "+i", unremovableDir)
+	err = cmd.Run()
+	require.NoError(t, err, "Failed to make unremovable directory read-only")
+
+	// Restore permissions after test
+	t.Cleanup(func() {
+		_ = exec.Command("chattr", "-i", unremovableDir).Run()
+	})
+
+	//
+	// When
+	//
+	step, err := SetupKubectl().Build()
+	require.NoError(t, err)
+
+	//
+	// When - Rollback
+	//
+
+	report := step.Execute(context.Background())
+
+	require.NotNil(t, report)
+
+	// Check errorx error type
+	require.Error(t, report.Error)
+
+	// Confirm errorx error type is DownloadError
+	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.Equal(t, automa.StatusFailed, report.Status)
+
+	//
+	// Then
+	//
+	rollbackReport := report.StepReports[0].Rollback
+
+	require.NoError(t, rollbackReport.Error)
+	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+
+	// Verify download folder is still around when there is an extraction error
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	require.NoError(t, err)
+
+	// Check there is a tar.gz file in the unpack directory by counting the number of files
+	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
+
+	// Verify unpack folder is not around because the cleanup tried to remove it
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl/unpack")
+	require.Error(t, err)
+
+	// Check there are unpacked files
+	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
+
+	// Verify binary files were removed
+	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	require.Error(t, err)
+}
+
+func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
+	//
+	// Given
+	//
+	cleanUpTempDir(t)
+
+	// Create an unremovable directory under download folder
+	unremovableDir := path.Join(core.Paths().TempDir, "kubectl", "unremovable")
+
+	err := os.MkdirAll(unremovableDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create unremovable directory")
+	cmd := exec.Command("chattr", "+i", unremovableDir)
+	err = cmd.Run()
+	require.NoError(t, err, "Failed to make unremovable directory read-only")
+
+	// Restore permissions after test
+	t.Cleanup(func() {
+		_ = exec.Command("chattr", "-i", unremovableDir).Run()
+	})
+
+	//
+	// When
+	//
+	step, err := SetupKubectl().Build()
+	require.NoError(t, err)
+
+	//
+	// When - Rollback
+	//
+
+	report := step.Execute(context.Background())
+
+	require.NotNil(t, report)
+
+	// Check errorx error type
+	require.Error(t, report.Error)
+
+	// Confirm errorx error type is DownloadError
+
+	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.Equal(t, automa.StatusFailed, report.Status)
+
+	//
+	// Then
+	//
+	rollbackReport := report.StepReports[0].Rollback
+
+	require.NoError(t, rollbackReport.Error)
+	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+
+	// Verify download folder is still around when there is an extraction error
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	require.NoError(t, err)
+
+	// Check there is a tar.gz file in the unpack directory by counting the number of files
+	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
+
+	// Verify unpack folder is not around because the cleanup tried to remove it
+	_, err = os.Stat("/opt/provisioner/tmp/kubectl/unpack")
+	require.Error(t, err)
+
+	// Check there are unpacked files
+	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
+
+	// Verify binary files were removed
+	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	require.Error(t, err)
 }
