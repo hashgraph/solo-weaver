@@ -1,13 +1,13 @@
 package sysctl
 
 import (
-	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/joomcode/errorx"
 	"github.com/lorenzosaino/go-sysctl"
 	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/templates"
@@ -220,60 +220,14 @@ func LoadConfigurationFrom(configFiles []string) ([]string, error) {
 func applyConfigs(files ...string) error {
 	config, err := sysctl.LoadConfig(files...)
 	if err != nil {
-		return fmt.Errorf("could not read configuration from files: %v", err)
+		return errorx.IllegalArgument.Wrap(err, "could not read configuration from files %v", files)
 	}
 	for k, v := range config {
 		if err := Set(k, v); err != nil {
-			return fmt.Errorf("could not set %s = %s: %v", k, v, err)
+			return errorx.InternalError.Wrap(err, "could not set %s = %s", k, v)
 		}
 	}
 	return nil
-}
-
-// PathFromKey returns the sysctl file path for a given key.
-// It supports patterns with '*' for interface names, e.g. net.ipv4.conf.lxc*.rp_filter
-// Only suffix wildcards are supported. If no wildcard is present, it returns the full path for the given key.
-// If no matching paths are found for a pattern, it returns an empty slice.
-func PathFromKey(key string) ([]string, error) {
-	key = strings.TrimPrefix(key, "-") // remove leading '-' if present
-	if !strings.Contains(key, "*") {
-		// Not a pattern, replace . with / and return full path
-		return []string{filepath.Join(DefaultPath, strings.Replace(key, ".", "/", -1))}, nil
-	}
-
-	sysctlPaths := []string{DefaultPath}
-	parts := strings.Split(key, ".")
-	for _, p := range parts {
-		var newPaths []string
-
-		// handle wildcard and append matching paths
-		if strings.Contains(p, "*") {
-			prefix := strings.TrimSuffix(p, "*")
-
-			for _, sp := range sysctlPaths {
-				entries, err := os.ReadDir(sp)
-				if err != nil {
-					return nil, err
-				}
-
-				for _, entry := range entries {
-					if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
-						sysctlPath := filepath.Join(sp, entry.Name())
-						newPaths = append(newPaths, sysctlPath)
-					}
-				}
-			}
-		} else {
-			for _, sp := range sysctlPaths {
-				sysctlPath := filepath.Join(sp, p)
-				newPaths = append(newPaths, sysctlPath)
-			}
-		}
-
-		sysctlPaths = newPaths
-	}
-
-	return sysctlPaths, nil
 }
 
 // Set updates the value of a sysctl.
@@ -285,9 +239,57 @@ func Set(key, value string) error {
 
 	for _, sysctlPath := range sysctlPaths {
 		if err := os.WriteFile(sysctlPath, []byte(value), 0o644); err != nil {
-			return fmt.Errorf("failed to set %s: %w", sysctlPath, err)
+			return errorx.InternalError.Wrap(err, "failed to set %s", sysctlPath)
 		}
 	}
 
 	return nil
+}
+
+// PathFromKey returns the sysctl file path for a given key.
+// It supports patterns with '*' for interface names, e.g. net.ipv4.conf.lxc*.rp_filter
+// Only suffix wildcards are supported. If no wildcard is present, it returns the full path for the given key.
+// If no matching paths are found for a pattern, it returns empty array
+func PathFromKey(key string) ([]string, error) {
+	key = strings.TrimPrefix(key, "-")
+	if key == "" {
+		return nil, errorx.IllegalArgument.New("key cannot be empty")
+	}
+
+	// No wildcard: direct mapping
+	if !strings.Contains(key, "*") {
+		return []string{filepath.Join(DefaultPath, strings.ReplaceAll(key, ".", "/"))}, nil
+	}
+
+	parts := strings.Split(key, ".")
+	paths := []string{DefaultPath}
+
+	for _, part := range parts {
+		var nextPaths []string
+		if strings.Contains(part, "*") {
+			prefix := strings.TrimSuffix(part, "*")
+			for _, base := range paths {
+				entries, err := os.ReadDir(base)
+				if err != nil {
+					return nil, err
+				}
+				for _, entry := range entries {
+					if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+						nextPaths = append(nextPaths, filepath.Join(base, entry.Name()))
+					}
+				}
+			}
+		} else {
+			for _, base := range paths {
+				nextPaths = append(nextPaths, filepath.Join(base, part))
+			}
+		}
+
+		paths = nextPaths
+		if len(paths) == 0 {
+			break // no matching paths found
+		}
+	}
+
+	return paths, nil
 }

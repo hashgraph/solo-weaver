@@ -106,6 +106,10 @@ func Test_PathFromKey(t *testing.T) {
 		}
 	}
 
+	results, err = PathFromKey("net.ipv4.conf.invalid*.rp_filter")
+	require.NoError(t, err)
+	require.Empty(t, results)
+
 	results, err = PathFromKey("-net.ipv4.ip_forward")
 	require.NoError(t, err)
 	require.Equal(t, []string{"/proc/sys/net/ipv4/ip_forward"}, results)
