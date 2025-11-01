@@ -24,8 +24,7 @@ import (
 )
 
 type helmManager struct {
-	log      zerolog.Logger
-	settings *cli.EnvSettings
+	log zerolog.Logger
 }
 
 type Option func(*helmManager)
@@ -33,12 +32,6 @@ type Option func(*helmManager)
 func WithLogger(log zerolog.Logger) Option {
 	return func(h *helmManager) {
 		h.log = log
-	}
-}
-
-func WithSettings(settings *cli.EnvSettings) Option {
-	return func(h *helmManager) {
-		h.settings = settings
 	}
 }
 
@@ -52,29 +45,29 @@ func NewManager(opts ...Option) (Manager, error) {
 		opt(m)
 	}
 
-	if m.settings == nil {
-		m.settings = cli.New()
-	}
-
 	return m, nil
 }
 
 func (h *helmManager) WithNamespace(namespace string) *cli.EnvSettings {
-	settings := *h.settings
-	settings.SetNamespace(namespace)
-	return &settings
+	// Set HELM_NAMESPACE env var so that Helm libraries pick it up and return it correctly when Namespace() is called
+	_ = os.Setenv("HELM_NAMESPACE", namespace)
+	settings := cli.New()
+	settings.SetNamespace(namespace) // set it just in case the env var is not picked up in SDK's future versions
+
+	return settings
 }
 
 // AddRepo adds a Helm chart repository with the given options and updates it.
 // It always forces updates the repo even if it already exists
 // It is equivalent to: helm repo add <name> <url> && helm repo update <name>
 func (h *helmManager) AddRepo(name, url string, o RepoAddOptions) (*repo.ChartRepository, error) {
+	settings := h.WithNamespace("")
 	if o.RepoFile == "" {
-		o.RepoFile = h.settings.RepositoryConfig
+		o.RepoFile = settings.RepositoryConfig
 	}
 
 	if o.RepoCache == "" {
-		o.RepoCache = h.settings.RepositoryCache
+		o.RepoCache = settings.RepositoryCache
 	}
 
 	h.log.Info().Str("name", name).Str("url", url).Msg("Adding Helm repository")
@@ -131,7 +124,7 @@ func (h *helmManager) AddRepo(name, url string, o RepoAddOptions) (*repo.ChartRe
 		return nil, errorx.IllegalFormat.New("repository name (%s) contains '/', please specify a different name without '/'", name)
 	}
 
-	r, err := repo.NewChartRepository(&c, getter.All(h.settings))
+	r, err := repo.NewChartRepository(&c, getter.All(settings))
 	if err != nil {
 		return nil, ErrRepoInvalid.Wrap(err, "failed to create chart repository for %q", url)
 	}

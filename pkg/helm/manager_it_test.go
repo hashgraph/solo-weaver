@@ -1,4 +1,4 @@
-//go:build helm_integration || cluster_e2e
+//go:build helm_integration || require_cluster
 
 package helm
 
@@ -9,7 +9,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
-	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
@@ -37,8 +36,7 @@ var testChart = testChartInfo{
 // helper to create Helm manager
 func newTestManager(t *testing.T) Manager {
 	log := zerolog.Nop()
-	settings := cli.New()
-	manager, err := NewManager(WithLogger(log), WithSettings(settings))
+	manager, err := NewManager(WithLogger(log))
 	require.NoError(t, err)
 	return manager
 }
