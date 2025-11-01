@@ -10,6 +10,7 @@ var (
 	SystemdErrTrait = errorx.RegisterTrait("systemd_error")
 
 	ErrSwapOutOfMemory    = ErrNamespace.NewType("out_of_memory", SwapErrTrait)
+	ErrInvalidSwapFile    = ErrNamespace.NewType("invalid_swap_file", SwapErrTrait)
 	ErrSwapUnknownSyscall = ErrNamespace.NewType("unknown_syscall", SwapErrTrait)
 	ErrNonSyscall         = ErrNamespace.NewType("non_syscall", SwapErrTrait)
 	ErrSwapNotSuperUser   = ErrNamespace.NewType("not_super_user", SwapErrTrait)
