@@ -80,7 +80,8 @@ set -e
 kubectl get nodes
 
 # Check all nodes are Ready
-kubectl get nodes --no-headers | awk '{print $2}' | grep -v Ready && exit 1
+kubectl get nodes --no-headers | awk '{print $2}' | grep -q '^Ready$'
+if [ $? -eq 0 ]; then exit 1; fi
 
 # List of required namespaces
 namespaces="cilium-secrets default kube-node-lease kube-public kube-system metallb-system"

@@ -2,18 +2,20 @@ package steps
 
 import (
 	"context"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/helm"
+	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 const (
 	MetalLBNamespace = "metallb-system"
 	MetalLBRelease   = "metallb"
 	MetalLBChart     = "metallb/metallb"
-	MetalLBVersion   = "v0.13.10"
+	MetalLBVersion   = "v0.15.2"
 	MetalLBRepo      = "https://metallb.github.io/metallb"
 )
 
@@ -67,6 +69,9 @@ func installMetalLB() automa.Builder {
 				MetalLBVersion,
 				MetalLBNamespace,
 				helm.InstallChartOptions{
+					ValueOpts: &values.Options{
+						Values: []string{"speaker.frr.enabled=false"},
+					},
 					CreateNamespace: true,
 				},
 			)
@@ -76,6 +81,10 @@ func installMetalLB() automa.Builder {
 
 			meta[InstalledByThisStep] = "true"
 			stp.State().Set(InstalledByThisStep, true)
+
+			// TODO: replace with proper readiness check using k8s client
+			time.Sleep(60 * time.Second) // wait for metallb to be ready
+
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
