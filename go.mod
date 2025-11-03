@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/automa-saga/automa v0.6.1
 	github.com/automa-saga/logx v0.1.0
-	github.com/bluet/syspkg v0.1.5
+	github.com/bluet/syspkg v0.1.6
 	github.com/coreos/go-systemd/v22 v22.6.0
 	github.com/gofrs/flock v0.13.0
 	github.com/golang/mock v1.6.0
