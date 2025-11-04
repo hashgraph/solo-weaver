@@ -12,6 +12,10 @@ import (
 
 type InstallerOption func(*baseInstaller)
 
+// WithVersion sets the specific version to install for the software.
+// If not provided, the latest version will be used automatically.
+// This is a public API option that can be used when creating installers
+// to override the default version selection behavior.
 func WithVersion(version string) InstallerOption {
 	return func(bi *baseInstaller) {
 		bi.versionToBeInstalled = version
@@ -269,7 +273,7 @@ func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
 }
 
 func (b *baseInstaller) downloadConfigs() error {
-	// Get config files for kubeadm from the software configuration
+	// Get config files from the software configuration
 	versionInfo, exists := b.software.Versions[Version(b.Version())]
 	if !exists {
 		return NewVersionNotFoundError(b.software.Name, b.Version())
@@ -609,13 +613,13 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 			return NewTemplateError(err, b.software.Name)
 		}
 
-		// Determine source path: check if binary comes from archive or was downloaded directly
+		// Determine source path: check if config comes from archive or was downloaded directly
 		var sourcePath string
 		if config.Archive != "" {
 			// Config is from an archive, look in extract folder
 			sourcePath = path.Join(extractFolder, configName)
 		} else {
-			// Binary was downloaded directly
+			// Config was downloaded directly
 			sourcePath = path.Join(downloadFolder, configName)
 		}
 
@@ -625,13 +629,46 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 			return NewFileNotFoundError(sourcePath)
 		}
 
-		configDestinationPath := path.Join(destinationDir, config.Name)
+		configDestinationPath := path.Join(destinationDir, configName)
 		err = b.fileManager.CopyFile(sourcePath, configDestinationPath, true)
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to copy %s into sandbox %s", sourcePath, configDestinationPath)
 		}
 	}
 
+	return nil
+}
+
+// uninstallConfig uninstalls the config files from the sandbox at the given destination directory
+func (b *baseInstaller) uninstallConfig(destinationDir string) error {
+	// Get config files
+	versionInfo, exists := b.software.Versions[Version(b.Version())]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.Version())
+	}
+	configs := versionInfo.GetConfigs()
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	// Remove each config file from the sandbox
+	for _, config := range configs {
+		// Resolve the config name using template
+		configName, err := executeTemplate(config.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		configDestinationPath := path.Join(destinationDir, configName)
+		err = b.fileManager.RemoveAll(configDestinationPath)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to remove %s from sandbox", configDestinationPath)
+		}
+	}
 	return nil
 }
 
@@ -736,6 +773,56 @@ func (b *baseInstaller) IsInstalled() (bool, error) {
 	return true, nil
 }
 
+// isConfigInstalled checks if the config files are installed in the given destination directory
+func (b *baseInstaller) isConfigInstalled(destinationDir string) (bool, error) {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return false, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	// If there are no configs defined, consider it not installed
+	if len(versionInfo.Configs) == 0 {
+		return false, nil
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	// Check all config files exist in destination directory and have correct checksums
+	for _, config := range versionInfo.Configs {
+		// Resolve the config name using template
+		configName, err := executeTemplate(config.Name, data)
+		if err != nil {
+			return false, NewTemplateError(err, b.software.Name)
+		}
+
+		// Get the base name for the destination (just the filename without path)
+		configBasename := path.Base(configName)
+		destinationFile := path.Join(destinationDir, configBasename)
+
+		// Check if the config exists in destination directory
+		_, exists, err := b.fileManager.PathExists(destinationFile)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return false, nil // Config doesn't exist, not installed
+		}
+
+		// Verify the installed config's checksum
+		err = VerifyChecksum(destinationFile, config.Value, config.Algorithm)
+		if err != nil {
+			return false, nil // Checksum mismatch, not properly installed
+		}
+	}
+
+	return true, nil
+}
+
 // IsConfigured provides a basic configuration check
 func (b *baseInstaller) IsConfigured() (bool, error) {
 	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
@@ -759,52 +846,76 @@ func (b *baseInstaller) IsConfigured() (bool, error) {
 
 	// Check all symbolic links exist and point to valid binaries with correct checksums
 	for _, binary := range versionInfo.Binaries {
-		// Resolve the binary name using template
-		binaryName, err := executeTemplate(binary.Name, data)
-		if err != nil {
-			return false, NewTemplateError(err, b.software.Name)
-		}
-
-		// Get the base name for the destination (just the filename without path)
-		binaryBasename := path.Base(binaryName)
-		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
-
-		// Check if the symbolic link exists in system bin directory
-		linkInfo, err := os.Readlink(systemBinary)
-		if err != nil {
-			return false, nil // Symbolic link doesn't exist or error reading it, not configured
-		}
-
-		// Verify the symbolic link points to the correct sandbox binary
-		if linkInfo != sandboxBinary {
-			return false, nil // Symbolic link points to wrong location, not properly configured
-		}
-
-		// Verify the target binary exists in sandbox
-		_, exists, err := b.fileManager.PathExists(sandboxBinary)
+		configured, err := b.isBinaryConfigured(binary, data, sandboxBinDir)
 		if err != nil {
 			return false, err
 		}
-		if !exists {
-			return false, nil // Target binary doesn't exist, not properly configured
+		if !configured {
+			return false, nil
 		}
+	}
 
-		// Get expected checksum for this binary
-		osInfo, exists := binary.PlatformChecksum[platform.os]
-		if !exists {
-			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
-		}
+	return true, nil
+}
 
-		checksum, exists := osInfo[platform.arch]
-		if !exists {
-			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
-		}
+// isBinaryConfigured checks if a single binary is properly configured
+func (b *baseInstaller) isBinaryConfigured(binary BinaryDetail, data TemplateData, sandboxBinDir string) (bool, error) {
+	// Resolve the binary name using template
+	binaryName, err := executeTemplate(binary.Name, data)
+	if err != nil {
+		return false, NewTemplateError(err, b.software.Name)
+	}
 
-		// Verify the target binary's checksum
-		if err := VerifyChecksum(sandboxBinary, checksum.Value, checksum.Algorithm); err != nil {
-			return false, nil // Checksum mismatch, not properly configured
-		}
+	// Get the base name for the destination (just the filename without path)
+	binaryBasename := path.Base(binaryName)
+	sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+	systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+
+	// Check if the symbolic link exists and points to correct location
+	if !b.isSymlinkValid(systemBinary, sandboxBinary) {
+		return false, nil
+	}
+
+	// Verify the target binary exists in sandbox
+	_, exists, err := b.fileManager.PathExists(sandboxBinary)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil // Target binary doesn't exist, not properly configured
+	}
+
+	// Verify checksum
+	return b.verifyBinaryChecksum(binary, sandboxBinary)
+}
+
+// isSymlinkValid checks if symlink exists and points to the correct target
+func (b *baseInstaller) isSymlinkValid(systemBinary, expectedTarget string) bool {
+	linkInfo, err := os.Readlink(systemBinary)
+	if err != nil {
+		return false // Symbolic link doesn't exist or error reading it
+	}
+	return linkInfo == expectedTarget
+}
+
+// verifyBinaryChecksum verifies the checksum of a binary file
+func (b *baseInstaller) verifyBinaryChecksum(binary BinaryDetail, binaryPath string) (bool, error) {
+	platform := b.software.getPlatform()
+
+	// Get expected checksum for this binary
+	osInfo, exists := binary.PlatformChecksum[platform.os]
+	if !exists {
+		return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
+	}
+
+	checksum, exists := osInfo[platform.arch]
+	if !exists {
+		return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
+	}
+
+	// Verify the target binary's checksum
+	if err := VerifyChecksum(binaryPath, checksum.Value, checksum.Algorithm); err != nil {
+		return false, nil // Checksum mismatch, not properly configured
 	}
 
 	return true, nil
@@ -865,7 +976,7 @@ func (b *baseInstaller) Uninstall() error {
 // where the binaries are placed in the sandbox bin directory.
 // It removes symbolic links from sandbox bin directory.
 // If the software has more complex installation steps, installers can override this method.
-func (b *baseInstaller) RestoreConfiguration() error {
+func (b *baseInstaller) RemoveConfiguration() error {
 	err := b.cleanupSymlinks()
 	if err != nil {
 		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)

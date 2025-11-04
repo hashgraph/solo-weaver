@@ -141,7 +141,7 @@ func configureKubectl(provider func(opts ...software.InstallerOption) (software.
 					automa.WithError(err))
 			}
 
-			err = installer.RestoreConfiguration()
+			err = installer.RemoveConfiguration()
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

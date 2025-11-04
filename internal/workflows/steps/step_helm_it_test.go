@@ -43,7 +43,6 @@ func Test_StepHelm_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-
 }
 
 func Test_StepHelm_AlreadyInstalled_Integration(t *testing.T) {

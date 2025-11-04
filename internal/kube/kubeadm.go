@@ -116,6 +116,10 @@ func ConfigureKubeadmInit(kubernetesVersion string) error {
 		return errorx.IllegalState.Wrap(err, "failed to create file manager")
 	}
 
+	err = fm.CreateDirectory(path.Join(core.Paths().SandboxDir, "/etc/provisioner"), true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create provisioner directory")
+	}
 	err = fm.WriteFile(path.Join(core.Paths().SandboxDir, "/etc/provisioner/kubeadm-init.yaml"), []byte(rendered))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write kubeadm init configuration file")

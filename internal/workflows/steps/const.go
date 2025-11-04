@@ -5,8 +5,14 @@ import "github.com/automa-saga/automa"
 const (
 	LoadedByThisStep = automa.Key("loadedByThisStep")
 
-	AlreadyInstalled     = "alreadyInstalled"
-	AlreadyConfigured    = "alreadyConfigured"
+	AlreadyInstalled      = "alreadyInstalled"
+	AlreadyConfigured     = "alreadyConfigured"
+	ServiceAlreadyEnabled = "serviceAlreadyEnabled"
+	ServiceAlreadyRunning = "serviceAlreadyRunning"
+
+	ServiceEnabledByThisStep = "serviceEnabled"
+	ServiceStartedByThisStep = "serviceStarted"
+
 	DownloadedByThisStep = "downloaded"
 	ExtractedByThisStep  = "extracted"
 	InstalledByThisStep  = "installed"

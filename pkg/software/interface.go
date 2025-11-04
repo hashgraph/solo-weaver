@@ -37,8 +37,8 @@ type Software interface {
 	// It also fills the configuration files
 	Configure() error
 
-	// RestoreConfiguration restores removes symlinks and restores the configuration files
-	RestoreConfiguration() error
+	// RemoveConfiguration removes symlinks and restores the configuration files
+	RemoveConfiguration() error
 
 	// IsConfigured checks if the configuration has been done
 	IsConfigured() (bool, error)
