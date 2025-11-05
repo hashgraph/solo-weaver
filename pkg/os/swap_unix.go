@@ -236,6 +236,11 @@ func handleSyscallErr(err error, path string, operationName string) error {
 				WithProperty(PathProperty, path).
 				WithProperty(SysErrorCodeProperty, SWAP_EX_ENOMEM)
 			return resultErr
+		case errors.Is(errCode, syscall.EINVAL):
+			resultErr = ErrInvalidSwapFile.Wrap(err, "%s: %s failed, invalid swap file", path, operationName).
+				WithProperty(PathProperty, path).
+				WithProperty(SysErrorCodeProperty, SWAP_EX_FAILURE)
+			return resultErr
 		default:
 			resultErr = ErrSwapUnknownSyscall.Wrap(err, "%s: %s failed, unknown syscall error", path, operationName).
 				WithProperty(PathProperty, path).
@@ -288,6 +293,11 @@ func SwapOffAll() error {
 
 		err = SwapOff(spec)
 		if err != nil {
+			if errorx.IsOfType(err, ErrSwapDeviceNotFound) || errorx.IsOfType(err, ErrInvalidSwapFile) {
+				// Device not found or invalid swap file, safe to ignore
+				continue
+			}
+
 			return err
 		}
 	}
