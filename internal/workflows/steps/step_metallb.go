@@ -2,7 +2,6 @@ package steps
 
 import (
 	"context"
-	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -62,7 +61,7 @@ func installMetalLB() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			_, err = hm.InstallChart(
+			rel, err := hm.InstallChart(
 				ctx,
 				MetalLBRelease,
 				MetalLBChart,
@@ -73,6 +72,7 @@ func installMetalLB() automa.Builder {
 						Values: []string{"speaker.frr.enabled=false"},
 					},
 					CreateNamespace: true,
+					Timeout:         helm.DefaultTimeout, // 5 minutes
 				},
 			)
 			if err != nil {
@@ -82,8 +82,10 @@ func installMetalLB() automa.Builder {
 			meta[InstalledByThisStep] = "true"
 			stp.State().Set(InstalledByThisStep, true)
 
-			// TODO: replace with proper readiness check using k8s client
-			time.Sleep(60 * time.Second) // wait for metallb to be ready
+			err = hm.WaitFor(rel, helm.StatusReady, helm.DefaultTimeout)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).

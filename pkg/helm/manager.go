@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -22,7 +23,6 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
 	"helm.sh/helm/v3/pkg/storage/driver"
-	"k8s.io/cli-runtime/pkg/resource"
 )
 
 type helmManager struct {
@@ -247,12 +247,13 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return nil, ErrInstallFailed.Wrap(err, "failed to install chart")
 	}
 
-	err = h.WaitFor(resource.Info{Name: rel.Name, Namespace: rel.Namespace}, StatusReady, installClient.Timeout)
+	err = h.waitFor(settings, rel, StatusReady, installClient.Timeout)
 	if err != nil {
 		return rel, err
 	}
 
-	l.Info().Msg("Helm chart installed successfully")
+	l.Info().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
+		Msg("Helm chart installed successfully")
 
 	return rel, nil
 }
@@ -278,17 +279,18 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 		return ErrUninstallFailed.Wrap(err, "failed to uninstall chart %q", releaseName)
 	}
 
-	err = h.WaitFor(resource.Info{Name: releaseName, Namespace: namespace}, StatusDeleted, uninstallClient.Timeout)
+	if rel == nil || rel.Release == nil {
+		l.Info().Str("releaseName", releaseName).Msg("Release not found, nothing to uninstall")
+		return nil
+	}
+
+	err = h.waitFor(settings, rel.Release, StatusReady, uninstallClient.Timeout)
 	if err != nil {
 		return err
 	}
 
-	if rel == nil {
-		l.Info().Msg("Uninstalled Helm release successfully (no release info returned)")
-		return nil
-	}
+	l.Info().Any("info", rel.Info).Msg("Uninstalled Helm release successfully")
 
-	l.Info().Any("info", rel).Msg("Uninstalled Helm release successfully")
 	return nil
 }
 
@@ -390,6 +392,13 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 		}
 		return nil, ErrUpgradeFailed.Wrap(err, "failed to run upgrade action")
 	}
+
+	err = h.waitFor(settings, rel, StatusReady, upgradeClient.Timeout)
+	if err != nil {
+		return rel, err
+	}
+
+	l.Info().Any("info", rel.Info).Msg("Helm chart upgraded successfully")
 
 	return rel, nil
 }
@@ -522,24 +531,40 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 	})
 }
 
-// WaitFor waits for the given Kubernetes resource to be in desired statues within the specified timeout
-func (h *helmManager) WaitFor(resource resource.Info, status Status, timeout time.Duration) error {
-	settings := h.WithNamespace(resource.Namespace)
-	c := kube.New(settings.RESTClientGetter())
+// waitFor waits for the given Kubernetes resource to be in desired statues within the specified timeout
+func (h *helmManager) waitFor(settings *cli.EnvSettings, rel *release.Release, status Status, timeout time.Duration) error {
+	if settings == nil {
+		return errorx.IllegalArgument.New("settings cannot be nil")
+	}
 
-	var err error
+	if rel == nil {
+		return errorx.IllegalArgument.New("release cannot be nil")
+	}
+
+	c := kube.New(settings.RESTClientGetter())
+	rs, err := c.Build(bytes.NewBufferString(rel.Manifest), false)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "unable to build kubernetes objects from release manifest")
+	}
+
 	switch status {
 	case StatusReady:
-		err = c.Wait(kube.ResourceList{&resource}, timeout)
+		err = c.Wait(rs, timeout)
 	case StatusDeleted:
-		err = c.WaitForDelete(kube.ResourceList{&resource}, timeout)
+		err = c.WaitForDelete(rs, timeout)
 	default:
 		return errorx.IllegalArgument.New("unknown status %q", status)
 	}
 
 	if err != nil {
-		return ErrWaitTimeout.Wrap(err, "timeout waiting for resource %q in namespace %q to be in status %q", resource.Name, resource.Namespace, status)
+		return ErrWaitTimeout.Wrap(err, "timeout waiting for resources %q to be in status %q", rs, status)
 	}
 
 	return err
+}
+
+// WaitFor waits for the given Kubernetes resource to be in desired statues within the specified timeout
+func (h *helmManager) WaitFor(rel *release.Release, status Status, timeout time.Duration) error {
+	settings := h.WithNamespace(rel.Namespace)
+	return h.waitFor(settings, rel, status, timeout)
 }

@@ -21,7 +21,6 @@ func reset() automa.Builder {
 		"helm uninstall metallb -n metallb-system || true",
 		"kubectl delete namespace metallb-system || true",
 		"cilium uninstall || true",
-		"/usr/local/bin/cilium uninstall || true",
 		"sudo kubeadm reset --force || true",
 		"sudo rm -rf /etc/cni/net.d || true",
 		"sudo systemctl stop kubelet || true",

@@ -6,7 +6,6 @@ import (
 
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
-	"k8s.io/cli-runtime/pkg/resource"
 )
 
 type Status string
@@ -50,6 +49,6 @@ type Manager interface {
 	// It considers only releases in deployed state as "installed"
 	IsInstalled(releaseName, namespace string) (bool, error)
 
-	// WaitFor waits until the specified resource is in desired status or the timeout is reached
-	WaitFor(resource resource.Info, status Status, timeout time.Duration) error
+	// WaitFor waits until the Helm release reaches the desired status or the timeout is reached
+	WaitFor(rel *release.Release, status Status, timeout time.Duration) error
 }
