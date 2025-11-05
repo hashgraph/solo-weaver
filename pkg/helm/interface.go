@@ -6,9 +6,16 @@ import (
 
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
+	"k8s.io/cli-runtime/pkg/resource"
 )
 
-const DefaultTimeout = 5 * time.Minute
+type Status string
+
+const (
+	DefaultTimeout        = 5 * time.Minute
+	StatusReady    Status = "ready"
+	StatusDeleted  Status = "deleted"
+)
 
 // Manager defines the interface for managing Helm charts and releases
 type Manager interface {
@@ -42,4 +49,7 @@ type Manager interface {
 	// IsInstalled checks if a Helm release is installed in the specified namespace
 	// It considers only releases in deployed state as "installed"
 	IsInstalled(releaseName, namespace string) (bool, error)
+
+	// WaitFor waits until the specified resource is in desired status or the timeout is reached
+	WaitFor(resource resource.Info, status Status, timeout time.Duration) error
 }

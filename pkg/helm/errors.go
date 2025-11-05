@@ -12,4 +12,5 @@ var (
 	ErrInstallFailed          = ErrNamespace.NewType("install_failed")               // Helm install failed
 	ErrUpgradeFailed          = ErrNamespace.NewType("upgrade_failed")               // Helm upgrade failed
 	ErrUninstallFailed        = ErrNamespace.NewType("uninstall_failed")             // Helm uninstall failed
+	ErrWaitTimeout            = ErrNamespace.NewType("wait_timeout", errorx.Timeout())
 )

@@ -18,9 +18,11 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
+	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	"k8s.io/cli-runtime/pkg/resource"
 )
 
 type helmManager struct {
@@ -245,6 +247,11 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return nil, ErrInstallFailed.Wrap(err, "failed to install chart")
 	}
 
+	err = h.WaitFor(resource.Info{Name: rel.Name, Namespace: rel.Namespace}, StatusReady, installClient.Timeout)
+	if err != nil {
+		return rel, err
+	}
+
 	l.Info().Msg("Helm chart installed successfully")
 
 	return rel, nil
@@ -266,16 +273,22 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 	uninstallClient := action.NewUninstall(actionConfig)
 	uninstallClient.DeletionPropagation = "foreground" // "background" or "orphan"
 
-	result, err := uninstallClient.Run(releaseName)
+	rel, err := uninstallClient.Run(releaseName)
 	if err != nil {
 		return ErrUninstallFailed.Wrap(err, "failed to uninstall chart %q", releaseName)
 	}
 
-	if result == nil {
+	err = h.WaitFor(resource.Info{Name: releaseName, Namespace: namespace}, StatusDeleted, uninstallClient.Timeout)
+	if err != nil {
+		return err
+	}
+
+	if rel == nil {
+		l.Info().Msg("Uninstalled Helm release successfully (no release info returned)")
 		return nil
 	}
 
-	l.Info().Any("info", result.Info).Msg("Uninstalled Helm release successfully")
+	l.Info().Any("info", rel).Msg("Uninstalled Helm release successfully")
 	return nil
 }
 
@@ -507,4 +520,26 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 		ReuseValues: o.ReuseValues,
 		Timeout:     o.Timeout,
 	})
+}
+
+// WaitFor waits for the given Kubernetes resource to be in desired statues within the specified timeout
+func (h *helmManager) WaitFor(resource resource.Info, status Status, timeout time.Duration) error {
+	settings := h.WithNamespace(resource.Namespace)
+	c := kube.New(settings.RESTClientGetter())
+
+	var err error
+	switch status {
+	case StatusReady:
+		err = c.Wait(kube.ResourceList{&resource}, timeout)
+	case StatusDeleted:
+		err = c.WaitForDelete(kube.ResourceList{&resource}, timeout)
+	default:
+		return errorx.IllegalArgument.New("unknown status %q", status)
+	}
+
+	if err != nil {
+		return ErrWaitTimeout.Wrap(err, "timeout waiting for resource %q in namespace %q to be in status %q", resource.Name, resource.Namespace, status)
+	}
+
+	return err
 }
