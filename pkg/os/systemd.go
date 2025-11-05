@@ -70,11 +70,37 @@ func DisableService(ctx context.Context, name string) error {
 	return nil
 }
 
-// StartService starts the specified service.
+// IsServiceEnabled checks if the specified service is enabled.
+// The service name can be provided with or without the .service suffix.
+func IsServiceEnabled(ctx context.Context, name string) (bool, error) {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	// Ensure the service name has the .service suffix
+	serviceName := ensureServiceSuffix(name)
+
+	// List unit files matching this name
+	unitFiles, err := conn.ListUnitFilesByPatternsContext(ctx, []string{}, []string{serviceName})
+	if err != nil {
+		return false, err
+	}
+
+	if len(unitFiles) == 0 {
+		return false, nil
+	}
+
+	// Check if the unit file is in enabled state
+	return unitFiles[0].Type == "enabled", nil
+}
+
+// RestartService starts the specified service.
 // This function waits until the service is fully started.
 // It is equivalent to running "systemctl start <service>".
 // The service name can be provided with or without the .service suffix.
-func StartService(ctx context.Context, name string) error {
+func RestartService(ctx context.Context, name string) error {
 	conn, err := dbus.NewSystemConnectionContext(ctx)
 	if err != nil {
 		return ErrSystemdConnection.Wrap(err, "failed to connect to systemd")
@@ -88,7 +114,7 @@ func StartService(ctx context.Context, name string) error {
 	jobChan := make(chan string, 1) // buffered channel to avoid goroutine leaks
 
 	// The second parameter 'replace' means to replace any existing job for the unit.
-	_, err = conn.StartUnitContext(ctx, serviceName, "replace", jobChan)
+	_, err = conn.RestartUnitContext(ctx, serviceName, "replace", jobChan)
 	if err != nil {
 		return ErrSystemdOperation.Wrap(err, "failed to start service %s", serviceName).
 			WithProperty(errorx.RegisterProperty("service"), serviceName)
@@ -146,6 +172,26 @@ func StopService(ctx context.Context, name string) error {
 		return ErrSystemdOperation.Wrap(ctx.Err(), "timeout waiting for service %s to stop", serviceName).
 			WithProperty(errorx.RegisterProperty("service"), serviceName)
 	}
+}
+
+// IsServiceRunning checks if the specified service is running.
+// The service name can be provided with or without the .service suffix.
+func IsServiceRunning(ctx context.Context, name string) (bool, error) {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return false, ErrSystemdConnection.Wrap(err, "failed to connect to systemd")
+	}
+	defer conn.Close()
+
+	// Ensure the service name has the .service suffix
+	serviceName := ensureServiceSuffix(name)
+
+	props, err := conn.GetUnitPropertiesContext(ctx, serviceName)
+	if err != nil {
+		return false, err
+	}
+
+	return props["ActiveState"] == "active", nil
 }
 
 // ensureServiceSuffix ensures the service name has the .service suffix.

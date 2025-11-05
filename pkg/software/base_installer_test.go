@@ -1313,7 +1313,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 	})
 }
 
-// Tests for RestoreConfiguration method
+// Tests for RemoveConfiguration method
 func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 	resetTestEnvironment(t)
 
@@ -1356,9 +1356,9 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 	err = os.Symlink(sandboxBinary, systemBinary)
 	require.NoError(t, err)
 
-	// Verify symlink exists and points to our binary before RestoreConfiguration
+	// Verify symlink exists and points to our binary before RemoveConfiguration
 	_, err = os.Lstat(systemBinary)
-	require.NoError(t, err, "Symlink should exist before RestoreConfiguration")
+	require.NoError(t, err, "Symlink should exist before RemoveConfiguration")
 	linkTarget, err := os.Readlink(systemBinary)
 	require.NoError(t, err)
 	require.Equal(t, sandboxBinary, linkTarget)
@@ -1367,8 +1367,8 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 	// When
 	//
 
-	// Execute RestoreConfiguration
-	err = installer.RestoreConfiguration()
+	// Execute RemoveConfiguration
+	err = installer.RemoveConfiguration()
 	require.NoError(t, err)
 
 	//
@@ -1377,11 +1377,11 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 
 	// Verify symlink is removed
 	_, err = os.Lstat(systemBinary)
-	require.True(t, os.IsNotExist(err), "Symlink should be removed after RestoreConfiguration")
+	require.True(t, os.IsNotExist(err), "Symlink should be removed after RemoveConfiguration")
 
-	// Verify sandbox binary still exists (RestoreConfiguration doesn't remove it)
+	// Verify sandbox binary still exists (RemoveConfiguration doesn't remove it)
 	_, err = os.Stat(sandboxBinary)
-	require.NoError(t, err, "Sandbox binary should still exist after RestoreConfiguration")
+	require.NoError(t, err, "Sandbox binary should still exist after RemoveConfiguration")
 }
 
 func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testing.T) {
@@ -1440,8 +1440,8 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 	// When
 	//
 
-	// Execute RestoreConfiguration
-	err = installer.RestoreConfiguration()
+	// Execute RemoveConfiguration
+	err = installer.RemoveConfiguration()
 
 	//
 	// Then
@@ -1528,8 +1528,8 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 	// When
 	//
 
-	// Execute RestoreConfiguration
-	err = installer.RestoreConfiguration()
+	// Execute RemoveConfiguration
+	err = installer.RemoveConfiguration()
 
 	//
 	// Then
@@ -1610,8 +1610,8 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 	// When
 	//
 
-	// Execute RestoreConfiguration - should fail due to read-only system bin directory
-	err = installer.RestoreConfiguration()
+	// Execute RemoveConfiguration - should fail due to read-only system bin directory
+	err = installer.RemoveConfiguration()
 
 	//
 	// Then
@@ -1652,8 +1652,8 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 	// When
 	//
 
-	// Execute RestoreConfiguration with non-existent version
-	err = installer.RestoreConfiguration()
+	// Execute RemoveConfiguration with non-existent version
+	err = installer.RemoveConfiguration()
 
 	//
 	// Then
@@ -1705,8 +1705,8 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 	// When
 	//
 
-	// Execute RestoreConfiguration - should succeed even with no symlinks
-	err = installer.RestoreConfiguration()
+	// Execute RemoveConfiguration - should succeed even with no symlinks
+	err = installer.RemoveConfiguration()
 
 	//
 	// Then

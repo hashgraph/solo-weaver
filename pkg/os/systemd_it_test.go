@@ -14,48 +14,6 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
-// Helper function to check if a unit is active
-func isUnitActive(ctx context.Context, unitName string) (bool, error) {
-	conn, err := dbus.NewSystemConnectionContext(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer conn.Close()
-
-	units, err := conn.ListUnitsByNamesContext(ctx, []string{unitName})
-	if err != nil {
-		return false, err
-	}
-
-	if len(units) == 0 {
-		return false, nil
-	}
-
-	return units[0].ActiveState == "active", nil
-}
-
-// Helper function to check if a unit is enabled
-func isUnitEnabled(ctx context.Context, unitName string) (bool, error) {
-	conn, err := dbus.NewSystemConnectionContext(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer conn.Close()
-
-	// List unit files matching this name
-	unitFiles, err := conn.ListUnitFilesByPatternsContext(ctx, []string{}, []string{unitName})
-	if err != nil {
-		return false, err
-	}
-
-	if len(unitFiles) == 0 {
-		return false, nil
-	}
-
-	// Check if the unit file is in enabled state
-	return unitFiles[0].Type == "enabled", nil
-}
-
 // Helper function to reset unit states before and after tests
 func resetSystemdState(t *testing.T, unitName, unitFilePath string) {
 	t.Helper()
@@ -192,12 +150,12 @@ WantedBy=multi-user.target
 	require.NoError(t, err)
 
 	// Verify unit is not enabled initially
-	enabled, err := isUnitEnabled(ctx, "test-systemd-integration.service")
+	enabled, err := IsServiceEnabled(ctx, "test-systemd-integration.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit should not be enabled initially")
 
 	// Verify unit is not started initially
-	active, err := isUnitActive(ctx, "test-systemd-integration.service")
+	active, err := IsServiceRunning(ctx, "test-systemd-integration.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit should not be active/started")
 
@@ -214,7 +172,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "enable service should succeed")
 
 	// Verify unit is now enabled
-	enabled, err = isUnitEnabled(ctx, "test-systemd-integration.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-integration.service")
 	require.NoError(t, err)
 	require.True(t, enabled, "unit should be enabled after EnableService")
 
@@ -223,12 +181,12 @@ WantedBy=multi-user.target
 	require.NoError(t, err)
 
 	// Verify unit is disabled again
-	enabled, err = isUnitEnabled(ctx, "test-systemd-integration.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-integration.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit should be disabled after cleanup")
 
 	// Verify unit is not started initially
-	active, err = isUnitActive(ctx, "test-systemd-integration.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-integration.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit should not be active/started")
 }
@@ -282,7 +240,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "enable service should succeed without .service suffix")
 
 	// Verify unit is now enabled
-	enabled, err := isUnitEnabled(ctx, "test-systemd-no-suffix.service")
+	enabled, err := IsServiceEnabled(ctx, "test-systemd-no-suffix.service")
 	require.NoError(t, err)
 	require.True(t, enabled, "unit should be enabled after EnableService")
 
@@ -324,7 +282,7 @@ WantedBy=multi-user.target
 	ctx := context.Background()
 
 	// Verify unit is not active initially
-	active, err := isUnitActive(ctx, "test-systemd-start-stop.service")
+	active, err := IsServiceRunning(ctx, "test-systemd-start-stop.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit should not be active initially")
 
@@ -333,7 +291,7 @@ WantedBy=multi-user.target
 	//
 
 	// Start the unit
-	err = StartService(ctx, "test-systemd-start-stop.service")
+	err = RestartService(ctx, "test-systemd-start-stop.service")
 
 	//
 	// Then
@@ -341,9 +299,9 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "start service should succeed")
 
 	// Verify unit is now active
-	active, err = isUnitActive(ctx, "test-systemd-start-stop.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-start-stop.service")
 	require.NoError(t, err)
-	require.True(t, active, "unit should be active after StartService")
+	require.True(t, active, "unit should be active after RestartService")
 
 	//
 	// When
@@ -358,7 +316,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "stop service should succeed")
 
 	// Verify unit is now inactive
-	active, err = isUnitActive(ctx, "test-systemd-start-stop.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-start-stop.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit should be inactive after StopService")
 }
@@ -404,7 +362,7 @@ WantedBy=multi-user.target
 	//
 
 	// Start the unit WITHOUT .service suffix
-	err = StartService(ctx, "test-systemd-start-no-suffix")
+	err = RestartService(ctx, "test-systemd-start-no-suffix")
 
 	//
 	// Then
@@ -412,9 +370,9 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "start service should succeed without .service suffix")
 
 	// Verify unit is now active
-	active, err := isUnitActive(ctx, "test-systemd-start-no-suffix.service")
+	active, err := IsServiceRunning(ctx, "test-systemd-start-no-suffix.service")
 	require.NoError(t, err)
-	require.True(t, active, "unit should be active after StartService")
+	require.True(t, active, "unit should be active after RestartService")
 
 	// Cleanup: stop the unit
 	err = StopService(ctx, "test-systemd-start-no-suffix")
@@ -473,16 +431,16 @@ WantedBy=multi-user.target
 	//
 
 	// Verify unit is enabled
-	enabled, err := isUnitEnabled(ctx, "test-systemd-usrlib.service")
+	enabled, err := IsServiceEnabled(ctx, "test-systemd-usrlib.service")
 	require.NoError(t, err)
 	require.True(t, enabled, "unit in /usr/lib should be enabled")
 
 	// Start the unit
-	err = StartService(ctx, "test-systemd-usrlib.service")
+	err = RestartService(ctx, "test-systemd-usrlib.service")
 	require.NoError(t, err, "start service in /usr/lib should succeed")
 
 	// Verify unit is active
-	active, err := isUnitActive(ctx, "test-systemd-usrlib.service")
+	active, err := IsServiceRunning(ctx, "test-systemd-usrlib.service")
 	require.NoError(t, err)
 	require.True(t, active, "unit in /usr/lib should be active")
 
@@ -491,7 +449,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "stop service in /usr/lib should succeed")
 
 	// Verify unit is inactive
-	active, err = isUnitActive(ctx, "test-systemd-usrlib.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-usrlib.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit in /usr/lib should be inactive after stop")
 
@@ -500,7 +458,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "disable service in /usr/lib should succeed")
 
 	// Verify unit is disabled
-	enabled, err = isUnitEnabled(ctx, "test-systemd-usrlib.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-usrlib.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit in /usr/lib should be disabled")
 }
@@ -557,16 +515,16 @@ WantedBy=multi-user.target
 	//
 
 	// Verify unit is enabled
-	enabled, err := isUnitEnabled(ctx, "test-systemd-usrlib-nosuffix.service")
+	enabled, err := IsServiceEnabled(ctx, "test-systemd-usrlib-nosuffix.service")
 	require.NoError(t, err)
 	require.True(t, enabled, "unit in /usr/lib should be enabled")
 
 	// Start the unit WITHOUT suffix
-	err = StartService(ctx, "test-systemd-usrlib-nosuffix")
+	err = RestartService(ctx, "test-systemd-usrlib-nosuffix")
 	require.NoError(t, err, "start service in /usr/lib without suffix should succeed")
 
 	// Verify unit is active
-	active, err := isUnitActive(ctx, "test-systemd-usrlib-nosuffix.service")
+	active, err := IsServiceRunning(ctx, "test-systemd-usrlib-nosuffix.service")
 	require.NoError(t, err)
 	require.True(t, active, "unit in /usr/lib should be active")
 
@@ -575,7 +533,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "stop service in /usr/lib without suffix should succeed")
 
 	// Verify unit is inactive
-	active, err = isUnitActive(ctx, "test-systemd-usrlib-nosuffix.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-usrlib-nosuffix.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit in /usr/lib should be inactive after stop")
 
@@ -584,7 +542,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "disable service in /usr/lib without suffix should succeed")
 
 	// Verify unit is disabled
-	enabled, err = isUnitEnabled(ctx, "test-systemd-usrlib-nosuffix.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-usrlib-nosuffix.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit in /usr/lib should be disabled")
 }
@@ -605,7 +563,7 @@ func Test_Systemd_StartService_NonExistent_Integration(t *testing.T) {
 	//
 	// When
 	//
-	err := StartService(ctx, "nonexistent-unit-12345.service")
+	err := RestartService(ctx, "nonexistent-unit-12345.service")
 
 	//
 	// Then
@@ -678,7 +636,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err)
 
 	// Verify unit is enabled
-	enabled, err := isUnitEnabled(ctx, "test-systemd-disable.service")
+	enabled, err := IsServiceEnabled(ctx, "test-systemd-disable.service")
 	require.NoError(t, err)
 	require.True(t, enabled, "unit should be enabled before disabling")
 
@@ -695,7 +653,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "disable service should succeed")
 
 	// Verify unit is now disabled
-	enabled, err = isUnitEnabled(ctx, "test-systemd-disable.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-disable.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit should be disabled after DisableService")
 }
@@ -742,11 +700,11 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "daemon reload should succeed")
 
 	// Verify initial state
-	enabled, err := isUnitEnabled(ctx, "test-systemd-lifecycle.service")
+	enabled, err := IsServiceEnabled(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit should not be enabled initially")
 
-	active, err := isUnitActive(ctx, "test-systemd-lifecycle.service")
+	active, err := IsServiceRunning(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit should not be active initially")
 
@@ -759,25 +717,25 @@ WantedBy=multi-user.target
 	//
 
 	// Verify unit is enabled
-	enabled, err = isUnitEnabled(ctx, "test-systemd-lifecycle.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err)
 	require.True(t, enabled, "unit should be enabled after EnableService")
 
 	// Step 3: Start the unit
-	err = StartService(ctx, "test-systemd-lifecycle.service")
+	err = RestartService(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err, "start should succeed")
 
 	// Verify unit is active
-	active, err = isUnitActive(ctx, "test-systemd-lifecycle.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err)
-	require.True(t, active, "unit should be active after StartService")
+	require.True(t, active, "unit should be active after RestartService")
 
 	// Step 4: Stop the unit
 	err = StopService(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err, "stop should succeed")
 
 	// Verify unit is inactive
-	active, err = isUnitActive(ctx, "test-systemd-lifecycle.service")
+	active, err = IsServiceRunning(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err)
 	require.False(t, active, "unit should be inactive after StopService")
 
@@ -786,7 +744,7 @@ WantedBy=multi-user.target
 	require.NoError(t, err, "disable should succeed")
 
 	// Verify unit is disabled
-	enabled, err = isUnitEnabled(ctx, "test-systemd-lifecycle.service")
+	enabled, err = IsServiceEnabled(ctx, "test-systemd-lifecycle.service")
 	require.NoError(t, err)
 	require.False(t, enabled, "unit should be disabled after DisableService")
 
