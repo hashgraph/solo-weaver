@@ -549,7 +549,7 @@ func (h *helmManager) waitFor(settings *cli.EnvSettings, rel *release.Release, s
 
 	switch status {
 	case StatusReady:
-		err = c.Wait(rs, timeout)
+		err = c.WaitWithJobs(rs, timeout)
 	case StatusDeleted:
 		err = c.WaitForDelete(rs, timeout)
 	default:

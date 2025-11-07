@@ -72,6 +72,8 @@ func installMetalLB() automa.Builder {
 						Values: []string{"speaker.frr.enabled=false"},
 					},
 					CreateNamespace: true,
+					Atomic:          true,
+					Wait:            true,
 					Timeout:         helm.DefaultTimeout, // 5 minutes
 				},
 			)
