@@ -7,10 +7,14 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 )
 
+const (
+	metaLBVersion = "0.15.2"
+)
+
 func SetupMetalLB() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId("setup-metallb").Steps(
-		bashSteps.InstallMetalLB(),
-		bashSteps.ConfigureMetalLB(),
+		installMetalLB(metaLBVersion), // still using bash steps
+		configureMetalLB(),            // still using bash steps
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up MetalLB")

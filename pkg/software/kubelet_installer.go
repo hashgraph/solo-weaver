@@ -10,7 +10,6 @@ import (
 
 const KubeletServiceName = "kubelet"
 const kubeletServiceFileName = "kubelet.service"
-const latestFileSuffix = ".latest"
 
 type kubeletInstaller struct {
 	*baseInstaller
@@ -170,7 +169,7 @@ func (ki *kubeletInstaller) getKubeletServicePath() string {
 
 // getLatestKubeletServicePath returns the path to the .latest kubelet.service file in the sandbox
 func (ki *kubeletInstaller) getLatestKubeletServicePath() string {
-	return ki.getKubeletServicePath() + latestFileSuffix
+	return ki.getKubeletServicePath() + ".latest"
 }
 
 // getSystemdUnitPath returns the path to the kubelet.service file in the systemd directory

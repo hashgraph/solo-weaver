@@ -1,17 +1,11 @@
 package kube
 
 import (
-	"crypto/rand"
-	"fmt"
-	"math/big"
 	"os"
 	"path"
 	"strconv"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/network"
-	"golang.hedera.com/solo-provisioner/internal/templates"
 	"golang.hedera.com/solo-provisioner/pkg/fsx"
 	"golang.hedera.com/solo-provisioner/pkg/security/principal"
 )
@@ -36,33 +30,6 @@ func UserKubeDir() (string, error) {
 	return kubeDir, nil
 }
 
-// GenerateKubeadmToken generates a random kubeadm token in the format [a-z0-9]{6}.[a-z0-9]{16}
-var GenerateKubeadmToken = func() (string, error) {
-	const allowedChars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	const part1Len = 6
-	const part2Len = 16
-	tokenPart := func(length int) (string, error) {
-		b := make([]byte, length)
-		for i := range b {
-			nBig, err := rand.Int(rand.Reader, big.NewInt(int64(len(allowedChars))))
-			if err != nil {
-				return "", fmt.Errorf("failed to generate random int for kubeadm token: %w", err)
-			}
-			b[i] = allowedChars[nBig.Int64()]
-		}
-		return string(b), nil
-	}
-	part1, err := tokenPart(part1Len)
-	if err != nil {
-		return "", err
-	}
-	part2, err := tokenPart(part2Len)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s.%s", part1, part2), nil
-}
-
 // getCurrentUser retrieves the current user using the principal package
 func getCurrentUser() (principal.User, error) {
 	pm, err := principal.NewManager()
@@ -77,55 +44,6 @@ func getCurrentUser() (principal.User, error) {
 	}
 
 	return currentUser, nil
-}
-
-// ConfigureKubeadmInit generates the kubeadm init configuration file
-// It retrieves the machine IP, generates a kubeadm token, and gets the hostname
-// It then renders the kubeadm-init.yaml template with the retrieved values
-func ConfigureKubeadmInit(kubernetesVersion string) error {
-	machineIp, err := network.GetMachineIP()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to get machine IP address")
-	}
-
-	kubeadmToken, err := GenerateKubeadmToken()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to generate kubeadm token")
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to get hostname")
-	}
-
-	tmplData := templates.KubeadmInitData{
-		KubeBootstrapToken: kubeadmToken,
-		SandboxDir:         core.Paths().SandboxDir,
-		MachineIP:          machineIp,
-		Hostname:           hostname,
-		KubernetesVersion:  kubernetesVersion,
-	}
-
-	rendered, err := templates.Render("files/kubeadm/kubeadm-init.yaml", tmplData)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to render kubeadm init configuration template")
-	}
-
-	fm, err := fsx.NewManager()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create file manager")
-	}
-
-	err = fm.CreateDirectory(path.Join(core.Paths().SandboxDir, "/etc/provisioner"), true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create provisioner directory")
-	}
-	err = fm.WriteFile(path.Join(core.Paths().SandboxDir, "/etc/provisioner/kubeadm-init.yaml"), []byte(rendered))
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to write kubeadm init configuration file")
-	}
-
-	return nil
 }
 
 // ConfigureKubeConfig copies the kubeconfig file to the user's home directory and sets the ownership

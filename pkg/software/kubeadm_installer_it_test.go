@@ -94,12 +94,12 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.True(t, exists, "kubelet service directory symlink should exist")
 
 	// Verify it's a symlink pointing to sandbox directory
-	linkTarget, err = os.Readlink("/usr/lib/systemd/system/kubelet.service.d")
+	linkTarget, err = os.Readlink("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d", linkTarget, "kubelet service directory symlink should point to sandbox directory")
+	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest", linkTarget, "symlink should point to sandbox kubelet service config")
 
 	// Verify kubelet path replacement in config file
-	configContent, err := os.ReadFile("/opt/provisioner/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
+	configContent, err := os.ReadFile("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
 	expectedKubeletPath := filepath.Join(core.Paths().SandboxBinDir, "kubelet")
 	require.Contains(t, string(configContent), expectedKubeletPath, "config file should contain updated kubelet path")

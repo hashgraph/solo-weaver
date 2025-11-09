@@ -2,8 +2,11 @@ package steps
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/automa/automa_steps"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/software"
 )
@@ -83,7 +86,8 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 
 func StartCilium() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
-		bashSteps.InstallCiliumCNI(), // we cannot write in pure Go because we need to run cilium binary
+		installCiliumCNI("1.18.1"), // we cannot write in pure Go because we need to run cilium binary
+
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Starting Cilium")
@@ -95,4 +99,12 @@ func StartCilium() automa.Builder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Cilium started successfully")
 		})
+}
+
+// TODO to be replaced with helm invocation
+func installCiliumCNI(version string) *automa.StepBuilder {
+	return automa_steps.BashScriptStep("install-cilium-cni", []string{
+		fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --values %s/etc/provisioner/cilium-config.yaml",
+			core.Paths().SandboxBinDir, version, core.Paths().SandboxDir),
+	}, "")
 }

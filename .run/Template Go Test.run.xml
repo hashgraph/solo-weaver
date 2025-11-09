@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="true" type="GoTestRunConfiguration" factoryName="Go Test">
+  <configuration default="true" type="GoTestRunConfiguration" factoryName="Go Test" show_console_on_std_err="true" show_console_on_std_out="true">
     <module name="solo-provisioner" />
     <working_directory value="$PROJECT_DIR$" />
     <useCustomBuildTags value="true" />
