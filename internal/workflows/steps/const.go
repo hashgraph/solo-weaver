@@ -3,7 +3,8 @@ package steps
 import "github.com/automa-saga/automa"
 
 const (
-	LoadedByThisStep = automa.Key("loadedByThisStep")
+	LoadedByThisStep  = automa.Key("loadedByThisStep")
+	ConfigurationFile = "configurationFile"
 
 	AlreadyInstalled      = "alreadyInstalled"
 	AlreadyConfigured     = "alreadyConfigured"

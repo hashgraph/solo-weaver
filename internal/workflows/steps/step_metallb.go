@@ -3,32 +3,42 @@ package steps
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
 	"time"
 
 	"github.com/automa-saga/automa"
-	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
 	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/internal/network"
+	"golang.hedera.com/solo-provisioner/internal/templates"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 	"golang.hedera.com/solo-provisioner/pkg/helm"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 const (
-	MetalLBNamespace          = "metallb-system"
-	MetalLBRelease            = "metallb"
-	MetalLBChart              = "metallb/metallb"
-	MetalLBVersion            = "v0.15.2"
-	MetalLBRepo               = "https://metallb.github.io/metallb"
-	SetupMetalLBStepId        = "setup-metallb"
-	InstallMetalLBStepId      = "install-metallb"
-	DeployMetalLbConfigStepId = "deploy-metallb-config"
+	MetalLBNamespace             = "metallb-system"
+	MetalLBRelease               = "metallb"
+	MetalLBChart                 = "metallb/metallb"
+	MetalLBVersion               = "v0.15.2"
+	MetalLBRepo                  = "https://metallb.github.io/metallb"
+	SetupMetalLBStepId           = "setup-metallb"
+	InstallMetalLBStepId         = "install-metallb"
+	MetalLBTemplatePath          = "files/metallb/metallb.yaml"
+	ConfigureMetalLbConfigStepId = "configure-metallb-config"
+	PrepareMetalLbConfigStepId   = "prepare-metallb-config"
+	DeployMetalLbConfigStepId    = "deploy-metallb-config"
+)
+
+var (
+	metalLBConfigFilePath = path.Join(core.Paths().TempDir, "metallb-config.yaml")
 )
 
 func SetupMetalLB() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId(SetupMetalLBStepId).Steps(
 		installMetalLB(),
-		configureMetalLB(),
+		configureMetalLB(metalLBConfigFilePath),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up MetalLB")
@@ -131,46 +141,97 @@ func installMetalLB() automa.Builder {
 		})
 }
 
-func configureMetalLB() *automa.StepBuilder {
-	machineIp, err := runCmd(`ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}'`)
-	if err != nil {
-		machineIp = "0.0.0.0"
-		logx.As().Warn().Err(err).Str("machine_ip", machineIp).
-			Msg("failed to get machine IP, defaulting to 0.0.0.0")
-	}
+func configureMetalLB(configFilePath string) automa.Builder {
+	return automa.NewWorkflowBuilder().WithId(ConfigureMetalLbConfigStepId).
+		Steps(
+			prepareMetalLBConfigFile(configFilePath),
+			deployMetalLBConfig(configFilePath),
+		)
+}
 
-	configScript := fmt.Sprintf(
-		`set -eo pipefail; cat <<EOF | %s/kubectl apply -f - 
----
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: private-address-pool
-  namespace: metallb-system
-spec:
-  addresses:
-    - 192.168.99.0/24
----
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: public-address-pool
-  namespace: metallb-system
-spec:
-  addresses:
-    - %s/32
----
-apiVersion: metallb.io/v1beta1
-kind: L2Advertisement
-metadata:
-  name: primary-l2-advertisement
-  namespace: metallb-system
-spec:
-  ipAddressPools:
-    - private-address-pool
-    - public-address-pool
-EOF`, core.Paths().SandboxBinDir, machineIp)
-	return automa_steps.BashScriptStep(DeployMetalLbConfigStepId, []string{
-		configScript,
-	}, "")
+func prepareMetalLBConfigFile(configFilePath string) automa.Builder {
+	return automa.NewStepBuilder().WithId(PrepareMetalLbConfigStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			machineIp, err := network.GetMachineIP()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			tmplData := templates.MetallbData{
+				MachineIP: machineIp,
+			}
+
+			rendered, err := templates.Render(MetalLBTemplatePath, tmplData)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = os.WriteFile(configFilePath, []byte(rendered), 0644)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta[ConfiguredByThisStep] = "true"
+			meta[ConfigurationFile] = configFilePath
+
+			stp.State().Set(ConfiguredByThisStep, true)
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Configuring MetalLB")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure MetalLB")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB configured successfully")
+		})
+}
+
+func deployMetalLBConfig(configFilePath string) automa.Builder {
+	return automa.NewStepBuilder().WithId(DeployMetalLbConfigStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			// TODO: use kubernetes client-go instead of kubectl command
+			cmd := fmt.Sprintf("%s/kubectl apply -f %s", core.Paths().SandboxBinDir, configFilePath)
+			_, err := runCmd(cmd)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			//if err = kube.ApplyManifest(ctx, configFilePath); err != nil {
+			//	return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			//}
+
+			meta[InstalledByThisStep] = "true"
+			stp.State().Set("deployed", true)
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if stp.State().Bool(InstalledByThisStep) == false {
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			cmd := fmt.Sprintf("%s/kubectl delete -f %s", core.Paths().SandboxBinDir, configFilePath)
+			_, err := runCmd(cmd)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Deploying MetalLB configuration")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy MetalLB configuration")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB configuration deployed successfully")
+		})
 }
