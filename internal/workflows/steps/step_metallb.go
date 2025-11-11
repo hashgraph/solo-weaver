@@ -197,18 +197,14 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			// TODO: use kubernetes client-go instead of kubectl command
 			cmd := fmt.Sprintf("%s/kubectl apply -f %s", core.Paths().SandboxBinDir, configFilePath)
 			_, err := runCmd(cmd)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			//if err = kube.ApplyManifest(ctx, configFilePath); err != nil {
-			//	return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			//}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set("deployed", true)
+			stp.State().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).

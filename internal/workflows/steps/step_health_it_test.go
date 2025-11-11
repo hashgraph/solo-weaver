@@ -1,4 +1,4 @@
-//go:build helm_integration || require_cluster
+//go:build require_cluster
 
 package steps
 
