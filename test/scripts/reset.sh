@@ -19,10 +19,7 @@ sudo rm -f /etc/sysctl.d/*.conf || true
 for path in \
     /opt/provisioner/sandbox/var/run \
     /opt/provisioner/sandbox/var/lib/containers/storage/overlay; do
-  mount | grep $path | awk '{print $3}' | while read mnt; do
-    echo Unmounting $mnt
-    sudo umount -l $mnt || true
-  done
+  sudo umount -R $path || true
 done
 sudo umount /var/lib/kubelet || true
 sudo umount /var/run/cilium || true

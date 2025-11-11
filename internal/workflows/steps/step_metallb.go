@@ -21,7 +21,7 @@ const (
 	MetalLBNamespace             = "metallb-system"
 	MetalLBRelease               = "metallb"
 	MetalLBChart                 = "metallb/metallb"
-	MetalLBVersion               = "v0.15.2"
+	MetalLBVersion               = "0.15.2"
 	MetalLBRepo                  = "https://metallb.github.io/metallb"
 	SetupMetalLBStepId           = "setup-metallb"
 	InstallMetalLBStepId         = "install-metallb"
@@ -32,6 +32,7 @@ const (
 )
 
 var (
+	// we create a temp file for metallb configuration
 	metalLBConfigFilePath = path.Join(core.Paths().TempDir, "metallb-config.yaml")
 )
 

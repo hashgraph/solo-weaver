@@ -39,7 +39,7 @@ func reset() automa.Builder {
 		"sudo umount -R /var/run/cilium || true",
 		"sudo umount -R /etc/kubernetes || true",
 		"sudo swapoff -a",
-		"sudo lsof -t -i :6443 | xargs -r sudo kill -9",
+		"sudo lsof -t -i :6443 | xargs -r sudo kill -9 || true",
 		fmt.Sprintf("sudo rm -rf %s || true", core.Paths().HomeDir),
 	}, "")
 }

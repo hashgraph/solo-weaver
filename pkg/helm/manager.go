@@ -173,6 +173,11 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to init action config")
 	}
 
+	// if chartVersion doesn't start with "v", prepend it
+	if chartVersion != "" && !strings.HasPrefix(chartVersion, "v") {
+		chartVersion = "v" + chartVersion
+	}
+
 	installClient := action.NewInstall(actionConfig)
 	installClient.DryRunOption = "none"
 	installClient.ReleaseName = releaseName
@@ -284,7 +289,7 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 		return nil
 	}
 
-	err = h.waitFor(settings, rel.Release, StatusReady, uninstallClient.Timeout)
+	err = h.waitFor(settings, rel.Release, StatusDeleted, uninstallClient.Timeout)
 	if err != nil {
 		return err
 	}
@@ -531,7 +536,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 	})
 }
 
-// waitFor waits for the given Kubernetes resource to be in desired statues within the specified timeout
+// waitFor waits for the given Kubernetes resource to be in desired statuses within the specified timeout
 func (h *helmManager) waitFor(settings *cli.EnvSettings, rel *release.Release, status Status, timeout time.Duration) error {
 	if settings == nil {
 		return errorx.IllegalArgument.New("settings cannot be nil")

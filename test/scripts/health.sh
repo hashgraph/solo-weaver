@@ -50,7 +50,7 @@ done
 success "All required namespaces are Active."
 
 # List of pod name prefixes to check in kube-system
-printf ">> Checking pod statuses in `kube-system` namespace...\n"
+printf ">> Checking pod statuses across all namespaces...\n"
 prefixes="cilium- cilium-operator- coredns- etcd- hubble-relay- kube-apiserver- kube-controller-manager- kube-scheduler- metallb-controller- metallb-speaker-"
 
 for prefix in $prefixes; do
@@ -68,7 +68,7 @@ for prefix in $prefixes; do
     fi
   done <<< "$pods_output"
 done
-success "All required pods in `kube-system` are Running and Ready."
+success "All required pods in across all namespaces are Running and Ready."
 
 # List of required services in the format namespace:service
 printf ">> Checking required services...\n"
