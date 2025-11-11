@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -78,12 +79,18 @@ func installMetalLB() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
+		
+			// if chartVersion doesn't start with "v", prepend it
+			chartVersion := MetalLBVersion
+			if !strings.HasPrefix(chartVersion, "v") {
+				chartVersion = "v" + chartVersion
+			}
 
 			_, err = hm.InstallChart(
 				ctx,
 				MetalLBRelease,
 				MetalLBChart,
-				MetalLBVersion,
+				chartVersion,
 				MetalLBNamespace,
 				helm.InstallChartOptions{
 					ValueOpts: &values.Options{

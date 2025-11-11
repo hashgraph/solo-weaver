@@ -68,7 +68,7 @@ for prefix in $prefixes; do
     fi
   done <<< "$pods_output"
 done
-success "All required pods in across all namespaces are Running and Ready."
+success "All required pods across all namespaces are Running and Ready."
 
 # List of required services in the format namespace:service
 printf ">> Checking required services...\n"

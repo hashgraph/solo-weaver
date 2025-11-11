@@ -173,11 +173,6 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to init action config")
 	}
 
-	// if chartVersion doesn't start with "v", prepend it
-	if chartVersion != "" && !strings.HasPrefix(chartVersion, "v") {
-		chartVersion = "v" + chartVersion
-	}
-
 	installClient := action.NewInstall(actionConfig)
 	installClient.DryRunOption = "none"
 	installClient.ReleaseName = releaseName
@@ -565,7 +560,7 @@ func (h *helmManager) waitFor(settings *cli.EnvSettings, rel *release.Release, s
 		return ErrWaitTimeout.Wrap(err, "timeout waiting for resources %q to be in status %q", rs, status)
 	}
 
-	return err
+	return nil
 }
 
 // WaitFor waits for the given Kubernetes resource to be in desired statues within the specified timeout
