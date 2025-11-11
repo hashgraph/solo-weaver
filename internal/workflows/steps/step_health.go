@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/automa/automa_steps"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 )
 
@@ -19,4 +20,10 @@ func CheckClusterHealth() automa.Builder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Cluster is healthy")
 		})
+}
+
+func checkClusterHealth() *automa.StepBuilder {
+	return automa_steps.BashScriptStep("check-cluster-health", []string{
+		"../../../test/scripts/health.sh",
+	}, "")
 }
