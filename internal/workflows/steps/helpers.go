@@ -2,7 +2,9 @@ package steps
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,4 +33,50 @@ func Sleep(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func findScript(rel string) string {
+	// try absolute/cleaned path first
+	if p, err := filepath.Abs(rel); err == nil {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return rel
+	}
+
+	dir := wd
+	level := 0
+	for {
+		if level > 5 {
+			// prevent too deep search
+			break
+		}
+
+		// check for script in this dir
+		p := filepath.Join(dir, rel)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+
+		// if go.mod exists in this dir, treat it as project root and stop here
+		// This prevents searching all the way to filesystem root
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// reached filesystem root
+			break
+		}
+		dir = parent
+		level++
+	}
+
+	// fallback to provided relative path
+	return rel
 }

@@ -43,6 +43,6 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.SetupMetalLB(), // still using bash steps
 
 			// health check
-			// steps.CheckClusterHealth(), // still using bash steps
+			steps.CheckClusterHealth(), // still using bash steps
 		)
 }
