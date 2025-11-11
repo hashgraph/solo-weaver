@@ -8,7 +8,7 @@ import (
 )
 
 func CheckClusterHealth() automa.Builder {
-	return bashSteps.CheckClusterHealth().
+	return checkClusterHealth().
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Checking cluster health")
 			return ctx, nil

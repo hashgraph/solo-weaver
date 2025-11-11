@@ -2,7 +2,6 @@ package steps
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
@@ -142,8 +141,6 @@ func configureKubelet(provider func(opts ...software.InstallerOption) (software.
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			a := stp.State().Items()
-			fmt.Println(a)
 			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubelet was not configured by this step, skipping rollback"))
