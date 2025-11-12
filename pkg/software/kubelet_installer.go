@@ -77,7 +77,7 @@ func (ki *kubeletInstaller) Configure() error {
 	}
 
 	// Create the latest service file with updated paths
-	err = ki.createLatestServiceFile()
+	err = ki.patchServiceFile()
 	if err != nil {
 		return err
 	}
@@ -201,8 +201,8 @@ func (ki *kubeletInstaller) validateCriticalPaths() error {
 	return nil
 }
 
-// createLatestServiceFile creates a copy of kubelet.service with updated paths
-func (ki *kubeletInstaller) createLatestServiceFile() error {
+// patchServiceFile creates a copy of kubelet.service with updated paths
+func (ki *kubeletInstaller) patchServiceFile() error {
 	kubeletServicePath := ki.getKubeletServicePath()
 	latestServicePath := ki.getLatestKubeletServicePath()
 
