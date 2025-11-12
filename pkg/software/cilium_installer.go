@@ -9,6 +9,11 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/templates"
 )
 
+const (
+	ciliumConfigFileName = "cilium-config.yaml"
+	ciliumTemplateFile   = "files/cilium/cilium-config.yaml"
+)
+
 type ciliumInstaller struct {
 	*baseInstaller
 }
@@ -34,12 +39,43 @@ func (ci *ciliumInstaller) Configure() error {
 	}
 
 	// Setup cilium configuration file
+	return ci.createCiliumConfigFile()
+}
+
+// RemoveConfiguration restores the cilium binary and configuration files to their original state
+func (ci *ciliumInstaller) RemoveConfiguration() error {
+	err := ci.baseInstaller.RemoveConfiguration()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to restore cilium binary configuration")
+	}
+
+	// Remove cilium-config.yaml configuration file
+	configPath := ci.getCiliumConfigPath()
+	err = ci.fileManager.RemoveAll(configPath)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to remove cilium-config.yaml file at %s", configPath)
+	}
+
+	return nil
+}
+
+// getCiliumConfigPath returns the path to the cilium-config.yaml configuration file
+func (ci *ciliumInstaller) getCiliumConfigPath() string {
+	return path.Join(ci.getConfigurationDir(), ciliumConfigFileName)
+}
+
+// getConfigurationDir returns the path to the provisioner configuration directory
+func (ci *ciliumInstaller) getConfigurationDir() string {
+	return path.Join(core.Paths().SandboxDir, "etc", "provisioner")
+}
+
+// createCiliumConfigFile creates the cilium configuration file from template
+func (ci *ciliumInstaller) createCiliumConfigFile() error {
 	machineIp, err := network.GetMachineIP()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to get machine IP address")
 	}
 
-	// create anonymous struct for template data
 	tmplData := struct {
 		SandboxDir string
 		MachineIP  string
@@ -48,12 +84,12 @@ func (ci *ciliumInstaller) Configure() error {
 		MachineIP:  machineIp,
 	}
 
-	rendered, err := templates.Render("files/cilium/cilium-config.yaml", tmplData)
+	rendered, err := templates.Render(ciliumTemplateFile, tmplData)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to render cilium configuration template")
 	}
 
-	configurationDir := path.Join(core.Paths().SandboxDir, "etc", "provisioner")
+	configurationDir := ci.getConfigurationDir()
 	// Create the configuration directory if it doesn't exist
 	err = ci.fileManager.CreateDirectory(configurationDir, true)
 	if err != nil {
@@ -61,7 +97,8 @@ func (ci *ciliumInstaller) Configure() error {
 	}
 
 	// write the configuration file
-	err = ci.fileManager.WriteFile(path.Join(configurationDir, "cilium-config.yaml"), []byte(rendered))
+	configFilePath := ci.getCiliumConfigPath()
+	err = ci.fileManager.WriteFile(configFilePath, []byte(rendered))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write cilium configuration file")
 	}
