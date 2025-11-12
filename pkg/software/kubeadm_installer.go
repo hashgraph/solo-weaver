@@ -65,7 +65,7 @@ func (ki *kubeadmInstaller) Configure() error {
 	}
 
 	// Create the latest 10-kubeadm.conf file with updated paths
-	err = ki.createLatestKubeadmConf()
+	err = ki.patchKubeadmConf()
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (ki *kubeadmInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove the latest 10-kubeadm.conf file
-	latestConfPath := ki.getLatestKubeadmConfPath()
+	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
 	err = ki.fileManager.RemoveAll(latestConfPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove latest 10-kubeadm.conf file at %s", latestConfPath)
@@ -263,7 +263,7 @@ func (ki *kubeadmInstaller) IsConfigured() (bool, error) {
 
 // isLatestKubeadmConfValid checks if the .latest 10-kubeadm.conf file exists and has the correct content
 func (ki *kubeadmInstaller) isLatestKubeadmConfValid() (bool, error) {
-	latestConfPath := ki.getLatestKubeadmConfPath()
+	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
 
 	// Check if the .latest file exists
 	fi, exists, err := ki.fileManager.PathExists(latestConfPath)
@@ -323,20 +323,15 @@ func (ki *kubeadmInstaller) getKubeadmConfPath() string {
 	return path.Join(core.Paths().SandboxDir, kubeletServiceDirRelPath, kubeadmConfFileName)
 }
 
-// getLatestKubeadmConfPath returns the path to the .latest 10-kubeadm.conf file in the sandbox
-func (ki *kubeadmInstaller) getLatestKubeadmConfPath() string {
-	return ki.getKubeadmConfPath() + ".latest"
-}
-
 // getKubeadmInitConfigPath returns the path to the kubeadm-init.yaml configuration file
 func (ki *kubeadmInstaller) getKubeadmInitConfigPath() string {
 	return path.Join(core.Paths().SandboxDir, etcProvisionerDirRelPath, kubeadmInitConfigFileName)
 }
 
-// createLatestKubeadmConf creates a copy of 10-kubeadm.conf with updated paths
-func (ki *kubeadmInstaller) createLatestKubeadmConf() error {
+// patchKubeadmConf creates a copy of 10-kubeadm.conf with updated paths
+func (ki *kubeadmInstaller) patchKubeadmConf() error {
 	originalConfPath := ki.getKubeadmConfPath()
-	latestConfPath := ki.getLatestKubeadmConfPath()
+	latestConfPath := getLatestPath(originalConfPath)
 
 	// Create latest file which will have some strings replaced
 	err := ki.fileManager.CopyFile(originalConfPath, latestConfPath, true)
@@ -365,7 +360,7 @@ func (ki *kubeadmInstaller) createKubeletServiceDirSymlink() error {
 	}
 
 	// Create symlink from the .latest file to the system location
-	latestConfPath := ki.getLatestKubeadmConfPath()
+	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
 	systemConfPath := path.Join(kubeletServiceDir, kubeadmConfFileName)
 
 	err = ki.fileManager.CreateSymbolicLink(latestConfPath, systemConfPath, true)

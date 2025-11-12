@@ -1105,8 +1105,16 @@ func (b *baseInstaller) cleanupSymlinks() error {
 // This is a helper method that can be used by any installer that needs to copy files
 // with specific permissions during installation.
 func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
+
+	// Create destination directory if it doesn't exist
+	destDir := path.Dir(dst)
+	err := b.fileManager.CreateDirectory(destDir, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create directory %s", destDir)
+	}
+
 	// Copy file
-	err := b.fileManager.CopyFile(src, dst, true)
+	err = b.fileManager.CopyFile(src, dst, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to copy %s to %s", src, dst)
 	}
@@ -1118,4 +1126,9 @@ func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
 	}
 
 	return nil
+}
+
+// getLatestPath returns the path to the .latest file in the sandbox
+func getLatestPath(originalPath string) string {
+	return originalPath + ".latest"
 }

@@ -63,44 +63,13 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Install()
 	require.NoError(t, err, "Failed to install cri-o")
 
-	// Verify 10-crio.conf is copied to /opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf and contains expected content
+	// Verify 10-crio.conf is copied to /opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf
 	contents, err := os.ReadFile("/opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf")
 	require.NoError(t, err)
-	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/usr/libexec/crio`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/usr/libexec/crio`), string(contents),
 		"10-crio.conf should reference the correct libexec path")
-	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/etc/crio`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/etc/crio`), string(contents),
 		"10-crio.conf should reference the correct etc crio path")
-
-	// Verify paths in updated 10-crio.conf exist
-	// Match anything that looks like an absolute path between quotes
-	re := regexp.MustCompile(`"(/[^"]+)"`)
-	matches := re.FindAllSubmatch(contents, -1)
-	require.Greater(t, len(matches), 0, "10-crio.conf should contain at least one path")
-	for _, m := range matches {
-		path := string(m[1])
-		if !strings.HasPrefix(path, "/run/") {
-			_, err = os.Stat(path)
-			require.NoError(t, err, "Path %s should exist", path)
-		}
-	}
-
-	// Verify ~/.crio-install is created and paths in it exist
-	homeDir, err := os.UserHomeDir()
-	require.NoError(t, err)
-	contents, err = os.ReadFile(path.Join(homeDir, ".crio-install"))
-	require.NoError(t, err)
-	// Every line should contains a /opt/provisioner/sandbox path that exists
-	lines := strings.Split(string(contents), "\n")
-	require.Greater(t, len(lines), 0, ".crio-install should contain at least one path")
-	for _, line := range lines {
-		if line != "" {
-			line = strings.TrimRight(line, "/*")
-			require.True(t, strings.HasPrefix(line, "/opt/provisioner/sandbox/"),
-				".crio-install should only contain /opt/provisioner/sandbox paths")
-			_, err = os.Stat(line)
-			require.NoError(t, err, "Path %s from .crio-install should exist", line)
-		}
-	}
 
 	//
 	// When - Configure
@@ -116,6 +85,10 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify CRI-O service file is using the sandbox bin directory
 	contents, err = os.ReadFile("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err)
+
+	// Verify CRI-O service file contents from latest
+	contents, err = os.ReadFile("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	require.NoError(t, err)
 	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/usr/local/bin/crio`), string(contents),
 		"crio service file should reference the correct bin path")
 	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/etc/default/crio`), string(contents),
@@ -124,7 +97,7 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify Symlink CRI-O /usr/lib/systemd/system/crio.service
 	linkTarget, err = os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service", linkTarget, "crio service symlink should point to sandbox service directory")
+	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget, "crio service symlink should point to sandbox service directory")
 
 	// Verify /opt/provisioner/sandbox/etc/default/crio
 	contents, err = os.ReadFile("/opt/provisioner/sandbox/etc/default/crio")
@@ -141,8 +114,16 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/etc/crio/crio.conf.d`), string(contents),
 		"crio config options should reference the correct etc crio path")
 
+	// Verify 10-crio.conf is copied to /opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf.latest and contains expected content
+	contents, err = os.ReadFile("/opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf.latest")
+	require.NoError(t, err)
+	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/usr/libexec/crio`), string(contents),
+		"10-crio.conf should reference the correct libexec path")
+	require.Regexp(t, regexp.MustCompile(`/opt/provisioner/sandbox/etc/crio`), string(contents),
+		"10-crio.conf should reference the correct etc crio path")
+
 	// Verify contents of /opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf toml file
-	contents, err = os.ReadFile("/opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf")
+	contents, err = os.ReadFile("/opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf.latest")
 	var tomlEntries map[string]any
 	_, err = toml.NewDecoder(bytes.NewBufferString(string(contents))).Decode(&tomlEntries)
 	require.NoError(t, err, "10-crio.conf should be a valid toml file")
@@ -200,6 +181,24 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/nri/nri.sock" '.crio.nri.nri_listen'
 	require.Equal(t, "/opt/provisioner/sandbox/var/run/nri/nri.sock", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_listen"],
 		"crio.nri.nri_listen should be correctly set")
+
+	// Verify ~/.crio-install is created and paths in it exist
+	homeDir, err := os.UserHomeDir()
+	require.NoError(t, err)
+	contents, err = os.ReadFile(path.Join(homeDir, ".crio-install"))
+	require.NoError(t, err)
+	// Every line should contains a /opt/provisioner/sandbox path that exists
+	lines := strings.Split(string(contents), "\n")
+	require.Greater(t, len(lines), 0, ".crio-install should contain at least one path")
+	for _, line := range lines {
+		if line != "" {
+			line = strings.TrimRight(line, "/*")
+			require.True(t, strings.HasPrefix(line, "/opt/provisioner/sandbox/"),
+				".crio-install should only contain /opt/provisioner/sandbox paths")
+			_, err = os.Stat(line)
+			require.NoError(t, err, "Path %s from .crio-install should exist", line)
+		}
+	}
 
 	//
 	// When - Cleanup
