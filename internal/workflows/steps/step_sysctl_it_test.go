@@ -28,7 +28,7 @@ func Test_ConfigureSysctlForKubernetes_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// cleanup
-	defer func() {
+	t.Cleanup(func() {
 		// revert sysctl changes
 		report := wf.Rollback(context.Background())
 		assert.NoError(t, report.Error) // assert failure won't stop cleanup
@@ -37,7 +37,7 @@ func Test_ConfigureSysctlForKubernetes_Integration(t *testing.T) {
 		report = setup.Rollback(context.Background())
 		assert.NoError(t, report.Error) // assert failure won't stop cleanup
 
-	}()
+	})
 
 	// setup prerequisites
 	report := setup.Execute(context.Background())
@@ -61,11 +61,6 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	require.NoError(t, err)
 	report := setup.Execute(context.Background())
 	require.NoError(t, report.Error)
-	defer func() {
-		// revert setup
-		report = setup.Rollback(context.Background())
-		assert.NoError(t, report.Error) // assert failure won't stop cleanup
-	}()
 
 	expectedTotalSettings := 31 // there are 31 settings in total
 
@@ -78,9 +73,12 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, backupFile)
 	require.FileExists(t, backupFile)
-	defer func() {
+	t.Cleanup(func() {
+		// revert setup
+		report = setup.Rollback(context.Background())
+		assert.NoError(t, report.Error) // assert failure won't stop cleanup
 		_ = os.RemoveAll(backupFile)
-	}()
+	})
 
 	files, err := sysctl.CopyConfiguration()
 	require.NoError(t, err)

@@ -214,7 +214,25 @@ tasks:
     deps:
       - "generate"
     cmds:
-      - "go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/..."
+      - |
+        start=$(date +%s)
+
+        # run tests
+        go test -p 1 -v -race -cover -tags='integration' \
+          ./internal/... ./pkg/... ./cmd/... -timeout 30m
+        status=$?
+
+        end=$(date +%s)
+        elapsed=$(( end - start ))
+
+        hrs=$(( elapsed / 3600 ))
+        mins=$(( (elapsed % 3600) / 60 ))
+        secs=$(( elapsed % 60 ))
+
+        printf "\n=== Integration tests finished in %02d:%02d:%02d (status %d) ===\n" \
+          "$hrs" "$mins" "$secs" "$status"
+
+        exit $status
 
   test:coverage:
     desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
@@ -223,7 +241,7 @@ tasks:
       TEST_REGEX: '{{.TEST_REGEX | default "."}}'
     cmds:
       - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
-      - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./..."
+      - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./... -timeout 30m"
       - "go-test-coverage --config=./.testcoverage.yml"
 
   test:integration:
@@ -233,7 +251,7 @@ tasks:
     cmds:
       # Using go-testreport v0.3.2
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
-      - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... > integration-test.json"
+      - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 30m > integration-test.json"
       - "go-testreport -input integration-test.json -output integration-test-report.md -vars 'Title:Integration Test Report'"
 
   run:
@@ -583,7 +601,7 @@ tasks:
           set -e
           echo 'Installing git, curl, rsync, and build tools...'
           sudo apt-get update -qq
-          sudo apt-get install -y git curl rsync build-essential gcc libc6-dev
+          sudo apt-get install -y git curl rsync build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
 
           # Install Task
           if ! command -v task >/dev/null 2>&1; then
