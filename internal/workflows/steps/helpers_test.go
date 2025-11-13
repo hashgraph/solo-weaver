@@ -86,6 +86,10 @@ func reset(t *testing.T) {
 	// Remove crio directory
 	_ = sudo(exec.Command("rm", "-rf", "/etc/crio")).Run()
 
+	// Remove .kube/config
+	_ = sudo(exec.Command("rm", "-rf", "/root/.kube")).Run()
+	_ = sudo(exec.Command("rm", "-rf", "/home/provisioner/.kube")).Run()
+
 	// Clean up temp directory (from existing tests)
 	cleanUpTempDir(t)
 }
@@ -96,7 +100,7 @@ const (
 	SetupBasicLevel SetupLevel = iota
 	SetupKubeletLevel
 	SetupCrioLevel
-	SetupCKubeadmLevel
+	SetupKubeadmLevel
 )
 
 // setupPrerequisitesToLevel sets up all the required components before cluster initialization
@@ -236,7 +240,7 @@ func setupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to initialize cluster")
 
-	if level == SetupCKubeadmLevel {
+	if level == SetupKubeadmLevel {
 		return
 	}
 }

@@ -198,28 +198,32 @@ func InitializeCluster() automa.Builder {
 
 			// Step 1: Pull kubeadm images
 			logx.As().Info().Msg("Pulling kubeadm images, this may take a while...")
-			imageScripts := []string{
+			pullImageCmd := []string{
 				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/provisioner/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
 			}
 
-			_, err = automa_steps.RunBashScript(imageScripts, "")
+			_, err = automa_steps.RunBashScript(pullImageCmd, "")
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to pull kubeadm images: %w", err)))
 			}
 			logx.As().Info().Msg("Kubeadm images pulled successfully.")
 
 			// Step 2: Initialize cluster with kubeadm
-			initScripts := []string{
+			initCmd := []string{
 				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/provisioner/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
 			}
 
-			_, err = automa_steps.RunBashScript(initScripts, "")
+			_, err = automa_steps.RunBashScript(initCmd, "")
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to initialize cluster with kubeadm: %w", err)))
 			}
 
 			// Step 3: Configure kubeconfig
-			err = kube.ConfigureKubeConfig()
+			kubeConfigManager, err := kube.NewKubeConfigManager()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to create kubeconfig manager: %w", err)))
+			}
+			err = kubeConfigManager.Configure()
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to configure kubeconfig: %w", err)))
 			}

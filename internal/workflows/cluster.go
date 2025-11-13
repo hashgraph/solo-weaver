@@ -40,7 +40,7 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 			steps.StartCilium(),
 
 			// metalLB
-			steps.SetupMetalLB(), // still using bash steps
+			steps.SetupMetalLB(),
 
 			// health check
 			steps.CheckClusterHealth(), // still using bash steps
