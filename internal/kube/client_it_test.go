@@ -46,7 +46,15 @@ func createUnstructured(kind, apiVersion, ns, name string, spec map[string]inter
 	return u
 }
 
-func createPodUnstructured(ns, name, cmd string) *unstructured.Unstructured {
+func createPodUnstructured(ns, name, cmd string, labels map[string]interface{}) *unstructured.Unstructured {
+	if labels == nil {
+		labels = map[string]interface{}{
+			"app": name,
+		}
+	} else {
+		labels["app"] = name
+	}
+
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -54,6 +62,7 @@ func createPodUnstructured(ns, name, cmd string) *unstructured.Unstructured {
 			"metadata": map[string]interface{}{
 				"name":      name,
 				"namespace": ns,
+				"labels":    labels,
 			},
 			"spec": map[string]interface{}{
 				"restartPolicy": "Never",
@@ -86,7 +95,7 @@ func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns 
 		t.Fatalf("failed to create %s/%s: %v", gvr.Resource, obj.GetName(), err)
 	}
 
-	if err := c.WaitForResource(ctx, ToResourceKind(gvr), ns, obj.GetName(), check, timeout); err != nil {
+	if err := c.WaitForResource(ctx, ToResourceKind(gvr), ns, check, timeout, WaitOptions{NamePrefix: obj.GetName()}); err != nil {
 		t.Fatalf("%s/%s did not reach desired state: %v", gvr.Resource, obj.GetName(), err)
 	}
 }
@@ -247,7 +256,9 @@ func TestWaitForResources(t *testing.T) {
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 2*time.Minute)
 
 	// Wait for container completion
-	if err := c.WaitForContainer(ctx, nsName, podName, IsContainerReady("c"), 1*time.Minute); err != nil {
+	if err := c.WaitForContainer(ctx, nsName, IsContainerReady("c"), 1*time.Minute, WaitOptions{
+		NamePrefix: podName,
+	}); err != nil {
 		t.Fatalf("WaitForContainer failed: %v", err)
 	}
 
@@ -288,11 +299,11 @@ func TestWaitForContainer_Succeeds(t *testing.T) {
 	podName := "test-waitforcontainer-success"
 	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 
-	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 0")
+	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 0", nil)
 	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 30*time.Second)
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 1*time.Minute)
 
-	if err := c.WaitForContainer(ctx, nsName, podName, IsContainerReady("c"), 60*time.Second); err != nil {
+	if err := c.WaitForContainer(ctx, nsName, IsContainerReady("c"), 60*time.Second, WaitOptions{NamePrefix: podName}); err != nil {
 		t.Fatalf("expected WaitForContainer to succeed, got: %v", err)
 	}
 }
@@ -311,12 +322,86 @@ func TestWaitForContainer_TerminatedNonZero(t *testing.T) {
 	podName := "test-waitforcontainer-fail"
 	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 
-	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 2")
+	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 2", nil)
 	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 30*time.Second)
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 1*time.Minute)
 
-	if err := c.WaitForContainer(ctx, nsName, podName,
-		IsContainerTerminated("c", 2), 60*time.Second); err != nil {
+	if err := c.WaitForContainer(ctx, nsName,
+		IsContainerTerminated("c", 2), 60*time.Second, WaitOptions{NamePrefix: podName}); err != nil {
 		t.Fatalf("expected error for container terminated with exit code 2, got error: %v", err)
+	}
+}
+
+func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+
+	ctx := context.Background()
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+
+	// create two namespaces
+	nsA := fmt.Sprintf("it-list-a-%d", time.Now().UnixNano())
+	nsB := fmt.Sprintf("it-list-b-%d", time.Now().UnixNano())
+
+	nsAObj := createUnstructured("Namespace", "v1", "", nsA, nil)
+	createAndWait(t, c, nsGVR, "", nsAObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsA, 2*time.Minute)
+
+	nsBObj := createUnstructured("Namespace", "v1", "", nsB, nil)
+	createAndWait(t, c, nsGVR, "", nsBObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsB, 2*time.Minute)
+
+	// create pods:
+	// - podA1 (nsA) label test=foo
+	// - podA2 (nsA) label test=bar
+	// - podB1 (nsB) label test=foo
+	podA1 := createPodUnstructured(nsA, "pod-a1", "sleep 300", map[string]interface{}{"test": "foo"})
+	createAndWait(t, c, podGVR, nsA, podA1, IsPodReady, 2*time.Minute)
+	defer deleteAndWait(t, c, podGVR, nsA, "pod-a1", 1*time.Minute)
+
+	podA2 := createPodUnstructured(nsA, "pod-a2", "sleep 300", map[string]interface{}{"test": "bar"})
+	createAndWait(t, c, podGVR, nsA, podA2, IsPodReady, 2*time.Minute)
+	defer deleteAndWait(t, c, podGVR, nsA, "pod-a2", 1*time.Minute)
+
+	podB1 := createPodUnstructured(nsB, "pod-b1", "sleep 300", map[string]interface{}{"test": "foo"})
+	createAndWait(t, c, podGVR, nsB, podB1, IsPodReady, 2*time.Minute)
+	defer deleteAndWait(t, c, podGVR, nsB, "pod-b1", 1*time.Minute)
+
+	// 1) Namespace filtering: list pods in nsA -> expect pod-a1 and pod-a2 only
+	items, err := c.List(ctx, podGVR, nsA, WaitOptions{})
+	if err != nil {
+		t.Fatalf("List by namespace failed: %v", err)
+	}
+	names := map[string]struct{}{}
+	for _, it := range items.Items {
+		names[it.GetName()] = struct{}{}
+	}
+	if _, ok := names["pod-a1"]; !ok {
+		t.Fatalf("expected pod-a1 in namespace list, got: %v", names)
+	}
+	if _, ok := names["pod-a2"]; !ok {
+		t.Fatalf("expected pod-a2 in namespace list, got: %v", names)
+	}
+	if _, ok := names["pod-b1"]; ok {
+		t.Fatalf("did not expect pod-b1 in namespace %s list", nsA)
+	}
+
+	// 2) LabelSelector: in nsA, select app=foo -> expect only pod-a1
+	itemsLbl, err := c.List(ctx, podGVR, nsA, WaitOptions{LabelSelector: "test=foo"})
+	if err != nil {
+		t.Fatalf("List with label selector failed: %v", err)
+	}
+	if len(itemsLbl.Items) != 1 || itemsLbl.Items[0].GetName() != "pod-a1" {
+		t.Fatalf("label selector returned unexpected items: %v", itemsLbl)
+	}
+
+	// 3) FieldSelector: in nsA, select metadata.name=pod-a1 -> expect only pod-a1
+	itemsField, err := c.List(ctx, podGVR, nsA, WaitOptions{FieldSelector: "metadata.name=pod-a1"})
+	if err != nil {
+		t.Fatalf("List with field selector failed: %v", err)
+	}
+	if len(itemsField.Items) != 1 || itemsField.Items[0].GetName() != "pod-a1" {
+		t.Fatalf("field selector returned unexpected items: %v", itemsField)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joomcode/errorx"
@@ -288,10 +289,40 @@ func (c *Client) DeleteManifest(ctx context.Context, manifestPath string) error 
 // Generic WaitFor
 // =====================
 
-// WaitFor waits for a resource to satisfy the given check function within the timeout
-func (c *Client) WaitFor(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string,
-	checkFn CheckFunc, timeout time.Duration) error {
+type WaitOptions struct {
+	NamePrefix string
+	// A selector to restrict the list of returned objects by their labels.
+	// Defaults to everything.
+	// +optional
+	LabelSelector string `json:"labelSelector,omitempty" protobuf:"bytes,1,opt,name=labelSelector"`
+	// A selector to restrict the list of returned objects by their fields.
+	// Defaults to everything.
+	// +optional
+	FieldSelector string `json:"fieldSelector,omitempty" protobuf:"bytes,2,opt,name=fieldSelector"`
+}
 
+func (w WaitOptions) AsListOptions() metav1.ListOptions {
+	return metav1.ListOptions{
+		LabelSelector: w.LabelSelector,
+		FieldSelector: w.FieldSelector,
+	}
+}
+
+func (w WaitOptions) String() string {
+	var parts []string
+	if w.NamePrefix != "" {
+		parts = append(parts, "namePrefix="+w.NamePrefix)
+	}
+	if w.LabelSelector != "" {
+		parts = append(parts, "labelSelector="+w.LabelSelector)
+	}
+	if w.FieldSelector != "" {
+		parts = append(parts, "fieldSelector="+w.FieldSelector)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func (c *Client) List(ctx context.Context, gvr schema.GroupVersionResource, namespace string, opts WaitOptions) (*unstructured.UnstructuredList, error) {
 	var dr dynamic.ResourceInterface
 	if namespace != "" {
 		dr = c.Dyn.Resource(gvr).Namespace(namespace)
@@ -299,30 +330,67 @@ func (c *Client) WaitFor(ctx context.Context, gvr schema.GroupVersionResource, n
 		dr = c.Dyn.Resource(gvr)
 	}
 
+	items, err := dr.List(ctx, opts.AsListOptions())
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "error during list %s in ns=%s: %s", gvr.Resource, namespace, opts.String())
+	}
+
+	if opts.NamePrefix != "" {
+		filtered := &unstructured.UnstructuredList{}
+		for _, item := range items.Items {
+			if strings.HasPrefix(item.GetName(), opts.NamePrefix) {
+				filtered.Items = append(filtered.Items, item)
+			}
+		}
+		items = filtered
+	}
+
+	return items, nil
+}
+
+// WaitFor waits for a resource to satisfy the given check function within the timeout
+func (c *Client) WaitFor(ctx context.Context, gvr schema.GroupVersionResource, namespace string,
+	checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
+
 	deadline := time.Now().Add(timeout)
 	for {
-		obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+		items, err := c.List(ctx, gvr, namespace, opts)
+
 		if err != nil {
-			if kerrors.IsNotFound(err) {
-				// keep waiting
-			} else {
-				return err
-			}
-		} else {
-			ok, err := checkFn(obj)
+			return err
+		}
+
+		total := len(items.Items)
+		count := 0
+		for _, obj := range items.Items {
 			if err != nil {
-				return err
+				if kerrors.IsNotFound(err) {
+					// keep waiting
+				} else {
+					return err
+				}
+			} else {
+				ok, err := checkFn(obj.DeepCopy())
+				if err != nil {
+					return err
+				}
+				if ok {
+					count++
+				}
 			}
-			if ok {
-				return nil
-			}
+		}
+
+		// if total is zero, we keep waiting
+		// otherwise, we wait until all items satisfy the condition
+		if total > 0 && count == total {
+			return nil
 		}
 
 		if time.Now().After(deadline) {
-			return errorx.IllegalState.New("timed out waiting for %s/%s", namespace, name)
+			return errorx.IllegalState.New("timed out waiting for %s: %s", namespace, opts.String())
 		}
 
-		if err := sleepWithContext(ctx, 300*time.Millisecond); err != nil {
+		if err = sleepWithContext(ctx, 300*time.Millisecond); err != nil {
 			return err
 		}
 	}
@@ -407,7 +475,7 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 // =====================
 
 // WaitForResource waits for a resource of the given kind to reach its ready/completed state
-func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespace, name string, checkFn CheckFunc, timeout time.Duration) error {
+func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespace string, checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
 	var gvr schema.GroupVersionResource
 
 	gvr, err := ToGroupVersionResource(kind)
@@ -415,15 +483,15 @@ func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespa
 		return err
 	}
 
-	return c.WaitFor(ctx, gvr, namespace, name, checkFn, timeout)
+	return c.WaitFor(ctx, gvr, namespace, checkFn, timeout, opts)
 }
 
 // WaitForContainer waits until the specified container in the given Pod is ready
 // or has terminated successfully within the timeout. It returns an error when the
 // container terminates with a non-zero exit code or on other failures.
-func (c *Client) WaitForContainer(ctx context.Context, namespace, podName string, checkFn CheckFunc, timeout time.Duration) error {
+func (c *Client) WaitForContainer(ctx context.Context, namespace string, checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
 	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-	return c.WaitFor(ctx, gvr, namespace, podName, checkFn, timeout)
+	return c.WaitFor(ctx, gvr, namespace, checkFn, timeout, opts)
 }
 
 // =====================
