@@ -143,37 +143,6 @@ func installMetalLB() automa.Builder {
 		})
 }
 
-func isMetalLBPodsReady() automa.Builder {
-	return automa.NewStepBuilder().WithId(IsMetalLBReadyStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			meta := map[string]string{}
-			// wait for metallb pods to be ready
-			err = k.WaitForResource(ctx, kube.KindPod, MetalLBNamespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "metallb"})
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			meta[IsReady] = "true"
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Verifying MetalLB readiness")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "MetalLB is not ready")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB is ready")
-
-		})
-}
-
 func configureMetalLB(configFilePath string) automa.Builder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureMetalLbConfigStepId).
 		Steps(
