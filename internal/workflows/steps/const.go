@@ -19,4 +19,7 @@ const (
 	InstalledByThisStep  = "installed"
 	CleanedUpByThisStep  = "cleanedUp"
 	ConfiguredByThisStep = "configured"
+
+	IsReady   = "isReady"
+	IsPending = "isPending"
 )
