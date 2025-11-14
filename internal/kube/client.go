@@ -290,15 +290,17 @@ func (c *Client) DeleteManifest(ctx context.Context, manifestPath string) error 
 // =====================
 
 type WaitOptions struct {
-	NamePrefix string
+	// NamePrefix restricts the list of returned objects to those whose names start with the given prefix.
+	// +optional
+	NamePrefix string `json:"namePrefix,omitempty"`
 	// A selector to restrict the list of returned objects by their labels.
 	// Defaults to everything.
 	// +optional
-	LabelSelector string `json:"labelSelector,omitempty" protobuf:"bytes,1,opt,name=labelSelector"`
+	LabelSelector string `json:"labelSelector,omitempty"`
 	// A selector to restrict the list of returned objects by their fields.
 	// Defaults to everything.
 	// +optional
-	FieldSelector string `json:"fieldSelector,omitempty" protobuf:"bytes,2,opt,name=fieldSelector"`
+	FieldSelector string `json:"fieldSelector,omitempty"`
 }
 
 func (w WaitOptions) AsListOptions() metav1.ListOptions {
