@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-provisioner/internal/kube"
@@ -10,7 +11,7 @@ import (
 )
 
 const (
-	defaultClusterResourceCheckTimeout = 60 // in seconds
+	defaultClusterResourceCheckTimeout = 60 * time.Second
 	CheckClusterNodesStepId            = "check_cluster_nodes"
 	CheckClusterNamespacesStepId       = "check_cluster_namespaces"
 	CheckClusterConfigMapsStepId       = "check_cluster_configmaps"

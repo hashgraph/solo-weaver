@@ -76,7 +76,7 @@ func prepareNodeInfoForMeta(ctx context.Context, k *kube.Client) ([]string, erro
 			}
 		}
 
-		nodeInfo = append(nodeInfo, fmt.Sprintf("%s/%s(Ready=%s)", item.GetNamespace(), item.GetName(), readyStatus))
+		nodeInfo = append(nodeInfo, fmt.Sprintf("%s(Ready=%s)", item.GetName(), readyStatus))
 	}
 
 	return nodeInfo, nil

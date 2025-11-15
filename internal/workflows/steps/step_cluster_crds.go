@@ -61,7 +61,7 @@ func prepareCRDMeta(ctx context.Context, k *kube.Client) ([]string, error) {
 	foundCRDs := []string{}
 	for _, item := range items.Items {
 		foundCRDs = append(foundCRDs, strings.TrimSpace(
-			item.GetNamespace()+"/"+item.GetName()+"-"+item.GetCreationTimestamp().String(),
+			item.GetName()+"-"+item.GetCreationTimestamp().String(),
 		))
 	}
 	return foundCRDs, nil

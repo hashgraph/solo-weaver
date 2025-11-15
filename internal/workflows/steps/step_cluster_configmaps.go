@@ -39,14 +39,14 @@ func CheckClusterConfigMaps(id string, configMaps []string, timeout time.Duratio
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Checking cluster namespaces")
+			notify.As().StepStart(ctx, stp, "Checking cluster config maps")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to check cluster namespaces")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to check cluster config maps")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cluster namespaces checked successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Cluster config maps are checked successfully")
 		})
 }
 
