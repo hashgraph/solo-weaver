@@ -104,37 +104,24 @@ var clusterCRDs = []string{
 	"servicel2statuses.metallb.io",
 }
 
-// This helps to avoid instantiating multiple kube clients during the health check workflow
-var kubeClient *kube.Client
-var kubeClientProvider = func() (*kube.Client, error) {
-	if kubeClient != nil {
-		return kubeClient, nil
-	}
-
-	k, err := kube.NewClient()
-	if err != nil {
-		return nil, err
-	}
-
-	kubeClient = k
-	return kubeClient, nil
-}
-
 // CheckClusterHealth performs a series of checks to ensure the cluster is healthy and operational
 func CheckClusterHealth() automa.Builder {
-	kubeClient = nil // reset kube client before starting the health check workflow
 
 	return automa.NewWorkflowBuilder().WithId("check-cluster-health").Steps(
-		CheckClusterNodesReady(CheckClusterNodesStepId, kubeClientProvider),
-		CheckClusterNamespaces(CheckClusterNamespacesStepId, clusterNamespaces, defaultClusterResourceCheckTimeout, kubeClientProvider),
-		CheckClusterConfigMaps(CheckClusterConfigMapsStepId, clusterConfigMaps, defaultClusterResourceCheckTimeout, kubeClientProvider),
-		CheckClusterCRDs(CheckClusterCRDsStepId, clusterCRDs, defaultClusterResourceCheckTimeout, kubeClientProvider),
-		CheckClusterPodsReady(CheckClusterPodsStepId, clusterPods, defaultClusterResourceCheckTimeout, kubeClientProvider),
-		CheckClusterServices(CheckClusterServicesStepId, clusterServices, defaultClusterResourceCheckTimeout, kubeClientProvider),
+		CheckClusterNodesReady(CheckClusterNodesStepId, kube.ClientFromContext),
+		CheckClusterNamespaces(CheckClusterNamespacesStepId, clusterNamespaces, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterConfigMaps(CheckClusterConfigMapsStepId, clusterConfigMaps, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterCRDs(CheckClusterCRDsStepId, clusterCRDs, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterPodsReady(CheckClusterPodsStepId, clusterPods, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterServices(CheckClusterServicesStepId, clusterServices, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Checking cluster health")
-			return ctx, nil
+			kc, err := kube.NewClient()
+			if err != nil {
+				return ctx, err
+			}
+			return kube.WithKubeClient(ctx, kc), nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepFailure(ctx, stp, rpt, "Cluster health check failed")

@@ -11,17 +11,17 @@ import (
 )
 
 // CheckClusterConfigMaps checks if the specified config maps exist in the cluster
-func CheckClusterConfigMaps(id string, configMaps []string, timeout time.Duration, provider kube.ClientProvider) automa.Builder {
+func CheckClusterConfigMaps(id string, configMaps []string, timeout time.Duration, provider kube.ClientProviderFromContext) automa.Builder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, err := provider()
+			k, err := provider(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			for _, item := range configMaps {
 				namespace, name := splitIntoNamespaceAndName(item)
-				err = k.WaitForResource(ctx, kube.KindConfigMaps, namespace, name, kube.IsPresent, timeout)
+				err = k.WaitForResource(ctx, kube.KindConfigMap, namespace, name, kube.IsPresent, timeout)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
@@ -51,7 +51,7 @@ func CheckClusterConfigMaps(id string, configMaps []string, timeout time.Duratio
 }
 
 func prepareConfigMapMeta(ctx context.Context, k *kube.Client) ([]string, error) {
-	items, err := k.List(ctx, kube.KindConfigMaps, "", kube.WaitOptions{})
+	items, err := k.List(ctx, kube.KindConfigMap, "", kube.WaitOptions{})
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# File: `test/scripts/cluster-health.sh`
+# File: `test/scripts/health.sh`
 # Modular cluster health checks (non-destructive). Returns non-zero on failure.
 
 set -euo pipefail
@@ -181,11 +181,11 @@ list_basic_resources() {
   printf "\n-- Services (all namespaces) --\n"
   $KUBECTL get svc --all-namespaces || true
 
-  printf "\n-- ConfigMaps (all namespaces) --\n"
-  $KUBECTL get cm --all-namespaces || true
+  printf "\n-- ConfigMaps --\n"
+  $KUBECTL get cm || true
 
   printf "\n-- Namespaces --\n"
-  $KUBECTL get ns --all-namespaces || true
+  $KUBECTL get ns || true
   printf "\n"
 }
 
@@ -196,7 +196,7 @@ check_expected_resources() {
   # expected pod prefixes (search across all namespaces)
   expected_pod_prefixes=(
     "cilium-" "cilium-operator-" "coredns-" "etcd-" "hubble-relay-" "kube-apiserver-"
-    "kube-controller-manager-" "kube-scheduler-" "metallb-controller-" "metallb-speaker"
+    "kube-controller-manager-" "kube-scheduler-" "metallb-controller-" "metallb-speaker-"
   )
 
   missing_pod_prefixes=()

@@ -11,11 +11,11 @@ import (
 )
 
 // CheckClusterPodsReady checks if the specified pods are running in the cluster
-// pods is a map of pod prefixes to namespace
-func CheckClusterPodsReady(id string, podNames []string, timeout time.Duration, provider kube.ClientProvider) automa.Builder {
+// podNames is a list of strings in the format 'namespace/pod-name-prefix'
+func CheckClusterPodsReady(id string, podNames []string, timeout time.Duration, provider kube.ClientProviderFromContext) automa.Builder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, err := provider()
+			k, err := provider(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -28,6 +28,7 @@ func CheckClusterPodsReady(id string, podNames []string, timeout time.Duration, 
 				}
 			}
 
+			// get all pods in the cluster
 			foundPods, err := preparePodMeta(ctx, k)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
@@ -37,7 +38,6 @@ func CheckClusterPodsReady(id string, podNames []string, timeout time.Duration, 
 			meta["checkedPods"] = strings.Join(podNames, ", ")
 			meta["foundPods"] = strings.Join(foundPods, ", ")
 
-			// get all namespaces in the cluster
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

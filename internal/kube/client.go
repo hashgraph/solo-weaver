@@ -140,10 +140,40 @@ type Client struct {
 	Mapper *restmapper.DeferredDiscoveryRESTMapper
 }
 
-// ClientProvider is a function that provides a kube client instance.
-// NewClient is such a provider for general use.
-// However, this is to help abstract the client creation and to allow better mocking and reusability of an instance of kube Client.
+// ClientProviderFromContext is a function that provides a kube client instance from context.
+// ClientFromContext can be used for this provider type
+type ClientProviderFromContext func(ctx context.Context) (*Client, error)
+
+// ClientProvider is a function that provides a kube client
+// NewClient can be used for this provider type
 type ClientProvider func() (*Client, error)
+
+// Context key for kube client
+type kubeClientKeyType struct{}
+
+var kubeClientKey = kubeClientKeyType{}
+
+func ClientFromContext(ctx context.Context) (*Client, error) {
+	if ctx == nil {
+		return nil, errorx.IllegalArgument.New("context is nil")
+	}
+
+	val := ctx.Value(kubeClientKey)
+	if val == nil {
+		return nil, errorx.IllegalArgument.New("kube client not found in context")
+	}
+
+	kc, ok := val.(*Client)
+	if !ok || kc == nil {
+		return nil, errorx.IllegalArgument.New("invalid kube client stored in context")
+	}
+
+	return kc, nil
+}
+
+func WithKubeClient(ctx context.Context, kc *Client) context.Context {
+	return context.WithValue(ctx, kubeClientKey, kc)
+}
 
 // NewClient creates a Kubernetes client that automatically detects
 // whether it is running inside a cluster or using a kubeconfig file.
