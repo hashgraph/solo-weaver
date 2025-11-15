@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/joomcode/errorx"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,106 +25,98 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type ResourceKind string
-
-func (k ResourceKind) String() string { return string(k) }
-
 const (
-	KindNode       ResourceKind = "Node"
-	KindService    ResourceKind = "Service"
 	KindNamespace  ResourceKind = "Namespace"
-	KindConfigMap  ResourceKind = "ConfigMap"
+	KindConfigMaps ResourceKind = "ConfigMap"
 	KindPod        ResourceKind = "Pod"
 	KindDeployment ResourceKind = "Deployment"
 	KindJob        ResourceKind = "Job"
-	KindPVC        ResourceKind = "PersistentVolumeClaim"
-	KindCRD        ResourceKind = "CustomResourceDefinition"
-)
+	KindPVC        ResourceKind = "PVC"
 
-var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
-	KindNode:       {Group: "", Version: "v1", Resource: "nodes"},
-	KindService:    {Group: "", Version: "v1", Resource: "services"},
-	KindNamespace:  {Group: "", Version: "v1", Resource: "namespaces"},
-	KindConfigMap:  {Group: "", Version: "v1", Resource: "configmaps"},
-	KindPod:        {Group: "", Version: "v1", Resource: "pods"},
-	KindDeployment: {Group: "apps", Version: "v1", Resource: "deployments"},
-	KindJob:        {Group: "batch", Version: "v1", Resource: "jobs"},
-	KindPVC:        {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
-	KindCRD:        {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
-}
-
-func RegisterKind(kind ResourceKind, gvr schema.GroupVersionResource) {
-	kindToGVR[kind] = gvr
-	key := gvr.Group + "/" + gvr.Version + "/" + gvr.Resource
-	gvrToKind[key] = kind
-}
-
-var gvrToKind = map[string]ResourceKind{}
-
-func init() {
-	for k, v := range kindToGVR {
-		key := v.Group + "/" + v.Version + "/" + v.Resource
-		gvrToKind[key] = k
-	}
-}
-
-func ToGroupVersionResource(kind ResourceKind) (schema.GroupVersionResource, error) {
-	gvr, ok := kindToGVR[kind]
-	if !ok {
-		return schema.GroupVersionResource{}, errorx.IllegalArgument.New("unsupported resource kind: %s", kind)
-	}
-	return gvr, nil
-}
-
-func ToResourceKind(gvr schema.GroupVersionResource) ResourceKind {
-	key := gvr.Group + "/" + gvr.Version + "/" + gvr.Resource
-	if kind, ok := gvrToKind[key]; ok {
-		return kind
-	}
-	return ResourceKind(gvr.Resource) // fallback
-}
-
-type Phase string
-
-const (
 	PhasePending   Phase = "Pending"
 	PhaseRunning   Phase = "Running"
 	PhaseSucceeded Phase = "Succeeded"
 	PhaseFailed    Phase = "Failed"
 	PhaseUnknown   Phase = "Unknown"
+
+	DefaultTimeout = 5 * time.Minute
 )
 
-var knownPhases = map[string]Phase{
-	"Pending":   PhasePending,
-	"Running":   PhaseRunning,
-	"Succeeded": PhaseSucceeded,
-	"Failed":    PhaseFailed,
-	"Unknown":   PhaseUnknown,
+// ResourceKind represents a Kubernetes resource kind
+type ResourceKind string
+
+// String returns the string representation of the ResourceKind
+func (r ResourceKind) String() string {
+	return string(r)
 }
 
+// ToResourceKind converts a GroupVersionResource to ResourceKind
+func ToResourceKind(gvr schema.GroupVersionResource) ResourceKind {
+	switch gvr.Resource {
+	case "namespaces":
+		return KindNamespace
+	case "configmaps":
+		return KindConfigMaps
+	case "pods":
+		return KindPod
+	case "deployments":
+		return KindDeployment
+	case "jobs":
+		return KindJob
+	case "persistentvolumeclaims":
+		return KindPVC
+	}
+
+	return ResourceKind(gvr.Resource)
+}
+
+// ToGroupVersionResource converts a ResourceKind to GroupVersionResource
+func ToGroupVersionResource(kind ResourceKind) (schema.GroupVersionResource, error) {
+	switch kind {
+	case KindNamespace:
+		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}, nil
+	case KindConfigMaps:
+		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, nil
+	case KindPod:
+		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, nil
+	case KindDeployment:
+		return schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, nil
+	case KindJob:
+		return schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, nil
+	case KindPVC:
+		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}, nil
+	default:
+		return schema.GroupVersionResource{}, errorx.IllegalArgument.New("unsupported resource kind: %s", kind)
+	}
+}
+
+// Phase represents a Kubernetes resource phase/status
+type Phase string
+
+// String returns the string representation of the Phase
 func (p Phase) String() string {
 	return string(p)
 }
 
-// ToPhase converts a string to a Phase, normalizing the case
+// ToPhase converts a string to Phase
 func ToPhase(s string) Phase {
-	sn := cases.Title(language.Und, cases.NoLower).String(strings.ToLower(strings.TrimSpace(s)))
-	if p, ok := knownPhases[sn]; ok {
-		return p
+	switch s {
+	case "Pending":
+		return PhasePending
+	case "Running":
+		return PhaseRunning
+	case "Succeeded":
+		return PhaseSucceeded
+	case "Failed":
+		return PhaseFailed
+	case "Unknown":
+		return PhaseUnknown
+	default:
+		return Phase(s)
 	}
-	return Phase(s)
-}
-
-// RegisterPhase allows registering a new Phase value
-func RegisterPhase(name string) Phase {
-	p := Phase(name)
-	knownPhases[name] = p
-	return p
 }
 
 // CheckFunc defines a function type for checking resource conditions
-// Notes: when err != nil, obj may be nil.
-// CheckFunc should handle API errors like IsNotFound, IsForbidden.
 type CheckFunc func(obj *unstructured.Unstructured, err error) (bool, error)
 
 // =====================
@@ -140,77 +130,43 @@ type Client struct {
 	Mapper *restmapper.DeferredDiscoveryRESTMapper
 }
 
-// ClientProvider is a function that provides a kube client instance.
-// NewClient is such a provider for general use.
-// However, this is to help abstract the client creation and to allow better mocking and reusability of an instance of kube Client.
-type ClientProvider func() (*Client, error)
-
-// NewClient creates a Kubernetes client that automatically detects
-// whether it is running inside a cluster or using a kubeconfig file.
-// It returns a fully prepared dynamic client + discovery mapper.
+// NewClient creates a new kube.Client using default kubeconfig rules
 func NewClient() (*Client, error) {
-	config, err := loadKubeConfig()
-	if err != nil {
-		return nil, err
+	var config *rest.Config
+	var err error
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		// Running inside cluster
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, errorx.IllegalArgument.Wrap(err, "failed to load in-cluster config")
+		}
+	} else {
+		// Local dev / test
+		kubeconfig := os.Getenv("KUBECONFIG")
+		if kubeconfig == "" {
+			kubeconfig = filepath.Join(os.Getenv("HOME"), ".kube", "config")
+		}
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			return nil, errorx.IllegalArgument.Wrap(err, "failed to load kubeconfig")
+		}
 	}
 
-	// Create dynamic client
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to create dynamic client")
 	}
 
-	// Create discovery client
 	disco, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to create discovery client")
 	}
 
-	// Create RESTMapper (auto-refreshing)
-	memcache := memory.NewMemCacheClient(disco)
-	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memcache)
-
-	// Warm discovery cache to avoid first-call latency
-	_, _ = mapper.ResourcesFor(schema.GroupVersionResource{Resource: "pods"})
-
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco))
 	return &Client{
 		Dyn:    dyn,
 		Mapper: mapper,
 	}, nil
-}
-
-// ---------------------------------------------------------------------
-// loadKubeConfig detects in-cluster configuration or falls back
-// to a kubeconfig file. Supports multi-KUBECONFIG paths.
-// ---------------------------------------------------------------------
-func loadKubeConfig() (*rest.Config, error) {
-	// Detect in-cluster
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		cfg, err := rest.InClusterConfig()
-		if err != nil {
-			return nil, errorx.IllegalArgument.Wrap(err, "failed to load in-cluster config")
-		}
-		return cfg, nil
-	}
-
-	// Detect KUBECONFIG (supports : separated multi-path)
-	kubeconfigEnv := os.Getenv("KUBECONFIG")
-	if kubeconfigEnv != "" {
-		cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigEnv)
-		if err != nil {
-			return nil, errorx.IllegalArgument.Wrap(err, "failed to load kubeconfig from $KUBECONFIG")
-		}
-		return cfg, nil
-	}
-
-	// Default ~/.kube/config
-	defaultPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	cfg, err := clientcmd.BuildConfigFromFlags("", defaultPath)
-	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err,
-			"failed to load default kubeconfig at %s", defaultPath)
-	}
-	return cfg, nil
 }
 
 // =====================
@@ -370,15 +326,7 @@ func (w WaitOptions) String() string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-// List lists resources of the given kind in the specified namespace with optional filtering.
-// If opts.NamePrefix is set, client-side filtering is applied to return only resources
-// whose names start with the specified prefix.
-func (c *Client) List(ctx context.Context, kind ResourceKind, namespace string, opts WaitOptions) (*unstructured.UnstructuredList, error) {
-	gvr, err := ToGroupVersionResource(kind)
-	if err != nil {
-		return nil, err
-	}
-
+func (c *Client) List(ctx context.Context, gvr schema.GroupVersionResource, namespace string, opts WaitOptions) (*unstructured.UnstructuredList, error) {
 	var dr dynamic.ResourceInterface
 	if namespace != "" {
 		dr = c.Dyn.Resource(gvr).Namespace(namespace)
@@ -386,126 +334,82 @@ func (c *Client) List(ctx context.Context, kind ResourceKind, namespace string, 
 		dr = c.Dyn.Resource(gvr)
 	}
 
-	list, err := dr.List(ctx, opts.AsListOptions())
+	items, err := dr.List(ctx, opts.AsListOptions())
 	if err != nil {
-		return nil, errorx.InternalError.Wrap(
-			err,
-			"list failed for %s (namespace=%s, opts=%s)",
-			gvr.Resource, namespace, opts.String(),
-		)
+		return nil, errorx.InternalError.Wrap(err, "error during list %s in ns=%s: %s", gvr.Resource, namespace, opts.String())
 	}
 
-	// No prefix filtering required
-	if opts.NamePrefix == "" {
-		return list, nil
-	}
-
-	// Client-side filtering by prefix
-	filtered := &unstructured.UnstructuredList{
-		Items: make([]unstructured.Unstructured, 0, len(list.Items)),
-	}
-
-	// Preserve metadata
-	filtered.SetGroupVersionKind(list.GroupVersionKind())
-	filtered.SetResourceVersion(list.GetResourceVersion())
-	filtered.SetContinue(list.GetContinue())
-
-	for _, item := range list.Items {
-		if strings.HasPrefix(item.GetName(), opts.NamePrefix) {
-			filtered.Items = append(filtered.Items, item)
-		}
-	}
-
-	return filtered, nil
-}
-
-// WaitForResources waits until all resources of the given kind in the specified namespace
-// satisfy the condition defined by checkFn within the timeout.
-// It returns an error if the timeout is reached or if any fatal API errors occur.
-func (c *Client) WaitForResources(
-	ctx context.Context,
-	kind ResourceKind,
-	namespace string,
-	checkFn CheckFunc,
-	timeout time.Duration,
-	opts WaitOptions,
-) error {
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(300 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return errorx.IllegalState.New(
-				"timed out waiting for %s in ns=%s with opts=%s",
-				kind, namespace, opts.String(),
-			)
-
-		case <-ticker.C:
-			items, err := c.List(ctx, kind, namespace, opts)
-			if err != nil {
-				if kerrors.IsNotFound(err) {
-					// Resource not created yet → keep waiting
-					continue
-				}
-
-				if isFatalAPIError(err) {
-					return errorx.InternalError.Wrap(err, "fatal API error listing for %s in ns=%s", kind, namespace)
-				}
-
-				return errorx.InternalError.Wrap(
-					err, "list failed while waiting for %s in ns=%s",
-					kind, namespace,
-				)
-			}
-
-			if len(items.Items) == 0 {
-				// No items matched → keep waiting
-				continue
-			}
-
-			// All or nothing: every resource must satisfy condition
-			allReady := true
-			for _, item := range items.Items {
-				ok, err := checkFn(item.DeepCopy(), nil)
-				if err != nil {
-					return err
-				}
-				if !ok {
-					allReady = false
-					break
-				}
-			}
-
-			if allReady {
-				return nil
+	if opts.NamePrefix != "" {
+		filtered := &unstructured.UnstructuredList{}
+		for _, item := range items.Items {
+			if strings.HasPrefix(item.GetName(), opts.NamePrefix) {
+				filtered.Items = append(filtered.Items, item)
 			}
 		}
+		items = filtered
 	}
+
+	return items, nil
 }
 
-// WaitForResource waits until the specified resource of the given kind in the specified namespace
-// satisfies the condition defined by checkFn within the timeout.
-// It returns an error if the timeout is reached or if any fatal API errors occur.
-func (c *Client) WaitForResource(
-	ctx context.Context,
-	kind ResourceKind,
-	namespace, name string,
-	checkFn CheckFunc,
-	timeout time.Duration,
-) error {
+// WaitForResources waits for multiple resources to satisfy the given check function within the timeout
+// It lists using the provided WaitOptions that can filter by name prefix, label selector, and field selector
+func (c *Client) WaitForResources(ctx context.Context, kind ResourceKind, namespace string,
+	checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
 
 	gvr, err := ToGroupVersionResource(kind)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	deadline := time.Now().Add(timeout)
+	for {
+		items, err := c.List(ctx, gvr, namespace, opts)
+
+		if err != nil {
+			if kerrors.IsNotFound(err) {
+				// keep waiting
+			} else {
+				return err
+			}
+		}
+
+		total := len(items.Items)
+		count := 0
+		for _, obj := range items.Items {
+			ok, err := checkFn(obj.DeepCopy(), err)
+			if err != nil {
+				return err
+			}
+
+			if ok {
+				count++
+			}
+		}
+
+		// if total is zero, we keep waiting
+		// otherwise, we wait until all items satisfy the condition
+		if total > 0 && count == total {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return errorx.IllegalState.New("timed out waiting for %s: %s", namespace, opts.String())
+		}
+
+		if err = sleepWithContext(ctx, 300*time.Millisecond); err != nil {
+			return err
+		}
+	}
+}
+
+// WaitForResource waits for a single resource to satisfy the given check function within the timeout
+// This is efficient for waiting on a specific named resource
+func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespace, name string, checkFn CheckFunc, timeout time.Duration) error {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
 
 	var dr dynamic.ResourceInterface
 	if namespace != "" {
@@ -514,47 +418,27 @@ func (c *Client) WaitForResource(
 		dr = c.Dyn.Resource(gvr)
 	}
 
-	ticker := time.NewTicker(300 * time.Millisecond)
-	defer ticker.Stop()
+	deadline := time.Now().Add(timeout)
+	poll := 300 * time.Millisecond
 
 	for {
-		select {
-		case <-ctx.Done():
-			return errorx.IllegalState.Wrap(
-				ctx.Err(),
-				"timeout waiting for %s/%s in namespace=%s",
-				gvr.Resource, name, namespace,
-			)
+		obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+		done, perr := checkFn(obj, err)
+		if perr != nil {
+			return perr
+		}
+		if done {
+			return nil
+		}
 
-		case <-ticker.C:
-			obj, err := dr.Get(ctx, name, metav1.GetOptions{})
-			if err != nil && isFatalAPIError(err) {
-				return errorx.InternalError.Wrap(err, "fatal API error waiting for %s/%s", gvr.Resource, name)
-			}
+		if time.Now().After(deadline) {
+			return errorx.IllegalState.Wrap(err, "timed out waiting for %s/%s in ns=%s", gvr.Resource, name, namespace)
+		}
 
-			// DeepCopy for safety
-			if obj != nil {
-				obj = obj.DeepCopy()
-			}
-
-			// Delegate handling of errors and readiness to checkFn.
-			done, checkErr := checkFn(obj, err)
-			if checkErr != nil {
-				return checkErr
-			}
-
-			if done {
-				return nil
-			}
+		if err := sleepWithContext(ctx, poll); err != nil {
+			return err
 		}
 	}
-}
-
-func isFatalAPIError(err error) bool {
-	return kerrors.IsForbidden(err) ||
-		kerrors.IsUnauthorized(err) ||
-		kerrors.IsInvalid(err) ||
-		kerrors.IsBadRequest(err)
 }
 
 // sleepWithContext sleeps for the given duration or returns early if the context is done
@@ -580,7 +464,7 @@ func (c *Client) WaitForContainer(ctx context.Context, namespace string, checkFn
 // Condition Functions
 // =====================
 
-// IsPresent checks if the item exists
+// IsPresent checks if the item exist
 func IsPresent(obj *unstructured.Unstructured, err error) (bool, error) {
 	if err == nil {
 		return true, nil
@@ -593,49 +477,16 @@ func IsPresent(obj *unstructured.Unstructured, err error) (bool, error) {
 	return false, err
 }
 
-// IsDeleted checks if a resource has been deleted (returns true if obj is nil or error is NotFound)
 func IsDeleted(obj *unstructured.Unstructured, err error) (bool, error) {
-	// If there's an error, check if it's NotFound
-	if err != nil {
-		if kerrors.IsNotFound(err) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	// If no error, the object should exist (not deleted)
 	if obj != nil {
 		return false, nil
 	}
 
-	// obj is nil but no error - inconsistent state
-	return false, errorx.IllegalState.New("resource returned nil object with no error")
-}
-
-// IsNodeReady checks if a Node has Ready condition == True
-func IsNodeReady(obj *unstructured.Unstructured, err error) (bool, error) {
-	if ok, err := IsPresent(obj, err); !ok || err != nil {
-		return ok, err
+	if err != nil && kerrors.IsNotFound(err) {
+		return true, nil
 	}
 
-	conds, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
-	if !found {
-		return false, nil
-	}
-
-	for _, c := range conds {
-		m, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if m["type"] == "Ready" {
-			if m["status"] == "True" {
-				return true, nil
-			}
-			return false, nil
-		}
-	}
-	return false, nil
+	return false, err
 }
 
 // IsPodReady checks if a Pod is in Ready condition
@@ -817,40 +668,4 @@ func IsContainerTerminated(containerName string, wantCode int64) CheckFunc {
 		}
 		return false, nil
 	}
-}
-
-// IsCRDReady checks if a CustomResourceDefinition is established
-func IsCRDReady(obj *unstructured.Unstructured, err error) (bool, error) {
-	if ok, err := IsPresent(obj, err); !ok || err != nil {
-		return ok, err
-	}
-
-	conds, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
-	if !found {
-		return false, nil
-	}
-
-	var established bool
-	for _, c := range conds {
-		m, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// name acceptance failure should be surfaced as an error
-		if m["type"] == "NamesAccepted" && m["status"] == "False" {
-			reason, _ := m["reason"].(string)
-			msg, _ := m["message"].(string)
-			if reason == "" && msg == "" {
-				return false, errorx.IllegalState.New("crd %q names not accepted", obj.GetName())
-			}
-			return false, errorx.IllegalState.New("crd %q names not accepted: %s %s", obj.GetName(), reason, msg)
-		}
-
-		if m["type"] == "Established" && m["status"] == "True" {
-			established = true
-		}
-	}
-
-	return established, nil
 }
