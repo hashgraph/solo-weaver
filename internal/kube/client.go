@@ -346,6 +346,20 @@ func (w WaitOptions) String() string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+// List retrieves a list of resources of the specified kind in the given namespace.
+// The opts parameter allows filtering by name prefix, label selector, and field selector.
+// Note: NamePrefix filtering is performed client-side after the API list call.
+//
+// Parameters:
+//
+//	ctx: Context for the API request.
+//	kind: The kind of resource to list.
+//	namespace: The namespace to list resources in. If empty, lists across all namespaces.
+//	opts: Filtering options (name prefix, label selector, field selector).
+//
+// Returns:
+//
+//	A list of unstructured resources matching the criteria, or an error.
 func (c *Client) List(ctx context.Context, kind ResourceKind, namespace string, opts WaitOptions) (*unstructured.UnstructuredList, error) {
 	gvr, err := ToGroupVersionResource(kind)
 	if err != nil {
@@ -365,7 +379,8 @@ func (c *Client) List(ctx context.Context, kind ResourceKind, namespace string, 
 	}
 
 	if opts.NamePrefix != "" {
-		filtered := &unstructured.UnstructuredList{}
+		filtered := items.DeepCopy()
+		filtered.Items = []unstructured.Unstructured{}
 		for _, item := range items.Items {
 			if strings.HasPrefix(item.GetName(), opts.NamePrefix) {
 				filtered.Items = append(filtered.Items, item)
@@ -385,36 +400,31 @@ func (c *Client) WaitForResources(ctx context.Context, kind ResourceKind, namesp
 	deadline := time.Now().Add(timeout)
 	for {
 		items, err := c.List(ctx, kind, namespace, opts)
+		if err != nil && !kerrors.IsNotFound(err) {
+			return err
+		} else if items != nil {
+			total := len(items.Items)
+			count := 0
+			for _, obj := range items.Items {
+				ok, err := checkFn(obj.DeepCopy(), nil)
+				if err != nil {
+					return err
+				}
 
-		if err != nil {
-			if kerrors.IsNotFound(err) {
-				// keep waiting
-			} else {
-				return err
+				if ok {
+					count++
+				}
 			}
-		}
 
-		total := len(items.Items)
-		count := 0
-		for _, obj := range items.Items {
-			ok, err := checkFn(obj.DeepCopy(), err)
-			if err != nil {
-				return err
+			// if total is zero, we keep waiting
+			// otherwise, we wait until all items satisfy the condition
+			if total > 0 && count == total {
+				return nil
 			}
-
-			if ok {
-				count++
-			}
-		}
-
-		// if total is zero, we keep waiting
-		// otherwise, we wait until all items satisfy the condition
-		if total > 0 && count == total {
-			return nil
 		}
 
 		if time.Now().After(deadline) {
-			return errorx.IllegalState.New("timed out waiting for %s: %s", namespace, opts.String())
+			return errorx.IllegalState.New("timed out waiting for %s in namespace %s with options %s", kind, namespace, opts.String())
 		}
 
 		if err = sleepWithContext(ctx, 300*time.Millisecond); err != nil {
@@ -485,7 +495,7 @@ func (c *Client) WaitForContainer(ctx context.Context, namespace string, checkFn
 // Condition Functions
 // =====================
 
-// IsPresent checks if the item exist
+// IsPresent checks if the item exists
 func IsPresent(obj *unstructured.Unstructured, err error) (bool, error) {
 	if err == nil {
 		return true, nil
@@ -498,16 +508,23 @@ func IsPresent(obj *unstructured.Unstructured, err error) (bool, error) {
 	return false, err
 }
 
+// IsDeleted checks if a resource has been deleted (returns true if obj is nil or error is NotFound)
 func IsDeleted(obj *unstructured.Unstructured, err error) (bool, error) {
+	// If there's an error, check if it's NotFound
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	// If no error, the object should exist (not deleted)
 	if obj != nil {
 		return false, nil
 	}
 
-	if err != nil && kerrors.IsNotFound(err) {
-		return true, nil
-	}
-
-	return false, err
+	// obj is nil but no error - inconsistent state
+	return false, errorx.IllegalState.New("resource returned nil object with no error")
 }
 
 // IsNodeReady checks if a Node has Ready condition == True
