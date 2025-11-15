@@ -202,7 +202,7 @@ func TestToResourceKind(t *testing.T) {
 		want ResourceKind
 	}{
 		{"namespaces", schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}, KindNamespace},
-		{"configmaps", schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, KindConfigMaps},
+		{"configmaps", schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, KindConfigMap},
 		{"pods", schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, KindPod},
 		{"deployments", schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, KindDeployment},
 		{"jobs", schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, KindJob},
@@ -233,7 +233,7 @@ func TestToGroupVersionResource(t *testing.T) {
 		wantErr bool
 	}{
 		{"Namespace", KindNamespace, schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}, false},
-		{"ConfigMap", KindConfigMaps, schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, false},
+		{"ConfigMap", KindConfigMap, schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, false},
 		{"Pod", KindPod, schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, false},
 		{"Deployment", KindDeployment, schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, false},
 		{"Job", KindJob, schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, false},
