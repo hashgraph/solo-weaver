@@ -2,17 +2,41 @@ package steps
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/automa-saga/automa"
+	"golang.hedera.com/solo-provisioner/internal/kube"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 )
 
 // CheckClusterNamespaces checks if the specified namespaces exist in the cluster
 // namespaces is a list of namespace names
-func CheckClusterNamespaces(namespaces []string) automa.Builder {
-	return automa.NewStepBuilder().WithId("check_cluster_namespaces").
+func CheckClusterNamespaces(id string, namespaces []string, timeout time.Duration, provider kube.ClientProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			return automa.StepSuccessReport(stp.Id())
+			k, err := provider()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			for _, ns := range namespaces {
+				err = k.WaitForResource(ctx, kube.KindNamespace, "", ns, kube.IsPresent, timeout)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+			}
+
+			foundNamespaces, err := prepareNamespaceMeta(ctx, k)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			meta["checkedNamespaces"] = strings.Join(namespaces, ", ")
+			meta["foundNamespaces"] = strings.Join(foundNamespaces, ", ")
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Checking cluster namespaces")
@@ -24,4 +48,17 @@ func CheckClusterNamespaces(namespaces []string) automa.Builder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Cluster namespaces checked successfully")
 		})
+}
+
+func prepareNamespaceMeta(ctx context.Context, k *kube.Client) ([]string, error) {
+	items, err := k.List(ctx, kube.KindNamespace, "", kube.WaitOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	foundNamespaces := []string{}
+	for _, item := range items.Items {
+		foundNamespaces = append(foundNamespaces, item.GetName())
+	}
+	return foundNamespaces, nil
 }

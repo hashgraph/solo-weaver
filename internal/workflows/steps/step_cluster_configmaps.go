@@ -10,9 +10,8 @@ import (
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
 )
 
-// CheckClusterServices checks if the specified services are running in the cluster
-// services is a map of namespace to list of services
-func CheckClusterServices(id string, services []string, timeout time.Duration, provider kube.ClientProvider) automa.Builder {
+// CheckClusterConfigMaps checks if the specified config maps exist in the cluster
+func CheckClusterConfigMaps(id string, configMaps []string, timeout time.Duration, provider kube.ClientProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := provider()
@@ -20,45 +19,48 @@ func CheckClusterServices(id string, services []string, timeout time.Duration, p
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			for _, item := range services {
+			for _, item := range configMaps {
 				namespace, name := splitIntoNamespaceAndName(item)
-				err = k.WaitForResource(ctx, kube.KindService, namespace, name, kube.IsPresent, timeout)
+				err = k.WaitForResource(ctx, kube.KindConfigMaps, namespace, name, kube.IsPresent, timeout)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 			}
 
-			foundServices, err := prepareServiceMeta(ctx, k)
+			foundConfigMaps, err := prepareConfigMapMeta(ctx, k)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			meta["checkedServices"] = strings.Join(services, ", ")
-			meta["foundServices"] = strings.Join(foundServices, ", ")
+			meta["checkedConfigMaps"] = strings.Join(configMaps, ", ")
+			meta["foundConfigMaps"] = strings.Join(foundConfigMaps, ", ")
+
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Checking cluster services")
+			notify.As().StepStart(ctx, stp, "Checking cluster namespaces")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to check cluster services")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to check cluster namespaces")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cluster services checked successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Cluster namespaces checked successfully")
 		})
 }
 
-func prepareServiceMeta(ctx context.Context, k *kube.Client) ([]string, error) {
-	items, err := k.List(ctx, kube.KindService, "", kube.WaitOptions{})
+func prepareConfigMapMeta(ctx context.Context, k *kube.Client) ([]string, error) {
+	items, err := k.List(ctx, kube.KindConfigMaps, "", kube.WaitOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	foundServices := []string{}
+	foundConfigMaps := []string{}
 	for _, item := range items.Items {
-		foundServices = append(foundServices, item.GetNamespace()+"/"+item.GetName())
+		foundConfigMaps = append(foundConfigMaps, strings.TrimSpace(
+			item.GetNamespace()+"/"+item.GetName()+"-"+item.GetCreationTimestamp().String(),
+		))
 	}
-	return foundServices, nil
+	return foundConfigMaps, nil
 }
