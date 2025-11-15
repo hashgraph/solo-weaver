@@ -79,7 +79,7 @@ func createPodUnstructured(ns, name, cmd string, labels map[string]interface{}) 
 }
 
 // createAndWait creates a resource and waits for a given condition
-func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns string, obj *unstructured.Unstructured, check func(*unstructured.Unstructured) (bool, error), timeout time.Duration) {
+func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns string, obj *unstructured.Unstructured, check CheckFunc, timeout time.Duration) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -95,7 +95,7 @@ func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns 
 		t.Fatalf("failed to create %s/%s: %v", gvr.Resource, obj.GetName(), err)
 	}
 
-	if err := c.WaitForResource(ctx, ToResourceKind(gvr), ns, check, timeout, WaitOptions{NamePrefix: obj.GetName()}); err != nil {
+	if err := c.WaitForResources(ctx, ToResourceKind(gvr), ns, check, timeout, WaitOptions{NamePrefix: obj.GetName()}); err != nil {
 		t.Fatalf("%s/%s did not reach desired state: %v", gvr.Resource, obj.GetName(), err)
 	}
 }
@@ -114,7 +114,7 @@ func deleteAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns,
 	}
 
 	_ = dr.Delete(ctx, name, metav1.DeleteOptions{})
-	if err := c.WaitForDeleted(ctx, gvr, ns, name, timeout); err != nil {
+	if err := c.WaitForResource(ctx, ToResourceKind(gvr), ns, name, IsDeleted, timeout); err != nil {
 		t.Logf("Warning: resource %s/%s may not have been deleted: %v", gvr.Resource, name, err)
 	}
 }
@@ -158,14 +158,12 @@ data:
 	}
 
 	// Wait for Namespace
-	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
-	if err := c.WaitForExistence(ctx, nsGVR, "", nsName, 30*time.Second); err != nil {
+	if err := c.WaitForResource(ctx, KindNamespace, "", nsName, IsPresent, 30*time.Second); err != nil {
 		t.Fatalf("waiting for namespace %s: %v", nsName, err)
 	}
 
 	// Wait for ConfigMap
-	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
-	if err := c.WaitForExistence(ctx, cmGVR, nsName, cmName, 30*time.Second); err != nil {
+	if err := c.WaitForResource(ctx, KindConfigMaps, nsName, cmName, IsPresent, 30*time.Second); err != nil {
 		t.Fatalf("waiting for configmap %s/%s: %v", nsName, cmName, err)
 	}
 

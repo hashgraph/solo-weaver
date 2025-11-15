@@ -38,6 +38,8 @@ const (
 	PhaseSucceeded Phase = "Succeeded"
 	PhaseFailed    Phase = "Failed"
 	PhaseUnknown   Phase = "Unknown"
+
+	DefaultTimeout = 5 * time.Minute
 )
 
 // ResourceKind represents a Kubernetes resource kind
@@ -115,7 +117,7 @@ func ToPhase(s string) Phase {
 }
 
 // CheckFunc defines a function type for checking resource conditions
-type CheckFunc func(*unstructured.Unstructured) (bool, error)
+type CheckFunc func(obj *unstructured.Unstructured, err error) (bool, error)
 
 // =====================
 // Client
@@ -350,35 +352,38 @@ func (c *Client) List(ctx context.Context, gvr schema.GroupVersionResource, name
 	return items, nil
 }
 
-// WaitFor waits for a resource to satisfy the given check function within the timeout
-func (c *Client) WaitFor(ctx context.Context, gvr schema.GroupVersionResource, namespace string,
+// WaitForResources waits for multiple resources to satisfy the given check function within the timeout
+// It lists using the provided WaitOptions that can filter by name prefix, label selector, and field selector
+func (c *Client) WaitForResources(ctx context.Context, kind ResourceKind, namespace string,
 	checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
+
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
 
 	deadline := time.Now().Add(timeout)
 	for {
 		items, err := c.List(ctx, gvr, namespace, opts)
 
 		if err != nil {
-			return err
+			if kerrors.IsNotFound(err) {
+				// keep waiting
+			} else {
+				return err
+			}
 		}
 
 		total := len(items.Items)
 		count := 0
 		for _, obj := range items.Items {
+			ok, err := checkFn(obj.DeepCopy(), err)
 			if err != nil {
-				if kerrors.IsNotFound(err) {
-					// keep waiting
-				} else {
-					return err
-				}
-			} else {
-				ok, err := checkFn(obj.DeepCopy())
-				if err != nil {
-					return err
-				}
-				if ok {
-					count++
-				}
+				return err
+			}
+
+			if ok {
+				count++
 			}
 		}
 
@@ -398,10 +403,13 @@ func (c *Client) WaitFor(ctx context.Context, gvr schema.GroupVersionResource, n
 	}
 }
 
-// WaitForGet is a shared polling helper. predicate receives the result of Get (obj, err)
-// and should return (done, error). When done == true the helper returns nil.
-func (c *Client) waitForGet(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, timeout time.Duration,
-	predicate func(obj *unstructured.Unstructured, getErr error) (bool, error)) error {
+// WaitForResource waits for a single resource to satisfy the given check function within the timeout
+// This is efficient for waiting on a specific named resource
+func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespace, name string, checkFn CheckFunc, timeout time.Duration) error {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
 
 	var dr dynamic.ResourceInterface
 	if namespace != "" {
@@ -415,7 +423,7 @@ func (c *Client) waitForGet(ctx context.Context, gvr schema.GroupVersionResource
 
 	for {
 		obj, err := dr.Get(ctx, name, metav1.GetOptions{})
-		done, perr := predicate(obj, err)
+		done, perr := checkFn(obj, err)
 		if perr != nil {
 			return perr
 		}
@@ -433,33 +441,6 @@ func (c *Client) waitForGet(ctx context.Context, gvr schema.GroupVersionResource
 	}
 }
 
-// WaitForExistence waits until the specified resource can be Get()'d (exists) or times out.
-func (c *Client) WaitForExistence(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, timeout time.Duration) error {
-	return c.waitForGet(ctx, gvr, namespace, name, timeout, func(obj *unstructured.Unstructured, err error) (bool, error) {
-		if err == nil {
-			return true, nil
-		}
-		if kerrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	})
-}
-
-// WaitForDeleted waits until Get() returns NotFound (deleted) or times out.
-func (c *Client) WaitForDeleted(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, timeout time.Duration) error {
-	return c.waitForGet(ctx, gvr, namespace, name, timeout, func(obj *unstructured.Unstructured, err error) (bool, error) {
-		if err != nil {
-			if kerrors.IsNotFound(err) {
-				return true, nil
-			}
-			return false, err
-		}
-		// object still exists -> keep waiting
-		return false, nil
-	})
-}
-
 // sleepWithContext sleeps for the given duration or returns early if the context is done
 func sleepWithContext(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
@@ -472,36 +453,48 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// =====================
-// Generic WaitForResource by Kind
-// =====================
-
-// WaitForResource waits for a resource of the given kind to reach its ready/completed state
-func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespace string, checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
-	var gvr schema.GroupVersionResource
-
-	gvr, err := ToGroupVersionResource(kind)
-	if err != nil {
-		return err
-	}
-
-	return c.WaitFor(ctx, gvr, namespace, checkFn, timeout, opts)
-}
-
 // WaitForContainer waits until the specified container in the given Pod is ready
 // or has terminated successfully within the timeout. It returns an error when the
 // container terminates with a non-zero exit code or on other failures.
 func (c *Client) WaitForContainer(ctx context.Context, namespace string, checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
-	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-	return c.WaitFor(ctx, gvr, namespace, checkFn, timeout, opts)
+	return c.WaitForResources(ctx, KindPod, namespace, checkFn, timeout, opts)
 }
 
 // =====================
 // Condition Functions
 // =====================
 
+// IsPresent checks if the item exist
+func IsPresent(obj *unstructured.Unstructured, err error) (bool, error) {
+	if err == nil {
+		return true, nil
+	}
+
+	if kerrors.IsNotFound(err) {
+		return false, nil
+	}
+
+	return false, err
+}
+
+func IsDeleted(obj *unstructured.Unstructured, err error) (bool, error) {
+	if obj != nil {
+		return false, nil
+	}
+
+	if err != nil && kerrors.IsNotFound(err) {
+		return true, nil
+	}
+
+	return false, err
+}
+
 // IsPodReady checks if a Pod is in Ready condition
-func IsPodReady(obj *unstructured.Unstructured) (bool, error) {
+func IsPodReady(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
 	status, found, _ := unstructured.NestedMap(obj.Object, "status")
 	if !found {
 		return false, nil
@@ -534,7 +527,11 @@ func IsPodReady(obj *unstructured.Unstructured) (bool, error) {
 }
 
 // IsDeploymentReady checks if a Deployment has all desired replicas ready
-func IsDeploymentReady(obj *unstructured.Unstructured) (bool, error) {
+func IsDeploymentReady(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
 	status, found, _ := unstructured.NestedMap(obj.Object, "status")
 	if !found {
 		return false, nil
@@ -550,7 +547,11 @@ func IsDeploymentReady(obj *unstructured.Unstructured) (bool, error) {
 }
 
 // IsJobComplete checks if a Job has completed successfully
-func IsJobComplete(obj *unstructured.Unstructured) (bool, error) {
+func IsJobComplete(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
 	conds, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	if !found {
 		return false, nil
@@ -573,7 +574,11 @@ func IsJobComplete(obj *unstructured.Unstructured) (bool, error) {
 }
 
 // IsPVCBound checks if a PersistentVolumeClaim is in Bound phase
-func IsPVCBound(obj *unstructured.Unstructured) (bool, error) {
+func IsPVCBound(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
 	phase, found, _ := unstructured.NestedString(obj.Object, "status", "phase")
 	if !found {
 		return false, nil
@@ -582,8 +587,12 @@ func IsPVCBound(obj *unstructured.Unstructured) (bool, error) {
 }
 
 // IsPhase returns a check function that verifies if the resource is in the desired phase
-func IsPhase(desired Phase) func(*unstructured.Unstructured) (bool, error) {
-	return func(obj *unstructured.Unstructured) (bool, error) {
+func IsPhase(desired Phase) func(obj *unstructured.Unstructured, err error) (bool, error) {
+	return func(obj *unstructured.Unstructured, err error) (bool, error) {
+		if ok, err := IsPresent(obj, err); !ok || err != nil {
+			return ok, err
+		}
+
 		phase, found, _ := unstructured.NestedString(obj.Object, "status", "phase")
 		if !found {
 			return false, nil
@@ -595,7 +604,11 @@ func IsPhase(desired Phase) func(*unstructured.Unstructured) (bool, error) {
 // IsContainerReady returns a CheckFunc that succeeds when the named container reports Ready==true.
 // This is meant to be used for WaitForContainer function.
 func IsContainerReady(containerName string) CheckFunc {
-	return func(obj *unstructured.Unstructured) (bool, error) {
+	return func(obj *unstructured.Unstructured, err error) (bool, error) {
+		if ok, err := IsPresent(obj, err); !ok || err != nil {
+			return ok, err
+		}
+
 		cs, found, _ := unstructured.NestedSlice(obj.Object, "status", "containerStatuses")
 		if !found {
 			return false, nil
@@ -625,7 +638,11 @@ func IsContainerReady(containerName string) CheckFunc {
 // If terminated with a different exit code it returns an error.
 // This is meant to be used for WaitForContainer function.
 func IsContainerTerminated(containerName string, wantCode int64) CheckFunc {
-	return func(obj *unstructured.Unstructured) (bool, error) {
+	return func(obj *unstructured.Unstructured, err error) (bool, error) {
+		if ok, err := IsPresent(obj, err); !ok || err != nil {
+			return ok, err
+		}
+
 		cs, found, _ := unstructured.NestedSlice(obj.Object, "status", "containerStatuses")
 		if !found {
 			return false, nil
