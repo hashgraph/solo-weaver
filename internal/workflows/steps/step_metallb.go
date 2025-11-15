@@ -251,7 +251,7 @@ func isMetalLBPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for metallb pods to be ready
-			err = k.WaitForResource(ctx, kube.KindPod, MetalLBNamespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "metallb"})
+			err = k.WaitForResources(ctx, kube.KindPod, MetalLBNamespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "metallb"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -268,6 +268,5 @@ func isMetalLBPodsReady() automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB is ready")
-
 		})
 }

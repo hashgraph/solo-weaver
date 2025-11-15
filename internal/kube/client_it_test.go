@@ -51,7 +51,7 @@ func createPodUnstructured(ns, name, cmd string, labels map[string]interface{}) 
 		labels = map[string]interface{}{
 			"app": name,
 		}
-	} else {
+	} else if _, hasApp := labels["app"]; !hasApp {
 		labels["app"] = name
 	}
 
