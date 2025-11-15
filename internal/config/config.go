@@ -1,11 +1,12 @@
 package config
 
 import (
+	"os"
+	"strings"
+
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
-	"os"
-	"strings"
 )
 
 // Config holds the global configuration for the application.
@@ -15,7 +16,7 @@ type Config struct {
 
 var config = Config{
 	Log: logx.LoggingConfig{
-		Level:          "Info",
+		Level:          "Debug",
 		ConsoleLogging: true,
 		FileLogging:    false,
 	},
@@ -29,25 +30,23 @@ var config = Config{
 // Returns:
 //   - An error if the configuration cannot be loaded.
 func Initialize(path string) error {
-	if path == "" {
-		return errorx.IllegalArgument.New("config file path cannot be empty").
-			WithProperty(errorx.PropertyPayload(), "--config")
-	}
+	if path != "" {
+		viper.Reset()
+		viper.SetConfigFile(path)
+		viper.SetEnvPrefix("solo_provisioner")
+		viper.AutomaticEnv()
+		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
-	viper.Reset()
-	viper.SetConfigFile(path)
-	viper.SetEnvPrefix("solo_provisioner")
-	viper.AutomaticEnv()
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		err := viper.ReadInConfig()
+		if err != nil {
+			return NotFoundError.Wrap(err, "failed to read config file: %s", path).
+				WithProperty(errorx.PropertyPayload(), path)
+		}
 
-	if err := viper.ReadInConfig(); err != nil {
-		return NotFoundError.Wrap(err, "failed to read config file: %s", path).
-			WithProperty(errorx.PropertyPayload(), path)
-	}
-
-	if err := viper.Unmarshal(&config); err != nil {
-		return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
-			WithProperty(errorx.PropertyPayload(), path)
+		if err := viper.Unmarshal(&config); err != nil {
+			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
+				WithProperty(errorx.PropertyPayload(), path)
+		}
 	}
 
 	return nil
