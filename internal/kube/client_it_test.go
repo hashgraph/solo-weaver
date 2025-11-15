@@ -367,7 +367,7 @@ func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
 	defer deleteAndWait(t, c, podGVR, nsB, "pod-b1", 1*time.Minute)
 
 	// 1) Namespace filtering: list pods in nsA -> expect pod-a1 and pod-a2 only
-	items, err := c.List(ctx, podGVR, nsA, WaitOptions{})
+	items, err := c.List(ctx, KindPod, nsA, WaitOptions{})
 	if err != nil {
 		t.Fatalf("List by namespace failed: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
 	}
 
 	// 2) LabelSelector: in nsA, select app=foo -> expect only pod-a1
-	itemsLbl, err := c.List(ctx, podGVR, nsA, WaitOptions{LabelSelector: "test=foo"})
+	itemsLbl, err := c.List(ctx, KindPod, nsA, WaitOptions{LabelSelector: "test=foo"})
 	if err != nil {
 		t.Fatalf("List with label selector failed: %v", err)
 	}
@@ -395,11 +395,37 @@ func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
 	}
 
 	// 3) FieldSelector: in nsA, select metadata.name=pod-a1 -> expect only pod-a1
-	itemsField, err := c.List(ctx, podGVR, nsA, WaitOptions{FieldSelector: "metadata.name=pod-a1"})
+	itemsField, err := c.List(ctx, KindPod, nsA, WaitOptions{FieldSelector: "metadata.name=pod-a1"})
 	if err != nil {
 		t.Fatalf("List with field selector failed: %v", err)
 	}
 	if len(itemsField.Items) != 1 || itemsField.Items[0].GetName() != "pod-a1" {
 		t.Fatalf("field selector returned unexpected items: %v", itemsField)
 	}
+}
+
+func TestClusterNodes_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Wait until all discovered nodes are Ready
+	if err := c.WaitForResources(ctx, KindNode, "", IsNodeReady, 30*time.Second, WaitOptions{}); err != nil {
+		t.Fatalf("waiting for nodes to be ready: %v", err)
+	}
+
+	// List nodes and assert there's at least one
+	items, err := c.List(ctx, KindNode, "", WaitOptions{})
+	if err != nil {
+		t.Fatalf("List nodes failed: %v", err)
+	}
+	if len(items.Items) == 0 {
+		t.Fatalf("expected at least one cluster node, got 0")
+	}
+
+	names := make([]string, 0, len(items.Items))
+	for _, it := range items.Items {
+		names = append(names, it.GetName())
+	}
+	t.Logf("Cluster nodes: %v", names)
 }

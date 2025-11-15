@@ -26,12 +26,15 @@ import (
 )
 
 const (
+	KindNode       ResourceKind = "Node"
+	KindService    ResourceKind = "Service"
 	KindNamespace  ResourceKind = "Namespace"
 	KindConfigMaps ResourceKind = "ConfigMap"
 	KindPod        ResourceKind = "Pod"
 	KindDeployment ResourceKind = "Deployment"
 	KindJob        ResourceKind = "Job"
 	KindPVC        ResourceKind = "PVC"
+	KindCRD        ResourceKind = "CRD"
 
 	PhasePending   Phase = "Pending"
 	PhaseRunning   Phase = "Running"
@@ -53,6 +56,10 @@ func (r ResourceKind) String() string {
 // ToResourceKind converts a GroupVersionResource to ResourceKind
 func ToResourceKind(gvr schema.GroupVersionResource) ResourceKind {
 	switch gvr.Resource {
+	case "nodes":
+		return KindNode
+	case "services":
+		return KindService
 	case "namespaces":
 		return KindNamespace
 	case "configmaps":
@@ -65,6 +72,8 @@ func ToResourceKind(gvr schema.GroupVersionResource) ResourceKind {
 		return KindJob
 	case "persistentvolumeclaims":
 		return KindPVC
+	case "customresourcedefinitions":
+		return KindCRD
 	}
 
 	return ResourceKind(gvr.Resource)
@@ -73,6 +82,10 @@ func ToResourceKind(gvr schema.GroupVersionResource) ResourceKind {
 // ToGroupVersionResource converts a ResourceKind to GroupVersionResource
 func ToGroupVersionResource(kind ResourceKind) (schema.GroupVersionResource, error) {
 	switch kind {
+	case KindNode:
+		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "nodes"}, nil
+	case KindService:
+		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}, nil
 	case KindNamespace:
 		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}, nil
 	case KindConfigMaps:
@@ -85,6 +98,8 @@ func ToGroupVersionResource(kind ResourceKind) (schema.GroupVersionResource, err
 		return schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, nil
 	case KindPVC:
 		return schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}, nil
+	case KindCRD:
+		return schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}, nil
 	default:
 		return schema.GroupVersionResource{}, errorx.IllegalArgument.New("unsupported resource kind: %s", kind)
 	}
@@ -129,6 +144,11 @@ type Client struct {
 	Dyn    dynamic.Interface
 	Mapper *restmapper.DeferredDiscoveryRESTMapper
 }
+
+// ClientProvider is a function that provides a kube client instance.
+// NewClient is such a provider for general use.
+// However, this is to help abstract the client creation and to allow better mocking and reusability of an instance of kube Client.
+type ClientProvider func() (*Client, error)
 
 // NewClient creates a new kube.Client using default kubeconfig rules
 func NewClient() (*Client, error) {
@@ -326,7 +346,12 @@ func (w WaitOptions) String() string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func (c *Client) List(ctx context.Context, gvr schema.GroupVersionResource, namespace string, opts WaitOptions) (*unstructured.UnstructuredList, error) {
+func (c *Client) List(ctx context.Context, kind ResourceKind, namespace string, opts WaitOptions) (*unstructured.UnstructuredList, error) {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return nil, err
+	}
+
 	var dr dynamic.ResourceInterface
 	if namespace != "" {
 		dr = c.Dyn.Resource(gvr).Namespace(namespace)
@@ -357,14 +382,9 @@ func (c *Client) List(ctx context.Context, gvr schema.GroupVersionResource, name
 func (c *Client) WaitForResources(ctx context.Context, kind ResourceKind, namespace string,
 	checkFn CheckFunc, timeout time.Duration, opts WaitOptions) error {
 
-	gvr, err := ToGroupVersionResource(kind)
-	if err != nil {
-		return err
-	}
-
 	deadline := time.Now().Add(timeout)
 	for {
-		items, err := c.List(ctx, gvr, namespace, opts)
+		items, err := c.List(ctx, kind, namespace, opts)
 
 		if err != nil {
 			if kerrors.IsNotFound(err) {
@@ -405,6 +425,7 @@ func (c *Client) WaitForResources(ctx context.Context, kind ResourceKind, namesp
 
 // WaitForResource waits for a single resource to satisfy the given check function within the timeout
 // This is efficient for waiting on a specific named resource
+// Namespace is optional and if not provided, it will look for resources in all namespaces
 func (c *Client) WaitForResource(ctx context.Context, kind ResourceKind, namespace, name string, checkFn CheckFunc, timeout time.Duration) error {
 	gvr, err := ToGroupVersionResource(kind)
 	if err != nil {
@@ -487,6 +508,32 @@ func IsDeleted(obj *unstructured.Unstructured, err error) (bool, error) {
 	}
 
 	return false, err
+}
+
+// IsNodeReady checks if a Node has Ready condition == True
+func IsNodeReady(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
+	conds, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if !found {
+		return false, nil
+	}
+
+	for _, c := range conds {
+		m, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if m["type"] == "Ready" {
+			if m["status"] == "True" {
+				return true, nil
+			}
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // IsPodReady checks if a Pod is in Ready condition
@@ -668,4 +715,40 @@ func IsContainerTerminated(containerName string, wantCode int64) CheckFunc {
 		}
 		return false, nil
 	}
+}
+
+// IsCRDReady checks if a CustomResourceDefinition is established
+func IsCRDReady(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
+	conds, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if !found {
+		return false, nil
+	}
+
+	var established bool
+	for _, c := range conds {
+		m, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// name acceptance failure should be surfaced as an error
+		if m["type"] == "NamesAccepted" && m["status"] == "False" {
+			reason, _ := m["reason"].(string)
+			msg, _ := m["message"].(string)
+			if reason == "" && msg == "" {
+				return false, errorx.IllegalState.New("crd %q names not accepted", obj.GetName())
+			}
+			return false, errorx.IllegalState.New("crd %q names not accepted: %s %s", obj.GetName(), reason, msg)
+		}
+
+		if m["type"] == "Established" && m["status"] == "True" {
+			established = true
+		}
+	}
+
+	return established, nil
 }
