@@ -7,18 +7,17 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-provisioner/internal/config"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/doctor"
 )
 
 // examples:
 // ./provisioner block node check
-// ./provisioner consensus node check
-// ./provisioner local node check
-
-// Future commands (not yet implemented):
 // ./provisioner block node setup --config ./config.yaml
-// ./provisioner consensus node setup --manifest ./manifests/consensus-node.yaml
-// ./provisioner local node setup
+// ./provisioner consensus node check
+// ./provisioner consensus node setup --config ./config.yaml
+// ./provisioner local node check
+// ./provisioner local node setup --config ./config.yaml
 
 // NodeTypeConfig defines the configuration for a node type
 type NodeTypeConfig struct {
@@ -58,9 +57,9 @@ var (
 
 // nodeTypeConfigs defines all supported node types and their configuration
 var nodeTypeConfigs = []NodeTypeConfig{
-	{Name: "block", ParentCmd: blockCmd},
-	{Name: "consensus", ParentCmd: consensusCmd},
-	{Name: "local", ParentCmd: localCmd},
+	{Name: core.NodeTypeBlock, ParentCmd: blockCmd},
+	{Name: core.NodeTypeConsensus, ParentCmd: consensusCmd},
+	{Name: core.NodeTypeLocal, ParentCmd: localCmd},
 }
 
 // Execute executes the root command.

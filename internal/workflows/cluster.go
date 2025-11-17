@@ -2,47 +2,56 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
+	"golang.hedera.com/solo-provisioner/internal/core"
 	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
 	"golang.hedera.com/solo-provisioner/pkg/software"
 )
 
 func NewSetupClusterWorkflow(nodeType string) automa.Builder {
+	// Build the base steps that are common to all node types
+	baseSteps := []automa.Builder{
+		// preflight & basic setup
+		NewNodeSetupWorkflow(nodeType),
+
+		// setup env for k8s
+		steps.DisableSwap(),
+		steps.ConfigureSysctlForKubernetes(),
+		steps.SetupBindMounts(),
+
+		// kubelet
+		steps.SetupKubelet(),
+		steps.SetupSystemdService(software.KubeletServiceName),
+
+		// setup cli tools
+		steps.SetupKubectl(),
+		steps.SetupHelm(), // required by MetalLB setup, so we install it earlier
+		steps.SetupK9s(),
+
+		// CRI-O
+		steps.SetupCrio(),
+		steps.SetupSystemdService(software.CrioServiceName),
+
+		// kubeadm
+		steps.SetupKubeadm(),
+		// init cluster
+		steps.InitializeCluster(),
+
+		// cilium
+		steps.SetupCilium(),
+		steps.StartCilium(),
+
+		// metalLB
+		steps.SetupMetalLB(),
+
+		// health check
+		steps.CheckClusterHealth(), // still using bash steps
+	}
+
+	// Add block node setup if this is a block node or local node
+	if nodeType == core.NodeTypeBlock || nodeType == core.NodeTypeLocal {
+		baseSteps = append(baseSteps, steps.SetupBlockNode(nodeType))
+	}
+
 	return automa.NewWorkflowBuilder().WithId("setup-kubernetes").
-		Steps(
-			// preflight & basic setup
-			NewNodeSetupWorkflow(nodeType),
-
-			// setup env for k8s
-			steps.DisableSwap(),
-			steps.ConfigureSysctlForKubernetes(),
-			steps.SetupBindMounts(),
-
-			// kubelet
-			steps.SetupKubelet(),
-			steps.SetupSystemdService(software.KubeletServiceName),
-
-			// setup cli tools
-			steps.SetupKubectl(),
-			steps.SetupHelm(), // required by MetalLB setup, so we install it earlier
-			steps.SetupK9s(),
-
-			// CRI-O
-			steps.SetupCrio(),
-			steps.SetupSystemdService(software.CrioServiceName),
-
-			// kubeadm
-			steps.SetupKubeadm(),
-			// init cluster
-			steps.InitializeCluster(),
-
-			// cilium
-			steps.SetupCilium(),
-			steps.StartCilium(),
-
-			// metalLB
-			steps.SetupMetalLB(),
-
-			// health check
-			steps.CheckClusterHealth(), // still using bash steps
-		)
+		Steps(baseSteps...)
 }

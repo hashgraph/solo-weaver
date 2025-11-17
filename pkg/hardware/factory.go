@@ -4,16 +4,17 @@ import (
 	"strings"
 
 	"github.com/joomcode/errorx"
+	"golang.hedera.com/solo-provisioner/internal/core"
 )
 
 // SupportedNodeTypes returns all supported node types
-func SupportedNodeTypes() []NodeType {
-	return []NodeType{NodeTypeLocal, NodeTypeBlock, NodeTypeConsensus}
+func SupportedNodeTypes() []string {
+	return []string{core.NodeTypeLocal, core.NodeTypeBlock, core.NodeTypeConsensus}
 }
 
 // IsValidNodeType checks if the given node type is supported
 func IsValidNodeType(nodeType string) bool {
-	normalized := NodeType(strings.ToLower(nodeType))
+	normalized := strings.ToLower(nodeType)
 	for _, supported := range SupportedNodeTypes() {
 		if normalized == supported {
 			return true
@@ -24,14 +25,14 @@ func IsValidNodeType(nodeType string) bool {
 
 // CreateNodeSpec creates the appropriate node spec based on node type and host profile
 func CreateNodeSpec(nodeType string, hostProfile HostProfile) (Spec, error) {
-	normalized := NodeType(strings.ToLower(nodeType))
+	normalized := strings.ToLower(nodeType)
 
 	switch normalized {
-	case NodeTypeLocal:
+	case core.NodeTypeLocal:
 		return NewLocalNodeSpec(hostProfile), nil
-	case NodeTypeBlock:
+	case core.NodeTypeBlock:
 		return NewBlockNodeSpec(hostProfile), nil
-	case NodeTypeConsensus:
+	case core.NodeTypeConsensus:
 		return NewConsensusNodeSpec(hostProfile), nil
 	default:
 		supportedTypes := make([]string, len(SupportedNodeTypes()))

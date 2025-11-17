@@ -7,13 +7,20 @@ import (
 )
 
 const (
+	// File and directory permissions
 	DefaultDirOrExecPerm = 0755 // for directories and executable files
 	DefaultFilePerm      = 0644 // for regular data/config files
 
+	// Provisioner paths
 	DefaultProvisionerHome  = "/opt/provisioner"
 	DefaultUnpackFolderName = "unpack"
 	SystemBinDir            = "/usr/local/bin"
 	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
+
+	// Node types
+	NodeTypeLocal     = "local"
+	NodeTypeBlock     = "block"
+	NodeTypeConsensus = "consensus"
 )
 
 var (

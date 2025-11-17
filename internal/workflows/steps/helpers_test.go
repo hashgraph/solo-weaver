@@ -101,6 +101,8 @@ const (
 	SetupKubeletLevel
 	SetupCrioLevel
 	SetupKubeadmLevel
+	SetupCiliumLevel
+	SetupMetalLBLevel
 )
 
 // setupPrerequisitesToLevel sets up all the required components before cluster initialization
@@ -241,6 +243,32 @@ func setupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	require.NoError(t, report.Error, "Failed to initialize cluster")
 
 	if level == SetupKubeadmLevel {
+		return
+	}
+
+	// Setup Cilium
+	step, err = SetupCilium().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to setup Cilium")
+
+	// Start Cilium
+	step, err = StartCilium().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to start Cilium")
+
+	if level == SetupCiliumLevel {
+		return
+	}
+
+	// Setup MetalLB
+	step, err = SetupMetalLB().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to setup MetalLB")
+
+	if level == SetupMetalLBLevel {
 		return
 	}
 }
