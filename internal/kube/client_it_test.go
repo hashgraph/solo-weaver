@@ -5,9 +5,11 @@ package kube
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -46,7 +48,15 @@ func createUnstructured(kind, apiVersion, ns, name string, spec map[string]inter
 	return u
 }
 
-func createPodUnstructured(ns, name, cmd string) *unstructured.Unstructured {
+func createPodUnstructured(ns, name, cmd string, labels map[string]interface{}) *unstructured.Unstructured {
+	if labels == nil {
+		labels = map[string]interface{}{
+			"app": name,
+		}
+	} else if _, hasApp := labels["app"]; !hasApp {
+		labels["app"] = name
+	}
+
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -54,6 +64,7 @@ func createPodUnstructured(ns, name, cmd string) *unstructured.Unstructured {
 			"metadata": map[string]interface{}{
 				"name":      name,
 				"namespace": ns,
+				"labels":    labels,
 			},
 			"spec": map[string]interface{}{
 				"restartPolicy": "Never",
@@ -70,7 +81,7 @@ func createPodUnstructured(ns, name, cmd string) *unstructured.Unstructured {
 }
 
 // createAndWait creates a resource and waits for a given condition
-func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns string, obj *unstructured.Unstructured, check func(*unstructured.Unstructured) (bool, error), timeout time.Duration) {
+func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns string, obj *unstructured.Unstructured, check CheckFunc, timeout time.Duration) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -86,7 +97,7 @@ func createAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns 
 		t.Fatalf("failed to create %s/%s: %v", gvr.Resource, obj.GetName(), err)
 	}
 
-	if err := c.WaitForResource(ctx, ToResourceKind(gvr), ns, obj.GetName(), check, timeout); err != nil {
+	if err := c.WaitForResources(ctx, ToResourceKind(gvr), ns, check, timeout, WaitOptions{NamePrefix: obj.GetName()}); err != nil {
 		t.Fatalf("%s/%s did not reach desired state: %v", gvr.Resource, obj.GetName(), err)
 	}
 }
@@ -105,7 +116,7 @@ func deleteAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns,
 	}
 
 	_ = dr.Delete(ctx, name, metav1.DeleteOptions{})
-	if err := c.WaitForDeleted(ctx, gvr, ns, name, timeout); err != nil {
+	if err := c.WaitForResource(ctx, ToResourceKind(gvr), ns, name, IsDeleted, timeout); err != nil {
 		t.Logf("Warning: resource %s/%s may not have been deleted: %v", gvr.Resource, name, err)
 	}
 }
@@ -149,14 +160,12 @@ data:
 	}
 
 	// Wait for Namespace
-	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
-	if err := c.WaitForExistence(ctx, nsGVR, "", nsName, 30*time.Second); err != nil {
+	if err := c.WaitForResource(ctx, KindNamespace, "", nsName, IsPresent, 30*time.Second); err != nil {
 		t.Fatalf("waiting for namespace %s: %v", nsName, err)
 	}
 
 	// Wait for ConfigMap
-	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
-	if err := c.WaitForExistence(ctx, cmGVR, nsName, cmName, 30*time.Second); err != nil {
+	if err := c.WaitForResource(ctx, KindConfigMap, nsName, cmName, IsPresent, 30*time.Second); err != nil {
 		t.Fatalf("waiting for configmap %s/%s: %v", nsName, cmName, err)
 	}
 
@@ -247,7 +256,9 @@ func TestWaitForResources(t *testing.T) {
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 2*time.Minute)
 
 	// Wait for container completion
-	if err := c.WaitForContainer(ctx, nsName, podName, IsContainerReady("c"), 1*time.Minute); err != nil {
+	if err := c.WaitForContainer(ctx, nsName, IsContainerReady("c"), 1*time.Minute, WaitOptions{
+		NamePrefix: podName,
+	}); err != nil {
 		t.Fatalf("WaitForContainer failed: %v", err)
 	}
 
@@ -288,11 +299,11 @@ func TestWaitForContainer_Succeeds(t *testing.T) {
 	podName := "test-waitforcontainer-success"
 	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 
-	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 0")
+	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 0", nil)
 	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 30*time.Second)
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 1*time.Minute)
 
-	if err := c.WaitForContainer(ctx, nsName, podName, IsContainerReady("c"), 60*time.Second); err != nil {
+	if err := c.WaitForContainer(ctx, nsName, IsContainerReady("c"), 60*time.Second, WaitOptions{NamePrefix: podName}); err != nil {
 		t.Fatalf("expected WaitForContainer to succeed, got: %v", err)
 	}
 }
@@ -311,12 +322,272 @@ func TestWaitForContainer_TerminatedNonZero(t *testing.T) {
 	podName := "test-waitforcontainer-fail"
 	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 
-	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 2")
+	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 2", nil)
 	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 30*time.Second)
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 1*time.Minute)
 
-	if err := c.WaitForContainer(ctx, nsName, podName,
-		IsContainerTerminated("c", 2), 60*time.Second); err != nil {
+	if err := c.WaitForContainer(ctx, nsName,
+		IsContainerTerminated("c", 2), 60*time.Second, WaitOptions{NamePrefix: podName}); err != nil {
 		t.Fatalf("expected error for container terminated with exit code 2, got error: %v", err)
+	}
+}
+
+func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+
+	ctx := context.Background()
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+
+	// create two namespaces
+	nsA := fmt.Sprintf("it-list-a-%d", time.Now().UnixNano())
+	nsB := fmt.Sprintf("it-list-b-%d", time.Now().UnixNano())
+
+	nsAObj := createUnstructured("Namespace", "v1", "", nsA, nil)
+	createAndWait(t, c, nsGVR, "", nsAObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsA, 2*time.Minute)
+
+	nsBObj := createUnstructured("Namespace", "v1", "", nsB, nil)
+	createAndWait(t, c, nsGVR, "", nsBObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsB, 2*time.Minute)
+
+	// create pods:
+	// - podA1 (nsA) label test=foo
+	// - podA2 (nsA) label test=bar
+	// - podB1 (nsB) label test=foo
+	podA1 := createPodUnstructured(nsA, "pod-a1", "sleep 300", map[string]interface{}{"test": "foo"})
+	createAndWait(t, c, podGVR, nsA, podA1, IsPodReady, 2*time.Minute)
+	defer deleteAndWait(t, c, podGVR, nsA, "pod-a1", 1*time.Minute)
+
+	podA2 := createPodUnstructured(nsA, "pod-a2", "sleep 300", map[string]interface{}{"test": "bar"})
+	createAndWait(t, c, podGVR, nsA, podA2, IsPodReady, 2*time.Minute)
+	defer deleteAndWait(t, c, podGVR, nsA, "pod-a2", 1*time.Minute)
+
+	podB1 := createPodUnstructured(nsB, "pod-b1", "sleep 300", map[string]interface{}{"test": "foo"})
+	createAndWait(t, c, podGVR, nsB, podB1, IsPodReady, 2*time.Minute)
+	defer deleteAndWait(t, c, podGVR, nsB, "pod-b1", 1*time.Minute)
+
+	// 1) Namespace filtering: list pods in nsA -> expect pod-a1 and pod-a2 only
+	items, err := c.List(ctx, KindPod, nsA, WaitOptions{})
+	if err != nil {
+		t.Fatalf("List by namespace failed: %v", err)
+	}
+	names := map[string]struct{}{}
+	for _, it := range items.Items {
+		names[it.GetName()] = struct{}{}
+	}
+	if _, ok := names["pod-a1"]; !ok {
+		t.Fatalf("expected pod-a1 in namespace list, got: %v", names)
+	}
+	if _, ok := names["pod-a2"]; !ok {
+		t.Fatalf("expected pod-a2 in namespace list, got: %v", names)
+	}
+	if _, ok := names["pod-b1"]; ok {
+		t.Fatalf("did not expect pod-b1 in namespace %s list", nsA)
+	}
+
+	// 2) LabelSelector: in nsA, select app=foo -> expect only pod-a1
+	itemsLbl, err := c.List(ctx, KindPod, nsA, WaitOptions{LabelSelector: "test=foo"})
+	if err != nil {
+		t.Fatalf("List with label selector failed: %v", err)
+	}
+	if len(itemsLbl.Items) != 1 || itemsLbl.Items[0].GetName() != "pod-a1" {
+		t.Fatalf("label selector returned unexpected items: %v", itemsLbl)
+	}
+
+	// 3) FieldSelector: in nsA, select metadata.name=pod-a1 -> expect only pod-a1
+	itemsField, err := c.List(ctx, KindPod, nsA, WaitOptions{FieldSelector: "metadata.name=pod-a1"})
+	if err != nil {
+		t.Fatalf("List with field selector failed: %v", err)
+	}
+	if len(itemsField.Items) != 1 || itemsField.Items[0].GetName() != "pod-a1" {
+		t.Fatalf("field selector returned unexpected items: %v", itemsField)
+	}
+}
+
+func TestClusterNodes_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Wait until all discovered nodes are Ready
+	if err := c.WaitForResources(ctx, KindNode, "", IsNodeReady, 30*time.Second, WaitOptions{}); err != nil {
+		t.Fatalf("waiting for nodes to be ready: %v", err)
+	}
+
+	// List nodes and assert there's at least one
+	items, err := c.List(ctx, KindNode, "", WaitOptions{})
+	if err != nil {
+		t.Fatalf("List nodes failed: %v", err)
+	}
+	if len(items.Items) == 0 {
+		t.Fatalf("expected at least one cluster node, got 0")
+	}
+
+	names := make([]string, 0, len(items.Items))
+	for _, it := range items.Items {
+		names = append(names, it.GetName())
+	}
+	t.Logf("Cluster nodes: %v", names)
+}
+
+func TestToGroupVersionResource_KnownAndFallback(t *testing.T) {
+	t.Parallel()
+
+	// Known kind
+	gvr, err := ToGroupVersionResource(KindNode)
+	if err != nil {
+		t.Fatalf("ToGroupVersionResource(KindNode) returned error: %v", err)
+	}
+	if gvr.Resource != "nodes" || gvr.Version != "v1" || gvr.Group != "" {
+		t.Fatalf("unexpected GVR for Node: %v", gvr)
+	}
+
+	// Unknown kind -> error
+	_, err = ToGroupVersionResource(ResourceKind("UnknownKindX"))
+	if err == nil {
+		t.Fatalf("expected error for unknown kind")
+	}
+
+	// ToResourceKind fallback for unknown GVR
+	rk := ToResourceKind(schema.GroupVersionResource{Group: "custom", Version: "v1", Resource: "things"})
+	if string(rk) != "things" {
+		t.Fatalf("ToResourceKind fallback expected 'things', got %q", rk)
+	}
+}
+
+func TestCheckFuncWrappers_IsPhaseAndContainerFuncs(t *testing.T) {
+	t.Parallel()
+
+	// IsPhase
+	objRunning := &unstructured.Unstructured{Object: map[string]interface{}{
+		"status": map[string]interface{}{"phase": PhaseRunning.String()},
+	}}
+	ok, err := IsPhase(PhaseRunning)(objRunning, nil)
+	if err != nil || !ok {
+		t.Fatalf("IsPhase should return true for Running")
+	}
+	ok, err = IsPhase(PhasePending)(objRunning, nil)
+	if err != nil || ok {
+		t.Fatalf("IsPhase should return false for non-matching phase")
+	}
+
+	// IsContainerReady
+	pod := &unstructured.Unstructured{Object: map[string]interface{}{
+		"status": map[string]interface{}{
+			"containerStatuses": []interface{}{
+				map[string]interface{}{"name": "c", "ready": true},
+			},
+		},
+	}}
+	ok, err = IsContainerReady("c")(pod, nil)
+	if err != nil || !ok {
+		t.Fatalf("IsContainerReady expected true but got ok=%v err=%v", ok, err)
+	}
+
+	// IsContainerTerminated success and failure cases
+	podTerm := &unstructured.Unstructured{Object: map[string]interface{}{
+		"status": map[string]interface{}{
+			"containerStatuses": []interface{}{
+				map[string]interface{}{
+					"name": "c",
+					"state": map[string]interface{}{
+						"terminated": map[string]interface{}{"exitCode": int64(2)},
+					},
+				},
+			},
+		},
+	}}
+	ok, err = IsContainerTerminated("c", 2)(podTerm, nil)
+	if err != nil || !ok {
+		t.Fatalf("IsContainerTerminated expected success for matching exit code, got ok=%v err=%v", ok, err)
+	}
+	_, err = IsContainerTerminated("c", 3)(podTerm, nil)
+	if err == nil {
+		t.Fatalf("IsContainerTerminated expected error for non-matching exit code")
+	}
+}
+
+func TestIsCRDReady(t *testing.T) {
+	t.Parallel()
+
+	objEstablished := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{"name": "crd-established"},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "Established", "status": "True"},
+				},
+			},
+		},
+	}
+
+	objNoConditions := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{"name": "crd-nocond"},
+		},
+	}
+
+	objNamesNotAccepted := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{"name": "crd-badnames"},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "NamesAccepted", "status": "False", "reason": "BadName", "message": "invalid"},
+				},
+			},
+		},
+	}
+
+	objNamesNotAcceptedEmpty := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{"name": "crd-badnames-empty"},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "NamesAccepted", "status": "False"},
+				},
+			},
+		},
+	}
+
+	notFoundErr := kerrors.NewNotFound(schema.GroupResource{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"}, "missing")
+
+	tests := []struct {
+		name     string
+		obj      *unstructured.Unstructured
+		err      error
+		wantOk   bool
+		wantErr  bool
+		msgMatch string
+	}{
+		{"established", objEstablished, nil, true, false, ""},
+		{"no-conditions", objNoConditions, nil, false, false, ""},
+		{"names-not-accepted-with-reason", objNamesNotAccepted, nil, false, true, "BadName"},
+		{"names-not-accepted-empty-reason", objNamesNotAcceptedEmpty, nil, false, true, "names not accepted"},
+		{"not-found-error", nil, notFoundErr, false, false, ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ok, err := IsCRDReady(tt.obj, tt.err)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.msgMatch != "" && !strings.Contains(err.Error(), tt.msgMatch) {
+					t.Fatalf("error message %q does not contain %q", err.Error(), tt.msgMatch)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+			if ok != tt.wantOk {
+				t.Fatalf("expected ok=%v, got %v", tt.wantOk, ok)
+			}
+		})
 	}
 }

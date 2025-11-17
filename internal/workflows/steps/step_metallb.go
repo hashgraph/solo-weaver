@@ -2,7 +2,6 @@ package steps
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-provisioner/internal/kube"
 	"golang.hedera.com/solo-provisioner/internal/network"
 	"golang.hedera.com/solo-provisioner/internal/templates"
 	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
@@ -30,6 +30,7 @@ const (
 	ConfigureMetalLbConfigStepId = "configure-metallb-config"
 	PrepareMetalLbConfigStepId   = "prepare-metallb-config"
 	DeployMetalLbConfigStepId    = "deploy-metallb-config"
+	IsMetalLBReadyStepId         = "is-metallb-ready"
 )
 
 var (
@@ -40,6 +41,7 @@ var (
 func SetupMetalLB() automa.Builder {
 	return automa.NewWorkflowBuilder().WithId(SetupMetalLBStepId).Steps(
 		installMetalLB(),
+		isMetalLBPodsReady(), // ensure metallb pods are ready before applying config
 		configureMetalLB(metalLBConfigFilePath),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -79,7 +81,7 @@ func installMetalLB() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-		
+
 			// if chartVersion doesn't start with "v", prepend it
 			chartVersion := MetalLBVersion
 			if !strings.HasPrefix(chartVersion, "v") {
@@ -108,14 +110,6 @@ func installMetalLB() automa.Builder {
 
 			meta[InstalledByThisStep] = "true"
 			stp.State().Set(InstalledByThisStep, true)
-
-			// wait for the release to be ready
-			// Note: metallb-reaper container takes some time to be in running state
-			// TODO: improve this by checking the actual status instead of sleeping
-			err = Sleep(ctx, 60*time.Second)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -203,9 +197,12 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 	return automa.NewStepBuilder().WithId(DeployMetalLbConfigStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
-			cmd := fmt.Sprintf("%s/kubectl apply -f %s", core.Paths().SandboxBinDir, configFilePath)
-			_, err := runCmd(cmd)
+			err = k.ApplyManifest(ctx, configFilePath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -220,8 +217,12 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			cmd := fmt.Sprintf("%s/kubectl delete -f %s", core.Paths().SandboxBinDir, configFilePath)
-			_, err := runCmd(cmd)
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = k.DeleteManifest(ctx, configFilePath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -237,5 +238,35 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB configuration deployed successfully")
+		})
+}
+
+func isMetalLBPodsReady() automa.Builder {
+	return automa.NewStepBuilder().WithId(IsMetalLBReadyStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			// wait for metallb pods to be ready
+			err = k.WaitForResources(ctx, kube.KindPod, MetalLBNamespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "metallb"})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta[IsReady] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Verifying MetalLB readiness")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "MetalLB is not ready")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB is ready")
 		})
 }
