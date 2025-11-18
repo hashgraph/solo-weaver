@@ -7,11 +7,11 @@ vars:
   GO_VERSION: 1.25.2
   LDFLAGS: "-w -s"
   # VM configuration
-  VM_NAME: "solo-provisioner-debian"
-  VM_GOLDEN_NAME: "solo-provisioner-debian-golden"
+  VM_NAME: "solo-weaver-debian"
+  VM_GOLDEN_NAME: "solo-weaver-debian-golden"
   # Set this to the actual URL or local path of your golden image (e.g., "https://storage.example.com/golden-image.utm" or "/path/to/golden-image.utm")
   VM_GOLDEN_IMAGE_URL: ""  # REQUIRED: Set to your golden image location before running tasks
-  VM_USER: "provisioner"
+  VM_USER: "weaver"
   SSH_PRIVATE_KEY: "{{.PWD}}/.ssh/id_rsa_vm"
   SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
@@ -46,21 +46,21 @@ tasks:
     cmds:
       - task: "clean"
       - task: "generate"
-      - task: "build:provisioner:all"
+      - task: "build:weaver:all"
     sources:
       - "**/*.go"
     generates:
-      - "bin/provisioner-linux-*"
-      - "bin/provisioner-darwin-*"
+      - "bin/weaver-linux-*"
+      - "bin/weaver-darwin-*"
 
   hash:
     deps:
       - "build"
     cmds:
-      - task: "hash:provisioner:all"
+      - task: "hash:weaver:all"
     sources:
-      - "bin/provisioner-linux-*"
-      - "bin/provisioner-darwin-*"
+      - "bin/weaver-linux-*"
+      - "bin/weaver-darwin-*"
     generates:
       - "bin/*.sha256"
 
@@ -68,126 +68,126 @@ tasks:
     deps:
       - "build"
     cmds:
-      - task: "sign:provisioner:all"
+      - task: "sign:weaver:all"
 
   build:image:
     deps:
       - task: "hash"
     cmds:
-      - "docker build -t solo-provisioner ."
+      - "docker build -t solo-weaver ."
 
   generate:
     cmds:
       - "go generate ./..."
 
-  build:provisioner:all:
+  build:weaver:all:
     desc: "Build the binary for all configured operating systems and architectures"
     cmds:
-      - task: build:provisioner:all:os
+      - task: build:weaver:all:os
 
-  build:provisioner:all:os:
+  build:weaver:all:os:
     internal: true
     desc: "Build the binary for all configured operating systems"
     cmds:
       - for:
           var: OS
-        task: build:provisioner:all:arch
+        task: build:weaver:all:arch
         vars:
           GOOS: "{{.ITEM}}"
 
-  build:provisioner:all:arch:
+  build:weaver:all:arch:
     internal: true
     desc: "Build the binary for all configured architectures"
     cmds:
       - for:
           var: ARCH
-        task: build:provisioner
+        task: build:weaver
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.ITEM}}"
 
-  build:provisioner:
+  build:weaver:
     internal: true
     desc: "Build the binary for the specified operating system and architecture"
     env:
       GOOS: "{{coalesce .GOOS OS}}"
       GOARCH: "{{coalesce .GOARCH ARCH}}"
     cmds:
-      - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/provisioner
-      - cmd: chmod +x bin/provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
+      - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
+      - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
 
-  hash:provisioner:all:
+  hash:weaver:all:
     desc: "Hash the binary binaries for all configured operating systems and architectures"
     cmds:
-      - task: hash:provisioner:all:os
+      - task: hash:weaver:all:os
 
-  hash:provisioner:all:os:
+  hash:weaver:all:os:
     internal: true
     desc: "Hash the binary binaries for all configured operating systems"
     cmds:
       - for:
           var: OS
-        task: hash:provisioner:all:arch
+        task: hash:weaver:all:arch
         vars:
           GOOS: "{{.ITEM}}"
 
-  hash:provisioner:all:arch:
+  hash:weaver:all:arch:
     internal: true
     desc: "Hash the binary binaries for all configured architectures"
     cmds:
       - for:
           var: ARCH
-        task: hash:provisioner
+        task: hash:weaver
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.ITEM}}"
 
-  hash:provisioner:
+  hash:weaver:
     internal: true
     desc: "Hash the binary binaries for the specified operating system and architecture"
     dir: bin
     cmds:
-      - cmd: sha256sum provisioner-{{.GOOS}}-{{.GOARCH}} > provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
+      - cmd: sha256sum weaver-{{.GOOS}}-{{.GOARCH}} > weaver-{{.GOOS}}-{{.GOARCH}}.sha256
 
-  sign:provisioner:all:
+  sign:weaver:all:
     desc: "Sign the binary binaries for all configured operating systems and architectures"
     cmds:
-      - task: sign:provisioner:all:os
+      - task: sign:weaver:all:os
 
-  sign:provisioner:all:os:
+  sign:weaver:all:os:
     internal: true
     desc: "Sign the binary binaries for all configured operating systems"
     cmds:
       - for:
           var: OS
-        task: sign:provisioner:all:arch
+        task: sign:weaver:all:arch
         vars:
           GOOS: "{{.ITEM}}"
 
-  sign:provisioner:all:arch:
+  sign:weaver:all:arch:
     internal: true
     desc: "Sign the binary binaries for all configured architectures"
     cmds:
       - for:
           var: ARCH
-        task: sign:provisioner
+        task: sign:weaver
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.ITEM}}"
 
-  sign:provisioner:
+  sign:weaver:
     internal: true
     desc: "Sign the binary binaries for the specified operating system and architecture"
     env:
       GOOS: "{{coalesce .GOOS OS}}"
       GOARCH: "{{coalesce .GOARCH ARCH}}"
     cmds:
-      - task: hash:provisioner
+      - task: hash:weaver
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.GOARCH}}"
-      - cmd: gpg --batch --yes --armor --output bin/provisioner-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
-      - cmd: gpg --batch --yes --armor --output bin/provisioner-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/provisioner-{{.GOOS}}-{{.GOARCH}}
+      - cmd: gpg --batch --yes --armor --output bin/weaver-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/weaver-{{.GOOS}}-{{.GOARCH}}.sha256
+      - cmd: gpg --batch --yes --armor --output bin/weaver-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/weaver-{{.GOOS}}-{{.GOARCH}}
 
   test:
     cmds:
@@ -256,21 +256,21 @@ tasks:
 
   run:
     deps:
-      - "run:provisioner"
+      - "run:weaver"
 
-  run:provisioner:
+  run:weaver:
     deps:
       - "build"
     cmds:
-      - "bin/provisioner-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
+      - "bin/weaver-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
 
-  run:provisioner:skipdl:
+  run:weaver:skipdl:
     deps:
       - "build"
     env:
       _LOG_LEVEL: "Debug"
     cmds:
-      - "bin/provisioner-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
+      - "bin/weaver-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
 
   install:go:
     deps:
@@ -302,10 +302,10 @@ tasks:
     cmds:
       - go install github.com/golang/mock/mockgen@v1.6.0
       # Generate mocks in the package it belongs. Note these generated mock files are not checked in.
-      - mockgen -source=pkg/security/principal/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
-      - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
-      - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/software -package software> pkg/software/mocks_generated.go
-      - mockgen -source=pkg/kernel/interface.go -self_package golang.hedera.com/solo-provisioner/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
+      - mockgen -source=pkg/security/principal/interface.go -self_package golang.hedera.com/solo-weaver/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
+      - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
+      - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
+      - mockgen -source=pkg/kernel/interface.go -self_package golang.hedera.com/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
 
   # Remote debug tasks for Docker container debugging
   debug:container:
@@ -318,7 +318,7 @@ tasks:
         echo ""
         echo "Available debug commands:"
         echo "  task debug:container:test -- [package]   # Debug tests (package required)"
-        echo "  task debug:container:app -- [args...]    # Debug provisioner application"
+        echo "  task debug:container:app -- [args...]    # Debug weaver application"
         echo "  task debug:container:stop                # Stop debug container"
         echo ""
 
@@ -347,7 +347,7 @@ tasks:
   debug:container:stop:
     desc: "Stop remote debug container"
     cmds:
-      - "docker stop solo-provisioner-debug 2>/dev/null || true"
+      - "docker stop solo-weaver-debug 2>/dev/null || true"
 
   # VM Debugging Tasks
   vm:debug:
@@ -358,7 +358,7 @@ tasks:
         echo ""
         echo "Available debug commands:"
         echo "  task debug:vm:test -- [package]   # Debug tests on the VM (package required)"
-        echo "  task debug:vm:app -- [args...]    # Debug provisioner application on the VM"
+        echo "  task debug:vm:app -- [args...]    # Debug weaver application on the VM"
         echo ""
 
   vm:debug:test:
@@ -572,7 +572,7 @@ tasks:
       - |
         echo "Configuring SSH access..."
         PUBLIC_KEY=$(cat {{.SSH_PUBLIC_KEY}})
-        # This command is complex because it needs to run as the non-root user 'provisioner'
+        # This command is complex because it needs to run as the non-root user 'weaver'
         # to ensure the authorized_keys file has the correct ownership and permissions.
         utmctl exec "{{.VM_NAME}}" --cmd /bin/su -l {{.VM_USER}} -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo '✓ SSH key configured for user {{.VM_USER}}'"
         utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '$PUBLIC_KEY' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && echo '✓ SSH key configured for user root'"
@@ -581,7 +581,7 @@ tasks:
         utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && sed -i 's/#AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config && systemctl restart sshd && echo '✓ SSH daemon configured for root login with keys'"
       - |
         echo "Mounting shared directory..."
-        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "mkdir -p /mnt/solo-provisioner && echo 'share   /mnt/solo-provisioner   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | tee -a /etc/fstab && mount -a && chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-provisioner && echo '✓ Shared directory mounted at /mnt/solo-provisioner'"
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "mkdir -p /mnt/solo-weaver && echo 'share   /mnt/solo-weaver   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | tee -a /etc/fstab && mount -a && chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-weaver && echo '✓ Shared directory mounted at /mnt/solo-weaver'"
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
         echo "Installing development tools (Git, Task, Go, Delve, rsync) via SSH at $VM_IP..."
@@ -613,7 +613,7 @@ tasks:
             echo 'Task already installed, skipping...'
           fi
 
-          cd /mnt/solo-provisioner
+          cd /mnt/solo-weaver
           task install:go
 
           echo '✓ Development tools installed successfully!'
@@ -653,7 +653,7 @@ tasks:
 
         echo "Connecting to VM at $VM_IP..."
         env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-provisioner 2>/dev/null || true; exec \$SHELL -l"
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
 
   vm:test:unit:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
@@ -674,7 +674,7 @@ tasks:
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
-            cd /mnt/solo-provisioner && sudo -E PATH=\"\$PATH\" task test:unit
+            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit
           "
 
   vm:test:integration:
@@ -696,7 +696,7 @@ tasks:
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
-            cd /mnt/solo-provisioner && sudo -E PATH=\"\$PATH\" task test:integration
+            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:integration
           "
 
   vm:status:

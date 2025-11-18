@@ -6,9 +6,9 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func SetupCilium() automa.Builder {
@@ -218,7 +218,7 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 
 			// Install Cilium CNI
 			installScript := []string{
-				fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --values %s/etc/provisioner/cilium-config.yaml",
+				fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --values %s/etc/weaver/cilium-config.yaml",
 					core.Paths().SandboxBinDir, version, core.Paths().SandboxDir),
 			}
 			_, err = automa_steps.RunBashScript(installScript, "")

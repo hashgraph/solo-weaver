@@ -11,7 +11,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func Test_Downloader_Download(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-provisioner/internal/doctor"
-	"golang.hedera.com/solo-provisioner/internal/workflows"
+	"golang.hedera.com/solo-weaver/internal/doctor"
+	"golang.hedera.com/solo-weaver/internal/workflows"
 )
 
 // createNodeCheckCommand creates a check command for a specific node type
@@ -23,7 +23,7 @@ func createNodeCheckCommand(nodeType string) *cobra.Command {
 				os.Exit(1)
 			}
 
-			logx.As().Debug().Strs("args", args).Str("nodeType", nodeType).Msg("Running solo provisioner preflight checks")
+			logx.As().Debug().Strs("args", args).Str("nodeType", nodeType).Msg("Running solo weaver preflight checks")
 
 			runNodeSafetyCheck(cmd.Context(), nodeType)
 		},

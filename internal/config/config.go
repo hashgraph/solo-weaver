@@ -33,7 +33,7 @@ func Initialize(path string) error {
 	if path != "" {
 		viper.Reset()
 		viper.SetConfigFile(path)
-		viper.SetEnvPrefix("solo_provisioner")
+		viper.SetEnvPrefix("solo_weaver")
 		viper.AutomaticEnv()
 		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 

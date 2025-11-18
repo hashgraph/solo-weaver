@@ -14,8 +14,8 @@ import (
 
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 // TestScenario defines a test scenario with specific combinations of archives, binaries, and configs
@@ -664,8 +664,8 @@ func Test_BaseInstaller_Download_PermissionError(t *testing.T) {
 	// Create a regular file where the directory should be created
 	// This will cause MkdirAll to fail with permission/file exists error
 	conflictingFile := tmpFolder
-	err := os.MkdirAll("/opt/provisioner", core.DefaultDirOrExecPerm)
-	require.NoError(t, err, "Failed to create /opt/provisioner directory")
+	err := os.MkdirAll("/opt/weaver", core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create /opt/weaver directory")
 	err = os.WriteFile(conflictingFile, []byte("blocking file"), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create blocking file")
 

@@ -8,7 +8,7 @@ import (
 
 	"github.com/bluet/syspkg/manager"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/pkg/hardware"
+	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 func requireLinux(t *testing.T) {

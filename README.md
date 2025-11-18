@@ -1,4 +1,4 @@
-# solo-provisioner
+# solo-weaver
 
 A Go-based tool for provisioning Hedera network components in a streamlined and automated way.
 
@@ -11,21 +11,21 @@ A Go-based tool for provisioning Hedera network components in a streamlined and 
 
 ## Requirements
 
-- Go 1.20 or newer
+- Go 1.25 or newer
 
 ## Installation
 
 Install via Go:
 
 ```sh
-go install github.com/hashgraph/solo-provisioner@latest
+go install github.com/hashgraph/solo-weaver@latest
 ```
 
 Or clone the repository:
 
 ```sh
-git clone https://github.com/hashgraph/solo-provisioner.git
-cd solo-provisioner
+git clone https://github.com/hashgraph/solo-weaver.git
+cd solo-weaver
 task build
 ```
 
@@ -40,7 +40,7 @@ task run -- [flags]
 Or run directly:
 
 ```sh
-./solo-provisioner --config=config.yaml
+./weaver --config=config.yaml
 ```
 
 ## Configuration
@@ -61,7 +61,7 @@ The project supports debugging using UTM VMs for testing in a Linux environment 
 ### Debugging with UTM VM
 
 The project supports debugging inside a Debian VM using [UTM](https://mac.getutm.app/) on macOS.  
-This setup allows you to test **solo-provisioner** in a Linux environment similar to production.
+This setup allows you to test **solo-weaver** in a Linux environment similar to production.
 
 ---
 
@@ -91,9 +91,9 @@ If this is your first time setting up, follow these steps:
 
 2. Configure the VM:
     - Storage: 64 GiB (default).
-    - Shared Directory: set to your `solo-provisioner` project root.
+    - Shared Directory: set to your `solo-weaver` project root.
     - Network: **Bridged (Advanced)** on your Wi-Fi interface (e.g., `en0`).
-    - Name the VM: `solo-provisioner-debian-golden`.
+    - Name the VM: `solo-weaver-debian-golden`.
 
 ##### Debian Installation
 
@@ -105,9 +105,9 @@ If this is your first time setting up, follow these steps:
 - Domain: leave empty.
 - Root password: `password`.
 - User:
-    - Full name: `provisioner`
-    - Username: `provisioner`
-    - Password: `provisioner`
+    - Full name: `weaver`
+    - Username: `weaver`
+    - Password: `weaver`
 - Clock: default selection.
 - Partitioning:
     - Guided – use entire disk

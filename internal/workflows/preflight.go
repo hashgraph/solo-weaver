@@ -4,12 +4,12 @@ import (
 	"context"
 	"os/user"
 
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/internal/workflows/notify"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/pkg/hardware"
+	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 // createNodeSpec creates the appropriate node spec based on node type and host profile

@@ -29,8 +29,8 @@ import (
 	"syscall"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/pkg/security"
-	"golang.hedera.com/solo-provisioner/pkg/security/principal"
+	"golang.hedera.com/solo-weaver/pkg/security"
+	"golang.hedera.com/solo-weaver/pkg/security/principal"
 )
 
 const (

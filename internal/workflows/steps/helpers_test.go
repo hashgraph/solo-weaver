@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func sudo(cmd *exec.Cmd) *exec.Cmd {
@@ -61,7 +61,7 @@ func reset(t *testing.T) {
 
 	// Reset kubeadm with custom CRI socket
 	_ = sudo(exec.Command("kubeadm", "reset",
-		"--cri-socket", "unix:///opt/provisioner/sandbox/var/run/crio/crio.sock",
+		"--cri-socket", "unix:///opt/weaver/sandbox/var/run/crio/crio.sock",
 		"--force")).Run()
 
 	// Stop CRI-O service
@@ -72,8 +72,8 @@ func reset(t *testing.T) {
 	_ = sudo(exec.Command("umount", "/var/lib/kubelet")).Run()
 	_ = sudo(exec.Command("umount", "-R", "/var/run/cilium")).Run()
 
-	// Remove provisioner directory
-	_ = sudo(exec.Command("rm", "-rf", "/opt/provisioner")).Run()
+	// Remove weaver directory
+	_ = sudo(exec.Command("rm", "-rf", "/opt/weaver")).Run()
 
 	// Remove /usr/lib/systemd/system
 	_ = sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/crio.service")).Run()
@@ -88,7 +88,7 @@ func reset(t *testing.T) {
 
 	// Remove .kube/config
 	_ = sudo(exec.Command("rm", "-rf", "/root/.kube")).Run()
-	_ = sudo(exec.Command("rm", "-rf", "/home/provisioner/.kube")).Run()
+	_ = sudo(exec.Command("rm", "-rf", "/home/weaver/.kube")).Run()
 
 	// Clean up temp directory (from existing tests)
 	cleanUpTempDir(t)

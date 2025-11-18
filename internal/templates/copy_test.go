@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func TestCopyConfigurationFiles(t *testing.T) {

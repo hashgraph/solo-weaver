@@ -6,9 +6,9 @@ import (
 	"path"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/mount"
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/mount"
+	"golang.hedera.com/solo-weaver/internal/workflows/notify"
 )
 
 const (

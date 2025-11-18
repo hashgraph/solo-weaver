@@ -3,7 +3,7 @@
 # This script sets up remote debugging for the Ubuntu container
 set -e
 
-CONTAINER_NAME="solo-provisioner-debug"
+CONTAINER_NAME="solo-weaver-debug"
 DEBUG_PORT="2345"
 
 echo "🐳 Setting up Docker container for debugging..."
@@ -16,7 +16,7 @@ docker rm $CONTAINER_NAME 2>/dev/null || true
 # Build the image
 echo "🏗️  Building Docker image..."
 cd "$(dirname "$0")"  # Ensure we're in the build directory
-docker build -t local/solo-provisioner-local:latest -f Dockerfile.local .
+docker build -t local/solo-weaver-local:latest -f Dockerfile.local .
 
 echo "🚀 Starting debug container..."
 # Start container with debug port exposed (2345 for both tests and app)
@@ -24,7 +24,7 @@ docker run -d --name $CONTAINER_NAME --privileged --cap-add=ALL \
   -v "/sys/fs/cgroup:/sys/fs/cgroup:rw" \
   -v "$(pwd)"/..:/app \
   -p $DEBUG_PORT:$DEBUG_PORT \
-  local/solo-provisioner-local:latest tail -f /dev/null
+  local/solo-weaver-local:latest tail -f /dev/null
 
 # Wait for container to be ready
 sleep 5

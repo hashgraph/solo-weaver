@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/network"
-	"golang.hedera.com/solo-provisioner/internal/templates"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/network"
+	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
 var (
@@ -19,7 +19,7 @@ var (
 	kubeletServiceDirRelPath  = path.Join("usr", "lib", "systemd", "system", "kubelet.service.d")
 	kubeadmConfFileName       = "10-kubeadm.conf"
 	kubeadmInitConfigFileName = "kubeadm-init.yaml"
-	etcProvisionerDirRelPath  = path.Join("etc", "provisioner")
+	etcWeaverDirRelPath       = path.Join("etc", "weaver")
 )
 
 type kubeadmInstaller struct {
@@ -164,13 +164,13 @@ func (ki *kubeadmInstaller) configureKubeadmInit(kubernetesVersion string) error
 		return errorx.IllegalState.Wrap(err, "failed to render kubeadm init configuration template")
 	}
 
-	sandboxEtcProvisionerDir := path.Join(core.Paths().SandboxDir, etcProvisionerDirRelPath)
+	sandboxEtcWeaverDir := path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath)
 
-	err = ki.fileManager.CreateDirectory(sandboxEtcProvisionerDir, true)
+	err = ki.fileManager.CreateDirectory(sandboxEtcWeaverDir, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create directory for kubeadm init configuration")
 	}
-	err = ki.fileManager.WriteFile(path.Join(sandboxEtcProvisionerDir, kubeadmInitConfigFileName), []byte(rendered))
+	err = ki.fileManager.WriteFile(path.Join(sandboxEtcWeaverDir, kubeadmInitConfigFileName), []byte(rendered))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write kubeadm init configuration file")
 	}
@@ -308,7 +308,7 @@ func (ki *kubeadmInstaller) isKubeletServiceDirSymlinkPresent() (bool, error) {
 
 // isKubeadmInitConfigExists checks if the kubeadm-init.yaml configuration file exists
 func (ki *kubeadmInstaller) isKubeadmInitConfigExists() (bool, error) {
-	kubeadmInitPath := path.Join(core.Paths().SandboxDir, etcProvisionerDirRelPath, kubeadmInitConfigFileName)
+	kubeadmInitPath := path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
 
 	fi, exists, err := ki.fileManager.PathExists(kubeadmInitPath)
 	if err != nil {
@@ -325,7 +325,7 @@ func (ki *kubeadmInstaller) getKubeadmConfPath() string {
 
 // getKubeadmInitConfigPath returns the path to the kubeadm-init.yaml configuration file
 func (ki *kubeadmInstaller) getKubeadmInitConfigPath() string {
-	return path.Join(core.Paths().SandboxDir, etcProvisionerDirRelPath, kubeadmInitConfigFileName)
+	return path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
 }
 
 // patchKubeadmConf creates a copy of 10-kubeadm.conf with updated paths

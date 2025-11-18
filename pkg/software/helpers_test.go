@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	tmpFolder = "/opt/provisioner/tmp"
+	tmpFolder = "/opt/weaver/tmp"
 )
 
 // resetTestEnvironment creates a clean test environment and registers cleanup
@@ -22,7 +22,7 @@ func resetTestEnvironment(t *testing.T) {
 	t.Helper()
 
 	// Clean up any existing test artifacts
-	_ = os.RemoveAll("/opt/provisioner")
+	_ = os.RemoveAll("/opt/weaver")
 
 	// Clean up any leftover symbolic links in SystemBinDir from previous test runs
 	// This is critical because IsInstalled() and IsConfigured() check these directories
@@ -30,18 +30,18 @@ func resetTestEnvironment(t *testing.T) {
 
 	// Register cleanup to run after test completes
 	t.Cleanup(func() {
-		_ = os.RemoveAll("/opt/provisioner")
+		_ = os.RemoveAll("/opt/weaver")
 		cleanupSystemBinDir(t)
 	})
 }
 
-// cleanupSystemBinDir removes any symbolic links in /usr/local/bin that point to /opt/provisioner
+// cleanupSystemBinDir removes any symbolic links in /usr/local/bin that point to /opt/weaver
 // This prevents test pollution between runs
 func cleanupSystemBinDir(t *testing.T) {
 	t.Helper()
 
 	systemBinDir := "/usr/local/bin"
-	provisionerPrefix := "/opt/provisioner"
+	weaverPrefix := "/opt/weaver"
 
 	// Read the system bin directory
 	entries, err := os.ReadDir(systemBinDir)
@@ -50,7 +50,7 @@ func cleanupSystemBinDir(t *testing.T) {
 		return
 	}
 
-	// Check each entry to see if it's a symlink pointing to provisioner directories
+	// Check each entry to see if it's a symlink pointing to weaver directories
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink == 0 {
 			continue // Not a symlink, skip
@@ -62,8 +62,8 @@ func cleanupSystemBinDir(t *testing.T) {
 			continue // Can't read symlink, skip
 		}
 
-		// If the symlink points to a provisioner directory, remove it
-		if strings.HasPrefix(target, provisionerPrefix) {
+		// If the symlink points to a weaver directory, remove it
+		if strings.HasPrefix(target, weaverPrefix) {
 			_ = os.Remove(linkPath)
 		}
 	}

@@ -12,8 +12,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func Test_StepK9s_Fresh_Integration(t *testing.T) {
@@ -162,11 +162,11 @@ func Test_StepK9s_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for k9s is removed
-	_, err = os.Stat("/opt/provisioner/tmp/k9s")
+	_, err = os.Stat("/opt/weaver/tmp/k9s")
 	require.Error(t, err)
 
 	// Verify binary files are removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/k9s")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/k9s")
 	require.Error(t, err)
 }
 
@@ -218,11 +218,11 @@ func Test_StepK9s_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for k9s was not created
-	_, err = os.Stat("/opt/provisioner/tmp/k9s")
+	_, err = os.Stat("/opt/weaver/tmp/k9s")
 	require.Error(t, err)
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/k9s")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/k9s")
 	require.Error(t, err)
 }
 
@@ -276,7 +276,7 @@ func Test_StepK9s_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/k9s")
+	_, err = os.Stat("/opt/weaver/tmp/k9s")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -285,7 +285,7 @@ func Test_StepK9s_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, 2, len(files), "Expected 2 files in the unpack directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/k9s")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/k9s")
 	require.Error(t, err)
 }
 
@@ -339,7 +339,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/k9s")
+	_, err = os.Stat("/opt/weaver/tmp/k9s")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -348,7 +348,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, 2, len(files), "Expected 2 files in the unpack directory")
 
 	// Verify unpack folder is still around when there is an installation error
-	_, err = os.Stat("/opt/provisioner/tmp/k9s/unpack")
+	_, err = os.Stat("/opt/weaver/tmp/k9s/unpack")
 	require.NoError(t, err)
 
 	// Check there are unpacked files
@@ -357,7 +357,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/k9s")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/k9s")
 	require.Error(t, err)
 }
 
@@ -411,7 +411,7 @@ func Test_StepK9s_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/k9s")
+	_, err = os.Stat("/opt/weaver/tmp/k9s")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -420,7 +420,7 @@ func Test_StepK9s_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/k9s directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/provisioner/tmp/k9s/unpack")
+	_, err = os.Stat("/opt/weaver/tmp/k9s/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -429,7 +429,7 @@ func Test_StepK9s_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/k9s")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/k9s")
 	require.Error(t, err)
 }
 
@@ -484,7 +484,7 @@ func Test_StepK9s_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/k9s")
+	_, err = os.Stat("/opt/weaver/tmp/k9s")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -493,7 +493,7 @@ func Test_StepK9s_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/k9s directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/provisioner/tmp/k9s/unpack")
+	_, err = os.Stat("/opt/weaver/tmp/k9s/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -502,6 +502,6 @@ func Test_StepK9s_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/k9s")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/k9s")
 	require.Error(t, err)
 }

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"text/template"
 
-	"golang.hedera.com/solo-provisioner/pkg/semver"
+	"golang.hedera.com/solo-weaver/pkg/semver"
 	"gopkg.in/yaml.v3"
 )
 

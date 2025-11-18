@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func Test_SetupBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T) {

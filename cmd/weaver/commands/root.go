@@ -6,18 +6,18 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-provisioner/internal/config"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/doctor"
+	"golang.hedera.com/solo-weaver/internal/config"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/doctor"
 )
 
 // examples:
-// ./provisioner block node check
-// ./provisioner block node setup --config ./config.yaml
-// ./provisioner consensus node check
-// ./provisioner consensus node setup --config ./config.yaml
-// ./provisioner local node check
-// ./provisioner local node setup --config ./config.yaml
+// ./weaver block node check
+// ./weaver block node setup --config ./config.yaml
+// ./weaver consensus node check
+// ./weaver consensus node setup --config ./config.yaml
+// ./weaver local node check
+// ./weaver local node setup --config ./config.yaml
 
 // NodeTypeConfig defines the configuration for a node type
 type NodeTypeConfig struct {
@@ -31,9 +31,9 @@ var (
 	flagConfig string
 
 	rootCmd = &cobra.Command{
-		Use:   "provisioner",
+		Use:   "weaver",
 		Short: "A user friendly tool to provision Hedera network components",
-		Long:  "Solo Provisioner - A user friendly tool to provision Hedera network components",
+		Long:  "Solo Weaver - A user friendly tool to provision Hedera network components",
 	}
 
 	blockCmd = &cobra.Command{

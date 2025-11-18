@@ -13,9 +13,9 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/config"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/version"
+	"golang.hedera.com/solo-weaver/internal/config"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/version"
 )
 
 type ErrorDiagnosis struct {

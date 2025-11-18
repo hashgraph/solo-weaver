@@ -5,7 +5,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/pkg/security/principal"
+	"golang.hedera.com/solo-weaver/pkg/security/principal"
 	"strconv"
 	"testing"
 )

@@ -9,7 +9,7 @@ spec:
   capacity:
     storage: 5Gi
   hostPath:
-    path: /opt/provisioner/block-node-storage/live
+    path: /opt/weaver/block-node-storage/live
     type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -35,7 +35,7 @@ spec:
   capacity:
     storage: 5Gi
   hostPath:
-    path: /opt/provisioner/block-node-storage/archive
+    path: /opt/weaver/block-node-storage/archive
     type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -61,7 +61,7 @@ spec:
   capacity:
     storage: 5Gi
   hostPath:
-    path: /opt/provisioner/block-node-storage/logs
+    path: /opt/weaver/block-node-storage/logs
     type: DirectoryOrCreate
 ---
 apiVersion: v1

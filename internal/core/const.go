@@ -3,7 +3,7 @@ package core
 import (
 	"path"
 
-	"golang.hedera.com/solo-provisioner/pkg/security"
+	"golang.hedera.com/solo-weaver/pkg/security"
 )
 
 const (
@@ -11,8 +11,8 @@ const (
 	DefaultDirOrExecPerm = 0755 // for directories and executable files
 	DefaultFilePerm      = 0644 // for regular data/config files
 
-	// Provisioner paths
-	DefaultProvisionerHome  = "/opt/provisioner"
+	// Weaver paths
+	DefaultWeaverHome       = "/opt/weaver"
 	DefaultUnpackFolderName = "unpack"
 	SystemBinDir            = "/usr/local/bin"
 	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
@@ -24,11 +24,11 @@ const (
 )
 
 var (
-	pp     = NewProvisionerPaths(DefaultProvisionerHome)
+	pp     = NewWeaverPaths(DefaultWeaverHome)
 	svcAcc = security.ServiceAccount{
-		UserName:  "provisioner",
+		UserName:  "weaver",
 		UserId:    "1000",
-		GroupName: "provisioner",
+		GroupName: "weaver",
 		GroupId:   "1000",
 	}
 )
@@ -37,7 +37,7 @@ func init() {
 	security.SetServiceAccount(svcAcc)
 }
 
-type ProvisionerPaths struct {
+type WeaverPaths struct {
 	HomeDir        string
 	BinDir         string
 	LogsDir        string
@@ -67,8 +67,8 @@ type ProvisionerPaths struct {
 	CiliumDir  string
 }
 
-func NewProvisionerPaths(home string) *ProvisionerPaths {
-	pp := &ProvisionerPaths{
+func NewWeaverPaths(home string) *WeaverPaths {
+	pp := &WeaverPaths{
 		HomeDir:        home,
 		BinDir:         path.Join(home, "bin"),
 		LogsDir:        path.Join(home, "logs"),
@@ -99,7 +99,7 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 		path.Join(pp.SandboxDir, "etc/crio/keys"),
 		path.Join(pp.SandboxDir, "etc/default"),
 		path.Join(pp.SandboxDir, "etc/sysconfig"),
-		path.Join(pp.SandboxDir, "etc/provisioner"),
+		path.Join(pp.SandboxDir, "etc/weaver"),
 		path.Join(pp.SandboxDir, "etc/containers/registries.conf.d"),
 		path.Join(pp.SandboxDir, "etc/cni/net.d"),
 		path.Join(pp.SandboxDir, "etc/nri/conf.d"),
@@ -150,7 +150,7 @@ func NewProvisionerPaths(home string) *ProvisionerPaths {
 	return pp
 }
 
-func Paths() *ProvisionerPaths {
+func Paths() *WeaverPaths {
 	return pp
 }
 

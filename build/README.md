@@ -4,7 +4,7 @@ To develop locally, you need to use the provided Docker setup as below:
 
 - Launch the container with `./launch-local.sh`
 - In a separate terminal
-    - Exec into the container: `docker exec -it solo-provisioner-local`
+    - Exec into the container: `docker exec -it solo-weaver-local`
     - Build: `cd /app && task build`
     - Run: `task run -- local node setup -c test/config/config.yaml`
     - Test system packages: `task test:system-packages`
@@ -43,7 +43,7 @@ Alternatively, to run system packages tests in one command (handles Docker setup
 4. Tests run with breakpoints active
 
 **For Application:**
-1. Set breakpoints in source code (e.g., `cmd/provisioner/main.go`)
+1. Set breakpoints in source code (e.g., `cmd/weaver/main.go`)
 2. Run `./debug-run.sh app cluster deploy` (waits for debugger)
 3. Attach debugger (F5 in VS Code or Run → Debug in IntelliJ)  
 4. Press Continue/Resume to start execution
@@ -57,7 +57,7 @@ Alternatively, to run system packages tests in one command (handles Docker setup
 # Debug scenarios  
 ./debug-run.sh test         # Debug all tests (default behavior)
 ./debug-run.sh test ./pkg/semver  # Debug specific package tests
-./debug-run.sh app [args...]      # Debug provisioner application
+./debug-run.sh app [args...]      # Debug weaver application
 
 # Task aliases (from project root)
 task debug                           # Setup debug environment and show help
@@ -66,5 +66,5 @@ task debug:container:test -- [package]  # Same as ./debug-run.sh test [package] 
 task debug:container:app -- [args...]   # Same as ./debug-run.sh app [args...]
 
 # Cleanup
-docker stop solo-provisioner-debug  # Stop debug container
+docker stop solo-weaver-debug  # Stop debug container
 ```

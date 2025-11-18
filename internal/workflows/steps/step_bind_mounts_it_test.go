@@ -12,8 +12,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/mount"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/mount"
 )
 
 func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {

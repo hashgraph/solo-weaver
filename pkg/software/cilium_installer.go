@@ -4,9 +4,9 @@ import (
 	"path"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/network"
-	"golang.hedera.com/solo-provisioner/internal/templates"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/network"
+	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
 const (
@@ -64,9 +64,9 @@ func (ci *ciliumInstaller) getCiliumConfigPath() string {
 	return path.Join(ci.getConfigurationDir(), ciliumConfigFileName)
 }
 
-// getConfigurationDir returns the path to the provisioner configuration directory
+// getConfigurationDir returns the path to the weaver configuration directory
 func (ci *ciliumInstaller) getConfigurationDir() string {
-	return path.Join(core.Paths().SandboxDir, "etc", "provisioner")
+	return path.Join(core.Paths().SandboxDir, "etc", "weaver")
 }
 
 // createCiliumConfigFile creates the cilium configuration file from template

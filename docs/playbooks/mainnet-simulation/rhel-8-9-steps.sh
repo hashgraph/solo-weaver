@@ -124,36 +124,36 @@ sudo sysctl --system >/dev/null
 #sudo grub2-mkconfig -o "$(readlink -e /etc/grub2.conf)"
 
 # Setup working directories
-mkdir -p /tmp/provisioner/containerd
-mkdir -p /tmp/provisioner/runc
-mkdir -p /tmp/provisioner/cni
-mkdir -p /tmp/provisioner/kubernetes
-mkdir -p /tmp/provisioner/cilium
+mkdir -p /tmp/weaver/containerd
+mkdir -p /tmp/weaver/runc
+mkdir -p /tmp/weaver/cni
+mkdir -p /tmp/weaver/kubernetes
+mkdir -p /tmp/weaver/cilium
 
 # Cleanup Kube Components in Wrong Directory
 rm -f /usr/local/bin/kubeadm /usr/local/bin/kubelet /usr/local/bin/kubectl || true
 
 # Download Components
-pushd "/tmp/provisioner/runc" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/runc" >/dev/null 2>&1 || true
 curl -sSLo "runc.${ARCH}" "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${ARCH}"
 curl -sSLo "runc.${ARCH}.asc" "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${ARCH}.asc"
 gpg --verify "runc.${ARCH}.asc" "runc.${ARCH}"
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/containerd" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/containerd" >/dev/null 2>&1 || true
 curl -sSLo "containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz" "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz"
 curl -sSLo "containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz.sha256sum" "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz.sha256sum"
 sha256sum -c "containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz.sha256sum"
 curl -sSLo containerd.service https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/cni" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/cni" >/dev/null 2>&1 || true
 curl -sSLo "cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz" "https://github.com/containernetworking/plugins/releases/download/v${CNI_PLUGINS_VERSION}/cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz"
 curl -sSLo "cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz.sha256" "https://github.com/containernetworking/plugins/releases/download/v${CNI_PLUGINS_VERSION}/cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz.sha256"
 sha256sum -c "cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz.sha256"
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/kubernetes" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/kubernetes" >/dev/null 2>&1 || true
 curl -sSLo "crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz" "https://github.com/kubernetes-sigs/cri-tools/releases/download/v${CRICTL_VERSION}/crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz"
 curl -sSLo "crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz.sha256" "https://github.com/kubernetes-sigs/cri-tools/releases/download/v${CRICTL_VERSION}/crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz.sha256"
 printf "%s %s" "$(tr -d '[:space:]' < "crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz.sha256" )" "crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz" | sha256sum -c -
@@ -168,46 +168,46 @@ curl -sSLo "k9s_${OS^}_${ARCH}.tar.gz" "https://github.com/derailed/k9s/releases
 curl -sSLo "helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" "https://get.helm.sh/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz"
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/cilium" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/cilium" >/dev/null 2>&1 || true
 curl -sSLo "cilium-${OS}-${ARCH}.tar.gz" "https://github.com/cilium/cilium-cli/releases/download/v${CILIUM_CLI_VERSION}/cilium-${OS}-${ARCH}.tar.gz"
 curl -sSLo "cilium-${OS}-${ARCH}.tar.gz.sha256sum" "https://github.com/cilium/cilium-cli/releases/download/v${CILIUM_CLI_VERSION}/cilium-${OS}-${ARCH}.tar.gz.sha256sum"
 sha256sum -c "cilium-${OS}-${ARCH}.tar.gz.sha256sum"
 popd >/dev/null 2>&1 || true
 
 # Install Runc
-sudo install -m 755 "/tmp/provisioner/runc/runc.${ARCH}" "/usr/local/sbin/runc"
+sudo install -m 755 "/tmp/weaver/runc/runc.${ARCH}" "/usr/local/sbin/runc"
 
 # Install ContainerD
-sudo tar -C /usr/local -zxvf "/tmp/provisioner/containerd/containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz"
+sudo tar -C /usr/local -zxvf "/tmp/weaver/containerd/containerd-${CONTAINERD_VERSION}-${OS}-${ARCH}.tar.gz"
 
 # Install CNI Plugins
 sudo mkdir -p /opt/cni/bin
-sudo tar -C /opt/cni/bin -zxvf "/tmp/provisioner/cni/cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz"
+sudo tar -C /opt/cni/bin -zxvf "/tmp/weaver/cni/cni-plugins-${OS}-${ARCH}-v${CNI_PLUGINS_VERSION}.tgz"
 
 # Install CRICTL
-sudo tar -C /usr/local/bin -zxvf "/tmp/provisioner/kubernetes/crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz"
+sudo tar -C /usr/local/bin -zxvf "/tmp/weaver/kubernetes/crictl-v${CRICTL_VERSION}-${OS}-${ARCH}.tar.gz"
 
 # Install Kubernetes
-sudo install -m 755 "/tmp/provisioner/kubernetes/kubeadm" "/usr/bin/kubeadm"
-sudo install -m 755 "/tmp/provisioner/kubernetes/kubelet" "/usr/bin/kubelet"
-sudo install -m 755 "/tmp/provisioner/kubernetes/kubectl" "/usr/bin/kubectl"
+sudo install -m 755 "/tmp/weaver/kubernetes/kubeadm" "/usr/bin/kubeadm"
+sudo install -m 755 "/tmp/weaver/kubernetes/kubelet" "/usr/bin/kubelet"
+sudo install -m 755 "/tmp/weaver/kubernetes/kubectl" "/usr/bin/kubectl"
 
 sudo mkdir -p /usr/lib/systemd/system/kubelet.service.d
-sudo cp "/tmp/provisioner/kubernetes/kubelet.service" "/usr/lib/systemd/system/kubelet.service"
-sudo cp "/tmp/provisioner/kubernetes/10-kubeadm.conf" "/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
+sudo cp "/tmp/weaver/kubernetes/kubelet.service" "/usr/lib/systemd/system/kubelet.service"
+sudo cp "/tmp/weaver/kubernetes/10-kubeadm.conf" "/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
 
 # Install K9s
-sudo tar -C /usr/local/bin -zxvf "/tmp/provisioner/kubernetes/k9s_${OS^}_${ARCH}.tar.gz" k9s
+sudo tar -C /usr/local/bin -zxvf "/tmp/weaver/kubernetes/k9s_${OS^}_${ARCH}.tar.gz" k9s
 
 # Install Helm
-sudo tar -C /usr/local/bin --strip-components=1 -zxvf "/tmp/provisioner/kubernetes/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" "${OS}-${ARCH}/helm"
+sudo tar -C /usr/local/bin --strip-components=1 -zxvf "/tmp/weaver/kubernetes/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" "${OS}-${ARCH}/helm"
 
 # Install Cilium
-sudo tar -C /usr/local/bin -zxvf "/tmp/provisioner/cilium/cilium-${OS}-${ARCH}.tar.gz"
+sudo tar -C /usr/local/bin -zxvf "/tmp/weaver/cilium/cilium-${OS}-${ARCH}.tar.gz"
 
 # Install ContainerD Configuration
 sudo mkdir -p /etc/containerd
-sudo cp "/tmp/provisioner/containerd/containerd.service" "/usr/lib/systemd/system/containerd.service"
+sudo cp "/tmp/weaver/containerd/containerd.service" "/usr/lib/systemd/system/containerd.service"
 sudo /usr/local/bin/containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
 sudo sed -i.bak 's/^\(.*\)SystemdCgroup =.*$/\1SystemdCgroup = true/' /etc/containerd/config.toml
 
@@ -224,7 +224,7 @@ sudo rm -rf /etc/kubernetes /etc/cni/net.d /var/lib/etcd || true
 kube_bootstrap_token="$(kubeadm token generate)"
 machine_ip="$(ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}')"
 
-cat <<EOF | sudo tee /tmp/provisioner/kubernetes/kubeadm-init.yaml >/dev/null
+cat <<EOF | sudo tee /tmp/weaver/kubernetes/kubeadm-init.yaml >/dev/null
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
@@ -288,9 +288,9 @@ set -eo pipefail
 
 # Initialize Kubernetes Cluster
 if [[ -n "${RHEL8_DETECTED}" ]]; then
-  sudo kubeadm init --upload-certs --config /tmp/provisioner/kubernetes/kubeadm-init.yaml --ignore-preflight-errors=SystemVerification
+  sudo kubeadm init --upload-certs --config /tmp/weaver/kubernetes/kubeadm-init.yaml --ignore-preflight-errors=SystemVerification
 else
-  sudo kubeadm init --upload-certs --config /tmp/provisioner/kubernetes/kubeadm-init.yaml
+  sudo kubeadm init --upload-certs --config /tmp/weaver/kubernetes/kubeadm-init.yaml
 fi
 
 mkdir -p "${HOME}/.kube"
@@ -298,7 +298,7 @@ sudo cp -f /etc/kubernetes/admin.conf "${HOME}/.kube/config"
 sudo chown "${USER}:${GROUP}" "${HOME}/.kube/config"
 
 # Configure Cilium
-cat <<EOF | sudo tee /tmp/provisioner/cilium/cilium-config.yaml >/dev/null
+cat <<EOF | sudo tee /tmp/weaver/cilium/cilium-config.yaml >/dev/null
 # StepSecurity Required Features
 extraArgs:
   - --tofqdns-dns-reject-response-code=nameError
@@ -375,7 +375,7 @@ k8sClientRateLimit:
 EOF
 
 # Install Cilium CNI
-cilium install --version "${CILIUM_VERSION}" --values /tmp/provisioner/cilium/cilium-config.yaml
+cilium install --version "${CILIUM_VERSION}" --values /tmp/weaver/cilium/cilium-config.yaml
 
 # Restart Container and Kubelet (fix for cilium CNI not initializing - CNI not ready error)
 sudo sysctl --system >/dev/null

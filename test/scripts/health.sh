@@ -135,7 +135,7 @@ check_storage() {
   fi
 
   # quick check for CSI pods in kube-system
-  csi_pods=$($KUBECTL get pods -n kube-system --no-headers 2>/dev/null | grep -E 'csi|provisioner' || true)
+  csi_pods=$($KUBECTL get pods -n kube-system --no-headers 2>/dev/null | grep -E 'csi|weaver' || true)
   if [ -z "$csi_pods" ]; then
     warn "No CSI pods detected in kube-system (cluster may use in-tree or not provide dynamic provisioning)."
   else

@@ -12,8 +12,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func Test_StepKubectl_Fresh_Integration(t *testing.T) {
@@ -158,11 +158,11 @@ func Test_StepKubectl_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for kubectl is removed
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl")
 	require.Error(t, err)
 
 	// Verify binary files are removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -214,11 +214,11 @@ func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for kubectl was not created
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl")
 	require.Error(t, err)
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -272,15 +272,15 @@ func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an error
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl")
 	require.NoError(t, err)
 
 	// Verify downloaded binary is still around
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl/kubectl")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl/kubectl")
 	require.NoError(t, err)
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -334,7 +334,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -343,7 +343,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl/unpack")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -352,7 +352,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -407,7 +407,7 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -416,7 +416,7 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/provisioner/tmp/kubectl/unpack")
+	_, err = os.Stat("/opt/weaver/tmp/kubectl/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -425,6 +425,6 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }

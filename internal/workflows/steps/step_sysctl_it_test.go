@@ -11,9 +11,9 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/sysctl"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/sysctl"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func Test_ConfigureSysctlForKubernetes_Integration(t *testing.T) {

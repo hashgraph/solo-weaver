@@ -7,10 +7,10 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/kube"
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/kube"
+	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 const kubectlGetNodesCmd = "/usr/local/bin/kubectl get nodes"
@@ -199,7 +199,7 @@ func InitializeCluster() automa.Builder {
 			// Step 1: Pull kubeadm images
 			logx.As().Info().Msg("Pulling kubeadm images, this may take a while...")
 			pullImageCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/provisioner/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/weaver/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(pullImageCmd, "")
@@ -210,7 +210,7 @@ func InitializeCluster() automa.Builder {
 
 			// Step 2: Initialize cluster with kubeadm
 			initCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/provisioner/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(initCmd, "")
@@ -232,7 +232,7 @@ func InitializeCluster() automa.Builder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/provisioner/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")
