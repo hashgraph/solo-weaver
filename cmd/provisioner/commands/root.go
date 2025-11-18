@@ -73,7 +73,7 @@ func Execute(ctx context.Context) error {
 		initConfig(ctx)
 	})
 
-	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "config.yaml", "config file path")
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
 
 	// make flags mandatory
 	//_ = rootCmd.MarkPersistentFlagRequired("cfg")
