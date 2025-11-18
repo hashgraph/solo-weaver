@@ -209,6 +209,18 @@ tasks:
     cmds:
       - "go test -v -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
 
+  test:unit:ci:
+    desc: "Run unit tests in CI environment (currently disabled)"
+    cmds:
+      - |
+        if [ "${RUN_UNIT_TESTS_IN_CI}" = "true" ]; then
+          task test:unit
+        else
+          echo "⚠️ Unit tests skipped in CI. Set RUN_UNIT_TESTS_IN_CI=true to enable."
+          echo "These tests require /opt/weaver permissions and a 'weaver' user."
+          exit 0
+        fi
+
   test:integration:verbose:
     desc: "Run integration tests with verbose console output"
     deps:

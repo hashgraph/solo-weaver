@@ -9,6 +9,7 @@ import (
 	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/doctor"
+	"golang.hedera.com/solo-weaver/internal/version"
 )
 
 // examples:
@@ -118,10 +119,10 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
-	//logx.WithContext(ctx, map[string]string{
-	//	"commit":  version.Commit(),
-	//	"version": version.Number(),
-	//}).Debug().Msg("Initialized configuration")
+	logx.As().Debug().
+		Str("commit", version.Commit()).
+		Str("version", version.Number()).
+		Msg("Initialized configuration")
 }
 
 // createNodeSubcommand creates a "node" subcommand for a specific node type
