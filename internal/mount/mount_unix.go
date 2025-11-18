@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	os2 "golang.hedera.com/solo-provisioner/pkg/os"
+	"golang.hedera.com/solo-weaver/internal/core"
+	os2 "golang.hedera.com/solo-weaver/pkg/os"
 	"golang.org/x/sys/unix"
 )
 

@@ -11,8 +11,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	osx "golang.hedera.com/solo-provisioner/pkg/os"
+	"golang.hedera.com/solo-weaver/internal/core"
+	osx "golang.hedera.com/solo-weaver/pkg/os"
 )
 
 func TestDisableSwap_Integration(t *testing.T) {

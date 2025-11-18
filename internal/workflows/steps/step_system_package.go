@@ -6,11 +6,11 @@ import (
 
 	"github.com/bluet/syspkg"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/internal/workflows/notify"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 const (

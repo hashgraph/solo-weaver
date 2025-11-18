@@ -1,9 +1,9 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="true" type="GoApplicationRunConfiguration" factoryName="Go Application">
-    <module name="solo-provisioner" />
+    <module name="solo-weaver" />
     <working_directory value="$PROJECT_DIR$" />
     <kind value="PACKAGE" />
-    <package value="golang.hedera.com/solo-provisioner" />
+    <package value="golang.hedera.com/solo-weaver" />
     <directory value="$PROJECT_DIR$" />
     <filePath value="$PROJECT_DIR$" />
     <method v="2" />

@@ -1,18 +1,18 @@
 #!/bin/bash
 
-# Unified debug script for solo-provisioner
+# Unified debug script for solo-weaver
 # Usage: ./debug.sh app [args...]        - Debug application
 #        ./debug.sh test [package]       - Debug tests (default: ./pkg/software)
 
 set -e
 
-CONTAINER_NAME="solo-provisioner-debug"
+CONTAINER_NAME="solo-weaver-debug"
 DEBUG_PORT="2345"
 
 # Show usage if no arguments
 if [ $# -eq 0 ]; then
     echo "Usage:"
-    echo "  ./debug.sh app [args...]        - Debug provisioner application"
+    echo "  ./debug.sh app [args...]        - Debug weaver application"
     echo "  ./debug.sh test [package]       - Debug tests in package (default: all packages)"
     echo ""
     echo "Examples:"
@@ -37,8 +37,8 @@ case "$MODE" in
         echo "🚀 Starting application debug server in Docker container..."
         
         # Build the application first with debug symbols
-        echo "🏗️ Building provisioner with debug symbols..."
-        docker exec -it $CONTAINER_NAME bash -c "cd /app && go build -gcflags='all=-N -l' -o ./bin/provisioner-linux-amd64-debug ./cmd/provisioner"
+        echo "🏗️ Building weaver with debug symbols..."
+        docker exec -it $CONTAINER_NAME bash -c "cd /app && go build -gcflags='all=-N -l' -o ./bin/weaver-linux-amd64-debug ./cmd/weaver"
         
         # Start debug server for application
         echo "🔧 Starting Delve debug server for application on port $DEBUG_PORT..."
@@ -48,7 +48,7 @@ case "$MODE" in
         docker exec -it $CONTAINER_NAME bash -c "
             cd /app && 
             pkill dlv 2>/dev/null || true &&
-            dlv exec ./bin/provisioner-linux-amd64-debug --headless --listen=:$DEBUG_PORT --api-version=2 --accept-multiclient --continue=false -- $ARGS
+            dlv exec ./bin/weaver-linux-amd64-debug --headless --listen=:$DEBUG_PORT --api-version=2 --accept-multiclient --continue=false -- $ARGS
         "
         ;;
         

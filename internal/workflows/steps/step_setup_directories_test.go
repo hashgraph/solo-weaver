@@ -7,13 +7,13 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func TestSetupHomeDirectoryStructure_Integration(t *testing.T) {
 	// Use a real temp directory as the home
 	tmpHome := t.TempDir()
-	pp := core.NewProvisionerPaths(tmpHome)
+	pp := core.NewWeaverPaths(tmpHome)
 
 	step, err := SetupHomeDirectoryStructure(pp).Build()
 	require.NoError(t, err)

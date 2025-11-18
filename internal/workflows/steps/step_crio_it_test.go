@@ -12,8 +12,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func Test_StepCrio_Fresh_Integration(t *testing.T) {
@@ -157,55 +157,55 @@ func Test_StepCrio_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for crio is removed
-	_, err = os.Stat("/opt/provisioner/tmp/crio")
+	_, err = os.Stat("/opt/weaver/tmp/crio")
 	require.Error(t, err)
 
 	// Verify binary files are removed (from Uninstall method)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/bin/pinns")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/bin/pinns")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/bin/crictl")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/bin/crictl")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/libexec/crio/conmon")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/libexec/crio/conmon")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/libexec/crio/conmonrs")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/libexec/crio/conmonrs")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/libexec/crio/crun")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/libexec/crio/crun")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/libexec/crio/runc")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/libexec/crio/runc")
 	require.Error(t, err)
 
 	// Verify CNI plugins directory is removed
-	_, err = os.Stat("/opt/provisioner/sandbox/opt/cni/bin")
+	_, err = os.Stat("/opt/weaver/sandbox/opt/cni/bin")
 	require.Error(t, err)
 
 	// Verify configuration files are removed (from Uninstall method)
-	_, err = os.Stat("/opt/provisioner/sandbox/etc/cni/net.d/10-crio-bridge.conflist.disabled")
+	_, err = os.Stat("/opt/weaver/sandbox/etc/cni/net.d/10-crio-bridge.conflist.disabled")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/etc/crictl.yaml")
+	_, err = os.Stat("/opt/weaver/sandbox/etc/crictl.yaml")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/share/oci-umount/oci-umount.d/crio-umount.conf")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/share/oci-umount/oci-umount.d/crio-umount.conf")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/etc/crio/policy.json")
+	_, err = os.Stat("/opt/weaver/sandbox/etc/crio/policy.json")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/etc/crio/crio.conf.d/10-crio.conf")
+	_, err = os.Stat("/opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/share/man/man5/crio.conf.5")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/share/man/man5/crio.conf.5")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/share/man/man5/crio.conf.d.5")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/share/man/man5/crio.conf.d.5")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/share/man/man8/crio.8")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/share/man/man8/crio.8")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/share/bash-completion/completions/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/share/bash-completion/completions/crio")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/share/fish/completions/crio.fish")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/share/fish/completions/crio.fish")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/share/zsh/site-functions/_crio")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/share/zsh/site-functions/_crio")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.Error(t, err)
-	_, err = os.Stat("/opt/provisioner/sandbox/etc/containers/registries.conf.d/registries.conf")
+	_, err = os.Stat("/opt/weaver/sandbox/etc/containers/registries.conf.d/registries.conf")
 	require.Error(t, err)
 
 	// Verify symlinks and configuration files removed (from RemoveConfiguration method)
@@ -269,11 +269,11 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder for crio was not created
-	_, err = os.Stat("/opt/provisioner/tmp/crio")
+	_, err = os.Stat("/opt/weaver/tmp/crio")
 	require.Error(t, err)
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/crio")
 	require.Error(t, err)
 }
 
@@ -329,7 +329,7 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/provisioner/tmp/cri-o")
+	_, err = os.Stat("/opt/weaver/tmp/cri-o")
 	require.NoError(t, err)
 
 	// Check there are downloaded files in the crio directory
@@ -338,7 +338,7 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the crio directory")
 
 	// Verify binary files were not installed (since extraction failed)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/local/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err)
 }
 
@@ -392,7 +392,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an installation error
-	_, err = os.Stat("/opt/provisioner/tmp/cri-o")
+	_, err = os.Stat("/opt/weaver/tmp/cri-o")
 	require.NoError(t, err)
 
 	// Check there are downloaded files in the crio directory
@@ -401,7 +401,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the crio directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/crio")
 	require.Error(t, err)
 }
 
@@ -455,7 +455,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	_, err = os.Stat("/opt/provisioner/tmp/cri-o")
+	_, err = os.Stat("/opt/weaver/tmp/cri-o")
 	require.NoError(t, err)
 
 	// Check there are files in the tmp/crio directory
@@ -464,7 +464,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the tmp/crio directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/crio")
 	require.Error(t, err)
 }
 
@@ -527,11 +527,11 @@ func Test_StepCrio_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, configRollbackReport.Status)
 
 	// Verify installation was rolled back - download folder should be removed
-	_, err = os.Stat("/opt/provisioner/tmp/cri-o")
+	_, err = os.Stat("/opt/weaver/tmp/cri-o")
 	require.Error(t, err)
 
 	// Verify binary files were removed from sandbox
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/crio")
 	require.Error(t, err)
 
 	// Verify configuration was not applied
@@ -561,23 +561,23 @@ func Test_StepCrio_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
 	// Verify crio.service was installed in sandbox
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service should exist in sandbox")
 
 	// Verify .latest file was created with modified content
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
 	require.NoError(t, err, "crio.service.latest should exist")
 
 	// Verify systemd symlink was created
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should exist")
-	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget, "symlink should point to .latest file")
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget, "symlink should point to .latest file")
 
 	// Verify .latest file contains sandbox binary path
-	content, err := os.ReadFile("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
 	require.NoError(t, err, "should be able to read .latest file")
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/provisioner/sandbox/usr/local/bin/crio", ".latest file should contain sandbox crio path")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/usr/local/bin/crio", ".latest file should contain sandbox crio path")
 }
 
 func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing.T) {
@@ -612,12 +612,12 @@ func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify service configuration still exists and is valid
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
 	require.NoError(t, err, "crio.service.latest should still exist")
 
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should still exist")
-	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget)
 }
 
 func Test_StepCrio_ServiceConfiguration_PartiallyConfigured_Integration(t *testing.T) {
@@ -662,7 +662,7 @@ func Test_StepCrio_ServiceConfiguration_PartiallyConfigured_Integration(t *testi
 	// Verify systemd symlink was recreated
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should be recreated")
-	require.Equal(t, "/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget)
 }
 
 func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testing.T) {
@@ -679,7 +679,7 @@ func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testi
 
 	// Corrupt the .latest file by writing incorrect content
 	corruptedContent := "This is corrupted content"
-	err = os.WriteFile("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest", []byte(corruptedContent), core.DefaultFilePerm)
+	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", []byte(corruptedContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	//
@@ -705,10 +705,10 @@ func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testi
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify .latest file was fixed
-	content, err := os.ReadFile("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
 	require.NoError(t, err)
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/provisioner/sandbox/usr/local/bin/crio", ".latest file should contain correct sandbox path")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/usr/local/bin/crio", ".latest file should contain correct sandbox path")
 	require.NotEqual(t, corruptedContent, contentStr, ".latest file should be fixed")
 }
 
@@ -725,7 +725,7 @@ func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *test
 	require.NoError(t, report.Error)
 
 	// Verify configuration is in place
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
 	require.NoError(t, err, "crio.service.latest should exist before restoration")
 
 	_, err = os.Stat("/usr/lib/systemd/system/crio.service")
@@ -743,16 +743,16 @@ func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *test
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify configuration was restored (removed)
-	_, err = os.Stat("/opt/provisioner/sandbox/usr/lib/systemd/system/crio.service.latest")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
 	require.Error(t, err, "crio.service.latest should be removed after rollback")
 
 	_, err = os.Stat("/usr/lib/systemd/system/crio.service")
 	require.Error(t, err, "crio.service symlink should be removed after rollback")
 
 	// Verify installation was also rolled back
-	_, err = os.Stat("/opt/provisioner/sandbox/bin/crio")
+	_, err = os.Stat("/opt/weaver/sandbox/bin/crio")
 	require.Error(t, err, "crio binary should be removed after rollback")
 
-	_, err = os.Stat("/opt/provisioner/tmp/crio")
+	_, err = os.Stat("/opt/weaver/tmp/crio")
 	require.Error(t, err, "crio temp directory should be removed after rollback")
 }

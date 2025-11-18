@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
+	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 const KubeletServiceName = "kubelet"

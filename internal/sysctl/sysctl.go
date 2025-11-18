@@ -9,8 +9,8 @@ import (
 
 	"github.com/joomcode/errorx"
 	"github.com/lorenzosaino/go-sysctl"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/templates"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
 const (

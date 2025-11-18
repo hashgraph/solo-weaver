@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 type InstallerOption func(*baseInstaller)

@@ -34,8 +34,8 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	testify "github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/pkg/security"
-	"golang.hedera.com/solo-provisioner/pkg/security/principal"
+	"golang.hedera.com/solo-weaver/pkg/security"
+	"golang.hedera.com/solo-weaver/pkg/security/principal"
 )
 
 func chmodPermNotationToFileMode(perms string) fs.FileMode {
@@ -829,7 +829,7 @@ func TestUnixManager_WriteFile_Failures(t *testing.T) {
 // - After running ./standup.sh
 //   - cd /source/src/go-tools
 //   - make setup
-//   - sudo env PATH="$PATH" go test -v golang.hedera.com/solo-provisioner/pkg/fsx -run TestUnixManager_WriteOwnerRecursivelyFromRoot_IT
+//   - sudo env PATH="$PATH" go test -v golang.hedera.com/solo-weaver/pkg/fsx -run TestUnixManager_WriteOwnerRecursivelyFromRoot_IT
 func TestUnixManager_WriteOwnerRecursivelyFromRoot_AsRoot(t *testing.T) {
 	currentUser, err := user.Current()
 	testify.NoError(t, err)

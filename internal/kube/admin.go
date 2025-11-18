@@ -4,9 +4,9 @@ import (
 	"path"
 
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
-	"golang.hedera.com/solo-provisioner/pkg/security/principal"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/fsx"
+	"golang.hedera.com/solo-weaver/pkg/security/principal"
 )
 
 const (
@@ -49,8 +49,8 @@ func (m *KubeConfigManager) SetKubeDir(dir string) {
 // and sets the ownership to the current user. This allows kubectl to be used without
 // requiring root privileges and ensures the config is available for the root user.
 func (m *KubeConfigManager) Configure() error {
-	// Install kubeconfig for the provisioner user
-	if err := m.configureProvisionerKubeConfig(); err != nil {
+	// Install kubeconfig for the weaver user
+	if err := m.configureWeaverKubeConfig(); err != nil {
 		return err
 	}
 
@@ -62,21 +62,21 @@ func (m *KubeConfigManager) Configure() error {
 	return nil
 }
 
-// configureProvisionerKubeConfig installs kubeconfig in the provisioner user's home directory
+// configureWeaverKubeConfig installs kubeconfig in the weaver user's home directory
 // with proper ownership settings.
-func (m *KubeConfigManager) configureProvisionerKubeConfig() error {
-	// Get the provisioner service account
+func (m *KubeConfigManager) configureWeaverKubeConfig() error {
+	// Get the weaver service account
 	svcAcc := core.ServiceAccount()
 
-	// Lookup provisioner user and group
+	// Lookup weaver user and group
 	usr, err := m.principalManager.LookupUserByName(svcAcc.UserName)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to lookup provisioner user: %s", svcAcc.UserName)
+		return errorx.IllegalState.Wrap(err, "failed to lookup weaver user: %s", svcAcc.UserName)
 	}
 
 	grp, err := m.principalManager.LookupGroupByName(svcAcc.GroupName)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to lookup provisioner group: %s", svcAcc.GroupName)
+		return errorx.IllegalState.Wrap(err, "failed to lookup weaver group: %s", svcAcc.GroupName)
 	}
 
 	// Determine kubeconfig directory

@@ -1,4 +1,4 @@
-module golang.hedera.com/solo-provisioner
+module golang.hedera.com/solo-weaver
 
 go 1.25.2
 

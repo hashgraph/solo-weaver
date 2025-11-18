@@ -5,7 +5,7 @@ import (
 
 	"github.com/joomcode/errorx"
 )
-import "golang.hedera.com/solo-provisioner/pkg/security/principal"
+import "golang.hedera.com/solo-weaver/pkg/security/principal"
 
 var (
 	ErrorsNamespace       = errorx.NewNamespace("fsx")

@@ -1,3 +1,5 @@
+//go:build integration
+
 package steps
 
 import (
@@ -7,9 +9,9 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/blocknode"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/hardware"
+	"golang.hedera.com/solo-weaver/internal/blocknode"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 func TestBlockNodeConstants(t *testing.T) {
@@ -18,7 +20,7 @@ func TestBlockNodeConstants(t *testing.T) {
 	assert.Equal(t, "block-node", blocknode.Release)
 	assert.Equal(t, "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server", blocknode.Chart)
 	assert.Equal(t, "0.22.1", blocknode.Version)
-	assert.Equal(t, "/opt/provisioner/block-node-storage", blocknode.StorageBasePath)
+	assert.Equal(t, "/opt/weaver/block-node-storage", blocknode.StorageBasePath)
 	assert.Equal(t, "block-node-block-node-server", blocknode.ServiceName)
 	assert.Equal(t, "metallb.io/address-pool=public-address-pool", blocknode.MetalLBAnnotation)
 	assert.Equal(t, "block", core.NodeTypeBlock)

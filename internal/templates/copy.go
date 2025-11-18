@@ -4,8 +4,8 @@ import (
 	"os"
 	"path"
 
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 func CopyTemplateFile(src string, dst string) error {

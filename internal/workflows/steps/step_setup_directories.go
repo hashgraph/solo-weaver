@@ -6,16 +6,16 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/workflows/notify"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
-func SetupHomeDirectoryStructure(pp *core.ProvisionerPaths) automa.Builder {
+func SetupHomeDirectoryStructure(pp *core.WeaverPaths) automa.Builder {
 	return automa.NewStepBuilder().WithId("home_directories").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			if pp == nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.IllegalArgument.New("provisioner path is nil")))
+				return automa.FailureReport(stp, automa.WithError(errorx.IllegalArgument.New("weaver path is nil")))
 			}
 
 			mg, err := fsx.NewManager()

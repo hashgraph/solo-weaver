@@ -11,9 +11,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/tomlx"
-	"golang.hedera.com/solo-provisioner/pkg/hardware"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/tomlx"
+	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 const (

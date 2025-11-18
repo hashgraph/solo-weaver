@@ -10,10 +10,10 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/doctor"
-	"golang.hedera.com/solo-provisioner/internal/workflows"
-	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/doctor"
+	"golang.hedera.com/solo-weaver/internal/workflows"
+	"golang.hedera.com/solo-weaver/internal/workflows/steps"
 )
 
 // createNodeSetupCommand creates a setup command for a specific node type
@@ -28,7 +28,7 @@ func createNodeSetupCommand(nodeType string) *cobra.Command {
 				os.Exit(1)
 			}
 
-			logx.As().Debug().Strs("args", args).Str("nodeType", nodeType).Msg("Running solo provisioner node setup")
+			logx.As().Debug().Strs("args", args).Str("nodeType", nodeType).Msg("Running solo weaver node setup")
 
 			runNodeSetup(cmd.Context(), nodeType)
 		},

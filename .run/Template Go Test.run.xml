@@ -1,10 +1,10 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="true" type="GoTestRunConfiguration" factoryName="Go Test" show_console_on_std_err="true" show_console_on_std_out="true">
-    <module name="solo-provisioner" />
+    <module name="solo-weaver" />
     <working_directory value="$PROJECT_DIR$" />
     <useCustomBuildTags value="true" />
     <kind value="DIRECTORY" />
-    <package value="golang.hedera.com/solo-provisioner" />
+    <package value="golang.hedera.com/solo-weaver" />
     <directory value="$PROJECT_DIR$" />
     <filePath value="$PROJECT_DIR$" />
     <framework value="gotest" />

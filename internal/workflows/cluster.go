@@ -2,9 +2,9 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
-	"golang.hedera.com/solo-provisioner/pkg/software"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/workflows/steps"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func NewSetupClusterWorkflow(nodeType string) automa.Builder {

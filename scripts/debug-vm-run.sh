@@ -4,8 +4,8 @@
 set -e
 
 # --- Configuration ---
-VM_NAME="solo-provisioner-debian"
-VM_USER="${VM_USER:-provisioner}"
+VM_NAME="solo-weaver-debian"
+VM_USER="${VM_USER:-weaver}"
 
 # Get the absolute path to the project root (parent of scripts directory)
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
@@ -21,7 +21,7 @@ if [ -z "$VM_HOST" ]; then
   exit 1
 fi
 
-VM_PROJECT_PATH="/mnt/solo-provisioner"
+VM_PROJECT_PATH="/mnt/solo-weaver"
 SSH_OPTS="-i $SSH_PRIVATE_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
 # --- Script ---
@@ -53,7 +53,7 @@ if [ "$COMMAND" == "test" ]; then
 elif [ "$COMMAND" == "app" ]; then
     # Use exec mode instead of debug mode to avoid runtime issues
     # First build the binary, then run it with dlv exec
-    DLV_COMMAND+="go build -ldflags='-compressdwarf=false' -o /tmp/provisioner-debug ./cmd/provisioner && sudo ~/go/bin/dlv exec /tmp/provisioner-debug --listen=:2345 --headless=true --api-version=2 --accept-multiclient -- ${ARGS[@]}"
+    DLV_COMMAND+="go build -ldflags='-compressdwarf=false' -o /tmp/weaver-debug ./cmd/weaver && sudo ~/go/bin/dlv exec /tmp/weaver-debug --listen=:2345 --headless=true --api-version=2 --accept-multiclient -- ${ARGS[@]}"
 else
     echo "Invalid command: $COMMAND. Use 'test' or 'app'."
     exit 1

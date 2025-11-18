@@ -10,8 +10,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/internal/workflows/steps"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/workflows/steps"
 )
 
 // Reset returns a step that resets the Kubernetes cluster and cleans up all related resources

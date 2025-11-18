@@ -10,8 +10,8 @@ USER="$(id -un)"
 GROUP="$(id -gn)"
 readonly USER GROUP
 
-readonly PROVISIONER_HOME="/opt/solo/provisioner"
-readonly SANDBOX_DIR="${PROVISIONER_HOME}/sandbox"
+readonly WEAVER_HOME="/opt/solo/weaver"
+readonly SANDBOX_DIR="${WEAVER_HOME}/sandbox"
 readonly SANDBOX_BIN="${SANDBOX_DIR}/bin"
 readonly SANDBOX_LOCAL_BIN="${SANDBOX_DIR}/usr/local/bin"
 
@@ -107,21 +107,21 @@ sudo sysctl --system >/dev/null
 #sudo update-grub
 
 # Setup working directories
-mkdir -p /tmp/provisioner/utils
-mkdir -p /tmp/provisioner/cri-o/unpack
-mkdir -p /tmp/provisioner/kubernetes
-mkdir -p /tmp/provisioner/cilium
+mkdir -p /tmp/weaver/utils
+mkdir -p /tmp/weaver/cri-o/unpack
+mkdir -p /tmp/weaver/kubernetes
+mkdir -p /tmp/weaver/cilium
 
 # Download Components
-pushd "/tmp/provisioner/utils" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/utils" >/dev/null 2>&1 || true
 curl -sSLo "dasel_${OS}_${ARCH}" "https://github.com/TomWright/dasel/releases/download/v${DASEL_VERSION}/dasel_${OS}_${ARCH}"
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/cri-o" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/cri-o" >/dev/null 2>&1 || true
 curl -sSLo "cri-o.${ARCH}.v${CRIO_VERSION}.tar.gz" "https://storage.googleapis.com/cri-o/artifacts/cri-o.${ARCH}.v${CRIO_VERSION}.tar.gz"
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/kubernetes" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/kubernetes" >/dev/null 2>&1 || true
 curl -sSLo kubeadm "https://dl.k8s.io/release/v${KUBERNETES_VERSION}/bin/${OS}/${ARCH}/kubeadm"
 curl -sSLo kubelet "https://dl.k8s.io/release/v${KUBERNETES_VERSION}/bin/${OS}/${ARCH}/kubelet"
 curl -sSLo kubectl "https://dl.k8s.io/release/v${KUBERNETES_VERSION}/bin/${OS}/${ARCH}/kubectl"
@@ -132,7 +132,7 @@ curl -sSLo "k9s_${OS^}_${ARCH}.tar.gz" "https://github.com/derailed/k9s/releases
 curl -sSLo "helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" "https://get.helm.sh/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz"
 popd >/dev/null 2>&1 || true
 
-pushd "/tmp/provisioner/cilium" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/cilium" >/dev/null 2>&1 || true
 curl -sSLo "cilium-${OS}-${ARCH}.tar.gz" "https://github.com/cilium/cilium-cli/releases/download/v${CILIUM_CLI_VERSION}/cilium-${OS}-${ARCH}.tar.gz"
 curl -sSLo "cilium-${OS}-${ARCH}.tar.gz.sha256sum" "https://github.com/cilium/cilium-cli/releases/download/v${CILIUM_CLI_VERSION}/cilium-${OS}-${ARCH}.tar.gz.sha256sum"
 sha256sum -c "cilium-${OS}-${ARCH}.tar.gz.sha256sum"
@@ -141,19 +141,19 @@ popd >/dev/null 2>&1 || true
 # Ensure Cilium directory exists
 sudo mkdir -p /var/run/cilium
 
-# Setup Production Provisioner Folders
-sudo mkdir -p ${PROVISIONER_HOME}
-sudo mkdir -p ${PROVISIONER_HOME}/bin
-sudo mkdir -p ${PROVISIONER_HOME}/logs
-sudo mkdir -p ${PROVISIONER_HOME}/config
+# Setup Production Weaver Folders
+sudo mkdir -p ${WEAVER_HOME}
+sudo mkdir -p ${WEAVER_HOME}/bin
+sudo mkdir -p ${WEAVER_HOME}/logs
+sudo mkdir -p ${WEAVER_HOME}/config
 
-# Setup Provisioner Sandbox
+# Setup Weaver Sandbox
 sudo mkdir -p ${SANDBOX_DIR}
 sudo mkdir -p ${SANDBOX_DIR}/bin
 sudo mkdir -p ${SANDBOX_DIR}/etc/crio/keys
 sudo mkdir -p ${SANDBOX_DIR}/etc/default
 sudo mkdir -p ${SANDBOX_DIR}/etc/sysconfig
-sudo mkdir -p ${SANDBOX_DIR}/etc/provisioner
+sudo mkdir -p ${SANDBOX_DIR}/etc/weaver
 sudo mkdir -p ${SANDBOX_DIR}/etc/containers/registries.conf.d
 sudo mkdir -p ${SANDBOX_DIR}/etc/cni/net.d
 sudo mkdir -p ${SANDBOX_DIR}/etc/nri/conf.d
@@ -180,7 +180,7 @@ sudo mkdir -p ${SANDBOX_DIR}/opt/cni/bin
 sudo mkdir -p ${SANDBOX_DIR}/opt/nri/plugins
 
 # Setup Ownership and Permissions
-sudo chown -R "${USER}:${GROUP}" "${PROVISIONER_HOME}"
+sudo chown -R "${USER}:${GROUP}" "${WEAVER_HOME}"
 sudo chown -R "root:root" "${SANDBOX_DIR}"
 
 # Setup Bind Mounts
@@ -204,13 +204,13 @@ sudo mount /var/lib/kubelet
 sudo mount /var/run/cilium
 
 # Install dasel
-pushd "/tmp/provisioner/utils" >/dev/null 2>&1 || true
+pushd "/tmp/weaver/utils" >/dev/null 2>&1 || true
 sudo install -m 755 "dasel_${OS}_${ARCH}" "${SANDBOX_BIN}/dasel"
 popd >/dev/null 2>&1 || true
 
 # Install CRI-O
-sudo tar -C "/tmp/provisioner/cri-o/unpack" -zxvf "/tmp/provisioner/cri-o/cri-o.${ARCH}.v${CRIO_VERSION}.tar.gz"
-pushd "/tmp/provisioner/cri-o/unpack/cri-o" >/dev/null 2>&1 || true
+sudo tar -C "/tmp/weaver/cri-o/unpack" -zxvf "/tmp/weaver/cri-o/cri-o.${ARCH}.v${CRIO_VERSION}.tar.gz"
+pushd "/tmp/weaver/cri-o/unpack/cri-o" >/dev/null 2>&1 || true
 DESTDIR="${SANDBOX_DIR}" SYSTEMDDIR="/usr/lib/systemd/system" sudo -E "$(command -v bash)" ./install
 popd >/dev/null 2>&1 || true
 
@@ -218,9 +218,9 @@ popd >/dev/null 2>&1 || true
 sudo ln -sf "${SANDBOX_DIR}/etc/containers" /etc/containers
 
 # Install Kubernetes
-sudo install -m 755 "/tmp/provisioner/kubernetes/kubeadm" "${SANDBOX_BIN}/kubeadm"
-sudo install -m 755 "/tmp/provisioner/kubernetes/kubelet" "${SANDBOX_BIN}/kubelet"
-sudo install -m 755 "/tmp/provisioner/kubernetes/kubectl" "${SANDBOX_BIN}/kubectl"
+sudo install -m 755 "/tmp/weaver/kubernetes/kubeadm" "${SANDBOX_BIN}/kubeadm"
+sudo install -m 755 "/tmp/weaver/kubernetes/kubelet" "${SANDBOX_BIN}/kubelet"
+sudo install -m 755 "/tmp/weaver/kubernetes/kubectl" "${SANDBOX_BIN}/kubectl"
 
 sudo ln -sf "${SANDBOX_BIN}/kubeadm" /usr/local/bin/kubeadm
 sudo ln -sf "${SANDBOX_BIN}/kubelet" /usr/local/bin/kubelet
@@ -230,8 +230,8 @@ sudo ln -sf "${SANDBOX_BIN}/helm" /usr/local/bin/helm
 sudo ln -sf "${SANDBOX_BIN}/cilium" /usr/local/bin/cilium
 
 sudo mkdir -p ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d
-sudo cp "/tmp/provisioner/kubernetes/kubelet.service" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service"
-sudo cp "/tmp/provisioner/kubernetes/10-kubeadm.conf" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
+sudo cp "/tmp/weaver/kubernetes/kubelet.service" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service"
+sudo cp "/tmp/weaver/kubernetes/10-kubeadm.conf" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
 
 # Change kubelet service file to use the sandbox bin directory
 sudo sed -i "s|/usr/bin/kubelet|${SANDBOX_BIN}/kubelet|" "${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service"
@@ -276,13 +276,13 @@ sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.c
 sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/nri/nri.sock" '.crio.nri.nri_listen'
 
 # Install K9s
-sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/provisioner/kubernetes/k9s_${OS^}_${ARCH}.tar.gz" k9s
+sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/weaver/kubernetes/k9s_${OS^}_${ARCH}.tar.gz" k9s
 
 # Install Helm
-sudo tar -C ${SANDBOX_BIN} --strip-components=1 -zxvf "/tmp/provisioner/kubernetes/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" "${OS}-${ARCH}/helm"
+sudo tar -C ${SANDBOX_BIN} --strip-components=1 -zxvf "/tmp/weaver/kubernetes/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" "${OS}-${ARCH}/helm"
 
 # Install Cilium
-sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/provisioner/cilium/cilium-${OS}-${ARCH}.tar.gz"
+sudo tar -C ${SANDBOX_BIN} -zxvf "/tmp/weaver/cilium/cilium-${OS}-${ARCH}.tar.gz"
 
 # Setup Systemd Service SymLinks
 sudo ln -sf ${SANDBOX_DIR}/usr/lib/systemd/system/kubelet.service /usr/lib/systemd/system/kubelet.service
@@ -306,7 +306,7 @@ kube_bootstrap_token="$(${SANDBOX_BIN}/kubeadm token generate)"
 # WARNING: ip not found in docker container
 machine_ip="$(ip route get 1 | head -1 | sed 's/^.*src \(.*\)$/\1/' | awk '{print $1}')"
 
-cat <<EOF | sudo tee ${SANDBOX_DIR}/etc/provisioner/kubeadm-init.yaml >/dev/null
+cat <<EOF | sudo tee ${SANDBOX_DIR}/etc/weaver/kubeadm-init.yaml >/dev/null
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
@@ -371,13 +371,13 @@ set -eo pipefail
 
 # Initialize Kubernetes Cluster
 # WARNING: This failed in docker container, probably because we couldn't disable swap earlier
-sudo ${SANDBOX_BIN}/kubeadm init --upload-certs --config ${SANDBOX_DIR}/etc/provisioner/kubeadm-init.yaml
+sudo ${SANDBOX_BIN}/kubeadm init --upload-certs --config ${SANDBOX_DIR}/etc/weaver/kubeadm-init.yaml
 mkdir -p "${HOME}/.kube"
 sudo cp -f /etc/kubernetes/admin.conf "${HOME}/.kube/config"
 sudo chown "${USER}:${GROUP}" "${HOME}/.kube/config"
 
 # Configure Cilium
-cat <<EOF | sudo tee ${SANDBOX_DIR}/etc/provisioner/cilium-config.yaml >/dev/null
+cat <<EOF | sudo tee ${SANDBOX_DIR}/etc/weaver/cilium-config.yaml >/dev/null
 # StepSecurity Required Features
 extraArgs:
   - --tofqdns-dns-reject-response-code=nameError
@@ -463,7 +463,7 @@ daemon:
 EOF
 
 # Install Cilium CNI
-${SANDBOX_BIN}/cilium install --version "${CILIUM_VERSION}" --values ${SANDBOX_DIR}/etc/provisioner/cilium-config.yaml
+${SANDBOX_BIN}/cilium install --version "${CILIUM_VERSION}" --values ${SANDBOX_DIR}/etc/weaver/cilium-config.yaml
 
 # Restart Container and Kubelet (fix for cilium CNI not initializing - CNI not ready error)
 sudo sysctl --system >/dev/null

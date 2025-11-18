@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"golang.hedera.com/solo-provisioner/internal/core"
-	"golang.hedera.com/solo-provisioner/pkg/fsx"
-	"golang.hedera.com/solo-provisioner/pkg/security/principal"
+	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/pkg/fsx"
+	"golang.hedera.com/solo-weaver/pkg/security/principal"
 )
 
 func TestKubeConfigManager_Configure(t *testing.T) {
@@ -27,14 +27,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -63,7 +63,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(nil, errors.New("user not found"))
 			},
 			expectError:   true,
-			errorContains: "failed to lookup provisioner user",
+			errorContains: "failed to lookup weaver user",
 		},
 		{
 			name:          "error - lookup group fails",
@@ -76,7 +76,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(nil, errors.New("group not found"))
 			},
 			expectError:   true,
-			errorContains: "failed to lookup provisioner group",
+			errorContains: "failed to lookup weaver group",
 		},
 		{
 			name:          "error - create directory fails",
@@ -85,14 +85,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(errors.New("permission denied"))
 			},
 			expectError:   true,
@@ -105,14 +105,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -128,14 +128,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -187,14 +187,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -215,14 +215,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -244,14 +244,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -276,14 +276,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
@@ -310,14 +310,14 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				svcAcc := core.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/provisioner").AnyTimes()
+				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
 
 				mockGroup := principal.NewMockGroup(ctrl)
 
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
 				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
 
-				expectedKubeDir := path.Join("/home/provisioner", ".kube")
+				expectedKubeDir := path.Join("/home/weaver", ".kube")
 				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
 
 				expectedConfigDest := path.Join(expectedKubeDir, "config")
