@@ -4,15 +4,6 @@ import (
 	"fmt"
 )
 
-// NodeType represents a supported node type
-type NodeType string
-
-const (
-	NodeTypeLocal     NodeType = "local"
-	NodeTypeBlock     NodeType = "block"
-	NodeTypeConsensus NodeType = "consensus"
-)
-
 type Spec interface {
 	ValidateOS() error
 	ValidateCPU() error
