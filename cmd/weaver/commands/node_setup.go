@@ -45,14 +45,17 @@ func runNodeSetup(ctx context.Context, nodeType string) {
 
 	report := wb.Execute(ctx)
 	if report.Error != nil {
-		doctor.CheckErr(ctx, report.Error)
+		// Check for instructions in any nested reports before showing error
+		instructions := doctor.GetInstructionsFromReport(report)
+		doctor.CheckErr(ctx, report.Error, instructions)
 	}
 
 	// For each step that failed, run the doctor to diagnose the error
 	if len(report.StepReports) > 0 {
 		for _, stepReport := range report.StepReports {
 			if stepReport.Status == automa.StatusFailed {
-				doctor.CheckErr(ctx, stepReport.Error)
+				instructions := doctor.GetInstructionsFromReport(stepReport)
+				doctor.CheckErr(ctx, stepReport.Error, instructions)
 			}
 		}
 	}

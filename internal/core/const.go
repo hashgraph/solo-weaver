@@ -27,9 +27,9 @@ var (
 	pp     = NewWeaverPaths(DefaultWeaverHome)
 	svcAcc = security.ServiceAccount{
 		UserName:  "weaver",
-		UserId:    "1000",
+		UserId:    "2500",
 		GroupName: "weaver",
-		GroupId:   "1000",
+		GroupId:   "2500",
 	}
 )
 
