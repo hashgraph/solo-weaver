@@ -9,7 +9,7 @@ import (
 
 // SupportedNodeTypes returns all supported node types
 func SupportedNodeTypes() []string {
-	return []string{core.NodeTypeLocal, core.NodeTypeBlock, core.NodeTypeConsensus}
+	return []string{core.NodeTypeBlock, core.NodeTypeConsensus}
 }
 
 // SupportedProfiles returns all supported deployment profiles
