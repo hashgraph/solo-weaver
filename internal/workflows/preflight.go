@@ -46,7 +46,7 @@ func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 			logx.As().Info().
 				Str("node_type", nodeType).
 				Str("profile", profile).
-				Msg("Host profile retrieved and node type validated")
+				Msg("Host profile retrieved, node type and profile validated")
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
