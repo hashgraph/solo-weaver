@@ -2,9 +2,11 @@ package workflows
 
 import (
 	"context"
+	"fmt"
 	"os/user"
 
 	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"golang.hedera.com/solo-weaver/pkg/security"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -78,6 +80,151 @@ func CheckPrivilegesStep() automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Privilege validation step completed successfully")
+		})
+}
+
+// CheckWeaverUserStep validates that the weaver user and group exist with the correct IDs
+func CheckWeaverUserStep() automa.Builder {
+	return automa.NewStepBuilder().WithId("validate-weaver-user").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			weaverUsername := security.ServiceAccountUserName()
+			weaverUserId := security.ServiceAccountUserId()
+			weaverGroupName := security.ServiceAccountGroupName()
+			weaverGroupId := security.ServiceAccountGroupId()
+
+			// Check if user exists
+			weaverUser, userErr := user.Lookup(weaverUsername)
+			userExists := userErr == nil
+
+			// Check if group exists
+			weaverGroup, groupErr := user.LookupGroup(weaverGroupName)
+			groupExists := groupErr == nil
+
+			// Collect validation errors for user and group before returning
+			var errors []error
+			var instructions string
+
+			// Track mismatches in meta
+			if userExists && weaverUser.Uid != weaverUserId {
+				meta["user_exists"] = "true"
+				meta["user_id_mismatch"] = "true"
+				meta["expected_user_id"] = weaverUserId
+				meta["actual_user_id"] = weaverUser.Uid
+				errors = append(errors, errorx.IllegalState.New("weaver user exists with incorrect UID: expected %s, got %s", weaverUserId, weaverUser.Uid))
+				instructions += fmt.Sprintf("User '%s' exists but has incorrect UID.\n", weaverUsername)
+				instructions += fmt.Sprintf("Expected: %s, Found: %s\n\n", weaverUserId, weaverUser.Uid)
+			}
+
+			if groupExists && weaverGroup.Gid != weaverGroupId {
+				meta["group_exists"] = "true"
+				meta["group_id_mismatch"] = "true"
+				meta["expected_group_id"] = weaverGroupId
+				meta["actual_group_id"] = weaverGroup.Gid
+				errors = append(errors, errorx.IllegalState.New("weaver group exists with incorrect GID: expected %s, got %s", weaverGroupId, weaverGroup.Gid))
+				instructions += fmt.Sprintf("Group '%s' exists but has incorrect GID.\n", weaverGroupName)
+				instructions += fmt.Sprintf("Expected: %s, Found: %s\n\n", weaverGroupId, weaverGroup.Gid)
+			}
+
+			// If there are any errors, provide combined instructions
+			if len(errors) > 0 {
+				instructions += "Please update the user and/or group IDs as follows:\n\n"
+				// Suggest groupmod if group exists but has wrong GID
+				if groupExists && weaverGroup.Gid != weaverGroupId {
+					instructions += fmt.Sprintf("  sudo groupmod -g %s %s\n", weaverGroupId, weaverGroupName)
+				}
+				// Suggest usermod if user exists but has wrong UID
+				if userExists && weaverUser.Uid != weaverUserId {
+					instructions += fmt.Sprintf("  sudo usermod -u %s -g %s %s\n", weaverUserId, weaverGroupId, weaverUsername)
+				}
+				instructions += "\nNote: After changing user/group IDs, you may need to update file ownerships accordingly.\n"
+				meta["instructions"] = instructions
+
+				// Combine errors into one error message
+				var errMsg string
+				for i, err := range errors {
+					if i > 0 {
+						errMsg += "; "
+					}
+					errMsg += err.Error()
+				}
+
+				return automa.FailureReport(stp,
+					automa.WithError(errorx.IllegalState.New(errMsg)),
+					automa.WithMetadata(meta))
+			}
+
+			// If either user or group doesn't exist, provide creation instructions
+			if !userExists || !groupExists {
+				meta["user_exists"] = fmt.Sprintf("%t", userExists)
+				meta["group_exists"] = fmt.Sprintf("%t", groupExists)
+
+				if !userExists && !groupExists {
+					instructions = fmt.Sprintf("The user '%s' and group '%s' do not exist.\n\n", weaverUsername, weaverGroupName)
+					instructions += "Please create them with the following commands:\n\n"
+					instructions += fmt.Sprintf("  sudo groupadd -g %s %s\n", weaverGroupId, weaverGroupName)
+					instructions += fmt.Sprintf("  sudo useradd -u %s -g %s -m -s /bin/bash %s\n\n", weaverUserId, weaverGroupId, weaverUsername)
+					instructions += "These commands will:\n"
+					instructions += fmt.Sprintf("  • Create group '%s' with GID %s\n", weaverGroupName, weaverGroupId)
+					instructions += fmt.Sprintf("  • Create user '%s' with UID %s\n", weaverUsername, weaverUserId)
+					instructions += "  • Create a home directory (-m)\n"
+					instructions += "  • Set bash as the default shell"
+				} else if !userExists {
+					instructions = fmt.Sprintf("The user '%s' does not exist.\n\n", weaverUsername)
+					instructions += "Please create it with the following command:\n\n"
+					instructions += fmt.Sprintf("  sudo useradd -u %s -g %s -m -s /bin/bash %s\n\n", weaverUserId, weaverGroupId, weaverUsername)
+					instructions += "This will create the user with:\n"
+					instructions += fmt.Sprintf("  • UID: %s\n", weaverUserId)
+					instructions += fmt.Sprintf("  • Primary group: %s (GID %s)\n", weaverGroupName, weaverGroupId)
+					instructions += "  • Home directory with bash shell"
+				} else {
+					instructions = fmt.Sprintf("The weaver group '%s' does not exist.\n\n", weaverGroupName)
+					instructions += "Please create it with the following command:\n\n"
+					instructions += fmt.Sprintf("  sudo groupadd -g %s %s\n\n", weaverGroupId, weaverGroupName)
+					instructions += fmt.Sprintf("This will create the group with GID %s.", weaverGroupId)
+				}
+
+				meta["instructions"] = instructions
+
+				var errMsg string
+				if !userExists && !groupExists {
+					errMsg = fmt.Sprintf("weaver user '%s' and group '%s' do not exist", weaverUsername, weaverGroupName)
+				} else if !userExists {
+					errMsg = fmt.Sprintf("weaver user '%s' does not exist", weaverUsername)
+				} else {
+					errMsg = fmt.Sprintf("weaver group '%s' does not exist", weaverGroupName)
+				}
+
+				return automa.FailureReport(stp,
+					automa.WithError(errorx.IllegalState.New(errMsg)),
+					automa.WithMetadata(meta))
+			}
+
+			// Both user and group exist with correct IDs
+			meta["user_exists"] = "true"
+			meta["group_exists"] = "true"
+			meta["user_id"] = weaverUserId
+			meta["group_id"] = weaverGroupId
+
+			logx.As().Info().
+				Str("user", weaverUsername).
+				Str("user_id", weaverUserId).
+				Str("group", weaverGroupName).
+				Str("group_id", weaverGroupId).
+				Msg("Weaver user and group validated")
+
+			return automa.SuccessReport(stp, automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Starting weaver user validation")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Weaver user validation failed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Weaver user validation step completed successfully")
 		})
 }
 
@@ -207,6 +354,7 @@ func NewNodeSafetyCheckWorkflow(nodeType string) automa.Builder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-preflight").Steps(
 		CheckPrivilegesStep(),
+		CheckWeaverUserStep(),
 		CheckHostProfileStep(nodeType),
 		CheckOSStep(nodeType),
 		CheckCPUStep(nodeType),

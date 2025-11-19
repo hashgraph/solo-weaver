@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"strings"
 	"time"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/config"
@@ -224,32 +226,78 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 }
 
 // CheckErr prints diagnosis and exit with error code 1
-func CheckErr(ctx context.Context, err error) {
+// Optional instructions can be provided to give additional context to the user
+func CheckErr(ctx context.Context, err error, instructions ...string) {
+
 	logx.As().Error().Err(err).Msg("error occurred")
 	fmt.Printf("%+v\n", err)
 	resp := Diagnose(ctx, err)
-	fmt.Println("\n************************************** Error Diagnostics ******************************************")
-	fmt.Printf("*\tError: %s\n", resp.Message)
-	fmt.Printf("*\tCause: %s\n", resp.Cause)
-	fmt.Printf("*\tError Type: %s\n", resp.ErrorType)
-	fmt.Printf("*\tError Code: %d\n", resp.Code)
-	fmt.Printf("*\tCommit: %s\n", resp.Commit)
-	fmt.Printf("*\tVersion: %s\n", resp.Version)
-	fmt.Printf("*\tPid: %d\n", resp.Pid)
+
+	fmt.Printf("\n%s%s************************************** Error Diagnostics ******************************************%s\n", Bold, Red, Reset)
+	fmt.Printf("%s*%s\t%sError:%s %s\n", Red, Reset, Bold+White, Reset, resp.Message)
+	if resp.Cause != "" {
+		fmt.Printf("%s*%s\t%sCause:%s %s\n", Red, Reset, Bold+White, Reset, resp.Cause)
+	}
+	fmt.Printf("%s*%s\t%sError Type:%s %s\n", Red, Reset, Bold+White, Reset, resp.ErrorType)
+	fmt.Printf("%s*%s\t%sError Code:%s %d\n", Red, Reset, Bold+White, Reset, resp.Code)
+	fmt.Printf("%s*%s\t%sCommit:%s %s\n", Red, Reset, Gray, Reset, resp.Commit)
+	fmt.Printf("%s*%s\t%sPid:%s %d\n", Red, Reset, Gray, Reset, resp.Pid)
+	fmt.Printf("%s*%s\t%sTraceId: %s\n", Red, Reset, Gray, Reset, resp.TraceId)
+	fmt.Printf("%s*%s\t%sVersion:%s %s\n", Red, Reset, Gray, Reset, resp.Version)
 	if resp.Logfile != "" {
-		fmt.Printf("*\tLogfile: %s\n", resp.Logfile)
+		fmt.Printf("%s*%s\t%sLogfile:%s %s\n", Red, Reset, Cyan, Reset, resp.Logfile)
 	}
 	if resp.ProfilingSnapshots != nil {
-		fmt.Println("*\tProfiling:")
+		fmt.Printf("%s*%s\t%sProfiling:%s\n", Red, Reset, Cyan, Reset)
 		for key, snapshotFile := range resp.ProfilingSnapshots {
-			fmt.Printf("*\t  - %s: %s\n", key, snapshotFile)
+			fmt.Printf("%s*%s\t  %s- %s:%s %s\n", Red, Reset, Cyan, key, Reset, snapshotFile)
 		}
 	}
-	fmt.Printf("*\tTraceId: %s\n", resp.TraceId)
-	fmt.Println("****************************************** Resolution *********************************************")
-	for _, r := range resp.Resolution {
-		fmt.Printf("*\t%s\n", r)
+	fmt.Printf("%s%s***************************************************************************************************%s\n", Bold, Red, Reset)
+	fmt.Printf("\n%s%s****************************************** Resolution *********************************************%s\n", Bold, Yellow, Reset)
+
+	// Print custom instructions first if provided
+	if len(instructions) > 0 && instructions[0] != "" {
+		for _, line := range strings.Split(instructions[0], "\n") {
+			if line == "" {
+				fmt.Printf("%s*%s\n", Yellow, Reset)
+			} else {
+				fmt.Printf("%s*%s\t%s\n", Yellow, Reset, Bold+White+line+Reset)
+			}
+		}
+		if len(resp.Resolution) > 0 {
+			fmt.Printf("%s*%s\n", Yellow, Reset)
+		}
 	}
-	fmt.Println("***************************************************************************************************")
+
+	// Print default resolution steps
+	for _, r := range resp.Resolution {
+		fmt.Printf("%s*%s\t%s\n", Yellow, Reset, White+r+Reset)
+	}
+
+	fmt.Printf("%s%s***************************************************************************************************%s\n", Bold, Yellow, Reset)
+
 	os.Exit(1)
+}
+
+// GetInstructionsFromReport recursively searches for instructions in report metadata.
+// Returns the first non-empty instructions found in the report tree, or an empty string if none exist.
+func GetInstructionsFromReport(report *automa.Report) string {
+	if report == nil {
+		return ""
+	}
+
+	// Check if this report has instructions
+	if instructions, ok := report.Metadata["instructions"]; ok {
+		return instructions
+	}
+
+	// Recursively check nested step reports
+	for _, stepReport := range report.StepReports {
+		if instructions := GetInstructionsFromReport(stepReport); instructions != "" {
+			return instructions
+		}
+	}
+
+	return ""
 }
