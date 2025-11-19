@@ -242,7 +242,7 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 	fmt.Printf("%s*%s\t%sError Code:%s %d\n", Red, Reset, Bold+White, Reset, resp.Code)
 	fmt.Printf("%s*%s\t%sCommit:%s %s\n", Red, Reset, Gray, Reset, resp.Commit)
 	fmt.Printf("%s*%s\t%sPid:%s %d\n", Red, Reset, Gray, Reset, resp.Pid)
-	fmt.Printf("%s*%s\t%sTraceId: %s\n", Red, Reset, Gray, Reset, resp.TraceId)
+	fmt.Printf("%s*%s\t%sTraceId:%s %s\n", Red, Reset, Gray, Reset, resp.TraceId)
 	fmt.Printf("%s*%s\t%sVersion:%s %s\n", Red, Reset, Gray, Reset, resp.Version)
 	if resp.Logfile != "" {
 		fmt.Printf("%s*%s\t%sLogfile:%s %s\n", Red, Reset, Cyan, Reset, resp.Logfile)

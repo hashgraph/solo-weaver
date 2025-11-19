@@ -42,7 +42,7 @@ const (
 	// that should be present after successful CRI-O installation. This includes
 	// standard plugins like bridge, host-local, loopback, portmap, etc.
 	// The count is based on the CNI plugins bundled with the CRI-O distribution.
-	ExpectedCniPluginCount = 20
+	ExpectedCniPluginCount = 21
 )
 
 var (
@@ -659,12 +659,16 @@ func (ci *crioInstaller) areBinariesInstalled(sandboxDir string) (bool, error) {
 		return false, NewVersionNotFoundError(ci.software.Name, ci.versionToBeInstalled)
 	}
 	for _, binary := range versionInfo.Binaries {
+		// Check if binary mapping exists FIRST
+		pathInSandbox, found := binaryFilesMapping[binary.Name]
+		if !found || pathInSandbox == "" {
+			return false, errorx.IllegalState.New("binary mapping not found for: %s (this is likely a configuration error)", binary.Name)
+		}
 
 		// Check if binary exists in the sandbox
-		pathInSandbox := binaryFilesMapping[binary.Name]
 		if _, exists, err := ci.fileManager.PathExists(pathInSandbox); err != nil {
-			return false, errorx.IllegalState.Wrap(err, "failed to check binary existence: %s", binary)
-		} else if !exists || pathInSandbox == "" {
+			return false, errorx.IllegalState.Wrap(err, "failed to check binary existence: %s at path: %s", binary.Name, pathInSandbox)
+		} else if !exists {
 			return false, nil
 		}
 
@@ -680,7 +684,7 @@ func (ci *crioInstaller) areBinariesInstalled(sandboxDir string) (bool, error) {
 
 		err := VerifyChecksum(pathInSandbox, checksum.Value, checksum.Algorithm)
 		if err != nil {
-			return false, errorx.IllegalState.Wrap(err, "checksum verification failed for binary: %s", binary)
+			return false, errorx.IllegalState.Wrap(err, "checksum verification failed for binary: %s at path: %s", binary.Name, pathInSandbox)
 		}
 	}
 
