@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"os"
 	"path"
 
 	"github.com/joomcode/errorx"
@@ -45,9 +46,9 @@ func (m *KubeConfigManager) SetKubeDir(dir string) {
 	m.kubeDir = dir
 }
 
-// Configure copies the kubeconfig file to the user's home directory and to /root/.kube,
-// and sets the ownership to the current user. This allows kubectl to be used without
-// requiring root privileges and ensures the config is available for the root user.
+// Configure copies the kubeconfig file to the user's home directory, to /root/.kube,
+// and to the current user's directory. This allows kubectl to be used without
+// requiring root privileges and ensures the config is available for all relevant users.
 func (m *KubeConfigManager) Configure() error {
 	// Install kubeconfig for the weaver user
 	if err := m.configureWeaverKubeConfig(); err != nil {
@@ -56,6 +57,11 @@ func (m *KubeConfigManager) Configure() error {
 
 	// Install kubeconfig for the root user
 	if err := m.configureRootKubeConfig(); err != nil {
+		return err
+	}
+
+	// Install kubeconfig for the current user (if running with sudo)
+	if err := m.configureCurrentUserKubeConfig(); err != nil {
 		return err
 	}
 
@@ -138,6 +144,61 @@ func (m *KubeConfigManager) configureRootKubeConfig() error {
 	err = m.fsManager.WriteOwner(rootKubeDir, rootUser, rootGroup, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to set ownership of root .kube directory: %q", rootKubeDir)
+	}
+
+	return nil
+}
+
+// configureCurrentUserKubeConfig installs kubeconfig in the current user's home directory.
+// This is particularly useful when the application is run with sudo, as it copies the config
+// to the original user's home directory (obtained from SUDO_USER environment variable).
+func (m *KubeConfigManager) configureCurrentUserKubeConfig() error {
+	// Get the current user from SUDO_USER environment variable
+	// This contains the username of the user who invoked sudo
+	sudoUser := os.Getenv("SUDO_USER")
+	if sudoUser == "" {
+		// If SUDO_USER is not set, the command wasn't run with sudo
+		// In this case, we skip this configuration step
+		return nil
+	}
+
+	// Don't configure if SUDO_USER is root (already handled by configureRootKubeConfig)
+	if sudoUser == "root" {
+		return nil
+	}
+
+	// Lookup the sudo user
+	currentUser, err := m.principalManager.LookupUserByName(sudoUser)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to lookup current user: %s", sudoUser)
+	}
+
+	// Get the user's primary group
+	currentGroup := currentUser.PrimaryGroup()
+	if currentGroup == nil {
+		return errorx.IllegalState.New("current user %s has no primary group", sudoUser)
+	}
+
+	// Determine kubeconfig directory
+	currentUserKubeDir := path.Join(currentUser.HomeDir(), ".kube")
+
+	// Create .kube directory
+	err = m.fsManager.CreateDirectory(currentUserKubeDir, false)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s directory", currentUserKubeDir)
+	}
+
+	// Copy kubeconfig file
+	currentUserKubeConfigDest := path.Join(currentUserKubeDir, "config")
+	err = m.fsManager.CopyFile(kubeConfigSourcePath, currentUserKubeConfigDest, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to copy kubeconfig file %q to %q", kubeConfigSourcePath, currentUserKubeConfigDest)
+	}
+
+	// Set proper ownership to the current user
+	err = m.fsManager.WriteOwner(currentUserKubeDir, currentUser, currentGroup, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to set ownership of current user .kube directory: %q", currentUserKubeDir)
 	}
 
 	return nil
