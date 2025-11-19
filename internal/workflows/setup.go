@@ -9,12 +9,12 @@ import (
 
 // NewNodeSetupWorkflow creates a comprehensive setup workflow for any node type
 // It runs preflight checks first, then performs the actual setup
-func NewNodeSetupWorkflow(nodeType string) automa.Builder {
+func NewNodeSetupWorkflow(nodeType string, profile string) automa.Builder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-setup").
 		Steps(
 			// First run preflight checks to ensure system readiness
-			NewNodeSafetyCheckWorkflow(nodeType),
+			NewNodeSafetyCheckWorkflow(nodeType, profile),
 			// Then perform the actual setup
 			steps.SetupHomeDirectoryStructure(core.Paths()),
 			steps.RefreshSystemPackageIndex(),

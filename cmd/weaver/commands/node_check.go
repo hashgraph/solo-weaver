@@ -13,7 +13,9 @@ import (
 
 // createNodeCheckCommand creates a check command for a specific node type
 func createNodeCheckCommand(nodeType string) *cobra.Command {
-	return &cobra.Command{
+	var profile string
+
+	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Runs safety checks to validate system readiness for " + nodeType + " nodes",
 		Long:  "Runs safety checks to validate system readiness for deploying " + nodeType + " node components",
@@ -23,17 +25,27 @@ func createNodeCheckCommand(nodeType string) *cobra.Command {
 				os.Exit(1)
 			}
 
-			logx.As().Debug().Strs("args", args).Str("nodeType", nodeType).Msg("Running solo weaver preflight checks")
+			logx.As().Debug().
+				Strs("args", args).
+				Str("nodeType", nodeType).
+				Str("profile", profile).
+				Msg("Running solo weaver preflight checks")
 
-			runNodeSafetyCheck(cmd.Context(), nodeType)
+			runNodeSafetyCheck(cmd.Context(), nodeType, profile)
 		},
 	}
+
+	cmd.Flags().StringVarP(&profile, "profile", "p", "",
+		"Deployment profile (local, perfnet, testnet, mainnet)")
+	_ = cmd.MarkFlagRequired("profile")
+
+	return cmd
 }
 
 // runNodeSafetyCheck runs safety checks for a specific node type
-func runNodeSafetyCheck(ctx context.Context, nodeType string) {
+func runNodeSafetyCheck(ctx context.Context, nodeType string, profile string) {
 	// get an instance of preflight workflow for the specific node type
-	wb, err := workflows.NewNodeSafetyCheckWorkflow(nodeType).Build()
+	wb, err := workflows.NewNodeSafetyCheckWorkflow(nodeType, profile).Build()
 	if err != nil {
 		doctor.CheckErr(ctx, err)
 	}
@@ -55,5 +67,9 @@ func runNodeSafetyCheck(ctx context.Context, nodeType string) {
 		}
 	}
 
-	logx.As().Info().Interface("report", report).Str("nodeType", nodeType).Msg("Node preflight checks completed successfully")
+	logx.As().Info().
+		Interface("report", report).
+		Str("nodeType", nodeType).
+		Str("profile", profile).
+		Msg("Node preflight checks completed successfully")
 }

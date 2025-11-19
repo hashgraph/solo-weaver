@@ -13,12 +13,10 @@ import (
 )
 
 // examples:
-// ./weaver block node check
-// ./weaver block node setup --config ./config.yaml
-// ./weaver consensus node check
-// ./weaver consensus node setup --config ./config.yaml
-// ./weaver local node check
-// ./weaver local node setup --config ./config.yaml
+// ./weaver block node check --profile=local
+// ./weaver block node setup --config ./config.yaml --profile=mainnet
+// ./weaver consensus node check --profile=testnet
+// ./weaver consensus node setup --config ./config.yaml --profile=perfnet
 
 // NodeTypeConfig defines the configuration for a node type
 type NodeTypeConfig struct {
@@ -48,19 +46,12 @@ var (
 		Short: "Commands for consensus node type",
 		Long:  "Commands for consensus node type",
 	}
-
-	localCmd = &cobra.Command{
-		Use:   "local",
-		Short: "Commands for local node type",
-		Long:  "Commands for local node type",
-	}
 )
 
 // nodeTypeConfigs defines all supported node types and their configuration
 var nodeTypeConfigs = []NodeTypeConfig{
 	{Name: core.NodeTypeBlock, ParentCmd: blockCmd},
 	{Name: core.NodeTypeConsensus, ParentCmd: consensusCmd},
-	{Name: core.NodeTypeLocal, ParentCmd: localCmd},
 }
 
 // Execute executes the root command.

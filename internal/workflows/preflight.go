@@ -14,13 +14,13 @@ import (
 	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
-// createNodeSpec creates the appropriate node spec based on node type and host profile
-func createNodeSpec(nodeType string, hostProfile hardware.HostProfile) (hardware.Spec, error) {
-	return hardware.CreateNodeSpec(nodeType, hostProfile)
+// createNodeSpec creates the appropriate node spec based on node type, profile and host profile
+func createNodeSpec(nodeType string, profile string, hostProfile hardware.HostProfile) (hardware.Spec, error) {
+	return hardware.CreateNodeSpec(nodeType, profile, hostProfile)
 }
 
-// CheckHostProfileStep retrieves host profile and validates node type
-func CheckHostProfileStep(nodeType string) automa.Builder {
+// CheckHostProfileStep retrieves host profile and validates node type and profile
+func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-host-profile").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Use the new HostProfile abstraction
@@ -35,7 +35,18 @@ func CheckHostProfileStep(nodeType string) automa.Builder {
 							nodeType, hardware.SupportedNodeTypes())))
 			}
 
-			logx.As().Info().Str("node_type", nodeType).Msg("Host profile retrieved and node type validated")
+			// Validate profile
+			if !hardware.IsValidProfile(profile) {
+				return automa.FailureReport(stp,
+					automa.WithError(
+						errorx.IllegalArgument.New("unsupported profile: %s. Supported profiles: %v",
+							profile, hardware.SupportedProfiles())))
+			}
+
+			logx.As().Info().
+				Str("node_type", nodeType).
+				Str("profile", profile).
+				Msg("Host profile retrieved, node type and profile validated")
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -229,11 +240,11 @@ func CheckWeaverUserStep() automa.Builder {
 }
 
 // CheckOSStep validates OS requirements for a specific node type
-func CheckOSStep(nodeType string) automa.Builder {
+func CheckOSStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-os").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, hostProfile)
+			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -259,11 +270,11 @@ func CheckOSStep(nodeType string) automa.Builder {
 }
 
 // CheckCPUStep validates CPU requirements for a specific node type
-func CheckCPUStep(nodeType string) automa.Builder {
+func CheckCPUStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-cpu").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, hostProfile)
+			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -291,11 +302,11 @@ func CheckCPUStep(nodeType string) automa.Builder {
 }
 
 // CheckMemoryStep validates memory requirements for a specific node type
-func CheckMemoryStep(nodeType string) automa.Builder {
+func CheckMemoryStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-memory").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, hostProfile)
+			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -320,11 +331,11 @@ func CheckMemoryStep(nodeType string) automa.Builder {
 }
 
 // CheckStorageStep validates storage requirements for a specific node type
-func CheckStorageStep(nodeType string) automa.Builder {
+func CheckStorageStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-storage").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, hostProfile)
+			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -350,16 +361,16 @@ func CheckStorageStep(nodeType string) automa.Builder {
 }
 
 // NewNodeSafetyCheckWorkflow creates a safety check workflow for any node type
-func NewNodeSafetyCheckWorkflow(nodeType string) automa.Builder {
+func NewNodeSafetyCheckWorkflow(nodeType string, profile string) automa.Builder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-preflight").Steps(
 		CheckPrivilegesStep(),
 		CheckWeaverUserStep(),
-		CheckHostProfileStep(nodeType),
-		CheckOSStep(nodeType),
-		CheckCPUStep(nodeType),
-		CheckMemoryStep(nodeType),
-		CheckStorageStep(nodeType),
+		CheckHostProfileStep(nodeType, profile),
+		CheckOSStep(nodeType, profile),
+		CheckCPUStep(nodeType, profile),
+		CheckMemoryStep(nodeType, profile),
+		CheckStorageStep(nodeType, profile),
 		//CheckDockerStep(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

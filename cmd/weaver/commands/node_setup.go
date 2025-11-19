@@ -18,7 +18,9 @@ import (
 
 // createNodeSetupCommand creates a setup command for a specific node type
 func createNodeSetupCommand(nodeType string) *cobra.Command {
-	return &cobra.Command{
+	var profile string
+
+	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Installs prerequisites and kubernetes for deploying " + nodeType + " network components",
 		Long:  "Installs the system prerequisites and kubernetes for deploying " + nodeType + " network components",
@@ -28,17 +30,27 @@ func createNodeSetupCommand(nodeType string) *cobra.Command {
 				os.Exit(1)
 			}
 
-			logx.As().Debug().Strs("args", args).Str("nodeType", nodeType).Msg("Running solo weaver node setup")
+			logx.As().Debug().
+				Strs("args", args).
+				Str("nodeType", nodeType).
+				Str("profile", profile).
+				Msg("Running solo weaver node setup")
 
-			runNodeSetup(cmd.Context(), nodeType)
+			runNodeSetup(cmd.Context(), nodeType, profile)
 		},
 	}
+
+	cmd.Flags().StringVarP(&profile, "profile", "p", "",
+		"Deployment profile (local, perfnet, testnet, mainnet)")
+	_ = cmd.MarkFlagRequired("profile")
+
+	return cmd
 }
 
 // runNodeSetup runs the setup workflow for a specific node type
-func runNodeSetup(ctx context.Context, nodeType string) {
+func runNodeSetup(ctx context.Context, nodeType string, profile string) {
 	// get an instance of cluster setup workflow for the specific node type
-	wb, err := workflows.NewSetupClusterWorkflow(nodeType).Build()
+	wb, err := workflows.NewSetupClusterWorkflow(nodeType, profile).Build()
 	if err != nil {
 		doctor.CheckErr(ctx, err)
 	}
@@ -60,7 +72,10 @@ func runNodeSetup(ctx context.Context, nodeType string) {
 		}
 	}
 
-	logx.As().Info().Str("nodeType", nodeType).Msg("Node setup completed successfully")
+	logx.As().Info().
+		Str("nodeType", nodeType).
+		Str("profile", profile).
+		Msg("Node setup completed successfully")
 
 	timestamp := time.Now().Format("20060102_150405")
 	reportPath := path.Join(core.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))

@@ -9,7 +9,12 @@ import (
 
 // SupportedNodeTypes returns all supported node types
 func SupportedNodeTypes() []string {
-	return []string{core.NodeTypeLocal, core.NodeTypeBlock, core.NodeTypeConsensus}
+	return []string{core.NodeTypeBlock, core.NodeTypeConsensus}
+}
+
+// SupportedProfiles returns all supported deployment profiles
+func SupportedProfiles() []string {
+	return []string{core.ProfileLocal, core.ProfilePerfnet, core.ProfileTestnet, core.ProfileMainnet}
 }
 
 // IsValidNodeType checks if the given node type is supported
@@ -23,13 +28,29 @@ func IsValidNodeType(nodeType string) bool {
 	return false
 }
 
-// CreateNodeSpec creates the appropriate node spec based on node type and host profile
-func CreateNodeSpec(nodeType string, hostProfile HostProfile) (Spec, error) {
-	normalized := strings.ToLower(nodeType)
+// IsValidProfile checks if the given profile is supported
+func IsValidProfile(profile string) bool {
+	normalized := strings.ToLower(profile)
+	for _, supported := range SupportedProfiles() {
+		if normalized == supported {
+			return true
+		}
+	}
+	return false
+}
 
-	switch normalized {
-	case core.NodeTypeLocal:
+// CreateNodeSpec creates the appropriate node spec based on node type, profile and host profile
+func CreateNodeSpec(nodeType string, profile string, hostProfile HostProfile) (Spec, error) {
+	normalized := strings.ToLower(nodeType)
+	normalizedProfile := strings.ToLower(profile)
+
+	// For local profile, use local node specs regardless of node type
+	if normalizedProfile == core.ProfileLocal {
 		return NewLocalNodeSpec(hostProfile), nil
+	}
+
+	// For other profiles, use node-specific requirements
+	switch normalized {
 	case core.NodeTypeBlock:
 		return NewBlockNodeSpec(hostProfile), nil
 	case core.NodeTypeConsensus:
