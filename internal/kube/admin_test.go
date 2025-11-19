@@ -2,6 +2,7 @@ package kube
 
 import (
 	"errors"
+	"os"
 	"path"
 	"strings"
 	"testing"
@@ -364,6 +365,193 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 
 			// Call Configure
 			err := mgr.Configure()
+
+			// Verify results
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got nil")
+					return
+				}
+				if tt.errorContains != "" {
+					errMsg := err.Error()
+					if !strings.Contains(errMsg, tt.errorContains) {
+						t.Errorf("expected error to contain %q, but got %q", tt.errorContains, errMsg)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error but got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestKubeConfigManager_ConfigureCurrentUserKubeConfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		sudoUser      string
+		setupMocks    func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:     "success - configures kubeconfig for sudo user",
+			sudoUser: "testuser",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/testuser").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("testuser").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/testuser/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
+			},
+			expectError: false,
+		},
+		{
+			name:     "skip - SUDO_USER is root",
+			sudoUser: "root",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed as this should return early
+			},
+			expectError: false,
+		},
+		{
+			name:     "skip - SUDO_USER is empty",
+			sudoUser: "",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed as this should return early
+			},
+			expectError: false,
+		},
+		{
+			name:     "error - lookup user fails",
+			sudoUser: "testuser",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				pm.EXPECT().LookupUserByName("testuser").Return(nil, errors.New("user not found"))
+			},
+			expectError:   true,
+			errorContains: "failed to lookup current user",
+		},
+		{
+			name:     "error - user has no primary group",
+			sudoUser: "testuser",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(nil).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("testuser").Return(mockUser, nil)
+			},
+			expectError:   true,
+			errorContains: "has no primary group",
+		},
+		{
+			name:     "error - create directory fails",
+			sudoUser: "testuser",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/testuser").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("testuser").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/testuser/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(errors.New("permission denied"))
+			},
+			expectError:   true,
+			errorContains: "failed to create",
+		},
+		{
+			name:     "error - copy file fails",
+			sudoUser: "testuser",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/testuser").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("testuser").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/testuser/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(errors.New("copy failed"))
+			},
+			expectError:   true,
+			errorContains: "failed to copy kubeconfig file",
+		},
+		{
+			name:     "error - write owner fails",
+			sudoUser: "testuser",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/testuser").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("testuser").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/testuser/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(errors.New("chown failed"))
+			},
+			expectError:   true,
+			errorContains: "failed to set ownership of current user .kube directory",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set the SUDO_USER environment variable for the test
+			originalSudoUser := os.Getenv("SUDO_USER")
+			if tt.sudoUser != "" {
+				_ = os.Setenv("SUDO_USER", tt.sudoUser)
+			} else {
+				_ = os.Unsetenv("SUDO_USER")
+			}
+			defer func() {
+				if originalSudoUser != "" {
+					_ = os.Setenv("SUDO_USER", originalSudoUser)
+				} else {
+					_ = os.Unsetenv("SUDO_USER")
+				}
+			}()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockFsxManager := fsx.NewMockManager(ctrl)
+			mockPrincipalManager := principal.NewMockManager(ctrl)
+
+			// Setup mocks
+			tt.setupMocks(ctrl, mockFsxManager, mockPrincipalManager)
+
+			// Create manager with mocked dependencies
+			mgr := KubeConfigManager{
+				fsManager:        mockFsxManager,
+				principalManager: mockPrincipalManager,
+			}
+
+			// Call configureCurrentUserKubeConfig
+			err := mgr.configureCurrentUserKubeConfig()
 
 			// Verify results
 			if tt.expectError {
