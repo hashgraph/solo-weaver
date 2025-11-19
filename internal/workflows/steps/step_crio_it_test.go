@@ -50,23 +50,18 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	reset(t)
 
-	step, err := SetupCrio().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
+	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	//
 	// When
 	//
-	step, err = SetupCrio().Build()
+	step, err := SetupCrio().Build()
 
 	//
 	// Then
 	//
 	require.NoError(t, err)
-	report = step.Execute(context.Background())
+	report := step.Execute(context.Background())
 	require.NotNil(t, report)
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
