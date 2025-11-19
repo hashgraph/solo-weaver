@@ -213,7 +213,7 @@ func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) e
 }
 
 // InstallChart installs the block node helm chart
-func (m *Manager) InstallChart(ctx context.Context, tempDir string, nodeType string) (bool, error) {
+func (m *Manager) InstallChart(ctx context.Context, tempDir string, nodeType string, profile string) (bool, error) {
 	// Check if already installed
 	isInstalled, err := m.helmManager.IsInstalled(Release, Namespace)
 	if err != nil {
@@ -225,11 +225,11 @@ func (m *Manager) InstallChart(ctx context.Context, tempDir string, nodeType str
 		return false, nil
 	}
 
-	// Choose the appropriate values file based on node type
+	// Choose the appropriate values file based on profile
 	valuesTemplatePath := ValuesPath
-	if nodeType == core.NodeTypeLocal {
+	if profile == core.ProfileLocal {
 		valuesTemplatePath = NanoValuesPath
-		m.logger.Info().Msg("Using nano values configuration for local node type")
+		m.logger.Info().Msg("Using nano values configuration for local profile")
 	}
 
 	// Read the values file template

@@ -20,12 +20,12 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(nodeType string) automa.Builder {
+func SetupBlockNode(nodeType string, profile string) automa.Builder {
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
 		setupBlockNodeStorage(),
 		createBlockNodeNamespace(),
 		createBlockNodePVs(),
-		installBlockNode(nodeType),
+		installBlockNode(nodeType, profile),
 		annotateBlockNodeService(),
 		waitForBlockNode(),
 	).
@@ -171,7 +171,7 @@ func createBlockNodePVs() automa.Builder {
 }
 
 // installBlockNode installs the block node helm chart
-func installBlockNode(nodeType string) automa.Builder {
+func installBlockNode(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
@@ -181,7 +181,7 @@ func installBlockNode(nodeType string) automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			installed, err := manager.InstallChart(ctx, core.Paths().TempDir, nodeType)
+			installed, err := manager.InstallChart(ctx, core.Paths().TempDir, nodeType, profile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

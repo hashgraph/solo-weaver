@@ -21,6 +21,12 @@ const (
 	NodeTypeLocal     = "local"
 	NodeTypeBlock     = "block"
 	NodeTypeConsensus = "consensus"
+
+	// Deployment profiles
+	ProfileLocal   = "local"
+	ProfilePerfnet = "perfnet"
+	ProfileTestnet = "testnet"
+	ProfileMainnet = "mainnet"
 )
 
 var (

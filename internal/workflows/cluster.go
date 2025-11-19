@@ -7,11 +7,11 @@ import (
 	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
-func NewSetupClusterWorkflow(nodeType string) automa.Builder {
+func NewSetupClusterWorkflow(nodeType string, profile string) automa.Builder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
 		// preflight & basic setup
-		NewNodeSetupWorkflow(nodeType),
+		NewNodeSetupWorkflow(nodeType, profile),
 
 		// setup env for k8s
 		steps.DisableSwap(),
@@ -47,9 +47,9 @@ func NewSetupClusterWorkflow(nodeType string) automa.Builder {
 		steps.CheckClusterHealth(), // still using bash steps
 	}
 
-	// Add block node setup if this is a block node or local node
-	if nodeType == core.NodeTypeBlock || nodeType == core.NodeTypeLocal {
-		baseSteps = append(baseSteps, steps.SetupBlockNode(nodeType))
+	// Add block node setup if this is a block node
+	if nodeType == core.NodeTypeBlock {
+		baseSteps = append(baseSteps, steps.SetupBlockNode(nodeType, profile))
 	}
 
 	return automa.NewWorkflowBuilder().WithId("setup-kubernetes").

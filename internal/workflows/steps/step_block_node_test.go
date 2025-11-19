@@ -41,7 +41,7 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	reset(t)
 	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	wb := SetupBlockNode(core.NodeTypeBlock)
+	wb := SetupBlockNode(core.NodeTypeBlock, core.ProfileMainnet)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -109,7 +109,7 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	reset(t)
 	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	wb := SetupBlockNode(core.NodeTypeLocal)
+	wb := SetupBlockNode(core.NodeTypeBlock, core.ProfileLocal)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -174,7 +174,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	// Given - already installed from fresh install test
 	//
 
-	wb := SetupBlockNode(core.NodeTypeLocal)
+	wb := SetupBlockNode(core.NodeTypeBlock, core.ProfileLocal)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
