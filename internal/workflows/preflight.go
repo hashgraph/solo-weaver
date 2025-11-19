@@ -19,7 +19,7 @@ func createNodeSpec(nodeType string, profile string, hostProfile hardware.HostPr
 	return hardware.CreateNodeSpec(nodeType, profile, hostProfile)
 }
 
-// CheckHostProfileStep retrieves host profile and validates node type
+// CheckHostProfileStep retrieves host profile and validates node type and profile
 func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-host-profile").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
