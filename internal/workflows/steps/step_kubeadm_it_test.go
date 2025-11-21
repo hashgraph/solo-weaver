@@ -200,7 +200,7 @@ func Test_StepKubeadm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.DownloadError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -257,7 +257,7 @@ func Test_StepKubeadm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is InstallationError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -319,7 +319,7 @@ func Test_StepKubeadm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is CleanupError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -439,29 +439,29 @@ func Test_StepKubeadm_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err, "10-kubeadm.conf should exist in sandbox")
 
-	// Verify .latest 10-kubeadm.conf file was created with updated paths
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest")
-	require.NoError(t, err, "10-kubeadm.conf.latest should exist in sandbox")
+	// Verify 10-kubeadm.conf file was created in latest/ subdirectory with updated paths
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf")
+	require.NoError(t, err, "10-kubeadm.conf should exist in latest subdirectory")
 
 	// Verify systemd symlink was created for the 10-kubeadm.conf file
 	_, err = os.Stat("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err, "10-kubeadm.conf symlink should exist in system directory")
 
-	// Verify it's actually a symlink pointing to the .latest file
+	// Verify it's actually a symlink pointing to the file in latest/ subdirectory
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err, "10-kubeadm.conf should be a symlink")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest", linkTarget, "symlink should point to .latest file")
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf", linkTarget, "symlink should point to file in latest subdirectory")
 
 	// Verify kubeadm-init.yaml was created
 	_, err = os.Stat("/opt/weaver/sandbox/etc/weaver/kubeadm-init.yaml")
 	require.NoError(t, err, "kubeadm-init.yaml should exist")
 
-	// Verify 10-kubeadm.conf.latest contains sandbox binary path
-	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest")
-	require.NoError(t, err, "should be able to read 10-kubeadm.conf.latest file")
+	// Verify 10-kubeadm.conf in latest/ subdirectory contains sandbox binary path
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf")
+	require.NoError(t, err, "should be able to read 10-kubeadm.conf file in latest subdirectory")
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "10-kubeadm.conf.latest should contain sandbox kubelet path")
-	require.NotContains(t, contentStr, "/usr/bin/kubelet", "10-kubeadm.conf.latest should not contain original kubelet path")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "10-kubeadm.conf in latest subdirectory should contain sandbox kubelet path")
+	require.NotContains(t, contentStr, "/usr/bin/kubelet", "10-kubeadm.conf in latest subdirectory should not contain original kubelet path")
 }
 
 func Test_StepKubeadm_ServiceConfiguration_AlreadyConfigured_Integration(t *testing.T) {
@@ -499,12 +499,12 @@ func Test_StepKubeadm_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err, "10-kubeadm.conf should still exist")
 
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest")
-	require.NoError(t, err, "10-kubeadm.conf.latest should still exist")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf")
+	require.NoError(t, err, "10-kubeadm.conf should still exist in latest subdirectory")
 
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err, "10-kubeadm.conf symlink should still exist")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf", linkTarget)
 
 	_, err = os.Stat("/opt/weaver/sandbox/etc/weaver/kubeadm-init.yaml")
 	require.NoError(t, err, "kubeadm-init.yaml should still exist")
@@ -552,11 +552,11 @@ func Test_StepKubeadm_ServiceConfiguration_PartiallyConfigured_Integration(t *te
 	// Verify 10-kubeadm.conf symlink was recreated
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err, "10-kubeadm.conf symlink should be recreated")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf", linkTarget)
 
-	// Verify .latest file was recreated
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest")
-	require.NoError(t, err, "10-kubeadm.conf.latest should be recreated")
+	// Verify file in latest/ subdirectory was recreated
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf")
+	require.NoError(t, err, "10-kubeadm.conf should be recreated in latest subdirectory")
 }
 
 func Test_StepKubeadm_ServiceConfiguration_CorruptedConfFile_Integration(t *testing.T) {
@@ -571,9 +571,9 @@ func Test_StepKubeadm_ServiceConfiguration_CorruptedConfFile_Integration(t *test
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
 
-	// Corrupt the 10-kubeadm.conf.latest file by writing incorrect content
+	// Corrupt the 10-kubeadm.conf file in latest/ subdirectory by writing incorrect content
 	corruptedContent := "This is corrupted content"
-	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest", []byte(corruptedContent), core.DefaultFilePerm)
+	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf", []byte(corruptedContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	//
@@ -598,12 +598,12 @@ func Test_StepKubeadm_ServiceConfiguration_CorruptedConfFile_Integration(t *test
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
-	// Verify 10-kubeadm.conf.latest file was fixed
-	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest")
+	// Verify 10-kubeadm.conf file in latest/ subdirectory was fixed
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf")
 	require.NoError(t, err)
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "10-kubeadm.conf.latest should contain correct sandbox path")
-	require.NotEqual(t, corruptedContent, contentStr, "10-kubeadm.conf.latest should be fixed")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "10-kubeadm.conf in latest subdirectory should contain correct sandbox path")
+	require.NotEqual(t, corruptedContent, contentStr, "10-kubeadm.conf in latest subdirectory should be fixed")
 }
 
 func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *testing.T) {
@@ -643,8 +643,8 @@ func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.Error(t, err, "10-kubeadm.conf should be removed after rollback")
 
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest")
-	require.Error(t, err, "10-kubeadm.conf.latest should be removed after rollback")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/latest/10-kubeadm.conf")
+	require.Error(t, err, "10-kubeadm.conf in latest subdirectory should be removed after rollback")
 
 	_, err = os.Stat("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.Error(t, err, "10-kubeadm.conf symlink should be removed after rollback")

@@ -202,7 +202,7 @@ func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.DownloadError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -260,7 +260,7 @@ func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -322,7 +322,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -395,7 +395,7 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 
 	// Confirm errorx error type is DownloadError
 
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//

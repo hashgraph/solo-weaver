@@ -1128,7 +1128,9 @@ func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
 	return nil
 }
 
-// getLatestPath returns the path to the .latest file in the sandbox
+// getLatestPath returns the path to the file in the latest subfolder
 func getLatestPath(originalPath string) string {
-	return originalPath + ".latest"
+	dir := path.Dir(originalPath)
+	filename := path.Base(originalPath)
+	return path.Join(dir, "latest", filename)
 }

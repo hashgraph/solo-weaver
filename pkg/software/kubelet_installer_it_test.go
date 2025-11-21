@@ -89,10 +89,10 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 
 	linkTarget, err = os.Readlink("/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest", linkTarget, "kubelet.service symlink should point to .latest file")
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service", linkTarget, "kubelet.service symlink should point to file in latest subfolder")
 
-	// Verify .latest file has correct content
-	latestContent, err := fileManager.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest", -1)
+	// Verify file in latest subfolder has correct content
+	latestContent, err := fileManager.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service", -1)
 	require.NoError(t, err)
 	contentStr := string(latestContent)
 	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "Latest service file should contain updated kubelet path")
@@ -124,9 +124,9 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exists, "kubelet.service symlink should be removed")
 
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
+	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
 	require.NoError(t, err)
-	require.False(t, exists, "kubelet.service.latest should be removed")
+	require.False(t, exists, "latest kubelet.service file should be removed")
 
 	//
 	// When - Uninstall
@@ -334,13 +334,13 @@ func Test_KubeletInstaller_IsConfigured_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet symlink should exist in system bin directory")
 
-	// Verify the .latest file exists and has the correct content
-	latestServiceFile := "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest"
+	// Verify the file in latest subfolder exists and has the correct content
+	latestServiceFile := "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service"
 	_, exists, err = fileManager.PathExists(latestServiceFile)
 	require.NoError(t, err)
-	require.True(t, exists, "kubelet.service.latest should exist")
+	require.True(t, exists, "kubelet.service should exist in latest subfolder")
 
-	// Verify content of .latest file has updated paths
+	// Verify content of file in latest subfolder has updated paths
 	content, err := fileManager.ReadFile(latestServiceFile, -1)
 	require.NoError(t, err)
 	contentStr := string(content)
@@ -420,16 +420,16 @@ func Test_KubeletInstaller_IsConfigured_False_WhenLatestFileMissing(t *testing.T
 	// Then
 	//
 	require.NoError(t, err, "IsConfigured should not return an error")
-	require.False(t, isConfigured, "kubelet should not be reported as configured when .latest file is missing")
+	require.False(t, isConfigured, "kubelet should not be reported as configured when latest subfolder is missing")
 
 	// Verify binary symlink exists but service files don't
 	_, exists, err := fileManager.PathExists("/usr/local/bin/kubelet")
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet binary symlink should exist")
 
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
+	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/latest")
 	require.NoError(t, err)
-	require.False(t, exists, "kubelet.service.latest should not exist")
+	require.False(t, exists, "latest subfolder should not exist")
 }
 
 func Test_KubeletInstaller_IsConfigured_False_WhenLatestFileHasWrongContent(t *testing.T) {
@@ -457,8 +457,8 @@ func Test_KubeletInstaller_IsConfigured_False_WhenLatestFileHasWrongContent(t *t
 	err = installer.Configure()
 	require.NoError(t, err, "Failed to configure kubelet")
 
-	// Manually corrupt the .latest file
-	latestServiceFile := "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest"
+	// Manually corrupt the file in latest subfolder
+	latestServiceFile := "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service"
 	err = fileManager.WriteFile(latestServiceFile, []byte("corrupted content"))
 	require.NoError(t, err, "Failed to write corrupted content")
 
@@ -471,7 +471,7 @@ func Test_KubeletInstaller_IsConfigured_False_WhenLatestFileHasWrongContent(t *t
 	// Then
 	//
 	require.NoError(t, err, "IsConfigured should not return an error")
-	require.False(t, isConfigured, "kubelet should not be reported as configured when .latest file has wrong content")
+	require.False(t, isConfigured, "kubelet should not be reported as configured when file in latest subfolder has wrong content")
 }
 
 func Test_KubeletInstaller_RestoreConfiguration_Success(t *testing.T) {
@@ -504,9 +504,9 @@ func Test_KubeletInstaller_RestoreConfiguration_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet binary symlink should exist before restoration")
 
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
+	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
 	require.NoError(t, err)
-	require.True(t, exists, "kubelet.service.latest should exist before restoration")
+	require.True(t, exists, "kubelet.service should exist in latest subfolder before restoration")
 
 	_, exists, err = fileManager.PathExists("/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err)
@@ -527,10 +527,10 @@ func Test_KubeletInstaller_RestoreConfiguration_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exists, "kubelet binary symlink should be removed after restoration")
 
-	// Verify that .latest file is removed
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
+	// Verify that latest kubelet.service file is removed
+	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
 	require.NoError(t, err)
-	require.False(t, exists, "kubelet.service.latest should be removed after restoration")
+	require.False(t, exists, "latest kubelet.service file should be removed after restoration")
 
 	// Verify that service symlink is removed
 	_, exists, err = fileManager.PathExists("/usr/lib/systemd/system/kubelet.service")
@@ -586,11 +586,11 @@ func Test_KubeletInstaller_RestoreConfiguration_PartialCleanup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create partial configuration state
-	err = fileManager.CreateDirectory("/opt/weaver/sandbox/usr/lib/systemd/system", true)
+	err = fileManager.CreateDirectory("/opt/weaver/sandbox/usr/lib/systemd/system/latest", true)
 	require.NoError(t, err)
 
-	// Create only the .latest file without other configuration
-	latestFile := "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest"
+	// Create only a file in latest subfolder without other configuration
+	latestFile := "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service"
 	err = fileManager.WriteFile(latestFile, []byte("test content"))
 	require.NoError(t, err)
 
@@ -604,10 +604,10 @@ func Test_KubeletInstaller_RestoreConfiguration_PartialCleanup(t *testing.T) {
 	//
 	require.NoError(t, err, "RemoveConfiguration should handle partial state gracefully")
 
-	// Verify cleanup occurred
+	// Verify cleanup occurred - check that the latest kubelet.service file is removed
 	_, exists, err := fileManager.PathExists(latestFile)
 	require.NoError(t, err)
-	require.False(t, exists, "kubelet.service.latest should be removed")
+	require.False(t, exists, "latest kubelet.service file should be removed")
 }
 
 func Test_KubeletInstaller_ConfigureWithCorruptedOriginalFile_ShouldFail(t *testing.T) {
@@ -647,10 +647,10 @@ func Test_KubeletInstaller_ConfigureWithCorruptedOriginalFile_ShouldFail(t *test
 	//
 	require.NoError(t, err, "Configure should handle empty file gracefully")
 
-	// Verify the .latest file was created (even if empty)
-	_, exists, err := fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
+	// Verify the file in latest subfolder was created (even if empty)
+	_, exists, err := fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
 	require.NoError(t, err)
-	require.True(t, exists, "kubelet.service.latest should be created")
+	require.True(t, exists, "kubelet.service should be created in latest subfolder")
 }
 
 func Test_KubeletInstaller_IsConfigured_ChecksSymlinkTarget(t *testing.T) {

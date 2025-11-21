@@ -162,7 +162,7 @@ func CheckWeaverUserStep() automa.Builder {
 				}
 
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.New(errMsg)),
+					automa.WithError(errorx.IllegalState.New("%s", errMsg)),
 					automa.WithMetadata(meta))
 			}
 
@@ -208,7 +208,7 @@ func CheckWeaverUserStep() automa.Builder {
 				}
 
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.New(errMsg)),
+					automa.WithError(errorx.IllegalState.New("%s", errMsg)),
 					automa.WithMetadata(meta))
 			}
 

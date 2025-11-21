@@ -112,7 +112,7 @@ func (ki *kubeadmInstaller) RemoveConfiguration() error {
 	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
 	err = ki.fileManager.RemoveAll(latestConfPath)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to remove latest 10-kubeadm.conf file at %s", latestConfPath)
+		return errorx.IllegalState.Wrap(err, "failed to remove latest configuration file at %s", latestConfPath)
 	}
 
 	// Remove the symlink for the 10-kubeadm.conf file
@@ -261,11 +261,11 @@ func (ki *kubeadmInstaller) IsConfigured() (bool, error) {
 	return initConfigExists, nil
 }
 
-// isLatestKubeadmConfValid checks if the .latest 10-kubeadm.conf file exists and has the correct content
+// isLatestKubeadmConfValid checks if the 10-kubeadm.conf file in the latest subfolder exists and has the correct content
 func (ki *kubeadmInstaller) isLatestKubeadmConfValid() (bool, error) {
 	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
 
-	// Check if the .latest file exists
+	// Check if the file in latest subfolder exists
 	fi, exists, err := ki.fileManager.PathExists(latestConfPath)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to check if latest 10-kubeadm.conf exists at %s", latestConfPath)
@@ -328,13 +328,20 @@ func (ki *kubeadmInstaller) getKubeadmInitConfigPath() string {
 	return path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
 }
 
-// patchKubeadmConf creates a copy of 10-kubeadm.conf with updated paths
+// patchKubeadmConf creates a copy of 10-kubeadm.conf with updated paths in the latest subfolder
 func (ki *kubeadmInstaller) patchKubeadmConf() error {
 	originalConfPath := ki.getKubeadmConfPath()
 	latestConfPath := getLatestPath(originalConfPath)
 
+	// Create latest subfolder if it doesn't exist
+	latestDir := path.Dir(latestConfPath)
+	err := ki.fileManager.CreateDirectory(latestDir, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create latest subfolder at %s", latestDir)
+	}
+
 	// Create latest file which will have some strings replaced
-	err := ki.fileManager.CopyFile(originalConfPath, latestConfPath, true)
+	err = ki.fileManager.CopyFile(originalConfPath, latestConfPath, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create latest 10-kubeadm.conf file at %s", latestConfPath)
 	}

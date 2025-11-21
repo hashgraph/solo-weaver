@@ -201,7 +201,7 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.DownloadError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -259,7 +259,7 @@ func Test_StepKubelet_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is InstallationError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -322,7 +322,7 @@ func Test_StepKubelet_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is CleanupError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -443,21 +443,21 @@ func Test_StepKubelet_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err, "kubelet.service should exist in sandbox")
 
-	// Verify .latest file was created with modified content
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
-	require.NoError(t, err, "kubelet.service.latest should exist")
+	// Verify file in latest subfolder was created with modified content
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
+	require.NoError(t, err, "kubelet.service should exist in latest subfolder")
 
 	// Verify systemd symlink was created
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err, "kubelet.service symlink should exist")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest", linkTarget, "symlink should point to .latest file")
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service", linkTarget, "symlink should point to file in latest subfolder")
 
-	// Verify .latest file contains sandbox binary path
-	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
-	require.NoError(t, err, "should be able to read .latest file")
+	// Verify file in latest subfolder contains sandbox binary path
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
+	require.NoError(t, err, "should be able to read file in latest subfolder")
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", ".latest file should contain sandbox kubelet path")
-	require.NotContains(t, contentStr, "/usr/bin/kubelet", ".latest file should not contain original kubelet path")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "file in latest subfolder should contain sandbox kubelet path")
+	require.NotContains(t, contentStr, "/usr/bin/kubelet", "file in latest subfolder should not contain original kubelet path")
 }
 
 func Test_StepKubelet_ServiceConfiguration_AlreadyConfigured_Integration(t *testing.T) {
@@ -492,12 +492,12 @@ func Test_StepKubelet_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify service configuration still exists and is valid
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
-	require.NoError(t, err, "kubelet.service.latest should still exist")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
+	require.NoError(t, err, "kubelet.service should still exist in latest subfolder")
 
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err, "kubelet.service symlink should still exist")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service", linkTarget)
 }
 
 func Test_StepKubelet_ServiceConfiguration_PartiallyConfigured_Integration(t *testing.T) {
@@ -542,7 +542,7 @@ func Test_StepKubelet_ServiceConfiguration_PartiallyConfigured_Integration(t *te
 	// Verify systemd symlink was recreated
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err, "kubelet.service symlink should be recreated")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service", linkTarget)
 }
 
 func Test_StepKubelet_ServiceConfiguration_CorruptedLatestFile_Integration(t *testing.T) {
@@ -557,9 +557,9 @@ func Test_StepKubelet_ServiceConfiguration_CorruptedLatestFile_Integration(t *te
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
 
-	// Corrupt the .latest file by writing incorrect content
+	// Corrupt the file in latest subfolder by writing incorrect content
 	corruptedContent := "This is corrupted content"
-	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest", []byte(corruptedContent), core.DefaultFilePerm)
+	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service", []byte(corruptedContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	//
@@ -579,17 +579,17 @@ func Test_StepKubelet_ServiceConfiguration_CorruptedLatestFile_Integration(t *te
 	// Installation should be skipped (already installed)
 	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
 
-	// Configuration should run again (corrupted .latest file detected)
+	// Configuration should run again (corrupted file in latest subfolder detected)
 	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
-	// Verify .latest file was fixed
-	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
+	// Verify file in latest subfolder was fixed
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
 	require.NoError(t, err)
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", ".latest file should contain correct sandbox path")
-	require.NotEqual(t, corruptedContent, contentStr, ".latest file should be fixed")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/bin/kubelet", "file in latest subfolder should contain correct sandbox path")
+	require.NotEqual(t, corruptedContent, contentStr, "file in latest subfolder should be fixed")
 }
 
 func Test_StepKubelet_ServiceConfiguration_RestoreConfiguration_Integration(t *testing.T) {
@@ -605,8 +605,8 @@ func Test_StepKubelet_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	require.NoError(t, report.Error)
 
 	// Verify configuration is in place
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
-	require.NoError(t, err, "kubelet.service.latest should exist before restoration")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
+	require.NoError(t, err, "kubelet.service should exist in latest subfolder before restoration")
 
 	_, err = os.Stat("/usr/lib/systemd/system/kubelet.service")
 	require.NoError(t, err, "kubelet.service symlink should exist before restoration")
@@ -623,8 +623,8 @@ func Test_StepKubelet_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify configuration was restored (removed)
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.latest")
-	require.Error(t, err, "kubelet.service.latest should be removed after rollback")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/kubelet.service")
+	require.Error(t, err, "latest kubelet.service file should be removed after rollback")
 
 	_, err = os.Stat("/usr/lib/systemd/system/kubelet.service")
 	require.Error(t, err, "kubelet.service symlink should be removed after rollback")

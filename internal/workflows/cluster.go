@@ -52,6 +52,7 @@ func NewSetupClusterWorkflow(nodeType string, profile string) automa.Builder {
 		baseSteps = append(baseSteps, steps.SetupBlockNode(nodeType, profile))
 	}
 
-	return automa.NewWorkflowBuilder().WithId("setup-kubernetes").
+	return automa.NewWorkflowBuilder().
+		WithId("setup-kubernetes").
 		Steps(baseSteps...)
 }

@@ -86,8 +86,8 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	contents, err = os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err)
 
-	// Verify CRI-O service file contents from latest
-	contents, err = os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
+	// Verify CRI-O service file contents from latest subfolder
+	contents, err = os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
 	require.NoError(t, err)
 	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/usr/local/bin/crio`), string(contents),
 		"crio service file should reference the correct bin path")
@@ -97,7 +97,7 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify Symlink CRI-O /usr/lib/systemd/system/crio.service
 	linkTarget, err = os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget, "crio service symlink should point to sandbox service directory")
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service", linkTarget, "crio service symlink should point to file in latest subfolder")
 
 	// Verify /opt/weaver/sandbox/etc/default/crio
 	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/default/crio")
@@ -114,16 +114,16 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/etc/crio/crio.conf.d`), string(contents),
 		"crio config options should reference the correct etc crio path")
 
-	// Verify 10-crio.conf is copied to /opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf.latest and contains expected content
-	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf.latest")
+	// Verify 10-crio.conf is copied to latest subfolder and contains expected content
+	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/latest/10-crio.conf")
 	require.NoError(t, err)
 	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/usr/libexec/crio`), string(contents),
 		"10-crio.conf should reference the correct libexec path")
 	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/etc/crio`), string(contents),
 		"10-crio.conf should reference the correct etc crio path")
 
-	// Verify contents of /opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf toml file
-	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf.latest")
+	// Verify contents of 10-crio.conf toml file in latest subfolder
+	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/latest/10-crio.conf")
 	var tomlEntries map[string]any
 	_, err = toml.NewDecoder(bytes.NewBufferString(string(contents))).Decode(&tomlEntries)
 	require.NoError(t, err, "10-crio.conf should be a valid toml file")

@@ -98,11 +98,11 @@ func (ki *kubeletInstaller) RemoveConfiguration() error {
 		return errorx.IllegalState.Wrap(err, "failed to restore kubelet binary configuration")
 	}
 
-	// Remove the latest file
+	// Remove the latest service file
 	latestServicePath := ki.getLatestKubeletServicePath()
 	err = ki.fileManager.RemoveAll(latestServicePath)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to remove latest kubelet.service file at %s", latestServicePath)
+		return errorx.IllegalState.Wrap(err, "failed to remove latest service file at %s", latestServicePath)
 	}
 
 	// Remove the symlink for kubelet.service config file
@@ -132,7 +132,7 @@ func (ki *kubeletInstaller) IsInstalled() (bool, error) {
 }
 
 // Overrides IsConfigured() to check if the kubelet is properly configured.
-// This includes checking if the binaries are configured, the .latest service file is valid,
+// This includes checking if the binaries are configured, the service file in the latest subfolder is valid,
 // and the systemd symlink for kubelet.service is present.
 func (ki *kubeletInstaller) IsConfigured() (bool, error) {
 	// First check if binaries are configured
@@ -167,9 +167,9 @@ func (ki *kubeletInstaller) getKubeletServicePath() string {
 	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, kubeletServiceFileName)
 }
 
-// getLatestKubeletServicePath returns the path to the .latest kubelet.service file in the sandbox
+// getLatestKubeletServicePath returns the path to the kubelet.service file in the latest subfolder
 func (ki *kubeletInstaller) getLatestKubeletServicePath() string {
-	return ki.getKubeletServicePath() + ".latest"
+	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, "latest", kubeletServiceFileName)
 }
 
 // getSystemdUnitPath returns the path to the kubelet.service file in the systemd directory
@@ -201,13 +201,20 @@ func (ki *kubeletInstaller) validateCriticalPaths() error {
 	return nil
 }
 
-// patchServiceFile creates a copy of kubelet.service with updated paths
+// patchServiceFile creates a copy of kubelet.service with updated paths in the latest subfolder
 func (ki *kubeletInstaller) patchServiceFile() error {
 	kubeletServicePath := ki.getKubeletServicePath()
 	latestServicePath := ki.getLatestKubeletServicePath()
 
+	// Create latest subfolder if it doesn't exist
+	latestDir := path.Dir(latestServicePath)
+	err := ki.fileManager.CreateDirectory(latestDir, true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create latest subfolder at %s", latestDir)
+	}
+
 	// Create latest file which will have some strings replaced
-	err := ki.fileManager.CopyFile(kubeletServicePath, latestServicePath, true)
+	err = ki.fileManager.CopyFile(kubeletServicePath, latestServicePath, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create latest kubelet.service file at %s", latestServicePath)
 	}
@@ -235,11 +242,11 @@ func (ki *kubeletInstaller) createSystemdSymlink() error {
 	return nil
 }
 
-// isLatestServiceFileValid checks if the .latest service file exists and has the correct content
+// isLatestServiceFileValid checks if the service file in the latest subfolder exists and has the correct content
 func (ki *kubeletInstaller) isLatestServiceFileValid() (bool, error) {
 	latestServicePath := ki.getLatestKubeletServicePath()
 
-	// Check if the .latest file exists
+	// Check if the file in latest subfolder exists
 	fi, exists, err := ki.fileManager.PathExists(latestServicePath)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to check if latest service file exists at %s", latestServicePath)

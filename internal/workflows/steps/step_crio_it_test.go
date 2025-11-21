@@ -252,7 +252,7 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.DownloadError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -312,7 +312,7 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is ExtractionError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.ExtractionError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.ExtractionError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -375,7 +375,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is InstallationError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -438,7 +438,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is CleanupError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -559,20 +559,20 @@ func Test_StepCrio_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service should exist in sandbox")
 
-	// Verify .latest file was created with modified content
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
-	require.NoError(t, err, "crio.service.latest should exist")
+	// Verify file was created in latest/ subdirectory with modified content
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
+	require.NoError(t, err, "crio.service should exist in latest subdirectory")
 
 	// Verify systemd symlink was created
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should exist")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget, "symlink should point to .latest file")
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service", linkTarget, "symlink should point to file in latest subdirectory")
 
-	// Verify .latest file contains sandbox binary path
-	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
-	require.NoError(t, err, "should be able to read .latest file")
+	// Verify file in latest/ subdirectory contains sandbox binary path
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
+	require.NoError(t, err, "should be able to read file in latest subdirectory")
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/weaver/sandbox/usr/local/bin/crio", ".latest file should contain sandbox crio path")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/usr/local/bin/crio", "file in latest subdirectory should contain sandbox crio path")
 }
 
 func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing.T) {
@@ -607,12 +607,12 @@ func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify service configuration still exists and is valid
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
-	require.NoError(t, err, "crio.service.latest should still exist")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
+	require.NoError(t, err, "crio.service should still exist in latest subdirectory")
 
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should still exist")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service", linkTarget)
 }
 
 func Test_StepCrio_ServiceConfiguration_PartiallyConfigured_Integration(t *testing.T) {
@@ -657,7 +657,7 @@ func Test_StepCrio_ServiceConfiguration_PartiallyConfigured_Integration(t *testi
 	// Verify systemd symlink was recreated
 	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should be recreated")
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", linkTarget)
+	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service", linkTarget)
 }
 
 func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testing.T) {
@@ -672,9 +672,9 @@ func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testi
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
 
-	// Corrupt the .latest file by writing incorrect content
+	// Corrupt the file in latest/ subdirectory by writing incorrect content
 	corruptedContent := "This is corrupted content"
-	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest", []byte(corruptedContent), core.DefaultFilePerm)
+	err = os.WriteFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service", []byte(corruptedContent), core.DefaultFilePerm)
 	require.NoError(t, err)
 
 	//
@@ -699,12 +699,12 @@ func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testi
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
-	// Verify .latest file was fixed
-	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
+	// Verify file in latest/ subdirectory was fixed
+	content, err := os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
 	require.NoError(t, err)
 	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/weaver/sandbox/usr/local/bin/crio", ".latest file should contain correct sandbox path")
-	require.NotEqual(t, corruptedContent, contentStr, ".latest file should be fixed")
+	require.Contains(t, contentStr, "/opt/weaver/sandbox/usr/local/bin/crio", "file in latest subdirectory should contain correct sandbox path")
+	require.NotEqual(t, corruptedContent, contentStr, "file in latest subdirectory should be fixed")
 }
 
 func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *testing.T) {
@@ -720,8 +720,8 @@ func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *test
 	require.NoError(t, report.Error)
 
 	// Verify configuration is in place
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
-	require.NoError(t, err, "crio.service.latest should exist before restoration")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
+	require.NoError(t, err, "crio.service should exist in latest subdirectory before restoration")
 
 	_, err = os.Stat("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service symlink should exist before restoration")
@@ -738,8 +738,8 @@ func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *test
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify configuration was restored (removed)
-	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service.latest")
-	require.Error(t, err, "crio.service.latest should be removed after rollback")
+	_, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
+	require.Error(t, err, "crio.service in latest subdirectory should be removed after rollback")
 
 	_, err = os.Stat("/usr/lib/systemd/system/crio.service")
 	require.Error(t, err, "crio.service symlink should be removed after rollback")

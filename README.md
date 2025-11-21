@@ -60,8 +60,30 @@ The project supports debugging using UTM VMs for testing in a Linux environment 
 
 ### Debugging with UTM VM
 
-The project supports debugging inside a Debian VM using [UTM](https://mac.getutm.app/) on macOS.  
+The project supports debugging inside Linux VMs using [UTM](https://mac.getutm.app/) on macOS.  
 This setup allows you to test **solo-weaver** in a Linux environment similar to production.
+
+**Supported OS Types:**
+- **Debian** (default)
+- **Ubuntu 22.04**
+
+You can work with either OS type or both simultaneously. See [VM Targets Documentation](docs/VM_TARGETS.md) for detailed usage.
+
+**Quick Start with OS Type:**
+```sh
+# Use Debian (default)
+task vm:start
+
+# Use Ubuntu 22.04
+task vm:start VM_OS_TYPE=ubuntu
+
+# Or use convenience tasks
+task vm:ubuntu:start
+task vm:debian:start
+
+# View all available targets
+task vm:targets
+```
 
 ---
 
@@ -78,48 +100,80 @@ If no VM image exists yet, you’ll be prompted to create a **golden Debian imag
 
 ---
 
-#### 2. Create the Debian Golden Image
+#### 2. Create the Golden Images
 
 If this is your first time setting up, follow these steps:
 
-##### VM Settings
+##### Debian Installation
 
 1. Start a new VM in UTM:
     - Select **Virtualize** → **Linux**.
     - Boot from the Debian ISO:  
-      [Debian 13.1.0 ARM64 Netinst](https://debian.mirror.digitalpacific.com.au/debian-cd/13.1.0/arm64/iso-cd/debian-13.1.0-arm64-netinst.iso).
+      [Debian 13.1.0 ARM64 Netinst](https://cdimage.debian.org/cdimage/archive/13.1.0/arm64/iso-cd/debian-13.1.0-arm64-netinst.iso).
+      - If the link is outdated, find the latest at [Debian CD Image Archive](https://www.debian.org/CD/http-ftp/#stable).
+   - Storage: 64 GiB (default).
+   - Shared Directory: set to your `solo-weaver` project root.
+   - Network: **Bridged (Advanced)** on your Wi-Fi interface (e.g., `en0`).
+   - Name the VM: `solo-weaver-debian-golden`.
 
-2. Configure the VM:
-    - Storage: 64 GiB (default).
-    - Shared Directory: set to your `solo-weaver` project root.
-    - Network: **Bridged (Advanced)** on your Wi-Fi interface (e.g., `en0`).
-    - Name the VM: `solo-weaver-debian-golden`.
-
-##### Debian Installation
-
-- Language: **English (US)**.
-- Location: your country (e.g., **Australia**).
-- Locale: **en_US.UTF-8**.
-- Keyboard: **American English**.
-- Hostname: keep default `debian`.
-- Domain: leave empty.
-- Root password: `password`.
-- User:
-    - Full name: `weaver`
-    - Username: `weaver`
-    - Password: `weaver`
-- Clock: default selection.
-- Partitioning:
-    - Guided – use entire disk
-    - All files in one partition
-    - Write changes to disk
-- Package mirror: choose a local Debian mirror (e.g., `mirror.aarnet.edu.au`).
-- Software selection: keep default
+2. Install Linux in the VM:
+- Start the golden image installation.
+- Keep all default selections except:
+  - Language: **English (US)**.
+  - Location: your country (e.g., **Australia**).
+  - Locale: **en_US.UTF-8**.
+  - Keyboard: **American English**.
+  - Hostname: keep default `debian`.
+  - Domain: leave empty.
+  - Root password: leave empty.
+  - User:
+      - Full name: `provisioner`
+      - Username: `provisioner`
+      - Password: `provisioner`
+  - Clock: default selection.
+  - Partitioning:
+      - Guided – use entire disk
+      - All files in one partition
+      - Write changes to disk
+  - Package mirror: choose a local Debian mirror (e.g., `mirror.aarnet.edu.au`).
+  - Software selection: keep default
 - Remove the ISO from UTM (**CD/DVD → Clear**) before reboot.
 - Select **Continue** and boot into Debian.
 
+✅ At this point, your **debian golden image** is ready.
 
-✅ At this point, your **golden image** is ready.
+##### Ubuntu Installation
+
+1. Start a new VM in UTM:
+    - Select **Virtualize** → **Linux**.
+    - Boot from the Ubuntu ISO:  
+      [Ubuntu 22.04.5 LTS AMD64](https://cdimage.ubuntu.com/releases/jammy/release/ubuntu-22.04.5-live-server-arm64.iso).
+   - Storage: 64 GiB (default).
+   - Shared Directory: set to your `solo-weaver` project root.
+   - Network: **Bridged (Advanced)** on your Wi-Fi interface (e.g., `en0`).
+   - Name the VM: `solo-weaver-ubuntu-golden`.
+
+2. Install Linux in the VM:
+- Start the golden image installation.
+- Keep all default selections except:
+  - Language: **English (US)**.
+  - Type of installation: **Ubuntu Server (minimized)**.
+  - User:
+      - Full name: `provisioner`
+      - Server name: `ubuntu`
+      - Username: `provisioner`
+      - Password: `provisioner`
+- Remove the ISO from UTM (**CD/DVD → Clear**) before reboot.
+- Reboot and log in with:
+    - Username: `provisioner`
+    - Password: `provisioner`
+- Install QEMU Guest Agents:
+    ```sh
+    sudo apt update
+    sudo apt install qemu-guest-agent -y
+    ```
+
+✅ At this point, your **ubuntu golden image** is ready.
 
 ---
 
