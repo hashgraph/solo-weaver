@@ -38,6 +38,13 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "K9s installed successfully")
+
+			// Record installation state if this step installed the software
+			if stp.State().Bool(InstalledByThisStep) {
+				if installer, err := provider(); err == nil {
+					recordInstallState(installer)
+				}
+			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -75,6 +82,7 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[InstalledByThisStep] = "true"
+			stp.State().Set(InstalledByThisStep, true)
 
 			err = installer.Cleanup()
 			if err != nil {
@@ -85,6 +93,11 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			if !installedByThisStep {
+				return automa.SkippedReport(stp, automa.WithDetail("K9s was not installed by this step, skipping rollback"))
+			}
+
 			installer, err := provider()
 			if err != nil {
 				return automa.FailureReport(stp,
@@ -96,6 +109,9 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			// Remove installation state during rollback
+			removeInstallState(installer)
 
 			return automa.SuccessReport(stp)
 		})
@@ -112,6 +128,13 @@ func configureK9s(provider func(opts ...software.InstallerOption) (software.Soft
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "K9s configured successfully")
+
+			// Record configuration state if this step configured the software
+			if stp.State().Bool(ConfiguredByThisStep) {
+				if installer, err := provider(); err == nil {
+					recordConfigureState(installer)
+				}
+			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -138,10 +161,16 @@ func configureK9s(provider func(opts ...software.InstallerOption) (software.Soft
 			}
 
 			meta[ConfiguredByThisStep] = "true"
+			stp.State().Set(ConfiguredByThisStep, true)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			if !configuredByThisStep {
+				return automa.SkippedReport(stp, automa.WithDetail("K9s was not configured by this step, skipping rollback"))
+			}
+
 			installer, err := provider()
 			if err != nil {
 				return automa.FailureReport(stp,
@@ -153,6 +182,9 @@ func configureK9s(provider func(opts ...software.InstallerOption) (software.Soft
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			// Remove configuration state during rollback
+			removeConfigureState(installer)
 
 			return automa.SuccessReport(stp)
 		})

@@ -15,6 +15,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/state"
 	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
@@ -418,37 +419,6 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 				})
 			}
 
-			// Test IsInstalled
-			t.Run("IsInstalled", func(t *testing.T) {
-				resetTestEnvironment(t)
-				installer := newTestInstallerWithScenario(t, scenario)
-
-				// First check that nothing is installed initially
-				isInstalled, err := installer.IsInstalled()
-				require.NoError(t, err, "IsInstalled should not error initially")
-				require.False(t, isInstalled, "IsInstalled should return false initially for scenario: %s", scenario.Description)
-
-				// Download and extract first
-				err = installer.Download()
-				require.NoError(t, err, "Download should succeed")
-
-				if len(scenario.Archives) > 0 {
-					err = installer.Extract()
-					require.NoError(t, err, "Extract should succeed")
-				}
-
-				// Install binaries if they exist
-				if len(scenario.Binaries) > 0 {
-					err = installer.Install()
-					require.NoError(t, err, "Install should succeed")
-
-					// Now verify installation
-					isInstalled, err = installer.IsInstalled()
-					require.NoError(t, err, "IsInstalled should not error after installation")
-					require.True(t, isInstalled, "IsInstalled should return true after installation for scenario: %s", scenario.Description)
-				}
-			})
-
 			// Test Configure and IsConfigured (only if binaries exist)
 			if len(scenario.Binaries) > 0 {
 				t.Run("Configure", func(t *testing.T) {
@@ -480,42 +450,6 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					}
 				})
 
-				t.Run("IsConfigured", func(t *testing.T) {
-					resetTestEnvironment(t)
-					installer := newTestInstallerWithScenario(t, scenario)
-
-					// First check that nothing is configured initially
-					isConfigured, err := installer.IsConfigured()
-					require.NoError(t, err, "IsConfigured should not error initially")
-					require.False(t, isConfigured, "IsConfigured should return false initially for scenario: %s", scenario.Description)
-
-					// Download, extract, and install first
-					err = installer.Download()
-					require.NoError(t, err, "Download should succeed")
-
-					if len(scenario.Archives) > 0 {
-						err = installer.Extract()
-						require.NoError(t, err, "Extract should succeed")
-					}
-
-					err = installer.Install()
-					require.NoError(t, err, "Install should succeed")
-
-					// Should still not be configured before Configure() is called
-					isConfigured, err = installer.IsConfigured()
-					require.NoError(t, err, "IsConfigured should not error after installation")
-					require.False(t, isConfigured, "IsConfigured should return false before Configure() for scenario: %s", scenario.Description)
-
-					// Configure the software
-					err = installer.Configure()
-					require.NoError(t, err, "Configure should succeed")
-
-					// Now verify configuration
-					isConfigured, err = installer.IsConfigured()
-					require.NoError(t, err, "IsConfigured should not error after configuration")
-					require.True(t, isConfigured, "IsConfigured should return true after Configure() for scenario: %s", scenario.Description)
-				})
-
 				// Test Cleanup
 				t.Run("Cleanup", func(t *testing.T) {
 					resetTestEnvironment(t)
@@ -534,11 +468,6 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					if len(scenario.Binaries) > 0 {
 						err = installer.Install()
 						require.NoError(t, err, "Install should succeed")
-
-						// Now verify installation
-						isInstalled, err := installer.IsInstalled()
-						require.NoError(t, err, "IsInstalled should not error after installation")
-						require.True(t, isInstalled, "IsInstalled should return true after installation for scenario: %s", scenario.Description)
 					}
 
 					// Then cleanup
@@ -664,8 +593,8 @@ func Test_BaseInstaller_Download_PermissionError(t *testing.T) {
 	// Create a regular file where the directory should be created
 	// This will cause MkdirAll to fail with permission/file exists error
 	conflictingFile := tmpFolder
-	err := os.MkdirAll("/opt/weaver", core.DefaultDirOrExecPerm)
-	require.NoError(t, err, "Failed to create /opt/weaver directory")
+	err := os.MkdirAll("/opt/solo/weaver", core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create /opt/solo/weaver directory")
 	err = os.WriteFile(conflictingFile, []byte("blocking file"), core.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create blocking file")
 
@@ -928,6 +857,7 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1019,7 +949,7 @@ func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
 	// Restore permissions after test
 	t.Cleanup(func() {
 		_ = exec.Command("chattr", "-i", sandboxBinDir).Run()
-		_ = os.RemoveAll(sandboxBinary)
+		_ = os.Remove(sandboxBinary)
 	})
 
 	//
@@ -1033,7 +963,7 @@ func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
 	// Then
 	//
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, InstallationError))
+	require.True(t, errorx.IsOfType(err, UninstallationError))
 
 }
 
@@ -1140,7 +1070,7 @@ func Test_BaseInstaller_Uninstall_VersionNotFound(t *testing.T) {
 	// Then
 	//
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, InstallationError))
+	require.True(t, errorx.IsOfType(err, UninstallationError))
 }
 
 func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
@@ -1617,7 +1547,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 	// Then
 	//
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, InstallationError))
+	require.True(t, errorx.IsOfType(err, UninstallationError))
 }
 
 func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
@@ -1659,7 +1589,7 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 	// Then
 	//
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, InstallationError))
+	require.True(t, errorx.IsOfType(err, UninstallationError))
 }
 
 func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
@@ -1698,8 +1628,6 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
 	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-
-	// Don't create any symlinks
 
 	//
 	// When

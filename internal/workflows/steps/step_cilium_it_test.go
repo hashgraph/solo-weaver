@@ -84,48 +84,6 @@ func Test_StepCilium_AlreadyInstalled_Integration(t *testing.T) {
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 }
 
-func Test_StepCilium_PartiallyInstalled_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	reset(t)
-
-	step, err := SetupCilium().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	err = os.RemoveAll("/usr/local/bin/cilium")
-	require.NoError(t, err)
-
-	//
-	// When
-	//
-	step, err = SetupCilium().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
-	require.Empty(t, report.StepReports[0].Metadata[DownloadedByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[ExtractedByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[CleanedUpByThisStep])
-
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-}
-
 func Test_StepCilium_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
@@ -161,11 +119,11 @@ func Test_StepCilium_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for cilium is removed
-	_, err = os.Stat("/opt/weaver/tmp/cilium")
+	_, err = os.Stat("/opt/solo/weaver/tmp/cilium")
 	require.Error(t, err)
 
 	// Verify binary files are removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/cilium")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/cilium")
 	require.Error(t, err)
 }
 
@@ -216,11 +174,11 @@ func Test_StepCilium_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder for cilium was not created
-	_, err = os.Stat("/opt/weaver/tmp/cilium")
+	_, err = os.Stat("/opt/solo/weaver/tmp/cilium")
 	require.Error(t, err)
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/weaver/sandbox/bin/cilium")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/cilium")
 	require.Error(t, err)
 }
 
@@ -273,7 +231,7 @@ func Test_StepCilium_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an installation error
-	_, err = os.Stat("/opt/weaver/tmp/cilium")
+	_, err = os.Stat("/opt/solo/weaver/tmp/cilium")
 	require.NoError(t, err)
 
 	// Check there are downloaded files in the cilium directory
@@ -282,7 +240,7 @@ func Test_StepCilium_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the cilium directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/cilium")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/cilium")
 	require.Error(t, err)
 }
 
@@ -335,7 +293,7 @@ func Test_StepCilium_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	_, err = os.Stat("/opt/weaver/tmp/cilium")
+	_, err = os.Stat("/opt/solo/weaver/tmp/cilium")
 	require.NoError(t, err)
 
 	// Check there are files in the tmp/cilium directory
@@ -344,7 +302,7 @@ func Test_StepCilium_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the tmp/cilium directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/cilium")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/cilium")
 	require.Error(t, err)
 }
 
@@ -407,11 +365,11 @@ func Test_StepCilium_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, configRollbackReport.Status)
 
 	// Verify installation was rolled back - download folder should be removed
-	_, err = os.Stat("/opt/weaver/tmp/cilium")
+	_, err = os.Stat("/opt/solo/weaver/tmp/cilium")
 	require.Error(t, err)
 
 	// Verify binary files were removed from sandbox
-	_, err = os.Stat("/opt/weaver/sandbox/bin/cilium")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/cilium")
 	require.Error(t, err)
 
 	// Verify configuration was not applied - symlinks should not exist

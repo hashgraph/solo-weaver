@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	tmpFolder = "/opt/weaver/tmp"
+	tmpFolder = "/opt/solo/weaver/tmp"
 )
 
 // resetTestEnvironment creates a clean test environment and registers cleanup
@@ -22,7 +22,7 @@ func resetTestEnvironment(t *testing.T) {
 	t.Helper()
 
 	// Clean up any existing test artifacts
-	_ = os.RemoveAll("/opt/weaver")
+	_ = os.RemoveAll("/opt/solo/weaver")
 
 	// Clean up any leftover symbolic links in SystemBinDir from previous test runs
 	// This is critical because IsInstalled() and IsConfigured() check these directories
@@ -30,18 +30,18 @@ func resetTestEnvironment(t *testing.T) {
 
 	// Register cleanup to run after test completes
 	t.Cleanup(func() {
-		_ = os.RemoveAll("/opt/weaver")
+		_ = os.RemoveAll("/opt/solo/weaver")
 		cleanupSystemBinDir(t)
 	})
 }
 
-// cleanupSystemBinDir removes any symbolic links in /usr/local/bin that point to /opt/weaver
+// cleanupSystemBinDir removes any symbolic links in /usr/local/bin that point to /opt/solo/weaver
 // This prevents test pollution between runs
 func cleanupSystemBinDir(t *testing.T) {
 	t.Helper()
 
 	systemBinDir := "/usr/local/bin"
-	weaverPrefix := "/opt/weaver"
+	weaverPrefix := "/opt/solo/weaver"
 
 	// Read the system bin directory
 	entries, err := os.ReadDir(systemBinDir)

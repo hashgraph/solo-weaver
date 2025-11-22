@@ -32,7 +32,7 @@ const (
 	MetalLBAnnotation = "metallb.io/address-pool=public-address-pool"
 
 	// Storage paths
-	StorageBasePath    = "/opt/weaver/block-node-storage"
+	StorageBasePath    = "/mnt/fast-storage"
 	ArchiveStoragePath = StorageBasePath + "/archive"
 	LiveStoragePath    = StorageBasePath + "/live"
 	LogsStoragePath    = StorageBasePath + "/logs"

@@ -34,7 +34,7 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download cri-o and/or its configuration")
 
 	// Verify downloaded files exist
-	files, err := os.ReadDir("/opt/weaver/tmp/cri-o")
+	files, err := os.ReadDir("/opt/solo/weaver/tmp/cri-o")
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(files), "There should be exactly one file in the download directory")
@@ -52,7 +52,7 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to extract cri-o")
 
 	// Verify extraction directory exists and contains expected files
-	extractedFiles, err := os.ReadDir("/opt/weaver/tmp/cri-o/unpack")
+	extractedFiles, err := os.ReadDir("/opt/solo/weaver/tmp/cri-o/unpack")
 	require.NoError(t, err)
 	require.Greater(t, len(extractedFiles), 0, "Extraction directory should contain files")
 
@@ -63,8 +63,8 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Install()
 	require.NoError(t, err, "Failed to install cri-o")
 
-	// Verify 10-crio.conf is copied to /opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf
-	contents, err := os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf")
+	// Verify 10-crio.conf is copied to /opt/solo/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf
+	contents, err := os.ReadFile("/opt/solo/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf")
 	require.NoError(t, err)
 	require.Regexp(t, regexp.MustCompile(`/usr/libexec/crio`), string(contents),
 		"10-crio.conf should reference the correct libexec path")
@@ -80,27 +80,23 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify Symlink CRI-O /etc/containers/registries.conf.d
 	linkTarget, err := os.Readlink("/etc/containers")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/etc/containers", linkTarget, "containers etc symlink should point to sandbox etc directory")
+	require.Equal(t, "/opt/solo/weaver/sandbox/etc/containers", linkTarget, "containers etc symlink should point to sandbox etc directory")
 
-	// Verify CRI-O service file is using the sandbox bin directory
-	contents, err = os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/crio.service")
+	// Verify CRI-O service file contents from sandbox directory
+	contents, err = os.ReadFile("/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err)
-
-	// Verify CRI-O service file contents from latest subfolder
-	contents, err = os.ReadFile("/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service")
-	require.NoError(t, err)
-	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/usr/local/bin/crio`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/opt/solo/weaver/sandbox/usr/local/bin/crio`), string(contents),
 		"crio service file should reference the correct bin path")
-	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/etc/default/crio`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/opt/solo/weaver/sandbox/etc/default/crio`), string(contents),
 		"crio service file should reference the correct default crio path")
 
 	// Verify Symlink CRI-O /usr/lib/systemd/system/crio.service
 	linkTarget, err = os.Readlink("/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/latest/crio.service", linkTarget, "crio service symlink should point to file in latest subfolder")
+	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service", linkTarget, "crio service symlink should point to file in sandbox directory")
 
-	// Verify /opt/weaver/sandbox/etc/default/crio
-	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/default/crio")
+	// Verify /opt/solo/weaver/sandbox/etc/default/crio
+	contents, err = os.ReadFile("/opt/solo/weaver/sandbox/etc/default/crio")
 	require.NoError(t, err)
 	// there should be no occurrences of `sysconfig/crio` that file
 	require.NotRegexp(t, regexp.MustCompile(`sysconfig/crio`), string(contents),
@@ -111,19 +107,19 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 		"crio configuration should reference default/crio for debian based distributions")
 
 	// check CRI-O configuration directory
-	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/etc/crio/crio.conf.d`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/opt/solo/weaver/sandbox/etc/crio/crio.conf.d`), string(contents),
 		"crio config options should reference the correct etc crio path")
 
-	// Verify 10-crio.conf is copied to latest subfolder and contains expected content
-	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/latest/10-crio.conf")
+	// Verify 10-crio.conf is copied to sandbox directory and contains expected content
+	contents, err = os.ReadFile("/opt/solo/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf")
 	require.NoError(t, err)
-	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/usr/libexec/crio`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/opt/solo/weaver/sandbox/usr/libexec/crio`), string(contents),
 		"10-crio.conf should reference the correct libexec path")
-	require.Regexp(t, regexp.MustCompile(`/opt/weaver/sandbox/etc/crio`), string(contents),
+	require.Regexp(t, regexp.MustCompile(`/opt/solo/weaver/sandbox/etc/crio`), string(contents),
 		"10-crio.conf should reference the correct etc crio path")
 
-	// Verify contents of 10-crio.conf toml file in latest subfolder
-	contents, err = os.ReadFile("/opt/weaver/sandbox/etc/crio/crio.conf.d/latest/10-crio.conf")
+	// Verify contents of 10-crio.conf toml file in sandbox directory
+	contents, err = os.ReadFile("/opt/solo/weaver/sandbox/etc/crio/crio.conf.d/10-crio.conf")
 	var tomlEntries map[string]any
 	_, err = toml.NewDecoder(bytes.NewBufferString(string(contents))).Decode(&tomlEntries)
 	require.NoError(t, err, "10-crio.conf should be a valid toml file")
@@ -131,55 +127,55 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.Equal(t, "runc", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["default_runtime"],
 		"crio.default_runtime should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/etc/crio/keys" '.crio.runtime.decryption_keys_path'
-	require.Equal(t, "/opt/weaver/sandbox/etc/crio/keys", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["decryption_keys_path"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/etc/crio/keys", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["decryption_keys_path"],
 		"crio.decryption_keys_path should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/exits" '.crio.runtime.container_exits_dir'
-	require.Equal(t, "/opt/weaver/sandbox/var/run/crio/exits", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["container_exits_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run/crio/exits", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["container_exits_dir"],
 		"crio.container_exits_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio" '.crio.runtime.container_attach_socket_dir'
-	require.Equal(t, "/opt/weaver/sandbox/var/run/crio", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["container_attach_socket_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run/crio", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["container_attach_socket_dir"],
 		"crio.container_attach_socket_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run" '.crio.runtime.namespaces_dir'
-	require.Equal(t, "/opt/weaver/sandbox/var/run", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["namespaces_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["namespaces_dir"],
 		"crio.namespaces_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_LOCAL_BIN}/pinns" '.crio.runtime.pinns_path'
-	require.Equal(t, "/opt/weaver/sandbox/usr/local/bin/pinns", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["pinns_path"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/usr/local/bin/pinns", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["pinns_path"],
 		"crio.pinns_path should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/run/runc" '.crio.runtime.runtimes.runc.runtime_root'
-	require.Equal(t, "/opt/weaver/sandbox/run/runc", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["runtimes"].(map[string]any)["runc"].(map[string]any)["runtime_root"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/run/runc", tomlEntries["crio"].(map[string]any)["runtime"].(map[string]any)["runtimes"].(map[string]any)["runc"].(map[string]any)["runtime_root"],
 		"crio.runtimes.runc.runtime_root should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/crio.sock" '.crio.api.listen'
-	require.Equal(t, "/opt/weaver/sandbox/var/run/crio/crio.sock", tomlEntries["crio"].(map[string]any)["api"].(map[string]any)["listen"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run/crio/crio.sock", tomlEntries["crio"].(map[string]any)["api"].(map[string]any)["listen"],
 		"crio.api.listen should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/lib/containers/storage" '.crio.root'
-	require.Equal(t, "/opt/weaver/sandbox/var/lib/containers/storage", tomlEntries["crio"].(map[string]any)["root"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/lib/containers/storage", tomlEntries["crio"].(map[string]any)["root"],
 		"crio.root should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/containers/storage" '.crio.runroot'
-	require.Equal(t, "/opt/weaver/sandbox/var/run/containers/storage", tomlEntries["crio"].(map[string]any)["runroot"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run/containers/storage", tomlEntries["crio"].(map[string]any)["runroot"],
 		"crio.runroot should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/crio/version" '.crio.version_file'
-	require.Equal(t, "/opt/weaver/sandbox/var/run/crio/version", tomlEntries["crio"].(map[string]any)["version_file"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run/crio/version", tomlEntries["crio"].(map[string]any)["version_file"],
 		"crio.version_file should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/logs/crio/pods" '.crio.log_dir'
-	require.Equal(t, "/opt/weaver/sandbox/var/logs/crio/pods", tomlEntries["crio"].(map[string]any)["log_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/logs/crio/pods", tomlEntries["crio"].(map[string]any)["log_dir"],
 		"crio.log_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/lib/crio/clean.shutdown" '.crio.clean_shutdown_file'
-	require.Equal(t, "/opt/weaver/sandbox/var/lib/crio/clean.shutdown", tomlEntries["crio"].(map[string]any)["clean_shutdown_file"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/lib/crio/clean.shutdown", tomlEntries["crio"].(map[string]any)["clean_shutdown_file"],
 		"crio.clean_shutdown_file should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/etc/cni/net.d/" '.crio.network.network_dir'
-	require.Equal(t, "/opt/weaver/sandbox/etc/cni/net.d", tomlEntries["crio"].(map[string]any)["network"].(map[string]any)["network_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/etc/cni/net.d", tomlEntries["crio"].(map[string]any)["network"].(map[string]any)["network_dir"],
 		"crio.network.network_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/opt/cni/bin" -s 'crio.network.plugin_dirs.[]'
-	require.Equal(t, "/opt/weaver/sandbox/opt/cni/bin", tomlEntries["crio"].(map[string]any)["network"].(map[string]any)["plugin_dirs"].([]any)[0],
+	require.Equal(t, "/opt/solo/weaver/sandbox/opt/cni/bin", tomlEntries["crio"].(map[string]any)["network"].(map[string]any)["plugin_dirs"].([]any)[0],
 		"crio.network.plugin_dirs[0] should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/opt/nri/plugins" '.crio.nri.nri_plugin_dir'
-	require.Equal(t, "/opt/weaver/sandbox/opt/nri/plugins", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_plugin_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/opt/nri/plugins", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_plugin_dir"],
 		"crio.nri.nri_plugin_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/etc/nri/conf.d" '.crio.nri.nri_plugin_config_dir'
-	require.Equal(t, "/opt/weaver/sandbox/etc/nri/conf.d", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_plugin_config_dir"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/etc/nri/conf.d", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_plugin_config_dir"],
 		"crio.nri.nri_plugin_config_dir should be correctly set")
 	//sudo ${SANDBOX_BIN}/dasel put -w toml -r toml -f "${SANDBOX_DIR}/etc/crio/crio.conf.d/10-crio.conf" -v "${SANDBOX_DIR}/var/run/nri/nri.sock" '.crio.nri.nri_listen'
-	require.Equal(t, "/opt/weaver/sandbox/var/run/nri/nri.sock", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_listen"],
+	require.Equal(t, "/opt/solo/weaver/sandbox/var/run/nri/nri.sock", tomlEntries["crio"].(map[string]any)["nri"].(map[string]any)["nri_listen"],
 		"crio.nri.nri_listen should be correctly set")
 
 	// Verify ~/.crio-install is created and paths in it exist
@@ -187,14 +183,14 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err)
 	contents, err = os.ReadFile(path.Join(homeDir, ".crio-install"))
 	require.NoError(t, err)
-	// Every line should contains a /opt/weaver/sandbox path that exists
+	// Every line should contains a /opt/solo/weaver/sandbox path that exists
 	lines := strings.Split(string(contents), "\n")
 	require.Greater(t, len(lines), 0, ".crio-install should contain at least one path")
 	for _, line := range lines {
 		if line != "" {
 			line = strings.TrimRight(line, "/*")
-			require.True(t, strings.HasPrefix(line, "/opt/weaver/sandbox/"),
-				".crio-install should only contain /opt/weaver/sandbox paths")
+			require.True(t, strings.HasPrefix(line, "/opt/solo/weaver/sandbox/"),
+				".crio-install should only contain /opt/solo/weaver/sandbox paths")
 			_, err = os.Stat(line)
 			require.NoError(t, err, "Path %s from .crio-install should exist", line)
 		}
@@ -207,7 +203,7 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to cleanup crio installation")
 
 	// Check download folder is cleaned up
-	_, exists, err := fileManager.PathExists("/opt/weaver/tmp/cri-o")
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/cri-o")
 	require.NoError(t, err)
 	require.False(t, exists, "crio download temp folder should be cleaned up after installation")
 }

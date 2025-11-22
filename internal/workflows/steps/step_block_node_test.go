@@ -20,7 +20,7 @@ func TestBlockNodeConstants(t *testing.T) {
 	assert.Equal(t, "block-node", blocknode.Release)
 	assert.Equal(t, "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server", blocknode.Chart)
 	assert.Equal(t, "0.22.1", blocknode.Version)
-	assert.Equal(t, "/opt/weaver/block-node-storage", blocknode.StorageBasePath)
+	assert.Equal(t, "/mnt/fast-storage", blocknode.StorageBasePath)
 	assert.Equal(t, "block-node-block-node-server", blocknode.ServiceName)
 	assert.Equal(t, "metallb.io/address-pool=public-address-pool", blocknode.MetalLBAnnotation)
 	assert.Equal(t, "block", core.NodeTypeBlock)

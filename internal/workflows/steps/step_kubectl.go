@@ -37,6 +37,13 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "kubectl installed successfully")
+
+			// Record installation state if this step installed the software
+			if stp.State().Bool(InstalledByThisStep) {
+				if installer, err := provider(); err == nil {
+					recordInstallState(installer)
+				}
+			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -68,6 +75,7 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[InstalledByThisStep] = "true"
+			stp.State().Set(InstalledByThisStep, true)
 
 			err = installer.Cleanup()
 			if err != nil {
@@ -78,6 +86,11 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			if !installedByThisStep {
+				return automa.SkippedReport(stp, automa.WithDetail("kubectl was not installed by this step, skipping rollback"))
+			}
+
 			installer, err := provider()
 			if err != nil {
 				return automa.FailureReport(stp,
@@ -89,6 +102,9 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			// Remove installation state during rollback
+			removeInstallState(installer)
 
 			return automa.SuccessReport(stp)
 		})
@@ -105,6 +121,13 @@ func configureKubectl(provider func(opts ...software.InstallerOption) (software.
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "kubectl configured successfully")
+
+			// Record configuration state if this step configured the software
+			if stp.State().Bool(ConfiguredByThisStep) {
+				if installer, err := provider(); err == nil {
+					recordConfigureState(installer)
+				}
+			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -131,10 +154,16 @@ func configureKubectl(provider func(opts ...software.InstallerOption) (software.
 			}
 
 			meta[ConfiguredByThisStep] = "true"
+			stp.State().Set(ConfiguredByThisStep, true)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			if !configuredByThisStep {
+				return automa.SkippedReport(stp, automa.WithDetail("kubectl was not configured by this step, skipping rollback"))
+			}
+
 			installer, err := provider()
 			if err != nil {
 				return automa.FailureReport(stp,
@@ -146,6 +175,9 @@ func configureKubectl(provider func(opts ...software.InstallerOption) (software.
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			// Remove configuration state during rollback
+			removeConfigureState(installer)
 
 			return automa.SuccessReport(stp)
 		})

@@ -30,7 +30,7 @@ func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download helm and/or its configuration")
 
 	// Verify downloaded files exist
-	files, err := os.ReadDir("/opt/weaver/tmp/helm")
+	files, err := os.ReadDir("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(files), "There should be exactly one file in the download directory")
@@ -48,7 +48,7 @@ func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to extract helm")
 
 	// Verify extraction directory exists and contains expected files
-	extractedFiles, err := os.ReadDir("/opt/weaver/tmp/helm/unpack")
+	extractedFiles, err := os.ReadDir("/opt/solo/weaver/tmp/helm/unpack")
 	require.NoError(t, err)
 	require.Greater(t, len(extractedFiles), 0, "Extraction directory should contain files")
 
@@ -59,12 +59,12 @@ func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to install helm")
 
 	// Verify installation files exist in sandbox
-	_, exists, err := fileManager.PathExists("/opt/weaver/sandbox/bin/helm")
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/sandbox/bin/helm")
 	require.NoError(t, err)
 	require.True(t, exists, "helm binary should exist in sandbox bin directory")
 
 	// Check binary permissions (should be executable)
-	info, err := os.Stat("/opt/weaver/sandbox/bin/helm")
+	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0755), info.Mode().Perm(), "helm binary should have 0755 permissions")
 
@@ -75,7 +75,7 @@ func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to cleanup helm installation")
 
 	// Check download folder is cleaned up
-	_, exists, err = fileManager.PathExists("/opt/weaver/tmp/helm")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 	require.False(t, exists, "helm download temp folder should be cleaned up after installation")
 
@@ -93,6 +93,6 @@ func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify it's actually a symlink pointing to the sandbox binary
 	linkTarget, err := os.Readlink("/usr/local/bin/helm")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/bin/helm", linkTarget, "symlink should point to sandbox binary")
+	require.Equal(t, "/opt/solo/weaver/sandbox/bin/helm", linkTarget, "symlink should point to sandbox binary")
 
 }

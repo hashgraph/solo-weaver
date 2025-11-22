@@ -61,7 +61,7 @@ func reset(t *testing.T) {
 
 	// Reset kubeadm with custom CRI socket
 	_ = sudo(exec.Command("kubeadm", "reset",
-		"--cri-socket", "unix:///opt/weaver/sandbox/var/run/crio/crio.sock",
+		"--cri-socket", "unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock",
 		"--force")).Run()
 
 	// Stop CRI-O service
@@ -73,7 +73,7 @@ func reset(t *testing.T) {
 	_ = sudo(exec.Command("umount", "-R", "/var/run/cilium")).Run()
 
 	// Remove weaver directory
-	_ = sudo(exec.Command("rm", "-rf", "/opt/weaver")).Run()
+	_ = sudo(exec.Command("rm", "-rf", "/opt/solo/weaver")).Run()
 
 	// Remove /usr/lib/systemd/system
 	_ = sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/crio.service")).Run()

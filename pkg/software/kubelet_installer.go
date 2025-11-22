@@ -2,7 +2,6 @@ package software
 
 import (
 	"path"
-	"strings"
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
@@ -51,6 +50,7 @@ func (ki *kubeletInstaller) Install() error {
 
 // Uninstall removes the kubelet binary and configuration files from the sandbox folder
 func (ki *kubeletInstaller) Uninstall() error {
+	// Uninstall the kubelet binary using the common logic
 	err := ki.baseInstaller.Uninstall()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubelet binary")
@@ -93,83 +93,25 @@ func (ki *kubeletInstaller) Configure() error {
 
 // RestoreConfiguration restores the kubelet binary and configuration files to their original state
 func (ki *kubeletInstaller) RemoveConfiguration() error {
-	err := ki.baseInstaller.RemoveConfiguration()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to restore kubelet binary configuration")
-	}
-
-	// Remove the latest service file
-	latestServicePath := ki.getLatestKubeletServicePath()
-	err = ki.fileManager.RemoveAll(latestServicePath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to remove latest service file at %s", latestServicePath)
-	}
-
 	// Remove the symlink for kubelet.service config file
 	systemdUnitPath := ki.getSystemdUnitPath()
-	err = ki.fileManager.RemoveAll(systemdUnitPath)
+	err := ki.fileManager.RemoveAll(systemdUnitPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove symlink for kubelet service file at %s", systemdUnitPath)
+	}
+
+	// Call base implementation to cleanup symlinks
+	err = ki.baseInstaller.RemoveConfiguration()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to restore kubelet binary configuration")
 	}
 
 	return nil
 }
 
-// Overrides IsInstalled() to check if both binaries and config files are installed
-func (ki *kubeletInstaller) IsInstalled() (bool, error) {
-	binariesInstalled, err := ki.baseInstaller.IsInstalled()
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubelet binaries are installed")
-	}
-
-	configDir := path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir)
-	configsInstalled, err := ki.isConfigInstalled(configDir)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubelet configuration files are installed in %s", configDir)
-	}
-
-	return binariesInstalled && configsInstalled, nil
-}
-
-// Overrides IsConfigured() to check if the kubelet is properly configured.
-// This includes checking if the binaries are configured, the service file in the latest subfolder is valid,
-// and the systemd symlink for kubelet.service is present.
-func (ki *kubeletInstaller) IsConfigured() (bool, error) {
-	// First check if binaries are configured
-	binariesConfigured, err := ki.baseInstaller.IsConfigured()
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubelet binaries are configured")
-	}
-	if !binariesConfigured {
-		return false, nil
-	}
-
-	// Check if the .latest service file is valid
-	latestFileValid, err := ki.isLatestServiceFileValid()
-	if err != nil {
-		return false, err
-	}
-	if !latestFileValid {
-		return false, nil
-	}
-
-	// Check if the systemd symlink is present
-	symlinkPresent, err := ki.isSystemdSymlinkPresent()
-	if err != nil {
-		return false, err
-	}
-
-	return symlinkPresent, nil
-}
-
 // getKubeletServicePath returns the path to the kubelet.service file in the sandbox
 func (ki *kubeletInstaller) getKubeletServicePath() string {
 	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, kubeletServiceFileName)
-}
-
-// getLatestKubeletServicePath returns the path to the kubelet.service file in the latest subfolder
-func (ki *kubeletInstaller) getLatestKubeletServicePath() string {
-	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, "latest", kubeletServiceFileName)
 }
 
 // getSystemdUnitPath returns the path to the kubelet.service file in the systemd directory
@@ -201,27 +143,13 @@ func (ki *kubeletInstaller) validateCriticalPaths() error {
 	return nil
 }
 
-// patchServiceFile creates a copy of kubelet.service with updated paths in the latest subfolder
+// patchServiceFile patches kubelet.service with updated paths in place
 func (ki *kubeletInstaller) patchServiceFile() error {
 	kubeletServicePath := ki.getKubeletServicePath()
-	latestServicePath := ki.getLatestKubeletServicePath()
-
-	// Create latest subfolder if it doesn't exist
-	latestDir := path.Dir(latestServicePath)
-	err := ki.fileManager.CreateDirectory(latestDir, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create latest subfolder at %s", latestDir)
-	}
-
-	// Create latest file which will have some strings replaced
-	err = ki.fileManager.CopyFile(kubeletServicePath, latestServicePath, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create latest kubelet.service file at %s", latestServicePath)
-	}
 
 	// Replace the kubelet binary path with sandbox path
 	sandboxKubeletPath := ki.getSandboxKubeletBinPath()
-	err = ki.replaceAllInFile(latestServicePath, "/usr/bin/kubelet", sandboxKubeletPath)
+	err := ki.replaceAllInFile(kubeletServicePath, "/usr/bin/kubelet", sandboxKubeletPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to replace kubelet path in kubelet.service file")
 	}
@@ -231,59 +159,13 @@ func (ki *kubeletInstaller) patchServiceFile() error {
 
 // createSystemdSymlink creates a symlink for the kubelet service in the systemd directory
 func (ki *kubeletInstaller) createSystemdSymlink() error {
-	latestServicePath := ki.getLatestKubeletServicePath()
+	kubeletServicePath := ki.getKubeletServicePath()
 	systemdUnitPath := ki.getSystemdUnitPath()
 
-	err := ki.fileManager.CreateSymbolicLink(latestServicePath, systemdUnitPath, true)
+	err := ki.fileManager.CreateSymbolicLink(kubeletServicePath, systemdUnitPath, true)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create symlink for kubelet service from %s to %s", latestServicePath, systemdUnitPath)
+		return errorx.IllegalState.Wrap(err, "failed to create symlink for kubelet service from %s to %s", kubeletServicePath, systemdUnitPath)
 	}
 
 	return nil
-}
-
-// isLatestServiceFileValid checks if the service file in the latest subfolder exists and has the correct content
-func (ki *kubeletInstaller) isLatestServiceFileValid() (bool, error) {
-	latestServicePath := ki.getLatestKubeletServicePath()
-
-	// Check if the file in latest subfolder exists
-	fi, exists, err := ki.fileManager.PathExists(latestServicePath)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if latest service file exists at %s", latestServicePath)
-	}
-	if !exists || !ki.fileManager.IsRegularFileByFileInfo(fi) {
-		return false, nil
-	}
-
-	// Read the original service file to create expected content
-	originalServicePath := ki.getKubeletServicePath()
-	originalContent, err := ki.fileManager.ReadFile(originalServicePath, -1)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to read original kubelet.service file at %s", originalServicePath)
-	}
-
-	// Generate expected content with replaced paths
-	sandboxKubeletPath := ki.getSandboxKubeletBinPath()
-	expectedContent := strings.ReplaceAll(string(originalContent), "/usr/bin/kubelet", sandboxKubeletPath)
-
-	// Read the actual latest file content
-	actualContent, err := ki.fileManager.ReadFile(latestServicePath, -1)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to read latest kubelet.service file at %s", latestServicePath)
-	}
-
-	// Compare contents
-	return string(actualContent) == expectedContent, nil
-}
-
-// isSystemdSymlinkPresent checks if the kubelet.service symlink exists in the systemd directory
-func (ki *kubeletInstaller) isSystemdSymlinkPresent() (bool, error) {
-	systemdUnitPath := ki.getSystemdUnitPath()
-
-	_, exists, err := ki.fileManager.PathExists(systemdUnitPath)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if systemd symlink exists at %s", systemdUnitPath)
-	}
-
-	return exists, nil
 }
