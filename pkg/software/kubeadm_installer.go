@@ -6,7 +6,6 @@ import (
 	"math/big"
 	"os"
 	"path"
-	"strings"
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
@@ -86,6 +85,7 @@ func (ki *kubeadmInstaller) Configure() error {
 
 // Uninstall removes the kubeadm binary and configuration files from the sandbox folder
 func (ki *kubeadmInstaller) Uninstall() error {
+	// Uninstall the kubeadm binary using the common logic
 	err := ki.baseInstaller.Uninstall()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubeadm binary")
@@ -103,21 +103,9 @@ func (ki *kubeadmInstaller) Uninstall() error {
 
 // RemoveConfiguration restores the kubeadm binary and configuration files to their original state
 func (ki *kubeadmInstaller) RemoveConfiguration() error {
-	err := ki.baseInstaller.RemoveConfiguration()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to restore kubeadm binary configuration")
-	}
-
-	// Remove the latest 10-kubeadm.conf file
-	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
-	err = ki.fileManager.RemoveAll(latestConfPath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to remove latest 10-kubeadm.conf file at %s", latestConfPath)
-	}
-
 	// Remove the symlink for the 10-kubeadm.conf file
 	systemConfPath := path.Join(rootPath, kubeletServiceDirRelPath, kubeadmConfFileName)
-	err = ki.fileManager.RemoveAll(systemConfPath)
+	err := ki.fileManager.RemoveAll(systemConfPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove symlink for 10-kubeadm.conf file at %s", systemConfPath)
 	}
@@ -127,6 +115,12 @@ func (ki *kubeadmInstaller) RemoveConfiguration() error {
 	err = ki.fileManager.RemoveAll(initConfigPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove kubeadm-init.yaml file at %s", initConfigPath)
+	}
+
+	// Call base implementation to cleanup symlinks
+	err = ki.baseInstaller.RemoveConfiguration()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to restore kubeadm binary configuration")
 	}
 
 	return nil
@@ -205,119 +199,6 @@ var GenerateKubeadmToken = func() (string, error) {
 	return fmt.Sprintf("%s.%s", part1, part2), nil
 }
 
-// Overrides IsInstalled() to check if both binaries and config files are installed
-func (ki *kubeadmInstaller) IsInstalled() (bool, error) {
-	binariesInstalled, err := ki.baseInstaller.IsInstalled()
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubeadm binaries are installed")
-	}
-
-	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, kubeletServiceDirRelPath)
-	configsInstalled, err := ki.isConfigInstalled(sandboxKubeletServiceDir)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubeadm configuration files are installed in %s", sandboxKubeletServiceDir)
-	}
-
-	return binariesInstalled && configsInstalled, nil
-}
-
-// Overrides IsConfigured() to check if the kubeadm is properly configured.
-// This includes checking if the binaries are configured, the 10-kubeadm.conf file is properly updated,
-// the systemd symlink for kubelet service directory is present, and kubeadm-init.yaml exists.
-func (ki *kubeadmInstaller) IsConfigured() (bool, error) {
-	// First check if binaries are configured
-	binariesConfigured, err := ki.baseInstaller.IsConfigured()
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubeadm binaries are configured")
-	}
-	if !binariesConfigured {
-		return false, nil
-	}
-
-	// Check if the .latest 10-kubeadm.conf file is valid
-	latestConfValid, err := ki.isLatestKubeadmConfValid()
-	if err != nil {
-		return false, err
-	}
-	if !latestConfValid {
-		return false, nil
-	}
-
-	// Check if the systemd symlink for kubelet service directory is present
-	symlinkPresent, err := ki.isKubeletServiceDirSymlinkPresent()
-	if err != nil {
-		return false, err
-	}
-	if !symlinkPresent {
-		return false, nil
-	}
-
-	// Check if kubeadm-init.yaml configuration file exists
-	initConfigExists, err := ki.isKubeadmInitConfigExists()
-	if err != nil {
-		return false, err
-	}
-
-	return initConfigExists, nil
-}
-
-// isLatestKubeadmConfValid checks if the .latest 10-kubeadm.conf file exists and has the correct content
-func (ki *kubeadmInstaller) isLatestKubeadmConfValid() (bool, error) {
-	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
-
-	// Check if the .latest file exists
-	fi, exists, err := ki.fileManager.PathExists(latestConfPath)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if latest 10-kubeadm.conf exists at %s", latestConfPath)
-	}
-	if !exists || !ki.fileManager.IsRegularFileByFileInfo(fi) {
-		return false, nil
-	}
-
-	// Read the original 10-kubeadm.conf file to create expected content
-	originalConfPath := ki.getKubeadmConfPath()
-	originalContent, err := ki.fileManager.ReadFile(originalConfPath, -1)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to read original 10-kubeadm.conf file at %s", originalConfPath)
-	}
-
-	// Generate expected content with replaced paths
-	sandboxKubeletPath := path.Join(core.Paths().SandboxBinDir, "kubelet")
-	expectedContent := strings.ReplaceAll(string(originalContent), "/usr/bin/kubelet", sandboxKubeletPath)
-
-	// Read the actual latest file content
-	actualContent, err := ki.fileManager.ReadFile(latestConfPath, -1)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to read latest 10-kubeadm.conf file at %s", latestConfPath)
-	}
-
-	// Compare contents
-	return string(actualContent) == expectedContent, nil
-}
-
-// isKubeletServiceDirSymlinkPresent checks if the 10-kubeadm.conf symlink exists in the system directory
-func (ki *kubeadmInstaller) isKubeletServiceDirSymlinkPresent() (bool, error) {
-	systemConfPath := path.Join(rootPath, kubeletServiceDirRelPath, kubeadmConfFileName)
-	_, exists, err := ki.fileManager.PathExists(systemConfPath)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if 10-kubeadm.conf symlink exists at %s", systemConfPath)
-	}
-
-	return exists, nil
-}
-
-// isKubeadmInitConfigExists checks if the kubeadm-init.yaml configuration file exists
-func (ki *kubeadmInstaller) isKubeadmInitConfigExists() (bool, error) {
-	kubeadmInitPath := path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
-
-	fi, exists, err := ki.fileManager.PathExists(kubeadmInitPath)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if kubeadm-init.yaml exists at %s", kubeadmInitPath)
-	}
-
-	return exists && ki.fileManager.IsRegularFileByFileInfo(fi), nil
-}
-
 // getKubeadmConfPath returns the path to the 10-kubeadm.conf file in the sandbox
 func (ki *kubeadmInstaller) getKubeadmConfPath() string {
 	return path.Join(core.Paths().SandboxDir, kubeletServiceDirRelPath, kubeadmConfFileName)
@@ -328,20 +209,13 @@ func (ki *kubeadmInstaller) getKubeadmInitConfigPath() string {
 	return path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
 }
 
-// patchKubeadmConf creates a copy of 10-kubeadm.conf with updated paths
+// patchKubeadmConf patches 10-kubeadm.conf with updated paths in place
 func (ki *kubeadmInstaller) patchKubeadmConf() error {
-	originalConfPath := ki.getKubeadmConfPath()
-	latestConfPath := getLatestPath(originalConfPath)
-
-	// Create latest file which will have some strings replaced
-	err := ki.fileManager.CopyFile(originalConfPath, latestConfPath, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create latest 10-kubeadm.conf file at %s", latestConfPath)
-	}
+	confPath := ki.getKubeadmConfPath()
 
 	// Replace the kubelet binary path with sandbox path
 	sandboxKubeletPath := path.Join(core.Paths().SandboxBinDir, "kubelet")
-	err = ki.replaceAllInFile(latestConfPath, "/usr/bin/kubelet", sandboxKubeletPath)
+	err := ki.replaceAllInFile(confPath, "/usr/bin/kubelet", sandboxKubeletPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to replace kubelet path in 10-kubeadm.conf file")
 	}
@@ -359,13 +233,13 @@ func (ki *kubeadmInstaller) createKubeletServiceDirSymlink() error {
 		return errorx.IllegalState.Wrap(err, "failed to create kubelet service directory at %s", kubeletServiceDir)
 	}
 
-	// Create symlink from the .latest file to the system location
-	latestConfPath := getLatestPath(ki.getKubeadmConfPath())
+	// Create symlink from the conf file to the system location
+	confPath := ki.getKubeadmConfPath()
 	systemConfPath := path.Join(kubeletServiceDir, kubeadmConfFileName)
 
-	err = ki.fileManager.CreateSymbolicLink(latestConfPath, systemConfPath, true)
+	err = ki.fileManager.CreateSymbolicLink(confPath, systemConfPath, true)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create symlink for 10-kubeadm.conf from %s to %s", latestConfPath, systemConfPath)
+		return errorx.IllegalState.Wrap(err, "failed to create symlink for 10-kubeadm.conf from %s to %s", confPath, systemConfPath)
 	}
 
 	return nil

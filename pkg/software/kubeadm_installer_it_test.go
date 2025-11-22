@@ -31,12 +31,12 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download kubeadm and/or its configuration")
 
 	// Verify downloaded files exist
-	_, exists, err := fileManager.PathExists("/opt/weaver/tmp/kubeadm/kubeadm")
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/kubeadm/kubeadm")
 	require.NoError(t, err)
 	require.True(t, exists, "kubeadm binary should exist in download folder")
 
 	// Check config file exists (10-kubeadm.conf)
-	_, exists, err = fileManager.PathExists("/opt/weaver/tmp/kubeadm/10-kubeadm.conf")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/kubeadm/10-kubeadm.conf")
 	require.NoError(t, err)
 	require.True(t, exists, "10-kubeadm.conf should exist in download folder")
 
@@ -47,17 +47,17 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to install kubeadm")
 
 	// Verify installation files exist in sandbox
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/bin/kubeadm")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/sandbox/bin/kubeadm")
 	require.NoError(t, err)
 	require.True(t, exists, "kubeadm binary should exist in sandbox bin directory")
 
 	// Check binary permissions (should be executable)
-	info, err := os.Stat("/opt/weaver/sandbox/bin/kubeadm")
+	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/kubeadm")
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "kubeadm binary should have 0755 permissions")
 
 	// Verify config file is copied to sandbox kubelet service directory
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
 	require.True(t, exists, "10-kubeadm.conf should exist in sandbox kubelet service directory")
 
@@ -68,7 +68,7 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to cleanup kubeadm installation")
 
 	// Check download folder is cleaned up
-	_, exists, err = fileManager.PathExists("/opt/weaver/tmp/kubeadm")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/kubeadm")
 	require.NoError(t, err)
 	require.False(t, exists, "kubeadm download temp folder should be cleaned up after installation")
 
@@ -86,17 +86,17 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify it's actually a symlink pointing to the sandbox binary
 	linkTarget, err := os.Readlink("/usr/local/bin/kubeadm")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/bin/kubeadm", linkTarget, "symlink should point to sandbox binary")
+	require.Equal(t, "/opt/solo/weaver/sandbox/bin/kubeadm", linkTarget, "symlink should point to sandbox binary")
 
 	// Verify kubelet service directory symlink
 	_, exists, err = fileManager.PathExists("/usr/lib/systemd/system/kubelet.service.d")
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet service directory symlink should exist")
 
-	// Verify it's a symlink pointing to sandbox directory
+	// Verify it's a symlink pointing to sandbox directory (no 'latest' subfolder)
 	linkTarget, err = os.Readlink("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf.latest", linkTarget, "symlink should point to sandbox kubelet service config")
+	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf", linkTarget, "symlink should point to file in sandbox directory")
 
 	// Verify kubelet path replacement in config file
 	configContent, err := os.ReadFile("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
@@ -106,7 +106,7 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NotContains(t, string(configContent), "/usr/bin/kubelet", "config file should not contain old kubelet path")
 
 	// Verify config file permissions
-	info, err = os.Stat("/opt/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
+	info, err = os.Stat("/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(core.DefaultFilePerm), info.Mode().Perm(), "config file should have 0644 permissions")
 }

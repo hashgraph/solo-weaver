@@ -12,7 +12,7 @@ const (
 	DefaultFilePerm      = 0644 // for regular data/config files
 
 	// Weaver paths
-	DefaultWeaverHome       = "/opt/weaver"
+	DefaultWeaverHome       = "/opt/solo/weaver"
 	DefaultUnpackFolderName = "unpack"
 	SystemBinDir            = "/usr/local/bin"
 	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
@@ -48,11 +48,11 @@ type WeaverPaths struct {
 	BinDir         string
 	LogsDir        string
 	UtilsDir       string
-	DataDir        string
 	ConfigDir      string
 	BackupDir      string
 	TempDir        string
 	DiagnosticsDir string
+	StateDir       string
 
 	AllDirectories []string
 
@@ -62,15 +62,6 @@ type WeaverPaths struct {
 	SandboxBinDir      string
 	SandboxLocalBinDir string
 	SandboxDirectories []string // all sandbox related directories
-
-	// Kubernetes related directories
-	KubeletDir string
-	KubectlDir string
-	KubeadmDir string
-	HelmDir    string
-	K9sDir     string
-	CrioDir    string
-	CiliumDir  string
 }
 
 func NewWeaverPaths(home string) *WeaverPaths {
@@ -78,20 +69,12 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		HomeDir:        home,
 		BinDir:         path.Join(home, "bin"),
 		LogsDir:        path.Join(home, "logs"),
-		DataDir:        path.Join(home, "data"),
 		ConfigDir:      path.Join(home, "config"),
 		UtilsDir:       path.Join(home, "utils"),
 		BackupDir:      path.Join(home, "backup"),
 		TempDir:        path.Join(home, "tmp"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
-
-		KubeletDir: path.Join(home, "kubelet"),
-		KubectlDir: path.Join(home, "kubectl"),
-		KubeadmDir: path.Join(home, "kubeadm"),
-		HelmDir:    path.Join(home, "helm"),
-		K9sDir:     path.Join(home, "k9s"),
-		CrioDir:    path.Join(home, "crio"),
-		CiliumDir:  path.Join(home, "cilium"),
+		StateDir:       path.Join(home, "state"),
 	}
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
@@ -136,20 +119,12 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		pp.HomeDir,
 		pp.BinDir,
 		pp.LogsDir,
-		pp.DataDir,
 		pp.UtilsDir,
 		pp.ConfigDir,
 		pp.BackupDir,
 		pp.TempDir,
 		pp.DiagnosticsDir,
-		pp.KubeletDir,
-		pp.KubectlDir,
-		pp.KubeadmDir,
-		pp.K9sDir,
-		pp.HelmDir,
-		pp.CrioDir,
-		path.Join(pp.CrioDir, "unpack"),
-		pp.CiliumDir,
+		pp.StateDir,
 	}
 	pp.AllDirectories = append(pp.AllDirectories, pp.SandboxDirectories...)
 

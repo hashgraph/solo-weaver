@@ -7,6 +7,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/state"
 	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
@@ -29,6 +30,7 @@ type baseInstaller struct {
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
+	stateManager         *state.Manager
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -56,9 +58,10 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 	}
 
 	bi := &baseInstaller{
-		downloader:  NewDownloader(),
-		software:    item,
-		fileManager: fsxManager,
+		downloader:   NewDownloader(),
+		software:     item,
+		fileManager:  fsxManager,
+		stateManager: state.NewManager(fsxManager),
 	}
 
 	for _, opt := range opts {
@@ -513,8 +516,7 @@ func (b *baseInstaller) verifyExtractedConfigs() error {
 	return nil
 }
 
-// Install provides a basic install implementation for simple binary installations
-// Differently than the Download() methods, it does not handle configuration files.
+// Install provides a basic install implementation for simple binary installations.
 func (b *baseInstaller) Install() error {
 	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
 	if !exists {
@@ -573,7 +575,6 @@ func (b *baseInstaller) Install() error {
 		if err != nil {
 			return NewInstallationError(err, sourcePath, sandboxBinDir)
 		}
-
 	}
 
 	return nil
@@ -672,7 +673,7 @@ func (b *baseInstaller) uninstallConfig(destinationDir string) error {
 	return nil
 }
 
-// Configure provides a basic configuration implementation
+// Configure provides a basic configuration implementation.
 func (b *baseInstaller) Configure() error {
 	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
 	if !exists {
@@ -713,212 +714,12 @@ func (b *baseInstaller) Configure() error {
 
 // IsInstalled provides a basic installation check
 func (b *baseInstaller) IsInstalled() (bool, error) {
-	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
-	if !exists {
-		return false, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
-	}
-
-	// If there are no binaries defined, consider it not installed
-	if len(versionInfo.Binaries) == 0 {
-		return false, nil
-	}
-
-	platform := b.software.getPlatform()
-	data := TemplateData{
-		VERSION: b.versionToBeInstalled,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-
-	sandboxBinDir := core.Paths().SandboxBinDir
-
-	// Check all binaries exist in sandbox and have correct checksums
-	for _, binary := range versionInfo.Binaries {
-		// Resolve the binary name using template
-		binaryName, err := executeTemplate(binary.Name, data)
-		if err != nil {
-			return false, NewTemplateError(err, b.software.Name)
-		}
-
-		// Get the base name for the destination (just the filename without path)
-		binaryBasename := path.Base(binaryName)
-		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-
-		// Check if the binary exists in sandbox
-		_, exists, err := b.fileManager.PathExists(sandboxBinary)
-		if err != nil {
-			return false, err
-		}
-		if !exists {
-			return false, nil // Binary doesn't exist, not installed
-		}
-
-		// Get expected checksum for this binary
-		osInfo, exists := binary.PlatformChecksum[platform.os]
-		if !exists {
-			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
-		}
-
-		checksum, exists := osInfo[platform.arch]
-		if !exists {
-			return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
-		}
-
-		// Verify the installed binary's checksum
-		if err := VerifyChecksum(sandboxBinary, checksum.Value, checksum.Algorithm); err != nil {
-			return false, nil // Checksum mismatch, not properly installed
-		}
-	}
-
-	return true, nil
-}
-
-// isConfigInstalled checks if the config files are installed in the given destination directory
-func (b *baseInstaller) isConfigInstalled(destinationDir string) (bool, error) {
-	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
-	if !exists {
-		return false, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
-	}
-
-	// If there are no configs defined, consider it not installed
-	if len(versionInfo.Configs) == 0 {
-		return false, nil
-	}
-
-	platform := b.software.getPlatform()
-	data := TemplateData{
-		VERSION: b.versionToBeInstalled,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-
-	// Check all config files exist in destination directory and have correct checksums
-	for _, config := range versionInfo.Configs {
-		// Resolve the config name using template
-		configName, err := executeTemplate(config.Name, data)
-		if err != nil {
-			return false, NewTemplateError(err, b.software.Name)
-		}
-
-		// Get the base name for the destination (just the filename without path)
-		configBasename := path.Base(configName)
-		destinationFile := path.Join(destinationDir, configBasename)
-
-		// Check if the config exists in destination directory
-		_, exists, err := b.fileManager.PathExists(destinationFile)
-		if err != nil {
-			return false, err
-		}
-		if !exists {
-			return false, nil // Config doesn't exist, not installed
-		}
-
-		// Verify the installed config's checksum
-		err = VerifyChecksum(destinationFile, config.Value, config.Algorithm)
-		if err != nil {
-			return false, nil // Checksum mismatch, not properly installed
-		}
-	}
-
-	return true, nil
+	return b.stateManager.Exists(b.software.Name, state.TypeInstalled)
 }
 
 // IsConfigured provides a basic configuration check
 func (b *baseInstaller) IsConfigured() (bool, error) {
-	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
-	if !exists {
-		return false, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
-	}
-
-	// If there are no binaries defined, consider it not configured
-	if len(versionInfo.Binaries) == 0 {
-		return false, nil
-	}
-
-	platform := b.software.getPlatform()
-	data := TemplateData{
-		VERSION: b.versionToBeInstalled,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-
-	sandboxBinDir := core.Paths().SandboxBinDir
-
-	// Check all symbolic links exist and point to valid binaries with correct checksums
-	for _, binary := range versionInfo.Binaries {
-		configured, err := b.isBinaryConfigured(binary, data, sandboxBinDir)
-		if err != nil {
-			return false, err
-		}
-		if !configured {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// isBinaryConfigured checks if a single binary is properly configured
-func (b *baseInstaller) isBinaryConfigured(binary BinaryDetail, data TemplateData, sandboxBinDir string) (bool, error) {
-	// Resolve the binary name using template
-	binaryName, err := executeTemplate(binary.Name, data)
-	if err != nil {
-		return false, NewTemplateError(err, b.software.Name)
-	}
-
-	// Get the base name for the destination (just the filename without path)
-	binaryBasename := path.Base(binaryName)
-	sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-	systemBinary := path.Join(core.SystemBinDir, binaryBasename)
-
-	// Check if the symbolic link exists and points to correct location
-	if !b.isSymlinkValid(systemBinary, sandboxBinary) {
-		return false, nil
-	}
-
-	// Verify the target binary exists in sandbox
-	_, exists, err := b.fileManager.PathExists(sandboxBinary)
-	if err != nil {
-		return false, err
-	}
-	if !exists {
-		return false, nil // Target binary doesn't exist, not properly configured
-	}
-
-	// Verify checksum
-	return b.verifyBinaryChecksum(binary, sandboxBinary)
-}
-
-// isSymlinkValid checks if symlink exists and points to the correct target
-func (b *baseInstaller) isSymlinkValid(systemBinary, expectedTarget string) bool {
-	linkInfo, err := os.Readlink(systemBinary)
-	if err != nil {
-		return false // Symbolic link doesn't exist or error reading it
-	}
-	return linkInfo == expectedTarget
-}
-
-// verifyBinaryChecksum verifies the checksum of a binary file
-func (b *baseInstaller) verifyBinaryChecksum(binary BinaryDetail, binaryPath string) (bool, error) {
-	platform := b.software.getPlatform()
-
-	// Get expected checksum for this binary
-	osInfo, exists := binary.PlatformChecksum[platform.os]
-	if !exists {
-		return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
-	}
-
-	checksum, exists := osInfo[platform.arch]
-	if !exists {
-		return false, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
-	}
-
-	// Verify the target binary's checksum
-	if err := VerifyChecksum(binaryPath, checksum.Value, checksum.Algorithm); err != nil {
-		return false, nil // Checksum mismatch, not properly configured
-	}
-
-	return true, nil
+	return b.stateManager.Exists(b.software.Name, state.TypeConfigured)
 }
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
@@ -956,30 +757,32 @@ func (b *baseInstaller) Version() string {
 	return b.versionToBeInstalled
 }
 
-// Uninstall removes the software from the sandbox and cleans up related files
-// This is the default implementation which assumes a simple binary installation
-// where the binaries are placed in the sandbox bin directory.
-// It removes binaries from sandbox bin directory.
-// If the software has more complex installation steps, installers can override this method.
+// GetStateManager returns the state manager for external state management
+func (b *baseInstaller) GetStateManager() *state.Manager {
+	return b.stateManager
+}
+
+// GetSoftwareName returns the software name
+func (b *baseInstaller) GetSoftwareName() string {
+	return b.software.Name
+}
+
+// Uninstall removes the software from the sandbox and cleans up related files.
 func (b *baseInstaller) Uninstall() error {
 	// Remove the binaries from the sandbox bin directory
 	err := b.removeSandboxBinaries()
 	if err != nil {
-		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+		return NewUninstallationError(err, b.software.Name, b.versionToBeInstalled)
 	}
 
 	return nil
 }
 
-// RestoreConfiguration restores the configuration of the software after an uninstall
-// This is the default implementation which assumes a simple binary installation
-// where the binaries are placed in the sandbox bin directory.
-// It removes symbolic links from sandbox bin directory.
-// If the software has more complex installation steps, installers can override this method.
+// RemoveConfiguration restores the configuration of the software after an uninstall.
 func (b *baseInstaller) RemoveConfiguration() error {
 	err := b.cleanupSymlinks()
 	if err != nil {
-		return NewInstallationError(err, b.software.Name, b.versionToBeInstalled)
+		return NewUninstallationError(err, b.software.Name, b.versionToBeInstalled)
 	}
 
 	return nil
@@ -1126,9 +929,4 @@ func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
 	}
 
 	return nil
-}
-
-// getLatestPath returns the path to the .latest file in the sandbox
-func getLatestPath(originalPath string) string {
-	return originalPath + ".latest"
 }

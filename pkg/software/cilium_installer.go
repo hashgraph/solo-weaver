@@ -39,21 +39,27 @@ func (ci *ciliumInstaller) Configure() error {
 	}
 
 	// Setup cilium configuration file
-	return ci.createCiliumConfigFile()
+	err = ci.createCiliumConfigFile()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // RemoveConfiguration restores the cilium binary and configuration files to their original state
 func (ci *ciliumInstaller) RemoveConfiguration() error {
-	err := ci.baseInstaller.RemoveConfiguration()
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to restore cilium binary configuration")
-	}
-
 	// Remove cilium-config.yaml configuration file
 	configPath := ci.getCiliumConfigPath()
-	err = ci.fileManager.RemoveAll(configPath)
+	err := ci.fileManager.RemoveAll(configPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove cilium-config.yaml file at %s", configPath)
+	}
+
+	// Call base implementation to cleanup symlinks
+	err = ci.baseInstaller.RemoveConfiguration()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to restore cilium binary configuration")
 	}
 
 	return nil

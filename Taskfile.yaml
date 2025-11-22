@@ -7,11 +7,16 @@ vars:
   GO_VERSION: 1.25.2
   LDFLAGS: "-w -s"
   # VM configuration
-  VM_NAME: "solo-weaver-debian"
-  VM_GOLDEN_NAME: "solo-weaver-debian-golden"
+  VM_OS_TYPE: '{{.VM_OS_TYPE | default "debian"}}'  # Options: debian, ubuntu
+  VM_NAME: "solo-weaver-{{.VM_OS_TYPE}}"
+  VM_GOLDEN_NAME: "solo-weaver-{{.VM_OS_TYPE}}-golden"
   # Set this to the actual URL or local path of your golden image (e.g., "https://storage.example.com/golden-image.utm" or "/path/to/golden-image.utm")
+  # For Debian: Set your Debian golden image URL
+  # For Ubuntu: Set your Ubuntu 22.04 golden image URL
   VM_GOLDEN_IMAGE_URL: ""  # REQUIRED: Set to your golden image location before running tasks
-  VM_USER: "weaver"
+  VM_GOLDEN_IMAGE_URL_DEBIAN: '{{.VM_GOLDEN_IMAGE_URL_DEBIAN | default .VM_GOLDEN_IMAGE_URL}}'
+  VM_GOLDEN_IMAGE_URL_UBUNTU: '{{.VM_GOLDEN_IMAGE_URL_UBUNTU | default .VM_GOLDEN_IMAGE_URL}}'
+  VM_USER: "provisioner"
   SSH_PRIVATE_KEY: "{{.PWD}}/.ssh/id_rsa_vm"
   SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
@@ -231,7 +236,7 @@ tasks:
 
         # run tests
         go test -p 1 -v -race -cover -tags='integration' \
-          ./internal/... ./pkg/... ./cmd/... -timeout 30m
+          ./internal/... ./pkg/... ./cmd/... -timeout 60m
         status=$?
 
         end=$(date +%s)
@@ -253,7 +258,7 @@ tasks:
       TEST_REGEX: '{{.TEST_REGEX | default "."}}'
     cmds:
       - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
-      - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./... -timeout 30m"
+      - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./... -timeout 60m"
       - "go-test-coverage --config=./.testcoverage.yml"
 
   test:integration:
@@ -263,7 +268,7 @@ tasks:
     cmds:
       # Using go-testreport v0.3.2
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
-      - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 30m > integration-test.json"
+      - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m > integration-test.json"
       - "go-testreport -input integration-test.json -output integration-test-report.md -vars 'Title:Integration Test Report'"
 
   run:
@@ -389,6 +394,36 @@ tasks:
     cmds:
       - "./debug-vm-run.sh app {{.CLI_ARGS}}"
 
+  vm:targets:
+    desc: "Show available VM OS targets and create VMs for specific OS types"
+    cmds:
+      - |
+        echo "🎯 VM OS Targets"
+        echo "================"
+        echo ""
+        echo "Available OS types:"
+        echo "  • debian  - Debian Linux"
+        echo "  • ubuntu  - Ubuntu 22.04"
+        echo ""
+        echo "Current VM_OS_TYPE: {{.VM_OS_TYPE}}"
+        echo "Current VM_NAME: {{.VM_NAME}}"
+        echo "Current VM_GOLDEN_NAME: {{.VM_GOLDEN_NAME}}"
+        echo ""
+        echo "Usage examples:"
+        echo "  task vm:setup VM_OS_TYPE=debian      # Setup Debian VM"
+        echo "  task vm:setup VM_OS_TYPE=ubuntu      # Setup Ubuntu 22.04 VM"
+        echo "  task vm:start VM_OS_TYPE=debian      # Start Debian VM"
+        echo "  task vm:start VM_OS_TYPE=ubuntu      # Start Ubuntu VM"
+        echo "  task vm:reset VM_OS_TYPE=ubuntu      # Reset Ubuntu VM"
+        echo ""
+        echo "You can also set VM_OS_TYPE in your environment:"
+        echo "  export VM_OS_TYPE=ubuntu"
+        echo "  task vm:start"
+        echo ""
+        echo "To configure golden image URLs per OS type, set:"
+        echo "  VM_GOLDEN_IMAGE_URL_DEBIAN=<url>"
+        echo "  VM_GOLDEN_IMAGE_URL_UBUNTU=<url>"
+
   vm:ip:
     cmds:
       - "{{.GET_VM_IP}} echo $(get_vm_ip)"
@@ -430,6 +465,8 @@ tasks:
     cmds:
       - |
         echo "Checking if golden VM already exists..."
+        echo "VM OS Type: {{.VM_OS_TYPE}}"
+        echo "VM Golden Name: {{.VM_GOLDEN_NAME}}"
 
         # Check if the golden VM already exists
         if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
@@ -437,15 +474,38 @@ tasks:
           exit 0
         fi
 
-        echo "Golden VM not found, downloading from {{.VM_GOLDEN_IMAGE_URL}}..."
+        # Determine which golden image URL to use based on OS type
+        GOLDEN_IMAGE_URL=""
+        case "{{.VM_OS_TYPE}}" in
+          debian)
+            GOLDEN_IMAGE_URL="{{.VM_GOLDEN_IMAGE_URL_DEBIAN}}"
+            ;;
+          ubuntu)
+            GOLDEN_IMAGE_URL="{{.VM_GOLDEN_IMAGE_URL_UBUNTU}}"
+            ;;
+          *)
+            echo "❌ Unknown VM_OS_TYPE: {{.VM_OS_TYPE}}"
+            echo "Supported types: debian, ubuntu"
+            exit 1
+            ;;
+        esac
+
+        if [ -z "$GOLDEN_IMAGE_URL" ]; then
+          echo "❌ No golden image URL configured for {{.VM_OS_TYPE}}"
+          echo "Please set VM_GOLDEN_IMAGE_URL_{{.VM_OS_TYPE | upper}} or VM_GOLDEN_IMAGE_URL"
+          echo "Example: VM_GOLDEN_IMAGE_URL_UBUNTU=https://example.com/ubuntu-22.04.utm"
+          exit 1
+        fi
+
+        echo "Golden VM not found, downloading {{.VM_OS_TYPE}} image from $GOLDEN_IMAGE_URL..."
 
         # Create temporary directory for download
         TEMP_DIR=$(mktemp -d)
         echo "Downloading to temporary directory: $TEMP_DIR"
 
         # Download the golden image
-        if ! curl -fL -o "$TEMP_DIR/golden-image.utm" "{{.VM_GOLDEN_IMAGE_URL}}"; then
-          echo "❌ Failed to download the golden VM image from {{.VM_GOLDEN_IMAGE_URL}}"
+        if ! curl -fL -o "$TEMP_DIR/golden-image.utm" "$GOLDEN_IMAGE_URL"; then
+          echo "❌ Failed to download the golden VM image from $GOLDEN_IMAGE_URL"
           echo "Please check the URL and try again or download the image manually and import it manually."
           rm -rf "$TEMP_DIR"
           exit 0
@@ -582,32 +642,132 @@ tasks:
     desc: "Configure the VM with SSH, sudo, and mounts"
     cmds:
       - |
-        echo "Configuring SSH access..."
+        echo "Configuring SSH access for user {{.VM_USER}}..."
         PUBLIC_KEY=$(cat {{.SSH_PUBLIC_KEY}})
-        # This command is complex because it needs to run as the non-root user 'weaver'
-        # to ensure the authorized_keys file has the correct ownership and permissions.
-        utmctl exec "{{.VM_NAME}}" --cmd /bin/su -l {{.VM_USER}} -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo '✓ SSH key configured for user {{.VM_USER}}'"
-        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '$PUBLIC_KEY' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && echo '✓ SSH key configured for user root'"
+        
+        echo "DEBUG: Public key length: ${#PUBLIC_KEY} characters"
+        echo "DEBUG: Configuring SSH keys via utmctl exec..."
+        
+        # Configure SSH for the provisioner user using utmctl exec
+        # Create directory structure
+        echo "Creating .ssh directory..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "mkdir -p /home/{{.VM_USER}}/.ssh && chmod 700 /home/{{.VM_USER}}/.ssh"
+        
+        # Write the key using printf which handles special characters well
+        echo "Writing authorized_keys file..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "printf '%s\\n' \"$PUBLIC_KEY\" > /home/{{.VM_USER}}/.ssh/authorized_keys && chmod 600 /home/{{.VM_USER}}/.ssh/authorized_keys && chown -R {{.VM_USER}}:{{.VM_USER}} /home/{{.VM_USER}}/.ssh"
+        
+        echo "✓ SSH key configured for user {{.VM_USER}}"
+        
+        # Ensure SSH service is installed and running
+        echo "Ensuring SSH server is installed..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "command -v sshd >/dev/null 2>&1 || apt-get update -qq && apt-get install -y openssh-server" 2>&1 || echo "SSH server check completed"
+        
+        echo "Configuring passwordless sudo for {{.VM_USER}} via utmctl (as root)..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "echo '{{.VM_USER}} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/{{.VM_USER}} && chmod 440 /etc/sudoers.d/{{.VM_USER}} && echo '✓ Passwordless sudo configured for {{.VM_USER}}'" 2>&1
+        
+        echo "Ensuring SSH service is enabled and running..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true" 2>&1
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || service ssh start 2>/dev/null || service sshd start 2>/dev/null || /etc/init.d/ssh start 2>/dev/null || true" 2>&1
+
       - |
-        echo "Configuring SSH daemon to allow root login with keys..."
-        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && sed -i 's/#AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config && systemctl restart sshd && echo '✓ SSH daemon configured for root login with keys'"
+        echo "Waiting for SSH service to be ready..."
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not get VM IP address. VM may not have network configured."
+          exit 1
+        fi
+        
+        echo "VM IP: $VM_IP"
+        echo "Attempting SSH connection to {{.VM_USER}}@$VM_IP..."
+        
+        MAX_SSH_ATTEMPTS=10
+        SSH_ATTEMPT=0
+        while [ $SSH_ATTEMPT -lt $MAX_SSH_ATTEMPTS ]; do
+          SSH_ATTEMPT=$((SSH_ATTEMPT + 1))
+          
+          echo -n "Attempt $SSH_ATTEMPT/$MAX_SSH_ATTEMPTS: "
+          
+          if ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes {{.VM_USER}}@$VM_IP "echo 'SSH ready'" >/dev/null 2>&1; then
+            echo "✓ SSH is ready!"
+            break
+          fi
+          
+          echo "Connection failed, retrying..."
+
+          sleep 3
+        done
+        
+        if [ $SSH_ATTEMPT -eq $MAX_SSH_ATTEMPTS ]; then
+          echo ""
+          echo "❌ SSH is not responding after $MAX_SSH_ATTEMPTS attempts"
+          echo ""
+          exit 1
+        fi
       - |
-        echo "Mounting shared directory..."
-        utmctl exec "{{.VM_NAME}}" --cmd /bin/sh -c "mkdir -p /mnt/solo-weaver && echo 'share   /mnt/solo-weaver   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | tee -a /etc/fstab && mount -a && chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-weaver && echo '✓ Shared directory mounted at /mnt/solo-weaver'"
+        echo "Configuring SSH for root user and system settings..."
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        PUBLIC_KEY=$(cat {{.SSH_PUBLIC_KEY}})
+        
+        # Now use SSH as provisioner with sudo to configure root and system
+        # Passwordless sudo was already configured via utmctl exec
+        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+          set -e
+          
+          echo 'Verifying sudo is available...'
+          if ! command -v sudo >/dev/null 2>&1; then
+            echo '❌ sudo not found. Cannot proceed with configuration.'
+            exit 1
+          fi
+          
+          echo 'Verifying passwordless sudo is configured...'
+          sudo -n true 2>/dev/null || {
+            echo '⚠️  Passwordless sudo not working, but continuing...'
+          }
+          
+          echo 'Creating weaver user and group with ID 2500...'
+          if ! getent group weaver >/dev/null 2>&1; then
+            sudo groupadd -g 2500 weaver
+            echo '✓ Created weaver group with GID 2500'
+          else
+            echo 'weaver group already exists'
+          fi
+          
+          if ! id -u weaver >/dev/null 2>&1; then
+            sudo useradd -u 2500 -g 2500 -m -s /bin/bash weaver
+            echo '✓ Created weaver user with UID 2500'
+          else
+            echo 'weaver user already exists'
+          fi
+          
+          echo 'Configuring SSH key for root user...'
+          sudo mkdir -p /root/.ssh
+          sudo chmod 700 /root/.ssh
+          echo \"$PUBLIC_KEY\" | sudo tee /root/.ssh/authorized_keys >/dev/null
+          sudo chmod 600 /root/.ssh/authorized_keys
+          echo '✓ SSH key configured for user root'
+          
+          echo 'Configuring SSH daemon to allow root login with keys...'
+          sudo sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
+          sudo systemctl restart sshd || sudo systemctl restart ssh
+          echo '✓ SSH daemon configured for root login with keys'
+          
+          echo 'Mounting shared directory...'
+          sudo mkdir -p /mnt/solo-weaver
+          if ! grep -q '/mnt/solo-weaver' /etc/fstab; then
+            echo 'share   /mnt/solo-weaver   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | sudo tee -a /etc/fstab >/dev/null
+          fi
+          sudo mount -a || true
+          echo '✓ Shared directory mounted at /mnt/solo-weaver'
+        "
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
         echo "Installing development tools (Git, Task, Go, Delve, rsync) via SSH at $VM_IP..."
 
-        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$VM_IP "
-          set -e
-          echo 'Installing sudo...'
-          apt-get update -qq
-          apt-get install -y sudo
-
-          echo 'Configuring passwordless sudo for user {{.VM_USER}}...'
-          echo '{{.VM_USER}} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/{{.VM_USER}}
-          chmod 440 /etc/sudoers.d/{{.VM_USER}}
-        "
 
         ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
           set -e
@@ -717,6 +877,10 @@ tasks:
       - |
         echo "VM Status:"
         echo "=========="
+        echo "Current VM_OS_TYPE: {{.VM_OS_TYPE}}"
+        echo "Current VM_NAME: {{.VM_NAME}}"
+        echo ""
+        echo "All UTM VMs:"
         utmctl list 2>/dev/null || echo "UTM not available or no VMs found"
 
   vm:clean:

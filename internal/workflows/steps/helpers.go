@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/joomcode/errorx"
+	"golang.hedera.com/solo-weaver/internal/state"
+	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 // runCmd runs a bash command and returns its trimmed output or an error
@@ -79,4 +81,34 @@ func findScript(rel string) string {
 
 	// fallback to provided relative path
 	return rel
+}
+
+// recordInstallState records the installation state for a software installer
+func recordInstallState(installer software.Software) {
+	stateManager := installer.GetStateManager()
+	softwareName := installer.GetSoftwareName()
+	version := installer.Version()
+	_ = stateManager.RecordState(softwareName, state.TypeInstalled, version)
+}
+
+// recordConfigureState records the configuration state for a software installer
+func recordConfigureState(installer software.Software) {
+	stateManager := installer.GetStateManager()
+	softwareName := installer.GetSoftwareName()
+	version := installer.Version()
+	_ = stateManager.RecordState(softwareName, state.TypeConfigured, version)
+}
+
+// removeInstallState removes the installation state for a software installer
+func removeInstallState(installer software.Software) {
+	stateManager := installer.GetStateManager()
+	softwareName := installer.GetSoftwareName()
+	_ = stateManager.RemoveState(softwareName, state.TypeInstalled)
+}
+
+// removeConfigureState removes the configuration state for a software installer
+func removeConfigureState(installer software.Software) {
+	stateManager := installer.GetStateManager()
+	softwareName := installer.GetSoftwareName()
+	_ = stateManager.RemoveState(softwareName, state.TypeConfigured)
 }

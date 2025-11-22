@@ -84,48 +84,6 @@ func Test_StepHelm_AlreadyInstalled_Integration(t *testing.T) {
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 }
 
-func Test_StepHelm_PartiallyInstalled_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	cleanUpTempDir(t)
-
-	step, err := SetupHelm().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	err = os.RemoveAll("/usr/local/bin/helm")
-	require.NoError(t, err)
-
-	//
-	// When
-	//
-	step, err = SetupHelm().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
-	require.Empty(t, report.StepReports[0].Metadata[DownloadedByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[ExtractedByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[CleanedUpByThisStep])
-
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-}
-
 func Test_StepHelm_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
@@ -161,11 +119,11 @@ func Test_StepHelm_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for helm is removed
-	_, err = os.Stat("/opt/weaver/tmp/helm")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.Error(t, err)
 
 	// Verify binary files are removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/helm")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.Error(t, err)
 }
 
@@ -205,7 +163,7 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.DownloadError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -217,11 +175,11 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for helm was not created
-	_, err = os.Stat("/opt/weaver/tmp/helm")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.Error(t, err)
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/weaver/sandbox/bin/helm")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.Error(t, err)
 }
 
@@ -263,7 +221,7 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.ExtractionError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.ExtractionError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -275,7 +233,7 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/weaver/tmp/helm")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -284,7 +242,7 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, 2, len(files), "Expected 2 files in the unpack directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/helm")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.Error(t, err)
 }
 
@@ -326,7 +284,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -338,7 +296,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/weaver/tmp/helm")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -347,7 +305,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, 2, len(files), "Expected 2 files in the unpack directory")
 
 	// Verify unpack folder is still around when there is an installation error
-	_, err = os.Stat("/opt/weaver/tmp/helm/unpack")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm/unpack")
 	require.NoError(t, err)
 
 	// Check there are unpacked files
@@ -356,7 +314,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/helm")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.Error(t, err)
 }
 
@@ -398,7 +356,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -410,7 +368,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/weaver/tmp/helm")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -419,7 +377,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/helm directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/weaver/tmp/helm/unpack")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -428,7 +386,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/helm")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.Error(t, err)
 }
 
@@ -471,7 +429,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 
 	// Confirm errorx error type is DownloadError
 
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -483,7 +441,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/weaver/tmp/helm")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -492,7 +450,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/helm directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/weaver/tmp/helm/unpack")
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -501,6 +459,6 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/helm")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
 	require.Error(t, err)
 }

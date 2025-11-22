@@ -38,6 +38,13 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Cri-o installed successfully")
+
+			// Record installation state if this step installed the software
+			if stp.State().Bool(InstalledByThisStep) {
+				if installer, err := provider(); err == nil {
+					recordInstallState(installer)
+				}
+			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -103,6 +110,9 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 					automa.WithError(err))
 			}
 
+			// Remove installation state during rollback
+			removeInstallState(installer)
+
 			return automa.SuccessReport(stp)
 		})
 }
@@ -118,6 +128,13 @@ func configureCrio(provider func(opts ...software.InstallerOption) (software.Sof
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Cri-o configured successfully")
+
+			// Record configuration state if this step configured the software
+			if stp.State().Bool(ConfiguredByThisStep) {
+				if installer, err := provider(); err == nil {
+					recordConfigureState(installer)
+				}
+			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -165,6 +182,9 @@ func configureCrio(provider func(opts ...software.InstallerOption) (software.Sof
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			// Remove configuration state during rollback
+			removeConfigureState(installer)
 
 			return automa.SuccessReport(stp)
 		})

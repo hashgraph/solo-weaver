@@ -31,7 +31,7 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download k9s and/or its configuration")
 
 	// Verify downloaded files exist
-	files, err := os.ReadDir("/opt/weaver/tmp/k9s")
+	files, err := os.ReadDir("/opt/solo/weaver/tmp/k9s")
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(files), "There should be exactly one file in the download directory")
@@ -49,7 +49,7 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to extract k9s")
 
 	// Verify extraction directory exists and contains expected files
-	extractedFiles, err := os.ReadDir("/opt/weaver/tmp/k9s/unpack")
+	extractedFiles, err := os.ReadDir("/opt/solo/weaver/tmp/k9s/unpack")
 	require.NoError(t, err)
 	require.Greater(t, len(extractedFiles), 0, "Extraction directory should contain files")
 
@@ -60,12 +60,12 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to install k9s")
 
 	// Verify installation files exist in sandbox
-	_, exists, err := fileManager.PathExists("/opt/weaver/sandbox/bin/k9s")
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/sandbox/bin/k9s")
 	require.NoError(t, err)
 	require.True(t, exists, "k9s binary should exist in sandbox bin directory")
 
 	// Check binary permissions (should be executable)
-	info, err := os.Stat("/opt/weaver/sandbox/bin/k9s")
+	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/k9s")
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "k9s binary should have 0755 permissions")
 
@@ -76,7 +76,7 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to cleanup k9s installation")
 
 	// Check download folder is cleaned up
-	_, exists, err = fileManager.PathExists("/opt/weaver/tmp/k9s")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/k9s")
 	require.NoError(t, err)
 	require.False(t, exists, "k9s download temp folder should be cleaned up after installation")
 
@@ -94,6 +94,6 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify it's actually a symlink pointing to the sandbox binary
 	linkTarget, err := os.Readlink("/usr/local/bin/k9s")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/bin/k9s", linkTarget, "symlink should point to sandbox binary")
+	require.Equal(t, "/opt/solo/weaver/sandbox/bin/k9s", linkTarget, "symlink should point to sandbox binary")
 
 }

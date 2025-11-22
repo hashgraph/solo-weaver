@@ -24,8 +24,8 @@ github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPd
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkYZB8zMSxRWpUBQtwG5a7fFgvEO+odwuTv2gs=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3dyBCFEj5IhUbnKptjxatkF07cF2ak3yi77so=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
-github.com/automa-saga/automa v0.6.1 h1:ggF3tf9cN3nyryqMWBTauUz6O8w8HckXmqfzO5kytJE=
-github.com/automa-saga/automa v0.6.1/go.mod h1:PB3qOTyU6kCFkqDddVDdX6ZXjb+NxurOegaHiO3YRWY=
+github.com/automa-saga/automa v0.7.0 h1:whvHi3ERQlHqDrV+xcf02EWJ3Eh6uwQvW0cvYv7ZSug=
+github.com/automa-saga/automa v0.7.0/go.mod h1:PB3qOTyU6kCFkqDddVDdX6ZXjb+NxurOegaHiO3YRWY=
 github.com/automa-saga/logx v0.1.0 h1:BP6CMErwX/YPDlqjNtre1zVhI53wHe8I2CuiNc+cDLQ=
 github.com/automa-saga/logx v0.1.0/go.mod h1:inlus7bMGEUD5wIEgtoKcGO5Ulhl93CHkzUBlqJJK6I=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=

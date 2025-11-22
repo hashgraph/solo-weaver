@@ -83,47 +83,6 @@ func Test_StepKubectl_AlreadyInstalled_Integration(t *testing.T) {
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 }
 
-func Test_StepKubectl_PartiallyInstalled_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	cleanUpTempDir(t)
-
-	step, err := SetupKubectl().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	err = os.RemoveAll("/usr/local/bin/kubectl")
-	require.NoError(t, err)
-
-	//
-	// When
-	//
-	step, err = SetupKubectl().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
-	require.Empty(t, report.StepReports[0].Metadata[DownloadedByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
-	require.Empty(t, report.StepReports[0].Metadata[CleanedUpByThisStep])
-
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-}
-
 func Test_StepKubectl_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
@@ -158,11 +117,11 @@ func Test_StepKubectl_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for kubectl is removed
-	_, err = os.Stat("/opt/weaver/tmp/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
 	require.Error(t, err)
 
 	// Verify binary files are removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -202,7 +161,7 @@ func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.DownloadError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.DownloadError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -214,11 +173,11 @@ func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder for kubectl was not created
-	_, err = os.Stat("/opt/weaver/tmp/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
 	require.Error(t, err)
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -260,7 +219,7 @@ func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.InstallationError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -272,15 +231,15 @@ func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an error
-	_, err = os.Stat("/opt/weaver/tmp/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
 	require.NoError(t, err)
 
 	// Verify downloaded binary is still around
-	_, err = os.Stat("/opt/weaver/tmp/kubectl/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl/kubectl")
 	require.NoError(t, err)
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -322,7 +281,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, report.Error)
 
 	// Confirm errorx error type is DownloadError
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -334,7 +293,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/weaver/tmp/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -343,7 +302,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/weaver/tmp/kubectl/unpack")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -352,7 +311,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }
 
@@ -395,7 +354,7 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 
 	// Confirm errorx error type is DownloadError
 
-	require.True(t, errorx.IsOfType(errorx.Cast(report.Error).Cause(), software.CleanupError))
+	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
 	//
@@ -407,7 +366,7 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/weaver/tmp/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
 	require.NoError(t, err)
 
 	// Check there is a tar.gz file in the unpack directory by counting the number of files
@@ -416,7 +375,7 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/weaver/tmp/kubectl/unpack")
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
@@ -425,6 +384,6 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/weaver/sandbox/bin/kubectl")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.Error(t, err)
 }

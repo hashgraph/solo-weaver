@@ -17,6 +17,7 @@ var (
 	ExtractionError       = ErrorsNamespace.NewType("extraction_error")
 	FileNotFoundError     = ErrorsNamespace.NewType("file_not_found")
 	InstallationError     = ErrorsNamespace.NewType("installation_error")
+	UninstallationError   = ErrorsNamespace.NewType("uninstallation_error")
 	ConfigurationError    = ErrorsNamespace.NewType("configuration_error")
 	CleanupError          = ErrorsNamespace.NewType("cleanup_error")
 	FileSystemError       = ErrorsNamespace.NewType("filesystem_error")
@@ -44,6 +45,7 @@ const (
 	extractionErrorMsg       = "failed to extract file '%s' to '%s'"
 	fileNotFoundErrorMsg     = "file not found: '%s'"
 	installationErrorMsg     = "failed to install software '%s' versionToBeInstalled '%s'"
+	uninstallationErrorMsg   = "failed to uninstall software '%s' versionToBeUninstalled '%s'"
 	configurationErrorMsg    = "failed to configure software '%s'"
 	cleanupErrorMsg          = "failed to clean up download folder %s after installation"
 	filesystemErrorMsg       = "filesystem error"
@@ -119,6 +121,18 @@ func NewFileNotFoundError(filePath string) *errorx.Error {
 
 func NewInstallationError(cause error, softwareName, version string) *errorx.Error {
 	err := InstallationError.New(installationErrorMsg, softwareName, version).
+		WithProperty(softwareNameProperty, softwareName).
+		WithProperty(versionProperty, version)
+
+	if cause != nil {
+		err = err.WithUnderlyingErrors(cause)
+	}
+
+	return err
+}
+
+func NewUninstallationError(cause error, softwareName, version string) *errorx.Error {
+	err := UninstallationError.New(uninstallationErrorMsg, softwareName, version).
 		WithProperty(softwareNameProperty, softwareName).
 		WithProperty(versionProperty, version)
 

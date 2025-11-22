@@ -30,7 +30,7 @@ func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download kubectl and/or its configuration")
 
 	// Verify downloaded files exist
-	_, exists, err := fileManager.PathExists("/opt/weaver/tmp/kubectl/kubectl")
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/kubectl/kubectl")
 	require.NoError(t, err)
 	require.True(t, exists, "kubectl binary should exist in download folder")
 
@@ -41,12 +41,12 @@ func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to install kubectl")
 
 	// Verify installation files exist in sandbox
-	_, exists, err = fileManager.PathExists("/opt/weaver/sandbox/bin/kubectl")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.NoError(t, err)
 	require.True(t, exists, "kubectl binary should exist in sandbox bin directory")
 
 	// Check binary permissions (should be executable)
-	info, err := os.Stat("/opt/weaver/sandbox/bin/kubectl")
+	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "kubectl binary should have 0755 permissions")
 
@@ -57,7 +57,7 @@ func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to cleanup kubectl installation")
 
 	// Check download folder is cleaned up
-	_, exists, err = fileManager.PathExists("/opt/weaver/tmp/kubectl")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/kubectl")
 	require.NoError(t, err)
 	require.False(t, exists, "kubectl download temp folder should be cleaned up after installation")
 
@@ -75,6 +75,6 @@ func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify it's actually a symlink pointing to the sandbox binary
 	linkTarget, err := os.Readlink("/usr/local/bin/kubectl")
 	require.NoError(t, err)
-	require.Equal(t, "/opt/weaver/sandbox/bin/kubectl", linkTarget, "symlink should point to sandbox binary")
+	require.Equal(t, "/opt/solo/weaver/sandbox/bin/kubectl", linkTarget, "symlink should point to sandbox binary")
 
 }

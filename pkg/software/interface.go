@@ -1,6 +1,9 @@
 package software
 
-import "github.com/bluet/syspkg"
+import (
+	"github.com/bluet/syspkg"
+	"golang.hedera.com/solo-weaver/internal/state"
+)
 
 type Package interface {
 	Name() string
@@ -48,4 +51,10 @@ type Software interface {
 
 	// Cleanup removes temporary files created during download and extraction
 	Cleanup() error
+
+	// GetStateManager returns the state manager for external state management
+	GetStateManager() *state.Manager
+
+	// GetSoftwareName returns the software name
+	GetSoftwareName() string
 }
