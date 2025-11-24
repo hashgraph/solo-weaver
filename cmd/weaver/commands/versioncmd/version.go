@@ -16,16 +16,21 @@ type VersionInfo struct {
 	Commit string `json:"commit" yaml:"commit"`
 }
 
+const (
+	FormatYAML = "yaml"
+	FormatJSON = "json"
+)
+
 func (v *VersionInfo) Format(format string) (string, error) {
 	var output []byte
 	var err error
 	switch strings.ToLower(format) {
-	case "json":
+	case FormatJSON:
 		output, err = json.Marshal(versionInfo)
 		if err != nil {
 			return "", errorx.IllegalFormat.Wrap(err, "Error marshaling version info to JSON")
 		}
-	case "yaml":
+	case FormatYAML:
 		output, err = yaml.Marshal(versionInfo)
 		if err != nil {
 			return "", errorx.IllegalFormat.Wrap(err, "Error marshaling version info to YAML")
