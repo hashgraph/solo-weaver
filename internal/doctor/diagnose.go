@@ -71,6 +71,8 @@ func findResolution(err error) []string {
 			return []string{fmt.Sprintf("Ensure configuration file %q exists, is correctly formatted and accessible", arg.(string))}
 		}
 		return []string{"Ensure configuration file exists and is accessible."}
+	case errorx.IsOfType(err, errorx.NotImplemented):
+		return []string{"This feature is not yet implemented. Contact support for more information."}
 	default:
 		return []string{"Check error message for details or contact support"}
 	}
@@ -210,18 +212,17 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 
 	msg, cause := toErrorMessage(ex)
 	return &ErrorDiagnosis{
-		Error:              ex,
-		ErrorType:          errorx.GetTypeName(ex),
-		Message:            msg,
-		Cause:              cause,
-		TraceId:            traceId,
-		Code:               toErrorCode(ex),
-		Commit:             version.Commit(),
-		Version:            version.Number(),
-		Pid:                os.Getpid(),
-		Logfile:            config.Get().Log.Filename,
-		ProfilingSnapshots: takeProfilingSnapshots(ex),
-		Resolution:         findResolution(ex),
+		Error:      ex,
+		ErrorType:  errorx.GetTypeName(ex),
+		Message:    msg,
+		Cause:      cause,
+		TraceId:    traceId,
+		Code:       toErrorCode(ex),
+		Commit:     version.Commit(),
+		Version:    version.Number(),
+		Pid:        os.Getpid(),
+		Logfile:    config.Get().Log.Filename,
+		Resolution: findResolution(ex),
 	}
 }
 
@@ -278,6 +279,19 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 	fmt.Printf("%s%s***************************************************************************************************%s\n", Bold, Yellow, Reset)
 
 	os.Exit(1)
+}
+
+// CheckReportErr checks an automa.Report for errors and runs diagnosis if any are found
+func CheckReportErr(ctx context.Context, report *automa.Report) {
+	if report == nil {
+		return
+	}
+
+	if report.Error != nil {
+		// Check for instructions in any nested reports before showing error
+		instructions := GetInstructionsFromReport(report)
+		CheckErr(ctx, report.Error, instructions)
+	}
 }
 
 // GetInstructionsFromReport recursively searches for instructions in report metadata.
