@@ -18,9 +18,10 @@ var (
 	}
 
 	blockCmd = &cobra.Command{
-		Use:   "block-node",
-		Short: "Manage lifecycle of a Hedera Block Node",
-		Long:  "Manage lifecycle of a Hedera Block Node",
+		Use:     "block-node",
+		Aliases: []string{"blocknode"},
+		Short:   "Manage lifecycle of a Hedera Block Node",
+		Long:    "Manage lifecycle of a Hedera Block Node",
 	}
 )
 

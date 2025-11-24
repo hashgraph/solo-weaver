@@ -1,8 +1,6 @@
 package blockcmd
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
@@ -18,8 +16,7 @@ var blockNodeCheckCmd = &cobra.Command{
 			Strs("args", args).
 			Str("nodeType", nodeType).
 			Str("profile", flagProfile).
-			Str("args", fmt.Sprintf("%v", args)).
-			Msg("Running solo weaver preflight checks for block node")
+			Msg("Running preflight checks for Hedera Block Node")
 
 		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodePreflightCheckWorkflow(flagProfile))
 

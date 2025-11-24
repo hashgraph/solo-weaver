@@ -1,8 +1,6 @@
 package blockcmd
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
@@ -19,7 +17,6 @@ var blockNodeInstallCmd = &cobra.Command{
 			Strs("args", args).
 			Str("nodeType", nodeType).
 			Str("profile", flagProfile).
-			Str("args", fmt.Sprintf("%v", args)).
 			Msg("Installing Hedera Block Node")
 
 		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile))
