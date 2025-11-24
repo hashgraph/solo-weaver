@@ -22,7 +22,7 @@ vars:
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
   GET_VM_IP: |
     get_vm_ip() {
-      utmctl ip-address "{{.VM_NAME}}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1
+    utmctl ip-address "{{.VM_NAME}}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1
     }
 
 tasks:
@@ -32,19 +32,19 @@ tasks:
       - "rm -f unit-test-report.md"
       - "mkdir -p bin"
       - "go clean -cache -testcache"
-
+  
   vendor:
     cmds:
       - "go mod vendor"
-
+  
   lint:
     cmds:
       - "go fmt -x ./..."
-
+  
   lint:check:
     cmds:
       - "R=$(go fmt ./...) && if [[ -n \"$R\" ]]; then echo \"The following files require formatting:\"; echo \"$R\"; exit 1; fi"
-
+  
   build:
     deps:
       - "vendor"
@@ -57,7 +57,7 @@ tasks:
     generates:
       - "bin/weaver-linux-*"
       - "bin/weaver-darwin-*"
-
+  
   hash:
     deps:
       - "build"
@@ -68,28 +68,28 @@ tasks:
       - "bin/weaver-darwin-*"
     generates:
       - "bin/*.sha256"
-
+  
   sign:
     deps:
       - "build"
     cmds:
       - task: "sign:weaver:all"
-
+  
   build:image:
     deps:
       - task: "hash"
     cmds:
       - "docker build -t solo-weaver ."
-
+  
   generate:
     cmds:
       - "go generate ./..."
-
+  
   build:weaver:all:
     desc: "Build the binary for all configured operating systems and architectures"
     cmds:
       - task: build:weaver:all:os
-
+  
   build:weaver:all:os:
     internal: true
     desc: "Build the binary for all configured operating systems"
@@ -99,7 +99,7 @@ tasks:
         task: build:weaver:all:arch
         vars:
           GOOS: "{{.ITEM}}"
-
+  
   build:weaver:all:arch:
     internal: true
     desc: "Build the binary for all configured architectures"
@@ -110,7 +110,7 @@ tasks:
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.ITEM}}"
-
+  
   build:weaver:
     internal: true
     desc: "Build the binary for the specified operating system and architecture"
@@ -120,12 +120,12 @@ tasks:
     cmds:
       - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
       - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
-
+  
   hash:weaver:all:
     desc: "Hash the binary binaries for all configured operating systems and architectures"
     cmds:
       - task: hash:weaver:all:os
-
+  
   hash:weaver:all:os:
     internal: true
     desc: "Hash the binary binaries for all configured operating systems"
@@ -135,7 +135,7 @@ tasks:
         task: hash:weaver:all:arch
         vars:
           GOOS: "{{.ITEM}}"
-
+  
   hash:weaver:all:arch:
     internal: true
     desc: "Hash the binary binaries for all configured architectures"
@@ -146,19 +146,19 @@ tasks:
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.ITEM}}"
-
+  
   hash:weaver:
     internal: true
     desc: "Hash the binary binaries for the specified operating system and architecture"
     dir: bin
     cmds:
       - cmd: sha256sum weaver-{{.GOOS}}-{{.GOARCH}} > weaver-{{.GOOS}}-{{.GOARCH}}.sha256
-
+  
   sign:weaver:all:
     desc: "Sign the binary binaries for all configured operating systems and architectures"
     cmds:
       - task: sign:weaver:all:os
-
+  
   sign:weaver:all:os:
     internal: true
     desc: "Sign the binary binaries for all configured operating systems"
@@ -168,7 +168,7 @@ tasks:
         task: sign:weaver:all:arch
         vars:
           GOOS: "{{.ITEM}}"
-
+  
   sign:weaver:all:arch:
     internal: true
     desc: "Sign the binary binaries for all configured architectures"
@@ -179,7 +179,7 @@ tasks:
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.ITEM}}"
-
+  
   sign:weaver:
     internal: true
     desc: "Sign the binary binaries for the specified operating system and architecture"
@@ -193,12 +193,12 @@ tasks:
           GOARCH: "{{.GOARCH}}"
       - cmd: gpg --batch --yes --armor --output bin/weaver-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/weaver-{{.GOOS}}-{{.GOARCH}}.sha256
       - cmd: gpg --batch --yes --armor --output bin/weaver-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/weaver-{{.GOOS}}-{{.GOARCH}}
-
+  
   test:
     cmds:
       - task: "mocks"
       - task: "test:unit"
-
+  
   test:unit:
     deps:
       - "generate"
@@ -206,14 +206,14 @@ tasks:
       # Using go-testreport v0.3.2
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
       - "go test -race -cover -json -tags='!integration' ./internal/... ./pkg/... ./cmd/... | go-testreport -output unit-test-report.md -vars 'Title:Unit Test Report'"
-
+  
   test:unit:verbose:
     desc: "Run unit tests with verbose console output"
     deps:
       - "generate"
     cmds:
       - "go test -v -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
-
+  
   test:unit:ci:
     desc: "Run unit tests in CI environment (currently disabled)"
     cmds:
@@ -225,7 +225,7 @@ tasks:
           echo "These tests require /opt/weaver permissions and a 'weaver' user."
           exit 0
         fi
-
+  
   test:integration:verbose:
     desc: "Run integration tests with verbose console output"
     deps:
@@ -233,34 +233,34 @@ tasks:
     cmds:
       - |
         start=$(date +%s)
-
+        
         # run tests
         go test -p 1 -v -race -cover -tags='integration' \
           ./internal/... ./pkg/... ./cmd/... -timeout 60m
         status=$?
-
+        
         end=$(date +%s)
         elapsed=$(( end - start ))
-
+        
         hrs=$(( elapsed / 3600 ))
         mins=$(( (elapsed % 3600) / 60 ))
         secs=$(( elapsed % 60 ))
-
+        
         printf "\n=== Integration tests finished in %02d:%02d:%02d (status %d) ===\n" \
           "$hrs" "$mins" "$secs" "$status"
-
+        
         exit $status
-
+  
   test:coverage:
     desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
     vars:
-      TEST_PATHS:  '{{.TEST_PATHS | default "./internal/... ./pkg/... ./cmd/..."}}'
+      TEST_PATHS: '{{.TEST_PATHS | default "./internal/... ./pkg/... ./cmd/..."}}'
       TEST_REGEX: '{{.TEST_REGEX | default "."}}'
     cmds:
       - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
       - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./... -timeout 60m"
       - "go-test-coverage --config=./.testcoverage.yml"
-
+  
   test:integration:
     desc: "Run integration tests (includes cluster_test.go)"
     deps:
@@ -270,17 +270,17 @@ tasks:
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
       - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m > integration-test.json"
       - "go-testreport -input integration-test.json -output integration-test-report.md -vars 'Title:Integration Test Report'"
-
+  
   run:
     deps:
       - "run:weaver"
-
+  
   run:weaver:
     deps:
       - "build"
     cmds:
       - "bin/weaver-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
-
+  
   run:weaver:skipdl:
     deps:
       - "build"
@@ -288,11 +288,11 @@ tasks:
       _LOG_LEVEL: "Debug"
     cmds:
       - "bin/weaver-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
-
+  
   install:go:
     deps:
       - "install:go:linux"
-
+  
   install:go:linux:
     internal: true
     status:
@@ -314,7 +314,7 @@ tasks:
       - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.0+auto"
     generates:
       - "/usr/local/go/**"
-
+  
   mocks:
     cmds:
       - go install github.com/golang/mock/mockgen@v1.6.0
@@ -323,7 +323,7 @@ tasks:
       - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
       - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
       - mockgen -source=pkg/kernel/interface.go -self_package golang.hedera.com/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
-
+  
   # Remote debug tasks for Docker container debugging
   debug:container:
     desc: "Setup debug environment and show available debug commands"
@@ -338,13 +338,13 @@ tasks:
         echo "  task debug:container:app -- [args...]    # Debug weaver application"
         echo "  task debug:container:stop                # Stop debug container"
         echo ""
-
+  
   debug:container:setup:
     desc: "Setup Docker container for remote debugging"
     dir: build
     cmds:
       - "./debug-setup.sh"
-
+  
   debug:container:test:
     desc: "Start remote test debug server in Docker container (specify package with -- ./pkg/name)"
     deps:
@@ -352,7 +352,7 @@ tasks:
     dir: build
     cmds:
       - "./debug-run.sh test {{.CLI_ARGS}}"
-
+  
   debug:container:app:
     desc: "Start remote application debug server in Docker container (pass args with -- after command)"
     deps:
@@ -360,12 +360,12 @@ tasks:
     dir: build
     cmds:
       - "./debug-run.sh app {{.CLI_ARGS}}"
-
+  
   debug:container:stop:
     desc: "Stop remote debug container"
     cmds:
       - "docker stop solo-weaver-debug 2>/dev/null || true"
-
+  
   # VM Debugging Tasks
   vm:debug:
     desc: "Show available VM debug commands"
@@ -377,7 +377,7 @@ tasks:
         echo "  task debug:vm:test -- [package]   # Debug tests on the VM (package required)"
         echo "  task debug:vm:app -- [args...]    # Debug weaver application on the VM"
         echo ""
-
+  
   vm:debug:test:
     desc: "Start remote test debug server on the VM (specify package with -- ./pkg/name)"
     dir: scripts
@@ -385,7 +385,7 @@ tasks:
       - "vm:start"
     cmds:
       - "./debug-vm-run.sh test {{.CLI_ARGS}}"
-
+  
   vm:debug:app:
     desc: "Start remote application debug server on the VM (pass args with -- after command)"
     dir: scripts
@@ -393,7 +393,7 @@ tasks:
       - "vm:start"
     cmds:
       - "./debug-vm-run.sh app {{.CLI_ARGS}}"
-
+  
   vm:targets:
     desc: "Show available VM OS targets and create VMs for specific OS types"
     cmds:
@@ -423,11 +423,11 @@ tasks:
         echo "To configure golden image URLs per OS type, set:"
         echo "  VM_GOLDEN_IMAGE_URL_DEBIAN=<url>"
         echo "  VM_GOLDEN_IMAGE_URL_UBUNTU=<url>"
-
+  
   vm:ip:
     cmds:
       - "{{.GET_VM_IP}} echo $(get_vm_ip)"
-
+  
   # VM Management Tasks
   vm:install:
     desc: "Install UTM and rsync if not already installed"
@@ -452,14 +452,14 @@ tasks:
         else
           echo "rsync is already installed"
         fi
-
+  
   vm:setup:
     desc: "Download and setup the pre-built golden VM image"
     deps:
       - vm:install
     cmds:
       - task: vm:download:golden
-
+  
   vm:download:golden:
     desc: "Download pre-built golden VM image from URL"
     cmds:
@@ -467,13 +467,13 @@ tasks:
         echo "Checking if golden VM already exists..."
         echo "VM OS Type: {{.VM_OS_TYPE}}"
         echo "VM Golden Name: {{.VM_GOLDEN_NAME}}"
-
+        
         # Check if the golden VM already exists
         if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
           echo "✓ Golden VM already exists, skipping download."
           exit 0
         fi
-
+        
         # Determine which golden image URL to use based on OS type
         GOLDEN_IMAGE_URL=""
         case "{{.VM_OS_TYPE}}" in
@@ -489,20 +489,20 @@ tasks:
             exit 1
             ;;
         esac
-
+        
         if [ -z "$GOLDEN_IMAGE_URL" ]; then
           echo "❌ No golden image URL configured for {{.VM_OS_TYPE}}"
           echo "Please set VM_GOLDEN_IMAGE_URL_{{.VM_OS_TYPE | upper}} or VM_GOLDEN_IMAGE_URL"
           echo "Example: VM_GOLDEN_IMAGE_URL_UBUNTU=https://example.com/ubuntu-22.04.utm"
           exit 1
         fi
-
+        
         echo "Golden VM not found, downloading {{.VM_OS_TYPE}} image from $GOLDEN_IMAGE_URL..."
-
+        
         # Create temporary directory for download
         TEMP_DIR=$(mktemp -d)
         echo "Downloading to temporary directory: $TEMP_DIR"
-
+        
         # Download the golden image
         if ! curl -fL -o "$TEMP_DIR/golden-image.utm" "$GOLDEN_IMAGE_URL"; then
           echo "❌ Failed to download the golden VM image from $GOLDEN_IMAGE_URL"
@@ -510,20 +510,20 @@ tasks:
           rm -rf "$TEMP_DIR"
           exit 0
         fi
-
+        
         # Import the VM into UTM
         echo "Importing VM into UTM..."
         open -a UTM
         sleep 5
-
+        
         # Copy the VM to UTM directory and rename
         cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-
+        
         # Clean up
         rm -rf "$TEMP_DIR"
-
+        
         echo "✓ Golden VM downloaded and imported successfully!"
-
+  
   vm:reset:
     desc: "Clone the golden VM to create a working instance with passwordless SSH"
     deps:
@@ -537,21 +537,21 @@ tasks:
           ssh-keygen -t rsa -b 2048 -f {{.SSH_PRIVATE_KEY}} -N ""
           echo "✓ SSH key generated at {{.SSH_PRIVATE_KEY}}"
         fi
-
+        
         echo "Cloning golden VM to working instance..."
-
+        
         # Check if golden VM exists
         if ! utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
           echo "Error: Golden VM '{{.VM_GOLDEN_NAME}}' not found. Run 'task vm:setup' first."
           echo "If you have downloaded the golden VM image manually, please import it manually."
           exit 1
         fi
-
+        
         # Stop the golden VM if it's running (required for cloning)
         echo "Ensuring golden VM is stopped for cloning..."
         utmctl stop "{{.VM_GOLDEN_NAME}}" 2>/dev/null || true
         sleep 2
-
+        
         # Stop and delete existing working VM if it exists
         if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
           echo "Stopping and removing existing working VM..."
@@ -560,16 +560,16 @@ tasks:
           utmctl delete "{{.VM_NAME}}" 2>/dev/null || true
           sleep 1
         fi
-
+        
         # Clone the golden VM
         echo "Cloning '{{.VM_GOLDEN_NAME}}' to '{{.VM_NAME}}'..."
         utmctl clone "{{.VM_GOLDEN_NAME}}" --name "{{.VM_NAME}}"
-
+        
         echo "✓ VM cloned. Now starting it for initial configuration..."
       - task: vm:start
       - task: vm:configure
       - cmd: echo "✓ VM reset and configured successfully."
-
+  
   vm:start:
     desc: "Start the working VM instance"
     deps:
@@ -578,18 +578,18 @@ tasks:
       - utmctl start --hide "{{.VM_NAME}}"
       - |
         echo "Waiting for VM to boot (checking every 5 seconds)..."
-
+        
         # Poll for VM to be ready with timeout
         MAX_ATTEMPTS=24  # 24 * 5 seconds = 2 minutes max wait
         ATTEMPT=0
         
         while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
           ATTEMPT=$((ATTEMPT + 1))
-
+        
           # Check if VM is running
           if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
             echo "✓ VM is running, checking if network is ready..."
-
+        
             VM_IP=$({{.GET_VM_IP}} get_vm_ip)
             if [ -n "$VM_IP" ]; then
               echo "✓ VM started successfully and network is ready at $VM_IP!"
@@ -600,18 +600,18 @@ tasks:
           else
             echo "VM is starting... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
           fi
-
+        
           if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
             sleep 5
           fi
         done
-
+        
         # Final check
         if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
           echo "⚠️  VM may not be fully ready after 2 minutes, but continuing..."
         fi
       - task: vm:ssh:port-forward
-
+  
   vm:ssh:port-forward:
     desc: "Forward port 2222 to 22 on the VM for debugging purposes"
     internal: true
@@ -623,7 +623,7 @@ tasks:
           echo "SSH key authentication failed. VM may not be configured yet."
           exit 0
         fi
-
+        
         echo "Setting up SSH port forwarding..."
         echo "Checking if port 2222 is available..."
         if command lsof -t -i :2222 >/dev/null 2>&1; then
@@ -636,7 +636,7 @@ tasks:
         # Forward port 2222 to 22 on the VM
         ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
         echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
-
+  
   vm:configure:
     internal: true
     desc: "Configure the VM with SSH, sudo, and mounts"
@@ -669,7 +669,7 @@ tasks:
         echo "Ensuring SSH service is enabled and running..."
         utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true" 2>&1
         utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || service ssh start 2>/dev/null || service sshd start 2>/dev/null || /etc/init.d/ssh start 2>/dev/null || true" 2>&1
-
+      
       - |
         echo "Waiting for SSH service to be ready..."
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
@@ -686,16 +686,16 @@ tasks:
         SSH_ATTEMPT=0
         while [ $SSH_ATTEMPT -lt $MAX_SSH_ATTEMPTS ]; do
           SSH_ATTEMPT=$((SSH_ATTEMPT + 1))
-          
+        
           echo -n "Attempt $SSH_ATTEMPT/$MAX_SSH_ATTEMPTS: "
-          
+        
           if ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes {{.VM_USER}}@$VM_IP "echo 'SSH ready'" >/dev/null 2>&1; then
             echo "✓ SSH is ready!"
             break
           fi
-          
+        
           echo "Connection failed, retrying..."
-
+        
           sleep 3
         done
         
@@ -714,18 +714,18 @@ tasks:
         # Passwordless sudo was already configured via utmctl exec
         ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
           set -e
-          
+        
           echo 'Verifying sudo is available...'
           if ! command -v sudo >/dev/null 2>&1; then
             echo '❌ sudo not found. Cannot proceed with configuration.'
             exit 1
           fi
-          
+        
           echo 'Verifying passwordless sudo is configured...'
           sudo -n true 2>/dev/null || {
             echo '⚠️  Passwordless sudo not working, but continuing...'
           }
-          
+        
           echo 'Creating weaver user and group with ID 2500...'
           if ! getent group weaver >/dev/null 2>&1; then
             sudo groupadd -g 2500 weaver
@@ -733,21 +733,21 @@ tasks:
           else
             echo 'weaver group already exists'
           fi
-          
+        
           if ! id -u weaver >/dev/null 2>&1; then
             sudo useradd -u 2500 -g 2500 -m -s /bin/bash weaver
             echo '✓ Created weaver user with UID 2500'
           else
             echo 'weaver user already exists'
           fi
-          
+        
           echo 'Configuring SSH key for root user...'
           sudo mkdir -p /root/.ssh
           sudo chmod 700 /root/.ssh
           echo \"$PUBLIC_KEY\" | sudo tee /root/.ssh/authorized_keys >/dev/null
           sudo chmod 600 /root/.ssh/authorized_keys
           echo '✓ SSH key configured for user root'
-          
+        
           echo 'Configuring SSH daemon to allow root login with keys...'
           sudo sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -755,26 +755,31 @@ tasks:
           sudo sed -i 's/#AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
           sudo systemctl restart sshd || sudo systemctl restart ssh
           echo '✓ SSH daemon configured for root login with keys'
-          
+        
           echo 'Mounting shared directory...'
           sudo mkdir -p /mnt/solo-weaver
           if ! grep -q '/mnt/solo-weaver' /etc/fstab; then
             echo 'share   /mnt/solo-weaver   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | sudo tee -a /etc/fstab >/dev/null
           fi
           sudo mount -a || true
-          echo '✓ Shared directory mounted at /mnt/solo-weaver'
+        
+          # Try to set ownership and permissions to the VM user (best effort)
+          echo "Fixing ownership/permissions for {{.VM_USER}} on /mnt/solo-weaver..."
+          sudo chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-weaver 2>/dev/null || true
+        
+          echo "✓ Shared directory mounted at /mnt/solo-weaver"
         "
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
         echo "Installing development tools (Git, Task, Go, Delve, rsync) via SSH at $VM_IP..."
-
-
+        
+        
         ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
           set -e
           echo 'Installing git, curl, rsync, and build tools...'
           sudo apt-get update -qq
           sudo apt-get install -y git curl rsync build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
-
+        
           # Install Task
           if ! command -v task >/dev/null 2>&1; then
             echo 'Installing Task...'
@@ -784,13 +789,13 @@ tasks:
           else
             echo 'Task already installed, skipping...'
           fi
-
+        
           cd /mnt/solo-weaver
           task install:go
-
+        
           echo '✓ Development tools installed successfully!'
         "
-
+  
   vm:ensure-exists:
     desc: "Ensure the working VM exists, creating it if necessary"
     internal: true
@@ -799,20 +804,20 @@ tasks:
       - task: vm:reset
     status:
       - utmctl status "{{.VM_NAME}}" >/dev/null 2>&1
-
+  
   vm:stop:
     desc: "Stop the working VM instance"
     cmds:
       - |
         echo "Stopping VM '{{.VM_NAME}}'..."
-
+        
         if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
           utmctl stop "{{.VM_NAME}}"
           echo "✓ VM stopped successfully!"
         else
           echo "VM '{{.VM_NAME}}' not found or already stopped."
         fi
-
+  
   vm:ssh:
     desc: "SSH into the running VM"
     silent: true
@@ -822,11 +827,11 @@ tasks:
     cmds:
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
-
+        
         echo "Connecting to VM at $VM_IP..."
         env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
-
+  
   vm:test:unit:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
     deps:
@@ -834,21 +839,21 @@ tasks:
     cmds:
       - cmd: |
           VM_IP=$({{.GET_VM_IP}} get_vm_ip)
-
+          
           echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
-
+          
           # Check if VM is accessible
           if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
             echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
             exit 1
           fi
-
+          
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit
           "
-
+  
   vm:test:integration:
     desc: "Run all integration tests in a UTM VM (useful for testing system-level functionality)"
     deps:
@@ -856,21 +861,21 @@ tasks:
     cmds:
       - cmd: |
           VM_IP=$({{.GET_VM_IP}} get_vm_ip)
-
+          
           echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
-
+          
           # Check if VM is accessible
           if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
             echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
             exit 1
           fi
-
+          
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:integration
           "
-
+  
   vm:status:
     desc: "Show status of all VMs"
     cmds:
@@ -882,33 +887,33 @@ tasks:
         echo ""
         echo "All UTM VMs:"
         utmctl list 2>/dev/null || echo "UTM not available or no VMs found"
-
+  
   vm:clean:
     desc: "Stop and delete the working VM instance"
     cmds:
       - task: vm:stop
       - |
         echo "Deleting working VM '{{.VM_NAME}}'..."
-
+        
         if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
           utmctl delete "{{.VM_NAME}}"
           echo "✓ Working VM deleted successfully!"
         else
           echo "Working VM not found or already deleted."
         fi
-
+  
   vm:recreate:golden:
     desc: "Re-download the golden VM image"
     cmds:
       - task: vm:delete:golden
       - task: vm:setup
-
+  
   vm:delete:golden:
     desc: "Delete the golden VM"
     cmds:
       - |
         echo "Deleting golden VM..."
-
+        
         if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
           echo "Found golden VM, deleting..."
           utmctl stop "{{.VM_GOLDEN_NAME}}" 2>/dev/null || true
