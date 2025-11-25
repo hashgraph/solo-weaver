@@ -152,6 +152,10 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	return pp
 }
 
+func (w *WeaverPaths) Clone() *WeaverPaths {
+	return NewWeaverPaths(w.HomeDir)
+}
+
 func Paths() *WeaverPaths {
 	return pp
 }
