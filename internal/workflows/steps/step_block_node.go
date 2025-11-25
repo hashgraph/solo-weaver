@@ -21,7 +21,7 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(profile string) automa.Builder {
+func SetupBlockNode(profile string, valuesFile string) automa.Builder {
 	// Lazy initialization of block node manager
 	// This blocknodeManagerProvider pattern ensures that the manager is only created once
 	// and reused across all steps in the workflow steps
@@ -41,7 +41,7 @@ func SetupBlockNode(profile string) automa.Builder {
 		setupBlockNodeStorage(blocknodeManagerProvider),
 		createBlockNodeNamespace(blocknodeManagerProvider),
 		createBlockNodePVs(blocknodeManagerProvider),
-		installBlockNode(profile, blocknodeManagerProvider),
+		installBlockNode(profile, valuesFile, blocknodeManagerProvider),
 		annotateBlockNodeService(blocknodeManagerProvider),
 		waitForBlockNode(blocknodeManagerProvider),
 	).
@@ -187,7 +187,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 }
 
 // installBlockNode installs the block node helm chart
-func installBlockNode(profile string, getManager func() (*blocknode.Manager, error)) automa.Builder {
+func installBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
@@ -197,7 +197,12 @@ func installBlockNode(profile string, getManager func() (*blocknode.Manager, err
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			installed, err := manager.InstallChart(ctx, core.Paths().TempDir, profile)
+			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			installed, err := manager.InstallChart(ctx, valuesFilePath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

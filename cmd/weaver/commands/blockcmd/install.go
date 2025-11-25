@@ -17,9 +17,10 @@ var blockNodeInstallCmd = &cobra.Command{
 			Strs("args", args).
 			Str("nodeType", nodeType).
 			Str("profile", flagProfile).
+			Str("valuesFile", flagValuesFile).
 			Msg("Installing Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile))
+		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, flagValuesFile))
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 		return nil

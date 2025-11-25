@@ -10,7 +10,8 @@ import (
 var (
 	nodeType = core.NodeTypeBlock
 
-	flagProfile string
+	flagProfile    string
+	flagValuesFile string
 
 	subCommands = []*cobra.Command{
 		blockNodeCheckCmd,
@@ -33,6 +34,8 @@ func init() {
 		_ = cmd.MarkFlagRequired("profile")
 
 	}
+	blockNodeInstallCmd.Flags().StringVarP(&flagValuesFile, "values", "f", "",
+		fmt.Sprintf("Values file"))
 
 	blockCmd.AddCommand(subCommands...)
 }

@@ -206,7 +206,7 @@ func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) e
 }
 
 // InstallChart installs the block node helm chart
-func (m *Manager) InstallChart(ctx context.Context, tempDir string, profile string) (bool, error) {
+func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, error) {
 	// Check if already installed
 	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
 	if err != nil {
@@ -218,25 +218,6 @@ func (m *Manager) InstallChart(ctx context.Context, tempDir string, profile stri
 		return false, nil
 	}
 
-	// Choose the appropriate values file based on profile
-	valuesTemplatePath := ValuesPath
-	if profile == core.ProfileLocal {
-		valuesTemplatePath = NanoValuesPath
-		m.logger.Info().Msg("Using nano values configuration for local profile")
-	}
-
-	// Read the values file template
-	valuesContent, err := templates.Read(valuesTemplatePath)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to read values template")
-	}
-
-	// Write to temp file
-	valuesFilePath := path.Join(tempDir, "block-node-values.yaml")
-	if err := os.WriteFile(valuesFilePath, []byte(valuesContent), core.DefaultFilePerm); err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to write values to temp file")
-	}
-
 	// Install the chart
 	_, err = m.helmManager.InstallChart(
 		ctx,
@@ -246,7 +227,7 @@ func (m *Manager) InstallChart(ctx context.Context, tempDir string, profile stri
 		m.blockConfig.Namespace,
 		helm.InstallChartOptions{
 			ValueOpts: &values.Options{
-				ValueFiles: []string{valuesFilePath},
+				ValueFiles: []string{valuesFile},
 			},
 			CreateNamespace: false, // namespace already created
 			Atomic:          true,
@@ -301,4 +282,39 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ComputeValuesFile generates the values file for helm installation based on profile
+// It provides the path to the generated values file
+func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, error) {
+	var valuesContent []byte
+	var err error
+	if valuesFile == "" {
+		// Choose the appropriate values file based on profile
+		valuesTemplatePath := ValuesPath
+		if profile == core.ProfileLocal {
+			valuesTemplatePath = NanoValuesPath
+			logx.As().Info().Msg("Using nano values configuration for local profile")
+		}
+
+		// Read the values file template
+		valuesContent, err = templates.Read(valuesTemplatePath)
+		if err != nil {
+			return "", errorx.InternalError.Wrap(err, "failed to read block node values template")
+		}
+	} else {
+		// Read the provided values file
+		valuesContent, err = os.ReadFile(valuesFile)
+		if err != nil {
+			return "", errorx.InternalError.Wrap(err, "failed to read provided values file: %s", valuesFile)
+		}
+	}
+
+	// make a temporary copy of the values content
+	valuesFilePath := path.Join(core.Paths().TempDir, "block-node-values.yaml")
+	if err = os.WriteFile(valuesFilePath, []byte(valuesContent), core.DefaultFilePerm); err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to write block node values file")
+	}
+
+	return valuesFilePath, nil
 }
