@@ -17,6 +17,6 @@ func NewBlockNodeInstallWorkflow(profile string) *automa.WorkflowBuilder {
 		NewBlockNodePreflightCheckWorkflow(profile),
 		NewNodeSetupWorkflow(core.NodeTypeBlock, profile),
 		NewSetupClusterWorkflow(),
-		steps.SetupBlockNode(core.NodeTypeBlock, profile),
+		steps.SetupBlockNode(profile),
 	)
 }
