@@ -2,3 +2,10 @@ log:
   level: debug
   consoleLogging: true
   fileLogging: false
+blockNode:
+  namespace: "block-node"
+  release: "block-node"
+  chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  version: "0.22.1"
+  storage:
+    basePath: "/mnt/fast-storage"

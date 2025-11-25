@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
+	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/kube"
 	"golang.hedera.com/solo-weaver/internal/templates"
@@ -23,19 +24,9 @@ import (
 
 const (
 	// Kubernetes resources
-	Namespace         = "block-node"
-	Release           = "block-node"
-	Chart             = "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
-	Version           = "0.22.1"
 	ServiceName       = "block-node-block-node-server"
 	PodLabelSelector  = "app.kubernetes.io/name=block-node-server"
 	MetalLBAnnotation = "metallb.io/address-pool=public-address-pool"
-
-	// Storage paths
-	StorageBasePath    = "/mnt/fast-storage"
-	ArchiveStoragePath = StorageBasePath + "/archive"
-	LiveStoragePath    = StorageBasePath + "/live"
-	LogsStoragePath    = StorageBasePath + "/logs"
 
 	// Template paths
 	NamespacePath     = "files/block-node/namespace.yaml"
@@ -54,10 +45,11 @@ type Manager struct {
 	kubeClient  *kube.Client
 	clientset   *kubernetes.Clientset // Still needed for pod listing and service updates
 	logger      *zerolog.Logger
+	blockConfig *config.BlockNodeConfig
 }
 
 // NewManager creates a new block node manager
-func NewManager() (*Manager, error) {
+func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
@@ -95,6 +87,7 @@ func NewManager() (*Manager, error) {
 		kubeClient:  kubeClient,
 		clientset:   clientset,
 		logger:      l,
+		blockConfig: &blockConfig,
 	}, nil
 }
 
@@ -114,10 +107,10 @@ func getKubeConfig() (*rest.Config, error) {
 // SetupStorage creates the required directories for block node storage
 func (m *Manager) SetupStorage(ctx context.Context) error {
 	storagePaths := []string{
-		StorageBasePath,
-		ArchiveStoragePath,
-		LiveStoragePath,
-		LogsStoragePath,
+		m.blockConfig.Storage.BasePath,
+		path.Join(m.blockConfig.Storage.BasePath, "archive"),
+		path.Join(m.blockConfig.Storage.BasePath, "live"),
+		path.Join(m.blockConfig.Storage.BasePath, "logs"),
 	}
 
 	for _, dirPath := range storagePaths {
@@ -162,7 +155,7 @@ func (m *Manager) CreateNamespace(ctx context.Context, tempDir string) error {
 		return errorx.IllegalState.Wrap(err, "failed to apply namespace manifest")
 	}
 
-	m.logger.Info().Msgf("Applied namespace manifest for: %s", Namespace)
+	m.logger.Info().Msgf("Applied namespace manifest for: %s", m.blockConfig.Namespace)
 	return nil
 }
 
@@ -197,7 +190,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 
 	for _, pvcName := range pvcNames {
 		m.logger.Info().Str("pvc", pvcName).Msg("Waiting for PVC to be bound...")
-		if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, Namespace, pvcName, kube.IsPVCBound, timeout); err != nil {
+		if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockConfig.Namespace, pvcName, kube.IsPVCBound, timeout); err != nil {
 			return errorx.IllegalState.Wrap(err, "PVC %s did not become bound in time", pvcName)
 		}
 		m.logger.Info().Str("pvc", pvcName).Msg("PVC is bound")
@@ -213,9 +206,9 @@ func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) e
 }
 
 // InstallChart installs the block node helm chart
-func (m *Manager) InstallChart(ctx context.Context, tempDir string, nodeType string, profile string) (bool, error) {
+func (m *Manager) InstallChart(ctx context.Context, tempDir string, profile string) (bool, error) {
 	// Check if already installed
-	isInstalled, err := m.helmManager.IsInstalled(Release, Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -247,10 +240,10 @@ func (m *Manager) InstallChart(ctx context.Context, tempDir string, nodeType str
 	// Install the chart
 	_, err = m.helmManager.InstallChart(
 		ctx,
-		Release,
-		Chart,
-		Version,
-		Namespace,
+		m.blockConfig.Release,
+		m.blockConfig.Chart,
+		m.blockConfig.Version,
+		m.blockConfig.Namespace,
 		helm.InstallChartOptions{
 			ValueOpts: &values.Options{
 				ValueFiles: []string{valuesFilePath},
@@ -270,12 +263,12 @@ func (m *Manager) InstallChart(ctx context.Context, tempDir string, nodeType str
 
 // UninstallChart uninstalls the block node helm chart
 func (m *Manager) UninstallChart(ctx context.Context) error {
-	return m.helmManager.UninstallChart(Release, Namespace)
+	return m.helmManager.UninstallChart(m.blockConfig.Release, m.blockConfig.Namespace)
 }
 
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
-	svc, err := m.clientset.CoreV1().Services(Namespace).Get(ctx, ServiceName, metav1.GetOptions{})
+	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, ServiceName, metav1.GetOptions{})
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to get service: %s", ServiceName)
 	}
@@ -286,7 +279,7 @@ func (m *Manager) AnnotateService(ctx context.Context) error {
 
 	svc.Annotations["metallb.io/address-pool"] = "public-address-pool"
 
-	_, err = m.clientset.CoreV1().Services(Namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	_, err = m.clientset.CoreV1().Services(m.blockConfig.Namespace).Update(ctx, svc, metav1.UpdateOptions{})
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", ServiceName)
 	}
@@ -303,7 +296,7 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 		LabelSelector: PodLabelSelector,
 	}
 
-	if err := m.kubeClient.WaitForResources(ctx, kube.KindPod, Namespace, kube.IsPodReady, timeout, opts); err != nil {
+	if err := m.kubeClient.WaitForResources(ctx, kube.KindPod, m.blockConfig.Namespace, kube.IsPodReady, timeout, opts); err != nil {
 		return errorx.IllegalState.Wrap(err, "pod did not become ready in time")
 	}
 

@@ -11,7 +11,22 @@ import (
 
 // Config holds the global configuration for the application.
 type Config struct {
-	Log logx.LoggingConfig `yaml:"log" json:"log"`
+	Log       logx.LoggingConfig `yaml:"log" json:"log"`
+	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
+}
+
+// BlockNodeStorage represents the `storage` section under `blockNode`.
+type BlockNodeStorage struct {
+	BasePath string `yaml:"basePath" json:"basePath"`
+}
+
+// BlockNodeConfig represents the `blockNode` configuration block.
+type BlockNodeConfig struct {
+	Namespace string           `yaml:"namespace" json:"namespace"`
+	Release   string           `yaml:"release" json:"release"`
+	Chart     string           `yaml:"chart" json:"chart"`
+	Version   string           `yaml:"version" json:"version"`
+	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
 var config = Config{
@@ -19,6 +34,15 @@ var config = Config{
 		Level:          "Debug",
 		ConsoleLogging: true,
 		FileLogging:    false,
+	},
+	BlockNode: BlockNodeConfig{
+		Namespace: "block-node",
+		Release:   "block-node",
+		Chart:     "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+		Version:   "0.22.1",
+		Storage: BlockNodeStorage{
+			BasePath: "/mnt/fast-storage",
+		},
 	},
 }
 
@@ -33,7 +57,7 @@ func Initialize(path string) error {
 	if path != "" {
 		viper.Reset()
 		viper.SetConfigFile(path)
-		viper.SetEnvPrefix("solo_weaver")
+		viper.SetEnvPrefix("weaver")
 		viper.AutomaticEnv()
 		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
