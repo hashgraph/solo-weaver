@@ -7,7 +7,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-weaver/cmd/weaver/commands/block"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/versioncmd"
+	"golang.hedera.com/solo-weaver/cmd/weaver/commands/version"
 	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/doctor"
 )
@@ -31,7 +31,7 @@ var (
 		Long:  "Solo Weaver - A user friendly tool to provision Hedera network components",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
-				versioncmd.PrintVersion(cmd, flagOutputFormat)
+				version.PrintVersion(cmd, flagOutputFormat)
 				return nil
 			}
 
@@ -52,7 +52,7 @@ func init() {
 
 	// add subcommands
 	rootCmd.AddCommand(block.GetCmd())
-	rootCmd.AddCommand(versioncmd.Get())
+	rootCmd.AddCommand(version.Get())
 }
 
 // Execute executes the root command.

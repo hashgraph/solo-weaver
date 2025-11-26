@@ -1,7 +1,8 @@
-package versioncmd
+package version
 
 import (
 	"encoding/json"
+	"runtime"
 	"strings"
 
 	"github.com/joomcode/errorx"
@@ -12,8 +13,9 @@ import (
 )
 
 type VersionInfo struct {
-	Number string `json:"version" yaml:"version"`
-	Commit string `json:"commit" yaml:"commit"`
+	Number    string `json:"version" yaml:"version"`
+	Commit    string `json:"commit" yaml:"commit"`
+	GoVersion string `json:"go" yaml:"go"`
 }
 
 const (
@@ -59,8 +61,9 @@ var (
 
 func init() {
 	versionInfo = &VersionInfo{
-		Number: version.Number(),
-		Commit: version.Commit(),
+		Number:    version.Number(),
+		Commit:    version.Commit(),
+		GoVersion: runtime.Version(),
 	}
 	versionCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format: yaml|json")
 }
