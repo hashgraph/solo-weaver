@@ -1,4 +1,4 @@
-package config
+package core
 
 import (
 	"os"
@@ -10,17 +10,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// StateManager defines the interface for managing the application state with IO operations.
+// It is just a thin wrapper around State with added thread-safe disk persistence & refresh operations.
+// However, the State itself is not thread-safe for mutations since State is a data model.
+type StateManager interface {
+	State() *State
+	FileManager() fsx.Manager
+	Flush() error
+	Refresh() error
+	HasPersistedState() (os.FileInfo, bool, error)
+}
+
 // StateManager encapsulates a State and all IO operations (flush/refresh).
-type StateManager struct {
+type stateManager struct {
 	mu    sync.Mutex
 	state *State
 	fm    fsx.Manager
 }
 
-type StateManagerOption func(*StateManager) error
+type StateManagerOption func(*stateManager) error
 
 func WithFileManager(fm fsx.Manager) StateManagerOption {
-	return func(m *StateManager) error {
+	return func(m *stateManager) error {
 		if fm == nil {
 			return errorx.IllegalArgument.New("file manager cannot be nil")
 		}
@@ -30,7 +41,7 @@ func WithFileManager(fm fsx.Manager) StateManagerOption {
 }
 
 func WithState(s *State) StateManagerOption {
-	return func(m *StateManager) error {
+	return func(m *stateManager) error {
 		if s == nil {
 			return errorx.IllegalArgument.New("state cannot be nil")
 		}
@@ -40,8 +51,8 @@ func WithState(s *State) StateManagerOption {
 }
 
 // NewStateManager creates a StateManager with the provided options.
-func NewStateManager(opts ...StateManagerOption) (*StateManager, error) {
-	m := &StateManager{}
+func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
+	m := &stateManager{}
 
 	for _, opt := range opts {
 		if err := opt(m); err != nil {
@@ -65,17 +76,22 @@ func NewStateManager(opts ...StateManagerOption) (*StateManager, error) {
 }
 
 // State returns the current state (thread-safe for read operations)
-func (m *StateManager) State() *State {
+// It returns a pointer to the state, allowing callers to be able to mutat it directly and invoke Flush to persist changes.
+// This is because cloning the state for every read would be inefficient.
+// Callers should ensure proper synchronization when mutating the state.
+// For read-only operations, callers can use the returned pointer without additional locking.
+// The disk persistence & refresh operations (Flush/Refresh) are thread-safe, however mutations to the state itself are not synchronized.
+func (m *stateManager) State() *State {
 	return m.state
 }
 
 // FileManager returns the file manager used by the state manager
-func (m *StateManager) FileManager() fsx.Manager {
+func (m *stateManager) FileManager() fsx.Manager {
 	return m.fm
 }
 
 // Flush persists the current state to disk with write lock
-func (m *StateManager) Flush() error {
+func (m *stateManager) Flush() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -95,7 +111,7 @@ func (m *StateManager) Flush() error {
 }
 
 // Refresh reloads the persisted state from disk with write lock
-func (m *StateManager) Refresh() error {
+func (m *stateManager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -123,6 +139,6 @@ func (m *StateManager) Refresh() error {
 }
 
 // HasPersistedState checks if the state file exists on disk
-func (m *StateManager) HasPersistedState() (os.FileInfo, bool, error) {
+func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
 	return m.fm.PathExists(m.state.File)
 }

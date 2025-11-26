@@ -1,22 +1,22 @@
-package config
+package core
 
 import (
 	"path"
 	"time"
 
-	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/version"
 )
 
 type State struct {
-	Version   string            `yaml:"version" json:"version"`
-	Commit    string            `yaml:"commit" json:"commit"`
-	File      string            `yaml:"file" json:"file"` // path to state file
-	Paths     *core.WeaverPaths `yaml:"paths" json:"paths"`
-	Machine   *MachineState     `yaml:"machine" json:"machine"`
-	Cluster   *ClusterState     `yaml:"cluster" json:"cluster"`
-	BlockNode *BlockNodeState   `yaml:"blockNode" json:"blockNode"`
-	LastSync  *time.Time        `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Version   string          `yaml:"version" json:"version"`
+	Commit    string          `yaml:"commit" json:"commit"`
+	File      string          `yaml:"file" json:"file"` // path to state file
+	Paths     *WeaverPaths    `yaml:"paths" json:"paths"`
+	Machine   *MachineState   `yaml:"machine" json:"machine"`
+	Cluster   *ClusterState   `yaml:"cluster" json:"cluster"`
+	BlockNode *BlockNodeState `yaml:"blockNode" json:"blockNode"`
+	LastSync  *time.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type MachineState struct {
@@ -43,10 +43,10 @@ type StorageState struct {
 }
 
 type BlockNodeState struct {
-	Config    *BlockNodeConfig `yaml:"config" json:"config"`
-	Created   bool             `yaml:"installed" json:"installed"`
-	CreatedAt *time.Time       `yaml:"createdAt,omitempty" json:"createdAt,omitempty"`
-	LastSync  *time.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Config    *config.BlockNodeConfig `yaml:"config" json:"config"`
+	Created   bool                    `yaml:"installed" json:"installed"`
+	CreatedAt *time.Time              `yaml:"createdAt,omitempty" json:"createdAt,omitempty"`
+	LastSync  *time.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.
@@ -101,7 +101,7 @@ type ClusterState struct {
 // NewState creates a new State instance with default values
 // It does not load any persisted state from disk.
 func NewState() *State {
-	p := core.Paths().Clone()
+	p := Paths().Clone()
 	return &State{
 		Version: version.Number(),
 		Commit:  version.Commit(),
@@ -124,8 +124,8 @@ func NewState() *State {
 		},
 
 		BlockNode: &BlockNodeState{
-			Config: &BlockNodeConfig{
-				Storage: BlockNodeStorage{
+			Config: &config.BlockNodeConfig{
+				Storage: config.BlockNodeStorage{
 					BasePath: "",
 				},
 			},
