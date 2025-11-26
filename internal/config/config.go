@@ -29,7 +29,7 @@ type BlockNodeConfig struct {
 	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
-var config = Config{
+var globalConfig = Config{
 	Log: logx.LoggingConfig{
 		Level:          "Debug",
 		ConsoleLogging: true,
@@ -63,11 +63,11 @@ func Initialize(path string) error {
 
 		err := viper.ReadInConfig()
 		if err != nil {
-			return NotFoundError.Wrap(err, "failed to read config file: %s", path).
+			return NotFoundError.Wrap(err, "failed to read globalConfig file: %s", path).
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 
-		if err := viper.Unmarshal(&config); err != nil {
+		if err := viper.Unmarshal(&globalConfig); err != nil {
 			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
 				WithProperty(errorx.PropertyPayload(), path)
 		}
@@ -89,10 +89,10 @@ func overrideWithEnv(value string) string {
 // Returns:
 //   - The global configuration.
 func Get() Config {
-	return config
+	return globalConfig
 }
 
 func Set(c *Config) error {
-	config = *c
+	globalConfig = *c
 	return nil
 }
