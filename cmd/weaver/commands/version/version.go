@@ -23,7 +23,7 @@ func init() {
 	versionCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format: yaml|json")
 }
 
-func Get() *cobra.Command {
+func GetCmd() *cobra.Command {
 	return versionCmd
 }
 

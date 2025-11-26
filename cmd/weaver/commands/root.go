@@ -52,7 +52,7 @@ func init() {
 
 	// add subcommands
 	rootCmd.AddCommand(block.GetCmd())
-	rootCmd.AddCommand(version.Get())
+	rootCmd.AddCommand(version.GetCmd())
 }
 
 // Execute executes the root command.
