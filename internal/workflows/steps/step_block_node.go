@@ -5,6 +5,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"golang.hedera.com/solo-weaver/internal/blocknode"
+	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/workflows/notify"
 )
@@ -20,14 +21,29 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(nodeType string, profile string) automa.Builder {
+func SetupBlockNode(profile string, valuesFile string) automa.Builder {
+	// Lazy initialization of block node manager
+	// This blocknodeManagerProvider pattern ensures that the manager is only created once
+	// and reused across all steps in the workflow steps
+	var blockNodeManager *blocknode.Manager
+	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
+		if blockNodeManager == nil {
+			var err error
+			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return blockNodeManager, nil
+	}
+
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
-		setupBlockNodeStorage(),
-		createBlockNodeNamespace(),
-		createBlockNodePVs(),
-		installBlockNode(nodeType, profile),
-		annotateBlockNodeService(),
-		waitForBlockNode(),
+		setupBlockNodeStorage(blockNodeManagerProvider),
+		createBlockNodeNamespace(blockNodeManagerProvider),
+		createBlockNodePVs(blockNodeManagerProvider),
+		installBlockNode(profile, valuesFile, blockNodeManagerProvider),
+		annotateBlockNodeService(blockNodeManagerProvider),
+		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up Block Node")
@@ -42,12 +58,12 @@ func SetupBlockNode(nodeType string, profile string) automa.Builder {
 }
 
 // setupBlockNodeStorage creates the required directories for block node storage
-func setupBlockNodeStorage() automa.Builder {
+func setupBlockNodeStorage(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(SetupBlockNodeStorageStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -74,12 +90,12 @@ func setupBlockNodeStorage() automa.Builder {
 }
 
 // createBlockNodeNamespace creates the block-node namespace in the cluster
-func createBlockNodeNamespace() automa.Builder {
+func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodeNamespaceStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -99,7 +115,7 @@ func createBlockNodeNamespace() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -123,12 +139,12 @@ func createBlockNodeNamespace() automa.Builder {
 }
 
 // createBlockNodePVs creates the PersistentVolumes and PersistentVolumeClaims for block node
-func createBlockNodePVs() automa.Builder {
+func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodePVsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -147,7 +163,7 @@ func createBlockNodePVs() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			manager, err := blocknode.NewManager()
+			manager, err := blocknode.NewManager(config.Get().BlockNode)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -171,17 +187,22 @@ func createBlockNodePVs() automa.Builder {
 }
 
 // installBlockNode installs the block node helm chart
-func installBlockNode(nodeType string, profile string) automa.Builder {
+func installBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			installed, err := manager.InstallChart(ctx, core.Paths().TempDir, nodeType, profile)
+			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			installed, err := manager.InstallChart(ctx, valuesFilePath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -200,7 +221,7 @@ func installBlockNode(nodeType string, profile string) automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -224,12 +245,12 @@ func installBlockNode(nodeType string, profile string) automa.Builder {
 }
 
 // annotateBlockNodeService annotates the block node service with MetalLB address pool
-func annotateBlockNodeService() automa.Builder {
+func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(AnnotateBlockNodeServiceStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -256,12 +277,12 @@ func annotateBlockNodeService() automa.Builder {
 }
 
 // waitForBlockNode waits for the block node pod to be ready
-func waitForBlockNode() automa.Builder {
+func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(WaitForBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			manager, err := blocknode.NewManager()
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

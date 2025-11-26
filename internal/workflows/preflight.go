@@ -39,7 +39,7 @@ func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 			if !hardware.IsValidProfile(profile) {
 				return automa.FailureReport(stp,
 					automa.WithError(
-						errorx.IllegalArgument.New("unsupported profile: %s. Supported profiles: %v",
+						errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
 							profile, hardware.SupportedProfiles())))
 			}
 

@@ -12,11 +12,11 @@ func NewBlockNodePreflightCheckWorkflow(profile string) *automa.WorkflowBuilder 
 }
 
 // NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node
-func NewBlockNodeInstallWorkflow(profile string) *automa.WorkflowBuilder {
+func NewBlockNodeInstallWorkflow(profile string, valuesFile string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 		NewBlockNodePreflightCheckWorkflow(profile),
 		NewNodeSetupWorkflow(core.NodeTypeBlock, profile),
 		NewSetupClusterWorkflow(),
-		steps.SetupBlockNode(core.NodeTypeBlock, profile),
+		steps.SetupBlockNode(profile, valuesFile),
 	)
 }

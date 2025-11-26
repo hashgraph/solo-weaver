@@ -1,0 +1,36 @@
+package version
+
+import (
+	"github.com/spf13/cobra"
+	"golang.hedera.com/solo-weaver/internal/doctor"
+	"golang.hedera.com/solo-weaver/internal/version"
+)
+
+var (
+	flagOutputFormat string
+
+	versionCmd = &cobra.Command{
+		Use:   "version",
+		Short: "Show version",
+		Long:  "Show the current version of the application",
+		Run: func(cmd *cobra.Command, args []string) {
+			PrintVersion(cmd, flagOutputFormat)
+		},
+	}
+)
+
+func init() {
+	versionCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format: yaml|json")
+}
+
+func GetCmd() *cobra.Command {
+	return versionCmd
+}
+
+func PrintVersion(cmd *cobra.Command, format string) {
+	output, err := version.Get().Format(format)
+	if err != nil {
+		doctor.CheckErr(cmd.Context(), err)
+	}
+	cmd.Println(output)
+}

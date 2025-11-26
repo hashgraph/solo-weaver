@@ -15,12 +15,6 @@ import (
 )
 
 func TestBlockNodeConstants(t *testing.T) {
-	// Verify block node constants are properly defined
-	assert.Equal(t, "block-node", blocknode.Namespace)
-	assert.Equal(t, "block-node", blocknode.Release)
-	assert.Equal(t, "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server", blocknode.Chart)
-	assert.Equal(t, "0.22.1", blocknode.Version)
-	assert.Equal(t, "/mnt/fast-storage", blocknode.StorageBasePath)
 	assert.Equal(t, "block-node-block-node-server", blocknode.ServiceName)
 	assert.Equal(t, "metallb.io/address-pool=public-address-pool", blocknode.MetalLBAnnotation)
 	assert.Equal(t, "block", core.NodeTypeBlock)
@@ -41,7 +35,7 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	reset(t)
 	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	wb := SetupBlockNode(core.NodeTypeBlock, core.ProfileMainnet)
+	wb := SetupBlockNode(core.ProfileMainnet, "")
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -109,7 +103,7 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	reset(t)
 	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	wb := SetupBlockNode(core.NodeTypeBlock, core.ProfileLocal)
+	wb := SetupBlockNode(core.ProfileLocal, "")
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -174,7 +168,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	// Given - already installed from fresh install test
 	//
 
-	wb := SetupBlockNode(core.NodeTypeBlock, core.ProfileLocal)
+	wb := SetupBlockNode(core.ProfileLocal, "")
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()

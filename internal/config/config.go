@@ -7,18 +7,43 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
+	"golang.hedera.com/solo-weaver/pkg/deps"
 )
 
 // Config holds the global configuration for the application.
 type Config struct {
-	Log logx.LoggingConfig `yaml:"log" json:"log"`
+	Log       logx.LoggingConfig `yaml:"log" json:"log"`
+	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
 }
 
-var config = Config{
+// BlockNodeStorage represents the `storage` section under `blockNode`.
+type BlockNodeStorage struct {
+	BasePath string `yaml:"basePath" json:"basePath"`
+}
+
+// BlockNodeConfig represents the `blockNode` configuration block.
+type BlockNodeConfig struct {
+	Namespace string           `yaml:"namespace" json:"namespace"`
+	Release   string           `yaml:"release" json:"release"`
+	Chart     string           `yaml:"chart" json:"chart"`
+	Version   string           `yaml:"version" json:"version"`
+	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
+}
+
+var globalConfig = Config{
 	Log: logx.LoggingConfig{
 		Level:          "Debug",
 		ConsoleLogging: true,
 		FileLogging:    false,
+	},
+	BlockNode: BlockNodeConfig{
+		Namespace: deps.BLOCK_NODE_NAMESPACE,
+		Release:   deps.BLOCK_NODE_RELEASE,
+		Chart:     deps.BLOCK_NODE_CHART,
+		Version:   deps.BLOCK_NODE_VERSION,
+		Storage: BlockNodeStorage{
+			BasePath: deps.BLOCK_NODE_STORAGE_BASE_PATH,
+		},
 	},
 }
 
@@ -33,7 +58,7 @@ func Initialize(path string) error {
 	if path != "" {
 		viper.Reset()
 		viper.SetConfigFile(path)
-		viper.SetEnvPrefix("solo_weaver")
+		viper.SetEnvPrefix("weaver")
 		viper.AutomaticEnv()
 		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
@@ -43,7 +68,7 @@ func Initialize(path string) error {
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 
-		if err := viper.Unmarshal(&config); err != nil {
+		if err := viper.Unmarshal(&globalConfig); err != nil {
 			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
 				WithProperty(errorx.PropertyPayload(), path)
 		}
@@ -65,10 +90,10 @@ func overrideWithEnv(value string) string {
 // Returns:
 //   - The global configuration.
 func Get() Config {
-	return config
+	return globalConfig
 }
 
 func Set(c *Config) error {
-	config = *c
+	globalConfig = *c
 	return nil
 }

@@ -23,10 +23,25 @@ var handler = &Handler{
 			Msgf(msg, args...)
 	},
 	StepFailure: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
-		logx.As().Error().Err(report.Error).
+		// find the root cause from steps error by going through step reports
+		firstErrReport := report
+		for _, stepReport := range report.StepReports {
+			if stepReport.HasError() {
+				firstErrReport = stepReport
+				break
+			}
+		}
+
+		l := logx.As().Error().Err(report.Error).
 			Str("step_id", stp.Id()).
-			Str("status", report.Status.String()).
-			Msgf(msg, args...)
+			Str("status", report.Status.String())
+		if firstErrReport != nil && firstErrReport.Id != report.Id {
+			l.
+				Str("first_error", firstErrReport.Error.Error()).
+				Str("first_error_step_id", firstErrReport.Id)
+		}
+
+		l.Msgf(msg, args...)
 	},
 }
 
