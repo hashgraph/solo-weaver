@@ -6,7 +6,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/blockcmd"
+	"golang.hedera.com/solo-weaver/cmd/weaver/commands/block"
 	"golang.hedera.com/solo-weaver/cmd/weaver/commands/versioncmd"
 	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/doctor"
@@ -51,7 +51,7 @@ func init() {
 	cobra.EnableCommandSorting = false
 
 	// add subcommands
-	rootCmd.AddCommand(blockcmd.Get())
+	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(versioncmd.Get())
 }
 
