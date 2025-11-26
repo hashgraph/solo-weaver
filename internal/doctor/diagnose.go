@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
-	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/config"
 	"golang.hedera.com/solo-weaver/internal/core"
@@ -54,7 +53,12 @@ func toErrorMessage(err error) (string, string) {
 		return err.Error(), ""
 	}
 
-	return e.Message(), fmt.Sprintf("%s", e.Cause())
+	cause := ""
+	if e.Cause() != nil {
+		cause = fmt.Sprintf("%s", e.Cause())
+	}
+
+	return e.Message(), cause
 }
 
 func findResolution(err error) []string {
@@ -63,7 +67,7 @@ func findResolution(err error) []string {
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
 			return []string{fmt.Sprintf("Ensure %q is provided.", arg.(string))}
 		}
-		return []string{fmt.Sprintf("Ensure all required arguments are provided.")}
+		return []string{fmt.Sprintf("Ensure all required arguments are provided with valid values.")}
 	case errorx.IsOfType(err, errorx.IllegalFormat):
 		return []string{"Ensure provided data is in correct format."}
 	case errorx.IsOfType(err, config.NotFoundError):
@@ -229,9 +233,9 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 // CheckErr prints diagnosis and exit with error code 1
 // Optional instructions can be provided to give additional context to the user
 func CheckErr(ctx context.Context, err error, instructions ...string) {
+	fmt.Printf("\n%s%s************************************** Error Stacktrace ******************************************%s\n", Bold, Gray, Reset)
+	fmt.Printf("\n%+v\n", err) // Print full error with stack trace for logs
 
-	logx.As().Error().Err(err).Msg("error occurred")
-	fmt.Printf("%+v\n", err)
 	resp := Diagnose(ctx, err)
 
 	fmt.Printf("\n%s%s************************************** Error Diagnostics ******************************************%s\n", Bold, Red, Reset)
@@ -255,6 +259,7 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 		}
 	}
 	fmt.Printf("%s%s***************************************************************************************************%s\n", Bold, Red, Reset)
+
 	fmt.Printf("\n%s%s****************************************** Resolution *********************************************%s\n", Bold, Yellow, Reset)
 
 	// Print custom instructions first if provided
@@ -288,9 +293,22 @@ func CheckReportErr(ctx context.Context, report *automa.Report) {
 	}
 
 	if report.Error != nil {
+		// pick the first error when scanning step reports from the end (last step first)
+		rootErr := report.Error
+		var errStepReport *automa.Report
+		for i := len(report.StepReports) - 1; i >= 0; i-- {
+			stepReport := report.StepReports[i]
+			if stepReport != nil && stepReport.Error != nil {
+				rootErr = stepReport.Error
+				errStepReport = stepReport
+				break
+			}
+		}
+
 		// Check for instructions in any nested reports before showing error
-		instructions := GetInstructionsFromReport(report)
-		CheckErr(ctx, report.Error, instructions)
+		instructions := GetInstructionsFromReport(errStepReport)
+
+		CheckErr(ctx, rootErr, instructions)
 	}
 }
 
