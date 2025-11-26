@@ -7,6 +7,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
+	"golang.hedera.com/solo-weaver/pkg/deps"
 )
 
 // Config holds the global configuration for the application.
@@ -36,12 +37,12 @@ var globalConfig = Config{
 		FileLogging:    false,
 	},
 	BlockNode: BlockNodeConfig{
-		Namespace: "block-node",
-		Release:   "block-node",
-		Chart:     "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
-		Version:   "0.22.1",
+		Namespace: deps.BLOCK_NODE_NAMESPACE,
+		Release:   deps.BLOCK_NODE_RELEASE,
+		Chart:     deps.BLOCK_NODE_CHART,
+		Version:   deps.BLOCK_NODE_VERSION,
 		Storage: BlockNodeStorage{
-			BasePath: "/mnt/fast-storage",
+			BasePath: deps.BLOCK_NODE_STORAGE_BASE_PATH,
 		},
 	},
 }
