@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.hedera.com/solo-weaver/cmd/weaver/commands/block/node"
+	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
 	"golang.hedera.com/solo-weaver/internal/core"
 )
 
@@ -19,8 +20,12 @@ var (
 )
 
 func init() {
-	blockCmd.PersistentFlags().StringVarP(&flagProfile, "profile", "p", "",
+	blockCmd.PersistentFlags().StringVarP(&flagProfile,
+		common.FlagProfileName, common.FlagProfileNameShort, common.FlagProfileDefault,
 		fmt.Sprintf("Deployment profiles %s", core.AllProfiles()))
+
+	_ = blockCmd.MarkPersistentFlagRequired(common.FlagProfileName)
+
 	blockCmd.AddCommand(node.GetCmd())
 }
 
