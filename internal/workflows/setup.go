@@ -9,7 +9,7 @@ import (
 
 // NewNodeSetupWorkflow creates a comprehensive setup workflow for any node type
 // It runs preflight checks first, then performs the actual setup
-func NewNodeSetupWorkflow(nodeType string, profile string) automa.Builder {
+func NewNodeSetupWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-setup").
 		Steps(

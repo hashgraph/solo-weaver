@@ -2,6 +2,7 @@
   <configuration default="true" type="GoTestRunConfiguration" factoryName="Go Test" show_console_on_std_err="true" show_console_on_std_out="true">
     <module name="solo-weaver" />
     <working_directory value="$PROJECT_DIR$" />
+    <go_parameters value="-v" />
     <useCustomBuildTags value="true" />
     <kind value="DIRECTORY" />
     <package value="golang.hedera.com/solo-weaver" />

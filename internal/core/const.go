@@ -21,6 +21,8 @@ const (
 	NodeTypeLocal     = "local"
 	NodeTypeBlock     = "block"
 	NodeTypeConsensus = "consensus"
+	NodeTypeMirror    = "mirror"
+	NodeTypeRelay     = "relay"
 
 	// Deployment profiles
 	ProfileLocal   = "local"
@@ -28,6 +30,20 @@ const (
 	ProfileTestnet = "testnet"
 	ProfileMainnet = "mainnet"
 )
+
+var allProfiles = []string{
+	ProfileLocal,
+	ProfilePerfnet,
+	ProfileTestnet,
+	ProfileMainnet,
+}
+
+func AllProfiles() []string {
+	// return a copy to prevent modification
+	profilesCopy := make([]string, len(allProfiles))
+	copy(profilesCopy, allProfiles)
+	return profilesCopy
+}
 
 var (
 	pp     = NewWeaverPaths(DefaultWeaverHome)

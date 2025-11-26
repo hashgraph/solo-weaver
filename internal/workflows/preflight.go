@@ -361,7 +361,7 @@ func CheckStorageStep(nodeType string, profile string) automa.Builder {
 }
 
 // NewNodeSafetyCheckWorkflow creates a safety check workflow for any node type
-func NewNodeSafetyCheckWorkflow(nodeType string, profile string) automa.Builder {
+func NewNodeSafetyCheckWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-preflight").Steps(
 		CheckPrivilegesStep(),
@@ -379,7 +379,8 @@ func NewNodeSafetyCheckWorkflow(nodeType string, profile string) automa.Builder 
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepFailure(ctx, stp, rpt, "Node preflight checks failed")
-		}).WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-		notify.As().StepCompletion(ctx, stp, rpt, "Node preflight checks completed successfully")
-	})
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Node preflight checks completed successfully")
+		})
 }

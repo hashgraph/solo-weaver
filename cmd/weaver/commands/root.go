@@ -6,10 +6,10 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
+	"golang.hedera.com/solo-weaver/cmd/weaver/commands/blockcmd"
+	"golang.hedera.com/solo-weaver/cmd/weaver/commands/versioncmd"
 	"golang.hedera.com/solo-weaver/internal/config"
-	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/doctor"
-	"golang.hedera.com/solo-weaver/internal/version"
 )
 
 // examples:
@@ -18,40 +18,41 @@ import (
 // ./weaver consensus node check --profile=testnet
 // ./weaver consensus node setup --config ./config.yaml --profile=perfnet
 
-// NodeTypeConfig defines the configuration for a node type
-type NodeTypeConfig struct {
-	Name      string
-	ParentCmd *cobra.Command
-}
-
 // rootCmd represents the base command when called without any subcommands
 var (
 	// Used for flags.
-	flagConfig string
+	flagConfig       string
+	flagVersion      bool
+	flagOutputFormat string
 
 	rootCmd = &cobra.Command{
 		Use:   "weaver",
 		Short: "A user friendly tool to provision Hedera network components",
 		Long:  "Solo Weaver - A user friendly tool to provision Hedera network components",
-	}
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if flagVersion {
+				versioncmd.PrintVersion(cmd, flagOutputFormat)
+				return nil
+			}
 
-	blockCmd = &cobra.Command{
-		Use:   "block",
-		Short: "Commands for block node type",
-		Long:  "Commands for block node type",
-	}
-
-	consensusCmd = &cobra.Command{
-		Use:   "consensus",
-		Short: "Commands for consensus node type",
-		Long:  "Commands for consensus node type",
+			return cmd.Help()
+		},
 	}
 )
 
-// nodeTypeConfigs defines all supported node types and their configuration
-var nodeTypeConfigs = []NodeTypeConfig{
-	{Name: core.NodeTypeBlock, ParentCmd: blockCmd},
-	{Name: core.NodeTypeConsensus, ParentCmd: consensusCmd},
+func init() {
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
+
+	// support '--version', '-v' to show version information
+	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Show version")
+	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format (yaml|json)")
+
+	// disable command sorting to keep the order of commands as added
+	cobra.EnableCommandSorting = false
+
+	// add subcommands
+	rootCmd.AddCommand(blockcmd.Get())
+	rootCmd.AddCommand(versioncmd.Get())
 }
 
 // Execute executes the root command.
@@ -64,31 +65,7 @@ func Execute(ctx context.Context) error {
 		initConfig(ctx)
 	})
 
-	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
-
-	// make flags mandatory
-	//_ = rootCmd.MarkPersistentFlagRequired("cfg")
-
-	// Setup node commands for each configured node type
-	for _, cfg := range nodeTypeConfigs {
-		// Create commands for this node type
-		nodeCheckCmd := createNodeCheckCommand(cfg.Name)
-		nodeSetupCmd := createNodeSetupCommand(cfg.Name)
-		nodeSubCmd := createNodeSubcommand(cfg.Name)
-
-		// Add check and setup commands to node subcommand
-		nodeSubCmd.AddCommand(nodeCheckCmd)
-		nodeSubCmd.AddCommand(nodeSetupCmd)
-
-		// Add node subcommand to the parent command
-		cfg.ParentCmd.AddCommand(nodeSubCmd)
-	}
-
-	// Add all node type commands to root
-	for _, cfg := range nodeTypeConfigs {
-		rootCmd.AddCommand(cfg.ParentCmd)
-	}
-
+	// execute the root command
 	_, err := rootCmd.ExecuteContextC(ctx)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to execute command")
@@ -108,19 +85,5 @@ func initConfig(ctx context.Context) {
 	err = logx.Initialize(logConfig)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
-	}
-
-	logx.As().Debug().
-		Str("commit", version.Commit()).
-		Str("version", version.Number()).
-		Msg("Initialized configuration")
-}
-
-// createNodeSubcommand creates a "node" subcommand for a specific node type
-func createNodeSubcommand(nodeType string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "node",
-		Short: "Commands to manage and configure " + nodeType + " nodes",
-		Long:  "Commands to manage and configure " + nodeType + " nodes",
 	}
 }
