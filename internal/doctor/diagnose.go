@@ -27,6 +27,7 @@ type ErrorDiagnosis struct {
 	TraceId            string            `yaml:"traceId" json:"traceId"`
 	Commit             string            `yaml:"commit" json:"commit"`
 	Version            string            `yaml:"version" json:"version"`
+	GoVersion          string            `yaml:"goVersion" json:"goVersion"`
 	Pid                int               `yaml:"pid" json:"pid"`
 	StackTrace         []string          `yaml:"stackTrace" json:"stackTrace"`
 	Code               int               `yaml:"code" json:"code"`
@@ -224,6 +225,7 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 		Code:       toErrorCode(ex),
 		Commit:     version.Commit(),
 		Version:    version.Number(),
+		GoVersion:  runtime.Version(),
 		Pid:        os.Getpid(),
 		Logfile:    config.Get().Log.Filename,
 		Resolution: findResolution(ex),
@@ -239,26 +241,26 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 	resp := Diagnose(ctx, err)
 
 	fmt.Printf("\n%s%s************************************** Error Diagnostics ******************************************%s\n", Bold, Red, Reset)
-	fmt.Printf("%s*%s\t%sError:%s %s\n", Red, Reset, Bold+White, Reset, resp.Message)
+	fmt.Printf("\t%sError:%s %s\n", Bold+White, Reset, resp.Message)
 	if resp.Cause != "" {
-		fmt.Printf("%s*%s\t%sCause:%s %s\n", Red, Reset, Bold+White, Reset, resp.Cause)
+		fmt.Printf("\t%sCause:%s %s\n", Bold+White, Reset, resp.Cause)
 	}
-	fmt.Printf("%s*%s\t%sError Type:%s %s\n", Red, Reset, Bold+White, Reset, resp.ErrorType)
-	fmt.Printf("%s*%s\t%sError Code:%s %d\n", Red, Reset, Bold+White, Reset, resp.Code)
-	fmt.Printf("%s*%s\t%sCommit:%s %s\n", Red, Reset, Gray, Reset, resp.Commit)
-	fmt.Printf("%s*%s\t%sPid:%s %d\n", Red, Reset, Gray, Reset, resp.Pid)
-	fmt.Printf("%s*%s\t%sTraceId:%s %s\n", Red, Reset, Gray, Reset, resp.TraceId)
-	fmt.Printf("%s*%s\t%sVersion:%s %s\n", Red, Reset, Gray, Reset, resp.Version)
+	fmt.Printf("\t%sError Type:%s %s\n", Bold+White, Reset, resp.ErrorType)
+	fmt.Printf("\t%sError Code:%s %d\n", Bold+White, Reset, resp.Code)
+	fmt.Printf("\t%sCommit:%s %s\n", Gray, Reset, resp.Commit)
+	fmt.Printf("\t%sPid:%s %d\n", Gray, Reset, resp.Pid)
+	fmt.Printf("\t%sTraceId:%s %s\n", Gray, Reset, resp.TraceId)
+	fmt.Printf("\t%sVersion:%s %s\n", Gray, Reset, resp.Version)
+	fmt.Printf("\t%sGO:%s %s\n", Gray, Reset, resp.GoVersion)
 	if resp.Logfile != "" {
 		fmt.Printf("%s*%s\t%sLogfile:%s %s\n", Red, Reset, Cyan, Reset, resp.Logfile)
 	}
 	if resp.ProfilingSnapshots != nil {
-		fmt.Printf("%s*%s\t%sProfiling:%s\n", Red, Reset, Cyan, Reset)
+		fmt.Printf("\t%sProfiling:%s\n", Cyan, Reset)
 		for key, snapshotFile := range resp.ProfilingSnapshots {
-			fmt.Printf("%s*%s\t  %s- %s:%s %s\n", Red, Reset, Cyan, key, Reset, snapshotFile)
+			fmt.Printf("\t  %s- %s:%s %s\n", Cyan, key, Reset, snapshotFile)
 		}
 	}
-	fmt.Printf("%s%s***************************************************************************************************%s\n", Bold, Red, Reset)
 
 	fmt.Printf("\n%s%s****************************************** Resolution *********************************************%s\n", Bold, Yellow, Reset)
 
@@ -266,22 +268,20 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 	if len(instructions) > 0 && instructions[0] != "" {
 		for _, line := range strings.Split(instructions[0], "\n") {
 			if line == "" {
-				fmt.Printf("%s*%s\n", Yellow, Reset)
+				fmt.Println()
 			} else {
-				fmt.Printf("%s*%s\t%s\n", Yellow, Reset, Bold+White+line+Reset)
+				fmt.Printf("\t%s\n", Bold+White+line+Reset)
 			}
 		}
 		if len(resp.Resolution) > 0 {
-			fmt.Printf("%s*%s\n", Yellow, Reset)
+			fmt.Println()
 		}
 	}
 
 	// Print default resolution steps
 	for _, r := range resp.Resolution {
-		fmt.Printf("%s*%s\t%s\n", Yellow, Reset, White+r+Reset)
+		fmt.Printf("\t%s\n", White+r+Reset)
 	}
-
-	fmt.Printf("%s%s***************************************************************************************************%s\n", Bold, Yellow, Reset)
 
 	os.Exit(1)
 }
@@ -293,11 +293,10 @@ func CheckReportErr(ctx context.Context, report *automa.Report) {
 	}
 
 	if report.Error != nil {
-		// pick the first error when scanning step reports from the end (last step first)
+		// pick the first error when scanning step reports
 		rootErr := report.Error
 		var errStepReport *automa.Report
-		for i := len(report.StepReports) - 1; i >= 0; i-- {
-			stepReport := report.StepReports[i]
+		for _, stepReport := range report.StepReports {
 			if stepReport != nil && stepReport.Error != nil {
 				rootErr = stepReport.Error
 				errStepReport = stepReport

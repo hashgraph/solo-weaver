@@ -23,10 +23,9 @@ var handler = &Handler{
 			Msgf(msg, args...)
 	},
 	StepFailure: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
-		// find the root cause from steps error by going through step reports in reverse order
+		// find the root cause from steps error by going through step reports
 		firstErrReport := report
-		for i := len(report.StepReports) - 1; i >= 0; i-- {
-			stepReport := report.StepReports[i]
+		for _, stepReport := range report.StepReports {
 			if stepReport.HasError() {
 				firstErrReport = stepReport
 				break
