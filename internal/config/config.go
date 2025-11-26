@@ -63,7 +63,7 @@ func Initialize(path string) error {
 
 		err := viper.ReadInConfig()
 		if err != nil {
-			return NotFoundError.Wrap(err, "failed to read globalConfig file: %s", path).
+			return NotFoundError.Wrap(err, "failed to read config file: %s", path).
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 

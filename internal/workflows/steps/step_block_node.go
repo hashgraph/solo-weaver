@@ -26,7 +26,7 @@ func SetupBlockNode(profile string, valuesFile string) automa.Builder {
 	// This blocknodeManagerProvider pattern ensures that the manager is only created once
 	// and reused across all steps in the workflow steps
 	var blockNodeManager *blocknode.Manager
-	blocknodeManagerProvider := func() (*blocknode.Manager, error) {
+	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {
 			var err error
 			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
@@ -38,12 +38,12 @@ func SetupBlockNode(profile string, valuesFile string) automa.Builder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
-		setupBlockNodeStorage(blocknodeManagerProvider),
-		createBlockNodeNamespace(blocknodeManagerProvider),
-		createBlockNodePVs(blocknodeManagerProvider),
-		installBlockNode(profile, valuesFile, blocknodeManagerProvider),
-		annotateBlockNodeService(blocknodeManagerProvider),
-		waitForBlockNode(blocknodeManagerProvider),
+		setupBlockNodeStorage(blockNodeManagerProvider),
+		createBlockNodeNamespace(blockNodeManagerProvider),
+		createBlockNodePVs(blockNodeManagerProvider),
+		installBlockNode(profile, valuesFile, blockNodeManagerProvider),
+		annotateBlockNodeService(blockNodeManagerProvider),
+		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up Block Node")
@@ -221,7 +221,7 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			manager, err := blocknode.NewManager(config.Get().BlockNode)
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

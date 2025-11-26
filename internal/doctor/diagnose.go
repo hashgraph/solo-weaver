@@ -253,7 +253,7 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 	fmt.Printf("\t%sVersion:%s %s\n", Gray, Reset, resp.Version)
 	fmt.Printf("\t%sGO:%s %s\n", Gray, Reset, resp.GoVersion)
 	if resp.Logfile != "" {
-		fmt.Printf("%s*%s\t%sLogfile:%s %s\n", Red, Reset, Cyan, Reset, resp.Logfile)
+		fmt.Printf("\t%sLogfile:%s %s\n", Cyan, Reset, resp.Logfile)
 	}
 	if resp.ProfilingSnapshots != nil {
 		fmt.Printf("\t%sProfiling:%s\n", Cyan, Reset)

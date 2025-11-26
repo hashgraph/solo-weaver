@@ -16,7 +16,7 @@ func TestBlocknodeInstallCmd(t *testing.T) {
 	cmd.PersistentFlags().String("profile", "", "profile to use for block commands")
 
 	// call the subcommand explicitly to avoid test-runner arg interference
-	cmd.SetArgs([]string{"install", "--profile=local", "--values=../../../../../test/data/blocknode_values.yaml"})
+	cmd.SetArgs([]string{"install", "--profile=local", "--values=../../../../../test/config/blocknode_values.yaml"})
 	err := cmd.Execute()
 	require.NoError(t, err)
 }

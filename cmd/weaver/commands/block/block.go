@@ -21,7 +21,7 @@ var (
 
 func init() {
 	blockCmd.PersistentFlags().StringVarP(&flagProfile,
-		common.FlagProfileName, common.FlagProfileNameShort, common.FlagProfileDefault,
+		common.FlagProfileName, common.FlagProfileNameShort, "",
 		fmt.Sprintf("Deployment profiles %s", core.AllProfiles()))
 
 	_ = blockCmd.MarkPersistentFlagRequired(common.FlagProfileName)
