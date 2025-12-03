@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 
 # This script sets up remote debugging for the Ubuntu container
 set -e

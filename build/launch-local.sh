@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 SCRIPT_PATH="$(cd "$(dirname "${0}")" && pwd)"
 docker build -t local/solo-weaver-local:latest -f "${SCRIPT_PATH}/Dockerfile.local" "${SCRIPT_PATH}"
 docker stop solo-weaver-local || true

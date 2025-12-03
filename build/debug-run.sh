@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 
 # Unified debug script for solo-weaver
 # Usage: ./debug.sh app [args...]        - Debug application

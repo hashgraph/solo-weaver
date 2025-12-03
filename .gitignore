@@ -259,7 +259,8 @@ fabric.properties
 ### IDE Configuration Files ###
 !.idea/sshConfigs.xml
 !.idea/remote-targets.xml
-
+!.idea/copyright/profiles_settings.xml
+!.idea/copyright/Hashgraph_Apache_2_0.xml
 
 ### Linux template
 *~
@@ -371,3 +372,4 @@ docs/playbooks/production/dir-structure.txt
 .ssh/
 integration-test-report.md
 integration-test.json
+

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 name: Bug Report
 description: File a bug report
 labels: ["Bug", "Pending Triage"]

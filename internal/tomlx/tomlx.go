@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package tomlx provides utilities for managing TOML configuration files.
 //
 // This package offers a TomlConfigManager that can:

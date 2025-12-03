@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //go:build !darwin && !windows && !plan9
 
 package principal

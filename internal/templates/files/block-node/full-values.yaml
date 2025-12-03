@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 blockNode:
   config:
     BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"

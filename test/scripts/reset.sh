@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 helm uninstall metallb -n metallb-system || true
 kubectl delete namespace metallb-system || true
 cilium uninstall || true

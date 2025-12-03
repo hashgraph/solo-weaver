@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package hardware
 
 // localNode represents a local node with its specific requirements and validation logic

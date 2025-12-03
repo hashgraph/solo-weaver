@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 name: New Feature
 description: Request a new feature
 labels: ["New Feature", "Pending Triage"]

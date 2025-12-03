@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Updated health check with icons and robust parsing
 # File: 'internal/templates/files/health/health.sh'
 

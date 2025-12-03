@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package principal provides routines to set and check security for users, groups, files, and folders.
 //
 // Use NewManager() to get an operating system specific implementation.
