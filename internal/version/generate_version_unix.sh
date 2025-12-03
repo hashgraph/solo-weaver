@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 
 if [[ ! -f VERSION ]]; then
   echo -n "0.0.0" >VERSION

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 version: 3
 silent: false
 output: prefixed
@@ -45,6 +47,23 @@ tasks:
     cmds:
       - "R=$(go fmt ./...) && if [[ -n \"$R\" ]]; then echo \"The following files require formatting:\"; echo \"$R\"; exit 1; fi"
   
+  license:check:
+    desc: "Check if all source files have SPDX license headers"
+    dir: scripts
+    cmds:
+      - "./license-header.sh check"
+
+  license:add:
+    desc: "Add SPDX license headers to source files that are missing them"
+    dir: scripts
+    cmds:
+      - "./license-header.sh add"
+
+  license:
+    desc: "Alias for license:add - Add SPDX license headers to source files"
+    cmds:
+      - task: license:add
+
   build:
     deps:
       - "vendor"

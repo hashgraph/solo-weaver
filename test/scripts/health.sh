@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # File: `test/scripts/health.sh`
 # Modular cluster health checks (non-destructive). Returns non-zero on failure.
 

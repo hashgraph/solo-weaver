@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:

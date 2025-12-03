@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package os
 
 import "github.com/joomcode/errorx"

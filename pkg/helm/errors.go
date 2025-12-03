@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package helm
 
 import "github.com/joomcode/errorx"

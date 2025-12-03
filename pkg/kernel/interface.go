@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package kernel
 
 // Module defines the interface for kernel module management operations
