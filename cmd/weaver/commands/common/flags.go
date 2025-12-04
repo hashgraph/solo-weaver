@@ -8,4 +8,5 @@ const (
 	FlagProfileName      = "profile"
 	FlagProfileNameShort = "p"
 	FlagProfileDefault   = "local"
+	FlagOverrideName     = "override"
 )
