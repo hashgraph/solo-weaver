@@ -68,10 +68,22 @@ func testPackageInstallUninstall(t *testing.T, createPackage func() (Package, er
 	requireLinux(t)
 	requireRoot(t)
 
+	// Refresh package index to ensure we have the latest package information
+	// This is especially important in CI environments where the package cache may be stale
+	err := RefreshPackageIndex()
+	require.NoError(t, err, "failed to refresh package index")
+
 	pkg, err := createPackage()
 	require.NoError(t, err, "failed to create %s package", expectedName)
 	require.NotNil(t, pkg, "package should not be nil")
 	require.Equal(t, expectedName, pkg.Name(), "package name mismatch")
+
+	// Ensure clean state: uninstall the package if it's already installed
+	if pkg.IsInstalled() {
+		t.Logf("Package %s is already installed, uninstalling for clean test state", expectedName)
+		_, err := pkg.Uninstall()
+		require.NoError(t, err, "failed to uninstall pre-existing %s", expectedName)
+	}
 
 	// Test installation
 	info, err := pkg.Install()

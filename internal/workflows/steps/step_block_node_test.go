@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/blocknode"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
@@ -34,8 +35,8 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	// Given
 	//
 
-	reset(t)
-	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	wb := SetupBlockNode(core.ProfileMainnet, "")
 	require.NotNil(t, wb)
@@ -102,8 +103,8 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	// Given
 	//
 
-	reset(t)
-	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	wb := SetupBlockNode(core.ProfileLocal, "")
 	require.NotNil(t, wb)

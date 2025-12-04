@@ -13,6 +13,7 @@ import (
 )
 
 func TestBlocknodeInstallCmd(t *testing.T) {
+	testutil.Reset(t)
 	cmd := testutil.PrepareSubCmdForTest(installCmd)
 
 	// add required flags

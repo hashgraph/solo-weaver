@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -89,9 +90,10 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	applied, err := sysctl.LoadAllConfiguration()
 	require.NoError(t, err)
 	require.NotEmpty(t, applied)
-	require.Equal(t, len(files), len(applied))
+	// Note: applied may include pre-existing system config files, so we check >= instead of ==
+	require.GreaterOrEqual(t, len(applied), len(files), "applied configs should include at least all copied files")
 
-	// check that files and applied contain the same files
+	// check that all copied files are in the applied list
 	for _, f := range files {
 		require.Contains(t, applied, f)
 	}
@@ -100,14 +102,17 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedTotalSettings, len(newSettings))
 
-	foundNotEqual := false
-	for k, v := range oldSettings {
-		require.Contains(t, newSettings, k)
-		if v != newSettings[k] {
-			foundNotEqual = true
-		}
+	// Verify that current settings match desired settings from templates
+	desiredSettings, err := sysctl.DesiredCandidateSettings()
+	require.NoError(t, err)
+
+	for k, desiredValue := range desiredSettings {
+		require.Contains(t, newSettings, k, "setting %s should exist", k)
+		// Normalize whitespace for comparison (sysctl returns tabs, templates may use spaces)
+		actualNormalized := normalizeWhitespace(newSettings[k])
+		desiredNormalized := normalizeWhitespace(desiredValue)
+		require.Equal(t, desiredNormalized, actualNormalized, "setting %s should have desired value", k)
 	}
-	require.True(t, foundNotEqual) // at least one setting must have changed
 
 	err = sysctl.RestoreSettings(backupFile)
 	assert.NoError(t, err)
@@ -121,4 +126,11 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 		require.Contains(t, restoredSettings, k)
 		require.Equal(t, v, restoredSettings[k])
 	}
+}
+
+// normalizeWhitespace normalizes whitespace in a string by replacing all sequences of whitespace
+// (spaces, tabs, etc.) with a single space. This is useful for comparing sysctl values where
+// the system may return tabs but templates use spaces.
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }

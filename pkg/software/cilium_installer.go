@@ -8,6 +8,7 @@ import (
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/network"
+	"golang.hedera.com/solo-weaver/internal/state"
 	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
@@ -35,7 +36,7 @@ func NewCiliumInstaller(opts ...InstallerOption) (Software, error) {
 // Configure configures the cilium after installation
 func (ci *ciliumInstaller) Configure() error {
 	// Create the symlink for the cilium binary
-	err := ci.baseInstaller.Configure()
+	err := ci.baseInstaller.performConfiguration()
 	if err != nil {
 		return err
 	}
@@ -45,6 +46,9 @@ func (ci *ciliumInstaller) Configure() error {
 	if err != nil {
 		return err
 	}
+
+	// Record configured state
+	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeConfigured, ci.Version())
 
 	return nil
 }
@@ -59,10 +63,13 @@ func (ci *ciliumInstaller) RemoveConfiguration() error {
 	}
 
 	// Call base implementation to cleanup symlinks
-	err = ci.baseInstaller.RemoveConfiguration()
+	err = ci.baseInstaller.performConfigurationRemoval()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to restore cilium binary configuration")
 	}
+
+	// Remove configured state
+	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeConfigured)
 
 	return nil
 }

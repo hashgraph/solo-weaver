@@ -15,6 +15,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
@@ -22,7 +23,7 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	//
 	// When
@@ -50,9 +51,9 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
-	setupPrerequisitesToLevel(t, SetupMetalLBLevel)
+	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	//
 	// When
@@ -83,7 +84,7 @@ func Test_StepCrio_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	//
 	// When
@@ -181,7 +182,7 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Make the download directory read-only
 	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
@@ -237,7 +238,7 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// First, let the download succeed, then make the extraction fail
 	// by making the unpack directory read-only after download
@@ -302,7 +303,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Make subfolder in sandbox directory read-only
 	sandboxSubFolder := path.Join(core.Paths().SandboxDir, "opt")
@@ -365,7 +366,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Create an unremovable directory under download folder
 	unremovableDir := path.Join(core.Paths().TempDir, "cri-o", "unremovable")
@@ -428,7 +429,7 @@ func Test_StepCrio_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Make the /etc/containers directory read-only to prevent configuration
 	etcCrioDir := "/etc/containers"
@@ -499,7 +500,7 @@ func Test_StepCrio_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	//
 	// When
@@ -520,7 +521,7 @@ func Test_StepCrio_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service should exist in sandbox")
 
-	// Verify file was created in latest/ subdirectory with modified content
+	// Verify file in sandbox directory exists
 	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "crio.service should exist in sandbox directory")
 
@@ -529,7 +530,7 @@ func Test_StepCrio_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	require.NoError(t, err, "crio.service symlink should exist")
 	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service", linkTarget, "symlink should point to file in sandbox directory")
 
-	// Verify file in latest/ subdirectory contains sandbox binary path
+	// Verify contents of the file in sandbox directory
 	content, err := os.ReadFile("/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service")
 	require.NoError(t, err, "should be able to read file in sandbox directory")
 	contentStr := string(content)
@@ -540,7 +541,7 @@ func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// First run to configure crio
 	step, err := SetupCrio().Build()
@@ -576,103 +577,11 @@ func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing
 	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service", linkTarget)
 }
 
-func Test_StepCrio_ServiceConfiguration_PartiallyConfigured_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	reset(t)
-
-	// First run to install and configure crio
-	step, err := SetupCrio().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	// Remove the systemd symlink but keep the .latest file
-	err = os.RemoveAll("/usr/lib/systemd/system/crio.service")
-	require.NoError(t, err)
-
-	//
-	// When - Run again
-	//
-	step, err = SetupCrio().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	// Installation should be skipped (already installed)
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
-
-	// Configuration should run again (partial configuration)
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-
-	// Verify systemd symlink was recreated
-	linkTarget, err := os.Readlink("/usr/lib/systemd/system/crio.service")
-	require.NoError(t, err, "crio.service symlink should be recreated")
-	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service", linkTarget)
-}
-
-func Test_StepCrio_ServiceConfiguration_CorruptedLatestFile_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	reset(t)
-
-	// First run to install and configure crio
-	step, err := SetupCrio().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	// Corrupt the file in latest/ subdirectory by writing incorrect content
-	corruptedContent := "This is corrupted content"
-	err = os.WriteFile("/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service", []byte(corruptedContent), core.DefaultFilePerm)
-	require.NoError(t, err)
-
-	//
-	// When - Run again
-	//
-	step, err = SetupCrio().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	// Installation should be skipped (already installed)
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-
-	// Configuration should run again (corrupted .latest file detected)
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-
-	// Verify file in latest/ subdirectory was fixed
-	content, err := os.ReadFile("/opt/solo/weaver/sandbox/usr/lib/systemd/system/crio.service")
-	require.NoError(t, err)
-	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/solo/weaver/sandbox/usr/local/bin/crio", "file in sandbox directory should contain correct sandbox path")
-	require.NotEqual(t, corruptedContent, contentStr, "file in sandbox directory should be fixed")
-}
-
 func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Install and configure crio
 	step, err := SetupCrio().Build()

@@ -39,13 +39,6 @@ func installKubelet(provider func(opts ...software.InstallerOption) (software.So
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "kubelet installed successfully")
-
-			// Record installation state if this step installed the software
-			if stp.State().Bool(InstalledByThisStep) {
-				if installer, err := provider(); err == nil {
-					recordInstallState(installer)
-				}
-			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -105,9 +98,6 @@ func installKubelet(provider func(opts ...software.InstallerOption) (software.So
 					automa.WithError(err))
 			}
 
-			// Remove installation state during rollback
-			removeInstallState(installer)
-
 			return automa.SuccessReport(stp)
 		})
 }
@@ -123,13 +113,6 @@ func configureKubelet(provider func(opts ...software.InstallerOption) (software.
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "kubelet configured successfully")
-
-			// Record configuration state if this step configured the software
-			if stp.State().Bool(ConfiguredByThisStep) {
-				if installer, err := provider(); err == nil {
-					recordConfigureState(installer)
-				}
-			}
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -176,9 +159,6 @@ func configureKubelet(provider func(opts ...software.InstallerOption) (software.
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
-
-			// Remove configuration state during rollback
-			removeConfigureState(installer)
 
 			return automa.SuccessReport(stp)
 		})

@@ -352,6 +352,16 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			mockFsxManager := fsx.NewMockManager(ctrl)
 			mockPrincipalManager := principal.NewMockManager(ctrl)
 
+			// Ensure SUDO_USER is not set for these tests to avoid unexpected behavior
+			// from configureCurrentUserKubeConfig()
+			originalSudoUser := os.Getenv("SUDO_USER")
+			_ = os.Unsetenv("SUDO_USER")
+			defer func() {
+				if originalSudoUser != "" {
+					_ = os.Setenv("SUDO_USER", originalSudoUser)
+				}
+			}()
+
 			// Setup mocks
 			tt.setupMocks(ctrl, mockFsxManager, mockPrincipalManager)
 

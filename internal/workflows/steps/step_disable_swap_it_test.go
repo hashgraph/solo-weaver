@@ -14,6 +14,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 	osx "golang.hedera.com/solo-weaver/pkg/os"
 )
 
@@ -30,16 +31,16 @@ func TestDisableSwap_Integration(t *testing.T) {
 	defer func() {
 		err = os.WriteFile(osx.FSTAB_LOCATION, backupFstab, core.DefaultFilePerm)
 		require.NoError(t, err)
-		err = sudo(exec.Command("/usr/sbin/swapon", "-a")).Run()
+		err = testutil.Sudo(exec.Command("/usr/sbin/swapon", "-a")).Run()
 		require.NoError(t, err)
 	}()
 
 	// Ensure swap is off
-	out, err := sudo(exec.Command("/usr/sbin/swapon", "--show=NAME")).CombinedOutput()
+	out, err := testutil.Sudo(exec.Command("/usr/sbin/swapon", "--show=NAME")).CombinedOutput()
 	require.NoError(t, err)
 	require.NotContains(t, string(out), filePattern)
 
-	// use sudo to write to /etc/fstab
+	// use Sudo to write to /etc/fstab
 	fstabEntry := swapFile + " none swap sw 0 0"
 	cmd := exec.Command("bash", "-c", fmt.Sprintf("echo '%s' >> %s", fstabEntry, osx.FSTAB_LOCATION))
 	out, err = cmd.CombinedOutput()
@@ -63,7 +64,7 @@ func TestDisableSwap_Integration(t *testing.T) {
 	require.Contains(t, string(content), "#"+swapFile+" none swap sw 0 0")
 
 	// Confirm swap is off
-	out, err = sudo(exec.Command("/usr/sbin/swapon", "--show=NAME")).CombinedOutput()
+	out, err = testutil.Sudo(exec.Command("/usr/sbin/swapon", "--show=NAME")).CombinedOutput()
 	require.NoError(t, err)
 	require.NotContains(t, string(out), swapFile)
 }

@@ -104,7 +104,18 @@ func (p *PackageInstaller) Uninstall() (*syspkg.PackageInfo, error) {
 		return nil, NewInstallationError(err, p.pkgName, "")
 	}
 
-	return p.Info()
+	// After uninstallation, get the package info to verify status
+	info, err := p.Info()
+	if err != nil {
+		// If package is not found after uninstall, this is expected
+		// Return a PackageInfo with available status (not installed)
+		return &syspkg.PackageInfo{
+			Name:   p.pkgName,
+			Status: manager.PackageStatusAvailable,
+		}, nil
+	}
+
+	return info, nil
 }
 
 func (p *PackageInstaller) Upgrade() (*syspkg.PackageInfo, error) {

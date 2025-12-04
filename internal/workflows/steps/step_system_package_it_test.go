@@ -15,6 +15,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 )
 
 // isModuleLoaded checks if a kernel module is currently loaded
@@ -63,7 +64,7 @@ func cleanupKernelModule(t *testing.T, moduleName string) {
 	confPath := filepath.Join("/etc/modules-load.d", moduleName+".conf")
 	if _, err := os.Stat(confPath); err == nil {
 		rmCmd := exec.Command("rm", "-f", confPath)
-		rmCmd = sudo(rmCmd)
+		rmCmd = testutil.Sudo(rmCmd)
 		if err := rmCmd.Run(); err != nil {
 			t.Logf("Warning: failed to remove persistence config for module %s: %v", moduleName, err)
 		}
@@ -72,7 +73,7 @@ func cleanupKernelModule(t *testing.T, moduleName string) {
 	// Unload the module if it's currently loaded
 	if isModuleLoaded(t, moduleName) {
 		rmmodCmd := exec.Command("/usr/sbin/rmmod", moduleName)
-		rmmodCmd = sudo(rmmodCmd)
+		rmmodCmd = testutil.Sudo(rmmodCmd)
 		if err := rmmodCmd.Run(); err != nil {
 			t.Logf("Warning: failed to unload module %s: %v", moduleName, err)
 		}
@@ -84,7 +85,7 @@ func preLoadModule(t *testing.T, moduleName string) {
 	t.Helper()
 
 	modprobeCmd := exec.Command("/usr/sbin/modprobe", moduleName)
-	modprobeCmd = sudo(modprobeCmd)
+	modprobeCmd = testutil.Sudo(modprobeCmd)
 	err := modprobeCmd.Run()
 	require.NoError(t, err, "Failed to pre-load module %s via modprobe", moduleName)
 }
@@ -98,13 +99,13 @@ func prePersistModule(t *testing.T, moduleName string) {
 
 	// Ensure directory exists
 	mkdirCmd := exec.Command("mkdir", "-p", confDir)
-	mkdirCmd = sudo(mkdirCmd)
+	mkdirCmd = testutil.Sudo(mkdirCmd)
 	err := mkdirCmd.Run()
 	require.NoError(t, err, "Failed to create modules-load.d directory")
 
 	// Write module name to config file
 	writeCmd := exec.Command("sh", "-c", fmt.Sprintf("echo '%s' > %s", moduleName, confPath))
-	writeCmd = sudo(writeCmd)
+	writeCmd = testutil.Sudo(writeCmd)
 	err = writeCmd.Run()
 	require.NoError(t, err, "Failed to write persistence config")
 }

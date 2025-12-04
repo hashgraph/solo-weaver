@@ -17,7 +17,7 @@ import (
 	osx "golang.hedera.com/solo-weaver/pkg/os"
 )
 
-// Helper function to reset unit states before and after tests
+// Helper function to Reset unit states before and after tests
 func resetSystemdState(t *testing.T, unitName string) {
 	t.Helper()
 
@@ -50,7 +50,7 @@ func resetSystemdState(t *testing.T, unitName string) {
 	require.False(t, running)
 }
 
-// Helper function to reset unit states
+// Helper function to Reset unit states
 func cleanupSystemdState(t *testing.T, unitName string) error {
 	t.Helper()
 

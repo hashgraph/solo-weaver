@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,30 @@ import (
 const (
 	tmpFolder = "/opt/solo/weaver/tmp"
 )
+
+// requireChattrSupport checks if chattr immutable attribute is supported
+// Skips the test if chattr is not available or doesn't work (e.g., in containers)
+func requireChattrSupport(t *testing.T) {
+	t.Helper()
+
+	// Create a temporary test file
+	tempDir := t.TempDir()
+	testFile := filepath.Join(tempDir, "chattr-test")
+	err := os.WriteFile(testFile, []byte("test"), 0644)
+	if err != nil {
+		t.Skipf("Cannot create test file for chattr: %v", err)
+	}
+
+	// Try to set immutable attribute
+	cmd := exec.Command("chattr", "+i", testFile)
+	err = cmd.Run()
+	if err != nil {
+		t.Skipf("chattr +i not supported in this environment: %v", err)
+	}
+
+	// Clean up: remove immutable attribute
+	_ = exec.Command("chattr", "-i", testFile).Run()
+}
 
 // resetTestEnvironment creates a clean test environment and registers cleanup
 func resetTestEnvironment(t *testing.T) {

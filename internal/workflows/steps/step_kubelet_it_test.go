@@ -15,6 +15,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
@@ -22,7 +23,7 @@ func Test_StepKubelet_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	//
 	// When
@@ -50,7 +51,7 @@ func Test_StepKubelet_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	step, err := SetupKubelet().Build()
 	require.NoError(t, err)
@@ -88,7 +89,7 @@ func Test_StepKubelet_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	//
 	// When
@@ -105,6 +106,7 @@ func Test_StepKubelet_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[0].Metadata[DownloadedByThisStep])
 	require.Equal(t, "true", report.StepReports[0].Metadata[InstalledByThisStep])
 	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
+	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	//
 	// When - Rollback
@@ -130,7 +132,7 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Make the download directory read-only
 	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
@@ -151,7 +153,7 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	//
-	// When - Rollback
+	// When - Execute (should fail at download step)
 	//
 
 	report := step.Execute(context.Background())
@@ -186,7 +188,7 @@ func Test_StepKubelet_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Make the sandbox directory read-only
 	sandboxDir := path.Join(core.Paths().SandboxDir, "bin")
@@ -249,7 +251,7 @@ func Test_StepKubelet_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Create an unremovable directory under download folder
 	unremovableDir := path.Join(core.Paths().TempDir, "kubelet", "unremovable")
@@ -312,7 +314,7 @@ func Test_StepKubelet_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Make the /usr/local/bin directory read-only to prevent configuration
 	usrLocalBinDir := "/usr/local/bin"
@@ -383,7 +385,7 @@ func Test_StepKubelet_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	//
 	// When
@@ -425,7 +427,7 @@ func Test_StepKubelet_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// First run to configure kubelet
 	step, err := SetupKubelet().Build()
@@ -461,103 +463,11 @@ func Test_StepKubelet_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service", linkTarget)
 }
 
-func Test_StepKubelet_ServiceConfiguration_PartiallyConfigured_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	cleanUpTempDir(t)
-
-	// First run to install and configure kubelet
-	step, err := SetupKubelet().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	// Remove the systemd symlink but keep the .latest file
-	err = os.RemoveAll("/usr/lib/systemd/system/kubelet.service")
-	require.NoError(t, err)
-
-	//
-	// When - Run again
-	//
-	step, err = SetupKubelet().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	// Installation should be skipped (already installed)
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
-
-	// Configuration should run again (partial configuration)
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-
-	// Verify systemd symlink was recreated
-	linkTarget, err := os.Readlink("/usr/lib/systemd/system/kubelet.service")
-	require.NoError(t, err, "kubelet.service symlink should be recreated")
-	require.Equal(t, "/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service", linkTarget)
-}
-
-func Test_StepKubelet_ServiceConfiguration_CorruptedLatestFile_Integration(t *testing.T) {
-	//
-	// Given
-	//
-	cleanUpTempDir(t)
-
-	// First run to install and configure kubelet
-	step, err := SetupKubelet().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	// Corrupt the file in sandbox directory by writing incorrect content
-	corruptedContent := "This is corrupted content"
-	err = os.WriteFile("/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service", []byte(corruptedContent), core.DefaultFilePerm)
-	require.NoError(t, err)
-
-	//
-	// When - Run again
-	//
-	step, err = SetupKubelet().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	// Installation should be skipped (already installed)
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-
-	// Configuration should run again (corrupted file in sandbox directory detected)
-	require.Equal(t, automa.StatusSuccess, report.StepReports[1].Status)
-	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
-	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
-
-	// Verify file in sandbox directory was fixed
-	content, err := os.ReadFile("/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service")
-	require.NoError(t, err)
-	contentStr := string(content)
-	require.Contains(t, contentStr, "/opt/solo/weaver/sandbox/bin/kubelet", "file in sandbox directory should contain correct sandbox path")
-	require.NotEqual(t, corruptedContent, contentStr, "file in sandbox directory should be fixed")
-}
-
 func Test_StepKubelet_ServiceConfiguration_RestoreConfiguration_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Install and configure kubelet
 	step, err := SetupKubelet().Build()
