@@ -99,3 +99,13 @@ func Set(c *Config) error {
 	globalConfig = *c
 	return nil
 }
+
+// Clone returns a copy of the receiver. It is nil-safe and performs a value copy
+// so the returned `*Config` is independent of the original for the current fields.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	return &cp
+}
