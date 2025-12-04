@@ -15,6 +15,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
@@ -22,7 +23,7 @@ func Test_StepK9s_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	//
 	// When
@@ -52,7 +53,7 @@ func Test_StepK9s_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	step, err := SetupK9s().Build()
 	require.NoError(t, err)
@@ -91,7 +92,7 @@ func Test_StepK9s_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	//
 	// When
@@ -134,7 +135,7 @@ func Test_StepK9s_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Make the download directory read-only
 	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
@@ -175,7 +176,7 @@ func Test_StepK9s_Rollback_Setup_DownloadFailed(t *testing.T) {
 	rollbackReport := report.StepReports[0].Rollback
 
 	require.NoError(t, rollbackReport.Error)
-	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder for k9s was not created
 	_, err = os.Stat("/opt/solo/weaver/tmp/k9s")
@@ -190,7 +191,7 @@ func Test_StepK9s_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Make the unpack directory read-only
 	unpackagedDir := path.Join(core.Paths().TempDir, "k9s", core.DefaultUnpackFolderName)
@@ -233,7 +234,7 @@ func Test_StepK9s_Rollback_Setup_ExtractFailed(t *testing.T) {
 	rollbackReport := report.StepReports[0].Rollback
 
 	require.NoError(t, rollbackReport.Error)
-	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
 	_, err = os.Stat("/opt/solo/weaver/tmp/k9s")
@@ -253,7 +254,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Make the sandbox directory read-only
 	sandboxDir := path.Join(core.Paths().SandboxDir, "bin")
@@ -296,7 +297,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	rollbackReport := report.StepReports[0].Rollback
 
 	require.NoError(t, rollbackReport.Error)
-	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
+	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
 	_, err = os.Stat("/opt/solo/weaver/tmp/k9s")
@@ -325,7 +326,7 @@ func Test_StepK9s_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Create an unremovable directory under download folder
 	unremovableDir := path.Join(core.Paths().TempDir, "k9s", "unremovable")
@@ -397,7 +398,7 @@ func Test_StepK9s_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// Given
 	//
-	cleanUpTempDir(t)
+	testutil.CleanUpTempDir(t)
 
 	// Create an unremovable directory under download folder
 	unremovableDir := path.Join(core.Paths().TempDir, "k9s", "unremovable")

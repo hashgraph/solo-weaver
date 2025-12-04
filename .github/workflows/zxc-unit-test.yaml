@@ -46,15 +46,17 @@ jobs:
         with:
           go-version: ${{ inputs.go-version || '>=1.25.0' }}
 
+      - name: Create Weaver User and Group
+        run: |
+          sudo groupadd -g 2500 weaver || true
+          sudo useradd -u 2500 -g 2500 -m -s /bin/bash weaver|| true
+
       - name: Run Unit Tests
-        run: task test:unit:ci
-        # Uncomment to enable:
-        # env:
-        #   RUN_UNIT_TESTS_IN_CI: true
+        run: sudo -E --preserve-env=PATH,GOPATH,HOME,GOROOT,GITHUB_STEP_SUMMARY task test:unit:verbose
 
       - name: Unit Test Report
         if: ${{ always() }}
         run: |
           if [[ -f unit-test-report.md ]]; then
-            cat unit-test-report.md >> "${GITHUB_STEP_SUMMARY}"
+            sudo cat unit-test-report.md >> "${GITHUB_STEP_SUMMARY}"
           fi

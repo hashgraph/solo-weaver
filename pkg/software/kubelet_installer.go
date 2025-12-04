@@ -7,6 +7,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/state"
 )
 
 const KubeletServiceName = "kubelet"
@@ -35,7 +36,7 @@ func (ki *kubeletInstaller) Install() error {
 	}
 
 	// Install the kubelet binary using the common logic
-	err := ki.baseInstaller.Install()
+	err := ki.baseInstaller.performInstall()
 	if err != nil {
 		return err
 	}
@@ -47,13 +48,16 @@ func (ki *kubeletInstaller) Install() error {
 		return err
 	}
 
+	// Record installed state
+	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeInstalled, ki.Version())
+
 	return nil
 }
 
 // Uninstall removes the kubelet binary and configuration files from the sandbox folder
 func (ki *kubeletInstaller) Uninstall() error {
 	// Uninstall the kubelet binary using the common logic
-	err := ki.baseInstaller.Uninstall()
+	err := ki.baseInstaller.performUninstall()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubelet binary")
 	}
@@ -65,6 +69,9 @@ func (ki *kubeletInstaller) Uninstall() error {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubelet configuration files from %s", configDir)
 	}
 
+	// Remove recorded installed state
+	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeInstalled)
+
 	return nil
 }
 
@@ -73,7 +80,7 @@ func (ki *kubeletInstaller) Uninstall() error {
 // and creates symlink in systemd unit directory
 func (ki *kubeletInstaller) Configure() error {
 	// Create the symlink for the kubelet binary
-	err := ki.baseInstaller.Configure()
+	err := ki.baseInstaller.performConfiguration()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to configure kubelet binary")
 	}
@@ -90,6 +97,9 @@ func (ki *kubeletInstaller) Configure() error {
 		return err
 	}
 
+	// Record configured state
+	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeConfigured, ki.Version())
+
 	return nil
 }
 
@@ -103,10 +113,13 @@ func (ki *kubeletInstaller) RemoveConfiguration() error {
 	}
 
 	// Call base implementation to cleanup symlinks
-	err = ki.baseInstaller.RemoveConfiguration()
+	err = ki.baseInstaller.performConfigurationRemoval()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to restore kubelet binary configuration")
 	}
+
+	// Remove recorded configured state
+	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeConfigured)
 
 	return nil
 }

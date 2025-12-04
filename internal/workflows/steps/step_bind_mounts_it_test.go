@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/mount"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 )
 
 func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {
@@ -598,7 +599,7 @@ func backupFstabFile(t *testing.T) string {
 
 	backupPath := filepath.Join(t.TempDir(), "fstab.backup")
 	cmd := exec.Command("cp", mount.DefaultFstabFile, backupPath)
-	out, err := sudo(cmd).CombinedOutput()
+	out, err := testutil.Sudo(cmd).CombinedOutput()
 	require.NoError(t, err, "Failed to backup fstab: %s", out)
 
 	return backupPath
@@ -608,7 +609,7 @@ func restoreFstabFile(t *testing.T, backupPath string) {
 	t.Helper()
 
 	cmd := exec.Command("cp", backupPath, mount.DefaultFstabFile)
-	out, err := sudo(cmd).CombinedOutput()
+	out, err := testutil.Sudo(cmd).CombinedOutput()
 	assert.NoError(t, err, "Failed to restore fstab: %s", out)
 }
 
@@ -618,7 +619,7 @@ func cleanupBindMounts(t *testing.T, mounts []mount.BindMount) {
 	for _, bm := range mounts {
 		// Try to unmount (ignore errors if not mounted)
 		cmd := exec.Command("umount", "-l", bm.Target)
-		_ = sudo(cmd)
+		_ = testutil.Sudo(cmd)
 		_ = mount.RemoveBindMountsWithFstab(bm)
 
 		// Remove target directory if it exists

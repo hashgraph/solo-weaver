@@ -12,6 +12,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/state"
 	"golang.hedera.com/solo-weaver/internal/tomlx"
 	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
@@ -226,6 +227,9 @@ func (ci *crioInstaller) Install() error {
 		}
 	}
 
+	// Record installed state
+	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeInstalled, ci.Version())
+
 	return nil
 }
 
@@ -326,6 +330,9 @@ func (ci *crioInstaller) Configure() error {
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create CRI-O service symlink")
 	}
+
+	// Record configured state
+	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeConfigured, ci.Version())
 
 	return nil
 }
@@ -523,6 +530,9 @@ func (ci *crioInstaller) Uninstall() error {
 		}
 	}
 
+	// Remove installed state
+	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeInstalled)
+
 	return nil
 }
 
@@ -549,6 +559,9 @@ func (ci *crioInstaller) RemoveConfiguration() error {
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove /etc/default/crio configuration file")
 	}
+
+	// Remove configured state
+	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeConfigured)
 
 	return nil
 }

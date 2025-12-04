@@ -215,12 +215,12 @@ tasks:
   
   test:
     cmds:
-      - task: "mocks"
       - task: "test:unit"
   
   test:unit:
     deps:
       - "generate"
+      - "mocks"
     cmds:
       # Using go-testreport v0.3.2
       - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
@@ -230,20 +230,9 @@ tasks:
     desc: "Run unit tests with verbose console output"
     deps:
       - "generate"
+      - "mocks"
     cmds:
       - "go test -v -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
-  
-  test:unit:ci:
-    desc: "Run unit tests in CI environment (currently disabled)"
-    cmds:
-      - |
-        if [ "${RUN_UNIT_TESTS_IN_CI}" = "true" ]; then
-          task test:unit
-        else
-          echo "⚠️ Unit tests skipped in CI. Set RUN_UNIT_TESTS_IN_CI=true to enable."
-          echo "These tests require /opt/weaver permissions and a 'weaver' user."
-          exit 0
-        fi
   
   test:integration:verbose:
     desc: "Run integration tests with verbose console output"
@@ -251,6 +240,7 @@ tasks:
       - "generate"
     cmds:
       - |
+        set +e  # Don't exit on error
         start=$(date +%s)
         
         # run tests

@@ -15,6 +15,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
+	"golang.hedera.com/solo-weaver/internal/testutil"
 	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
@@ -22,7 +23,7 @@ func Test_StepCilium_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	//
 	// When
@@ -51,7 +52,7 @@ func Test_StepCilium_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	step, err := SetupCilium().Build()
 	require.NoError(t, err)
@@ -90,7 +91,7 @@ func Test_StepCilium_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	//
 	// When
@@ -133,7 +134,7 @@ func Test_StepCilium_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Make the download directory read-only
 	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
@@ -188,7 +189,7 @@ func Test_StepCilium_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Make the sandbox directory read-only
 	sandboxDir := path.Join(core.Paths().SandboxDir, "bin")
@@ -250,7 +251,7 @@ func Test_StepCilium_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Create an unremovable directory under download folder
 	unremovableDir := path.Join(core.Paths().TempDir, "cilium", "unremovable")
@@ -312,7 +313,7 @@ func Test_StepCilium_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	// Make the /usr/local/bin directory read-only to prevent configuration
 	usrLocalBinDir := "/usr/local/bin"
@@ -387,8 +388,8 @@ func Test_StartCilium_Fresh_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
-	setupPrerequisitesToLevel(t, SetupKubeadmLevel)
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
 
 	// Setup Cilium CLI first
 	step, err := SetupCilium().Build()
@@ -417,7 +418,7 @@ func Test_StartCilium_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[0].Metadata[InstalledByThisStep])
 
 	// Verify Cilium CNI is installed in the cluster
-	cmd := sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
+	cmd := testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
 	output, err := cmd.Output()
 	require.NoError(t, err, "kubectl should be able to get cilium pods")
 	require.Contains(t, string(output), "cilium", "Cilium pods should be present")
@@ -431,8 +432,8 @@ func Test_StartCilium_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
-	setupPrerequisitesToLevel(t, SetupKubeadmLevel)
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
 
 	// Setup Cilium CLI first
 	step, err := SetupCilium().Build()
@@ -466,7 +467,7 @@ func Test_StartCilium_AlreadyInstalled_Integration(t *testing.T) {
 	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
 
 	// Verify Cilium CNI is still running
-	cmd := sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
+	cmd := testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
 	output, err := cmd.Output()
 	require.NoError(t, err, "kubectl should be able to get cilium pods")
 	require.Contains(t, string(output), "cilium", "Cilium pods should still be present")
@@ -480,8 +481,8 @@ func Test_StartCilium_Rollback_Integration(t *testing.T) {
 	//
 	// Given
 	//
-	reset(t)
-	setupPrerequisitesToLevel(t, SetupKubeadmLevel)
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
 
 	// Setup Cilium CLI first
 	step, err := SetupCilium().Build()
@@ -507,7 +508,7 @@ func Test_StartCilium_Rollback_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify Cilium CNI is uninstalled from the cluster
-	cmd := sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
+	cmd := testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
 	output, err := cmd.Output()
 	// Should either error (no resources found) or show no cilium pods
 	if err == nil {
@@ -522,9 +523,9 @@ func Test_StartCilium_WithoutPrerequisites_Integration(t *testing.T) {
 	}
 
 	//
-	// Given - Only reset, no prerequisites setup
+	// Given - Only Reset, no prerequisites setup
 	//
-	reset(t)
+	testutil.Reset(t)
 
 	//
 	// When

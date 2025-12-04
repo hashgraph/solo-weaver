@@ -519,7 +519,21 @@ func (b *baseInstaller) verifyExtractedConfigs() error {
 }
 
 // Install provides a basic install implementation for simple binary installations.
+// It also records the installation state.
 func (b *baseInstaller) Install() error {
+	err := b.performInstall()
+	if err != nil {
+		return err
+	}
+
+	// Record installation state
+	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeInstalled, b.Version())
+
+	return nil
+}
+
+// performInstall performs the installation logic
+func (b *baseInstaller) performInstall() error {
 	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
 	if !exists {
 		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
@@ -676,7 +690,20 @@ func (b *baseInstaller) uninstallConfig(destinationDir string) error {
 }
 
 // Configure provides a basic configuration implementation.
+// It also records the configuration state.
 func (b *baseInstaller) Configure() error {
+	err := b.performConfiguration()
+	if err != nil {
+		return err
+	}
+
+	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeConfigured, b.Version())
+
+	return nil
+}
+
+// performConfiguration performs the configuration logic
+func (b *baseInstaller) performConfiguration() error {
 	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
 	if !exists {
 		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
@@ -770,7 +797,21 @@ func (b *baseInstaller) GetSoftwareName() string {
 }
 
 // Uninstall removes the software from the sandbox and cleans up related files.
+// It also removes the installation state.
 func (b *baseInstaller) Uninstall() error {
+	err := b.performUninstall()
+	if err != nil {
+		return err
+	}
+
+	// Remove installation state
+	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeInstalled)
+
+	return nil
+}
+
+// performUninstall performs the uninstallation logic
+func (b *baseInstaller) performUninstall() error {
 	// Remove the binaries from the sandbox bin directory
 	err := b.removeSandboxBinaries()
 	if err != nil {
@@ -781,7 +822,20 @@ func (b *baseInstaller) Uninstall() error {
 }
 
 // RemoveConfiguration restores the configuration of the software after an uninstall.
+// It also removes the configuration state.
 func (b *baseInstaller) RemoveConfiguration() error {
+	err := b.performConfigurationRemoval()
+	if err != nil {
+		return err
+	}
+
+	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeConfigured)
+
+	return nil
+}
+
+// performConfigurationRemoval performs the configuration removal logic
+func (b *baseInstaller) performConfigurationRemoval() error {
 	err := b.cleanupSymlinks()
 	if err != nil {
 		return NewUninstallationError(err, b.software.Name, b.versionToBeInstalled)

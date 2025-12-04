@@ -169,6 +169,7 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
+		stateManager:         state.NewManager(fsxManager),
 	}
 }
 
@@ -560,6 +561,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
+		stateManager:         state.NewManager(fsxManager),
 	}
 }
 
@@ -907,6 +909,7 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
+	requireChattrSupport(t)
 	resetTestEnvironment(t)
 
 	//
@@ -995,6 +998,7 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox bin directory with a binary
@@ -1103,6 +1107,7 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1198,6 +1203,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1272,6 +1278,7 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1342,6 +1349,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1423,6 +1431,7 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1486,6 +1495,7 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
+	requireChattrSupport(t)
 	resetTestEnvironment(t)
 
 	//
@@ -1511,6 +1521,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure
@@ -1578,6 +1589,7 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "2.0.0", // Version not in metadata
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	//
@@ -1620,6 +1632,7 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
+		stateManager:         state.NewManager(fsxManager),
 	}
 
 	// Create sandbox directory structure but no symlinks

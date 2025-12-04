@@ -12,6 +12,7 @@ import (
 	"github.com/joomcode/errorx"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/internal/network"
+	"golang.hedera.com/solo-weaver/internal/state"
 	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
@@ -41,7 +42,7 @@ func NewKubeadmInstaller(opts ...InstallerOption) (Software, error) {
 // Install installs the kubeadm binary and configuration files in the sandbox folder
 func (ki *kubeadmInstaller) Install() error {
 	// Install the kubeadm binary using the common logic
-	err := ki.baseInstaller.Install()
+	err := ki.baseInstaller.performInstall()
 	if err != nil {
 		return err
 	}
@@ -53,6 +54,9 @@ func (ki *kubeadmInstaller) Install() error {
 		return err
 	}
 
+	// Record installed state
+	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeInstalled, ki.Version())
+
 	return nil
 }
 
@@ -60,7 +64,7 @@ func (ki *kubeadmInstaller) Install() error {
 // creates a copy of 10-kubeadm.conf with updated paths (.latest) and creates symlink for kubelet service directory
 func (ki *kubeadmInstaller) Configure() error {
 	// Create the symlink for the kubeadm binary
-	err := ki.baseInstaller.Configure()
+	err := ki.baseInstaller.performConfiguration()
 	if err != nil {
 		return err
 	}
@@ -82,13 +86,16 @@ func (ki *kubeadmInstaller) Configure() error {
 		return errorx.IllegalState.Wrap(err, "failed to configure kubeadm init")
 	}
 
+	// Record configured state
+	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeConfigured, ki.Version())
+
 	return nil
 }
 
 // Uninstall removes the kubeadm binary and configuration files from the sandbox folder
 func (ki *kubeadmInstaller) Uninstall() error {
 	// Uninstall the kubeadm binary using the common logic
-	err := ki.baseInstaller.Uninstall()
+	err := ki.baseInstaller.performUninstall()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubeadm binary")
 	}
@@ -99,6 +106,9 @@ func (ki *kubeadmInstaller) Uninstall() error {
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubeadm configuration files from %s", sandboxKubeletServiceDir)
 	}
+
+	// Remove installed state
+	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeInstalled)
 
 	return nil
 }
@@ -120,10 +130,13 @@ func (ki *kubeadmInstaller) RemoveConfiguration() error {
 	}
 
 	// Call base implementation to cleanup symlinks
-	err = ki.baseInstaller.RemoveConfiguration()
+	err = ki.baseInstaller.performConfigurationRemoval()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to restore kubeadm binary configuration")
 	}
+
+	// Remove configured state
+	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeConfigured)
 
 	return nil
 }

@@ -89,6 +89,13 @@ func Test_Swap_ParseFstabSwaps_Normal(t *testing.T) {
 	}()
 	swapFile := f.Name()
 
+	// Create a second test swap file for testing
+	f2 := makeTestSwapFile(t)
+	defer func() {
+		_ = os.Remove(f2.Name())
+	}()
+	swapFile2 := f2.Name()
+
 	tmp, err := os.CreateTemp("", "fstab")
 	if err != nil {
 		t.Fatal(err)
@@ -105,10 +112,10 @@ func Test_Swap_ParseFstabSwaps_Normal(t *testing.T) {
 
 	content := fmt.Sprintf(`
 # comment line
-/dev/vda1   none   swap   sw   0   0
+%s   none   swap   sw   0   0
 /dev/vda2   /mnt   ext4   defaults   0   0
 %s    none   swap   sw   0   0
-`, swapFile)
+`, swapFile2, swapFile)
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +125,7 @@ func Test_Swap_ParseFstabSwaps_Normal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(swaps) != 2 || swaps[0] != "/dev/vda1" || swaps[1] != swapFile {
+	if len(swaps) != 2 || swaps[0] != swapFile2 || swaps[1] != swapFile {
 		t.Errorf("unexpected swaps: %v", swaps)
 	}
 }
@@ -163,6 +170,12 @@ func Test_Swap_ParseFstabSwaps_FileNotFound(t *testing.T) {
 }
 
 func Test_Swap_ParseFstabSwaps_CommentAndShortLines(t *testing.T) {
+	f := makeTestSwapFile(t)
+	defer func() {
+		_ = os.Remove(f.Name())
+	}()
+	swapFile := f.Name()
+
 	tmp, err := os.CreateTemp("", "fstab")
 	if err != nil {
 		t.Fatal(err)
@@ -177,11 +190,11 @@ func Test_Swap_ParseFstabSwaps_CommentAndShortLines(t *testing.T) {
 	defer func() { fstabFile = fstabFileOrig }()
 	fstabFile = tmp.Name()
 
-	content := `
+	content := fmt.Sprintf(`
 # just a comment
 not-enough-fields
-/dev/vda1 none swap sw 0 0
-`
+%s none swap sw 0 0
+`, swapFile)
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +204,7 @@ not-enough-fields
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(swaps) != 1 || swaps[0] != "/dev/vda1" {
+	if len(swaps) != 1 || swaps[0] != swapFile {
 		t.Errorf("unexpected swaps: %v", swaps)
 	}
 }

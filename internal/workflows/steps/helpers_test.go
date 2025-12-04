@@ -4,28 +4,12 @@ package steps
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.hedera.com/solo-weaver/pkg/software"
 )
-
-func sudo(cmd *exec.Cmd) *exec.Cmd {
-	if os.Geteuid() == 0 {
-		return cmd
-	}
-
-	// Prepend sudo to the command
-	sudoCmd := exec.Command("sudo", append([]string{cmd.Path}, cmd.Args[1:]...)...)
-	sudoCmd.Stdout = cmd.Stdout
-	sudoCmd.Stderr = cmd.Stderr
-	sudoCmd.Stdin = cmd.Stdin
-
-	return sudoCmd
-}
 
 func TestRunCmd_Success(t *testing.T) {
 	out, err := runCmd("echo hello")
@@ -39,63 +23,6 @@ func TestRunCmd_Error(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to execute bash command")
 }
 
-func cleanUpTempDir(t *testing.T) {
-	t.Helper()
-
-	_ = exec.Command("chattr", "-Ri", core.Paths().TempDir).Run()
-
-	_ = os.RemoveAll(core.Paths().TempDir)
-
-	_ = os.RemoveAll(core.Paths().SandboxDir)
-
-	// List files in /usr/local/bin and remove them
-	files, err := os.ReadDir("/usr/local/bin")
-	if err == nil {
-		for _, file := range files {
-			_ = os.Remove("/usr/local/bin/" + file.Name())
-		}
-	}
-}
-
-// reset performs a complete cleanup of the Kubernetes environment
-func reset(t *testing.T) {
-	t.Helper()
-
-	// Reset kubeadm with custom CRI socket
-	_ = sudo(exec.Command("kubeadm", "reset",
-		"--cri-socket", "unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock",
-		"--force")).Run()
-
-	// Stop CRI-O service
-	_ = sudo(exec.Command("systemctl", "stop", "crio")).Run()
-
-	// Unmount kubernetes directories
-	_ = sudo(exec.Command("umount", "/etc/kubernetes")).Run()
-	_ = sudo(exec.Command("umount", "/var/lib/kubelet")).Run()
-	_ = sudo(exec.Command("umount", "-R", "/var/run/cilium")).Run()
-
-	// Remove weaver directory
-	_ = sudo(exec.Command("rm", "-rf", "/opt/solo/weaver")).Run()
-
-	// Remove /usr/lib/systemd/system
-	_ = sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/crio.service")).Run()
-	_ = sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/kubelet.service.d")).Run()
-	_ = sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/kubelet.service")).Run()
-
-	// Remove etc/containers directory
-	_ = sudo(exec.Command("rm", "-rf", "/etc/containers")).Run()
-
-	// Remove crio directory
-	_ = sudo(exec.Command("rm", "-rf", "/etc/crio")).Run()
-
-	// Remove .kube/config
-	_ = sudo(exec.Command("rm", "-rf", "/root/.kube")).Run()
-	_ = sudo(exec.Command("rm", "-rf", "/home/weaver/.kube")).Run()
-
-	// Clean up temp directory (from existing tests)
-	cleanUpTempDir(t)
-}
-
 type SetupLevel int
 
 const (
@@ -107,8 +34,8 @@ const (
 	SetupMetalLBLevel
 )
 
-// setupPrerequisitesToLevel sets up all the required components before cluster initialization
-func setupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
+// SetupPrerequisitesToLevel sets up all the required components before cluster initialization
+func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	t.Helper()
 
 	// preflight & basic setup
