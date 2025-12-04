@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/config"
-	"golang.hedera.com/solo-weaver/internal/core"
 	"golang.org/x/sync/singleflight"
 )
 
