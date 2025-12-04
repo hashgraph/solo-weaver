@@ -4,8 +4,8 @@ import (
 	"path"
 	"time"
 
-	"golang.hedera.com/solo-weaver/internal/config"
-	"golang.hedera.com/solo-weaver/internal/version"
+	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/version"
 )
 
 type State struct {
