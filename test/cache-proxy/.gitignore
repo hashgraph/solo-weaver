@@ -1,0 +1,10 @@
+# Cache proxy generated files
+cache/
+*.log
+cache-proxy
+cache-proxy-mitm
+
+# CA certificate files (MITM)
+ca-cert.pem
+ca-key.pem
+

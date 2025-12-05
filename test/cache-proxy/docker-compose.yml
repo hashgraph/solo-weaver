@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+services:
+  cache-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solo-weaver-cache-proxy
+    ports:
+      - "127.0.0.1:3128:3128"
+    volumes:
+      - cache-data:/var/cache/squid
+      - ca-certs:/etc/squid/certs
+    restart: unless-stopped
+
+  registry-mirror:
+    image: registry:2
+    container_name: solo-weaver-registry-mirror
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+      - ./registry-config.yml:/etc/docker/registry/config.yml:ro
+    restart: unless-stopped
+    environment:
+      - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+      - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
+      - REGISTRY_PROXY_REMOTEURL=https://registry.k8s.io
+
+  goproxy:
+    image: ghcr.io/goproxy/goproxy:latest
+    container_name: solo-weaver-goproxy
+    command: server --address :8081 --cacher-dir /go/cache
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - goproxy-cache:/go
+    restart: unless-stopped
+    network_mode: bridge
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    environment:
+      - GOPROXY=https://proxy.golang.org,direct
+
+volumes:
+  cache-data:
+    driver: local
+  ca-certs:
+    driver: local
+  registry-data:
+    driver: local
+  goproxy-cache:
+    driver: local
