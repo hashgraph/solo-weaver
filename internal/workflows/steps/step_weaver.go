@@ -20,9 +20,6 @@ var errWeaverInstallationRequired = errorx.IllegalState.
 	WithProperty(doctor.ErrPropertyResolution, "install or re-install weaver binary, run `sudo weaver install`")
 
 // CheckWeaverInstallation checks if weaver is installed at the given binDir.
-// It ensures the file exists, is executable, and that the installed binary
-// reports the same version/commit as the current running executable via
-// `weaver --version -o json`.
 func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("check-weaver-installation").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -52,9 +49,9 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 		})
 }
 
-// InstallWeaver installs weaver at the given binDir
-// It copies the weaver binary to the binDir. It finds the current binary path using os.Executable()
-// and copies it to the binDir.
+// InstallWeaver installs weaver at the given binDir by copying the current executable to that location.
+// It also attempts to create a symlink in /usr/local/bin for easier access.
+// Note: This step require elevated permissions to write to the target binDir.
 func InstallWeaver(binDir string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("install-weaver").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
