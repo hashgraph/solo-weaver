@@ -9,11 +9,11 @@ import (
 
 var selfInstallCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Perform self-installation of Solo Weaver components",
-	Long:  "Perform self-installation of Solo Weaver components on the local system",
+	Short: "Perform self-installation of Solo Weaver",
+	Long:  "Perform self-installation of Solo Weaver on the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflow(cmd.Context(), workflows.NewSelfInstallWorkflow())
-		logx.As().Info().Msg("Self-installation of Solo Weaver components completed successfully")
+		logx.As().Info().Msg("Solo Weaver is installed successfully; run 'weaver -h' to see available commands")
 		return nil
 	},
 }
