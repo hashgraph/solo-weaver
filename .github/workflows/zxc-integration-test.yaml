@@ -1,0 +1,436 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "ZXC: Integration Test"
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: "Go Version:"
+        type: string
+        required: false
+        default: ">=1.25.0"
+      custom-job-label:
+        description: "Custom Job Label:"
+        type: string
+        required: false
+        default: "Integration Test"
+      vm-os:
+        description: "VM OS (debian or ubuntu):"
+        type: string
+        required: false
+        default: "debian"
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  integration-test:
+    name: "${{ inputs.custom-job-label || 'Integration Test' }}"
+    runs-on: solo-linux-medium
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout Code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup GoLang (Host)
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ inputs.go-version || '>=1.25.0' }}
+
+      - name: Install Task (Host)
+        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          version: 3.39.2
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect KVM availability
+        id: kvm
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "KVM detected: /dev/kvm exists"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "KVM not detected: /dev/kvm does not exist (tests will run slower)"
+          fi
+
+      - name: Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 \
+            qemu-utils \
+            cloud-image-utils \
+            genisoimage \
+            openssh-client \
+            rsync
+
+      - name: Generate SSH key for VM access
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t ed25519 -f .ssh/id_ed25519_vm -N "" -C "ci-vm-key"
+          chmod 600 .ssh/id_ed25519_vm
+          chmod 644 .ssh/id_ed25519_vm.pub
+          echo "SSH key generated for VM access"
+
+      - name: Download cloud image
+        id: download-image
+        run: |
+          VM_OS="${{ inputs.vm-os }}"
+          
+          case "$VM_OS" in
+            debian)
+              IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+              IMAGE_FILE="debian-12-cloud.qcow2"
+              ;;
+            ubuntu)
+              IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+              IMAGE_FILE="ubuntu-22.04-cloud.img"
+              ;;
+            *)
+              echo "Unsupported VM OS: $VM_OS"
+              exit 1
+              ;;
+          esac
+          
+          echo "Downloading $VM_OS cloud image..."
+          wget -q --show-progress "$IMAGE_URL" -O "$IMAGE_FILE"
+          
+          echo "image_file=$IMAGE_FILE" >> "$GITHUB_OUTPUT"
+          echo "vm_os=$VM_OS" >> "$GITHUB_OUTPUT"
+
+      - name: Create cloud-init configuration
+        run: |
+          SSH_PUB_KEY=$(cat .ssh/id_ed25519_vm.pub)
+          
+          # Create meta-data
+          cat > meta-data <<EOF
+          instance-id: ci-vm-001
+          local-hostname: ci-vm
+          EOF
+          
+          # Create user-data with cloud-init configuration
+          cat > user-data <<EOF
+          #cloud-config
+          users:
+            - name: provisioner
+              groups: sudo
+              shell: /bin/bash
+              sudo: ['ALL=(ALL) NOPASSWD:ALL']
+              ssh_authorized_keys:
+                - $SSH_PUB_KEY
+            - name: root
+              ssh_authorized_keys:
+                - $SSH_PUB_KEY
+          
+          # Create weaver user with UID/GID 2500
+          system_info:
+            default_user:
+              name: provisioner
+          
+          bootcmd:
+            - groupadd -g 2500 weaver || true
+            - useradd -u 2500 -g 2500 -m -s /bin/bash weaver || true
+          
+          # Install required packages
+          packages:
+            - git
+            - curl
+            - rsync
+            - build-essential
+            - binutils
+            - gcc
+            - libc6-dev
+            - openssh-server
+            - sudo
+          
+          runcmd:
+            # Install Go 1.25.2 FIRST (before SSH, so it's ready)
+            - curl -sSLO https://go.dev/dl/go1.25.2.linux-amd64.tar.gz
+            - tar -C /usr/local -xzf go1.25.2.linux-amd64.tar.gz
+            - rm go1.25.2.linux-amd64.tar.gz
+            # Set up Go PATH for all users and shells
+            - echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' > /etc/profile.d/go.sh
+            - chmod +x /etc/profile.d/go.sh
+            - ln -s /usr/local/go/bin/go /usr/local/bin/go || true
+            - ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt || true
+            - /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.0+auto
+            # Configure SSH
+            - systemctl enable ssh
+            - systemctl start ssh
+            - echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+            - echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+            - systemctl restart ssh || systemctl restart sshd
+            # Install Task
+            - curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | bash || true
+            - apt-get update || true
+            - apt-get install -y task || true
+            # Install Delve (run in background after everything else)
+            - nohup sh -c 'export PATH=/usr/local/go/bin:$PATH && go install github.com/go-delve/delve/cmd/dlv@latest && ln -s $HOME/go/bin/dlv /usr/local/bin/dlv' > /tmp/delve-install.log 2>&1 &
+          EOF
+          
+          # Create cloud-init ISO
+          genisoimage -output cloud-init.iso \
+            -volid cidata \
+            -joliet \
+            -rock \
+            user-data meta-data
+          
+          echo "Cloud-init configuration created"
+
+      - name: Create VM disk overlay
+        run: |
+          IMAGE_FILE="${{ steps.download-image.outputs.image_file }}"
+          
+          # Create overlay disk (doesn't modify original image)
+          qemu-img create -f qcow2 -F qcow2 \
+            -b "$IMAGE_FILE" \
+            vm-disk.qcow2 20G
+          
+          echo "VM disk overlay created"
+
+      - name: Start QEMU VM
+        id: start-vm
+        run: |
+          KVM_AVAILABLE="${{ steps.kvm.outputs.available }}"
+          
+          if [ "$KVM_AVAILABLE" = "true" ]; then
+            ACCEL_OPTS="-enable-kvm -cpu host"
+            echo "Using KVM acceleration"
+          else
+            ACCEL_OPTS="-accel tcg"
+            echo "Using TCG (software emulation, slower)"
+          fi
+          
+          # Start QEMU in background
+          qemu-system-x86_64 \
+            $ACCEL_OPTS \
+            -m 4096 \
+            -smp 2 \
+            -drive file=vm-disk.qcow2,if=virtio,format=qcow2 \
+            -drive file=cloud-init.iso,if=virtio,format=raw \
+            -nographic \
+            -serial mon:stdio \
+            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            > vm-console.log 2>&1 &
+          
+          VM_PID=$!
+          echo "vm_pid=$VM_PID" >> "$GITHUB_OUTPUT"
+          echo "VM started with PID: $VM_PID"
+          
+          # Save PID for later cleanup
+          echo "$VM_PID" > vm.pid
+
+      - name: Wait for VM to be ready
+        timeout-minutes: 10
+        run: |
+          echo "Waiting for VM SSH to be ready..."
+          
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            
+            echo -n "Attempt $ATTEMPT/$MAX_ATTEMPTS: "
+            
+            # Try SSH connection
+            if ssh -i .ssh/id_ed25519_vm \
+                   -o ConnectTimeout=5 \
+                   -o StrictHostKeyChecking=no \
+                   -o UserKnownHostsFile=/dev/null \
+                   -o BatchMode=yes \
+                   -p 2222 \
+                   provisioner@localhost \
+                   "echo 'SSH ready'" >/dev/null 2>&1; then
+              echo "✓ VM is ready!"
+              exit 0
+            fi
+            
+            echo "Not ready yet, waiting..."
+            sleep 10
+          done
+          
+          echo "❌ VM failed to become ready after $MAX_ATTEMPTS attempts"
+          echo "=== VM Console Log ==="
+          tail -100 vm-console.log || echo "No console log available"
+          exit 1
+
+      - name: Verify VM Configuration
+        run: |
+          echo "Verifying VM configuration and tools..."
+          
+          ssh -i .ssh/id_ed25519_vm \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -o TCPKeepAlive=yes \
+              -p 2222 \
+              provisioner@localhost << 'EOSSH'
+          set -e
+          
+          # Wait for cloud-init to complete
+          echo "Waiting for cloud-init to complete..."
+          sudo cloud-init status --wait || echo "cloud-init status check failed, continuing anyway"
+          
+          # Verify Go is installed (should be in /usr/local/bin via symlink)
+          echo "Checking Go installation..."
+          if [ -f /usr/local/bin/go ]; then
+            echo "Go found in /usr/local/bin"
+            /usr/local/bin/go version
+          elif [ -f /usr/local/go/bin/go ]; then
+            echo "Go found in /usr/local/go/bin"
+            /usr/local/go/bin/go version
+            # Add to PATH for this session
+            export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+          else
+            echo "ERROR: Go not found!"
+            echo "Checking for Go installation..."
+            ls -la /usr/local/ || true
+            ls -la /usr/local/go/bin/ || true
+            exit 1
+          fi
+          
+          # Verify Task is installed
+          echo "Checking Task installation..."
+          if command -v task >/dev/null 2>&1; then
+            task --version
+          else
+            echo "Warning: Task not yet installed"
+          fi
+          
+          # Check if Delve is installed (background process from cloud-init)
+          echo "Checking Delve installation status..."
+          if command -v dlv >/dev/null 2>&1; then
+            dlv version
+          else
+            echo "Note: Delve may still be installing in background (not required for tests)"
+          fi
+          
+          echo "✓ VM configuration verified"
+          EOSSH
+
+      - name: Sync code to VM
+        run: |
+          echo "Syncing code to VM..."
+          
+          # Create remote directory
+          ssh -i .ssh/id_ed25519_vm \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -p 2222 \
+              provisioner@localhost \
+              "mkdir -p /home/provisioner/solo-weaver"
+          
+          # Sync code (excluding vendor, .git, etc.)
+          rsync -az \
+            -e "ssh -i .ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p 2222" \
+            --exclude='.git' \
+            --exclude='vendor' \
+            --exclude='bin' \
+            --exclude='*.log' \
+            --exclude='.ssh' \
+            --exclude='vm-disk.qcow2' \
+            --exclude='*.iso' \
+            --exclude='*.img' \
+            --exclude='*.qcow2' \
+            ./ \
+            provisioner@localhost:/home/provisioner/solo-weaver/
+          
+          echo "✓ Code synced to VM"
+
+      - name: Run Integration Tests in VM
+        timeout-minutes: 90
+        run: |
+          echo "Running integration tests in VM..."
+          
+          ssh -i .ssh/id_ed25519_vm \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -o TCPKeepAlive=yes \
+              -p 2222 \
+              provisioner@localhost << 'EOSSH'
+          set -e
+          
+          # Set up Go environment
+          export PATH=/usr/local/go/bin:$HOME/go/bin:/usr/local/bin:$PATH
+          export GOPATH=$HOME/go
+          
+          cd /home/provisioner/solo-weaver
+          
+          echo "Generating mocks and code..."
+          # Run as provisioner user first to install mockgen to $HOME/go/bin
+          task generate || true
+          task mocks || true
+          
+          echo "Installing mockgen if not present..."
+          if ! command -v mockgen >/dev/null 2>&1; then
+            go install github.com/golang/mock/mockgen@v1.6.0
+          fi
+          
+          # Now run with sudo, preserving the full PATH including $HOME/go/bin
+          echo "Running tasks with sudo..."
+          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
+          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task mocks
+          
+          echo "Running integration tests..."
+          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task test:integration:verbose
+          EOSSH
+          
+          echo "✓ Integration tests completed"
+
+      - name: Retrieve test results
+        if: always()
+        run: |
+          echo "Retrieving test results from VM..."
+          
+          # Try to get integration test report if it exists
+          rsync -az \
+            -e "ssh -i .ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -p 2222" \
+            provisioner@localhost:/home/provisioner/solo-weaver/integration-test-report.md \
+            ./ || echo "No integration test report found"
+          
+          rsync -az \
+            -e "ssh -i .ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -p 2222" \
+            provisioner@localhost:/home/provisioner/solo-weaver/integration-test.json \
+            ./ || echo "No integration test JSON found"
+
+      - name: Integration Test Report
+        if: always()
+        run: |
+          if [[ -f integration-test-report.md ]]; then
+            cat integration-test-report.md >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "⚠️ No integration test report found" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Cleanup VM
+        if: always()
+        run: |
+          if [ -f vm.pid ]; then
+            VM_PID=$(cat vm.pid)
+            echo "Stopping VM (PID: $VM_PID)..."
+            kill "$VM_PID" 2>/dev/null || true
+            sleep 2
+            kill -9 "$VM_PID" 2>/dev/null || true
+          fi
+          
+          echo "Cleaning up VM files..."
+          rm -f vm-disk.qcow2 cloud-init.iso vm.pid vm-console.log
+          rm -f meta-data user-data
+          rm -f debian-*.qcow2 ubuntu-*.img
+
