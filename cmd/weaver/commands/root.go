@@ -26,7 +26,6 @@ var (
 	flagConfig       string
 	flagVersion      bool
 	flagOutputFormat string
-	flagOverride     bool
 
 	rootCmd = &cobra.Command{
 		Use:   "weaver",
@@ -49,7 +48,6 @@ func init() {
 	// support '--version', '-v' to show version information
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Show version")
 	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format (yaml|json)")
-	rootCmd.PersistentFlags().BoolVarP(&flagOverride, "yes", "y", false, "Override existing configuration or installation")
 
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false

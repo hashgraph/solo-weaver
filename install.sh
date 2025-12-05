@@ -125,7 +125,7 @@ if ! sudo -n true 2>/dev/null; then
     echo "You may be prompted for your password now."
 fi
 
-sudo ./"$BINARY_FILE" install --yes
+sudo ./"$BINARY_FILE" install
 
 # Cleanup
 rm -f "$BINARY_FILE" "$CHECKSUM_FILE"

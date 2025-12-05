@@ -71,7 +71,7 @@ func findResolution(err error) []string {
 		if resSteps, ok := resolution.([]string); ok {
 			return resSteps
 		}
-		return []string{fmt.Sprintf("%v", resolution)}
+		return []string{fmt.Sprintf("%s", resolution)}
 	}
 
 	switch {
