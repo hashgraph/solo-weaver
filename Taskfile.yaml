@@ -860,7 +860,7 @@ tasks:
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
-            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit
+            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit:verbose
           "
   
   vm:test:integration:
@@ -882,7 +882,7 @@ tasks:
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
-            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:integration
+            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:integration:verbose
           "
   
   vm:status:
