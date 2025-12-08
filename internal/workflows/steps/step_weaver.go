@@ -49,9 +49,44 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 		})
 }
 
-// InstallWeaver installs weaver at the given binDir by copying the current executable to that location.
-// It also attempts to create a symlink in /usr/local/bin for easier access.
-// Note: This step require elevated permissions to write to the target binDir.
+// InstallWeaver installs the currently running executable as the `weaver` binary
+// into the provided `binDir` and attempts to create a convenience symlink in
+// `/usr/local/bin`.
+//
+// Behavior
+//   - The step locates the currently running executable (source).
+//   - It ensures `binDir` exists and then copies the source executable into a
+//     temporary file created inside `binDir` (pattern `weaver.tmp.*`).
+//   - After the copy completes the temp file is closed, its mode is set to
+//     executable (`0o755`), and the temp file is atomically renamed to the final
+//     destination `binDir/weaver`.
+//
+// Why a temp file + rename
+//   - Atomic replacement: renaming a file within the same filesystem is atomic on
+//     POSIX. This guarantees other processes see either the old binary or the
+//     fully-written new one, never a half-written file.
+//   - Crash/failure safety: if the copy fails (disk full, interrupt, etc.) the
+//     existing installed binary is not touched; the incomplete temp file can be
+//     removed without corrupting the installation.
+//   - Running processes remain valid: on Unix, processes holding the old inode
+//     continue to run unaffected after the file at the destination is replaced.
+//   - Correct final state: permissions and any finalization (e.g. fsync if added)
+//     can be applied to the temp file before it becomes visible at the final
+//     path.
+//
+// Implementation notes
+//   - The temp file is created inside `binDir` to ensure the rename is a same-
+//     filesystem move (required for atomicity).
+//   - If creating a symlink at `/usr/local/bin/weaver` fails the step logs a
+//     warning but does not treat this as a hard error (installation can still
+//     succeed without the symlink).
+//   - The step returns an automa success or failure report describing the outcome.
+//   - Elevated permissions (e.g. `sudo`) are typically required to write to the
+//     system `binDir` or create the symlink in `/usr/local/bin`.
+//
+// Usage
+//   - Intended to be executed as part of an installation workflow; callers should
+//     ensure the process has the required permissions when calling this step.
 func InstallWeaver(binDir string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("install-weaver").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
