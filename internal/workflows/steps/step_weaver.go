@@ -70,7 +70,7 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 
 			src, err := os.Open(srcPath)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errorx.InternalError.Wrap(err, "failed to open source executable %s: %w", srcPath, err)))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errorx.InternalError.Wrap(err, "failed to open source executable %s", srcPath)))
 			}
 			defer src.Close()
 
@@ -79,7 +79,7 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.
-						Wrap(err, "failed to create temp file in %s: %w", binDir, err)))
+						Wrap(err, "failed to create temp file in %s", binDir)))
 			}
 			tmpPath := tmpFile.Name()
 
@@ -87,13 +87,13 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 				_ = tmpFile.Close()
 				_ = os.Remove(tmpPath)
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to copy binary: %w", err)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to copy binary")))
 			}
 
 			if err := tmpFile.Close(); err != nil {
 				_ = os.Remove(tmpPath)
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to finalize temp file: %w", err)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to finalize temp file")))
 			}
 
 			// ensure executable permission
@@ -101,7 +101,7 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 				_ = os.Remove(tmpPath)
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.
-						Wrap(err, "failed to set executable permission: %w", err)))
+						Wrap(err, "failed to set executable permission")))
 			}
 
 			// atomically move into place
@@ -109,7 +109,7 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 				_ = os.Remove(tmpPath)
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.
-						Wrap(err, "failed to install binary to %s: %w", destPath, err)))
+						Wrap(err, "failed to install binary to %s", destPath)))
 			}
 
 			// create a symlink to usr/local/bin if possible
