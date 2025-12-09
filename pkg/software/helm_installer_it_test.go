@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {

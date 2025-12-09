@@ -10,7 +10,7 @@ import (
 	"sort"
 	"text/template"
 
-	"golang.hedera.com/solo-weaver/pkg/semver"
+	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"gopkg.in/yaml.v3"
 )
 

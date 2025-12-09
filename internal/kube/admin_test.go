@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
-	"golang.hedera.com/solo-weaver/pkg/security/principal"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 )
 
 func TestKubeConfigManager_Configure(t *testing.T) {

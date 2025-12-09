@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 // PrepareSubCmdForTest creates a root command with the given subcommand added.

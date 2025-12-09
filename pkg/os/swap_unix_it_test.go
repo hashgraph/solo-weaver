@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func Test_Swap_SwapOff_Integration(t *testing.T) {

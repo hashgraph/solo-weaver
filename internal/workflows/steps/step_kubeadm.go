@@ -9,10 +9,10 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/kube"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
-	"golang.hedera.com/solo-weaver/pkg/software"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 const kubectlGetNodesCmd = "/usr/local/bin/kubectl get nodes"

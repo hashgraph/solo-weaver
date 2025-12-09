@@ -10,9 +10,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	os2 "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	os2 "golang.hedera.com/solo-weaver/pkg/os"
 	"golang.org/x/sys/unix"
 )
 

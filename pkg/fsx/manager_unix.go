@@ -14,9 +14,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/hashgraph/solo-weaver/pkg/security"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/pkg/security"
-	"golang.hedera.com/solo-weaver/pkg/security/principal"
 )
 
 const (

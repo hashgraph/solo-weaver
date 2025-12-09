@@ -7,9 +7,9 @@ package node
 import (
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
-	"golang.hedera.com/solo-weaver/internal/testutil"
 )
 
 func TestBlocknodeCheckCmd(t *testing.T) {

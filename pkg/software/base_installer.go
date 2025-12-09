@@ -7,10 +7,10 @@ import (
 	"path"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/state"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 type InstallerOption func(*baseInstaller)

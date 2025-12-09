@@ -10,9 +10,9 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/doctor"
-	"golang.hedera.com/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 )
 
 // RunWorkflow executes a workflow and handles error

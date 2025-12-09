@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 func SetupHomeDirectoryStructure(pp *core.WeaverPaths) automa.Builder {

@@ -11,12 +11,12 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/kube"
-	"golang.hedera.com/solo-weaver/internal/network"
-	"golang.hedera.com/solo-weaver/internal/templates"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
-	"golang.hedera.com/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/network"
+	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 

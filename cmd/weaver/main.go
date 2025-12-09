@@ -6,8 +6,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands"
-	"golang.hedera.com/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 )
 
 func main() {

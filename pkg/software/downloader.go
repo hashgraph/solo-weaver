@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"golang.hedera.com/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/core"
 )
 
 // Downloader is responsible for downloading a software package and check its integrity.

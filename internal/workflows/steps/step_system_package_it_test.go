@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/testutil"
 )
 
 // isModuleLoaded checks if a kernel module is currently loaded

@@ -5,10 +5,10 @@ package block
 import (
 	"fmt"
 
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block/node"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/block/node"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 var (
