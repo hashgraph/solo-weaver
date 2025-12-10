@@ -3,8 +3,8 @@ package commands
 import (
 	"github.com/automa-saga/logx"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
-	"golang.hedera.com/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 )
 
 var selfInstallCmd = &cobra.Command{

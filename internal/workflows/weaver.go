@@ -2,8 +2,8 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 )
 
 func NewSelfInstallWorkflow() *automa.WorkflowBuilder {

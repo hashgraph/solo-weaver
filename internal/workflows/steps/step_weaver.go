@@ -9,8 +9,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/doctor"
-	"golang.hedera.com/solo-weaver/internal/version"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/version"
 )
 
 const weaverBinaryName = "weaver"
