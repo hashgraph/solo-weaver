@@ -18,6 +18,7 @@ var (
 		Use:   "block",
 		Short: "Manage a Hedera Block Node & its components",
 		Long:  "Manage a Hedera Block Node & its components",
+		RunE:  common.DefaultRunE, // ensure we have a default action to make it runnable
 	}
 )
 

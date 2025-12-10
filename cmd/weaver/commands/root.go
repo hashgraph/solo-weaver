@@ -11,7 +11,6 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -33,6 +32,9 @@ var (
 		Use:   "weaver",
 		Short: "A user friendly tool to provision Hedera network components",
 		Long:  "Solo Weaver - A user friendly tool to provision Hedera network components",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return common.RunGlobalChecks(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
 				version.PrintVersion(cmd, flagOutputFormat)
@@ -54,6 +56,9 @@ func init() {
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false
 
+	// disable global checks for install command since we need to install it first without any checks
+	common.SkipGlobalChecks(selfInstallCmd)
+
 	// add subcommands
 	rootCmd.AddCommand(selfInstallCmd)
 	rootCmd.AddCommand(block.GetCmd())
@@ -65,8 +70,6 @@ func Execute(ctx context.Context) error {
 	if ctx == nil {
 		return errorx.IllegalArgument.New("context is required")
 	}
-
-	common.RunWorkflow(ctx, workflows.CheckWeaverInstallationWorkflow())
 
 	cobra.OnInitialize(func() {
 		initConfig(ctx)

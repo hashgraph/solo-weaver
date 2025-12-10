@@ -2,9 +2,9 @@ package commands
 
 import (
 	"github.com/automa-saga/logx"
-	"github.com/spf13/cobra"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/spf13/cobra"
 )
 
 var selfInstallCmd = &cobra.Command{
