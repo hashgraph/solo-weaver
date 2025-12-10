@@ -6,8 +6,8 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
-	"golang.hedera.com/solo-weaver/pkg/software"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 func SetupHelm() automa.Builder {

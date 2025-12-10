@@ -1,4 +1,4 @@
-module golang.hedera.com/solo-weaver
+module github.com/hashgraph/solo-weaver
 
 go 1.25.2
 

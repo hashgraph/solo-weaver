@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/tomlx"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/state"
-	"golang.hedera.com/solo-weaver/internal/tomlx"
-	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 const (

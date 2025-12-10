@@ -12,11 +12,11 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/testutil"
-	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func Test_StepKubeadm_Fresh_Integration(t *testing.T) {

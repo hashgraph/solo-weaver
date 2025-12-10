@@ -6,10 +6,10 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/blocknode"
-	"golang.hedera.com/solo-weaver/internal/config"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
 
 const (

@@ -6,9 +6,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func TestRunCmd_Success(t *testing.T) {

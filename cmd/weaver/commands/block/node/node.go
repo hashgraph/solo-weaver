@@ -3,8 +3,8 @@
 package node
 
 import (
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 var (

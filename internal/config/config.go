@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
-	"golang.hedera.com/solo-weaver/pkg/deps"
 )
 
 // Config holds the global configuration for the application.

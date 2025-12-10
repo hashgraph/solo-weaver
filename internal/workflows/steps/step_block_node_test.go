@@ -9,12 +9,12 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/blocknode"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/testutil"
-	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 func TestBlockNodeConstants(t *testing.T) {

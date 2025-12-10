@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"gopkg.in/yaml.v3"
 )
 

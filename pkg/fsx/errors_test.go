@@ -5,9 +5,9 @@ package fsx
 import (
 	"fmt"
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/pkg/security/principal"
 	"strconv"
 	"testing"
 )

@@ -8,8 +8,8 @@ import (
 	"strconv"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
-	"golang.hedera.com/solo-weaver/pkg/os"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/os"
 )
 
 // SetupSystemdService enables and starts a systemd service by name

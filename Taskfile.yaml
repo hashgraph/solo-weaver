@@ -328,10 +328,10 @@ tasks:
     cmds:
       - go install github.com/golang/mock/mockgen@v1.6.0
       # Generate mocks in the package it belongs. Note these generated mock files are not checked in.
-      - mockgen -source=pkg/security/principal/interface.go -self_package golang.hedera.com/solo-weaver/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
-      - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
-      - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
-      - mockgen -source=pkg/kernel/interface.go -self_package golang.hedera.com/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
+      - mockgen -source=pkg/security/principal/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
+      - mockgen -source=pkg/fsx/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
+      - mockgen -source=pkg/software/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
+      - mockgen -source=pkg/kernel/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
   
   # Remote debug tasks for Docker container debugging
   debug:container:

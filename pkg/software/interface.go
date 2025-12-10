@@ -4,7 +4,7 @@ package software
 
 import (
 	"github.com/bluet/syspkg"
-	"golang.hedera.com/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/state"
 )
 
 type Package interface {

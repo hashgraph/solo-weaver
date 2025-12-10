@@ -5,8 +5,8 @@ package hardware
 import (
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 // SupportedNodeTypes returns all supported node types

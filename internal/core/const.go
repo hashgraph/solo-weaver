@@ -5,7 +5,7 @@ package core
 import (
 	"path"
 
-	"golang.hedera.com/solo-weaver/pkg/security"
+	"github.com/hashgraph/solo-weaver/pkg/security"
 )
 
 const (

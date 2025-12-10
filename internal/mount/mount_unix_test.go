@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func Test_FstabEntry_String(t *testing.T) {

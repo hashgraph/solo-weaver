@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 // Type represents the type of state being managed

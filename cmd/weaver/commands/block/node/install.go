@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/cmd/weaver/commands/common"
-	"golang.hedera.com/solo-weaver/internal/workflows"
 )
 
 var installCmd = &cobra.Command{

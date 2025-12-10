@@ -3,9 +3,9 @@
 package version
 
 import (
+	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/version"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/internal/doctor"
-	"golang.hedera.com/solo-weaver/internal/version"
 )
 
 var (

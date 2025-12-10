@@ -5,9 +5,9 @@ package software
 import (
 	"path"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/state"
 )
 
 const KubeletServiceName = "kubelet"

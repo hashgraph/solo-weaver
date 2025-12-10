@@ -6,8 +6,8 @@ import (
 	"os"
 	"path"
 
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 )
 
 func CopyTemplateFile(src string, dst string) error {

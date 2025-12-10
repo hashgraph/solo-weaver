@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/kube"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
 
 const (

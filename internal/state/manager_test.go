@@ -7,9 +7,9 @@ import (
 	"path"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 func TestManager_RecordAndCheckInstallState(t *testing.T) {
