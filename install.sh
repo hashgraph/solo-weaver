@@ -18,7 +18,8 @@ TMP_JSON="$(mktemp)"
 trap 'rm -f "$TMP_JSON"' EXIT
 
 # ------------------------------------
-# Function: extract asset id (to avoid the need for jq)
+# Function: extract asset id from Github API response.
+# This bash script implementation is used to avoid the need for jq
 # ------------------------------------
 extract_asset_id() {
   local file="$1"
