@@ -32,6 +32,29 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Detect KVM availability
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo "KVM_AVAILABLE=1" >> "$GITHUB_ENV"
+            echo "KVM detected: /dev/kvm exists"
+          else
+            echo "KVM_AVAILABLE=0" >> "$GITHUB_ENV"
+            echo "KVM not detected: /dev/kvm does not exist"
+          fi
+
+      - name: Debug QEMU accelerators (optional)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 || true
+
+          if command -v qemu-system-x86_64 >/dev/null 2>&1; then
+            echo "=== qemu accelerators ==="
+            qemu-system-x86_64 -accel help || true
+          else
+            echo "qemu-system-x86_64 not installed"
+          fi
+
+
       - name: Checkout Code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
