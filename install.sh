@@ -2,7 +2,6 @@
 set -euo pipefail
 
 REPO="hashgraph/solo-weaver"
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 TAG_NAME="${1:-}"  # optional release tag argument
 
 ARCH_RAW="$(uname -m)"
@@ -30,11 +29,6 @@ else
 fi
 
 CURL_API_ARGS=(--location -s -w "%{http_code}" -o "$TMP_JSON")
-if [[ -n "$GITHUB_TOKEN" ]]; then
-    CURL_API_ARGS+=(--header "Authorization: Bearer $GITHUB_TOKEN")
-    echo "🔍 Using GitHub token for API access..."
-fi
-
 HTTP_CODE=$(curl "${CURL_API_ARGS[@]}" "$API_URL")
 if [[ "$HTTP_CODE" != "200" ]]; then
     echo "❌ Failed to fetch release info (HTTP $HTTP_CODE)"
@@ -79,20 +73,13 @@ echo "Checksum file: $CHECKSUM_FILE"
 # ----------------------------
 # Download assets using GitHub API
 # ----------------------------
-if [[ -z "$GITHUB_TOKEN" ]]; then
-    echo "❌ GITHUB_TOKEN is required to download private release assets."
-    exit 1
-fi
-
 echo "⬇️ Downloading binary (asset ID $BINARY_ID)..."
-curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-     -H "Accept: application/octet-stream" \
+curl -L -H "Accept: application/octet-stream" \
      "https://api.github.com/repos/$REPO/releases/assets/$BINARY_ID" \
      -o "$BINARY_FILE"
 
 echo "⬇️ Downloading checksum (asset ID $CHECKSUM_ID)..."
-curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-     -H "Accept: application/octet-stream" \
+curl -L -H "Accept: application/octet-stream" \
      "https://api.github.com/repos/$REPO/releases/assets/$CHECKSUM_ID" \
      -o "$CHECKSUM_FILE"
 
