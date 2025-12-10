@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
@@ -31,6 +32,9 @@ var (
 		Use:   "weaver",
 		Short: "A user friendly tool to provision Hedera network components",
 		Long:  "Solo Weaver - A user friendly tool to provision Hedera network components",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return common.RunGlobalChecks(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
 				version.PrintVersion(cmd, flagOutputFormat)
@@ -52,7 +56,11 @@ func init() {
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false
 
+	// disable global checks for install command since we need to install it first without any checks
+	common.SkipGlobalChecks(selfInstallCmd)
+
 	// add subcommands
+	rootCmd.AddCommand(selfInstallCmd)
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(version.GetCmd())
 }

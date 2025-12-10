@@ -5,8 +5,11 @@ package workflows
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/user"
+	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/security"
 
@@ -77,7 +80,11 @@ func CheckPrivilegesStep() automa.Builder {
 
 			if current.Uid != "0" {
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.New("requires superuser privilege")))
+					automa.WithError(
+						errorx.IllegalState.New("requires superuser privilege").
+							WithProperty(doctor.ErrPropertyResolution,
+								fmt.Sprintf("Run the command with 'sudo' or as root user: `sudo %s`",
+									strings.Join(os.Args, " ")))))
 			}
 
 			logx.As().Info().Msg("Superuser privilege validated")
