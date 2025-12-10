@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -15,6 +16,8 @@ import (
 )
 
 const weaverBinaryName = "weaver"
+
+var errWeaverInstallationRequired = errorx.IllegalState.New("weaver installation or re-installation required")
 
 // CheckWeaverInstallation checks if weaver is installed at the given binDir.
 func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
@@ -28,19 +31,23 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 
 			expectedPath := filepath.Join(binDir, weaverBinaryName)
 			if exePath != expectedPath {
-				errWeaverInstallationRequired := errorx.IllegalState.
-					New("weaver installation or re-installation required").
-					WithProperty(doctor.ErrPropertyResolution,
-						fmt.Sprintf("install or re-install weaver binary, run `sudo %s install`", exePath))
+				var args string
+				if len(os.Args) > 1 {
+					args = " " + strings.TrimSpace(strings.Join(os.Args[1:], " "))
+				}
+
+				resolution := fmt.Sprintf("install or re-install weaver binary; "+
+					"run `sudo %s install` to install and then run `weaver%s`.", exePath, args)
+
+				errWithResolution := errWeaverInstallationRequired.WithProperty(doctor.ErrPropertyResolution, resolution)
 
 				logx.As().Error().
-					Err(errWeaverInstallationRequired).
+					Err(errWithResolution).
 					Str("exePath", exePath).
 					Str("expectedPath", expectedPath).
 					Msg("Weaver installation check failed: current executable is not in the expected bin directory")
 
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errWeaverInstallationRequired))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithResolution))
 			}
 
 			meta := map[string]string{

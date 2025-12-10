@@ -4,7 +4,6 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -12,8 +11,6 @@ import (
 func NewSetupClusterWorkflow() *automa.WorkflowBuilder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
-		steps.CheckWeaverInstallation(core.Paths().BinDir),
-
 		// setup env for k8s
 		steps.DisableSwap(),
 		steps.ConfigureSysctlForKubernetes(),

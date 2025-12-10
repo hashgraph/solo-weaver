@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"os/user"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/security"
 
 	"github.com/automa-saga/automa"
@@ -368,7 +366,6 @@ func CheckStorageStep(nodeType string, profile string) automa.Builder {
 func NewNodeSafetyCheckWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-preflight").Steps(
-		steps.CheckWeaverInstallation(core.Paths().BinDir),
 		CheckPrivilegesStep(),
 		CheckWeaverUserStep(),
 		CheckHostProfileStep(nodeType, profile),

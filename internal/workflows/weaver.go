@@ -6,6 +6,12 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 )
 
+func CheckWeaverInstallationWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("check-weaver-installation-workflow").Steps(
+		steps.CheckWeaverInstallation(core.Paths().BinDir),
+	)
+}
+
 func NewSelfInstallWorkflow() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("self-install-workflow").Steps(
 		CheckPrivilegesStep(),

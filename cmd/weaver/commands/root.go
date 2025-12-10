@@ -7,9 +7,11 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -63,6 +65,8 @@ func Execute(ctx context.Context) error {
 	if ctx == nil {
 		return errorx.IllegalArgument.New("context is required")
 	}
+
+	common.RunWorkflow(ctx, workflows.CheckWeaverInstallationWorkflow())
 
 	cobra.OnInitialize(func() {
 		initConfig(ctx)
