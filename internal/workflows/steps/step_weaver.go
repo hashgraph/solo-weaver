@@ -2,22 +2,19 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/joomcode/errorx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/version"
+	"github.com/joomcode/errorx"
 )
 
 const weaverBinaryName = "weaver"
-
-var errWeaverInstallationRequired = errorx.IllegalState.
-	New("weaver installation or re-installation required").
-	WithProperty(doctor.ErrPropertyResolution, "install or re-install weaver binary, run `sudo weaver install`")
 
 // CheckWeaverInstallation checks if weaver is installed at the given binDir.
 func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
@@ -31,10 +28,17 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 
 			expectedPath := filepath.Join(binDir, weaverBinaryName)
 			if exePath != expectedPath {
+				errWeaverInstallationRequired := errorx.IllegalState.
+					New("weaver installation or re-installation required").
+					WithProperty(doctor.ErrPropertyResolution,
+						fmt.Sprintf("install or re-install weaver binary, run `sudo %s install`", exePath))
+
 				logx.As().Error().
+					Err(errWeaverInstallationRequired).
 					Str("exePath", exePath).
 					Str("expectedPath", expectedPath).
 					Msg("Weaver installation check failed: current executable is not in the expected bin directory")
+
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errWeaverInstallationRequired))
 			}
