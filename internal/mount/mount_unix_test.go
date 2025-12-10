@@ -598,3 +598,214 @@ func Test_IsBindMountedWithFstab_MultipleFstabEntries(t *testing.T) {
 	require.False(t, alreadyMounted) // Not actually mounted without root
 	require.True(t, fstabEntryExists)
 }
+
+func Test_sanitizeBindMount(t *testing.T) {
+	tests := []struct {
+		name           string
+		mount          BindMount
+		expectedSource string
+		expectedTarget string
+		shouldErr      bool
+		errMsg         string
+	}{
+		{
+			name: "valid bind mount - no sanitization needed",
+			mount: BindMount{
+				Source: "/var/data/source",
+				Target: "/mnt/target",
+			},
+			expectedSource: "/var/data/source",
+			expectedTarget: "/mnt/target",
+			shouldErr:      false,
+		},
+		{
+			name: "paths with redundant slashes - should be cleaned",
+			mount: BindMount{
+				Source: "/var//data///source",
+				Target: "/mnt//target",
+			},
+			expectedSource: "/var/data/source",
+			expectedTarget: "/mnt/target",
+			shouldErr:      false,
+		},
+		{
+			name: "paths with trailing slashes - should be cleaned",
+			mount: BindMount{
+				Source: "/var/data/source/",
+				Target: "/mnt/target/",
+			},
+			expectedSource: "/var/data/source",
+			expectedTarget: "/mnt/target",
+			shouldErr:      false,
+		},
+		{
+			name: "paths with dot directories - should be cleaned",
+			mount: BindMount{
+				Source: "/var/./data/./source",
+				Target: "/mnt/./target",
+			},
+			expectedSource: "/var/data/source",
+			expectedTarget: "/mnt/target",
+			shouldErr:      false,
+		},
+		{
+			name: "paths with mixed redundant elements - should be cleaned",
+			mount: BindMount{
+				Source: "/var//./data///source/",
+				Target: "/mnt//./target/",
+			},
+			expectedSource: "/var/data/source",
+			expectedTarget: "/mnt/target",
+			shouldErr:      false,
+		},
+		{
+			name: "empty source path",
+			mount: BindMount{
+				Source: "",
+				Target: "/mnt/target",
+			},
+			shouldErr: true,
+			errMsg:    "path cannot be empty",
+		},
+		{
+			name: "path traversal in source",
+			mount: BindMount{
+				Source: "/var/data/../etc",
+				Target: "/mnt/target",
+			},
+			shouldErr: true,
+			errMsg:    "'..' segments",
+		},
+		{
+			name: "shell metacharacters in target",
+			mount: BindMount{
+				Source: "/var/data/source",
+				Target: "/mnt;rm -rf /",
+			},
+			shouldErr: true,
+			errMsg:    "shell metacharacters",
+		},
+		{
+			name: "invalid characters in source",
+			mount: BindMount{
+				Source: "/var/data@source",
+				Target: "/mnt/target",
+			},
+			shouldErr: true,
+			errMsg:    "invalid characters",
+		},
+		{
+			name: "same source and target after cleaning",
+			mount: BindMount{
+				Source: "/var/data/",
+				Target: "/var//data",
+			},
+			shouldErr: true,
+			errMsg:    "source and target paths cannot be the same",
+		},
+		{
+			name: "relative source path",
+			mount: BindMount{
+				Source: "relative/path",
+				Target: "/mnt/target",
+			},
+			shouldErr: true,
+			errMsg:    "path must be absolute",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := sanitizeBindMount(tt.mount)
+			if tt.shouldErr {
+				require.Error(t, err, "expected error for mount: %+v", tt.mount)
+				if tt.errMsg != "" {
+					require.Contains(t, err.Error(), tt.errMsg,
+						"error message should contain: %s", tt.errMsg)
+				}
+			} else {
+				require.NoError(t, err, "expected no error for mount: %+v", tt.mount)
+				require.Equal(t, tt.expectedSource, result.Source,
+					"source path should be sanitized correctly")
+				require.Equal(t, tt.expectedTarget, result.Target,
+					"target path should be sanitized correctly")
+			}
+		})
+	}
+}
+
+func Test_sanitizeBindMount_IntegrationWithPublicFunctions(t *testing.T) {
+	// Test that sanitizeBindMount is properly integrated with public functions
+	// This ensures the validation layer is working end-to-end
+
+	tempDir := t.TempDir()
+
+	tests := []struct {
+		name      string
+		mount     BindMount
+		shouldErr bool
+		errMsg    string
+	}{
+		{
+			name: "SetupBindMountsWithFstab rejects malicious paths",
+			mount: BindMount{
+				Source: "/var/data;malicious",
+				Target: tempDir + "/target",
+			},
+			shouldErr: true,
+			errMsg:    "shell metacharacters",
+		},
+		{
+			name: "RemoveBindMountsWithFstab rejects path traversal",
+			mount: BindMount{
+				Source: tempDir + "/source",
+				Target: "/mnt/../etc",
+			},
+			shouldErr: true,
+			errMsg:    "'..' segments",
+		},
+		{
+			name: "IsBindMountedWithFstab rejects invalid characters",
+			mount: BindMount{
+				Source: tempDir + "/source@test",
+				Target: tempDir + "/target",
+			},
+			shouldErr: true,
+			errMsg:    "invalid characters",
+		},
+	}
+
+	// Save original fstabFile and restore after test
+	originalFstabFile := fstabFile
+	t.Cleanup(func() {
+		fstabFile = originalFstabFile
+	})
+
+	testFstab := filepath.Join(tempDir, "fstab")
+	fstabFile = testFstab
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+
+			// Test different public functions that use sanitizeBindMount
+			if strings.Contains(tt.name, "Setup") {
+				err = SetupBindMountsWithFstab(tt.mount)
+			} else if strings.Contains(tt.name, "Remove") {
+				err = RemoveBindMountsWithFstab(tt.mount)
+			} else if strings.Contains(tt.name, "IsBindMounted") {
+				_, _, err = IsBindMountedWithFstab(tt.mount)
+			}
+
+			if tt.shouldErr {
+				require.Error(t, err, "expected error for mount: %+v", tt.mount)
+				if tt.errMsg != "" {
+					require.Contains(t, err.Error(), tt.errMsg,
+						"error message should contain: %s", tt.errMsg)
+				}
+			} else {
+				require.NoError(t, err, "expected no error for mount: %+v", tt.mount)
+			}
+		})
+	}
+}
