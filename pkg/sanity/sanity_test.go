@@ -672,3 +672,285 @@ func TestSanity_SanitizePath(t *testing.T) {
 		})
 	}
 }
+
+func TestSanity_ValidateURL(t *testing.T) {
+	testCases := []struct {
+		name      string
+		url       string
+		shouldErr bool
+		errMsg    string
+	}{
+		// Valid URLs
+		{
+			name:      "valid http URL",
+			url:       "http://example.com/file.tar.gz",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL",
+			url:       "https://example.com/file.tar.gz",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL with port",
+			url:       "https://example.com:8443/file.tar.gz",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL with query params",
+			url:       "https://example.com/file.tar.gz?version=1.0",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL with path",
+			url:       "https://example.com/path/to/file.tar.gz",
+			shouldErr: false,
+		},
+
+		// Invalid URLs - empty or malformed
+		{
+			name:      "empty URL",
+			url:       "",
+			shouldErr: true,
+			errMsg:    "URL cannot be empty",
+		},
+		{
+			name:      "malformed URL",
+			url:       "ht!tp://example.com",
+			shouldErr: true,
+			errMsg:    "invalid URL",
+		},
+
+		// Invalid URLs - wrong scheme
+		{
+			name:      "ftp scheme",
+			url:       "ftp://example.com/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "URL scheme must be http or https",
+		},
+		{
+			name:      "file scheme",
+			url:       "file:///etc/passwd",
+			shouldErr: true,
+			errMsg:    "URL scheme must be http or https",
+		},
+		{
+			name:      "javascript scheme",
+			url:       "javascript:alert(1)",
+			shouldErr: true,
+			errMsg:    "URL scheme must be http or https",
+		},
+		{
+			name:      "data scheme",
+			url:       "data:text/html,<script>alert(1)</script>",
+			shouldErr: true,
+			errMsg:    "URL scheme must be http or https",
+		},
+
+		// Invalid URLs - missing host
+		{
+			name:      "missing host",
+			url:       "https:///path/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "URL must have a valid host",
+		},
+		{
+			name:      "relative URL",
+			url:       "/path/to/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "URL scheme must be http or https",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			err := ValidateURL(tc.url)
+			if tc.shouldErr {
+				req.Error(err, "expected error for URL: %s", tc.url)
+				if tc.errMsg != "" {
+					req.Contains(err.Error(), tc.errMsg, "error message should contain: %s", tc.errMsg)
+				}
+			} else {
+				req.NoError(err, "expected no error for URL: %s", tc.url)
+			}
+		})
+	}
+}
+
+func TestSanity_ValidatePathWithinBase(t *testing.T) {
+	testCases := []struct {
+		name       string
+		basePath   string
+		targetPath string
+		expected   string
+		shouldErr  bool
+		errMsg     string
+	}{
+		// Valid paths - absolute target paths
+		{
+			name:       "valid path within base",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp/file.txt",
+			expected:   "/opt/solo/weaver/tmp/file.txt",
+			shouldErr:  false,
+		},
+		{
+			name:       "valid nested path within base",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp/subdir/file.txt",
+			expected:   "/opt/solo/weaver/tmp/subdir/file.txt",
+			shouldErr:  false,
+		},
+		{
+			name:       "valid path with redundant separators",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp//subdir///file.txt",
+			expected:   "/opt/solo/weaver/tmp/subdir/file.txt",
+			shouldErr:  false,
+		},
+		{
+			name:       "valid path with dot segments (cleaned)",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp/./subdir/./file.txt",
+			expected:   "/opt/solo/weaver/tmp/subdir/file.txt",
+			shouldErr:  false,
+		},
+
+		// Valid paths - simulating extract scenarios with filepath.Join
+		{
+			name:       "extract simple file",
+			basePath:   "/tmp/extract",
+			targetPath: "/tmp/extract/file.txt", // would be filepath.Join("/tmp/extract", "file.txt")
+			expected:   "/tmp/extract/file.txt",
+			shouldErr:  false,
+		},
+		{
+			name:       "extract nested file",
+			basePath:   "/tmp/extract",
+			targetPath: "/tmp/extract/dir/subdir/file.txt", // would be filepath.Join("/tmp/extract", "dir/subdir/file.txt")
+			expected:   "/tmp/extract/dir/subdir/file.txt",
+			shouldErr:  false,
+		},
+		{
+			name:       "extract with dots in filename",
+			basePath:   "/tmp/extract",
+			targetPath: "/tmp/extract/file.tar.gz",
+			expected:   "/tmp/extract/file.tar.gz",
+			shouldErr:  false,
+		},
+
+		// Invalid paths - empty
+		{
+			name:       "empty base path",
+			basePath:   "",
+			targetPath: "/opt/solo/weaver/tmp/file.txt",
+			shouldErr:  true,
+			errMsg:     "base path cannot be empty",
+		},
+		{
+			name:       "empty target path",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "",
+			shouldErr:  true,
+			errMsg:     "target path cannot be empty",
+		},
+
+		// Invalid paths - outside base
+		{
+			name:       "path outside base directory",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/bin/file.txt",
+			shouldErr:  true,
+			errMsg:     "is outside the allowed base directory",
+		},
+		{
+			name:       "path traversal with double dots",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp/../bin/file.txt",
+			shouldErr:  true,
+			errMsg:     "path cannot contain '..' segments",
+		},
+		{
+			name:       "path traversal escaping base",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp/../../etc/passwd",
+			shouldErr:  true,
+			errMsg:     "path cannot contain '..' segments",
+		},
+		{
+			name:       "absolute path outside base",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/etc/passwd",
+			shouldErr:  true,
+			errMsg:     "is outside the allowed base directory",
+		},
+		{
+			name:       "sibling directory attack",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/opt/solo/weaver/tmp-evil/file.txt",
+			shouldErr:  true,
+			errMsg:     "is outside the allowed base directory",
+		},
+		{
+			name:       "root directory",
+			basePath:   "/opt/solo/weaver/tmp",
+			targetPath: "/",
+			shouldErr:  true,
+			errMsg:     "is outside the allowed base directory",
+		},
+
+		// Invalid paths - extract-style path traversal attacks
+		{
+			name:       "extract path traversal with double dots",
+			basePath:   "/tmp/extract",
+			targetPath: "/tmp/extract/../etc/passwd", // would be filepath.Join("/tmp/extract", "../etc/passwd")
+			shouldErr:  true,
+			errMsg:     "path cannot contain '..' segments",
+		},
+		{
+			name:       "extract path traversal in middle",
+			basePath:   "/tmp/extract",
+			targetPath: "/tmp/extract/dir/../../../etc/passwd",
+			shouldErr:  true,
+			errMsg:     "path cannot contain '..' segments",
+		},
+		{
+			name:       "extract path traversal with multiple double dots",
+			basePath:   "/tmp/extract",
+			targetPath: "/tmp/extract/../../../../../../etc/passwd",
+			shouldErr:  true,
+			errMsg:     "path cannot contain '..' segments",
+		},
+		{
+			name:       "extract absolute path attempt",
+			basePath:   "/tmp/extract",
+			targetPath: "/etc/passwd", // malicious tar entry with absolute path
+			shouldErr:  true,
+			errMsg:     "is outside the allowed base directory",
+		},
+		{
+			name:       "extract path to sibling directory",
+			basePath:   "/var/data",
+			targetPath: "/var/data-evil/file.txt",
+			shouldErr:  true,
+			errMsg:     "is outside the allowed base directory",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			result, err := ValidatePathWithinBase(tc.basePath, tc.targetPath)
+			if tc.shouldErr {
+				req.Error(err, "expected error for basePath=%s targetPath=%s", tc.basePath, tc.targetPath)
+				if tc.errMsg != "" {
+					req.Contains(err.Error(), tc.errMsg, "error message should contain: %s", tc.errMsg)
+				}
+			} else {
+				req.NoError(err, "expected no error for basePath=%s targetPath=%s", tc.basePath, tc.targetPath)
+				req.Equal(tc.expected, result, "output should match expected")
+			}
+		})
+	}
+}

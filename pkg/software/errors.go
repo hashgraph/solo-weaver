@@ -24,6 +24,8 @@ var (
 	CleanupError          = ErrorsNamespace.NewType("cleanup_error")
 	FileSystemError       = ErrorsNamespace.NewType("filesystem_error")
 	TemplateError         = ErrorsNamespace.NewType("template_error")
+	PathTraversalError    = ErrorsNamespace.NewType("path_traversal_error")
+	InvalidURLError       = ErrorsNamespace.NewType("invalid_url_error")
 
 	softwareNameProperty = errorx.RegisterPrintableProperty("software_name")
 	versionProperty      = errorx.RegisterPrintableProperty("versionToBeInstalled")
@@ -52,6 +54,8 @@ const (
 	cleanupErrorMsg          = "failed to clean up download folder %s after installation"
 	filesystemErrorMsg       = "filesystem error"
 	templateErrorMsg         = "failed to execute template for software '%s'"
+	pathTraversalErrorMsg    = "path traversal detected: entry '%s' attempts to escape extraction directory"
+	invalidURLErrorMsg       = "invalid or unsafe URL: '%s'"
 )
 
 func NewConfigLoadError(cause error) *errorx.Error {
@@ -175,6 +179,22 @@ func NewFileSystemError(cause error) *errorx.Error {
 func NewTemplateError(cause error, softwareName string) *errorx.Error {
 	err := TemplateError.New(templateErrorMsg, softwareName).
 		WithProperty(softwareNameProperty, softwareName)
+
+	if cause != nil {
+		err = err.WithUnderlyingErrors(cause)
+	}
+
+	return err
+}
+
+func NewPathTraversalError(entryName string) *errorx.Error {
+	return PathTraversalError.New(pathTraversalErrorMsg, entryName).
+		WithProperty(filePathProperty, entryName)
+}
+
+func NewInvalidURLError(cause error, url string) *errorx.Error {
+	err := InvalidURLError.New(invalidURLErrorMsg, url).
+		WithProperty(urlProperty, url)
 
 	if cause != nil {
 		err = err.WithUnderlyingErrors(cause)

@@ -3,6 +3,7 @@
 package sanity
 
 import (
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -157,4 +158,76 @@ func SanitizePath(path string) (string, error) {
 	}
 
 	return filepath.Clean(path), nil
+}
+
+// ValidateURL validates a URL to ensure it's safe to use for downloads.
+//
+// This function checks that:
+//  1. The URL is not empty
+//  2. The URL can be parsed
+//  3. The scheme is either "http" or "https"
+//  4. The host is not empty
+//
+// Returns an error if the URL is invalid or unsafe.
+func ValidateURL(rawURL string) error {
+	if rawURL == "" {
+		return errorx.IllegalArgument.New("URL cannot be empty")
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return errorx.IllegalArgument.New("invalid URL: %s", err.Error())
+	}
+
+	// Only allow http and https schemes
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return errorx.IllegalArgument.New("URL scheme must be http or https, got: %s", parsedURL.Scheme)
+	}
+
+	// Ensure host is not empty
+	if parsedURL.Host == "" {
+		return errorx.IllegalArgument.New("URL must have a valid host")
+	}
+
+	return nil
+}
+
+// ValidatePathWithinBase validates that a path is within a specific base directory.
+//
+// This function:
+//  1. Sanitizes the input path
+//  2. Ensures the sanitized path starts with the base directory
+//  3. Prevents path traversal outside the base directory
+//
+// Returns the sanitized path or an error if the path is outside the base directory.
+func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
+	if basePath == "" {
+		return "", errorx.IllegalArgument.New("base path cannot be empty")
+	}
+
+	if targetPath == "" {
+		return "", errorx.IllegalArgument.New("target path cannot be empty")
+	}
+
+	// Sanitize the target path
+	cleanTarget, err := SanitizePath(targetPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Clean the base path
+	cleanBase := filepath.Clean(basePath)
+
+	// Ensure the clean base ends with a separator for prefix matching
+	// This prevents /opt/solo/weaver/tmp from matching /opt/solo/weaver/tmp-evil
+	if !strings.HasSuffix(cleanBase, string(filepath.Separator)) {
+		cleanBase += string(filepath.Separator)
+	}
+
+	// Check if the clean target starts with the clean base
+	if !strings.HasPrefix(cleanTarget+string(filepath.Separator), cleanBase) {
+		return "", errorx.IllegalArgument.New("path '%s' is outside the allowed base directory '%s'", cleanTarget, basePath)
+	}
+
+	return cleanTarget, nil
 }
