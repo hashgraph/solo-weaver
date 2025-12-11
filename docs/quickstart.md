@@ -1,139 +1,90 @@
 # Quickstart Guide
 
-## Features
+Below is a quickstart guide to get you up and running with Solo Weaver.
 
-- Automated resource provisioning and cleanup
-- Simple YAML configuration
-- Extensible and modular design
-- User, group, and filesystem management utilities
+## Prerequisites
 
-## Requirements
+- A Unix-like operating system (Linux)
+- `curl` installed
 
-- Go 1.25 or newer
+## Install
 
-## Installation
+- Run the single-line installer:
 
-Install via Go:
-
-```sh
-go install github.com/hashgraph/solo-weaver@latest
+```
+curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.sh | bash
 ```
 
-Or clone the repository:
+- Verify installation:
 
-```sh
-git clone https://github.com/hashgraph/solo-weaver.git
-cd solo-weaver
-task build
 ```
-
-## Usage
-
-Run with [Task](https://taskfile.dev/) (if used):
-
-```sh
-task run -- [flags]
-```
-
-Or run directly:
-
-```sh
-./weaver --config=config.yaml
+weaver --help
 ```
 
 ## Configuration
 
-Provide a `config.yaml` file with your desired settings.  
-_See the documentation or comments in `test/config/config.example.yaml` for all options._
+Solo Weaver accepts a configuration file. _See the documentation or comments in `test/config/config.example.yaml` for
+all
+options._
 
-## Project Structure
+## Setup Block Node
 
-- `pkg/` – Core packages (e.g., `security/principal`, `fsx`)
-- `cmd/` – CLI entry points
-- `internal/` – Internal utilities
+Solo Weaver deploys a Kubernetes cluster and deploys a Hedera Block Node on it using a Helm chart. It comes with
+pre-configured profiles for local development, mainnet, and testnet.
 
-## Debugging
+```
+$ ./weaver block node -h
+Manage lifecycle of a Hedera Block Node
 
-The project supports debugging using UTM VMs for testing in a Linux environment similar to production.
+Usage:
+  weaver block node [flags]
+  weaver block node [command]
 
-### Debugging with UTM VM
+Available Commands:
+  check       Runs safety checks to validate system readiness for Hedera Block node
+  install     Install a Hedera Block Node
 
-The project supports debugging inside Linux VMs using [UTM](https://mac.getutm.app/) on macOS.  
-This setup allows you to test **solo-weaver** in a Linux environment similar to production.
+Flags:
+  -h, --help   help for node
 
-**Supported OS Types:**
-- **Debian** (default)
-- **Ubuntu 22.04**
+Global Flags:
+  -c, --config string    config file path
+  -o, --output string    Output format (yaml|json) (default "yaml")
+  -p, --profile string   Deployment profiles [local perfnet testnet mainnet]
+  -v, --version          Show version
 
-You can work with either OS type or both simultaneously. See [VM Targets Documentation](VM_TARGETS.md) for detailed usage.
-
-**Quick Start with OS Type:**
-```sh
-# View all available targets
-task vm:targets
-
-# Use Debian (default)
-# For ubuntu, specify VM_OS_TYPE=ubuntu
-task vm:start
+Use "weaver block node [command] --help" for more information about a command. 
 ```
 
----
+If you would like to customize the configuration, create a copy of the example config file and modify it as needed.
+Also, if you would like to use custom BlockNode configurations, you can create a custom values file for BlockNode Helm
+chart and pass using `--values` flag
 
-#### 1. Start the VM Environment
+```
+$ ./weaver-linux-arm64 block node install -h
+Run safety checks, setup a K8s cluster and install a Hedera Block Node
 
-Before creating the VM, make sure UTM and `rsync` are installed.  
-This is handled automatically when you run:
+Usage:
+  weaver block node install [flags]
 
-```sh
-task vm:start
+Aliases:
+  install, setup
+
+Flags:
+  -h, --help            help for install
+  -f, --values string   Values file
+
+Global Flags:
+  -c, --config string    config file path
+  -o, --output string    Output format (yaml|json) (default "yaml")
+  -p, --profile string   Deployment profiles [local perfnet testnet mainnet]
+  -v, --version          Show version 
 ```
 
-If no VM image exists yet, you'll be prompted to create a **golden Debian image**.
+To set up a block node, run (use appropriate profile and values file as required):
 
----
-
-#### 2. Day-to-Day Debugging
-
-**Start the VM**
-```sh
-task vm:start
+``` 
+weaver block node install --profile <local | mainnet | testnet> --values <custom-values-file>
 ```
 
-##### IntelliJ IDEA Integration (Recommended)
-
-The project includes pre-configured IntelliJ IDEA run configurations for seamless debugging:
-
-- **`.idea/`** – IntelliJ project settings including remote debugging configurations
-- **`.run/`** – Run configuration templates:
-  - `Debug via Delve.run.xml` – Direct debugging configuration for VM debugging
-  - `Template Go Remote.run.xml` – Remote debugging template
-  - `Template Go Build.run.xml` – Build configuration template  
-  - `Template Go Test.run.xml` – Test debugging template
-
-Simply use the **play buttons** in the IntelliJ debugger to start remote debugging sessions directly in the VM without manual setup.
-
-##### Manual Delve Debugging (Alternative)
-
-For other development environments or manual debugging setup:
-
-1. **Run debugger against your app**
-   ```sh
-   task vm:debug:app -- block node setup
-   ```
-
-2. **Run debugger against tests**
-   ```sh
-   task vm:debug:test -- ./pkg/software
-   ```
-
-3. **Connect IDE Debugger**
-    - Connect to `127.0.0.1:2345` with a **Go Remote** debug config.
-    - Delve (`dlv`) is launched inside the VM and forwarded.
-    - This approach is compatible with VS Code, GoLand, and other IDEs that support remote Go debugging.
-
-#### Optional: SSH into the VM for manual operations
-
-```sh
-task vm:ssh
-```
-
+_This command will take a while to complete as it sets up the entire environment._
