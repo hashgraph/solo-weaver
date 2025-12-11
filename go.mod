@@ -18,7 +18,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/text v0.31.0
-	helm.sh/helm/v3 v3.19.2
+	helm.sh/helm/v3 v3.19.3
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
 	k8s.io/apimachinery v0.34.2
 	k8s.io/client-go v0.34.2
