@@ -20,7 +20,7 @@ require (
 	golang.org/x/text v0.31.0
 	helm.sh/helm/v3 v3.19.3
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
-	k8s.io/apimachinery v0.34.2
+	k8s.io/apimachinery v0.34.3
 	k8s.io/client-go v0.34.2
 	pault.ag/go/modprobe v0.2.0
 )
