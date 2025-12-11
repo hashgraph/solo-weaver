@@ -4,9 +4,9 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/workflows/steps"
-	"golang.hedera.com/solo-weaver/pkg/software"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 // NewNodeSetupWorkflow creates a comprehensive setup workflow for any node type

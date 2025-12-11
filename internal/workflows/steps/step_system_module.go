@@ -6,10 +6,10 @@ import (
 	"context"
 	"fmt"
 
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 
 	"github.com/automa-saga/automa"
-	"golang.hedera.com/solo-weaver/pkg/kernel"
+	"github.com/hashgraph/solo-weaver/pkg/kernel"
 )
 
 // InstallKernelModule ensures that a specific kernel module is loaded and persisted.

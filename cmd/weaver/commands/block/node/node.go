@@ -3,8 +3,9 @@
 package node
 
 import (
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 var (
@@ -16,6 +17,7 @@ var (
 		Use:   "node",
 		Short: "Manage lifecycle of a Hedera Block Node",
 		Long:  "Manage lifecycle of a Hedera Block Node",
+		RunE:  common.DefaultRunE, // ensure we have a default action to make it runnable
 	}
 )
 

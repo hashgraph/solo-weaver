@@ -5,16 +5,15 @@ package software
 import (
 	"fmt"
 	"os"
-
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/tomlx"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/state"
-	"golang.hedera.com/solo-weaver/internal/tomlx"
-	"golang.hedera.com/solo-weaver/pkg/hardware"
 )
 
 const (
@@ -70,6 +69,12 @@ var (
 	containersDir                = filepath.Join(etcDir, "containers")
 	containersRegistriesConfdDir = filepath.Join(containersDir, "registries.conf.d")
 )
+
+// GetRegistriesConfPath returns the full path to the registries.conf file in the sandbox
+// This is used by tests to install custom registry mirror configuration
+func GetRegistriesConfPath() string {
+	return filepath.Join(core.Paths().SandboxDir, containersRegistriesConfdDir, RegistriesConfFile)
+}
 
 type crioInstaller struct {
 	*baseInstaller

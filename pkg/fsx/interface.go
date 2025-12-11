@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"os"
 
-	"golang.hedera.com/solo-weaver/pkg/security/principal"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 )
 
 // Manager provides an operating system independent interface for managing files and directories.

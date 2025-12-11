@@ -1,4 +1,4 @@
-module golang.hedera.com/solo-weaver
+module github.com/hashgraph/solo-weaver
 
 go 1.25.2
 
@@ -17,11 +17,11 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zcalusic/sysinfo v1.1.3
-	golang.org/x/text v0.31.0
-	helm.sh/helm/v3 v3.19.2
+	golang.org/x/text v0.32.0
+	helm.sh/helm/v3 v3.19.3
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
-	k8s.io/apimachinery v0.34.2
-	k8s.io/client-go v0.34.2
+	k8s.io/apimachinery v0.34.3
+	k8s.io/client-go v0.34.3
 	pault.ag/go/modprobe v0.2.0
 )
 
@@ -104,13 +104,13 @@ require (
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20220613132600-b0d781184e0d // indirect
 	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616 // indirect
-	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/term v0.37.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
-	golang.org/x/tools v0.38.0 // indirect
+	golang.org/x/tools v0.39.0 // indirect
 	golang.org/x/tools/go/expect v0.1.1-deprecated // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250303144028-a0af3efb3deb // indirect
 	google.golang.org/grpc v1.72.1 // indirect
@@ -118,7 +118,7 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	honnef.co/go/tools v0.3.2 // indirect
-	k8s.io/api v0.34.2 // indirect
+	k8s.io/api v0.34.3 // indirect
 	k8s.io/apiextensions-apiserver v0.34.0 // indirect
 	k8s.io/apiserver v0.34.0 // indirect
 	k8s.io/cli-runtime v0.34.0 // indirect
@@ -156,7 +156,7 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.39.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )

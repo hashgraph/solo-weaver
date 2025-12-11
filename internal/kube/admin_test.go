@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
-	"golang.hedera.com/solo-weaver/pkg/security/principal"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 )
 
 func TestKubeConfigManager_Configure(t *testing.T) {
@@ -527,6 +527,383 @@ func TestKubeConfigManager_ConfigureCurrentUserKubeConfig(t *testing.T) {
 			},
 			expectError:   true,
 			errorContains: "failed to set ownership of current user .kube directory",
+		},
+
+		// Security test cases - path traversal attempts
+		{
+			name:     "security - SUDO_USER with path traversal (../)",
+			sudoUser: "../etc/passwd",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "path traversal sequences",
+		},
+		{
+			name:     "security - SUDO_USER with forward slash",
+			sudoUser: "user/admin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with backslash",
+			sudoUser: "user\\admin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with absolute path",
+			sudoUser: "/etc/passwd",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with double dots",
+			sudoUser: "user..admin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "path traversal sequences",
+		},
+
+		// Security test cases - shell metacharacters (command injection attempts)
+		{
+			name:     "security - SUDO_USER with semicolon (command separator)",
+			sudoUser: "user;rm -rf /",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with pipe",
+			sudoUser: "user|cat /etc/passwd",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with ampersand",
+			sudoUser: "user&command",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with dollar sign (variable expansion)",
+			sudoUser: "user$PATH",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with backtick (command substitution)",
+			sudoUser: "user`whoami`",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with greater than (redirection)",
+			sudoUser: "user>file",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with less than (redirection)",
+			sudoUser: "user<file",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with parentheses (subshell)",
+			sudoUser: "user(command)",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with braces",
+			sudoUser: "user{test}",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with brackets",
+			sudoUser: "user[test]",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with asterisk (glob)",
+			sudoUser: "user*",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with question mark (glob)",
+			sudoUser: "user?",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - SUDO_USER with tilde (home expansion)",
+			sudoUser: "user~",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+
+		// Security test cases - special characters
+		{
+			name:     "security - SUDO_USER with spaces",
+			sudoUser: "user name",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with at sign",
+			sudoUser: "user@host",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with hash",
+			sudoUser: "user#comment",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with percent",
+			sudoUser: "user%test",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with exclamation",
+			sudoUser: "user!test",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with plus",
+			sudoUser: "user+test",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with equals",
+			sudoUser: "user=test",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with comma",
+			sudoUser: "user,admin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with period",
+			sudoUser: "user.admin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - SUDO_USER with colon",
+			sudoUser: "user:admin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+
+		// Security test cases - attack vectors
+		{
+			name:     "security - SQL injection attempt in SUDO_USER",
+			sudoUser: "admin' OR '1'='1",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+		{
+			name:     "security - command injection with semicolon",
+			sudoUser: "user; cat /etc/shadow",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		{
+			name:     "security - newline injection",
+			sudoUser: "user\nadmin",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				// No mocks needed - should fail validation before any operations
+			},
+			expectError:   true,
+			errorContains: "invalid characters",
+		},
+
+		// Valid edge cases that should pass
+		{
+			name:     "valid - username with underscore",
+			sudoUser: "user_name",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/user_name").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("user_name").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/user_name/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
+			},
+			expectError: false,
+		},
+		{
+			name:     "valid - username with hyphen",
+			sudoUser: "user-name",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/user-name").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("user-name").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/user-name/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
+			},
+			expectError: false,
+		},
+		{
+			name:     "valid - username with numbers",
+			sudoUser: "user123",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/user123").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("user123").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/user123/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
+			},
+			expectError: false,
+		},
+		{
+			name:     "valid - username with mixed case",
+			sudoUser: "UserName",
+			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/UserName").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("UserName").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/UserName/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
+			},
+			expectError: false,
 		},
 	}
 

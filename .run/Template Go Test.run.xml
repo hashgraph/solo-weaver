@@ -5,7 +5,7 @@
     <go_parameters value="-v" />
     <useCustomBuildTags value="true" />
     <kind value="DIRECTORY" />
-    <package value="golang.hedera.com/solo-weaver" />
+    <package value="github.com/hashgraph/solo-weaver" />
     <directory value="$PROJECT_DIR$" />
     <filePath value="$PROJECT_DIR$" />
     <framework value="gotest" />

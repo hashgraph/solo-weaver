@@ -10,9 +10,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	os2 "github.com/hashgraph/solo-weaver/pkg/os"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	os2 "golang.hedera.com/solo-weaver/pkg/os"
 	"golang.org/x/sys/unix"
 )
 
@@ -43,10 +44,16 @@ type fstabEntry struct {
 // SetupBindMountsWithFstab sets up a bind mount for the given target
 // It adds an entry to /etc/fstab and performs the mount
 func SetupBindMountsWithFstab(mount BindMount) error {
+	// Validate and sanitize paths
+	sanitizedMount, err := sanitizeBindMount(mount)
+	if err != nil {
+		return err
+	}
+
 	// Step 1: Add entry to /etc/fstab
 	entry := fstabEntry{
-		source:  mount.Source,
-		target:  mount.Target,
+		source:  sanitizedMount.Source,
+		target:  sanitizedMount.Target,
 		fsType:  "none",
 		options: "bind,nofail",
 		dump:    "0",
@@ -58,7 +65,7 @@ func SetupBindMountsWithFstab(mount BindMount) error {
 	}
 
 	// Step 2: Mount the bind mount
-	err := setupBindMount(mount)
+	err = setupBindMount(sanitizedMount)
 	if err != nil {
 		return err
 	}
@@ -69,13 +76,19 @@ func SetupBindMountsWithFstab(mount BindMount) error {
 // RemoveBindMountsWithFstab undoes bind mount setup
 // It unmounts the bind mount and removes the entry from /etc/fstab
 func RemoveBindMountsWithFstab(mount BindMount) error {
+	// Validate and sanitize paths
+	sanitizedMount, err := sanitizeBindMount(mount)
+	if err != nil {
+		return err
+	}
+
 	// Step 1: Unmount the bind mount
-	if err := unmountBindMount(mount); err != nil {
+	if err := unmountBindMount(sanitizedMount); err != nil {
 		return err
 	}
 
 	// Step 2: Remove entry from /etc/fstab
-	if err := removeFstabEntry(mount.Target); err != nil {
+	if err := removeFstabEntry(sanitizedMount.Target); err != nil {
 		return err
 	}
 
@@ -90,10 +103,16 @@ func (e fstabEntry) String() string {
 // IsBindMountedWithFstab checks if the bind mount is currently mounted
 // and if the fstab entry exists
 func IsBindMountedWithFstab(mount BindMount) (alreadyMounted bool, fstabEntryAlreadyAdded bool, err error) {
-	// Check if bind mount is mounted
-	mounted, err := isBindMounted(mount)
+	// Validate and sanitize paths
+	sanitizedMount, err := sanitizeBindMount(mount)
 	if err != nil {
-		return false, false, errorx.ExternalError.Wrap(err, "failed to check if %s is mounted on %s", mount.Source, mount.Target)
+		return false, false, err
+	}
+
+	// Check if bind mount is mounted
+	mounted, err := isBindMounted(sanitizedMount)
+	if err != nil {
+		return false, false, errorx.ExternalError.Wrap(err, "failed to check if %s is mounted on %s", sanitizedMount.Source, sanitizedMount.Target)
 	}
 
 	// Check if fstab entry exists
@@ -104,7 +123,7 @@ func IsBindMountedWithFstab(mount BindMount) (alreadyMounted bool, fstabEntryAlr
 
 	var entryExists bool
 	for _, e := range entries {
-		if e.target == mount.Target && e.source == mount.Source {
+		if e.target == sanitizedMount.Target && e.source == sanitizedMount.Source {
 			entryExists = true
 			break
 		}
@@ -320,4 +339,27 @@ func writeFstab(fstabPath string, lines []string) error {
 	}
 
 	return nil
+}
+
+// sanitizeBindMount validates and sanitizes a BindMount, returning a new BindMount with cleaned paths
+func sanitizeBindMount(mount BindMount) (BindMount, error) {
+	// Sanitize paths to ensure they're clean and absolute
+	cleanSource, err := sanity.SanitizePath(mount.Source)
+	if err != nil {
+		return BindMount{}, err
+	}
+	cleanTarget, err := sanity.SanitizePath(mount.Target)
+	if err != nil {
+		return BindMount{}, err
+	}
+
+	// Ensure source and target are not the same
+	if cleanSource == cleanTarget {
+		return BindMount{}, errorx.IllegalArgument.New("source and target paths cannot be the same")
+	}
+
+	return BindMount{
+		Source: cleanSource,
+		Target: cleanTarget,
+	}, nil
 }

@@ -6,9 +6,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/pkg/software"
 )
 
 func TestRunCmd_Success(t *testing.T) {
@@ -148,6 +149,10 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup CRI-O")
+
+	// Sets up registry proxy for CRI-O
+	err = testutil.InstallCrioRegistriesConf()
+	require.NoError(t, err)
 
 	// Setup CRI-O systemd service
 	step, err = SetupSystemdService(software.CrioServiceName).Build()

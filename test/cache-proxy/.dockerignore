@@ -1,0 +1,11 @@
+# Git
+.git
+.gitignore
+
+# Testing
+test/
+
+# Certificates (generated at runtime)
+*.pem
+*.key
+

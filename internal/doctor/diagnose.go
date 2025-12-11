@@ -15,11 +15,13 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/version"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/config"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/version"
 )
+
+var ErrPropertyResolution = errorx.RegisterProperty("resolution")
 
 type ErrorDiagnosis struct {
 	Error              error             `yaml:"error" json:"error"`
@@ -65,6 +67,13 @@ func toErrorMessage(err error) (string, string) {
 }
 
 func findResolution(err error) []string {
+	if resolution, ok := errorx.ExtractProperty(err, ErrPropertyResolution); ok {
+		if resSteps, ok := resolution.([]string); ok {
+			return resSteps
+		}
+		return []string{fmt.Sprintf("%s", resolution)}
+	}
+
 	switch {
 	case errorx.IsOfType(err, errorx.IllegalArgument):
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
@@ -278,11 +287,11 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 		if len(resp.Resolution) > 0 {
 			fmt.Println()
 		}
-	}
-
-	// Print default resolution steps
-	for _, r := range resp.Resolution {
-		fmt.Printf("\t%s\n", White+r+Reset)
+	} else {
+		// Print default resolution steps
+		for _, r := range resp.Resolution {
+			fmt.Printf("\t%s\n", White+r+Reset)
+		}
 	}
 
 	os.Exit(1)
@@ -325,10 +334,16 @@ func GetInstructionsFromReport(report *automa.Report) string {
 		return instructions
 	}
 
+	if resolution, ok := errorx.ExtractProperty(report.Error, ErrPropertyResolution); ok {
+		return fmt.Sprintf("%s", resolution)
+	}
+
 	// Recursively check nested step reports
 	for _, stepReport := range report.StepReports {
 		if instructions := GetInstructionsFromReport(stepReport); instructions != "" {
 			return instructions
+		} else if resolution, ok := errorx.ExtractProperty(stepReport.Error, ErrPropertyResolution); ok {
+			return fmt.Sprintf("%s", resolution)
 		}
 	}
 

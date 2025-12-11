@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/joomcode/errorx"
 	"github.com/lorenzosaino/go-sysctl"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
 const (

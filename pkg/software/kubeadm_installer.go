@@ -9,11 +9,11 @@ import (
 	"os"
 	"path"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/network"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/joomcode/errorx"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/network"
-	"golang.hedera.com/solo-weaver/internal/state"
-	"golang.hedera.com/solo-weaver/internal/templates"
 )
 
 var (

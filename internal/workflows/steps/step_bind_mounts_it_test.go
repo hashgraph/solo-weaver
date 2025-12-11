@@ -12,11 +12,11 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/mount"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/mount"
-	"golang.hedera.com/solo-weaver/internal/testutil"
 )
 
 func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {

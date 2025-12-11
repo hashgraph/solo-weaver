@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/state"
-	"golang.hedera.com/solo-weaver/pkg/fsx"
 )
 
 // TestScenario defines a test scenario with specific combinations of archives, binaries, and configs

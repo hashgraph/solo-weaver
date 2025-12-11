@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func Test_SetupBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T) {

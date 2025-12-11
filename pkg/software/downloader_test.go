@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 func Test_Downloader_Download(t *testing.T) {
@@ -33,6 +33,8 @@ func Test_Downloader_Download(t *testing.T) {
 
 	// Test download
 	downloader := NewDownloader()
+	// Set basePath to allow test temp directory
+	downloader.basePath = filepath.Dir(tmpFile.Name())
 	err = downloader.Download(server.URL, tmpFile.Name())
 	require.NoError(t, err, "Download failed")
 
@@ -77,6 +79,8 @@ func Test_Downloader_Timeout(t *testing.T) {
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	downloader := NewDownloaderWithTimeout(1 * time.Second)
+	// Set basePath to allow test temp directory
+	downloader.basePath = filepath.Dir(tmpFile.Name())
 	err = downloader.Download(server.URL, tmpFile.Name())
 	require.Error(t, err, "Download should fail with timeout")
 
@@ -106,6 +110,8 @@ func Test_Downloader_Extract(t *testing.T) {
 
 	// Test extraction
 	downloader := NewDownloader()
+	// Set basePath to allow test temp directory
+	downloader.basePath = filepath.Dir(tempDir)
 	err = downloader.Extract(tarGzPath, extractDir)
 	require.NoError(t, err, "Extract failed")
 
@@ -124,7 +130,9 @@ func Test_Downloader_Extract_FileNotFound(t *testing.T) {
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	downloader := NewDownloader()
-	err = downloader.Extract("nonexistent.tar.gz", tempDir)
+	// Set basePath to allow test temp directory
+	downloader.basePath = filepath.Dir(tempDir)
+	err = downloader.Extract(filepath.Join(tempDir, "nonexistent.tar.gz"), tempDir)
 	require.Error(t, err, "Extract should fail with file not found")
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "Error should be of type FileNotFoundError")
 }
@@ -147,6 +155,8 @@ func Test_Downloader_Extract_Timeout(t *testing.T) {
 
 	extractDir := filepath.Join(tempDir, "extracted")
 	downloader := NewDownloaderWithTimeout(1 * time.Millisecond) // Very short timeout
+	// Set basePath to allow test temp directory
+	downloader.basePath = filepath.Dir(tempDir)
 
 	err = downloader.Extract(tarGzPath, extractDir)
 	require.Error(t, err, "Extract should fail with timeout")

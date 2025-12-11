@@ -8,9 +8,9 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
-	"golang.hedera.com/solo-weaver/internal/core"
-	"golang.hedera.com/solo-weaver/internal/workflows/notify"
-	"golang.hedera.com/solo-weaver/pkg/software"
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 func SetupCilium() automa.Builder {

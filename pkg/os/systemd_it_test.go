@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/require"
-	"golang.hedera.com/solo-weaver/internal/core"
 )
 
 // Helper function to reset unit states before and after tests

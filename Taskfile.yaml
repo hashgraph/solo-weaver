@@ -235,17 +235,19 @@ tasks:
       - "go test -v -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
   
   test:integration:verbose:
-    desc: "Run integration tests with verbose console output"
-    deps:
-      - "generate"
+    desc: "Run integration tests with verbose console output. Use TEST_NAME to run a specific test, e.g., task test:integration:verbose TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'"
     cmds:
       - |
         set +e  # Don't exit on error
         start=$(date +%s)
         
         # run tests
-        go test -p 1 -v -race -cover -tags='integration' \
-          ./internal/... ./pkg/... ./cmd/... -timeout 60m
+        {{if .TEST_NAME}}
+        echo "Running integration test '{{.TEST_NAME}}'..."
+        go test -p 1 -v -tags='integration' -run {{.TEST_NAME}} ./internal/... ./pkg/... ./cmd/... -timeout 60m
+        {{else}}
+        go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m
+        {{end}}
         status=$?
         
         end=$(date +%s)
@@ -255,11 +257,16 @@ tasks:
         mins=$(( (elapsed % 3600) / 60 ))
         secs=$(( elapsed % 60 ))
         
+        {{if .TEST_NAME}}
+        printf "\n=== Integration test '{{.TEST_NAME}}' finished in %02d:%02d:%02d (status %d) ===\n" \
+          "$hrs" "$mins" "$secs" "$status"
+        {{else}}
         printf "\n=== Integration tests finished in %02d:%02d:%02d (status %d) ===\n" \
           "$hrs" "$mins" "$secs" "$status"
+        {{end}}
         
         exit $status
-  
+
   test:coverage:
     desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
     vars:
@@ -328,10 +335,10 @@ tasks:
     cmds:
       - go install github.com/golang/mock/mockgen@v1.6.0
       # Generate mocks in the package it belongs. Note these generated mock files are not checked in.
-      - mockgen -source=pkg/security/principal/interface.go -self_package golang.hedera.com/solo-weaver/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
-      - mockgen -source=pkg/fsx/interface.go -self_package golang.hedera.com/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
-      - mockgen -source=pkg/software/interface.go -self_package golang.hedera.com/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
-      - mockgen -source=pkg/kernel/interface.go -self_package golang.hedera.com/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
+      - mockgen -source=pkg/security/principal/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/security/principal -package principal > pkg/security/principal/mocks_generated.go
+      - mockgen -source=pkg/fsx/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
+      - mockgen -source=pkg/software/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
+      - mockgen -source=pkg/kernel/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
   
   # Remote debug tasks for Docker container debugging
   debug:container:
@@ -537,6 +544,7 @@ tasks:
     desc: "Clone the golden VM to create a working instance with passwordless SSH"
     deps:
       - vm:setup
+      - proxy:start
     cmds:
       - |
         # Generate SSH key if it doesn't exist
@@ -576,9 +584,11 @@ tasks:
         
         echo "✓ VM cloned. Now starting it for initial configuration..."
       - task: vm:start
-      - task: vm:configure
-      - cmd: echo "✓ VM reset and configured successfully."
-  
+      - task: vm:configure:ssh
+      - task: proxy:install-ca-cert
+      - task: vm:configure:tools
+      - cmd: echo "✓ VM reset and configured successfully with proxy support."
+
   vm:start:
     desc: "Start the working VM instance"
     deps:
@@ -620,7 +630,7 @@ tasks:
           echo "⚠️  VM may not be fully ready after 2 minutes, but continuing..."
         fi
       - task: vm:ssh:port-forward
-  
+
   vm:ssh:port-forward:
     desc: "Forward port 2222 to 22 on the VM for debugging purposes"
     internal: true
@@ -643,12 +653,19 @@ tasks:
           echo "✓ Port 2222 is available"
         fi
         # Forward port 2222 to 22 on the VM
-        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
+        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
         echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
-  
+
   vm:configure:
     internal: true
-    desc: "Configure the VM with SSH, sudo, and mounts"
+    desc: "Configure the VM with SSH, sudo, and mounts (full configuration)"
+    cmds:
+      - task: vm:configure:ssh
+      - task: vm:configure:tools
+
+  vm:configure:ssh:
+    internal: true
+    desc: "Configure SSH access, sudo, and mounts (runs before proxy setup)"
     cmds:
       - |
         echo "Configuring SSH access for user {{.VM_USER}}..."
@@ -773,15 +790,17 @@ tasks:
           sudo mount -a || true
         
           # Try to set ownership and permissions to the VM user (best effort)
-          echo "Fixing ownership/permissions for {{.VM_USER}} on /mnt/solo-weaver..."
-          sudo chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-weaver 2>/dev/null || true
         
           echo "✓ Shared directory mounted at /mnt/solo-weaver"
         "
+
+  vm:configure:tools:
+    internal: true
+    desc: "Install development tools (Git, Task, Go, Delve) - runs after proxy tunnels are set up"
+    cmds:
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
         echo "Installing development tools (Git, Task, Go, Delve, rsync) via SSH at $VM_IP..."
-        
         
         ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
           set -e
@@ -804,7 +823,7 @@ tasks:
         
           echo '✓ Development tools installed successfully!'
         "
-  
+
   vm:ensure-exists:
     desc: "Ensure the working VM exists, creating it if necessary"
     internal: true
@@ -840,7 +859,7 @@ tasks:
         echo "Connecting to VM at $VM_IP..."
         env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
-  
+
   vm:test:unit:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
     deps:
@@ -862,29 +881,63 @@ tasks:
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit:verbose
           "
-  
+
   vm:test:integration:
-    desc: "Run all integration tests in a UTM VM (useful for testing system-level functionality)"
+    desc: "Run all integration tests in a UTM VM with cache proxies (useful for testing system-level functionality). Use TEST_NAME to run a specific test, e.g., task vm:test:integration TEST_NAME='^Test_InitializeCluster_Fresh_Integration$'"
     deps:
-      - "vm:start"
+      - vm:start
     cmds:
       - cmd: |
           VM_IP=$({{.GET_VM_IP}} get_vm_ip)
           
-          echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
-          
-          # Check if VM is accessible
-          if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
-            echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
-            exit 1
-          fi
+          echo "Running integration tests with verbose output in UTM VM at $VM_IP..."
           
           # Install dependencies and run tests on the VM with verbose output
-          ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+          ssh -i {{.SSH_PRIVATE_KEY}} \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ExitOnForwardFailure=yes \
+              -o ServerAliveInterval=60 \
+              -o ServerAliveCountMax=3 \
+              -R 3128:localhost:3128 \
+              -R 8081:localhost:8081 \
+              -R 5000:localhost:5000 \
+              {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
-            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:integration:verbose
+            cd /mnt/solo-weaver &&
+            echo 'Using cache infrastructure via SSH tunnels:' &&
+            echo '  - HTTP/HTTPS proxy at localhost:3128 (Squid with SSL MITM - binaries, packages)' &&
+            echo '  - Go module proxy at localhost:8081 (Go dependencies)' &&
+            echo '  - Registry mirror at localhost:5000 (container images)' &&
+            echo '' &&
+            echo 'Verifying SSH tunnels are active...' &&
+            netstat -tln | grep -E ':(3128|8081|5000)' || echo 'WARNING: Some tunnels may not be active yet' &&
+            echo '' &&
+            echo 'Testing proxy connectivity...' &&
+            timeout 5 nc -zv localhost 3128 2>&1 | grep -q succeeded && echo '✓ Squid proxy (3128) is reachable' || echo '✗ Squid proxy (3128) is NOT reachable' &&
+            timeout 5 nc -zv localhost 8081 2>&1 | grep -q succeeded && echo '✓ Go proxy (8081) is reachable' || echo '✗ Go proxy (8081) is NOT reachable' &&
+            timeout 5 nc -zv localhost 5000 2>&1 | grep -q succeeded && echo '✓ Registry mirror (5000) is reachable' || echo '✗ Registry mirror (5000) is NOT reachable' &&
+            echo '' &&
+            export HTTP_PROXY=http://localhost:3128
+            export HTTPS_PROXY=http://localhost:3128
+            export NO_PROXY=localhost,127.0.0.1,::1,.local,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+            export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+            export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+            export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+            export GODEBUG=http2debug=0
+            export GOPROXY=http://localhost:8081,https://proxy.golang.org,direct
+            export GOSUMDB=sum.golang.org
+            echo 'Environment variables set:' &&
+            echo '  HTTP_PROXY='\$HTTP_PROXY &&
+            echo '  HTTPS_PROXY='\$HTTPS_PROXY &&
+            echo '  NO_PROXY='\$NO_PROXY &&
+            echo '  SSL_CERT_FILE='\$SSL_CERT_FILE &&
+            echo '  GOPROXY='\$GOPROXY &&
+            echo '' &&
+            sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,PATH \
+              task test:integration:verbose TEST_NAME={{.TEST_NAME}}
           "
-  
+
   vm:status:
     desc: "Show status of all VMs"
     cmds:
@@ -932,3 +985,166 @@ tasks:
         else
           echo "Golden VM not found or already deleted."
         fi
+
+  # =============================================================================
+  # Cache Proxy Tasks - Optimize integration test performance
+  # =============================================================================
+
+  proxy:start:
+    desc: "Start cache proxy infrastructure (HTTP/HTTPS proxy, container registry mirror, Go proxy)"
+    dir: test/cache-proxy
+    cmds:
+      - |
+        echo "Starting cache proxy infrastructure..."
+        if docker-compose ps | grep -q "solo-weaver-cache-proxy.*Up"; then
+          echo "Cache proxy is already running"
+        else
+          docker-compose up -d
+          echo "Waiting for services to be ready..."
+          sleep 5
+          echo ""
+          echo "✓ Cache infrastructure started successfully!"
+          echo ""
+          echo "Services running:"
+          echo "  • HTTP/HTTPS Proxy:    http://localhost:3128 (Squid with SSL MITM)"
+          echo "  • Container Registry:  http://localhost:5000 (mirrors registry.k8s.io)"
+          echo "  • Go Module Proxy:     http://localhost:8081"
+          echo ""
+          echo "To use the proxies, set these environment variables:"
+          echo "  export HTTP_PROXY=http://localhost:3128"
+          echo "  export HTTPS_PROXY=http://localhost:3128"
+          echo "  export GOPROXY=http://localhost:8081"
+          echo ""
+          echo "⚠️  For HTTPS caching, install the CA certificate on your VMs:"
+          echo "  task proxy:install-ca-cert"
+          echo ""
+          echo "For CRI-O registry mirror, the registries.conf is installed during test setup."
+        fi
+
+  proxy:install-ca-cert:
+    desc: "Install MITM proxy CA certificate in VM for HTTPS caching"
+    deps:
+      - proxy:start
+      - vm:start
+    cmds:
+      - cmd: |
+          VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+          CA_CERT_PATH="test/cache-proxy/ca-cert.pem"
+          
+          echo "Installing Squid MITM proxy CA certificate in VM..."
+          
+          # Always extract fresh CA certificate from proxy container
+          # This ensures we get the correct certificate even after proxy:rebuild
+          echo "Extracting CA certificate from Squid proxy container..."
+          docker cp solo-weaver-cache-proxy:/etc/squid/certs/ca-cert.pem "$CA_CERT_PATH"
+          echo "✓ CA certificate extracted to $CA_CERT_PATH"
+          
+          # Show certificate details
+          echo "Certificate details:"
+          openssl x509 -in "$CA_CERT_PATH" -noout -subject -dates | head -3
+          
+          # Copy to VM
+          echo "Copying CA certificate to VM..."
+          scp -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$CA_CERT_PATH" {{.VM_USER}}@$VM_IP:/tmp/solo-weaver-ca.crt
+          
+          # Install in VM
+          echo "Installing certificate in VM..."
+          ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP \
+            "sudo cp /tmp/solo-weaver-ca.crt /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+             sudo chmod 644 /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+             sudo update-ca-certificates --fresh && \
+             echo 'Verifying CA certificate was added to bundle...' && \
+             if grep -q 'Solo Weaver Cache Proxy CA' /etc/ssl/certs/ca-certificates.crt; then \
+               echo '✓ CA certificate verified in bundle'; \
+             else \
+               echo '⚠ Warning: CA certificate not found in bundle'; \
+             fi"
+          
+          echo ""
+          echo "✅ Squid MITM CA certificate installed successfully!"
+          echo ""
+          echo "The VM can now use the Squid proxy for HTTPS caching with SSL interception."
+          echo "Run: task vm:test:integration"
+
+  proxy:rebuild:
+    desc: "Rebuild and restart the cache proxy (after code changes)"
+    dir: test/cache-proxy
+    cmds:
+      - |
+        echo "Rebuilding cache proxy (forcing fresh build)..."
+        
+        # Remove cached CA certificate since we're regenerating it
+        rm -f ca-cert.pem ca-key.pem || true
+        echo "✓ Removed cached CA certificates"
+        
+        docker-compose down -v || true
+        docker rmi -f $(docker images -q cache-proxy-cache-proxy 2>/dev/null) 2>/dev/null || true
+        docker-compose build --no-cache
+        docker-compose up -d
+        sleep 2
+        echo ""
+        echo "✅ Proxy rebuilt and restarted with new CA certificate"
+        echo ""
+        echo "Checking status..."
+        docker-compose ps
+        echo ""
+        echo "Recent logs:"
+        docker-compose logs --tail=5
+        echo ""
+        echo "⚠️  IMPORTANT: New CA certificate generated!"
+        echo "   Run 'task proxy:install-ca-cert' to install in VM"
+        echo "   Or run 'task vm:test:integration' which will install it automatically"
+        
+  proxy:stop:
+    desc: "Stop the cache proxy server"
+    dir: test/cache-proxy
+    cmds:
+      - docker-compose down
+
+  proxy:status:
+    desc: "Show cache proxy status and statistics"
+    dir: test/cache-proxy
+    cmds:
+      - |
+        echo "Cache Proxy Status:"
+        echo "==================="
+        docker-compose ps
+        echo ""
+        if docker ps | grep -q solo-weaver-cache-proxy; then
+          echo "Cache sizes:"
+          docker exec solo-weaver-cache-proxy du -sh /var/cache/squid 2>/dev/null | awk '{print "  HTTP/HTTPS cache (Squid): " $1}'
+          docker exec solo-weaver-registry-mirror du -sh /var/lib/registry 2>/dev/null | awk '{print "  Registry: " $1}' || true
+          docker exec solo-weaver-goproxy du -sh /go 2>/dev/null | awk '{print "  Go modules: " $1}' || true
+          
+          echo ""
+          echo "Large-object cache stats (>1MB):"
+          if docker exec solo-weaver-cache-proxy test -f /var/log/squid/access.log 2>/dev/null; then
+            LOGCMD="docker exec solo-weaver-cache-proxy sh -c"
+        
+            # field 5 = bytes sent to client
+            TOTAL=$($LOGCMD "awk '\$5 >= 1000000 && \$4 ~ /TCP_/ {c++} END {print c+0}' /var/log/squid/access.log" || echo 0)
+            HITS=$($LOGCMD "awk '\$5 >= 1000000 && \$4 ~ /(TCP_HIT|TCP_MEM_HIT|TCP_REFRESH_HIT|TCP_REFRESH_UNMODIFIED|TCP_IMS_HIT)/ {c++} END {print c+0}' /var/log/squid/access.log" || echo 0)
+            MISSES=$($LOGCMD "awk '\$5 >= 1000000 && \$4 ~ /(TCP_MISS|TCP_CLIENT_REFRESH_MISS|TCP_SWAPFAIL_MISS)/ {c++} END {print c+0}' /var/log/squid/access.log" || echo 0)
+        
+            echo "  Total large responses: $TOTAL"
+            echo "  Large hits:   $HITS"
+            echo "  Large misses: $MISSES"
+        
+            if [ "$TOTAL" -gt 0 ]; then
+              HIT_RATE=$(echo "scale=2; ($HITS * 100) / $TOTAL" | bc)
+              echo "  Large-object hit rate: ${HIT_RATE}%"
+            fi
+          else
+            echo "  No access log yet"
+          fi
+          
+          echo ""
+          echo "Recent activity (last 10 requests):"
+          docker exec solo-weaver-cache-proxy tail -10 /var/log/squid/access.log 2>/dev/null | awk '{print "  " $4 " " $7}' || echo "  No activity yet"
+          
+        else
+          echo "Cache proxy is not running"
+          echo "Start it with: task proxy:start"
+        fi
+
