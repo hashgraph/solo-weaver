@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 )
@@ -158,30 +159,34 @@ func (m *KubeConfigManager) configureCurrentUserKubeConfig() error {
 	// Get the current user from SUDO_USER environment variable
 	// This contains the username of the user who invoked sudo
 	sudoUser := os.Getenv("SUDO_USER")
-	if sudoUser == "" {
-		// If SUDO_USER is not set, the command wasn't run with sudo
-		// In this case, we skip this configuration step
+
+	// If SUDO_USER is not set, the command wasn't run with sudo
+	// In this case, we skip this configuration step
+	// Also, don't configure if SUDO_USER is root (already handled by configureRootKubeConfig)
+	if sudoUser == "" || sudoUser == "root" {
 		return nil
 	}
 
-	// Don't configure if SUDO_USER is root (already handled by configureRootKubeConfig)
-	if sudoUser == "root" {
-		return nil
-	}
-
-	// Lookup the sudo user
-	currentUser, err := m.principalManager.LookupUserByName(sudoUser)
+	// Validate and sanitize the SUDO_USER environment variable
+	// This is critical as environment variables can be manipulated by attackers
+	sanitizedUsername, err := sanity.Username(sudoUser)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to lookup current user: %s", sudoUser)
+		return errorx.IllegalState.Wrap(err, "invalid SUDO_USER environment variable: %s", sudoUser)
+	}
+
+	// Lookup the sudo user using the sanitized username
+	currentUser, err := m.principalManager.LookupUserByName(sanitizedUsername)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to lookup current user: %s", sanitizedUsername)
 	}
 
 	// Get the user's primary group
 	currentGroup := currentUser.PrimaryGroup()
 	if currentGroup == nil {
-		return errorx.IllegalState.New("current user %s has no primary group", sudoUser)
+		return errorx.IllegalState.New("current user %s has no primary group", sanitizedUsername)
 	}
 
-	// Determine kubeconfig directory
+	// Determine kubeconfig directory using the validated user's home directory
 	currentUserKubeDir := path.Join(currentUser.HomeDir(), ".kube")
 
 	// Create .kube directory
