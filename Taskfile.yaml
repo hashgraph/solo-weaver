@@ -15,9 +15,8 @@ vars:
   # Set this to the actual URL or local path of your golden image (e.g., "https://storage.example.com/golden-image.utm" or "/path/to/golden-image.utm")
   # For Debian: Set your Debian golden image URL
   # For Ubuntu: Set your Ubuntu 22.04 golden image URL
-  VM_GOLDEN_IMAGE_URL: ""  # REQUIRED: Set to your golden image location before running tasks
-  VM_GOLDEN_IMAGE_URL_DEBIAN: '{{.VM_GOLDEN_IMAGE_URL_DEBIAN | default .VM_GOLDEN_IMAGE_URL}}'
-  VM_GOLDEN_IMAGE_URL_UBUNTU: '{{.VM_GOLDEN_IMAGE_URL_UBUNTU | default .VM_GOLDEN_IMAGE_URL}}'
+  VM_GOLDEN_IMAGE_URL_DEBIAN: '{{.VM_GOLDEN_IMAGE_URL_DEBIAN | default "https://storage.googleapis.com/solo-weaver/solo-weaver-debian-golden.utm.tar.gz" }}'
+  VM_GOLDEN_IMAGE_URL_UBUNTU: '{{.VM_GOLDEN_IMAGE_URL_UBUNTU | default "https://storage.googleapis.com/solo-weaver/solo-weaver-ubuntu-golden.utm.tar.gz" }}'
   VM_USER: "provisioner"
   SSH_PRIVATE_KEY: "{{.PWD}}/.ssh/id_rsa_vm"
   SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
@@ -478,16 +477,33 @@ tasks:
   
   vm:download:golden:
     desc: "Download pre-built golden VM image from URL"
+    env:
+      FORCE : '{{.FORCE | default "false"}}'
     cmds:
       - |
         echo "Checking if golden VM already exists..."
         echo "VM OS Type: {{.VM_OS_TYPE}}"
         echo "VM Golden Name: {{.VM_GOLDEN_NAME}}"
+        echo "UTM VMs Directory: {{.UTM_VMS_DIR}}"
+        echo 'Force Download: {{ eq .FORCE "true" }}'
         
-        # Check if the golden VM already exists
-        if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
-          echo "✓ Golden VM already exists, skipping download."
-          exit 0
+        if [ "{{.FORCE}}" = "true" ]; then
+         echo "Force flag is set, re-downloading golden VM image..."
+        else
+          # Check if the golden VM already exists
+          if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
+            echo "✓ Golden VM already exists, skipping download."
+            exit 0
+          fi
+        
+          # if the .utm file exists in UTM_VMS_DIR, skip download
+          echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+          if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
+            echo "✓ Golden VM already exists in UTM directory, please restart UTM to reload VMs."
+            exit 1
+          else:
+            echo "✓ No existing golden VM found, proceeding to download."
+          fi
         fi
         
         # Determine which golden image URL to use based on OS type
@@ -517,28 +533,43 @@ tasks:
         
         # Create temporary directory for download
         TEMP_DIR=$(mktemp -d)
+        
+        # Clean up
+        cleanup() { rm -rf "$TEMP_DIR"; }
+        trap cleanup EXIT
+        
         echo "Downloading to temporary directory: $TEMP_DIR"
         
+        TMP_FILE="$TEMP_DIR/download.tar.gz"
+  
         # Download the golden image
-        if ! curl -fL -o "$TEMP_DIR/golden-image.utm" "$GOLDEN_IMAGE_URL"; then
+        if ! curl -fL -o "$TMP_FILE" "$GOLDEN_IMAGE_URL"; then
           echo "❌ Failed to download the golden VM image from $GOLDEN_IMAGE_URL"
           echo "Please check the URL and try again or download the image manually and import it manually."
           rm -rf "$TEMP_DIR"
           exit 0
         fi
         
+        tar -xzf "$TMP_FILE" -C "$TEMP_DIR"
+        UTM_PATH=$(find "$TEMP_DIR" -maxdepth 3 \( -type d -name '*.utm' -o -type f -name '*.utm' \) -print -quit || true)
+        if [ -z "$UTM_PATH" ]; then
+          echo "❌ No .utm entry found inside $GOLDEN_IMAGE_URL"
+          exit 1
+        fi
+      
+        # Normalize to a known path for the rest of the script
+        mv "$UTM_PATH" "$TEMP_DIR/golden-image.utm"
+        echo "✓ Downloaded and prepared golden image at $TEMP_DIR/golden-image.utm"
+        
+        # Copy the VM to UTM directory and rename
+        cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+        
         # Import the VM into UTM
         echo "Importing VM into UTM..."
         open -a UTM
         sleep 5
         
-        # Copy the VM to UTM directory and rename
-        cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-        
-        # Clean up
-        rm -rf "$TEMP_DIR"
-        
-        echo "✓ Golden VM downloaded and imported successfully!"
+        echo "✓ Golden VM downloaded and imported successfully: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
   
   vm:reset:
     desc: "Clone the golden VM to create a working instance with passwordless SSH"
@@ -586,7 +617,6 @@ tasks:
       - task: vm:start
       - task: vm:configure:ssh
       - task: proxy:install-ca-cert
-      - task: vm:configure:tools
       - cmd: echo "✓ VM reset and configured successfully with proxy support."
 
   vm:start:
