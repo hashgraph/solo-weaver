@@ -24,9 +24,15 @@ type Downloader struct {
 
 // NewDownloader creates a new Downloader with default settings
 func NewDownloader() *Downloader {
+	transport := &http.Transport{
+		// Use ProxyFromEnvironment to respect HTTP_PROXY, HTTPS_PROXY, and NO_PROXY
+		Proxy: http.ProxyFromEnvironment,
+	}
+
 	return &Downloader{
 		client: &http.Client{
-			Timeout: 30 * time.Minute, // Default timeout for large downloads
+			Timeout:   30 * time.Minute, // Default timeout for large downloads
+			Transport: transport,
 		},
 		timeout: 30 * time.Minute,
 	}
@@ -34,9 +40,15 @@ func NewDownloader() *Downloader {
 
 // NewDownloaderWithTimeout creates a new Downloader with custom timeout
 func NewDownloaderWithTimeout(timeout time.Duration) *Downloader {
+	transport := &http.Transport{
+		// Use ProxyFromEnvironment to respect HTTP_PROXY, HTTPS_PROXY, and NO_PROXY
+		Proxy: http.ProxyFromEnvironment,
+	}
+
 	return &Downloader{
 		client: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: transport,
 		},
 		timeout: timeout,
 	}
