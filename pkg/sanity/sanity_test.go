@@ -77,6 +77,324 @@ func TestSanity_Filename(t *testing.T) {
 	}
 }
 
+func TestSanity_Username(t *testing.T) {
+	testCases := []struct {
+		name      string
+		input     string
+		expected  string
+		shouldErr bool
+		errMsg    string
+	}{
+		// Valid usernames
+		{
+			name:      "valid simple username",
+			input:     "john",
+			expected:  "john",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with underscore",
+			input:     "john_doe",
+			expected:  "john_doe",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with hyphen",
+			input:     "john-doe",
+			expected:  "john-doe",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with numbers",
+			input:     "user123",
+			expected:  "user123",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with mixed case",
+			input:     "JohnDoe",
+			expected:  "JohnDoe",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with all allowed characters",
+			input:     "user_123-test",
+			expected:  "user_123-test",
+			shouldErr: false,
+		},
+
+		// Invalid usernames - empty or invalid
+		{
+			name:      "empty username",
+			input:     "",
+			shouldErr: true,
+			errMsg:    "username cannot be empty",
+		},
+		{
+			name:      "username with spaces",
+			input:     "john doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+
+		// Invalid usernames - path traversal attempts
+		{
+			name:      "username with forward slash",
+			input:     "john/doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with backslash",
+			input:     "john\\doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with double dots",
+			input:     "../john",
+			shouldErr: true,
+			errMsg:    "username contains path traversal sequences",
+		},
+		{
+			name:      "username with double dots in middle",
+			input:     "john..doe",
+			shouldErr: true,
+			errMsg:    "username contains path traversal sequences",
+		},
+		{
+			name:      "path traversal attempt",
+			input:     "../../etc/passwd",
+			shouldErr: true,
+			errMsg:    "username contains path traversal sequences",
+		},
+
+		// Invalid usernames - shell metacharacters
+		{
+			name:      "username with semicolon",
+			input:     "john;rm",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with pipe",
+			input:     "john|command",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with dollar sign",
+			input:     "john$var",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with backtick",
+			input:     "john`cmd`",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with ampersand",
+			input:     "john&command",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with greater than",
+			input:     "john>file",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with less than",
+			input:     "john<file",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with parentheses",
+			input:     "john(test)",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with braces",
+			input:     "john{test}",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with brackets",
+			input:     "john[test]",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with asterisk",
+			input:     "john*",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with question mark",
+			input:     "john?",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "username with tilde",
+			input:     "john~",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+
+		// Invalid usernames - special characters
+		{
+			name:      "username with at sign",
+			input:     "john@test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with hash",
+			input:     "john#test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with percent",
+			input:     "john%test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with exclamation",
+			input:     "john!test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with plus",
+			input:     "john+test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with equals",
+			input:     "john=test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with comma",
+			input:     "john,doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with period",
+			input:     "john.doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with colon",
+			input:     "john:test",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+
+		// Invalid usernames - only invalid characters
+		{
+			name:      "username with only special characters",
+			input:     "!!!",
+			shouldErr: true,
+			errMsg:    "username contains no valid characters",
+		},
+		{
+			name:      "username with only spaces",
+			input:     "   ",
+			shouldErr: true,
+			errMsg:    "username contains no valid characters",
+		},
+
+		// Invalid usernames - control characters
+		{
+			name:      "username with null byte",
+			input:     "john\x00doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with newline",
+			input:     "john\ndoe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with carriage return",
+			input:     "john\rdoe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with tab",
+			input:     "john\tdoe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with bell character",
+			input:     "john\x07doe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "username with invalid character",
+			input:     "john\x1bdoe",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+
+		// Potential attack vectors
+		{
+			name:      "SQL injection attempt",
+			input:     "admin' OR '1'='1",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+		{
+			name:      "Command injection attempt",
+			input:     "user; rm -rf /",
+			shouldErr: true,
+			errMsg:    "username contains shell metacharacters",
+		},
+		{
+			name:      "Path traversal with absolute path",
+			input:     "/etc/passwd",
+			shouldErr: true,
+			errMsg:    "username contains invalid characters",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			result, err := Username(tc.input)
+			if tc.shouldErr {
+				req.Error(err, "expected error for input: %s", tc.input)
+				if tc.errMsg != "" {
+					req.Contains(err.Error(), tc.errMsg, "error message should contain: %s", tc.errMsg)
+				}
+			} else {
+				req.NoError(err, "expected no error for input: %s", tc.input)
+				req.Equal(tc.expected, result, "output should match expected")
+			}
+		})
+	}
+}
+
 func TestSanity_SanitizePath(t *testing.T) {
 	testCases := []struct {
 		name      string

@@ -39,28 +39,81 @@ func Alphanumeric(s string) string {
 	return string(sb[:j])
 }
 
-// Filename sanitize the input string to be safe filename
-// It only allows alphanumeric characters (a-z, 0-9) and underscore
-// It returns error if the filename is empty string after the sanitization
-func Filename(s string) (string, error) {
+// isValidIdentifierChar checks if a byte is a valid character for identifiers
+// (alphanumeric, underscore, or hyphen)
+func isValidIdentifierChar(b byte) bool {
+	return ('a' <= b && b <= 'z') ||
+		('A' <= b && b <= 'Z') ||
+		('0' <= b && b <= '9') ||
+		b == '_' ||
+		b == '-'
+}
+
+// filterValidIdentifierChars filters a string to contain only valid identifier characters
+// Returns the filtered string and the count of valid characters
+func filterValidIdentifierChars(s string) (string, int) {
 	sb := []byte(s)
 	j := 0
 	for _, b := range sb {
-		if ('a' <= b && b <= 'z') ||
-			('A' <= b && b <= 'Z') ||
-			('0' <= b && b <= '9') ||
-			b == '_' ||
-			b == '-' {
+		if isValidIdentifierChar(b) {
 			sb[j] = b
 			j++
 		}
 	}
+	return string(sb[:j]), j
+}
 
-	if j == 0 {
+// Filename sanitize the input string to be safe filename
+// It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens
+// It returns error if the filename is empty string after the sanitization
+func Filename(s string) (string, error) {
+	sanitized, count := filterValidIdentifierChars(s)
+	if count == 0 {
 		return "", ErrInvalidFilename
 	}
+	return sanitized, nil
+}
 
-	return string(sb[:j]), nil
+// Username validates and sanitizes a username string to prevent security vulnerabilities.
+//
+// This function is particularly important when dealing with environment variables like SUDO_USER
+// that could be manipulated by attackers. It ensures that the username:
+//  1. Is not empty (precondition check)
+//  2. Contains only alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens
+//  3. Does not contain path traversal sequences (e.g., "..", "/")
+//  4. Does not contain shell metacharacters or special characters
+//  5. Contains at least one valid character after sanitization
+//
+// Returns the sanitized username, or an error if the username is invalid or unsafe.
+func Username(s string) (string, error) {
+	if s == "" {
+		return "", errorx.IllegalArgument.New("username cannot be empty")
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(s, "..") {
+		return "", errorx.IllegalArgument.New("username contains path traversal sequences: %s", s)
+	}
+
+	// Check for shell metacharacters
+	if shellMetachars.MatchString(s) {
+		return "", errorx.IllegalArgument.New("username contains shell metacharacters: %s", s)
+	}
+
+	// Sanitize: only allow alphanumeric, underscore, and hyphen
+	sanitized, count := filterValidIdentifierChars(s)
+
+	if count == 0 {
+		return "", errorx.IllegalArgument.New("username contains no valid characters")
+	}
+
+	// Verify the sanitized version matches the original
+	// This ensures no characters were removed during sanitization
+	if sanitized != s {
+		return "", errorx.IllegalArgument.New("username contains invalid characters: %s", s)
+	}
+
+	return sanitized, nil
 }
 
 // SanitizePath validates and sanitizes the given path according to strict security rules.
