@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -47,8 +48,8 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		require.NoError(t, err, "Failed to create test tar.gz")
 	}
 
-	// Setup mock HTTP server for downloads
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Setup mock HTTPS server for downloads (using TLS)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, ".tar.gz") && len(scenario.Archives) > 0:
 			// Serve tar.gz archive
@@ -164,8 +165,14 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		},
 	}
 
+	// Create downloader with test server's HTTP client (trusts self-signed cert)
+	client := server.Client()
+	client.Timeout = 30 * time.Minute
+	downloader := NewDownloader(WithHTTPClient(client))
+	downloader.allowedDomains = []string{"localhost", "127.0.0.1"}
+
 	return &baseInstaller{
-		downloader:           NewDownloader(),
+		downloader:           downloader,
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
@@ -503,8 +510,8 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 	fileContents, err := os.ReadFile(tarGzPath)
 	require.NoError(t, err, "Failed to read test tar.gz")
 
-	// Keep server alive for the duration of the test
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Keep server alive for the duration of the test (using TLS for HTTPS)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(fileContents)
 	}))
@@ -556,8 +563,13 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 		},
 	}
 
+	// Create downloader with test server's HTTP client (trusts self-signed cert)
+	client := server.Client()
+	client.Timeout = 30 * time.Minute
+	downloader := NewDownloader(WithHTTPClient(client), WithAllowedDomains([]string{"localhost", "127.0.0.1"}))
+
 	return &baseInstaller{
-		downloader:           NewDownloader(),
+		downloader:           downloader,
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
