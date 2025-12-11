@@ -9,12 +9,18 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
+	"github.com/joomcode/errorx"
 	"pault.ag/go/modprobe"
 )
 
 const (
 	// modulesLoadDirPath is the systemd modules-load.d directory path pattern
 	modulesLoadDirPath = "/etc/modules-load.d/%s.conf"
+
+	// Error message templates for module name validation
+	errInvalidModuleName      = "invalid module name '%s': %v"
+	errInvalidModuleCharacter = "module name '%s' contains invalid characters"
 )
 
 // defaultModule is the default implementation of the Module interface
@@ -26,9 +32,25 @@ type defaultModule struct {
 // defaultOperations is the default implementation of moduleOperations
 type defaultOperations struct{}
 
+// NewModule creates a new Module instance with the given name.
+// The name is validated to ensure it only contains alphanumeric characters,
+// underscores, and hyphens to prevent command injection attacks.
+// Returns an error if the name is empty or contains invalid characters.
 func NewModule(name string) (Module, error) {
+	// Validate module name to prevent command injection
+	// Kernel module names should only contain alphanumeric, underscore, and hyphen
+	sanitized, err := sanity.ModuleName(name)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New(errInvalidModuleName, name, err)
+	}
+
+	// Ensure sanitized name matches original to prevent any character stripping
+	if sanitized != name {
+		return nil, errorx.IllegalArgument.New(errInvalidModuleCharacter, name)
+	}
+
 	return &defaultModule{
-		name: name,
+		name: sanitized,
 		ops:  &defaultOperations{},
 	}, nil
 }
@@ -100,10 +122,28 @@ func (m *defaultModule) Unload(unpersist bool) error {
 var _ moduleOperations = (*defaultOperations)(nil)
 
 func (ops *defaultOperations) load(name string) error {
+	// Validate module name before passing to modprobe to prevent command injection
+	sanitized, err := sanity.ModuleName(name)
+	if err != nil {
+		return errorx.IllegalArgument.New(errInvalidModuleName, name, err)
+	}
+	if sanitized != name {
+		return errorx.IllegalArgument.New(errInvalidModuleCharacter, name)
+	}
+
 	return modprobe.Load(name, "")
 }
 
 func (ops *defaultOperations) unload(name string) error {
+	// Validate module name before passing to modprobe to prevent command injection
+	sanitized, err := sanity.ModuleName(name)
+	if err != nil {
+		return errorx.IllegalArgument.New(errInvalidModuleName, name, err)
+	}
+	if sanitized != name {
+		return errorx.IllegalArgument.New(errInvalidModuleCharacter, name)
+	}
+
 	return modprobe.Remove(name)
 }
 
