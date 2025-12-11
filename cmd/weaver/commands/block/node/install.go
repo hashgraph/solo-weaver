@@ -3,8 +3,6 @@
 package node
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
@@ -52,7 +50,11 @@ var installCmd = &cobra.Command{
 			Str("valuesFile", validatedValuesFile).
 			Msg("Installing Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile))
+		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(
+			flagProfile, validatedValuesFile, workflows.ClusterSetupOptions{
+				EnableMetricsServer: flagMetricsServer,
+				EnableCertManager:   flagCertManager,
+			}))
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 		return nil
@@ -61,7 +63,9 @@ var installCmd = &cobra.Command{
 
 func init() {
 	installCmd.Flags().StringVarP(
-		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
+		&flagValuesFile, "values", "f", "", "Values file")
+	installCmd.Flags().BoolVarP(&flagMetricsServer, "metrics-server", "", false, "Install Metrics Server")
+	installCmd.Flags().BoolVarP(&flagCertManager, "cert-manager", "", false, "Install Cert Manager")
 }
 
 // applyConfigOverrides applies flag values to override the configuration.
