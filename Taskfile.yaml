@@ -500,8 +500,8 @@ tasks:
           echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
           if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
             echo "✓ Golden VM already exists in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-            echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory (`open -a UTM`)."
-            exit 0
+            echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory ('open -a UTM')."
+            exit 1 # non zero would stop further steps
           else
             echo "✓ No existing golden VM found, proceeding to download."
           fi
@@ -566,8 +566,8 @@ tasks:
         cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
         
         echo "✓ Golden VM downloaded successfully and placed in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-        echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory (`open -a UTM`)."
-        exit 0
+        echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory ('open -a UTM')."
+        exit 1 # non zero would stop further steps
   
   vm:reset:
     desc: "Clone the golden VM to create a working instance with passwordless SSH"
