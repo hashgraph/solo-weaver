@@ -97,7 +97,7 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 // DESTDIR="${SANDBOX_DIR}" SYSTEMDDIR="/usr/lib/systemd/system" sudo -E "$(command -v bash)" ./install
 func (ci *crioInstaller) Install() error {
 	// Variables matching the shell script structure
-	srcDir := path.Join(ci.downloadFolder(), core.DefaultUnpackFolderName, "cri-o")
+	srcDir := path.Join(ci.extractFolder(), "cri-o")
 	destDir := core.Paths().SandboxDir
 
 	// Ensure directories exist

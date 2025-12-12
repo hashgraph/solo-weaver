@@ -136,16 +136,16 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
-	// Make the download directory read-only
-	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
-	require.NoError(t, err, "Failed to create download directory")
-	cmd := exec.Command("chattr", "+i", core.Paths().TempDir)
+	// Make the downloads directory read-only
+	err := os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create downloads directory")
+	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
 	err = cmd.Run()
-	require.NoError(t, err, "Failed to make download directory read-only")
+	require.NoError(t, err, "Failed to make downloads directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.Paths().TempDir).Run()
+		_ = exec.Command("chattr", "-i", core.Paths().DownloadsDir).Run()
 	})
 
 	//

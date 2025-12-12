@@ -32,12 +32,12 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download kubelet")
 
-	// Verify downloaded files exist
-	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/kubelet/kubelet")
+	// Verify downloaded files exist in the shared downloads folder
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/downloads/kubelet")
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet binary should exist in download folder")
 
-	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/kubelet/kubelet.service")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/downloads/kubelet.service")
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet.service should exist in download folder")
 

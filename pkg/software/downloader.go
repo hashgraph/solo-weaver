@@ -78,9 +78,10 @@ func (fd *Downloader) validateRedirect(req *http.Request, via []*http.Request) e
 // NewDownloader creates a new Downloader with default settings and optional configurations
 func NewDownloader(opts ...DownloaderOption) *Downloader {
 	// Set defaults
+	// Use HomeDir as basePath since downloads and extractions span multiple folders under home
 	downloader := &Downloader{
 		timeout:        30 * time.Minute,
-		basePath:       core.Paths().TempDir,
+		basePath:       core.Paths().HomeDir,
 		allowedDomains: sanity.AllowedDomains(),
 	}
 

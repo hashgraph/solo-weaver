@@ -48,8 +48,8 @@ func requireChattrSupport(t *testing.T) {
 func resetTestEnvironment(t *testing.T) {
 	t.Helper()
 
-	// Clean up any existing test artifacts
-	_ = os.RemoveAll("/opt/solo/weaver")
+	// Clean up any existing test artifacts, but preserve the shared downloads folder
+	cleanupWeaverPreservingDownloads()
 
 	// Clean up any leftover symbolic links in SystemBinDir from previous test runs
 	// This is critical because IsInstalled() and IsConfigured() check these directories
@@ -57,9 +57,36 @@ func resetTestEnvironment(t *testing.T) {
 
 	// Register cleanup to run after test completes
 	t.Cleanup(func() {
-		_ = os.RemoveAll("/opt/solo/weaver")
+		cleanupWeaverPreservingDownloads()
 		cleanupSystemBinDir(t)
 	})
+}
+
+// cleanupWeaverPreservingDownloads removes all weaver directories except the shared downloads folder
+// This preserves downloaded files with valid checksums to speed up subsequent test runs
+func cleanupWeaverPreservingDownloads() {
+	weaverHome := "/opt/solo/weaver"
+	downloadsFolder := "/opt/solo/weaver/downloads"
+
+	// Read the weaver home directory
+	entries, err := os.ReadDir(weaverHome)
+	if err != nil {
+		// Directory doesn't exist, nothing to clean
+		return
+	}
+
+	// Remove each top-level directory/file except downloads
+	for _, entry := range entries {
+		entryPath := filepath.Join(weaverHome, entry.Name())
+
+		// Skip the downloads folder
+		if entryPath == downloadsFolder {
+			continue
+		}
+
+		// Remove all other directories/files
+		_ = os.RemoveAll(entryPath)
+	}
 }
 
 // cleanupSystemBinDir removes any symbolic links in /usr/local/bin that point to /opt/solo/weaver
