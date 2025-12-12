@@ -3,10 +3,375 @@
 package sanity
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestSanity_isAllowedDomain(t *testing.T) {
+	testCases := []struct {
+		name     string
+		hostname string
+		allowed  bool
+	}{
+		// Exact matches - should be allowed
+		{
+			name:     "exact match: github.com",
+			hostname: "github.com",
+			allowed:  true,
+		},
+		{
+			name:     "exact match: storage.googleapis.com",
+			hostname: "storage.googleapis.com",
+			allowed:  true,
+		},
+		{
+			name:     "exact match: dl.k8s.io",
+			hostname: "dl.k8s.io",
+			allowed:  true,
+		},
+
+		// Valid subdomains - should be allowed
+		{
+			name:     "valid subdomain: api.github.com",
+			hostname: "api.github.com",
+			allowed:  true,
+		},
+		{
+			name:     "valid subdomain: raw.githubusercontent.com",
+			hostname: "raw.githubusercontent.com",
+			allowed:  true,
+		},
+		{
+			name:     "valid nested subdomain: test.api.github.com",
+			hostname: "test.api.github.com",
+			allowed:  true,
+		},
+		{
+			name:     "exact match: charts.helm.sh",
+			hostname: "charts.helm.sh",
+			allowed:  true,
+		},
+
+		// Edge case: domains that end with allowed domain but are not subdomains
+		// These should be REJECTED to prevent "evilgithub.com" bypassing "github.com"
+		{
+			name:     "malicious domain: evilgithub.com (NOT a subdomain of github.com)",
+			hostname: "evilgithub.com",
+			allowed:  false,
+		},
+		{
+			name:     "malicious domain: notgithub.com (NOT a subdomain of github.com)",
+			hostname: "notgithub.com",
+			allowed:  false,
+		},
+		{
+			name:     "rejected domain: fakestorage.googleapis.com (subdomain of googleapis.com, but only storage.googleapis.com is allowlisted)",
+			hostname: "fakestorage.googleapis.com",
+			allowed:  false,
+		},
+		{
+			name:     "malicious domain: evil-github.com (NOT a subdomain of github.com)",
+			hostname: "evil-github.com",
+			allowed:  false,
+		},
+		{
+			name:     "malicious domain: github.com.evil.com (NOT a subdomain of github.com)",
+			hostname: "github.com.evil.com",
+			allowed:  false,
+		},
+
+		// Completely unrelated domains - should be rejected
+		{
+			name:     "untrusted domain: evil.com",
+			hostname: "evil.com",
+			allowed:  false,
+		},
+		{
+			name:     "untrusted domain: attacker.net",
+			hostname: "attacker.net",
+			allowed:  false,
+		},
+		{
+			name:     "untrusted domain: malware.org",
+			hostname: "malware.org",
+			allowed:  false,
+		},
+
+		// Case sensitivity - should be case-insensitive
+		{
+			name:     "case insensitive: GitHub.com",
+			hostname: "GitHub.com",
+			allowed:  true,
+		},
+		{
+			name:     "case insensitive: GITHUB.COM",
+			hostname: "GITHUB.COM",
+			allowed:  true,
+		},
+		{
+			name:     "case insensitive: Api.GitHub.Com",
+			hostname: "Api.GitHub.Com",
+			allowed:  true,
+		},
+
+		// Empty and invalid inputs
+		{
+			name:     "empty hostname",
+			hostname: "",
+			allowed:  false,
+		},
+
+		// IP addresses - should be rejected (not in domain allowlist)
+		{
+			name:     "IPv4 address",
+			hostname: "192.168.1.1",
+			allowed:  false,
+		},
+		{
+			name:     "IPv6 address",
+			hostname: "::1",
+			allowed:  false,
+		},
+		{
+			name:     "cloud metadata endpoint",
+			hostname: "169.254.169.254",
+			allowed:  false,
+		},
+
+		// Unicode homograph attacks - should be rejected
+		{
+			name:     "Cyrillic 'а' instead of Latin 'a' in github",
+			hostname: "githаb.com", // Using Cyrillic 'а' (U+0430)
+			allowed:  false,
+		},
+		{
+			name:     "Armenian 'ս' instead of Latin 'u' in github",
+			hostname: "githսb.com", // Using Armenian 'ս' (U+057D)
+			allowed:  false,
+		},
+		{
+			name:     "Greek 'ο' instead of Latin 'o' in google",
+			hostname: "gοοgle.com", // Using Greek 'ο' (U+03BF)
+			allowed:  false,
+		},
+		{
+			name:     "Cyrillic 'е' instead of Latin 'e' in helm",
+			hostname: "hеlm.sh", // Using Cyrillic 'е' (U+0435)
+			allowed:  false,
+		},
+		{
+			name:     "Mixed Latin and Cyrillic characters",
+			hostname: "storаge.googleаpis.com", // Using Cyrillic 'а' in multiple places
+			allowed:  false,
+		},
+		{
+			name:     "Full-width Latin characters",
+			hostname: "ｇｉｔｈｕｂ．ｃｏｍ", // Using full-width characters
+			allowed:  false,
+		},
+		{
+			name:     "Chinese characters in domain",
+			hostname: "github.中国",
+			allowed:  false,
+		},
+		{
+			name:     "Arabic characters in domain",
+			hostname: "github.العربية",
+			allowed:  false,
+		},
+		{
+			name:     "Emoji in domain",
+			hostname: "github😀.com",
+			allowed:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			result := isAllowedDomain(tc.hostname, AllowedDomains())
+			req.Equal(tc.allowed, result, "hostname: %s", tc.hostname)
+		})
+	}
+}
+
+func TestSanity_isASCII(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		// Valid ASCII strings
+		{
+			name:     "simple ASCII domain",
+			input:    "github.com",
+			expected: true,
+		},
+		{
+			name:     "ASCII with numbers",
+			input:    "test123.example.com",
+			expected: true,
+		},
+		{
+			name:     "ASCII with hyphens",
+			input:    "my-domain.example.com",
+			expected: true,
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: true, // Empty string is technically all ASCII
+		},
+		{
+			name:     "ASCII printable characters",
+			input:    "test-domain_123.example.com",
+			expected: true,
+		},
+
+		// Invalid non-ASCII strings
+		{
+			name:     "Cyrillic character",
+			input:    "githаb.com", // Cyrillic 'а'
+			expected: false,
+		},
+		{
+			name:     "Armenian character",
+			input:    "githսb.com", // Armenian 'ս'
+			expected: false,
+		},
+		{
+			name:     "Greek character",
+			input:    "gοοgle.com", // Greek 'ο'
+			expected: false,
+		},
+		{
+			name:     "Chinese characters",
+			input:    "example.中国",
+			expected: false,
+		},
+		{
+			name:     "Arabic characters",
+			input:    "example.العربية",
+			expected: false,
+		},
+		{
+			name:     "Emoji",
+			input:    "github😀.com",
+			expected: false,
+		},
+		{
+			name:     "Full-width characters",
+			input:    "ｇｉｔｈｕｂ.com",
+			expected: false,
+		},
+		{
+			name:     "Mixed ASCII and non-ASCII",
+			input:    "github.cоm", // Latin 'o' replaced with Cyrillic 'о'
+			expected: false,
+		},
+		{
+			name:     "Unicode normalization attack",
+			input:    "github.com\u0301", // Combining acute accent
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			result := isASCII(tc.input)
+			req.Equal(tc.expected, result, "input: %s", tc.input)
+		})
+	}
+}
+
+func TestSanity_isAllowedDomain_WithUppercaseInAllowlist(t *testing.T) {
+	// This test verifies that the function correctly normalizes both sides of the comparison
+	// by temporarily adding uppercase domains to the allowlist
+	req := require.New(t)
+
+	// Set allowlist with mixed case domains (simulating future maintainability scenario)
+	testAllowedDomains := []string{
+		"GitHub.COM",             // Uppercase
+		"Storage.GoogleAPIs.com", // Mixed case
+		"dl.k8s.io",              // Lowercase (normal)
+	}
+
+	testCases := []struct {
+		name     string
+		hostname string
+		allowed  bool
+	}{
+		// Should match despite case differences in allowlist
+		{
+			name:     "lowercase hostname matches uppercase allowlist entry",
+			hostname: "github.com",
+			allowed:  true,
+		},
+		{
+			name:     "uppercase hostname matches uppercase allowlist entry",
+			hostname: "GITHUB.COM",
+			allowed:  true,
+		},
+		{
+			name:     "mixed case hostname matches uppercase allowlist entry",
+			hostname: "GitHub.Com",
+			allowed:  true,
+		},
+		{
+			name:     "subdomain of uppercase allowlist entry",
+			hostname: "api.github.com",
+			allowed:  true,
+		},
+		{
+			name:     "lowercase hostname matches mixed case allowlist entry",
+			hostname: "storage.googleapis.com",
+			allowed:  true,
+		},
+		{
+			name:     "uppercase hostname matches mixed case allowlist entry",
+			hostname: "STORAGE.GOOGLEAPIS.COM",
+			allowed:  true,
+		},
+		{
+			name:     "subdomain of mixed case allowlist entry",
+			hostname: "test.storage.googleapis.com",
+			allowed:  true,
+		},
+		{
+			name:     "lowercase hostname matches lowercase allowlist entry",
+			hostname: "dl.k8s.io",
+			allowed:  true,
+		},
+		{
+			name:     "uppercase hostname matches lowercase allowlist entry",
+			hostname: "DL.K8S.IO",
+			allowed:  true,
+		},
+
+		// Should NOT match
+		{
+			name:     "domain not in allowlist",
+			hostname: "evil.com",
+			allowed:  false,
+		},
+		{
+			name:     "fake subdomain",
+			hostname: "github.com.evil.com",
+			allowed:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isAllowedDomain(tc.hostname, testAllowedDomains)
+			req.Equal(tc.allowed, result, "hostname: %s", tc.hostname)
+		})
+	}
+}
 
 func TestSanity_Alphanumeric(t *testing.T) {
 	req := require.New(t)
@@ -680,31 +1045,39 @@ func TestSanity_ValidateURL(t *testing.T) {
 		shouldErr bool
 		errMsg    string
 	}{
-		// Valid URLs
+		// Valid URLs - trusted domains with HTTPS
 		{
-			name:      "valid http URL",
-			url:       "http://example.com/file.tar.gz",
+			name:      "valid https URL from storage.googleapis.com",
+			url:       "https://storage.googleapis.com/cri-o/artifacts/file.tar.gz",
 			shouldErr: false,
 		},
 		{
-			name:      "valid https URL",
-			url:       "https://example.com/file.tar.gz",
+			name:      "valid https URL from github.com",
+			url:       "https://github.com/kubernetes/kubernetes/releases/file.tar.gz",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL from dl.k8s.io",
+			url:       "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl",
 			shouldErr: false,
 		},
 		{
 			name:      "valid https URL with port",
-			url:       "https://example.com:8443/file.tar.gz",
+			url:       "https://storage.googleapis.com:443/file.tar.gz",
 			shouldErr: false,
 		},
 		{
 			name:      "valid https URL with query params",
-			url:       "https://example.com/file.tar.gz?version=1.0",
+			url:       "https://github.com/kubernetes/kubernetes/releases/download/v1.28.0/file.tar.gz?version=1.0",
 			shouldErr: false,
 		},
+
+		// Invalid URLs - HTTP not allowed (must be HTTPS)
 		{
-			name:      "valid https URL with path",
-			url:       "https://example.com/path/to/file.tar.gz",
-			shouldErr: false,
+			name:      "http URL rejected",
+			url:       "http://storage.googleapis.com/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "URL scheme must be https",
 		},
 
 		// Invalid URLs - empty or malformed
@@ -716,7 +1089,7 @@ func TestSanity_ValidateURL(t *testing.T) {
 		},
 		{
 			name:      "malformed URL",
-			url:       "ht!tp://example.com",
+			url:       "ht!tps://example.com",
 			shouldErr: true,
 			errMsg:    "invalid URL",
 		},
@@ -724,27 +1097,21 @@ func TestSanity_ValidateURL(t *testing.T) {
 		// Invalid URLs - wrong scheme
 		{
 			name:      "ftp scheme",
-			url:       "ftp://example.com/file.tar.gz",
+			url:       "ftp://storage.googleapis.com/file.tar.gz",
 			shouldErr: true,
-			errMsg:    "URL scheme must be http or https",
+			errMsg:    "URL scheme must be https",
 		},
 		{
 			name:      "file scheme",
 			url:       "file:///etc/passwd",
 			shouldErr: true,
-			errMsg:    "URL scheme must be http or https",
+			errMsg:    "URL scheme must be https",
 		},
 		{
 			name:      "javascript scheme",
 			url:       "javascript:alert(1)",
 			shouldErr: true,
-			errMsg:    "URL scheme must be http or https",
-		},
-		{
-			name:      "data scheme",
-			url:       "data:text/html,<script>alert(1)</script>",
-			shouldErr: true,
-			errMsg:    "URL scheme must be http or https",
+			errMsg:    "URL scheme must be https",
 		},
 
 		// Invalid URLs - missing host
@@ -758,14 +1125,93 @@ func TestSanity_ValidateURL(t *testing.T) {
 			name:      "relative URL",
 			url:       "/path/to/file.tar.gz",
 			shouldErr: true,
-			errMsg:    "URL scheme must be http or https",
+			errMsg:    "URL scheme must be https",
+		},
+
+		// Invalid URLs - untrusted domains
+		{
+			name:      "untrusted domain",
+			url:       "https://evil.com/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+		{
+			name:      "untrusted subdomain",
+			url:       "https://attacker.example.com/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+
+		// Edge cases - domains ending with allowed domain but not actual subdomains
+		// These test the subdomain matching logic to prevent bypass attacks
+		{
+			name:      "malicious domain: evilgithub.com (not a subdomain of github.com)",
+			url:       "https://evilgithub.com/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+		{
+			name:      "malicious domain: notgithub.com (not a subdomain of github.com)",
+			url:       "https://notgithub.com/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+		{
+			name:      "rejected domain: fakestorage.googleapis.com (subdomain of googleapis.com, but only storage.googleapis.com is allowlisted)",
+			url:       "https://fakestorage.googleapis.com/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+		{
+			name:      "malicious domain: evil-github.com (not a subdomain of github.com)",
+			url:       "https://evil-github.com/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+		{
+			name:      "malicious domain: github.com.evil.com (not a subdomain of github.com)",
+			url:       "https://github.com.evil.com/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+		{
+			name:      "malicious domain: attackerdl.k8s.io (not valid)",
+			url:       "https://attackerdl.k8s.io/malware.tar.gz",
+			shouldErr: true,
+			errMsg:    "not in the allowed domain list",
+		},
+
+		// Invalid URLs - IP addresses (direct IP access blocked)
+		{
+			name:      "IPv4 address",
+			url:       "https://192.168.1.1/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "is not in the allowed domain list",
+		},
+		{
+			name:      "IPv6 address",
+			url:       "https://[::1]/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "is not in the allowed domain list",
+		},
+		{
+			name:      "cloud metadata endpoint IPv4",
+			url:       "https://169.254.169.254/latest/meta-data/",
+			shouldErr: true,
+			errMsg:    "is not in the allowed domain list",
+		},
+		{
+			name:      "loopback address",
+			url:       "https://127.0.0.1/file.tar.gz",
+			shouldErr: true,
+			errMsg:    "is not in the allowed domain list",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
-			err := ValidateURL(tc.url)
+			err := ValidateURL(tc.url, AllowedDomains())
 			if tc.shouldErr {
 				req.Error(err, "expected error for URL: %s", tc.url)
 				if tc.errMsg != "" {
@@ -953,4 +1399,190 @@ func TestSanity_ValidatePathWithinBase(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSanity_ValidateInputFile(t *testing.T) {
+	// Create a temporary directory and test files for testing
+	tmpDir := t.TempDir()
+
+	// Create a valid test file
+	validFile := filepath.Join(tmpDir, "valid-file.yaml")
+	err := os.WriteFile(validFile, []byte("test: data\n"), 0644)
+	require.NoError(t, err)
+
+	// Create a test directory (not a file)
+	testDir := filepath.Join(tmpDir, "test-directory")
+	err = os.Mkdir(testDir, 0755)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name     string
+		filePath string
+		wantErr  bool
+		errMsg   string
+	}{
+		// Valid cases
+		{
+			name:     "valid absolute path to existing file",
+			filePath: validFile,
+			wantErr:  false,
+		},
+
+		// Invalid cases - empty path
+		{
+			name:     "empty file path",
+			filePath: "",
+			wantErr:  true,
+			errMsg:   "file path cannot be empty",
+		},
+
+		// Invalid cases - path traversal attacks
+		{
+			name:     "path traversal with double dots",
+			filePath: tmpDir + "/../../../etc/passwd",
+			wantErr:  true,
+			errMsg:   "path cannot contain '..' segments",
+		},
+		{
+			name:     "path traversal in middle",
+			filePath: "/tmp/../etc/passwd",
+			wantErr:  true,
+			errMsg:   "path cannot contain '..' segments",
+		},
+		{
+			name:     "path ending with double dots",
+			filePath: "/tmp/test/..",
+			wantErr:  true,
+			errMsg:   "path cannot contain '..' segments",
+		},
+
+		// Invalid cases - shell metacharacters
+		{
+			name:     "path with semicolon",
+			filePath: "/tmp/test;rm -rf /",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with pipe",
+			filePath: "/tmp/test|cat",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with backtick",
+			filePath: "/tmp/test`whoami`",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with dollar sign",
+			filePath: "/tmp/test$HOME",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with ampersand",
+			filePath: "/tmp/test&background",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+
+		// Invalid cases - non-existent file
+		{
+			name:     "non-existent file",
+			filePath: filepath.Join(tmpDir, "this-file-does-not-exist-12345.yaml"),
+			wantErr:  true,
+			errMsg:   "file does not exist",
+		},
+
+		// Invalid cases - not a regular file
+		{
+			name:     "path is a directory",
+			filePath: testDir,
+			wantErr:  true,
+			errMsg:   "path is not a regular file",
+		},
+		{
+			name:     "special device file",
+			filePath: "/dev/null",
+			wantErr:  true,
+			errMsg:   "path is not a regular file",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := ValidateInputFile(tc.filePath)
+
+			if tc.wantErr {
+				require.Error(t, err, "expected error for filePath=%s", tc.filePath)
+				if tc.errMsg != "" {
+					require.Contains(t, err.Error(), tc.errMsg, "error message should contain: %s", tc.errMsg)
+				}
+			} else {
+				require.NoError(t, err, "expected no error for filePath=%s", tc.filePath)
+				require.NotEmpty(t, result, "result should not be empty")
+				// Verify the result is an absolute path
+				require.True(t, filepath.IsAbs(result), "result should be an absolute path")
+			}
+		})
+	}
+}
+
+func TestSanity_ValidateInputFile_RelativePath(t *testing.T) {
+	// Create a temporary directory and test file
+	tmpDir := t.TempDir()
+	validFile := filepath.Join(tmpDir, "test-file.yaml")
+	err := os.WriteFile(validFile, []byte("test: data\n"), 0644)
+	require.NoError(t, err)
+
+	// Change to the temp directory
+	originalDir, err := os.Getwd()
+	require.NoError(t, err)
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	// Test with relative path
+	result, err := ValidateInputFile("test-file.yaml")
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(result), "result should be converted to absolute path")
+	require.Contains(t, result, "test-file.yaml", "result should contain the filename")
+}
+
+func TestSanity_ValidateInputFile_Symlink(t *testing.T) {
+	// Create a temporary directory
+	tmpDir := t.TempDir()
+
+	// Create a regular file
+	targetFile := filepath.Join(tmpDir, "target.yaml")
+	err := os.WriteFile(targetFile, []byte("test: data\n"), 0644)
+	require.NoError(t, err)
+
+	// Create a symlink to the regular file
+	symlinkPath := filepath.Join(tmpDir, "symlink.yaml")
+	err = os.Symlink(targetFile, symlinkPath)
+	require.NoError(t, err)
+
+	// ValidateInputFile follows symlinks (using os.Stat, not os.Lstat)
+	// If the symlink points to a regular file, it's accepted
+	result, err := ValidateInputFile(symlinkPath)
+	require.NoError(t, err, "symlinks to regular files should be accepted")
+	require.NotEmpty(t, result)
+
+	// Create a symlink to a directory (should be rejected)
+	err = os.Mkdir(filepath.Join(tmpDir, "target-dir"), 0755)
+	require.NoError(t, err)
+
+	symlinkToDir := filepath.Join(tmpDir, "symlink-to-dir")
+	err = os.Symlink(filepath.Join(tmpDir, "target-dir"), symlinkToDir)
+	require.NoError(t, err)
+
+	_, err = ValidateInputFile(symlinkToDir)
+	require.Error(t, err, "symlinks to directories should be rejected")
+	require.Contains(t, err.Error(), "path is not a regular file")
 }

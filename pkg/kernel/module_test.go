@@ -270,3 +270,126 @@ func TestDefaultModule_IsLoaded(t *testing.T) {
 		assert.False(t, persisted)
 	})
 }
+
+func TestNewModule_Security(t *testing.T) {
+	t.Run("should accept valid module names", func(t *testing.T) {
+		validNames := []string{
+			"test_module",
+			"test-module",
+			"TestModule",
+			"module123",
+			"test_module-123",
+		}
+
+		for _, name := range validNames {
+			t.Run(name, func(t *testing.T) {
+				mod, err := NewModule(name)
+				assert.NoError(t, err)
+				assert.NotNil(t, mod)
+				assert.Equal(t, name, mod.Name())
+			})
+		}
+	})
+
+	t.Run("should reject module names with shell metacharacters", func(t *testing.T) {
+		dangerousNames := []string{
+			"test;rm -rf /",
+			"test$(whoami)",
+			"test`whoami`",
+			"test|cat /etc/passwd",
+			"test&whoami",
+			"test>file",
+			"test<file",
+			"test()",
+			"test{}",
+			"test[]",
+			"test*",
+			"test?",
+			"test~",
+		}
+
+		for _, name := range dangerousNames {
+			t.Run(name, func(t *testing.T) {
+				mod, err := NewModule(name)
+				assert.Error(t, err)
+				assert.Nil(t, mod)
+			})
+		}
+	})
+
+	t.Run("should reject module names with spaces", func(t *testing.T) {
+		mod, err := NewModule("test module")
+		assert.Error(t, err)
+		assert.Nil(t, mod)
+	})
+
+	t.Run("should reject module names with special characters", func(t *testing.T) {
+		invalidNames := []string{
+			"test.module",
+			"test/module",
+			"test\\module",
+			"test@module",
+			"test#module",
+			"test$module",
+			"test%module",
+			"test^module",
+			"test*module",
+			"test+module",
+			"test=module",
+		}
+
+		for _, name := range invalidNames {
+			t.Run(name, func(t *testing.T) {
+				mod, err := NewModule(name)
+				assert.Error(t, err)
+				assert.Nil(t, mod)
+			})
+		}
+	})
+
+	t.Run("should reject empty module name", func(t *testing.T) {
+		mod, err := NewModule("")
+		assert.Error(t, err)
+		assert.Nil(t, mod)
+	})
+}
+
+func TestDefaultOperations_Load_Security(t *testing.T) {
+	ops := &defaultOperations{}
+
+	t.Run("should reject module names with shell metacharacters", func(t *testing.T) {
+		dangerousNames := []string{
+			"test;whoami",
+			"test$(id)",
+			"test`id`",
+			"test|whoami",
+		}
+
+		for _, name := range dangerousNames {
+			t.Run(name, func(t *testing.T) {
+				err := ops.load(name)
+				assert.Error(t, err)
+			})
+		}
+	})
+}
+
+func TestDefaultOperations_Unload_Security(t *testing.T) {
+	ops := &defaultOperations{}
+
+	t.Run("should reject module names with shell metacharacters", func(t *testing.T) {
+		dangerousNames := []string{
+			"test;whoami",
+			"test$(id)",
+			"test`id`",
+			"test|whoami",
+		}
+
+		for _, name := range dangerousNames {
+			t.Run(name, func(t *testing.T) {
+				err := ops.unload(name)
+				assert.Error(t, err)
+			})
+		}
+	})
+}

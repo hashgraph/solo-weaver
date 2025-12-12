@@ -4,6 +4,7 @@ package sanity
 
 import (
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -64,15 +65,26 @@ func filterValidIdentifierChars(s string) (string, int) {
 	return string(sb[:j]), j
 }
 
-// Filename sanitize the input string to be safe filename
-// It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens
-// It returns error if the filename is empty string after the sanitization
-func Filename(s string) (string, error) {
+// Identifier validates and sanitizes a string to be a safe identifier.
+// It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens.
+// This is useful for validating module names, filenames, usernames, and other identifiers.
+// Returns an error if the identifier is empty or contains no valid characters after sanitization.
+func Identifier(s string) (string, error) {
 	sanitized, count := filterValidIdentifierChars(s)
 	if count == 0 {
 		return "", ErrInvalidFilename
 	}
 	return sanitized, nil
+}
+
+// Filename is an alias for Identifier
+func Filename(s string) (string, error) {
+	return Identifier(s)
+}
+
+// ModuleName is an alias for Identifier
+func ModuleName(s string) (string, error) {
+	return Identifier(s)
 }
 
 // Username validates and sanitizes a username string to prevent security vulnerabilities.
@@ -162,14 +174,14 @@ func SanitizePath(path string) (string, error) {
 
 // ValidateURL validates a URL to ensure it's safe to use for downloads.
 //
-// This function checks that:
-//  1. The URL is not empty
-//  2. The URL can be parsed
-//  3. The scheme is either "http" or "https"
-//  4. The host is not empty
+// This function provides SSRF (Server-Side Request Forgery) protection by checking that:
+//  1. The URL is not empty and can be parsed
+//  2. The scheme is HTTPS only (HTTP is rejected for security)
+//  3. The host is not empty
+//  4. The host is in the allowed domain list for trusted registries
 //
 // Returns an error if the URL is invalid or unsafe.
-func ValidateURL(rawURL string) error {
+func ValidateURL(rawURL string, allowedDomains []string) error {
 	if rawURL == "" {
 		return errorx.IllegalArgument.New("URL cannot be empty")
 	}
@@ -179,9 +191,9 @@ func ValidateURL(rawURL string) error {
 		return errorx.IllegalArgument.New("invalid URL: %s", err.Error())
 	}
 
-	// Only allow http and https schemes
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return errorx.IllegalArgument.New("URL scheme must be http or https, got: %s", parsedURL.Scheme)
+	// Only allow HTTPS scheme for security (reject HTTP)
+	if parsedURL.Scheme != "https" {
+		return errorx.IllegalArgument.New("URL scheme must be https for security, got: %s", parsedURL.Scheme)
 	}
 
 	// Ensure host is not empty
@@ -189,7 +201,66 @@ func ValidateURL(rawURL string) error {
 		return errorx.IllegalArgument.New("URL must have a valid host")
 	}
 
+	// Extract hostname without port
+	hostname := parsedURL.Hostname()
+	if hostname == "" {
+		return errorx.IllegalArgument.New("URL must have a valid hostname")
+	}
+
+	// Validate against allowed domains - this is our primary security control
+	if !isAllowedDomain(hostname, allowedDomains) {
+		return errorx.IllegalArgument.New("URL host %s is not in the allowed domain list", hostname)
+	}
+
 	return nil
+}
+
+// isASCII checks if a string contains only ASCII characters.
+// This prevents Unicode homograph attacks where visually similar characters
+// from different scripts could be used to spoof trusted domains.
+// For example: "githսb.com" using Armenian 'ս' instead of Latin 'u'.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// isAllowedDomain checks if a hostname is in the allowlist of trusted domains.
+// This implements a domain allowlist strategy to prevent downloads from untrusted sources.
+//
+// SECURITY: This function protects against:
+//  1. Untrusted domain access - only allowlisted domains are permitted
+//  2. Unicode homograph attacks - non-ASCII characters are rejected
+//  3. Case variations - domains are normalized to lowercase
+func isAllowedDomain(hostname string, allowedDomains []string) bool {
+	// Reject non-ASCII hostnames to prevent Unicode homograph attacks
+	// This prevents attacks like using "githսb.com" (Armenian 'ս') instead of "github.com"
+	if !isASCII(hostname) {
+		return false
+	}
+
+	// Normalize hostname to lowercase
+	hostname = strings.ToLower(hostname)
+
+	// Check exact match
+	for _, allowed := range allowedDomains {
+		// Normalize allowed domain to lowercase for robust comparison
+		// This prevents future bugs if uppercase domains are added to the allowlist
+		allowedLower := strings.ToLower(allowed)
+
+		if hostname == allowedLower {
+			return true
+		}
+		// Also check if it's a subdomain of an allowed domain
+		if strings.HasSuffix(hostname, "."+allowedLower) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ValidatePathWithinBase validates that a path is within a specific base directory.
@@ -230,4 +301,57 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	}
 
 	return cleanTarget, nil
+}
+
+// ValidateInputFile validates a file path intended for reading user-provided input files.
+//
+// This function provides comprehensive validation to prevent path traversal attacks
+// and ensure the file is safe to read. It:
+//  1. Converts relative paths to absolute paths
+//  2. Sanitizes the path to prevent path traversal and shell injection
+//  3. Verifies the file exists
+//  4. Ensures the path points to a regular file (not a directory, device, socket, etc.)
+//
+// This is designed to be used in defense-in-depth scenarios where the same validation
+// is applied at multiple layers (CLI entry point and internal APIs).
+//
+// Returns the sanitized absolute path or an error if validation fails.
+func ValidateInputFile(filePath string) (string, error) {
+	if filePath == "" {
+		return "", errorx.IllegalArgument.New("file path cannot be empty")
+	}
+
+	// Convert to absolute path if not already
+	absPath := filePath
+	if !filepath.IsAbs(filePath) {
+		var err error
+		absPath, err = filepath.Abs(filePath)
+		if err != nil {
+			return "", errorx.IllegalArgument.Wrap(err, "failed to resolve file path: %s", filePath)
+		}
+	}
+
+	// Sanitize the path to prevent path traversal and shell injection attacks
+	sanitizedPath, err := SanitizePath(absPath)
+	if err != nil {
+		return "", errorx.IllegalArgument.Wrap(err, "invalid file path: %s", filePath)
+	}
+
+	// Verify file exists and get file info
+	fileInfo, err := os.Stat(sanitizedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errorx.IllegalArgument.New("file does not exist: %s", sanitizedPath)
+		}
+		return "", errorx.InternalError.Wrap(err, "failed to stat file: %s", sanitizedPath)
+	}
+
+	// Ensure it's a regular file (not a directory, device, socket, etc.).
+	// Symlinks are followed; symlinks to regular files are allowed.
+	// This prevents attacks using special files like /dev/zero or named pipes.
+	if !fileInfo.Mode().IsRegular() {
+		return "", errorx.IllegalArgument.New("path is not a regular file: %s", sanitizedPath)
+	}
+
+	return sanitizedPath, nil
 }

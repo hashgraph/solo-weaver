@@ -255,7 +255,7 @@ func TestUnixManager_CreateDirectory(t *testing.T) {
 	// Assert recursive directory creation.
 	err = manager.CreateDirectory(missingParent, true)
 	assert.NoError(err)
-	defer Remove(path.Join(tmpDir, "missing-parent"))
+	defer RemoveAll(path.Join(tmpDir, "missing-parent"))
 
 	assert.DirExists(missingParent)
 }
