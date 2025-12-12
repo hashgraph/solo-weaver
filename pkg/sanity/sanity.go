@@ -64,15 +64,26 @@ func filterValidIdentifierChars(s string) (string, int) {
 	return string(sb[:j]), j
 }
 
-// Filename sanitize the input string to be safe filename
-// It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens
-// It returns error if the filename is empty string after the sanitization
-func Filename(s string) (string, error) {
+// Identifier validates and sanitizes a string to be a safe identifier.
+// It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens.
+// This is useful for validating module names, filenames, usernames, and other identifiers.
+// Returns an error if the identifier is empty or contains no valid characters after sanitization.
+func Identifier(s string) (string, error) {
 	sanitized, count := filterValidIdentifierChars(s)
 	if count == 0 {
 		return "", ErrInvalidFilename
 	}
 	return sanitized, nil
+}
+
+// Filename is an alias for Identifier
+func Filename(s string) (string, error) {
+	return Identifier(s)
+}
+
+// ModuleName is an alias for Identifier
+func ModuleName(s string) (string, error) {
+	return Identifier(s)
 }
 
 // Username validates and sanitizes a username string to prevent security vulnerabilities.
