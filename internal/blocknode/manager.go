@@ -15,6 +15,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -286,35 +287,48 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 	return nil
 }
 
-// ComputeValuesFile generates the values file for helm installation based on profile
-// It provides the path to the generated values file
+// ComputeValuesFile generates the values file for helm installation based on profile.
+// It provides the path to the generated values file.
+//
+// NOTE: This method implements defense-in-depth validation. Even though the CLI layer
+// validates paths using sanity.ValidateInputFile(), this method also validates to ensure
+// safety regardless of the caller. This protects against future code changes where this
+// method might be called from other places without proper validation.
 func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, error) {
 	var valuesContent []byte
 	var err error
+
 	if valuesFile == "" {
-		// Choose the appropriate values file based on profile
+		// Use embedded template based on profile
 		valuesTemplatePath := ValuesPath
 		if profile == core.ProfileLocal {
 			valuesTemplatePath = NanoValuesPath
 			logx.As().Info().Msg("Using nano values configuration for local profile")
 		}
 
-		// Read the values file template
 		valuesContent, err = templates.Read(valuesTemplatePath)
 		if err != nil {
 			return "", errorx.InternalError.Wrap(err, "failed to read block node values template")
 		}
 	} else {
-		// Read the provided values file
-		valuesContent, err = os.ReadFile(valuesFile)
+		// Defense-in-depth: validate even though CLI layer already validated
+		// This ensures safety if this method is called from other contexts
+		sanitizedPath, err := sanity.ValidateInputFile(valuesFile)
 		if err != nil {
-			return "", errorx.InternalError.Wrap(err, "failed to read provided values file: %s", valuesFile)
+			return "", err
 		}
+
+		valuesContent, err = os.ReadFile(sanitizedPath)
+		if err != nil {
+			return "", errorx.InternalError.Wrap(err, "failed to read provided values file: %s", sanitizedPath)
+		}
+
+		logx.As().Info().Str("path", sanitizedPath).Msg("Using custom values file")
 	}
 
-	// make a temporary copy of the values content
+	// Write temporary copy to weaver's temp directory
 	valuesFilePath := path.Join(core.Paths().TempDir, "block-node-values.yaml")
-	if err = os.WriteFile(valuesFilePath, []byte(valuesContent), core.DefaultFilePerm); err != nil {
+	if err = os.WriteFile(valuesFilePath, valuesContent, core.DefaultFilePerm); err != nil {
 		return "", errorx.InternalError.Wrap(err, "failed to write block node values file")
 	}
 

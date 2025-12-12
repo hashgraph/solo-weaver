@@ -4,6 +4,7 @@ package sanity
 
 import (
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -300,4 +301,57 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	}
 
 	return cleanTarget, nil
+}
+
+// ValidateInputFile validates a file path intended for reading user-provided input files.
+//
+// This function provides comprehensive validation to prevent path traversal attacks
+// and ensure the file is safe to read. It:
+//  1. Converts relative paths to absolute paths
+//  2. Sanitizes the path to prevent path traversal and shell injection
+//  3. Verifies the file exists
+//  4. Ensures the path points to a regular file (not a directory, device, socket, etc.)
+//
+// This is designed to be used in defense-in-depth scenarios where the same validation
+// is applied at multiple layers (CLI entry point and internal APIs).
+//
+// Returns the sanitized absolute path or an error if validation fails.
+func ValidateInputFile(filePath string) (string, error) {
+	if filePath == "" {
+		return "", errorx.IllegalArgument.New("file path cannot be empty")
+	}
+
+	// Convert to absolute path if not already
+	absPath := filePath
+	if !filepath.IsAbs(filePath) {
+		var err error
+		absPath, err = filepath.Abs(filePath)
+		if err != nil {
+			return "", errorx.IllegalArgument.Wrap(err, "failed to resolve file path: %s", filePath)
+		}
+	}
+
+	// Sanitize the path to prevent path traversal and shell injection attacks
+	sanitizedPath, err := SanitizePath(absPath)
+	if err != nil {
+		return "", errorx.IllegalArgument.Wrap(err, "invalid file path: %s", filePath)
+	}
+
+	// Verify file exists and get file info
+	fileInfo, err := os.Stat(sanitizedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errorx.IllegalArgument.New("file does not exist: %s", sanitizedPath)
+		}
+		return "", errorx.InternalError.Wrap(err, "failed to stat file: %s", sanitizedPath)
+	}
+
+	// Ensure it's a regular file (not a directory, device, socket, etc.).
+	// Symlinks are followed; symlinks to regular files are allowed.
+	// This prevents attacks using special files like /dev/zero or named pipes.
+	if !fileInfo.Mode().IsRegular() {
+		return "", errorx.IllegalArgument.New("path is not a regular file: %s", sanitizedPath)
+	}
+
+	return sanitizedPath, nil
 }
