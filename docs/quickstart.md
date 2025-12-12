@@ -4,7 +4,7 @@ Below is a quickstart guide to get you up and running with Solo Weaver.
 
 ## Prerequisites
 
-- A Unix-like operating system (Linux)
+- Unix operating system (Tested on: Debian 13.1.0, Ubuntu 22.04)
 - `curl` installed
 
 ## Install
@@ -23,16 +23,16 @@ weaver --help
 
 ## Configuration
 
-Solo Weaver accepts a configuration file. _See the documentation or comments in `test/config/config.yaml` for
-all options._
+Solo Weaver accepts a configuration file. See the documentation or comments in sample [config.yaml](../test/config/config.yaml) for
+all options.
 
 ## Setup Block Node
 
 Solo Weaver deploys a Kubernetes cluster and deploys a Hedera Block Node on it using a Helm chart. It comes with
-pre-configured profiles for local development, mainnet, and testnet.
+pre-configured profiles for local, mainnet, and testnet deployment mode.
 
 ```
-$ ./weaver block node -h
+$ weaver block node -h
 Manage lifecycle of a Hedera Block Node
 
 Usage:
@@ -60,7 +60,7 @@ Also, if you would like to use custom BlockNode configurations, you can create a
 chart and pass using `--values` flag
 
 ```
-$ ./weaver-linux-arm64 block node install -h
+$ weaver block node install -h
 Run safety checks, setup a K8s cluster and install a Hedera Block Node
 
 Usage:
@@ -83,7 +83,10 @@ Global Flags:
 To set up a block node, run (use appropriate profile and values file as required):
 
 ``` 
-weaver block node install --profile <local | mainnet | testnet> --values <custom-values-file>
+sudo weaver block node install --profile <local | mainnet | testnet> --values <custom-values-file>
+
+# For example to deploy with a 'local' profile (local dev testing), run the below command:
+# sudo solo weaver block node install --profile=local 
 ```
 
-_This command will take a while to complete as it sets up the entire environment._
+This command will take a while (~5mins) to complete as it sets up the entire environment. Keep an eye on the console logs.
