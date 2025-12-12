@@ -20,77 +20,104 @@ func TestModule_Load_Integration(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		moduleName  string
-		persist     bool
-		expectError bool
+		name                 string
+		moduleName           string
+		persist              bool
+		expectNewModuleError bool
+		expectLoadError      bool
 	}{
 		{
-			name:        "load dummy module without persistence",
-			moduleName:  "dummy",
-			persist:     false,
-			expectError: false,
+			name:                 "load dummy module without persistence",
+			moduleName:           "dummy",
+			persist:              false,
+			expectNewModuleError: false,
+			expectLoadError:      false,
 		},
 		{
-			name:        "load dummy module with persistence",
-			moduleName:  "dummy",
-			persist:     true,
-			expectError: false,
+			name:                 "load dummy module with persistence",
+			moduleName:           "dummy",
+			persist:              true,
+			expectNewModuleError: false,
+			expectLoadError:      false,
 		},
 		{
-			name:        "load nonexistent module",
-			moduleName:  "nonexistent_module_12345",
-			persist:     false,
-			expectError: true,
+			name:                 "load nonexistent module",
+			moduleName:           "nonexistent_module_12345",
+			persist:              false,
+			expectNewModuleError: false,
+			expectLoadError:      true,
 		},
 		{
-			name:        "load invalid module name with persistence",
-			moduleName:  "invalid-module!@#",
-			persist:     true,
-			expectError: true,
+			name:                 "load invalid module name with persistence",
+			moduleName:           "invalid-module!@#",
+			persist:              true,
+			expectNewModuleError: true,
+			expectLoadError:      false, // won't get to Load() if NewModule fails
 		},
 		{
-			name:        "load overlay module with persistence",
-			moduleName:  "overlay",
-			persist:     true,
-			expectError: false,
+			name:                 "load overlay module with persistence",
+			moduleName:           "overlay",
+			persist:              true,
+			expectNewModuleError: false,
+			expectLoadError:      false,
 		},
 		{
-			name:        "load overlay module without persistence",
-			moduleName:  "overlay",
-			persist:     false,
-			expectError: false,
+			name:                 "load overlay module without persistence",
+			moduleName:           "overlay",
+			persist:              false,
+			expectNewModuleError: false,
+			expectLoadError:      false,
 		},
 		{
-			name:        "load br_netfilter module persistence",
-			moduleName:  "br_netfilter",
-			persist:     true,
-			expectError: false,
+			name:                 "load br_netfilter module persistence",
+			moduleName:           "br_netfilter",
+			persist:              true,
+			expectNewModuleError: false,
+			expectLoadError:      false,
 		},
 		{
-			name:        "load br_netfilter module without persistence",
-			moduleName:  "br_netfilter",
-			persist:     false,
-			expectError: false,
+			name:                 "load br_netfilter module without persistence",
+			moduleName:           "br_netfilter",
+			persist:              false,
+			expectNewModuleError: false,
+			expectLoadError:      false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			module, err := NewModule(tt.moduleName)
+
+			// Check NewModule error expectation
+			if tt.expectNewModuleError {
+				if err == nil {
+					t.Errorf("expected NewModule(%s) to fail, but it succeeded", tt.moduleName)
+					_ = module.Unload(true) // cleanup in case of unexpected success
+				} else {
+					t.Logf("expected NewModule error occurred: %v", err)
+				}
+				return // Test complete - we expected NewModule to fail
+			}
+
+			// NewModule should have succeeded
 			if err != nil {
-				t.Fatalf("failed to create module: %v", err)
+				t.Fatalf("unexpected error creating module %s: %v", tt.moduleName, err)
 			}
 
 			_ = module.Unload(true) // ignore errors on cleanup
 
 			err = module.Load(tt.persist)
 
-			if tt.expectError {
+			// Check Load error expectation
+			if tt.expectLoadError {
 				if err == nil {
-					t.Errorf("expected error loading module %s, but got none", tt.moduleName)
+					t.Errorf("expected Load() for module %s to fail, but it succeeded", tt.moduleName)
+					// Clean up: unload the module to prevent test interference
+					if cleanupErr := module.Unload(true); cleanupErr != nil {
+						t.Logf("warning: failed to clean up module %s after unexpected Load success: %v", tt.moduleName, cleanupErr)
+					}
 				} else {
-					t.Logf("expected error occurred: %v", err)
+					t.Logf("expected Load error occurred: %v", err)
 				}
 			} else {
 				if err != nil {
