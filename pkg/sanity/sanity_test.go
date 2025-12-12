@@ -3,6 +3,8 @@
 package sanity
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -1397,4 +1399,190 @@ func TestSanity_ValidatePathWithinBase(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSanity_ValidateInputFile(t *testing.T) {
+	// Create a temporary directory and test files for testing
+	tmpDir := t.TempDir()
+
+	// Create a valid test file
+	validFile := filepath.Join(tmpDir, "valid-file.yaml")
+	err := os.WriteFile(validFile, []byte("test: data\n"), 0644)
+	require.NoError(t, err)
+
+	// Create a test directory (not a file)
+	testDir := filepath.Join(tmpDir, "test-directory")
+	err = os.Mkdir(testDir, 0755)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name     string
+		filePath string
+		wantErr  bool
+		errMsg   string
+	}{
+		// Valid cases
+		{
+			name:     "valid absolute path to existing file",
+			filePath: validFile,
+			wantErr:  false,
+		},
+
+		// Invalid cases - empty path
+		{
+			name:     "empty file path",
+			filePath: "",
+			wantErr:  true,
+			errMsg:   "file path cannot be empty",
+		},
+
+		// Invalid cases - path traversal attacks
+		{
+			name:     "path traversal with double dots",
+			filePath: tmpDir + "/../../../etc/passwd",
+			wantErr:  true,
+			errMsg:   "path cannot contain '..' segments",
+		},
+		{
+			name:     "path traversal in middle",
+			filePath: "/tmp/../etc/passwd",
+			wantErr:  true,
+			errMsg:   "path cannot contain '..' segments",
+		},
+		{
+			name:     "path ending with double dots",
+			filePath: "/tmp/test/..",
+			wantErr:  true,
+			errMsg:   "path cannot contain '..' segments",
+		},
+
+		// Invalid cases - shell metacharacters
+		{
+			name:     "path with semicolon",
+			filePath: "/tmp/test;rm -rf /",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with pipe",
+			filePath: "/tmp/test|cat",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with backtick",
+			filePath: "/tmp/test`whoami`",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with dollar sign",
+			filePath: "/tmp/test$HOME",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+		{
+			name:     "path with ampersand",
+			filePath: "/tmp/test&background",
+			wantErr:  true,
+			errMsg:   "path contains shell metacharacters",
+		},
+
+		// Invalid cases - non-existent file
+		{
+			name:     "non-existent file",
+			filePath: filepath.Join(tmpDir, "this-file-does-not-exist-12345.yaml"),
+			wantErr:  true,
+			errMsg:   "file does not exist",
+		},
+
+		// Invalid cases - not a regular file
+		{
+			name:     "path is a directory",
+			filePath: testDir,
+			wantErr:  true,
+			errMsg:   "path is not a regular file",
+		},
+		{
+			name:     "special device file",
+			filePath: "/dev/null",
+			wantErr:  true,
+			errMsg:   "path is not a regular file",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := ValidateInputFile(tc.filePath)
+
+			if tc.wantErr {
+				require.Error(t, err, "expected error for filePath=%s", tc.filePath)
+				if tc.errMsg != "" {
+					require.Contains(t, err.Error(), tc.errMsg, "error message should contain: %s", tc.errMsg)
+				}
+			} else {
+				require.NoError(t, err, "expected no error for filePath=%s", tc.filePath)
+				require.NotEmpty(t, result, "result should not be empty")
+				// Verify the result is an absolute path
+				require.True(t, filepath.IsAbs(result), "result should be an absolute path")
+			}
+		})
+	}
+}
+
+func TestSanity_ValidateInputFile_RelativePath(t *testing.T) {
+	// Create a temporary directory and test file
+	tmpDir := t.TempDir()
+	validFile := filepath.Join(tmpDir, "test-file.yaml")
+	err := os.WriteFile(validFile, []byte("test: data\n"), 0644)
+	require.NoError(t, err)
+
+	// Change to the temp directory
+	originalDir, err := os.Getwd()
+	require.NoError(t, err)
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	// Test with relative path
+	result, err := ValidateInputFile("test-file.yaml")
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(result), "result should be converted to absolute path")
+	require.Contains(t, result, "test-file.yaml", "result should contain the filename")
+}
+
+func TestSanity_ValidateInputFile_Symlink(t *testing.T) {
+	// Create a temporary directory
+	tmpDir := t.TempDir()
+
+	// Create a regular file
+	targetFile := filepath.Join(tmpDir, "target.yaml")
+	err := os.WriteFile(targetFile, []byte("test: data\n"), 0644)
+	require.NoError(t, err)
+
+	// Create a symlink to the regular file
+	symlinkPath := filepath.Join(tmpDir, "symlink.yaml")
+	err = os.Symlink(targetFile, symlinkPath)
+	require.NoError(t, err)
+
+	// ValidateInputFile follows symlinks (using os.Stat, not os.Lstat)
+	// If the symlink points to a regular file, it's accepted
+	result, err := ValidateInputFile(symlinkPath)
+	require.NoError(t, err, "symlinks to regular files should be accepted")
+	require.NotEmpty(t, result)
+
+	// Create a symlink to a directory (should be rejected)
+	err = os.Mkdir(filepath.Join(tmpDir, "target-dir"), 0755)
+	require.NoError(t, err)
+
+	symlinkToDir := filepath.Join(tmpDir, "symlink-to-dir")
+	err = os.Symlink(filepath.Join(tmpDir, "target-dir"), symlinkToDir)
+	require.NoError(t, err)
+
+	_, err = ValidateInputFile(symlinkToDir)
+	require.Error(t, err, "symlinks to directories should be rejected")
+	require.Contains(t, err.Error(), "path is not a regular file")
 }
