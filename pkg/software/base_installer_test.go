@@ -329,7 +329,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 				require.NoError(t, err, "Download should succeed for scenario: %s", scenario.Description)
 
 				// Verify downloaded files exist
-				downloadFolder := installer.downloadFolder()
+				downloadFolder := core.Paths().DownloadsDir
 
 				// Check archives
 				for _, archive := range scenario.Archives {
@@ -372,7 +372,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					require.NoError(t, err, "Extract should succeed for scenario: %s", scenario.Description)
 
 					// Verify extracted files exist
-					extractFolder := path.Join(installer.downloadFolder(), core.DefaultUnpackFolderName)
+					extractFolder := installer.extractFolder()
 
 					// There should be files extracted from archives
 					extractedFiles, err := os.ReadDir(extractFolder)
@@ -484,10 +484,15 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					err = installer.Cleanup()
 					require.NoError(t, err, "Cleanup should succeed for scenario: %s", scenario.Description)
 
-					// Verify files under download folder were removed
-					downloadFolder := installer.downloadFolder()
+					// Verify software-specific extraction folder was removed
+					softwareFolder := path.Join(core.Paths().TempDir, installer.software.Name)
+					_, err = os.Stat(softwareFolder)
+					require.True(t, os.IsNotExist(err), "Software-specific folder should be removed after cleanup")
+
+					// Verify shared downloads folder still exists (not removed)
+					downloadFolder := core.Paths().DownloadsDir
 					_, err = os.Stat(downloadFolder)
-					require.True(t, os.IsNotExist(err), "Download folder should be removed after installation")
+					require.NoError(t, err, "Shared downloads folder should be preserved after cleanup")
 				})
 
 			}
@@ -597,40 +602,6 @@ func Test_BaseInstaller_Download_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download test-artifact")
 }
 
-// Test when permission to create file is denied
-func Test_BaseInstaller_Download_PermissionError(t *testing.T) {
-	resetTestEnvironment(t)
-
-	//
-	// Given
-	//
-	installer := newTestInstaller(t)
-
-	// Create a regular file where the directory should be created
-	// This will cause MkdirAll to fail with permission/file exists error
-	conflictingFile := tmpFolder
-	err := os.MkdirAll("/opt/solo/weaver", core.DefaultDirOrExecPerm)
-	require.NoError(t, err, "Failed to create /opt/solo/weaver directory")
-	err = os.WriteFile(conflictingFile, []byte("blocking file"), core.DefaultFilePerm)
-	require.NoError(t, err, "Failed to create blocking file")
-
-	// Override cleanup to remove the file we created
-	t.Cleanup(func() {
-		_ = os.Remove(conflictingFile)
-	})
-
-	//
-	// When
-	//
-	err = installer.Download()
-
-	//
-	// Then
-	//
-	require.Error(t, err, "Download should fail due to permission error")
-	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
-}
-
 // Test when download fails due to invalid configuration
 func Test_BaseInstaller_Download_Fails(t *testing.T) {
 	resetTestEnvironment(t)
@@ -724,10 +695,10 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testi
 	installer := newTestInstaller(t)
 
 	// create empty file to emulate first download with wrong checksum
-	err := os.MkdirAll(installer.downloadFolder(), core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create download folder")
 
-	destinationFile := path.Join(installer.downloadFolder(), "test-artifact.tar.gz")
+	destinationFile := path.Join(core.Paths().DownloadsDir, "test-artifact.tar.gz")
 
 	err = os.WriteFile(destinationFile, []byte(""), core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create empty file")

@@ -83,7 +83,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 // Download handles the common download logic with checksum verification
 // It downloads all archives, binaries (with URLs), and config files if available.
 func (b *baseInstaller) Download() error {
-	downloadFolder := b.downloadFolder()
+	downloadFolder := core.Paths().DownloadsDir
 
 	// Create download folder if it doesn't exist
 	err := b.fileManager.CreateDirectory(downloadFolder, true)
@@ -149,7 +149,7 @@ func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(b.downloadFolder(), archiveName)
+	destinationFile := path.Join(core.Paths().DownloadsDir, archiveName)
 
 	// Get expected checksum for this archive
 	osInfo, exists := archive.PlatformChecksum[platform.os]
@@ -233,7 +233,7 @@ func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(b.downloadFolder(), binaryName)
+	destinationFile := path.Join(core.Paths().DownloadsDir, binaryName)
 
 	// Get expected checksum for this binary
 	osInfo, exists := binary.PlatformChecksum[platform.os]
@@ -287,7 +287,7 @@ func (b *baseInstaller) downloadConfigs() error {
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(b.downloadFolder(), config.Name)
+		configFile := path.Join(core.Paths().DownloadsDir, config.Name)
 
 		// Check if file already exists and verify checksum
 		_, exists, err := b.fileManager.PathExists(configFile)
@@ -328,8 +328,7 @@ func (b *baseInstaller) Extract() error {
 		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
 	}
 
-	downloadFolder := b.downloadFolder()
-	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+	extractFolder := b.extractFolder()
 
 	// Check if extraction folder already exists and has content
 	entries, err := os.ReadDir(extractFolder)
@@ -393,7 +392,7 @@ func (b *baseInstaller) extractArchive(archive ArchiveDetail, extractFolder stri
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	compressedFile := path.Join(b.downloadFolder(), archiveName)
+	compressedFile := path.Join(core.Paths().DownloadsDir, archiveName)
 
 	// Verify that the compressed file exists
 	_, exists, err := b.fileManager.PathExists(compressedFile)
@@ -433,8 +432,7 @@ func (b *baseInstaller) verifyExtractedBinaries() error {
 		ARCH:    platform.arch,
 	}
 
-	downloadFolder := b.downloadFolder()
-	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+	extractFolder := b.extractFolder()
 
 	// Verify each binary that comes from an archive
 	for _, binary := range versionInfo.BinariesByArchive() {
@@ -489,8 +487,7 @@ func (b *baseInstaller) verifyExtractedConfigs() error {
 		ARCH:    platform.arch,
 	}
 
-	downloadFolder := b.downloadFolder()
-	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+	extractFolder := b.extractFolder()
 
 	// Verify each config that comes from an archive
 	for _, cfg := range versionInfo.ConfigsByArchive() {
@@ -555,8 +552,8 @@ func (b *baseInstaller) performInstall() error {
 		return NewInstallationError(err, "", sandboxBinDir)
 	}
 
-	downloadFolder := b.downloadFolder()
-	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+	downloadFolder := core.Paths().DownloadsDir
+	extractFolder := b.extractFolder()
 
 	// Install all binaries
 	for _, binary := range versionInfo.Binaries {
@@ -619,8 +616,8 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
 	}
 
-	downloadFolder := b.downloadFolder()
-	extractFolder := path.Join(downloadFolder, core.DefaultUnpackFolderName)
+	downloadFolder := core.Paths().DownloadsDir
+	extractFolder := b.extractFolder()
 
 	// Install each config file into the sandbox
 	for _, config := range configs {
@@ -776,9 +773,9 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 	return nil
 }
 
-// downloadFolder returns the download folder path for the software
-func (b *baseInstaller) downloadFolder() string {
-	return path.Join(core.Paths().TempDir, b.software.Name)
+// extractFolder returns the software-specific extraction folder path
+func (b *baseInstaller) extractFolder() string {
+	return path.Join(core.Paths().TempDir, b.software.Name, core.DefaultUnpackFolderName)
 }
 
 // Version returns the version being installed
@@ -892,13 +889,15 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 }
 
 // Cleanup performs any necessary cleanup after installation
+// It only removes the extraction folder, keeping downloaded files for reuse
 func (b *baseInstaller) Cleanup() error {
-	downloadFolder := b.downloadFolder()
+	extractFolder := path.Join(core.Paths().TempDir, b.software.Name)
 
-	// Clean up download and extract folders if installation succeeded
-	err := b.fileManager.RemoveAll(downloadFolder)
+	// Clean up only the software-specific extraction folder
+	// The shared downloads folder is preserved to enable checksum-based caching
+	err := b.fileManager.RemoveAll(extractFolder)
 	if err != nil {
-		return NewCleanupError(err, downloadFolder)
+		return NewCleanupError(err, extractFolder)
 	}
 
 	return nil

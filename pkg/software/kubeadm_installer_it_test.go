@@ -32,13 +32,13 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download kubeadm and/or its configuration")
 
-	// Verify downloaded files exist
-	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/kubeadm/kubeadm")
+	// Verify downloaded files exist in the shared downloads folder
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/downloads/kubeadm")
 	require.NoError(t, err)
 	require.True(t, exists, "kubeadm binary should exist in download folder")
 
 	// Check config file exists (10-kubeadm.conf)
-	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/kubeadm/10-kubeadm.conf")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/downloads/10-kubeadm.conf")
 	require.NoError(t, err)
 	require.True(t, exists, "10-kubeadm.conf should exist in download folder")
 
