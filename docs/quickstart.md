@@ -23,9 +23,8 @@ weaver --help
 
 ## Configuration
 
-Solo Weaver accepts a configuration file. _See the documentation or comments in `test/config/config.example.yaml` for
-all
-options._
+Solo Weaver accepts a configuration file. _See the documentation or comments in `test/config/config.yaml` for
+all options._
 
 ## Setup Block Node
 
