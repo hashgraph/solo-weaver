@@ -51,18 +51,18 @@ tasks:
     dir: scripts
     cmds:
       - "./license-header.sh check"
-
+  
   license:add:
     desc: "Add SPDX license headers to source files that are missing them"
     dir: scripts
     cmds:
       - "./license-header.sh add"
-
+  
   license:
     desc: "Alias for license:add - Add SPDX license headers to source files"
     cmds:
       - task: license:add
-
+  
   build:
     deps:
       - "vendor"
@@ -265,7 +265,7 @@ tasks:
         {{end}}
         
         exit $status
-
+  
   test:coverage:
     desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
     vars:
@@ -476,9 +476,9 @@ tasks:
       - task: vm:download:golden
   
   vm:download:golden:
-    desc: "Download pre-built golden VM image from URL"
+    desc: "Download pre-built golden VM image from URL. Use FORCE to force re-downloading, e.g., task vm:download:golden FORCE=true"
     env:
-      FORCE : '{{.FORCE | default "false"}}'
+      FORCE: '{{.FORCE | default "false"}}'
     cmds:
       - |
         echo "Checking if golden VM already exists..."
@@ -499,9 +499,10 @@ tasks:
           # if the .utm file exists in UTM_VMS_DIR, skip download
           echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
           if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
-            echo "✓ Golden VM already exists in UTM directory, please restart UTM to reload VMs."
-            exit 1
-          else:
+            echo "✓ Golden VM already exists in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+            echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory (`open -a UTM`)."
+            exit 0
+          else
             echo "✓ No existing golden VM found, proceeding to download."
           fi
         fi
@@ -541,7 +542,7 @@ tasks:
         echo "Downloading to temporary directory: $TEMP_DIR"
         
         TMP_FILE="$TEMP_DIR/download.tar.gz"
-  
+        
         # Download the golden image
         if ! curl -fL -o "$TMP_FILE" "$GOLDEN_IMAGE_URL"; then
           echo "❌ Failed to download the golden VM image from $GOLDEN_IMAGE_URL"
@@ -556,7 +557,7 @@ tasks:
           echo "❌ No .utm entry found inside $GOLDEN_IMAGE_URL"
           exit 1
         fi
-      
+        
         # Normalize to a known path for the rest of the script
         mv "$UTM_PATH" "$TEMP_DIR/golden-image.utm"
         echo "✓ Downloaded and prepared golden image at $TEMP_DIR/golden-image.utm"
@@ -564,12 +565,9 @@ tasks:
         # Copy the VM to UTM directory and rename
         cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
         
-        # Import the VM into UTM
-        echo "Importing VM into UTM..."
-        open -a UTM
-        sleep 5
-        
-        echo "✓ Golden VM downloaded and imported successfully: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+        echo "✓ Golden VM downloaded successfully and placed in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+        echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory (`open -a UTM`)."
+        exit 0
   
   vm:reset:
     desc: "Clone the golden VM to create a working instance with passwordless SSH"
@@ -618,7 +616,7 @@ tasks:
       - task: vm:configure:ssh
       - task: proxy:install-ca-cert
       - cmd: echo "✓ VM reset and configured successfully with proxy support."
-
+  
   vm:start:
     desc: "Start the working VM instance"
     deps:
@@ -660,7 +658,7 @@ tasks:
           echo "⚠️  VM may not be fully ready after 2 minutes, but continuing..."
         fi
       - task: vm:ssh:port-forward
-
+  
   vm:ssh:port-forward:
     desc: "Forward port 2222 to 22 on the VM for debugging purposes"
     internal: true
@@ -685,14 +683,14 @@ tasks:
         # Forward port 2222 to 22 on the VM
         ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
         echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
-
+  
   vm:configure:
     internal: true
     desc: "Configure the VM with SSH, sudo, and mounts (full configuration)"
     cmds:
       - task: vm:configure:ssh
       - task: vm:configure:tools
-
+  
   vm:configure:ssh:
     internal: true
     desc: "Configure SSH access, sudo, and mounts (runs before proxy setup)"
@@ -823,7 +821,7 @@ tasks:
         
           echo "✓ Shared directory mounted at /mnt/solo-weaver"
         "
-
+  
   vm:configure:tools:
     internal: true
     desc: "Install development tools (Git, Task, Go, Delve) - runs after proxy tunnels are set up"
@@ -853,7 +851,7 @@ tasks:
         
           echo '✓ Development tools installed successfully!'
         "
-
+  
   vm:ensure-exists:
     desc: "Ensure the working VM exists, creating it if necessary"
     internal: true
@@ -889,7 +887,7 @@ tasks:
         echo "Connecting to VM at $VM_IP..."
         env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
-
+  
   vm:test:unit:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
     deps:
@@ -911,7 +909,7 @@ tasks:
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit:verbose
           "
-
+  
   vm:test:integration:
     desc: "Run all integration tests in a UTM VM with cache proxies (useful for testing system-level functionality). Use TEST_NAME to run a specific test, e.g., task vm:test:integration TEST_NAME='^Test_InitializeCluster_Fresh_Integration$'"
     deps:
@@ -967,7 +965,7 @@ tasks:
             sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,PATH \
               task test:integration:verbose TEST_NAME={{.TEST_NAME}}
           "
-
+  
   vm:status:
     desc: "Show status of all VMs"
     cmds:
@@ -1015,11 +1013,11 @@ tasks:
         else
           echo "Golden VM not found or already deleted."
         fi
-
+  
   # =============================================================================
   # Cache Proxy Tasks - Optimize integration test performance
   # =============================================================================
-
+  
   proxy:start:
     desc: "Start cache proxy infrastructure (HTTP/HTTPS proxy, container registry mirror, Go proxy)"
     dir: test/cache-proxy
@@ -1050,7 +1048,7 @@ tasks:
           echo ""
           echo "For CRI-O registry mirror, the registries.conf is installed during test setup."
         fi
-
+  
   proxy:install-ca-cert:
     desc: "Install MITM proxy CA certificate in VM for HTTPS caching"
     deps:
@@ -1096,7 +1094,7 @@ tasks:
           echo ""
           echo "The VM can now use the Squid proxy for HTTPS caching with SSL interception."
           echo "Run: task vm:test:integration"
-
+  
   proxy:rebuild:
     desc: "Rebuild and restart the cache proxy (after code changes)"
     dir: test/cache-proxy
@@ -1125,13 +1123,13 @@ tasks:
         echo "⚠️  IMPORTANT: New CA certificate generated!"
         echo "   Run 'task proxy:install-ca-cert' to install in VM"
         echo "   Or run 'task vm:test:integration' which will install it automatically"
-        
+  
   proxy:stop:
     desc: "Stop the cache proxy server"
     dir: test/cache-proxy
     cmds:
       - docker-compose down
-
+  
   proxy:status:
     desc: "Show cache proxy status and statistics"
     dir: test/cache-proxy
@@ -1146,7 +1144,7 @@ tasks:
           docker exec solo-weaver-cache-proxy du -sh /var/cache/squid 2>/dev/null | awk '{print "  HTTP/HTTPS cache (Squid): " $1}'
           docker exec solo-weaver-registry-mirror du -sh /var/lib/registry 2>/dev/null | awk '{print "  Registry: " $1}' || true
           docker exec solo-weaver-goproxy du -sh /go 2>/dev/null | awk '{print "  Go modules: " $1}' || true
-          
+        
           echo ""
           echo "Large-object cache stats (>1MB):"
           if docker exec solo-weaver-cache-proxy test -f /var/log/squid/access.log 2>/dev/null; then
@@ -1168,11 +1166,11 @@ tasks:
           else
             echo "  No access log yet"
           fi
-          
+        
           echo ""
           echo "Recent activity (last 10 requests):"
           docker exec solo-weaver-cache-proxy tail -10 /var/log/squid/access.log 2>/dev/null | awk '{print "  " $4 " " $7}' || echo "  No activity yet"
-          
+        
         else
           echo "Cache proxy is not running"
           echo "Start it with: task proxy:start"

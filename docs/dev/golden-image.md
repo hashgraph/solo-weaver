@@ -1,6 +1,10 @@
 # Create the Golden Images
 
-If this is your first time setting up, follow these steps:
+If you are here for the first time, you can skip this and just follow the [quickstart guide](../dev/quickstart.md) to get started with the pre-built golden images.
+
+This guide explains how to create golden images for Debian and Ubuntu. These images are used as base templates for provisioning new VMs in UTM. 
+We don't need to do this often, but it's useful to know how to create and update these images when necessary.
+
 
 ##### Debian Installation
 
