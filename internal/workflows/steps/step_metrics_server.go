@@ -15,13 +15,13 @@ const (
 	MetricsServerNamespace    = "metrics-server"
 	MetricsServerRelease      = "metrics-server"
 	MetricsServerChart        = "metrics-server/metrics-server"
-	MetricsServerChartVersion = "0.8.0"
+	MetricsServerChartVersion = "3.13.0"
 	MetricsServerRepo         = "https://kubernetes-sigs.github.io/metrics-server"
 )
 
-func DeployMetricsServer(values *values.Options) *automa.WorkflowBuilder {
+func DeployMetricsServer(valueOptions *values.Options) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("deploy-metrics-server").Steps(
-		installMetricsServer(values),
+		installMetricsServer(valueOptions),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Deploying Metrics Server")
@@ -35,7 +35,15 @@ func DeployMetricsServer(values *values.Options) *automa.WorkflowBuilder {
 		})
 }
 
-func installMetricsServer(values *values.Options) *automa.StepBuilder {
+func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
+	if valueOptions == nil {
+		valueOptions = &values.Options{
+			Values: []string{
+				"apiService.insecureSkipTLSVerify=true",
+			},
+		}
+	}
+
 	return automa.NewStepBuilder().WithId("enable-metrics-server").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
@@ -74,7 +82,7 @@ func installMetricsServer(values *values.Options) *automa.StepBuilder {
 				chartVersion,
 				MetricsServerNamespace,
 				helm.InstallChartOptions{
-					ValueOpts:       values,
+					ValueOpts:       valueOptions,
 					CreateNamespace: true,
 					Atomic:          true,
 					Wait:            true,

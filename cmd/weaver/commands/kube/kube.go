@@ -1,8 +1,8 @@
 package kube
 
 import (
-	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block/node"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube/cluster"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +19,7 @@ var (
 
 func init() {
 	common.FlagProfile.SetVarP(kubeCmd, &flagProfile, false)
-	kubeCmd.AddCommand(node.GetCmd())
+	kubeCmd.AddCommand(cluster.GetCmd())
 }
 
 func GetCmd() *cobra.Command {
