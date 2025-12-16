@@ -5,6 +5,7 @@ package sanity
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -793,6 +794,11 @@ func TestSanity_SanitizePath(t *testing.T) {
 			expected:  "/var/my-data/test-file",
 			shouldErr: false,
 		},
+		{
+			name:      "relative path",
+			input:     "relative/path",
+			shouldErr: false,
+		},
 
 		// Paths that should be rejected - empty or invalid
 		{
@@ -800,12 +806,6 @@ func TestSanity_SanitizePath(t *testing.T) {
 			input:     "",
 			shouldErr: true,
 			errMsg:    "path cannot be empty",
-		},
-		{
-			name:      "relative path",
-			input:     "relative/path",
-			shouldErr: true,
-			errMsg:    "path must be absolute",
 		},
 
 		// Paths with shell metacharacters - should be rejected
@@ -927,7 +927,7 @@ func TestSanity_SanitizePath(t *testing.T) {
 			name:      "path with tilde expansion attempt",
 			input:     "~/data/test",
 			shouldErr: true,
-			errMsg:    "path must be absolute",
+			errMsg:    "path contains shell metacharacters",
 		},
 
 		// Paths with traversal patterns - should be rejected
@@ -1032,7 +1032,16 @@ func TestSanity_SanitizePath(t *testing.T) {
 				}
 			} else {
 				req.NoError(err, "expected no error for input: %s", tc.input)
-				req.Equal(tc.expected, result, "output should match expected")
+				if tc.expected != "" {
+					req.Equal(tc.expected, result, "output should match expected")
+				} else if !filepath.IsAbs(tc.input) {
+					// For relative paths without an expected value, verify they are converted to absolute paths
+					req.True(filepath.IsAbs(result), "relative path should be converted to absolute path, got: %s", result)
+					// Verify the result ends with the cleaned input path
+					expectedSuffix := filepath.Clean(tc.input)
+					req.True(strings.HasSuffix(result, expectedSuffix),
+						"absolute path should end with cleaned input path '%s', got: %s", expectedSuffix, result)
+				}
 			}
 		})
 	}
@@ -1585,4 +1594,161 @@ func TestSanity_ValidateInputFile_Symlink(t *testing.T) {
 	_, err = ValidateInputFile(symlinkToDir)
 	require.Error(t, err, "symlinks to directories should be rejected")
 	require.Contains(t, err.Error(), "path is not a regular file")
+}
+
+func TestSanity_ValidateStorageSize(t *testing.T) {
+	testCases := []struct {
+		name        string
+		size        string
+		expectError bool
+		errorMsg    string
+	}{
+		// Valid storage sizes
+		{
+			name:        "valid size: 5Gi",
+			size:        "5Gi",
+			expectError: false,
+		},
+		{
+			name:        "valid size: 10Mi",
+			size:        "10Mi",
+			expectError: false,
+		},
+		{
+			name:        "valid size: 1Ti",
+			size:        "1Ti",
+			expectError: false,
+		},
+		{
+			name:        "valid size: 100Gi",
+			size:        "100Gi",
+			expectError: false,
+		},
+		{
+			name:        "valid size: 1024Mi",
+			size:        "1024Mi",
+			expectError: false,
+		},
+		{
+			name:        "valid size: 500Gi",
+			size:        "500Gi",
+			expectError: false,
+		},
+
+		// Invalid storage sizes - zero values
+		{
+			name:        "zero size: 0Gi",
+			size:        "0Gi",
+			expectError: true,
+			errorMsg:    "storage size must be greater than zero",
+		},
+		{
+			name:        "zero size: 0Mi",
+			size:        "0Mi",
+			expectError: true,
+			errorMsg:    "storage size must be greater than zero",
+		},
+		{
+			name:        "zero size: 0Ti",
+			size:        "0Ti",
+			expectError: true,
+			errorMsg:    "storage size must be greater than zero",
+		},
+		{
+			name:        "zero size with leading zeros: 00Gi",
+			size:        "00Gi",
+			expectError: true,
+			errorMsg:    "storage size must be greater than zero",
+		},
+		{
+			name:        "zero size with multiple zeros: 000Mi",
+			size:        "000Mi",
+			expectError: true,
+			errorMsg:    "storage size must be greater than zero",
+		},
+
+		// Invalid storage sizes - empty
+		{
+			name:        "empty size",
+			size:        "",
+			expectError: true,
+			errorMsg:    "storage size cannot be empty",
+		},
+
+		// Invalid storage sizes - wrong format
+		{
+			name:        "missing unit",
+			size:        "5",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid unit: GB",
+			size:        "5GB",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid unit: gi (lowercase)",
+			size:        "5gi",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid unit: GiB",
+			size:        "5GiB",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid format: decimal number",
+			size:        "5.5Gi",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid format: negative number",
+			size:        "-5Gi",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid format: with spaces",
+			size:        "5 Gi",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid format: unit only",
+			size:        "Gi",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid unit: Ki",
+			size:        "5Ki",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+		{
+			name:        "invalid format: with special chars",
+			size:        "5Gi; rm -rf /",
+			expectError: true,
+			errorMsg:    "storage size must be in format",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateStorageSize(tc.size)
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
