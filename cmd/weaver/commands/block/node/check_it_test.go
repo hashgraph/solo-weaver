@@ -16,7 +16,7 @@ func TestBlocknodeCheckCmd(t *testing.T) {
 	cmd := testutil.PrepareSubCmdForTest(checkCmd)
 
 	// add required flags
-	cmd.PersistentFlags().String(common.FlagProfileName, "", "profile to use for block commands")
+	cmd.PersistentFlags().String(common.FlagProfile.Name, "", "profile to use for block commands")
 
 	// call the subcommand explicitly to avoid test-runner arg interference
 	cmd.SetArgs([]string{"check", "--profile=local"})
