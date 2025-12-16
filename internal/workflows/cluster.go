@@ -12,10 +12,9 @@ import (
 // ClusterSetupOptions defines options for setting up the cluster
 type ClusterSetupOptions struct {
 	EnableMetricsServer bool
-	EnableCertManager   bool
 }
 
-// NewSetupClusterWorkflow creates a workflow to setup a kubernetes cluster
+// NewSetupClusterWorkflow creates a workflow to set up a kubernetes cluster
 func NewSetupClusterWorkflow(opts ClusterSetupOptions) *automa.WorkflowBuilder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
@@ -51,24 +50,12 @@ func NewSetupClusterWorkflow(opts ClusterSetupOptions) *automa.WorkflowBuilder {
 	}
 
 	if opts.EnableMetricsServer {
-		baseSteps = append(baseSteps, steps.DeployCertManager())
-	}
-
-	if opts.EnableCertManager {
 		metricsValues := &values.Options{
 			Values: []string{
 				"apiService.insecureSkipTLSVerify=false",
 				"tls.type=helm",
 			},
 		}
-
-		if opts.EnableMetricsServer {
-			metricsValues.Values = []string{
-				"apiService.insecureSkipTLSVerify=false",
-				"tls.type=cert-manager",
-			}
-		}
-
 		baseSteps = append(baseSteps, steps.DeployMetricsServer(metricsValues))
 	}
 
