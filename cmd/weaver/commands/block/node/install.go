@@ -53,7 +53,6 @@ var installCmd = &cobra.Command{
 		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(
 			flagProfile, validatedValuesFile, workflows.ClusterSetupOptions{
 				EnableMetricsServer: flagMetricsServer,
-				EnableCertManager:   flagCertManager,
 			}))
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
@@ -65,7 +64,6 @@ func init() {
 	installCmd.Flags().StringVarP(
 		&flagValuesFile, "values", "f", "", "Values file")
 	installCmd.Flags().BoolVarP(&flagMetricsServer, "metrics-server", "", false, "Install Metrics Server")
-	installCmd.Flags().BoolVarP(&flagCertManager, "cert-manager", "", false, "Install Cert Manager")
 }
 
 // applyConfigOverrides applies flag values to override the configuration.
