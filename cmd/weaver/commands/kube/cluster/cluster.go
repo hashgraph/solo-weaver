@@ -8,7 +8,6 @@ import (
 )
 
 var (
-	flagValuesFile    string
 	flagMetricsServer bool
 
 	clusterCmd = &cobra.Command{

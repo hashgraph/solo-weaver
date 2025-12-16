@@ -20,6 +20,10 @@ var checkCmd = &cobra.Command{
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}
 
+		if flagProfile == "" {
+			return errorx.IllegalArgument.New("profile flag is required")
+		}
+
 		logx.As().Debug().
 			Strs("args", args).
 			Str("nodeType", nodeType).
