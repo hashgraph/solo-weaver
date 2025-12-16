@@ -9,12 +9,13 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
 )
 
 func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -31,17 +32,20 @@ func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download helm and/or its configuration")
 
-	// Verify downloaded files exist
-	files, err := os.ReadDir("/opt/solo/weaver/tmp/helm")
+	// Verify downloaded files exist in the shared downloads folder
+	files, err := os.ReadDir("/opt/solo/weaver/downloads")
 	require.NoError(t, err)
 
-	require.Equal(t, 1, len(files), "There should be exactly one file in the download directory")
-	// Check that the downloaded file has the expected name format by regex
-	require.Regexp(t,
-		regexp.MustCompile(`^helm-v[0-9]+\.[0-9]+\.[0-9]+-[^-]+-[^-]+\.tar\.gz$`),
-		files[0].Name(),
-		"Downloaded file name should match expected pattern",
-	)
+	require.GreaterOrEqual(t, len(files), 1, "There should be at least one file in the download directory")
+	// Check that the downloaded helm file exists with expected name format by regex
+	var foundHelm bool
+	for _, file := range files {
+		if regexp.MustCompile(`^helm-v[0-9]+\.[0-9]+\.[0-9]+-[^-]+-[^-]+\.tar\.gz$`).MatchString(file.Name()) {
+			foundHelm = true
+			break
+		}
+	}
+	require.True(t, foundHelm, "Downloaded helm file should exist with expected pattern")
 
 	//
 	// When - Extract

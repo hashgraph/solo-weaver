@@ -9,12 +9,13 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
 )
 
 func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -31,8 +32,8 @@ func Test_KubectlInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download kubectl and/or its configuration")
 
-	// Verify downloaded files exist
-	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/kubectl/kubectl")
+	// Verify downloaded files exist in the shared downloads folder
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/downloads/kubectl")
 	require.NoError(t, err)
 	require.True(t, exists, "kubectl binary should exist in download folder")
 

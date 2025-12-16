@@ -170,8 +170,8 @@ TARGET_CHECKSUM="$TARGET_BINARY.sha256"
 BINARY_ID=$(extract_asset_id "$TMP_JSON" "$TARGET_BINARY" || true)
 CHECKSUM_ID=$(extract_asset_id "$TMP_JSON" "$TARGET_CHECKSUM" || true)
 
-echo "Binary ID: $BINARY_ID"
-echo "Checksum ID: $CHECKSUM_ID"
+echo "Binary File ID: $BINARY_ID"
+echo "Checksum File ID: $CHECKSUM_ID"
 
 if [[ -z "$BINARY_ID" ]]; then
     echo "❌ Could not find asset: $TARGET_BINARY"

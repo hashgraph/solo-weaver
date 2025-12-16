@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -116,7 +117,7 @@ func Test_Downloader_Extract(t *testing.T) {
 		"file2.txt": "Content of file 2",
 	}
 
-	_, _, err = createTestTarGz(tarGzPath, testFiles)
+	_, _, err = testutil.CreateTestTarGz(tarGzPath, testFiles)
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	// Create extraction destination
@@ -166,7 +167,7 @@ func Test_Downloader_Extract_Timeout(t *testing.T) {
 		testFiles[fmt.Sprintf("file%d.txt", i)] = fmt.Sprintf("Content %d", i)
 	}
 
-	_, _, err = createTestTarGz(tarGzPath, testFiles)
+	_, _, err = testutil.CreateTestTarGz(tarGzPath, testFiles)
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	extractDir := filepath.Join(tempDir, "extracted")

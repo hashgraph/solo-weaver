@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -45,6 +46,18 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
+
+	// Verify downloaded file exists
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	require.True(t, found, "expected a file prefixed with cilium in the downloads directory")
+
+	// Verify temporary folder for kubelet is cleaned up
+	_, err = os.Stat("/opt/solo/weaver/tmp/crio")
+	require.Error(t, err)
+
+	// Verify binary files are there
+	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/local/bin/crio")
+	require.NoError(t, err)
 }
 
 func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
@@ -113,7 +126,11 @@ func Test_StepCrio_Rollback_Fresh_Integration(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder for crio is removed
+	// Verify download folder is still there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	require.True(t, found, "expected a file prefixed with cilium in the downloads directory")
+
+	// Verify temporary folder for crio is removed
 	_, err = os.Stat("/opt/solo/weaver/tmp/crio")
 	require.Error(t, err)
 
@@ -184,16 +201,26 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	testutil.Reset(t)
 
-	// Make the download directory read-only
-	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
-	require.NoError(t, err, "Failed to create download directory")
-	cmd := exec.Command("chattr", "+i", core.Paths().TempDir)
+	// Remove any existing cri-o files from downloads folder to ensure download will be attempted
+	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	if err == nil {
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "cri-o") {
+				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+			}
+		}
+	}
+
+	// Make the downloads directory read-only
+	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create downloads directory")
+	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
 	err = cmd.Run()
-	require.NoError(t, err, "Failed to make download directory read-only")
+	require.NoError(t, err, "Failed to make downloads directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.Paths().TempDir).Run()
+		_ = exec.Command("chattr", "-i", core.Paths().DownloadsDir).Run()
 	})
 
 	//
@@ -225,12 +252,12 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder for crio was not created
-	_, err = os.Stat("/opt/solo/weaver/tmp/crio")
-	require.Error(t, err)
+	// Verify downloaded file is not there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	require.False(t, found, "did not expect a file prefixed with cri-o in the downloads directory")
 
 	// Confirm binary files were not created
-	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/crio")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err)
 }
 
@@ -240,32 +267,25 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	testutil.Reset(t)
 
-	// First, let the download succeed, then make the extraction fail
-	// by making the unpack directory read-only after download
-	step, err := SetupCrio().Build()
-	require.NoError(t, err)
+	// Make the unpack directory read-only
+	unpackDir := path.Join(core.Paths().TempDir, "cri-o", core.DefaultUnpackFolderName)
 
-	// Download first to create the download folder
-	installer, err := software.NewCrioInstaller()
-	require.NoError(t, err)
-
-	err = installer.Download()
-	require.NoError(t, err)
-
-	// Now make the download folder read-only to prevent extraction
-	downloadDir := path.Join(core.Paths().TempDir, "cri-o")
-	cmd := exec.Command("chattr", "+i", downloadDir)
+	err := os.MkdirAll(unpackDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create unpack directory")
+	cmd := exec.Command("chattr", "+i", unpackDir)
 	err = cmd.Run()
-	require.NoError(t, err, "Failed to make download directory read-only")
+	require.NoError(t, err, "Failed to make unpack directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", downloadDir).Run()
+		_ = exec.Command("chattr", "-i", unpackDir).Run()
 	})
 
 	//
 	// When - Execute (should fail at extraction)
 	//
+	step, err := SetupCrio().Build()
+	require.NoError(t, err)
 	report := step.Execute(context.Background())
 
 	require.NotNil(t, report)
@@ -286,8 +306,8 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/solo/weaver/tmp/cri-o")
-	require.NoError(t, err)
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	require.True(t, found, "expected a file prefixed with cri-o in the downloads directory")
 
 	// Check there are downloaded files in the crio directory
 	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "cri-o"))
@@ -348,9 +368,9 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an installation error
-	_, err = os.Stat("/opt/solo/weaver/tmp/cri-o")
-	require.NoError(t, err)
+	// Verify download folder is still around when there is an extraction error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	require.True(t, found, "expected a file prefixed with cri-o in the downloads directory")
 
 	// Check there are downloaded files in the crio directory
 	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "cri-o"))
@@ -358,7 +378,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the crio directory")
 
 	// Verify binary files were not installed
-	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/crio")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err)
 }
 
@@ -412,16 +432,20 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	_, err = os.Stat("/opt/solo/weaver/tmp/cri-o")
-	require.NoError(t, err)
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	require.True(t, found, "expected a file prefixed with cri-o in the downloads directory")
 
-	// Check there are files in the tmp/crio directory
+	// Verify unpack folder is not around because the cleanup tried to remove it
+	_, err = os.Stat("/opt/solo/weaver/tmp/cri-o/unpack")
+	require.Error(t, err)
+
+	// Check there are unpacked files
 	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "cri-o"))
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the tmp/crio directory")
+	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
 	// Verify binary files were removed
-	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/crio")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err)
 }
 
@@ -488,7 +512,7 @@ func Test_StepCrio_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Error(t, err)
 
 	// Verify binary files were removed from sandbox
-	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/crio")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err)
 
 	// Verify configuration was not applied
@@ -615,7 +639,7 @@ func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *test
 	require.Error(t, err, "crio.service symlink should be removed after rollback")
 
 	// Verify installation was also rolled back
-	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/crio")
+	_, err = os.Stat("/opt/solo/weaver/sandbox/usr/local/bin/crio")
 	require.Error(t, err, "crio binary should be removed after rollback")
 
 	_, err = os.Stat("/opt/solo/weaver/tmp/crio")

@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
 )
 
 func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -32,12 +33,12 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Download()
 	require.NoError(t, err, "Failed to download kubelet")
 
-	// Verify downloaded files exist
-	_, exists, err := fileManager.PathExists("/opt/solo/weaver/tmp/kubelet/kubelet")
+	// Verify downloaded files exist in the shared downloads folder
+	_, exists, err := fileManager.PathExists("/opt/solo/weaver/downloads/kubelet")
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet binary should exist in download folder")
 
-	_, exists, err = fileManager.PathExists("/opt/solo/weaver/tmp/kubelet/kubelet.service")
+	_, exists, err = fileManager.PathExists("/opt/solo/weaver/downloads/kubelet.service")
 	require.NoError(t, err)
 	require.True(t, exists, "kubelet.service should exist in download folder")
 
@@ -157,7 +158,7 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 }
 
 func Test_KubeletInstaller_IsInstalled_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -200,7 +201,7 @@ func Test_KubeletInstaller_IsInstalled_Success(t *testing.T) {
 }
 
 func Test_KubeletInstaller_IsInstalled_False_WhenBinaryMissing(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -245,7 +246,7 @@ func Test_KubeletInstaller_IsInstalled_False_WhenBinaryMissing(t *testing.T) {
 }
 
 func Test_KubeletInstaller_IsConfigured_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -305,7 +306,7 @@ func Test_KubeletInstaller_IsConfigured_Success(t *testing.T) {
 }
 
 func Test_KubeletInstaller_IsConfigured_False_WhenBinaryNotConfigured(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -336,7 +337,7 @@ func Test_KubeletInstaller_IsConfigured_False_WhenBinaryNotConfigured(t *testing
 }
 
 func Test_KubeletInstaller_IsConfigured_False_WhenMarkerFileMissing(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -385,7 +386,7 @@ func Test_KubeletInstaller_IsConfigured_False_WhenMarkerFileMissing(t *testing.T
 }
 
 func Test_KubeletInstaller_IsConfigured_True_EvenWhenServiceFileCorrupted(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -427,7 +428,7 @@ func Test_KubeletInstaller_IsConfigured_True_EvenWhenServiceFileCorrupted(t *tes
 }
 
 func Test_KubeletInstaller_RestoreConfiguration_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -495,7 +496,7 @@ func Test_KubeletInstaller_RestoreConfiguration_Success(t *testing.T) {
 }
 
 func Test_KubeletInstaller_RestoreConfiguration_Idempotent(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -521,7 +522,7 @@ func Test_KubeletInstaller_RestoreConfiguration_Idempotent(t *testing.T) {
 }
 
 func Test_KubeletInstaller_RestoreConfiguration_PartialCleanup(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -558,7 +559,7 @@ func Test_KubeletInstaller_RestoreConfiguration_PartialCleanup(t *testing.T) {
 }
 
 func Test_KubeletInstaller_ConfigureWithCorruptedOriginalFile_ShouldFail(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -601,7 +602,7 @@ func Test_KubeletInstaller_ConfigureWithCorruptedOriginalFile_ShouldFail(t *test
 }
 
 func Test_KubeletInstaller_IsConfigured_ChecksSymlinkTarget(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given

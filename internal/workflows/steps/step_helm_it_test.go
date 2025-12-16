@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -46,6 +47,18 @@ func Test_StepHelm_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
+
+	// Verify downloaded file exists
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
+
+	// Verify temporary folder for helm is cleaned up
+	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
+	require.Error(t, err)
+
+	// Verify binary files are there
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
+	require.NoError(t, err)
 }
 
 func Test_StepHelm_AlreadyInstalled_Integration(t *testing.T) {
@@ -121,7 +134,11 @@ func Test_StepHelm_Rollback_Fresh_Integration(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder for helm is removed
+	// Verify download folder exists
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
+
+	// Verify temporary folder for helm is removed
 	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.Error(t, err)
 
@@ -136,16 +153,26 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
-	// Make the download directory read-only
-	err := os.MkdirAll(core.Paths().TempDir, core.DefaultDirOrExecPerm)
-	require.NoError(t, err, "Failed to create download directory")
-	cmd := exec.Command("chattr", "+i", core.Paths().TempDir)
+	// Remove any existing helm files from downloads folder to ensure download will be attempted
+	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	if err == nil {
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "helm") {
+				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+			}
+		}
+	}
+
+	// Make the downloads directory read-only
+	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create downloads directory")
+	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
 	err = cmd.Run()
-	require.NoError(t, err, "Failed to make download directory read-only")
+	require.NoError(t, err, "Failed to make downloads directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.Paths().TempDir).Run()
+		_ = exec.Command("chattr", "-i", core.Paths().DownloadsDir).Run()
 	})
 
 	//
@@ -177,9 +204,9 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder for helm was not created
-	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
-	require.Error(t, err)
+	// Verify downloaded file is not there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.False(t, found, "did not expect a file prefixed with helm in the downloads directory")
 
 	// Confirm binary files were not created
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
@@ -239,10 +266,9 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
 	require.NoError(t, err)
 
-	// Check there is a tar.gz file in the unpack directory by counting the number of files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
-	require.NoError(t, err)
-	require.Equal(t, 2, len(files), "Expected 2 files in the unpack directory")
+	// Verify download folder is still around when there is an extraction error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify binary files were not installed
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
@@ -299,22 +325,17 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
-	require.NoError(t, err)
-
-	// Check there is a tar.gz file in the unpack directory by counting the number of files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
-	require.NoError(t, err)
-	require.Equal(t, 2, len(files), "Expected 2 files in the unpack directory")
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify unpack folder is still around when there is an installation error
 	_, err = os.Stat("/opt/solo/weaver/tmp/helm/unpack")
 	require.NoError(t, err)
 
 	// Check there are unpacked files
-	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
+	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm", "unpack"))
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
+	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the unpack directory")
 
 	// Verify binary files were not installed
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/helm")
@@ -370,21 +391,16 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
-	require.NoError(t, err)
-
-	// Check there is a tar.gz file in the unpack directory by counting the number of files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/helm directory")
+	// Verify download folder is still around when there is a cleanup error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
 	_, err = os.Stat("/opt/solo/weaver/tmp/helm/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
-	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
+	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
@@ -443,21 +459,16 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/solo/weaver/tmp/helm")
-	require.NoError(t, err)
-
-	// Check there is a tar.gz file in the unpack directory by counting the number of files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/helm directory")
+	// Verify download folder is still around when there is a configuration error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
 	_, err = os.Stat("/opt/solo/weaver/tmp/helm/unpack")
 	require.Error(t, err)
 
 	// Check there are unpacked files
-	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
+	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 

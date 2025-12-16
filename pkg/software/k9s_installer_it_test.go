@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
 )
 
 func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -33,16 +34,19 @@ func Test_K9sInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to download k9s and/or its configuration")
 
 	// Verify downloaded files exist
-	files, err := os.ReadDir("/opt/solo/weaver/tmp/k9s")
+	files, err := os.ReadDir("/opt/solo/weaver/downloads")
 	require.NoError(t, err)
 
-	require.Equal(t, 1, len(files), "There should be exactly one file in the download directory")
-	// Check that the downloaded file has the expected name format by regex
-	require.Regexp(t,
-		regexp.MustCompile(`^k9s_[^-]+_[^-]+\.tar\.gz$`),
-		files[0].Name(),
-		"Downloaded file name should match expected pattern",
-	)
+	require.GreaterOrEqual(t, len(files), 1, "There should be at least one file in the download directory")
+	// Check that the downloaded k9s file exists with expected name format by regex
+	var foundK9s bool
+	for _, file := range files {
+		if regexp.MustCompile(`^k9s_[^-]+_[^-]+\.tar\.gz$`).MatchString(file.Name()) {
+			foundK9s = true
+			break
+		}
+	}
+	require.True(t, foundK9s, "Downloaded k9s file should exist with expected pattern")
 
 	//
 	// When - Extract

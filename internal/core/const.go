@@ -69,6 +69,7 @@ type WeaverPaths struct {
 	ConfigDir      string
 	BackupDir      string
 	TempDir        string
+	DownloadsDir   string
 	DiagnosticsDir string
 	StateDir       string
 
@@ -91,6 +92,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		UtilsDir:       path.Join(home, "utils"),
 		BackupDir:      path.Join(home, "backup"),
 		TempDir:        path.Join(home, "tmp"),
+		DownloadsDir:   path.Join(home, "downloads"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 		StateDir:       path.Join(home, "state"),
 	}
@@ -141,6 +143,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		pp.ConfigDir,
 		pp.BackupDir,
 		pp.TempDir,
+		pp.DownloadsDir,
 		pp.DiagnosticsDir,
 		pp.StateDir,
 	}
