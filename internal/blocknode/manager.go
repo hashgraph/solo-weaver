@@ -250,6 +250,55 @@ func (m *Manager) UninstallChart(ctx context.Context) error {
 	return m.helmManager.UninstallChart(m.blockConfig.Release, m.blockConfig.Namespace)
 }
 
+// UpgradeChart upgrades the block node helm chart
+func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValues bool) error {
+	// Check if installed first
+	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
+	}
+
+	if !isInstalled {
+		return errorx.IllegalState.New("block node is not installed, cannot upgrade. Use 'install' command instead")
+	}
+
+	// Prepare value files slice
+	// When reuseValues is true and no custom values file is provided (valuesFile is empty),
+	// pass an empty ValueFiles slice to allow pure value reuse following Helm CLI convention.
+	// This avoids merging default template values on top of existing release values.
+	var valueFiles []string
+	if valuesFile != "" {
+		valueFiles = []string{valuesFile}
+	} else if !reuseValues {
+		// If not reusing values and no values file provided, this is an error condition
+		// as we need either existing values or new values
+		return errorx.IllegalArgument.New("no values file provided and --no-reuse-values is set")
+	}
+
+	// Upgrade the chart
+	_, err = m.helmManager.UpgradeChart(
+		ctx,
+		m.blockConfig.Release,
+		m.blockConfig.Chart,
+		m.blockConfig.Version,
+		m.blockConfig.Namespace,
+		helm.UpgradeChartOptions{
+			ValueOpts: &values.Options{
+				ValueFiles: valueFiles,
+			},
+			ReuseValues: reuseValues,
+			Atomic:      true,
+			Wait:        true,
+			Timeout:     helm.DefaultTimeout,
+		},
+	)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to upgrade block node chart")
+	}
+
+	return nil
+}
+
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
 	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, ServiceName, metav1.GetOptions{})
