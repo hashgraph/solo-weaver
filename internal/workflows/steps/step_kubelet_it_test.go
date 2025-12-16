@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -45,6 +46,18 @@ func Test_StepKubelet_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[0].Metadata[CleanedUpByThisStep])
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
+
+	// Verify downloaded file exists
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubelet")
+	require.True(t, found, "expected a file prefixed with kubelet in the downloads directory")
+
+	// Verify temporary folder for kubelet is cleaned up
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubelet")
+	require.Error(t, err)
+
+	// Verify binary files are there
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubelet")
+	require.NoError(t, err)
 }
 
 func Test_StepKubelet_AlreadyInstalled_Integration(t *testing.T) {
@@ -119,6 +132,10 @@ func Test_StepKubelet_Rollback_Fresh_Integration(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
+	// Verify download folder is still there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubelet")
+	require.True(t, found, "expected a file prefixed with kubelet in the downloads directory")
+
 	// Verify download folder for kubelet is removed
 	_, err = os.Stat("/opt/solo/weaver/tmp/kubelet")
 	require.Error(t, err)
@@ -134,8 +151,18 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
+	// Remove any existing kubelet files from downloads folder to ensure download will be attempted
+	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	if err == nil {
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "kubelet") {
+				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+			}
+		}
+	}
+
 	// Make the downloads directory read-only
-	err := os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create downloads directory")
 	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
 	err = cmd.Run()
@@ -175,9 +202,9 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder for kubelet was not created
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubelet")
-	require.Error(t, err)
+	// Verify downloaded file is not there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubelet")
+	require.False(t, found, "did not expect a file prefixed with kubelet in the downloads directory")
 
 	// Confirm binary files were not created
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubelet")
@@ -233,14 +260,9 @@ func Test_StepKubelet_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an installation error
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubelet")
-	require.NoError(t, err)
-
-	// Check there are downloaded files in the kubelet directory
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubelet"))
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the kubelet directory")
+	// Verify download folder is still around when there is an extraction error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubelet")
+	require.True(t, found, "expected a file prefixed with kubelet in the downloads directory")
 
 	// Verify binary files were not installed
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubelet")
@@ -297,8 +319,8 @@ func Test_StepKubelet_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubelet")
-	require.NoError(t, err)
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubelet")
+	require.True(t, found, "expected a file prefixed with kubelet in the downloads directory")
 
 	// Check there are files in the tmp/kubelet directory
 	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubelet"))
@@ -367,6 +389,10 @@ func Test_StepKubelet_Rollback_ConfigurationFailed(t *testing.T) {
 
 	require.NoError(t, configRollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, configRollbackReport.Status)
+
+	// Verify download folder is still around when there is a configuration error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubelet")
+	require.True(t, found, "expected a file prefixed with kubelet in the downloads directory")
 
 	// Verify installation was rolled back - download folder should be removed
 	_, err = os.Stat("/opt/solo/weaver/tmp/kubelet")

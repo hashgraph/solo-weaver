@@ -9,12 +9,13 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
 )
 
 func Test_HelmInstaller_FullWorkflow_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given

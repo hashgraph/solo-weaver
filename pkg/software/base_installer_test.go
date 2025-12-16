@@ -17,9 +17,14 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	tmpFolder = "/opt/solo/weaver/tmp"
 )
 
 // TestScenario defines a test scenario with specific combinations of archives, binaries, and configs
@@ -44,7 +49,7 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 	// Create tar.gz if archives are defined
 	if len(scenario.Archives) > 0 {
 		tarGzPath := filepath.Join(tempDir, "test-artifact.tar.gz")
-		tarGzChecksum, filesChecksum, err = createTestTarGz(tarGzPath, scenario.Files)
+		tarGzChecksum, filesChecksum, err = testutil.CreateTestTarGz(tarGzPath, scenario.Files)
 		require.NoError(t, err, "Failed to create test tar.gz")
 	}
 
@@ -323,7 +328,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			// Test Download
 			t.Run("Download", func(t *testing.T) {
-				resetTestEnvironment(t)
+				testutil.ResetTestEnvironment(t)
 				installer := newTestInstallerWithScenario(t, scenario)
 				err := installer.Download()
 				require.NoError(t, err, "Download should succeed for scenario: %s", scenario.Description)
@@ -360,7 +365,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 			// Test Extract (only if archives exist)
 			if len(scenario.Archives) > 0 {
 				t.Run("Extract", func(t *testing.T) {
-					resetTestEnvironment(t)
+					testutil.ResetTestEnvironment(t)
 					installer := newTestInstallerWithScenario(t, scenario)
 
 					// Download first
@@ -402,7 +407,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 			// Test Install (only if binaries exist)
 			if len(scenario.Binaries) > 0 {
 				t.Run("Install", func(t *testing.T) {
-					resetTestEnvironment(t)
+					testutil.ResetTestEnvironment(t)
 					installer := newTestInstallerWithScenario(t, scenario)
 
 					// Download and extract first
@@ -432,7 +437,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 			// Test Configure and IsConfigured (only if binaries exist)
 			if len(scenario.Binaries) > 0 {
 				t.Run("Configure", func(t *testing.T) {
-					resetTestEnvironment(t)
+					testutil.ResetTestEnvironment(t)
 					installer := newTestInstallerWithScenario(t, scenario)
 
 					// Download, extract, and install first
@@ -462,7 +467,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 
 				// Test Cleanup
 				t.Run("Cleanup", func(t *testing.T) {
-					resetTestEnvironment(t)
+					testutil.ResetTestEnvironment(t)
 					installer := newTestInstallerWithScenario(t, scenario)
 
 					// Download and extract first
@@ -509,7 +514,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 
 	// Build the tar.gz used by the server
 	tarGzPath := filepath.Join(tempDir, "test-artifact.tar.gz")
-	checksum, filesChecksum, err := createTestTarGz(tarGzPath, nil)
+	checksum, filesChecksum, err := testutil.CreateTestTarGz(tarGzPath, nil)
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	fileContents, err := os.ReadFile(tarGzPath)
@@ -584,7 +589,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 
 // Test successful download
 func Test_BaseInstaller_Download_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -604,7 +609,7 @@ func Test_BaseInstaller_Download_Success(t *testing.T) {
 
 // Test when download fails due to invalid configuration
 func Test_BaseInstaller_Download_Fails(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -626,7 +631,7 @@ func Test_BaseInstaller_Download_Fails(t *testing.T) {
 
 // Test when checksum fails (this test might need adjustment based on actual config)
 func Test_BaseInstaller_Download_ChecksumFails(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -663,7 +668,7 @@ func Test_BaseInstaller_Download_ChecksumFails(t *testing.T) {
 
 // Test idempotency with existing valid file
 func Test_BaseInstaller_Download_Idempotency_ExistingFile(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -687,7 +692,7 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile(t *testing.T) {
 }
 
 func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -718,7 +723,7 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testi
 }
 
 func Test_BaseInstaller_Extract_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -745,7 +750,7 @@ func Test_BaseInstaller_Extract_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_Extract_Error(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -819,7 +824,7 @@ func Test_BaseInstaller_replaceAllInFile(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -892,8 +897,8 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
-	requireChattrSupport(t)
-	resetTestEnvironment(t)
+	testutil.RequireChattrSupport(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -956,7 +961,7 @@ func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1021,7 +1026,7 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_VersionNotFound(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1063,7 +1068,7 @@ func Test_BaseInstaller_Uninstall_VersionNotFound(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1161,7 +1166,7 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1236,7 +1241,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 
 // Tests for RemoveConfiguration method
 func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1307,7 +1312,7 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1387,7 +1392,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 }
 
 func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1478,8 +1483,8 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
-	requireChattrSupport(t)
-	resetTestEnvironment(t)
+	testutil.RequireChattrSupport(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1547,7 +1552,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
@@ -1590,7 +1595,7 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
-	resetTestEnvironment(t)
+	testutil.ResetTestEnvironment(t)
 
 	//
 	// Given
