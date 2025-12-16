@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -46,6 +47,17 @@ func Test_StepKubectl_Fresh_Integration(t *testing.T) {
 	require.Empty(t, report.StepReports[1].Metadata[AlreadyConfigured])
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
+	// Verify downloaded file exists
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubectl")
+	require.True(t, found, "expected a file prefixed with kubectl in the downloads directory")
+
+	// Verify temporary folder for kubectl is cleaned up
+	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
+	require.Error(t, err)
+
+	// Verify binary files are there
+	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
+	require.NoError(t, err)
 }
 
 func Test_StepKubectl_AlreadyInstalled_Integration(t *testing.T) {
@@ -119,7 +131,11 @@ func Test_StepKubectl_Rollback_Fresh_Integration(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder for kubectl is removed
+	// Verify download folder is still there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubectl")
+	require.True(t, found, "expected a file prefixed with kubectl in the downloads directory")
+
+	// Verify temporary folder for kubectl is removed
 	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
 	require.Error(t, err)
 
@@ -134,8 +150,18 @@ func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
+	// Remove any existing kubectl files from downloads folder to ensure download will be attempted
+	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	if err == nil {
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "kubectl") {
+				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+			}
+		}
+	}
+
 	// Make the downloads directory read-only
-	err := os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create downloads directory")
 	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
 	err = cmd.Run()
@@ -175,9 +201,9 @@ func Test_StepKubectl_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder for kubectl was not created
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
-	require.Error(t, err)
+	// Verify downloaded file is not there
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubectl")
+	require.False(t, found, "did not expect a file prefixed with kubectl in the downloads directory")
 
 	// Confirm binary files were not created
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
@@ -221,7 +247,7 @@ func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
 	// Check errorx error type
 	require.Error(t, report.Error)
 
-	// Confirm errorx error type is DownloadError
+	// Confirm errorx error type is InstallationError
 	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.InstallationError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
@@ -233,13 +259,9 @@ func Test_StepKubectl_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an error
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
-	require.NoError(t, err)
-
-	// Verify downloaded binary is still around
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl/kubectl")
-	require.NoError(t, err)
+	// Verify download folder is still around when there is an extraction error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubectl")
+	require.True(t, found, "expected a file prefixed with kubectl in the downloads directory")
 
 	// Verify binary files were not installed
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
@@ -283,7 +305,7 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	// Check errorx error type
 	require.Error(t, report.Error)
 
-	// Confirm errorx error type is DownloadError
+	// Confirm errorx error type is CleanupError
 	require.True(t, errorx.IsOfType(errorx.Cast(report.StepReports[0].Error), software.CleanupError))
 	require.Equal(t, automa.StatusFailed, report.Status)
 
@@ -295,23 +317,14 @@ func Test_StepKubectl_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
-	require.NoError(t, err)
+	// Verify download folder is still around when there is a cleanup error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubectl")
+	require.True(t, found, "expected a file prefixed with kubectl in the downloads directory")
 
-	// Check there is a tar.gz file in the unpack directory by counting the number of files
+	// Check there are files in the tmp/kubectl directory
 	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
-
-	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl/unpack")
-	require.Error(t, err)
-
-	// Check there are unpacked files
-	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
+	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the tmp/kubectl directory")
 
 	// Verify binary files were removed
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
@@ -368,23 +381,9 @@ func Test_StepKubectl_Rollback_ConfigurationFailed(t *testing.T) {
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Verify download folder is still around when there is an extraction error
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl")
-	require.NoError(t, err)
-
-	// Check there is a tar.gz file in the unpack directory by counting the number of files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the tmp/kubectl directory")
-
-	// Verify unpack folder is not around because the cleanup tried to remove it
-	_, err = os.Stat("/opt/solo/weaver/tmp/kubectl/unpack")
-	require.Error(t, err)
-
-	// Check there are unpacked files
-	files, err = os.ReadDir(path.Join(core.Paths().TempDir, "kubectl"))
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
+	// Verify download folder is still around when there is a configuration error
+	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubectl")
+	require.True(t, found, "expected a file prefixed with kubectl in the downloads directory")
 
 	// Verify binary files were removed
 	_, err = os.Stat("/opt/solo/weaver/sandbox/bin/kubectl")
