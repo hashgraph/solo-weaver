@@ -18,7 +18,7 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := cmd.Flags().GetString("profile")
+		flagProfile, err := common.FlagProfile.Value(cmd, args)
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}
@@ -61,9 +61,8 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	installCmd.Flags().StringVarP(
-		&flagValuesFile, "values", "f", "", "Values file")
-	installCmd.Flags().BoolVarP(&flagMetricsServer, "metrics-server", "", false, "Install Metrics Server")
+	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
+	common.FlagMetricsServer.SetVarP(installCmd, &flagMetricsServer, false)
 }
 
 // applyConfigOverrides applies flag values to override the configuration.
