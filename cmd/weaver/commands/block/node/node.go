@@ -22,7 +22,7 @@ var (
 )
 
 func init() {
-	nodeCmd.AddCommand(checkCmd, installCmd)
+	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd)
 }
 
 func GetCmd() *cobra.Command {
