@@ -1,25 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 resources:
-  requests:
-    cpu: "500m"
-    memory: "1Gi"
   limits:
-    cpu: "1"
-    memory: "1.5Gi"
+    memory: "2Gi"
 
 blockNode:
-  config:
-    JAVA_OPTS: '-Xms1G -Xmx1G -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath="/tmp/dump.hprof"'
-    MESSAGING_BLOCK_ITEM_QUEUE_SIZE: "128"
-    MESSAGING_BLOCK_NOTIFICATION_QUEUE_SIZE: "16"
-    BACKFILL_FETCH_BATCH_SIZE: "5"
-  logs:
-    level: "INFO"
-    loggingProperties:
-      org.hiero.block.level: "INFO"
-      java.util.logging.ConsoleHandler.level: "INFO"
-      java.util.logging.FileHandler.level: "INFO"
   initContainers:
     - name: init-storage-dirs
       image: docker.io/library/busybox:latest
@@ -53,15 +38,6 @@ blockNode:
       create: false
       existingClaim: logging-storage-pvc
       subPath: ""
-
-kubepromstack:
-  enabled: false
-
-loki:
-  enabled: false
-
-promtail:
-  enabled: false
 
 service:
   type: LoadBalancer

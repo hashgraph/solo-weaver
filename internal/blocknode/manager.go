@@ -4,6 +4,7 @@ package blocknode
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"time"
@@ -27,7 +28,7 @@ import (
 
 const (
 	// Kubernetes resources
-	ServiceName       = "block-node-block-node-server"
+	ServiceNameSuffix = "-block-node-server"
 	PodLabelSelector  = "app.kubernetes.io/name=block-node-server"
 	MetalLBAnnotation = "metallb.io/address-pool=public-address-pool"
 
@@ -109,11 +110,16 @@ func getKubeConfig() (*rest.Config, error) {
 
 // SetupStorage creates the required directories for block node storage
 func (m *Manager) SetupStorage(ctx context.Context) error {
+	// Get storage paths (already validated by GetStoragePaths)
+	archivePath, livePath, logPath, err := m.GetStoragePaths()
+	if err != nil {
+		return err
+	}
+
 	storagePaths := []string{
-		m.blockConfig.Storage.BasePath,
-		path.Join(m.blockConfig.Storage.BasePath, "archive"),
-		path.Join(m.blockConfig.Storage.BasePath, "live"),
-		path.Join(m.blockConfig.Storage.BasePath, "logs"),
+		archivePath,
+		livePath,
+		logPath,
 	}
 
 	for _, dirPath := range storagePaths {
@@ -141,15 +147,22 @@ func (m *Manager) SetupStorage(ctx context.Context) error {
 
 // CreateNamespace creates the block-node namespace if it doesn't exist
 func (m *Manager) CreateNamespace(ctx context.Context, tempDir string) error {
-	// Read the namespace template
-	namespaceManifest, err := templates.Read(NamespacePath)
+	// Prepare template data
+	data := struct {
+		Namespace string
+	}{
+		Namespace: m.blockConfig.Namespace,
+	}
+
+	// Render the namespace template
+	namespaceContent, err := templates.Render(NamespacePath, data)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to read namespace template")
+		return errorx.IllegalState.Wrap(err, "failed to render namespace template")
 	}
 
 	// Write to temp file
 	manifestFilePath := path.Join(tempDir, "block-node-namespace.yaml")
-	if err := os.WriteFile(manifestFilePath, []byte(namespaceManifest), core.DefaultFilePerm); err != nil {
+	if err := os.WriteFile(manifestFilePath, []byte(namespaceContent), core.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write namespace manifest to temp file")
 	}
 
@@ -170,10 +183,35 @@ func (m *Manager) DeleteNamespace(ctx context.Context, tempDir string) error {
 
 // CreatePersistentVolumes creates PVs and PVCs from the storage config
 func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) error {
-	// Read the storage config template
-	storageConfig, err := templates.Read(StorageConfigPath)
+	// Get the computed storage paths
+	archivePath, livePath, logPath, err := m.GetStoragePaths()
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to read storage config template")
+		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
+	}
+
+	// Prepare template data
+	data := struct {
+		Namespace   string
+		LivePath    string
+		ArchivePath string
+		LogPath     string
+		LiveSize    string
+		ArchiveSize string
+		LogSize     string
+	}{
+		Namespace:   m.blockConfig.Namespace,
+		LivePath:    livePath,
+		ArchivePath: archivePath,
+		LogPath:     logPath,
+		LiveSize:    m.blockConfig.Storage.LiveSize,
+		ArchiveSize: m.blockConfig.Storage.ArchiveSize,
+		LogSize:     m.blockConfig.Storage.LogSize,
+	}
+
+	// Render the storage config template
+	storageConfig, err := templates.Render(StorageConfigPath, data)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to render storage config template")
 	}
 
 	// Write to temp file
@@ -301,9 +339,11 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
-	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, ServiceName, metav1.GetOptions{})
+	svcName := fmt.Sprintf("%s%s", m.blockConfig.Release, ServiceNameSuffix)
+
+	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, svcName, metav1.GetOptions{})
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to get service: %s", ServiceName)
+		return errorx.IllegalState.Wrap(err, "failed to get service: %s", svcName)
 	}
 
 	if svc.Annotations == nil {
@@ -314,7 +354,7 @@ func (m *Manager) AnnotateService(ctx context.Context) error {
 
 	_, err = m.clientset.CoreV1().Services(m.blockConfig.Namespace).Update(ctx, svc, metav1.UpdateOptions{})
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", ServiceName)
+		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", svcName)
 	}
 
 	return nil
@@ -382,4 +422,58 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	}
 
 	return valuesFilePath, nil
+}
+
+// GetStoragePaths returns the computed storage paths based on configuration.
+// If individual paths are specified, they are used; otherwise, paths are derived from basePath.
+// All paths are validated using sanity checks.
+func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err error) {
+	archivePath = m.blockConfig.Storage.ArchivePath
+	livePath = m.blockConfig.Storage.LivePath
+	logPath = m.blockConfig.Storage.LogPath
+
+	// Sanitize basePath before using it to construct other paths
+	basePath := m.blockConfig.Storage.BasePath
+	if basePath != "" {
+		basePath, err = sanity.SanitizePath(basePath)
+		if err != nil {
+			return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid base storage path")
+		}
+	}
+
+	// If individual paths are not specified, use basePath as the parent.
+	// Do not allow deriving defaults from an empty basePath, as that would
+	// create relative paths and cause storage to depend on the current
+	// working directory.
+	if basePath == "" && (archivePath == "" || livePath == "" || logPath == "") {
+		return "", "", "", errorx.IllegalArgument.New("at least one storage path is not set and base storage path is empty")
+	}
+
+	if archivePath == "" {
+		archivePath = path.Join(basePath, "archive")
+	}
+	if livePath == "" {
+		livePath = path.Join(basePath, "live")
+	}
+	if logPath == "" {
+		logPath = path.Join(basePath, "logs")
+	}
+
+	// Validate all paths using sanity checks
+	archivePath, err = sanity.SanitizePath(archivePath)
+	if err != nil {
+		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid archive path")
+	}
+
+	livePath, err = sanity.SanitizePath(livePath)
+	if err != nil {
+		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid live path")
+	}
+
+	logPath, err = sanity.SanitizePath(logPath)
+	if err != nil {
+		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid log path")
+	}
+
+	return archivePath, livePath, logPath, nil
 }

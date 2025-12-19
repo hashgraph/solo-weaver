@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -24,6 +25,16 @@ var (
 			flagProfile, err := cmd.Flags().GetString("profile")
 			if err != nil {
 				return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+			}
+
+			// Apply configuration overrides from flags
+			applyConfigOverrides()
+
+			// Validate the configuration after applying overrides
+			// This catches invalid storage paths and other configuration issues early,
+			// before the workflow starts
+			if err := config.Get().Validate(); err != nil {
+				return err
 			}
 
 			// Validate the values file path if provided
