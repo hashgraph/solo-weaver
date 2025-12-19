@@ -17,8 +17,8 @@ type ClusterSetupOptions struct {
 }
 
 // DefaultClusterSetupOptions returns ClusterSetupOptions with all boolean options defaulted to true.
-func DefaultClusterSetupOptions() ClusterSetupOptions {
-	return ClusterSetupOptions{
+func DefaultClusterSetupOptions() *ClusterSetupOptions {
+	return &ClusterSetupOptions{
 		SetupCilium:        true,
 		SetupMetalLB:       true,
 		SetupMetricsServer: true,
@@ -27,7 +27,11 @@ func DefaultClusterSetupOptions() ClusterSetupOptions {
 }
 
 // NewSetupClusterWorkflow creates a workflow to set up a kubernetes cluster
-func NewSetupClusterWorkflow(opts ClusterSetupOptions) *automa.WorkflowBuilder {
+func NewSetupClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder {
+	if opts == nil {
+		opts = DefaultClusterSetupOptions()
+	}
+
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
 		// setup env for k8s
