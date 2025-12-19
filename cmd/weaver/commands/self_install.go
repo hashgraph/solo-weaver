@@ -17,3 +17,14 @@ var selfInstallCmd = &cobra.Command{
 		return nil
 	},
 }
+
+var selfUninstallCmd = &cobra.Command{
+	Use:   "uninstall",
+	Short: "Uninstall Solo Weaver from the local system",
+	Long:  "Uninstall Solo Weaver from the local system",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		common.RunWorkflow(cmd.Context(), workflows.NewSelfUninstallWorkflow())
+		logx.As().Info().Msg("Solo Weaver is uninstalled successfully")
+		return nil
+	},
+}

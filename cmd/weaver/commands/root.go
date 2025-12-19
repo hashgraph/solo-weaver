@@ -62,6 +62,7 @@ func init() {
 
 	// add subcommands
 	rootCmd.AddCommand(selfInstallCmd)
+	rootCmd.AddCommand(selfUninstallCmd)
 	rootCmd.AddCommand(kube.GetCmd())
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(version.GetCmd())
