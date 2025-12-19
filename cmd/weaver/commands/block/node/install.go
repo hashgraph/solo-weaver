@@ -23,6 +23,10 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}
 
+		if flagProfile == "" {
+			return errorx.IllegalArgument.New("profile flag is required")
+		}
+
 		// Apply configuration overrides from flags
 		applyConfigOverrides()
 
@@ -50,10 +54,7 @@ var installCmd = &cobra.Command{
 			Str("valuesFile", validatedValuesFile).
 			Msg("Installing Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(
-			flagProfile, validatedValuesFile, workflows.ClusterSetupOptions{
-				EnableMetricsServer: flagMetricsServer,
-			}))
+		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile, nil))
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 		return nil
@@ -62,7 +63,6 @@ var installCmd = &cobra.Command{
 
 func init() {
 	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
-	common.FlagMetricsServer.SetVarP(installCmd, &flagMetricsServer, false)
 }
 
 // applyConfigOverrides applies flag values to override the configuration.
