@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	MetricsServerNamespace    = "metrics-server"
-	MetricsServerRelease      = "kube-system"
+	MetricsServerNamespace    = "kube-system"
+	MetricsServerRelease      = "metrics-server"
 	MetricsServerChart        = "metrics-server/metrics-server"
 	MetricsServerChartVersion = "3.13.0"
 	MetricsServerRepo         = "https://kubernetes-sigs.github.io/metrics-server"
@@ -39,6 +39,7 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 	if valueOptions == nil {
 		valueOptions = &values.Options{
 			Values: []string{
+				"args={--kubelet-insecure-tls}",
 				"apiService.insecureSkipTLSVerify=true",
 			},
 		}
