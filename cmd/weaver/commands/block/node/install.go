@@ -47,14 +47,22 @@ var installCmd = &cobra.Command{
 			}
 		}
 
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return errorx.Decorate(err, "failed to determine execution mode")
+		}
+		opts := workflows.DefaultClusterSetupOptions()
+		opts.ExecutionMode = execMode
+
 		logx.As().Debug().
 			Strs("args", args).
 			Str("nodeType", nodeType).
 			Str("profile", flagProfile).
 			Str("valuesFile", validatedValuesFile).
+			Any("clusterSetupOptions", opts).
 			Msg("Installing Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile, nil))
+		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile, opts))
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 		return nil
@@ -63,6 +71,9 @@ var installCmd = &cobra.Command{
 
 func init() {
 	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
+	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
 }
 
 // applyConfigOverrides applies flag values to override the configuration.

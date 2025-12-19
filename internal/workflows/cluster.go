@@ -84,3 +84,14 @@ func NewSetupClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder 
 		Steps(baseSteps...).
 		WithExecutionMode(opts.ExecutionMode)
 }
+
+func NewTeardownClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder {
+	if opts == nil {
+		opts = DefaultClusterSetupOptions()
+	}
+
+	return automa.NewWorkflowBuilder().
+		WithId("teardown-kubernetes").
+		Steps().
+		WithExecutionMode(opts.ExecutionMode)
+}

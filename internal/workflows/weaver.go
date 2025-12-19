@@ -19,3 +19,10 @@ func NewSelfInstallWorkflow() *automa.WorkflowBuilder {
 		steps.InstallWeaver(core.Paths().BinDir),
 	)
 }
+
+func NewSelfUninstallWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("self-uninstall-workflow").Steps(
+		CheckPrivilegesStep(),
+		steps.UninstallWeaver(core.Paths().BinDir),
+	)
+}
