@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -22,6 +23,16 @@ var installCmd = &cobra.Command{
 		flagProfile, err := cmd.Flags().GetString("profile")
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+		}
+
+		// Apply configuration overrides from flags
+		applyConfigOverrides()
+
+		// Validate the configuration after applying overrides
+		// This catches invalid storage paths and other configuration issues early,
+		// before the workflow starts and cluster creation begins
+		if err := config.Get().Validate(); err != nil {
+			return err
 		}
 
 		// Validate the values file path if provided
@@ -51,4 +62,25 @@ var installCmd = &cobra.Command{
 func init() {
 	installCmd.Flags().StringVarP(
 		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
+}
+
+// applyConfigOverrides applies flag values to override the configuration.
+// This allows flags to take precedence over config file values.
+func applyConfigOverrides() {
+	overrides := config.BlockNodeConfig{
+		Namespace: flagNamespace,
+		Release:   flagReleaseName,
+		Chart:     flagChartRepo,
+		Version:   flagChartVersion,
+		Storage: config.BlockNodeStorage{
+			BasePath:    flagBasePath,
+			ArchivePath: flagArchivePath,
+			LivePath:    flagLivePath,
+			LogPath:     flagLogPath,
+			LiveSize:    flagLiveSize,
+			ArchiveSize: flagArchiveSize,
+			LogSize:     flagLogSize,
+		},
+	}
+	config.OverrideBlockNodeConfig(overrides)
 }

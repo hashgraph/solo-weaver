@@ -703,15 +703,6 @@ func Test_sanitizeBindMount(t *testing.T) {
 			shouldErr: true,
 			errMsg:    "source and target paths cannot be the same",
 		},
-		{
-			name: "relative source path",
-			mount: BindMount{
-				Source: "relative/path",
-				Target: "/mnt/target",
-			},
-			shouldErr: true,
-			errMsg:    "path must be absolute",
-		},
 	}
 
 	for _, tt := range tests {

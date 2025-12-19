@@ -18,6 +18,7 @@ const (
 	CreateBlockNodeNamespaceStepId = "create-block-node-namespace"
 	CreateBlockNodePVsStepId       = "create-block-node-pvs"
 	InstallBlockNodeStepId         = "install-block-node"
+	UpgradeBlockNodeStepId         = "upgrade-block-node"
 	AnnotateBlockNodeServiceStepId = "annotate-block-node-service"
 	WaitForBlockNodeStepId         = "wait-for-block-node"
 )
@@ -305,5 +306,72 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node is ready")
+		})
+}
+
+// UpgradeBlockNode upgrades the block node on the cluster
+func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) automa.Builder {
+	// Lazy initialization of block node manager
+	var blockNodeManager *blocknode.Manager
+	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
+		if blockNodeManager == nil {
+			var err error
+			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return blockNodeManager, nil
+	}
+
+	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
+		upgradeBlockNode(profile, valuesFile, reuseValues, blockNodeManagerProvider),
+		waitForBlockNode(blockNodeManagerProvider),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Upgrading Block Node")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to upgrade Block Node")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node upgraded successfully")
+		})
+}
+
+// upgradeBlockNode upgrades the block node helm chart
+func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(UpgradeBlockNodeStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = manager.UpgradeChart(ctx, valuesFilePath, reuseValues)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta["upgraded"] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Upgrading Block Node chart")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to upgrade Block Node chart")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node chart upgraded successfully")
 		})
 }

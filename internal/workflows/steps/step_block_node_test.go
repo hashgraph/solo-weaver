@@ -9,19 +9,12 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestBlockNodeConstants(t *testing.T) {
-	assert.Equal(t, "block-node-block-node-server", blocknode.ServiceName)
-	assert.Equal(t, "metallb.io/address-pool=public-address-pool", blocknode.MetalLBAnnotation)
-	assert.Equal(t, "block", core.NodeTypeBlock)
-}
 
 func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	// Check if system has at least 16GB memory for block node

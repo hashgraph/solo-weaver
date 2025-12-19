@@ -14,12 +14,12 @@ blockNode:
     MESSAGING_BLOCK_ITEM_QUEUE_SIZE: "128"
     MESSAGING_BLOCK_NOTIFICATION_QUEUE_SIZE: "16"
     BACKFILL_FETCH_BATCH_SIZE: "5"
-  logs:
-    level: "INFO"
-    loggingProperties:
-      org.hiero.block.level: "INFO"
-      java.util.logging.ConsoleHandler.level: "INFO"
-      java.util.logging.FileHandler.level: "INFO"
+#  logs:
+#    level: "INFO"
+#    loggingProperties:
+#      org.hiero.block.level: "FINEST"
+#      java.util.logging.ConsoleHandler.level: "FINEST"
+#      java.util.logging.FileHandler.level: "FINEST"
   initContainers:
     - name: init-storage-dirs
       image: docker.io/library/busybox:latest

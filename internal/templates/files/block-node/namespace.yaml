@@ -3,4 +3,4 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: block-node
+  name: {{ or .Namespace "block-node" }}
