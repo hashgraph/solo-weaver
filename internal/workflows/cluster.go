@@ -14,6 +14,8 @@ type ClusterSetupOptions struct {
 	SetupMetalLB       bool
 	SetupMetricsServer bool
 	CheckClusterHealth bool
+	ExecutionMode      automa.TypeMode
+	RollbackMode       automa.TypeMode
 }
 
 // DefaultClusterSetupOptions returns ClusterSetupOptions with all boolean options defaulted to true.
@@ -23,6 +25,7 @@ func DefaultClusterSetupOptions() *ClusterSetupOptions {
 		SetupMetalLB:       true,
 		SetupMetricsServer: true,
 		CheckClusterHealth: true,
+		ExecutionMode:      automa.StopOnError,
 	}
 }
 
@@ -78,5 +81,6 @@ func NewSetupClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder 
 
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
-		Steps(baseSteps...)
+		Steps(baseSteps...).
+		WithExecutionMode(opts.ExecutionMode)
 }
