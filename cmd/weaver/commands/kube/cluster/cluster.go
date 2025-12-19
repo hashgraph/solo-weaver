@@ -8,7 +8,10 @@ import (
 )
 
 var (
-	flagMetricsServer bool
+	flagMetricsServer   bool
+	flagStopOnError     bool
+	flagRollbackOnError bool
+	flagContinueOnError bool
 
 	clusterCmd = &cobra.Command{
 		Use:   "cluster",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/joomcode/errorx"
@@ -14,6 +15,27 @@ import (
 
 // Examples of typed flag definitions
 var (
+	FlagStopOnError = FlagDefinition[bool]{
+		Name:        "stop-on-error",
+		ShortName:   "",
+		Description: "Stop execution on first error",
+		Default:     true,
+	}
+
+	FlagRollbackOnError = FlagDefinition[bool]{
+		Name:        "rollback-on-error",
+		ShortName:   "",
+		Description: "Rollback executed steps on error",
+		Default:     false,
+	}
+
+	FlagContinueOnError = FlagDefinition[bool]{
+		Name:        "continue-on-error",
+		ShortName:   "",
+		Description: "Continue executing steps even if some steps fail",
+		Default:     false,
+	}
+
 	FlagProfile = FlagDefinition[string]{
 		Name:        "profile",
 		ShortName:   "p",
@@ -272,4 +294,32 @@ func (fp *FlagDefinition[T]) MarkRequiredP(cmd *cobra.Command, v bool) error {
 	}
 
 	return nil
+}
+
+func GetExecutionMode(continueOnErr bool, stopOnErr bool, rollbackOnErr bool) (automa.TypeMode, error) {
+	// validate only one flag is set
+	count := 0
+	if continueOnErr {
+		count++
+	}
+	if stopOnErr {
+		count++
+	}
+	if rollbackOnErr {
+		count++
+	}
+
+	if count > 1 {
+		return automa.StopOnError, errorx.IllegalArgument.New("only one of execution mode can be set; "+
+			"found continue-on-error: %s, stop-on-error: %s, rollback-on-error: %s", continueOnErr, stopOnErr, rollbackOnErr)
+	}
+
+	// determine execution mode
+	if continueOnErr {
+		return automa.ContinueOnError, nil
+	} else if rollbackOnErr {
+		return automa.RollbackOnError, nil
+	} else {
+		return automa.StopOnError, nil
+	}
 }
