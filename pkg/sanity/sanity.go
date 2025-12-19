@@ -77,6 +77,25 @@ func Identifier(s string) (string, error) {
 	return sanitized, nil
 }
 
+// ValidateIdentifier validates that a string contains only safe identifier characters
+// without sanitizing/modifying it. It rejects any string that contains invalid characters.
+// This is stricter than Identifier() which sanitizes by removing invalid characters.
+// Use this when you need to ensure the input is already clean and reject invalid input.
+func ValidateIdentifier(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("identifier cannot be empty")
+	}
+
+	// Check if all characters are valid
+	for i := 0; i < len(s); i++ {
+		if !isValidIdentifierChar(s[i]) {
+			return errorx.IllegalArgument.New("identifier contains invalid characters: %s", s)
+		}
+	}
+
+	return nil
+}
+
 // Filename is an alias for Identifier
 func Filename(s string) (string, error) {
 	return Identifier(s)
@@ -134,19 +153,14 @@ func Username(s string) (string, error) {
 // Specifically, it:
 //  1. Rejects paths containing shell metacharacters (e.g., ; & | $ ` < > ( ) { } [ ] * ? ~).
 //  2. Rejects path traversal attempts (e.g., segments like "../", "/..", or paths ending with "..").
-//  3. Requires the input path to be absolute.
+//  3. Converts relative paths to absolute paths.
 //  4. Normalizes the path by removing redundant slashes and dot directories (using filepath.Clean).
 //  5. May return a cleaned version of the input path that differs from the original.
 //
-// Returns the sanitized (cleaned) path, or an error if the input is invalid or unsafe.
+// Returns the sanitized (cleaned) absolute path, or an error if the input is invalid or unsafe.
 func SanitizePath(path string) (string, error) {
 	if path == "" {
 		return "", errorx.IllegalArgument.New("path cannot be empty")
-	}
-
-	// Ensure it's an absolute path
-	if !filepath.IsAbs(path) {
-		return "", errorx.IllegalArgument.New("path must be absolute: %s", path)
 	}
 
 	// Check for path traversal patterns BEFORE cleaning
@@ -159,17 +173,27 @@ func SanitizePath(path string) (string, error) {
 		}
 	}
 
+	// Convert to absolute path if not already
+	absPath := path
+	if !filepath.IsAbs(path) {
+		var err error
+		absPath, err = filepath.Abs(path)
+		if err != nil {
+			return "", errorx.IllegalArgument.Wrap(err, "failed to resolve file path: %s", path)
+		}
+	}
+
 	// Check for shell metacharacters in the original path
-	if shellMetachars.MatchString(path) {
+	if shellMetachars.MatchString(absPath) {
 		return "", errorx.IllegalArgument.New("path contains shell metacharacters: %s", path)
 	}
 
 	// Check for valid characters in the original path
-	if !validPathChars.MatchString(path) {
+	if !validPathChars.MatchString(absPath) {
 		return "", errorx.IllegalArgument.New("path contains invalid characters: %s", path)
 	}
 
-	return filepath.Clean(path), nil
+	return filepath.Clean(absPath), nil
 }
 
 // ValidateURL validates a URL to ensure it's safe to use for downloads.
@@ -321,18 +345,8 @@ func ValidateInputFile(filePath string) (string, error) {
 		return "", errorx.IllegalArgument.New("file path cannot be empty")
 	}
 
-	// Convert to absolute path if not already
-	absPath := filePath
-	if !filepath.IsAbs(filePath) {
-		var err error
-		absPath, err = filepath.Abs(filePath)
-		if err != nil {
-			return "", errorx.IllegalArgument.Wrap(err, "failed to resolve file path: %s", filePath)
-		}
-	}
-
 	// Sanitize the path to prevent path traversal and shell injection attacks
-	sanitizedPath, err := SanitizePath(absPath)
+	sanitizedPath, err := SanitizePath(filePath)
 	if err != nil {
 		return "", errorx.IllegalArgument.Wrap(err, "invalid file path: %s", filePath)
 	}
@@ -354,4 +368,137 @@ func ValidateInputFile(filePath string) (string, error) {
 	}
 
 	return sanitizedPath, nil
+}
+
+// ValidateVersion validates a semantic version string to ensure it's safe to use.
+// Accepts versions like: "1.0.0", "1.0.0-alpha", "1.0.0-beta.1", "0.24.0", etc.
+// This prevents injection attacks through version parameters.
+// From the bottom of the page at https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+func ValidateVersion(version string) error {
+	if version == "" {
+		return errorx.IllegalArgument.New("version cannot be empty")
+	}
+
+	// Semantic version pattern: digits, dots, hyphens, and alphanumeric for pre-release/build metadata
+	// Examples: 1.0.0, 1.0.0-alpha, 1.0.0-beta.1, 1.0.0+build.123
+	validVersionPattern := regexp.MustCompile(`^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
+	if !validVersionPattern.MatchString(version) {
+		return errorx.IllegalArgument.New("version contains invalid characters: %s", version)
+	}
+
+	return nil
+}
+
+// ValidateChartReference validates a Helm chart reference (OCI URL or repo/chart name).
+// This prevents injection attacks through chart parameters while allowing legitimate chart references.
+// Accepts:
+//   - OCI references: oci://registry.example.com/path/to/chart
+//   - Repository URLs: https://charts.example.com/chart-name
+//   - Simple chart names: my-chart, repo/chart-name
+func ValidateChartReference(chart string) error {
+	if chart == "" {
+		return errorx.IllegalArgument.New("chart reference cannot be empty")
+	}
+
+	// Check for dangerous shell metacharacters that could enable command injection
+	// Note: We allow some characters like : / @ for valid OCI and URL references
+	dangerousChars := regexp.MustCompile(`[;&|$\x60<>(){}[\]*?~\s]`)
+	if dangerousChars.MatchString(chart) {
+		return errorx.IllegalArgument.New("chart reference contains invalid characters: %s", chart)
+	}
+
+	// If it's an OCI reference, validate the OCI URL format
+	if strings.HasPrefix(chart, "oci://") {
+		return validateOCIReference(chart)
+	}
+
+	// If it's an HTTP/HTTPS URL, validate as URL
+	if strings.HasPrefix(chart, "https://") || strings.HasPrefix(chart, "http://") {
+		// Parse as URL to ensure it's well-formed
+		_, err := url.Parse(chart)
+		if err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart URL: %s", chart)
+		}
+		return nil
+	}
+
+	// Otherwise, it's a simple chart name or repo/chart format
+	// Allow alphanumeric, hyphens, underscores, dots, and forward slashes
+	validChartPattern := regexp.MustCompile(`^[a-zA-Z0-9.\-_/]+$`)
+	if !validChartPattern.MatchString(chart) {
+		return errorx.IllegalArgument.New("chart name contains invalid characters: %s", chart)
+	}
+
+	return nil
+}
+
+// validateOCIReference validates an OCI registry reference
+func validateOCIReference(ociRef string) error {
+	// Remove the oci:// prefix for validation
+	ref := strings.TrimPrefix(ociRef, "oci://")
+	if ref == "" {
+		return errorx.IllegalArgument.New("OCI reference missing registry path")
+	}
+
+	// OCI reference format: registry.example.com[:port]/path/to/chart[:tag][@digest]
+	// We'll validate this has reasonable structure without being too strict
+	// since Helm itself will do thorough validation
+
+	// Basic structure check: should have at least a registry and path
+	parts := strings.Split(ref, "/")
+	if len(parts) < 2 {
+		return errorx.IllegalArgument.New("OCI reference must include registry and path: %s", ociRef)
+	}
+
+	// Validate the registry part (first component)
+	registry := parts[0]
+	if registry == "" {
+		return errorx.IllegalArgument.New("OCI reference missing registry: %s", ociRef)
+	}
+
+	// Registry should be alphanumeric with dots, hyphens, and optional :port
+	validRegistryPattern := regexp.MustCompile(`^[a-zA-Z0-9.\-]+(:[0-9]+)?$`)
+	if !validRegistryPattern.MatchString(registry) {
+		return errorx.IllegalArgument.New("invalid OCI registry format: %s", registry)
+	}
+
+	return nil
+}
+
+// ValidateStorageSize validates a Kubernetes storage size string.
+// Accepts sizes like: "5Gi", "10Mi", "1Ti", "100Gi", etc.
+// This prevents injection attacks through storage size parameters while ensuring
+// the size matches Kubernetes quantity format requirements.
+// The numeric value must be greater than zero.
+func ValidateStorageSize(size string) error {
+	if size == "" {
+		return errorx.IllegalArgument.New("storage size cannot be empty")
+	}
+
+	// Kubernetes storage size pattern: number followed by unit (Gi, Mi, or Ti)
+	// Examples: 5Gi, 10Mi, 1Ti, 100Gi
+	validStorageSizePattern := regexp.MustCompile(`^([0-9]+)(Gi|Mi|Ti)$`)
+	matches := validStorageSizePattern.FindStringSubmatch(size)
+	if matches == nil {
+		return errorx.IllegalArgument.New("storage size must be in format '<number>(Gi|Mi|Ti)', got: %s", size)
+	}
+
+	// Extract the numeric part (first capture group)
+	numericPart := matches[1]
+
+	// Check if the numeric value is zero
+	// We need to check if all characters are '0'
+	allZeros := true
+	for _, ch := range numericPart {
+		if ch != '0' {
+			allZeros = false
+			break
+		}
+	}
+
+	if allZeros {
+		return errorx.IllegalArgument.New("storage size must be greater than zero, got: %s", size)
+	}
+
+	return nil
 }

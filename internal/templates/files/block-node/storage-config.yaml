@@ -7,22 +7,22 @@ spec:
   accessModes:
     - ReadWriteOnce
   capacity:
-    storage: 5Gi
+    storage: {{ or .LiveSize "5Gi" }}
   hostPath:
-    path: /opt/weaver/block-node-storage/live
+    path: {{ or .LivePath "/opt/weaver/block-node-storage/live" }}
     type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: live-storage-pvc
-  namespace: block-node
+  namespace: {{ or .Namespace "block-node" }}
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: {{ or .LiveSize "5Gi" }}
   volumeName: live-storage-pv
 ---
 apiVersion: v1
@@ -33,22 +33,22 @@ spec:
   accessModes:
     - ReadWriteOnce
   capacity:
-    storage: 5Gi
+    storage: {{ or .ArchiveSize "5Gi" }}
   hostPath:
-    path: /opt/weaver/block-node-storage/archive
+    path: {{ or .ArchivePath "/opt/weaver/block-node-storage/archive" }}
     type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: archive-storage-pvc
-  namespace: block-node
+  namespace: {{ or .Namespace "block-node" }}
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: {{ or .ArchiveSize "5Gi" }}
   volumeName: archive-storage-pv
 ---
 apiVersion: v1
@@ -59,20 +59,20 @@ spec:
   accessModes:
     - ReadWriteOnce
   capacity:
-    storage: 5Gi
+    storage: {{ or .LogSize "5Gi" }}
   hostPath:
-    path: /opt/weaver/block-node-storage/logs
+    path: {{ or .LogPath "/opt/weaver/block-node-storage/logs" }}
     type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: logging-storage-pvc
-  namespace: block-node
+  namespace: {{ or .Namespace "block-node" }}
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: {{ or .LogSize "5Gi" }}
   volumeName: logging-storage-pv

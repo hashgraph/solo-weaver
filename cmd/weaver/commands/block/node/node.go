@@ -11,7 +11,18 @@ import (
 var (
 	nodeType = core.NodeTypeBlock
 
-	flagValuesFile string
+	flagValuesFile   string
+	flagChartVersion string
+	flagChartRepo    string
+	flagNamespace    string
+	flagReleaseName  string
+	flagBasePath     string
+	flagArchivePath  string
+	flagLivePath     string
+	flagLogPath      string
+	flagLiveSize     string
+	flagArchiveSize  string
+	flagLogSize      string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -22,6 +33,23 @@ var (
 )
 
 func init() {
+	// Helm chart configuration flags
+	nodeCmd.PersistentFlags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
+	nodeCmd.PersistentFlags().StringVar(&flagChartRepo, "chart-repo", "", "Helm chart repository URL")
+	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "", "Kubernetes namespace for block node")
+	nodeCmd.PersistentFlags().StringVar(&flagReleaseName, "release-name", "", "Helm release name")
+
+	// Storage path configuration flags
+	nodeCmd.PersistentFlags().StringVar(&flagBasePath, "base-path", "", "Base path for all storage (used when individual paths are not specified)")
+	nodeCmd.PersistentFlags().StringVar(&flagArchivePath, "archive-path", "", "Path for archive storage")
+	nodeCmd.PersistentFlags().StringVar(&flagLivePath, "live-path", "", "Path for live storage")
+	nodeCmd.PersistentFlags().StringVar(&flagLogPath, "log-path", "", "Path for log storage")
+
+	// Storage size configuration flags
+	nodeCmd.PersistentFlags().StringVar(&flagLiveSize, "live-size", "", "Size for live storage PV/PVC (e.g., 5Gi, 10Gi)")
+	nodeCmd.PersistentFlags().StringVar(&flagArchiveSize, "archive-size", "", "Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)")
+	nodeCmd.PersistentFlags().StringVar(&flagLogSize, "log-size", "", "Size for log storage PV/PVC (e.g., 5Gi, 10Gi)")
+
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd)
 }
 
