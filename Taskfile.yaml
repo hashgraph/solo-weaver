@@ -130,7 +130,6 @@ tasks:
           GOARCH: "{{.ITEM}}"
   
   build:weaver:
-    internal: true
     desc: "Build the binary for the specified operating system and architecture"
     env:
       GOOS: "{{coalesce .GOOS OS}}"
