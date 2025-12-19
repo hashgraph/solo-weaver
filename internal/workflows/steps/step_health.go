@@ -41,6 +41,7 @@ var clusterPods = []string{
 	"kube-system/kube-apiserver-",
 	"kube-system/kube-controller-manager-",
 	"kube-system/kube-scheduler-",
+	"kube-system/metrics-server-",
 	"metallb-system/metallb-controller-",
 	"metallb-system/metallb-speaker-",
 }
@@ -52,6 +53,7 @@ var clusterServices = []string{
 	"kube-system/hubble-peer",
 	"kube-system/hubble-relay",
 	"kube-system/kube-dns",
+	"kube-system/metrics-server",
 	"metallb-system/metallb-webhook-service",
 }
 
