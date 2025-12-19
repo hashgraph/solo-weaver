@@ -51,17 +51,20 @@ jobs:
           version: 3.39.2
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect KVM availability
-        id: kvm
+      - name: Require KVM
         run: |
           set -euo pipefail
-          if [ -e /dev/kvm ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "KVM device present: /dev/kvm"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "KVM not present: /dev/kvm does not exist"
+          if [ ! -e /dev/kvm ]; then
+            echo "KVM is required but /dev/kvm is missing. Use a self-hosted runner with KVM."
+            exit 1
           fi
+          if ! groups | grep -q '\bkvm\b'; then
+            echo "User is not in kvm group. Fix runner permissions."
+            ls -la /dev/kvm || true
+            exit 1
+          fi
+          echo "KVM seems present; continuing."
+
 
       - name: Install QEMU and dependencies
         run: |
