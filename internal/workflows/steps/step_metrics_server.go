@@ -13,7 +13,7 @@ import (
 
 const (
 	MetricsServerNamespace    = "metrics-server"
-	MetricsServerRelease      = "metrics-server"
+	MetricsServerRelease      = "kube-system"
 	MetricsServerChart        = "metrics-server/metrics-server"
 	MetricsServerChartVersion = "3.13.0"
 	MetricsServerRepo         = "https://kubernetes-sigs.github.io/metrics-server"
