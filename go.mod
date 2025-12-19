@@ -3,7 +3,7 @@ module github.com/hashgraph/solo-weaver
 go 1.25.2
 
 require (
-	github.com/BurntSushi/toml v1.5.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/automa-saga/automa v0.7.0
 	github.com/automa-saga/logx v0.1.0
 	github.com/bluet/syspkg v0.1.6
