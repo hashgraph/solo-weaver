@@ -91,6 +91,7 @@ func NewTeardownClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuild
 		opts = DefaultClusterSetupOptions()
 	}
 
+	// TODO: implement teardown steps
 	return automa.NewWorkflowBuilder().
 		WithId("teardown-kubernetes").
 		Steps().

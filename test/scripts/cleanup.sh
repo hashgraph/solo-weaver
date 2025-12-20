@@ -75,7 +75,7 @@ get_mountpoint() {
 
 for p in "${paths[@]}"; do
   case "$p" in
-   /opt/solo|/opt/solo/* ) ;;
+   /opt/solo|/opt/solo/*) ;;
     * ) echo "Skipping unsafe path: $p"; continue ;;
   esac
 

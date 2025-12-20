@@ -3,9 +3,10 @@
 package fsx
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"strings"
+	"syscall"
 
 	"github.com/joomcode/errorx"
 )
@@ -19,7 +20,8 @@ func Close(f *os.File) {
 
 	err := f.Close()
 	if err != nil {
-		if strings.Contains(err.Error(), "file already closed") {
+		// Prefer errors.Is over string matching. Treat already-closed / bad-fd as non-errors.
+		if errors.Is(err, os.ErrClosed) || errors.Is(err, syscall.EBADF) {
 			return
 		}
 

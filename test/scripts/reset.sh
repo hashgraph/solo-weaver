@@ -24,7 +24,7 @@ banner
 
 # safe command checks
 if command -v helm >/dev/null 2>&1; then
-  fun "Uninstalling MetallB via helm..."
+  fun "Uninstalling MetalLB via helm..."
   helm uninstall metallb -n metallb-system || true
 fi
 
@@ -100,7 +100,11 @@ sudo systemctl reset-failed || true
 fun "Attempting to delete /opt/solo/weaver (best effort)..."
 sudo rm -rf /opt/solo/weaver 2> failed-rm.txt || true
 
-fun "Running final cleanup script on any remaining files..."
-cat failed-rm.txt | ./test/scripts/cleanup.sh || true
+if [[ -s failed-rm.txt ]]; then
+    fun "Running final cleanup script on any remaining files..."
+    cat failed-rm.txt | ./test/scripts/cleanup.sh
+fi
+
+rm -f failed-rm.txt || true
 
 printf "\n%s\n" "${_green}✅ Reset complete. May your nodes rise anew!${_reset}"

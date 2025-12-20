@@ -298,6 +298,12 @@ func (fp *FlagDefinition[T]) MarkRequiredP(cmd *cobra.Command, v bool) error {
 	return nil
 }
 
+// GetExecutionMode determines the execution mode based on the provided flags.
+// It ensures that only one of the flags is set; otherwise, it returns an error.
+// The precedence is as follows:
+// 1. continueOnErr
+// 2. rollbackOnErr
+// 3. stopOnErr (default)
 func GetExecutionMode(continueOnErr bool, stopOnErr bool, rollbackOnErr bool) (automa.TypeMode, error) {
 	// validate only one flag is set
 	count := 0
