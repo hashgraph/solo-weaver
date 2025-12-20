@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/automa"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -224,4 +225,42 @@ func TestValue_CheckPersistentFlagInParentCommand(t *testing.T) {
 	got, err = fp.Value(cmd, nil)
 	require.NoError(t, err)
 	require.Equal(t, "alice", got)
+}
+
+func TestGetExecutionMode_ValidCases(t *testing.T) {
+	cases := []struct {
+		name          string
+		continueOnErr bool
+		stopOnErr     bool
+		rollbackOnErr bool
+		expect        automa.TypeMode
+	}{
+		{"continue only", true, false, false, automa.ContinueOnError},
+		{"rollback only", false, false, true, automa.RollbackOnError},
+		{"stop only", false, true, false, automa.StopOnError},
+		{"none set (default)", false, false, false, automa.StopOnError},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := GetExecutionMode(tc.continueOnErr, tc.stopOnErr, tc.rollbackOnErr)
+			require.NoError(t, err)
+			require.Equal(t, tc.expect, got)
+		})
+	}
+}
+
+func TestGetExecutionMode_MutuallyExclusiveFlags_ReturnsError(t *testing.T) {
+	// More than one flag set should produce an error.
+	_, err := GetExecutionMode(true, true, false)
+	require.Error(t, err)
+
+	_, err = GetExecutionMode(true, false, true)
+	require.Error(t, err)
+
+	_, err = GetExecutionMode(false, true, true)
+	require.Error(t, err)
+
+	_, err = GetExecutionMode(true, true, true)
+	require.Error(t, err)
 }
