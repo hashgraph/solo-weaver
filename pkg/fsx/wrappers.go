@@ -4,8 +4,10 @@ package fsx
 
 import (
 	"fmt"
-	"github.com/joomcode/errorx"
 	"os"
+	"strings"
+
+	"github.com/joomcode/errorx"
 )
 
 // Close closes the file and logs an error if it fails.
@@ -17,6 +19,10 @@ func Close(f *os.File) {
 
 	err := f.Close()
 	if err != nil {
+		if strings.Contains(err.Error(), "file already closed") {
+			return
+		}
+
 		fmt.Printf("ERROR: %+v\n", errorx.Decorate(err, "failed to close file %q", f.Name()))
 	}
 }
