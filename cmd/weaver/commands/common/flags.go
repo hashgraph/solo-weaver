@@ -311,7 +311,7 @@ func GetExecutionMode(continueOnErr bool, stopOnErr bool, rollbackOnErr bool) (a
 
 	if count > 1 {
 		return automa.StopOnError, errorx.IllegalArgument.New("only one of execution mode can be set; "+
-			"found continue-on-error: %v, stop-on-error: %v, rollback-on-error: %v", continueOnErr, stopOnErr, rollbackOnErr)
+			"found continue-on-error: %t, stop-on-error: %t, rollback-on-error: %t", continueOnErr, stopOnErr, rollbackOnErr)
 	}
 
 	// determine execution mode

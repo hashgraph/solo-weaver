@@ -30,7 +30,7 @@ var installCmd = &cobra.Command{
 
 		common.RunWorkflow(cmd.Context(), workflows.NewSetupClusterWorkflow(opts))
 
-		logx.As().Info().Msg("Successfully installed Hedera Block Node")
+		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")
 		return nil
 	},
 }

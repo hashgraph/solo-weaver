@@ -17,7 +17,7 @@ var uninstallCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logx.As().Debug().
 			Strs("args", args).
-			Msg("Installing Kubernetes Cluster")
+			Msg("Uninstalling Kubernetes Cluster")
 
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {
@@ -30,7 +30,7 @@ var uninstallCmd = &cobra.Command{
 
 		common.RunWorkflow(cmd.Context(), workflows.NewTeardownClusterWorkflow(opts))
 
-		logx.As().Info().Msg("Successfully installed Hedera Block Node")
+		logx.As().Info().Msg("Successfully uninstalled Kubernetes Cluster")
 		return nil
 	},
 }

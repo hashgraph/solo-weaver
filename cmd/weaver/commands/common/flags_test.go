@@ -206,7 +206,7 @@ func TestValue_CheckPersistentFlagInParentCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fp.Default, got)
 
-	// set persisten flag value on root command
+	// set persistent flag value on root command
 	require.NoError(t, rc.PersistentFlags().Set(fp.Name, "alice")) // set on root command
 
 	// get from root command

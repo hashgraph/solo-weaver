@@ -24,7 +24,7 @@ EOF
 while getopts "nf:" opt; do
   case "$opt" in
     n) DRY_RUN=1 ;;
-    f) INPUT_FILE=$OPTARG ;;
+    f) INPUT_FILE="${OPTARG}" ;;
     *) usage ;;
   esac
 done
@@ -75,7 +75,7 @@ get_mountpoint() {
 
 for p in "${paths[@]}"; do
   case "$p" in
-    /opt/solo* ) ;;
+   /opt/solo|/opt/solo/* ) ;;
     * ) echo "Skipping unsafe path: $p"; continue ;;
   esac
 

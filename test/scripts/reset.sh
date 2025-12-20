@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# bash
 set -euo pipefail
 
 # Fun banner and helpers
