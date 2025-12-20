@@ -1,5 +1,5 @@
-#FROM ubuntu:22.04
-FROM debian:bookworm
+FROM ubuntu:22.04
+#FROM debian:bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 #ENV container docker
