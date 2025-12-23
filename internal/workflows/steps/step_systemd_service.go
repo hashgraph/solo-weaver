@@ -15,7 +15,7 @@ import (
 // SetupSystemdService enables and starts a systemd service by name
 // It also reloads the systemd daemon to apply any changes
 // Example: SetupSystemdService("kubelet")
-func SetupSystemdService(serviceName string) automa.Builder {
+func SetupSystemdService(serviceName string) *automa.StepBuilder {
 	stepId := fmt.Sprintf("setup-systemd-service-%s", serviceName)
 
 	return automa.NewStepBuilder().WithId(stepId).

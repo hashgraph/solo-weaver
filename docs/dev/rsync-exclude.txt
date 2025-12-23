@@ -1,0 +1,5 @@
+.run
+.task
+.vscode
+bin
+vendor

@@ -11,6 +11,10 @@ import (
 var (
 	nodeType = core.NodeTypeBlock
 
+	flagStopOnError     bool
+	flagRollbackOnError bool
+	flagContinueOnError bool
+
 	flagValuesFile   string
 	flagChartVersion string
 	flagChartRepo    string

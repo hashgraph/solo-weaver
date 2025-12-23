@@ -3,11 +3,8 @@
 package block
 
 import (
-	"fmt"
-
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block/node"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -18,17 +15,12 @@ var (
 		Use:   "block",
 		Short: "Manage a Hedera Block Node & its components",
 		Long:  "Manage a Hedera Block Node & its components",
-		RunE:  common.DefaultRunE, // ensure we have a default action to make it runnable
+		RunE:  common.DefaultRunE, // ensure we have a default action to make it runnable and sub-commands would inherit parent flags
 	}
 )
 
 func init() {
-	blockCmd.PersistentFlags().StringVarP(&flagProfile,
-		common.FlagProfileName, common.FlagProfileNameShort, "",
-		fmt.Sprintf("Deployment profiles %s", core.AllProfiles()))
-
-	_ = blockCmd.MarkPersistentFlagRequired(common.FlagProfileName)
-
+	common.FlagProfile.SetVarP(blockCmd, &flagProfile, false)
 	blockCmd.AddCommand(node.GetCmd())
 }
 

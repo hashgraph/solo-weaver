@@ -109,7 +109,7 @@ func Test_StepK9s_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s().Build()
+	step, err := SetupK9s().WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -178,7 +178,7 @@ func Test_StepK9s_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s().Build()
+	step, err := SetupK9s().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -236,7 +236,7 @@ func Test_StepK9s_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s().Build()
+	step, err := SetupK9s().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -294,7 +294,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s().Build()
+	step, err := SetupK9s().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -361,7 +361,7 @@ func Test_StepK9s_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s().Build()
+	step, err := SetupK9s().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -428,7 +428,7 @@ func Test_StepK9s_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s().Build()
+	step, err := SetupK9s().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//

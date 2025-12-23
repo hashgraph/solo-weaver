@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package commands
 
 import (
@@ -14,6 +16,17 @@ var selfInstallCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflow(cmd.Context(), workflows.NewSelfInstallWorkflow())
 		logx.As().Info().Msg("Solo Weaver is installed successfully; run 'weaver -h' to see available commands")
+		return nil
+	},
+}
+
+var selfUninstallCmd = &cobra.Command{
+	Use:   "uninstall",
+	Short: "Uninstall Solo Weaver from the local system",
+	Long:  "Uninstall Solo Weaver from the local system",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		common.RunWorkflow(cmd.Context(), workflows.NewSelfUninstallWorkflow())
+		logx.As().Info().Msg("Solo Weaver is uninstalled successfully")
 		return nil
 	},
 }

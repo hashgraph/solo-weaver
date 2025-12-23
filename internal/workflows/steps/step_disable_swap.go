@@ -18,7 +18,7 @@ const (
 // DisableSwap disables swap on the system
 // On execute, it runs the swapoff and ensures fstab is updated to prevent swap from being re-enabled on reboot
 // On rollback, it runs the swapon and ensures fstab is updated to re-enable swap on reboot
-func DisableSwap() automa.Builder {
+func DisableSwap() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(DisableSwapStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			err := osx.DisableSwap()

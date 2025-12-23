@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: "3"
+
+tasks:
+  build:
+    desc: "Build simulated node image"
+    cmds:
+      - docker build -t weaver-node . 
+  start:
+    desc: "Run simulated node in detached container"
+    cmds:
+      - >
+        docker run -d --name weaver-node --privileged --rm
+        --cgroupns=host
+        --network host 
+        -v /lib/modules:/lib/modules:ro
+        -v /sys/fs/cgroup:/sys/fs/cgroup:rw
+        -v ${PWD}/solo-weaver:/staging
+        --tmpfs /run --tmpfs /run/lock
+        --security-opt seccomp=unconfined
+        weaver-node:latest /sbin/init
+
+  stop:
+    desc: "Stop simulated node container"
+    cmds:
+      - docker stop weaver-node
+
+  exec:
+    desc: "Exec into the container"
+    interactive: true
+    cmds:
+      - docker exec -it weaver-node bash
+

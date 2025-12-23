@@ -3,8 +3,6 @@
 package node
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
@@ -20,9 +18,13 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := cmd.Flags().GetString("profile")
+		flagProfile, err := common.FlagProfile.Value(cmd, args)
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+		}
+
+		if flagProfile == "" {
+			return errorx.IllegalArgument.New("profile flag is required")
 		}
 
 		// Apply configuration overrides from flags
@@ -45,14 +47,25 @@ var installCmd = &cobra.Command{
 			}
 		}
 
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return errorx.Decorate(err, "failed to determine execution mode")
+		}
+		opts := workflows.DefaultWorkflowExecutionOptions()
+		opts.ExecutionMode = execMode
+
 		logx.As().Debug().
 			Strs("args", args).
 			Str("nodeType", nodeType).
 			Str("profile", flagProfile).
 			Str("valuesFile", validatedValuesFile).
+			Any("opts", opts).
 			Msg("Installing Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile))
+		wb := workflows.WithWorkflowExecutionMode(
+			workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile), opts)
+
+		common.RunWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 		return nil
@@ -60,8 +73,10 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	installCmd.Flags().StringVarP(
-		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
+	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
+	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
 }
 
 // applyConfigOverrides applies flag values to override the configuration.

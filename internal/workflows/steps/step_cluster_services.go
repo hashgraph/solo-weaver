@@ -14,7 +14,7 @@ import (
 
 // CheckClusterServices checks if the specified services are running in the cluster
 // services is a list of strings in the format 'namespace/service-name'
-func CheckClusterServices(id string, services []string, timeout time.Duration, provider kube.ClientProviderFromContext) automa.Builder {
+func CheckClusterServices(id string, services []string, timeout time.Duration, provider kube.ClientProviderFromContext) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := provider(ctx)

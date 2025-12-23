@@ -8,9 +8,26 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func NewSetupClusterWorkflow() *automa.WorkflowBuilder {
+// WorkflowExecutionOptions defines options for setting up various components of the cluster
+type WorkflowExecutionOptions struct {
+	ExecutionMode automa.TypeMode
+	RollbackMode  automa.TypeMode
+}
+
+// DefaultWorkflowExecutionOptions returns WorkflowExecutionOptions with all boolean options defaulted to true.
+func DefaultWorkflowExecutionOptions() *WorkflowExecutionOptions {
+	return &WorkflowExecutionOptions{
+		ExecutionMode: automa.StopOnError,
+		RollbackMode:  automa.ContinueOnError,
+	}
+}
+
+// InstallClusterWorkflow creates a workflow to set up a kubernetes cluster
+func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
+		NodeSetupWorkflow(nodeType, profile),
+
 		// setup env for k8s
 		steps.DisableSwap(),
 		steps.ConfigureSysctlForKubernetes(),
@@ -31,21 +48,39 @@ func NewSetupClusterWorkflow() *automa.WorkflowBuilder {
 
 		// kubeadm
 		steps.SetupKubeadm(),
+
 		// init cluster
 		steps.InitializeCluster(),
 
-		// cilium
 		steps.SetupCilium(),
 		steps.StartCilium(),
 
-		// metalLB
 		steps.SetupMetalLB(),
 
-		// health check
-		steps.CheckClusterHealth(), // still using bash steps
+		steps.DeployMetricsServer(nil),
+
+		steps.CheckClusterHealth(),
 	}
 
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
 		Steps(baseSteps...)
+}
+
+// WithWorkflowExecutionMode applies the given WorkflowExecutionOptions to the provided WorkflowBuilder.
+// If opts is nil, it uses DefaultWorkflowExecutionOptions.
+func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *WorkflowExecutionOptions) *automa.WorkflowBuilder {
+	if opts == nil {
+		opts = DefaultWorkflowExecutionOptions()
+	}
+
+	return wf.WithExecutionMode(opts.ExecutionMode).WithRollbackMode(opts.RollbackMode)
+}
+
+// UninstallClusterWorkflow creates a workflow to tear down a kubernetes cluster
+// TODO: implement teardown steps
+func UninstallClusterWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("teardown-kubernetes").
+		Steps()
 }

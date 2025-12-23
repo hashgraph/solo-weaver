@@ -9,9 +9,9 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// NewNodeSetupWorkflow creates a comprehensive setup workflow for any node type
+// NodeSetupWorkflow creates a comprehensive setup workflow for any node type
 // It runs preflight checks first, then performs the actual setup
-func NewNodeSetupWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
+func NodeSetupWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-setup").
 		Steps(

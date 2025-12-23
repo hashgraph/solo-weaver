@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package steps
 
 import (
@@ -177,6 +179,28 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 			logx.As().Info().
 				Str("weaver_path", destPath).
 				Msg("Weaver installed successfully")
+
+			return automa.StepSuccessReport(stp.Id())
+		})
+}
+
+func UninstallWeaver(binDir string) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("uninstall-weaver").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			destPath := filepath.Join(binDir, weaverBinaryName)
+
+			if err := os.Remove(destPath); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.
+						Wrap(err, "failed to remove weaver binary at %s", destPath)))
+			}
+
+			symlinkPath := filepath.Join("/usr/local/bin", weaverBinaryName)
+			_ = os.Remove(symlinkPath) // ignore error
+
+			logx.As().Info().
+				Str("weaver_path", destPath).
+				Msg("Weaver uninstalled successfully")
 
 			return automa.StepSuccessReport(stp.Id())
 		})

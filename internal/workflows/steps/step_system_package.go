@@ -44,7 +44,7 @@ func validateInstaller(name string, installer func() (software.Package, error)) 
 
 // RefreshSystemPackageIndex refreshes the system package index.
 // Essentially this is equivalent to running `apt-get update` on Debian-based systems
-func RefreshSystemPackageIndex() automa.Builder {
+func RefreshSystemPackageIndex() *automa.StepBuilder {
 	return automa.NewStepBuilder().
 		WithId(refreshSystemPackageStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -65,7 +65,7 @@ func RefreshSystemPackageIndex() automa.Builder {
 
 // AutoRemoveOrphanedPackages removes orphaned dependencies and frees disk space.
 // Essentially this is equivalent to running `apt autoremove -y` on Debian-based systems
-func AutoRemoveOrphanedPackages() automa.Builder {
+func AutoRemoveOrphanedPackages() *automa.StepBuilder {
 	return automa.NewStepBuilder().
 		WithId(autoRemoveOrphanedPackagesStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -91,7 +91,7 @@ func AutoRemoveOrphanedPackages() automa.Builder {
 // InstallSystemPackage installs a system package using the provided installer function.
 // The installer function should return a software.Package instance that knows how to install the package.
 // If the package is already installed, it will skip the installation.
-func InstallSystemPackage(name string, installer func() (software.Package, error)) automa.Builder {
+func InstallSystemPackage(name string, installer func() (software.Package, error)) *automa.StepBuilder {
 	var installedByThisStep bool
 	stepId := fmt.Sprintf("install-%s", name)
 
@@ -183,7 +183,7 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 // RemoveSystemPackage removes a system package using the provided installer function.
 // The installer function should return a software.Package instance that knows how to uninstall the package.
 // If the package is not installed, it will skip the removal.
-func RemoveSystemPackage(name string, installer func() (software.Package, error)) automa.Builder {
+func RemoveSystemPackage(name string, installer func() (software.Package, error)) *automa.StepBuilder {
 	var removedByThisStep bool
 	stepId := fmt.Sprintf("remove-%s", name)
 	return automa.NewStepBuilder().
