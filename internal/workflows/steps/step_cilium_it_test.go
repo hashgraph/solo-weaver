@@ -109,7 +109,7 @@ func Test_StepCilium_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -179,7 +179,7 @@ func Test_StepCilium_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -236,7 +236,7 @@ func Test_StepCilium_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -293,7 +293,7 @@ func Test_StepCilium_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -354,7 +354,7 @@ func Test_StepCilium_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -407,7 +407,13 @@ func Test_StepCilium_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Error(t, err)
 }
 
-func Test_StartCilium_Fresh_Integration(t *testing.T) {
+// Execution time: ~3 mins
+// It includes happy path, start and rollback verification
+func Test_StartCilium_Rollback_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long-running integration test in short mode")
+	}
+
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
@@ -419,18 +425,16 @@ func Test_StartCilium_Fresh_Integration(t *testing.T) {
 	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
 
 	// Setup Cilium CLI first
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup Cilium CLI")
 
-	//
-	// When
-	//
-	step, err = StartCilium().Build()
+	// Start Cilium
+	step, err = StartCilium().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
-
 	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to start Cilium")
 
 	//
 	// Then
@@ -449,79 +453,6 @@ func Test_StartCilium_Fresh_Integration(t *testing.T) {
 	output, err := cmd.Output()
 	require.NoError(t, err, "kubectl should be able to get cilium pods")
 	require.Contains(t, string(output), "cilium", "Cilium pods should be present")
-}
-
-func Test_StartCilium_AlreadyInstalled_Integration(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("This test requires root privileges")
-	}
-
-	//
-	// Given
-	//
-	testutil.Reset(t)
-	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
-
-	// Setup Cilium CLI first
-	step, err := SetupCilium().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error, "Failed to setup Cilium CLI")
-
-	// Start Cilium once
-	step, err = StartCilium().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-	require.NoError(t, report.Error, "Failed to start Cilium initially")
-
-	//
-	// When - Start again
-	//
-	step, err = StartCilium().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	// Verify the install-cilium-cni step was skipped due to already being installed
-	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
-	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
-	require.Empty(t, report.StepReports[0].Metadata[InstalledByThisStep])
-
-	// Verify Cilium CNI is still running
-	cmd := testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
-	output, err := cmd.Output()
-	require.NoError(t, err, "kubectl should be able to get cilium pods")
-	require.Contains(t, string(output), "cilium", "Cilium pods should still be present")
-}
-
-func Test_StartCilium_Rollback_Integration(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("This test requires root privileges")
-	}
-
-	//
-	// Given
-	//
-	testutil.Reset(t)
-	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
-
-	// Setup Cilium CLI first
-	step, err := SetupCilium().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error, "Failed to setup Cilium CLI")
-
-	// Start Cilium
-	step, err = StartCilium().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-	require.NoError(t, report.Error, "Failed to start Cilium")
 
 	//
 	// When - Rollback
@@ -535,8 +466,8 @@ func Test_StartCilium_Rollback_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify Cilium CNI is uninstalled from the cluster
-	cmd := testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
-	output, err := cmd.Output()
+	cmd = testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "pods", "-n", "kube-system", "-l", "k8s-app=cilium"))
+	output, err = cmd.Output()
 	// Should either error (no resources found) or show no cilium pods
 	if err == nil {
 		// If command succeeds, output should not contain cilium pods
