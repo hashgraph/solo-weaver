@@ -56,7 +56,7 @@ func Test_NewSetupClusterWorkflow_Integration(t *testing.T) {
 	require.NotNil(t, resetReport)
 	require.NoError(t, resetReport.Error)
 
-	wf, err := WithWorkflowExecutionMode(InstallClusterWorkflow(), DefaultWorkflowExecutionOptions()).Build()
+	wf, err := WithWorkflowExecutionMode(InstallClusterWorkflow(core.NodeTypeBlock, core.ProfileLocal), DefaultWorkflowExecutionOptions()).Build()
 	if err != nil {
 		t.Fatalf("failed to build workflow: %v", err)
 	}

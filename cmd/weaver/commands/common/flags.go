@@ -17,6 +17,13 @@ import (
 
 // Examples of typed flag definitions
 var (
+	FlagNodeType = FlagDefinition[string]{
+		Name:        "node-type",
+		ShortName:   "n",
+		Description: fmt.Sprintf("Type of node to deploy %s", []string{core.NodeTypeBlock, core.NodeTypeMirror, core.NodeTypeConsensus}),
+		Default:     core.NodeTypeBlock,
+	}
+
 	FlagStopOnError = FlagDefinition[bool]{
 		Name:        "stop-on-error",
 		ShortName:   "",
