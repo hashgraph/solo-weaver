@@ -10,7 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupKubectl() automa.Builder {
+func SetupKubectl() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubectl").
 		Steps(
 			installKubectl(software.NewKubectlInstaller),

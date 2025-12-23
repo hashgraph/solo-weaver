@@ -51,7 +51,7 @@ var installCmd = &cobra.Command{
 		if err != nil {
 			return errorx.Decorate(err, "failed to determine execution mode")
 		}
-		opts := workflows.DefaultClusterSetupOptions()
+		opts := workflows.DefaultWorkflowExecutionOptions()
 		opts.ExecutionMode = execMode
 
 		logx.As().Debug().
@@ -59,10 +59,13 @@ var installCmd = &cobra.Command{
 			Str("nodeType", nodeType).
 			Str("profile", flagProfile).
 			Str("valuesFile", validatedValuesFile).
-			Any("clusterSetupOptions", opts).
+			Any("opts", opts).
 			Msg("Installing Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile, opts))
+		wb := workflows.WithWorkflowExecutionMode(
+			workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile), opts)
+
+		common.RunWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 		return nil

@@ -109,7 +109,7 @@ var clusterCRDs = []string{
 }
 
 // CheckClusterHealth performs a series of checks to ensure the cluster is healthy and operational
-func CheckClusterHealth() automa.Builder {
+func CheckClusterHealth() *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("check-cluster-health").Steps(
 		CheckClusterNodesReady(CheckClusterNodesStepId, kube.ClientFromContext),

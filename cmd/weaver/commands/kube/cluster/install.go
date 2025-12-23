@@ -15,20 +15,21 @@ var installCmd = &cobra.Command{
 	Short: "Install a Kubernetes Cluster",
 	Long:  "Run safety checks, setup a K8s cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logx.As().Debug().
-			Strs("args", args).
-			Msg("Installing Kubernetes Cluster")
-
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {
 			return errorx.Decorate(err, "failed to determine execution mode")
 		}
 
-		opts := workflows.DefaultClusterSetupOptions()
-		opts.SetupMetricsServer = flagMetricsServer
+		opts := workflows.DefaultWorkflowExecutionOptions()
 		opts.ExecutionMode = execMode
 
-		common.RunWorkflow(cmd.Context(), workflows.NewSetupClusterWorkflow(opts))
+		logx.As().Debug().
+			Strs("args", args).
+			Any("opts", opts).
+			Msg("Installing Kubernetes Cluster")
+
+		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(), opts)
+		common.RunWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")
 		return nil
@@ -36,7 +37,6 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	common.FlagMetricsServer.SetVarP(installCmd, &flagMetricsServer, false)
 	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)

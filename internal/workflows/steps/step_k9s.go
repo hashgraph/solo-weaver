@@ -10,7 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupK9s() automa.Builder {
+func SetupK9s() *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("setup-k9s").
 		Steps(

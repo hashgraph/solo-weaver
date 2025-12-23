@@ -8,7 +8,6 @@ import (
 )
 
 var (
-	flagMetricsServer   bool
 	flagStopOnError     bool
 	flagRollbackOnError bool
 	flagContinueOnError bool

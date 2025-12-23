@@ -47,15 +47,26 @@ var (
 				}
 			}
 
+			execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+			if err != nil {
+				return errorx.Decorate(err, "failed to determine execution mode")
+			}
+			opts := workflows.DefaultWorkflowExecutionOptions()
+			opts.ExecutionMode = execMode
+
 			logx.As().Debug().
 				Strs("args", args).
 				Str("nodeType", nodeType).
 				Str("profile", flagProfile).
 				Str("valuesFile", validatedValuesFile).
 				Bool("noReuseValues", flagNoReuseValues).
+				Any("opts", opts).
 				Msg("Upgrading Hedera Block Node")
 
-			common.RunWorkflow(cmd.Context(), workflows.NewBlockNodeUpgradeWorkflow(flagProfile, validatedValuesFile, !flagNoReuseValues))
+			wb := workflows.WithWorkflowExecutionMode(
+				workflows.NewBlockNodeUpgradeWorkflow(flagProfile, validatedValuesFile, !flagNoReuseValues), opts)
+
+			common.RunWorkflow(cmd.Context(), wb)
 
 			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")
 			return nil
@@ -68,4 +79,8 @@ func init() {
 		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
 	upgradeCmd.Flags().BoolVar(
 		&flagNoReuseValues, "no-reuse-values", false, "Don't reuse the last release's values (resets to chart defaults)")
+
+	common.FlagStopOnError.SetVarP(upgradeCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError.SetVarP(upgradeCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError.SetVarP(upgradeCmd, &flagContinueOnError, false)
 }

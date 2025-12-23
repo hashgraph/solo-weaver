@@ -25,7 +25,7 @@ const (
 	KeyWarnings                        = "warnings"
 )
 
-func ConfigureSysctlForKubernetes() automa.Builder {
+func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureSysctlForKubernetesStepId).
 		Steps(
 			copySysctlConfigurationFiles(),
