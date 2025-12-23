@@ -15,20 +15,21 @@ var uninstallCmd = &cobra.Command{
 	Short: "Uninstall a Kubernetes Cluster",
 	Long:  "Uninstall a Kubernetes Cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logx.As().Debug().
-			Strs("args", args).
-			Msg("Uninstalling Kubernetes Cluster")
-
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {
 			return errorx.Decorate(err, "failed to determine execution mode")
 		}
 
-		opts := workflows.DefaultClusterSetupOptions()
-		opts.SetupMetricsServer = flagMetricsServer
+		opts := workflows.DefaultWorkflowExecutionOptions()
 		opts.ExecutionMode = execMode
 
-		common.RunWorkflow(cmd.Context(), workflows.NewTeardownClusterWorkflow(opts))
+		logx.As().Debug().
+			Strs("args", args).
+			Any("opts", opts).
+			Msg("Uninstalling Kubernetes Cluster")
+
+		wb := workflows.WithWorkflowExecutionMode(workflows.UninstallClusterWorkflow(), opts)
+		common.RunWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully uninstalled Kubernetes Cluster")
 		return nil
@@ -36,7 +37,6 @@ var uninstallCmd = &cobra.Command{
 }
 
 func init() {
-	common.FlagMetricsServer.SetVarP(uninstallCmd, &flagMetricsServer, false)
 	common.FlagStopOnError.SetVarP(uninstallCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError.SetVarP(uninstallCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError.SetVarP(uninstallCmd, &flagContinueOnError, false)

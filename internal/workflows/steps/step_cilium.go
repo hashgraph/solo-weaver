@@ -13,7 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupCilium() automa.Builder {
+func SetupCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-cilium-cli").Steps(
 		installCilium(software.NewCiliumInstaller),
 		configureCilium(software.NewCiliumInstaller),
@@ -173,7 +173,7 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 		})
 }
 
-func StartCilium() automa.Builder {
+func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
 		installCiliumCNI("1.18.1"), // we cannot write in pure Go because we need to run cilium binary
 

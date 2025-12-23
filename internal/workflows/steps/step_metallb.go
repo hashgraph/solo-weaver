@@ -40,7 +40,7 @@ var (
 	metalLBConfigFilePath = path.Join(core.Paths().TempDir, "metallb-config.yaml")
 )
 
-func SetupMetalLB() automa.Builder {
+func SetupMetalLB() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupMetalLBStepId).Steps(
 		installMetalLB(),
 		isMetalLBPodsReady(), // ensure metallb pods are ready before applying config

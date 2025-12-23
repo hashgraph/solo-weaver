@@ -8,33 +8,22 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// ClusterSetupOptions defines options for setting up various components of the cluster
-type ClusterSetupOptions struct {
-	SetupCilium        bool
-	SetupMetalLB       bool
-	SetupMetricsServer bool
-	CheckClusterHealth bool
-	ExecutionMode      automa.TypeMode
-	RollbackMode       automa.TypeMode
+// WorkflowExecutionOptions defines options for setting up various components of the cluster
+type WorkflowExecutionOptions struct {
+	ExecutionMode automa.TypeMode
+	RollbackMode  automa.TypeMode
 }
 
-// DefaultClusterSetupOptions returns ClusterSetupOptions with all boolean options defaulted to true.
-func DefaultClusterSetupOptions() *ClusterSetupOptions {
-	return &ClusterSetupOptions{
-		SetupCilium:        true,
-		SetupMetalLB:       true,
-		SetupMetricsServer: true,
-		CheckClusterHealth: true,
-		ExecutionMode:      automa.StopOnError,
+// DefaultWorkflowExecutionOptions returns WorkflowExecutionOptions with all boolean options defaulted to true.
+func DefaultWorkflowExecutionOptions() *WorkflowExecutionOptions {
+	return &WorkflowExecutionOptions{
+		ExecutionMode: automa.StopOnError,
+		RollbackMode:  automa.ContinueOnError,
 	}
 }
 
-// NewSetupClusterWorkflow creates a workflow to set up a kubernetes cluster
-func NewSetupClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder {
-	if opts == nil {
-		opts = DefaultClusterSetupOptions()
-	}
-
+// InstallClusterWorkflow creates a workflow to set up a kubernetes cluster
+func InstallClusterWorkflow() *automa.WorkflowBuilder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
 		// setup env for k8s
@@ -60,41 +49,36 @@ func NewSetupClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder 
 
 		// init cluster
 		steps.InitializeCluster(),
-	}
 
-	if opts.SetupCilium {
-		baseSteps = append(baseSteps, steps.SetupCilium(), steps.StartCilium())
-	}
+		steps.SetupCilium(),
+		steps.StartCilium(),
 
-	if opts.SetupMetalLB {
-		baseSteps = append(baseSteps, steps.SetupMetalLB())
-	}
+		steps.SetupMetalLB(),
 
-	if opts.SetupMetricsServer {
-		baseSteps = append(baseSteps, steps.DeployMetricsServer(nil))
-	}
+		steps.DeployMetricsServer(nil),
 
-	// health check
-	if opts.CheckClusterHealth {
-		baseSteps = append(baseSteps, steps.CheckClusterHealth())
+		steps.CheckClusterHealth(),
 	}
 
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
-		Steps(baseSteps...).
-		WithExecutionMode(opts.ExecutionMode).
-		WithRollbackMode(opts.RollbackMode)
+		Steps(baseSteps...)
 }
 
-func NewTeardownClusterWorkflow(opts *ClusterSetupOptions) *automa.WorkflowBuilder {
+// WithWorkflowExecutionMode applies the given WorkflowExecutionOptions to the provided WorkflowBuilder.
+// If opts is nil, it uses DefaultWorkflowExecutionOptions.
+func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *WorkflowExecutionOptions) *automa.WorkflowBuilder {
 	if opts == nil {
-		opts = DefaultClusterSetupOptions()
+		opts = DefaultWorkflowExecutionOptions()
 	}
 
-	// TODO: implement teardown steps
+	return wf.WithExecutionMode(opts.ExecutionMode).WithRollbackMode(opts.RollbackMode)
+}
+
+// UninstallClusterWorkflow creates a workflow to tear down a kubernetes cluster
+// TODO: implement teardown steps
+func UninstallClusterWorkflow() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("teardown-kubernetes").
-		Steps().
-		WithExecutionMode(opts.ExecutionMode).
-		WithRollbackMode(opts.RollbackMode)
+		Steps()
 }

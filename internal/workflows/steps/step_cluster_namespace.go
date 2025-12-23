@@ -14,7 +14,7 @@ import (
 
 // CheckClusterNamespaces checks if the specified namespaces exist in the cluster
 // namespaces is a list of namespace names
-func CheckClusterNamespaces(id string, namespaces []string, timeout time.Duration, provider kube.ClientProviderFromContext) automa.Builder {
+func CheckClusterNamespaces(id string, namespaces []string, timeout time.Duration, provider kube.ClientProviderFromContext) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := provider(ctx)

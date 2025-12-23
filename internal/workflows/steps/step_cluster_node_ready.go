@@ -15,7 +15,7 @@ import (
 )
 
 // CheckClusterNodesReady checks if all nodes in the cluster are ready
-func CheckClusterNodesReady(id string, provider kube.ClientProviderFromContext) automa.Builder {
+func CheckClusterNodesReady(id string, provider kube.ClientProviderFromContext) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := provider(ctx)

@@ -10,7 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupHelm() automa.Builder {
+func SetupHelm() *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("setup-helm").
 		Steps(

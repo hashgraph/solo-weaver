@@ -24,7 +24,7 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(profile string, valuesFile string) automa.Builder {
+func SetupBlockNode(profile string, valuesFile string) *automa.WorkflowBuilder {
 	// Lazy initialization of block node manager
 	// This blocknodeManagerProvider pattern ensures that the manager is only created once
 	// and reused across all steps in the workflow steps
@@ -190,7 +190,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 }
 
 // installBlockNode installs the block node helm chart
-func installBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) automa.Builder {
+func installBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
@@ -310,7 +310,7 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 }
 
 // UpgradeBlockNode upgrades the block node on the cluster
-func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) automa.Builder {
+func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) *automa.WorkflowBuilder {
 	// Lazy initialization of block node manager
 	var blockNodeManager *blocknode.Manager
 	blockNodeManagerProvider := func() (*blocknode.Manager, error) {

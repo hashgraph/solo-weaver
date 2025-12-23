@@ -10,7 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupKubelet() automa.Builder {
+func SetupKubelet() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubelet").
 		Steps(
 			installKubelet(software.NewKubeletInstaller),
