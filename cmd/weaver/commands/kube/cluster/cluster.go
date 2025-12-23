@@ -8,6 +8,7 @@ import (
 )
 
 var (
+	flagNodeType        string
 	flagStopOnError     bool
 	flagRollbackOnError bool
 	flagContinueOnError bool
