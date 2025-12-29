@@ -6,60 +6,25 @@ package workflows
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/automa-saga/automa/automa_steps"
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/stretchr/testify/require"
 )
 
-// Reset returns a step that resets the Kubernetes cluster and cleans up all related resources
-// This is a best effort cleanup and may not cover all edge cases
-func reset() automa.Builder {
-	return automa_steps.BashScriptStep("reset-all", []string{
-		"helm uninstall metallb -n metallb-system || true",
-		"kubectl delete namespace metallb-system || true",
-		"cilium uninstall || true",
-		"sudo kubeadm reset --force || true",
-		"sudo rm -rf /etc/cni/net.d || true",
-		"sudo systemctl stop kubelet || true",
-		"sudo systemctl disable kubelet || true",
-		"sudo rm -f /usr/lib/systemd/system/kubelet.service",
-		"sudo systemctl stop crio || true",
-		"sudo systemctl disable crio || true",
-		"sudo rm -f /usr/lib/systemd/system/crio.service",
-		"sudo systemctl daemon-reload || true",
-		"sudo rm -f /usr/local/bin/kubeadm || true",
-		"sudo rm -f /usr/local/bin/kubelet || true",
-		"sudo rm -f /usr/local/bin/cilium || true",
-		"sudo rm -rf $HOME/.kube || true",
-		"sudo rm -f /etc/sysctl.d/*.conf || true",
-		"sudo umount -R /var/lib/kubelet || true",
-		"sudo umount -R /var/run/cilium || true",
-		"sudo umount -R /etc/kubernetes || true",
-		"sudo swapoff -a",
-		"sudo lsof -t -i :6443 | xargs -r sudo kill -9 || true",
-		fmt.Sprintf("sudo rm -rf %s || true", core.Paths().HomeDir),
-	}, "")
-}
-
 func Test_NewSetupClusterWorkflow_Integration(t *testing.T) {
-	rf, err := reset().Build()
-	if err != nil {
-		t.Fatalf("failed to build reset workflow: %v", err)
-	}
+	testutil.Reset(t)
 
-	resetReport := rf.Execute(context.Background())
-	require.NotNil(t, resetReport)
-	require.NoError(t, resetReport.Error)
+	err := testutil.InstallCrioRegistriesConf()
+	require.NoError(t, err)
 
-	wf, err := WithWorkflowExecutionMode(InstallClusterWorkflow(core.NodeTypeBlock, core.ProfileLocal), DefaultWorkflowExecutionOptions()).Build()
-	if err != nil {
-		t.Fatalf("failed to build workflow: %v", err)
-	}
+	wf, err := InstallClusterWorkflow(core.NodeTypeBlock, core.ProfileLocal).
+		WithExecutionMode(automa.StopOnError).
+		Build()
+	require.NoError(t, err)
 
 	report := wf.Execute(context.Background())
 	require.NotNil(t, report)

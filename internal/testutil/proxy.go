@@ -34,6 +34,12 @@ func InstallCrioRegistriesConf() error {
 	// This is equivalent to software.GetRegistriesConfPath()
 	registriesConfPath := filepath.Join(core.Paths().SandboxDir, "etc", "containers", "registries.conf.d", "registries.conf")
 
+	// if the directory does not exist, create it
+	err = os.MkdirAll(filepath.Dir(registriesConfPath), core.DefaultDirOrExecPerm)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create registries.conf.d directory")
+	}
+
 	// Write to the sandbox registries.conf.d directory
 	err = os.WriteFile(registriesConfPath, []byte(content), core.DefaultFilePerm)
 	if err != nil {
