@@ -95,18 +95,20 @@ func (h *helmManager) AddRepo(name, url string, o RepoAddOptions) (*repo.ChartRe
 	defer cancel()
 
 	locked, err := fileLock.TryLockContext(lockCtx, time.Second)
-	if err == nil && locked {
-		defer func() {
-			e := fileLock.Unlock()
-			if e != nil {
-				h.log.Warn().Err(e).Str("lockPath", lockPath).Msg("failed to unlock repo file lock")
-			}
-		}()
-	}
-
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to acquire file lock for repo file %q", o.RepoFile)
 	}
+	if !locked {
+		return nil, errorx.IllegalState.New(fmt.Sprintf("timed out acquiring file lock for repo file %q", o.RepoFile))
+	}
+
+	// We have the lock — ensure we release it.
+	defer func() {
+		e := fileLock.Unlock()
+		if e != nil {
+			h.log.Warn().Err(e).Str("lockPath", lockPath).Msg("failed to unlock repo file lock")
+		}
+	}()
 
 	b, err := os.ReadFile(o.RepoFile)
 	if err != nil && !os.IsNotExist(err) {
