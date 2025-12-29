@@ -210,6 +210,10 @@ func TestHelmLifecycle_InstallAndUpgradeWithValueReuse(t *testing.T) {
 
 	testutil.Reset(t)
 
+	// Sets up registry proxy for CRI-O
+	err := testutil.InstallCrioRegistriesConf()
+	require.NoError(t, err)
+
 	// Create a test config file
 	configContent := `
 blockNode:
@@ -221,7 +225,7 @@ blockNode:
     basePath: "/mnt/fast-storage"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
-	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
+	err = os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
 	require.NoError(t, err)
 
 	err = config.Initialize(tmpConfigFile)

@@ -435,6 +435,7 @@ func Test_KernelModuleStep_RollbackOnFailure_Integration(t *testing.T) {
 			InstallKernelModule(validModule),
 			InstallKernelModule(invalidModule), // This should fail
 		).
+		WithExecutionMode(automa.RollbackOnError).
 		Build()
 	require.NoError(t, err, "Failed to build workflow")
 
@@ -489,6 +490,7 @@ func Test_KernelModuleStep_RollbackMixedScenario_Integration(t *testing.T) {
 			InstallKernelModule(newModule),                       // Should load the module
 			InstallKernelModule("nonexistent_module_mixed_test"), // Should fail
 		).
+		WithExecutionMode(automa.RollbackOnError).
 		Build()
 	require.NoError(t, err, "Failed to build workflow")
 

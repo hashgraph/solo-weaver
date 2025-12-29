@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Execution time: ~22 seconds
 func Test_StepKubeadm_Fresh_Integration(t *testing.T) {
 	//
 	// Given
@@ -550,8 +551,8 @@ func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	require.Error(t, err, "kubeadm temp directory should be removed after rollback")
 }
 
-// It tests fresh install happy path, attempt to reinitialize and then rollback
-// Execution time: ~4m 5secs
+// It combines multiple integration tests: fresh install, attempt to reinitialize and then rollback.
+// Execution time: 4 - 14 minutes
 func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

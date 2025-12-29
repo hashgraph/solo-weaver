@@ -234,7 +234,7 @@ func InitializeCluster() *automa.StepBuilder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")

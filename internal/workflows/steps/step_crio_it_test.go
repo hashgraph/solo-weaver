@@ -61,7 +61,7 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// Execution time: 3 min 17 seconds
+// Execution time: ~10 seconds
 func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given

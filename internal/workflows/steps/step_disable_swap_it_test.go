@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build integration
+//go:build unix || integration
 
 package steps
 
