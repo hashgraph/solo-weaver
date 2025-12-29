@@ -99,7 +99,7 @@ func (h *helmManager) AddRepo(name, url string, o RepoAddOptions) (*repo.ChartRe
 		return nil, errorx.IllegalState.Wrap(err, "failed to acquire file lock for repo file %q", o.RepoFile)
 	}
 	if !locked {
-		return nil, errorx.IllegalState.New(fmt.Sprintf("timed out acquiring file lock for repo file %q", o.RepoFile))
+		return nil, errorx.IllegalState.New("timed out acquiring file lock for repo file %q", o.RepoFile)
 	}
 
 	// We have the lock — ensure we release it.
