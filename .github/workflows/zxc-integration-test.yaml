@@ -1,24 +1,49 @@
 # SPDX-License-Identifier: Apache-2.0
-
 name: "ZXC: Integration Test"
+
 on:
   workflow_call:
     inputs:
-      go-version:
-        description: "Go Version:"
-        type: string
-        required: false
-        default: "1.25.x"
-      custom-job-label:
-        description: "Custom Job Label:"
-        type: string
-        required: false
-        default: "Integration Test"
       vm-os:
-        description: "VM OS (debian or ubuntu):"
+        description: "VM OS (debian or ubuntu)"
         type: string
         required: false
         default: "debian"
+      go-version:
+        description: "Go version installed inside the VM"
+        type: string
+        required: false
+        default: "1.25.2"
+      custom-job-label:
+        description: "Custom Job Label"
+        type: string
+        required: false
+        default: "Integration Test"
+      vm-cpus:
+        description: "VM vCPUs"
+        type: number
+        required: false
+        default: 2
+      vm-mem-mb:
+        description: "VM memory (MB)"
+        type: number
+        required: false
+        default: 4096
+      vm-disk-gb:
+        description: "Overlay disk size (GB)"
+        type: number
+        required: false
+        default: 20
+      vm-ready-timeout-minutes:
+        description: "Timeout waiting for VM SSH"
+        type: number
+        required: false
+        default: 10
+      integration-timeout-minutes:
+        description: "Timeout for integration tests in VM"
+        type: number
+        required: false
+        default: 90
 
 defaults:
   run:
@@ -29,8 +54,9 @@ permissions:
 
 jobs:
   integration-test:
-    name: "${{ inputs.custom-job-label || 'Integration Test' }}"
-    runs-on: ubuntu-latest
+    name: "${{ inputs.custom-job-label }}"
+    runs-on: kvm-runner
+
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
@@ -40,95 +66,95 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Setup GoLang (Host)
-        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
-        with:
-          go-version: ${{ inputs.go-version || '1.25.x' }}
+      # Host setup is assumed to be done on the runner:
+      # - QEMU + tools installed (qemu-system-x86, qemu-utils, genisoimage, jq, rsync, nc, ssh)
+      # - KVM enabled (/dev/kvm) and runner user has permissions
+      # - Optional: pre-cached base images in /var/lib/weaver/images
 
-      - name: Install Task (Host)
-        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
-        with:
-          version: 3.39.2
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Require KVM
+      - name: Create VM working directory + pick unique SSH port
+        id: vm-vars
         run: |
           set -euo pipefail
-          if [ ! -e /dev/kvm ]; then
-            echo "KVM is required but /dev/kvm is missing. Use a self-hosted runner with KVM."
-            exit 1
-          fi
-          if ! groups | grep -q '\bkvm\b'; then
-            echo "User is not in kvm group. Fix runner permissions."
-            ls -la /dev/kvm || true
-            exit 1
-          fi
-          echo "KVM seems present; continuing."
 
+          JOB_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}-${RANDOM}"
+          VM_DIR="${RUNNER_TEMP}/weaver-vm-${JOB_ID}"
+          mkdir -p "${VM_DIR}"
 
-      - name: Install QEMU and dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            qemu-system-x86 \
-            qemu-utils \
-            cloud-image-utils \
-            genisoimage \
-            openssh-client \
-            rsync \
-            netcat-openbsd
+          # Pick a random high port in a safe range to avoid conflicts.
+          # Retry a few times if already in use.
+          pick_port() {
+            local tries=20
+            while [ $tries -gt 0 ]; do
+              local p=$(( 2200 + (RANDOM % 400) ))
+              if ! ss -lnt "( sport = :$p )" | grep -q ":$p"; then
+                echo "$p"
+                return 0
+              fi
+              tries=$((tries - 1))
+            done
+            return 1
+          }
+
+          VM_PORT="$(pick_port)"
+          echo "VM_DIR=${VM_DIR}" >> "$GITHUB_OUTPUT"
+          echo "VM_PORT=${VM_PORT}" >> "$GITHUB_OUTPUT"
+          echo "JOB_ID=${JOB_ID}" >> "$GITHUB_OUTPUT"
+
+          echo "VM_DIR=${VM_DIR}"
+          echo "VM_PORT=${VM_PORT}"
 
       - name: Generate SSH key for VM access
         run: |
           set -euo pipefail
-          mkdir -p .ssh
-          ssh-keygen -t ed25519 -f .ssh/id_ed25519_vm -N "" -C "ci-vm-key"
-          chmod 600 .ssh/id_ed25519_vm
-          chmod 644 .ssh/id_ed25519_vm.pub
-          echo "SSH key generated for VM access"
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          mkdir -p "${VM_DIR}/.ssh"
+          ssh-keygen -t ed25519 -f "${VM_DIR}/.ssh/id_ed25519_vm" -N "" -C "ci-vm-key"
+          chmod 600 "${VM_DIR}/.ssh/id_ed25519_vm"
+          chmod 644 "${VM_DIR}/.ssh/id_ed25519_vm.pub"
 
-      - name: Download cloud image
-        id: download-image
+      - name: Resolve base image path (pre-cached)
+        id: base-image
         run: |
           set -euo pipefail
           VM_OS="${{ inputs.vm-os }}"
+          IMAGE_BASE="/var/lib/weaver/images"
 
           case "$VM_OS" in
             debian)
-              IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
-              IMAGE_FILE="debian-12-cloud.qcow2"
+              BASE_IMAGE="${IMAGE_BASE}/debian-12-genericcloud-amd64.qcow2"
               ;;
             ubuntu)
-              IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-              IMAGE_FILE="ubuntu-22.04-cloud.img"
+              BASE_IMAGE="${IMAGE_BASE}/jammy-server-cloudimg-amd64.img"
               ;;
             *)
-              echo "Unsupported VM OS: $VM_OS"
+              echo "Unsupported vm-os: ${VM_OS}"
               exit 1
               ;;
           esac
 
-          echo "Downloading $VM_OS cloud image..."
-          wget -q --show-progress "$IMAGE_URL" -O "$IMAGE_FILE"
+          if [ ! -f "$BASE_IMAGE" ]; then
+            echo "Base image not found: $BASE_IMAGE"
+            echo "Runner host must pre-cache images under /var/lib/weaver/images"
+            exit 1
+          fi
 
-          echo "image_file=$IMAGE_FILE" >> "$GITHUB_OUTPUT"
-          echo "vm_os=$VM_OS" >> "$GITHUB_OUTPUT"
+          echo "BASE_IMAGE=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "VM_OS=${VM_OS}" >> "$GITHUB_OUTPUT"
+          echo "Using base image: ${BASE_IMAGE}"
 
-      - name: Create cloud-init configuration
+      - name: Create cloud-init ISO
         run: |
           set -euo pipefail
-          SSH_PUB_KEY=$(cat .ssh/id_ed25519_vm.pub)
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          SSH_PUB_KEY="$(cat "${VM_DIR}/.ssh/id_ed25519_vm.pub")"
 
-          cat > meta-data <<EOF
-          instance-id: ci-vm-001
+          cat > "${VM_DIR}/meta-data" <<EOF
+          instance-id: ci-vm-${{ steps.vm-vars.outputs.JOB_ID }}
           local-hostname: ci-vm
           EOF
 
-          # IMPORTANT:
-          # - Keep cloud-init simple and bring SSH up ASAP.
-          # - Do NOT rely on long installs here; do those after SSH is reachable.
-          cat > user-data <<EOF
+          # Keep cloud-init minimal; bring SSH up quickly.
+          cat > "${VM_DIR}/user-data" <<EOF
           #cloud-config
           users:
             - name: provisioner
@@ -136,14 +162,15 @@ jobs:
               shell: /bin/bash
               sudo: ['ALL=(ALL) NOPASSWD:ALL']
               ssh_authorized_keys:
-                - $SSH_PUB_KEY
+                - ${SSH_PUB_KEY}
 
           system_info:
             default_user:
               name: provisioner
 
-          # Create weaver user with UID/GID 2500
           bootcmd:
+            - systemctl disable systemd-networkd-wait-online.service || true
+            - systemctl mask systemd-networkd-wait-online.service || true
             - groupadd -g 2500 weaver || true
             - useradd -u 2500 -g 2500 -m -s /bin/bash weaver || true
 
@@ -152,213 +179,210 @@ jobs:
             - sudo
             - ca-certificates
             - curl
+            - rsync
+            - git
 
           runcmd:
-            # Bring SSH up ASAP so CI can connect quickly
             - systemctl enable --now ssh || systemctl enable --now sshd
             - sed -i 's/^#\\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config || true
             - systemctl restart ssh || systemctl restart sshd || true
           EOF
 
-          genisoimage -output cloud-init.iso \
+          genisoimage -output "${VM_DIR}/cloud-init.iso" \
             -volid cidata \
             -joliet \
             -rock \
-            user-data meta-data
+            "${VM_DIR}/user-data" "${VM_DIR}/meta-data"
 
-          echo "Cloud-init configuration created"
-
-      - name: Create VM disk overlay
+      - name: Create overlay disk from base image
         run: |
           set -euo pipefail
-          IMAGE_FILE="${{ steps.download-image.outputs.image_file }}"
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          BASE_IMAGE="${{ steps.base-image.outputs.BASE_IMAGE }}"
+          VM_DISK_GB="${{ inputs.vm-disk-gb }}"
 
-          BACKING_FMT="$(qemu-img info --output=json "$IMAGE_FILE" | jq -r '.format')"
-          if [ -z "$BACKING_FMT" ] || [ "$BACKING_FMT" = "null" ]; then
-            echo "Could not determine backing format for $IMAGE_FILE"
-            qemu-img info "$IMAGE_FILE"
+          BASE_FMT="$(qemu-img info --output=json "$BASE_IMAGE" | jq -r '.format')"
+          if [ -z "$BASE_FMT" ] || [ "$BASE_FMT" = "null" ]; then
+            echo "Could not determine base format for $BASE_IMAGE"
+            qemu-img info "$BASE_IMAGE"
             exit 1
           fi
 
-          echo "Backing image format: $BACKING_FMT"
+          echo "Base image format: ${BASE_FMT}"
+          qemu-img create -f qcow2 -F "${BASE_FMT}" -b "$BASE_IMAGE" "${VM_DIR}/vm-disk.qcow2" "${VM_DISK_GB}G"
 
-          qemu-img create -f qcow2 -F "$BACKING_FMT" -b "$IMAGE_FILE" vm-disk.qcow2 20G
-          echo "VM disk overlay created"
-
-      - name: Start QEMU VM
-        id: start-vm
+      - name: Start QEMU VM (KVM)
         run: |
           set -euo pipefail
-          KVM_AVAILABLE="${{ steps.kvm.outputs.available }}"
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
+          VM_CPUS="${{ inputs.vm-cpus }}"
+          VM_MEM_MB="${{ inputs.vm-mem-mb }}"
 
-          if [ "$KVM_AVAILABLE" = "true" ]; then
-            # We'll still verify in the wait loop if QEMU dies.
-            ACCEL_OPTS="-enable-kvm -cpu host"
-            echo "Attempting KVM acceleration"
-          else
-            ACCEL_OPTS="-accel tcg"
-            echo "Using TCG (software emulation, slower)"
+          # Start QEMU in background. Log serial output to file.
+          nohup sudo qemu-system-x86_64 \
+            -enable-kvm -cpu host \
+            -m "${VM_MEM_MB}" -smp "${VM_CPUS}" \
+            -drive file="${VM_DIR}/vm-disk.qcow2",if=virtio,format=qcow2 \
+            -drive file="${VM_DIR}/cloud-init.iso",media=cdrom,readonly=on \
+            -nographic \
+            -serial "file:${VM_DIR}/vm-console.log" \
+            -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${VM_PORT}-:22 \
+            -device virtio-net-pci,netdev=net0 \
+            -pidfile "${VM_DIR}/vm.pid" \
+            </dev/null >/dev/null 2>&1 &
+
+          # Wait a moment for pidfile to appear
+          for i in $(seq 1 20); do
+            if [ -f "${VM_DIR}/vm.pid" ]; then
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ ! -f "${VM_DIR}/vm.pid" ]; then
+            echo "vm.pid not created; QEMU may have failed to start."
+            tail -200 "${VM_DIR}/vm-console.log" || true
+            exit 1
           fi
 
-          # Start QEMU in background.
-          # - Attach cloud-init as CD-ROM (more reliable for datasource detection).
-          # - Log serial output to a file (useful for debugging).
-          qemu-system-x86_64 \
-            $ACCEL_OPTS \
-            -m 4096 \
-            -smp 2 \
-            -drive file=vm-disk.qcow2,if=virtio,format=qcow2 \
-            -drive file=cloud-init.iso,media=cdrom,readonly=on \
-            -nographic \
-            -serial file:vm-console.log \
-            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-            -device virtio-net-pci,netdev=net0 \
-            >/dev/null 2>&1 &
+          echo "QEMU PID: $(cat "${VM_DIR}/vm.pid")"
+          sudo ss -lntp | grep ":${VM_PORT}" || true
 
-          VM_PID=$!
-          echo "vm_pid=$VM_PID" >> "$GITHUB_OUTPUT"
-          echo "$VM_PID" > vm.pid
-          echo "VM started with PID: $VM_PID"
-
-      - name: Wait for VM to be ready
-        timeout-minutes: 10
+      - name: Wait for VM SSH to be ready
+        timeout-minutes: ${{ inputs.vm-ready-timeout-minutes }}
         run: |
           set -euo pipefail
-          echo "Waiting for VM SSH to be ready..."
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
+          VM_PID="$(cat "${VM_DIR}/vm.pid")"
 
-          VM_PID="$(cat vm.pid)"
+          echo "Waiting for VM SSH on localhost:${VM_PORT}..."
+
           MAX_ATTEMPTS=60
-          ATTEMPT=0
+          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo -n "Attempt ${ATTEMPT}/${MAX_ATTEMPTS}: "
 
-          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            ATTEMPT=$((ATTEMPT + 1))
-            echo -n "Attempt $ATTEMPT/$MAX_ATTEMPTS: "
-
-            # Fail fast if QEMU exited
             if ! kill -0 "$VM_PID" 2>/dev/null; then
-              echo "❌ QEMU process is not running anymore (PID: $VM_PID)"
+              echo "❌ QEMU process exited (PID: ${VM_PID})"
               echo "=== vm-console.log (last 200 lines) ==="
-              tail -200 vm-console.log || true
+              tail -200 "${VM_DIR}/vm-console.log" || true
               exit 1
             fi
 
-            # Quick port signal
-            if nc -z localhost 2222; then
-              echo -n "port 2222 open; "
+            if nc -z 127.0.0.1 "${VM_PORT}"; then
+              echo -n "port open; "
             else
-              echo -n "port 2222 closed; "
+              echo -n "port closed; "
             fi
 
-            if ssh -i .ssh/id_ed25519_vm \
+            if ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
                  -o ConnectTimeout=5 \
                  -o StrictHostKeyChecking=no \
                  -o UserKnownHostsFile=/dev/null \
                  -o BatchMode=yes \
-                 -p 2222 \
-                 provisioner@localhost \
+                 -p "${VM_PORT}" \
+                 provisioner@127.0.0.1 \
                  "echo 'SSH ready'" >/dev/null 2>&1; then
               echo "✓ VM is ready!"
               exit 0
             fi
 
-            echo "not ready yet, waiting..."
+            echo "not ready yet..."
             sleep 10
           done
 
-          echo "❌ VM failed to become ready after $MAX_ATTEMPTS attempts"
-          echo "=== vm-console.log (last 200 lines) ==="
-          tail -200 vm-console.log || true
+          echo "❌ VM failed to become ready"
+          tail -200 "${VM_DIR}/vm-console.log" || true
           exit 1
 
-      - name: Bootstrap VM tools (Go + task deps)
+      - name: Bootstrap VM tools (Go + Task inside VM)
         timeout-minutes: 20
         run: |
           set -euo pipefail
-          ssh -i .ssh/id_ed25519_vm \
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
+          GO_VER="${{ inputs.go-version }}"
+
+          ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
-              -p 2222 \
-              provisioner@localhost << 'EOSSH'
+              -p "${VM_PORT}" \
+              provisioner@127.0.0.1 << EOSSH
           set -euo pipefail
 
           sudo cloud-init status --wait || true
 
-          # Install deps we need for builds/tests
           sudo apt-get update
-          sudo apt-get install -y git rsync build-essential binutils gcc libc6-dev
+          sudo apt-get install -y rsync build-essential binutils gcc libc6-dev curl ca-certificates
 
-          # Install Go (explicit version)
-          GO_VER="1.25.2"
-          curl -sSLO "https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz"
+          curl -sSLO "https://go.dev/dl/go\${GO_VER}.linux-amd64.tar.gz"
           sudo rm -rf /usr/local/go
-          sudo tar -C /usr/local -xzf "go${GO_VER}.linux-amd64.tar.gz"
-          rm "go${GO_VER}.linux-amd64.tar.gz"
+          sudo tar -C /usr/local -xzf "go\${GO_VER}.linux-amd64.tar.gz"
+          rm "go\${GO_VER}.linux-amd64.tar.gz"
 
-          echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' | sudo tee /etc/profile.d/go.sh >/dev/null
+          echo 'export PATH=\$PATH:/usr/local/go/bin:\$HOME/go/bin' | sudo tee /etc/profile.d/go.sh >/dev/null
           sudo chmod +x /etc/profile.d/go.sh
           sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
           sudo ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
-          # Avoid surprise toolchain downloads in CI
           /usr/local/go/bin/go env -w GOTOOLCHAIN=local
+          /usr/local/bin/go version
 
-          # Optional: install Task inside VM (if your Taskfile expects it there)
           if ! command -v task >/dev/null 2>&1; then
             curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | sudo -E bash
             sudo apt-get update
             sudo apt-get install -y task
           fi
 
-          /usr/local/bin/go version
-          task --version || true
-          EOSSH
+          task --version
+EOSSH
 
       - name: Sync code to VM
         run: |
           set -euo pipefail
-          echo "Syncing code to VM..."
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
 
-          ssh -i .ssh/id_ed25519_vm \
+          ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
-              -p 2222 \
-              provisioner@localhost \
+              -p "${VM_PORT}" \
+              provisioner@127.0.0.1 \
               "mkdir -p /home/provisioner/solo-weaver"
 
           rsync -az \
-            -e "ssh -i .ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p 2222" \
+            -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p ${VM_PORT}" \
             --exclude='.git' \
             --exclude='vendor' \
             --exclude='bin' \
             --exclude='*.log' \
             --exclude='.ssh' \
-            --exclude='vm-disk.qcow2' \
             --exclude='*.iso' \
             --exclude='*.img' \
             --exclude='*.qcow2' \
             ./ \
-            provisioner@localhost:/home/provisioner/solo-weaver/
-
-          echo "✓ Code synced to VM"
+            provisioner@127.0.0.1:/home/provisioner/solo-weaver/
 
       - name: Run Integration Tests in VM
-        timeout-minutes: 90
+        timeout-minutes: ${{ inputs.integration-timeout-minutes }}
         run: |
           set -euo pipefail
-          echo "Running integration tests in VM..."
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
 
-          ssh -i .ssh/id_ed25519_vm \
+          ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
               -o TCPKeepAlive=yes \
-              -p 2222 \
-              provisioner@localhost << 'EOSSH'
+              -p "${VM_PORT}" \
+              provisioner@127.0.0.1 << 'EOSSH'
           set -euo pipefail
 
           export PATH=/usr/local/go/bin:$HOME/go/bin:/usr/local/bin:$PATH
@@ -366,7 +390,6 @@ jobs:
 
           cd /home/provisioner/solo-weaver
 
-          # Ensure mockgen available (as provisioner)
           if ! command -v mockgen >/dev/null 2>&1; then
             go install github.com/golang/mock/mockgen@v1.6.0
           fi
@@ -375,27 +398,35 @@ jobs:
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task mocks
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task test:integration:verbose
-          EOSSH
-
-          echo "✓ Integration tests completed"
+EOSSH
 
       - name: Retrieve test results
         if: always()
         run: |
           set -euo pipefail
-          echo "Retrieving test results from VM..."
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
 
           rsync -az \
-            -e "ssh -i .ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -p 2222" \
-            provisioner@localhost:/home/provisioner/solo-weaver/integration-test-report.md \
+            -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -p ${VM_PORT}" \
+            provisioner@127.0.0.1:/home/provisioner/solo-weaver/integration-test-report.md \
             ./ || echo "No integration test report found"
 
           rsync -az \
-            -e "ssh -i .ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -p 2222" \
-            provisioner@localhost:/home/provisioner/solo-weaver/integration-test.json \
+            -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -p ${VM_PORT}" \
+            provisioner@127.0.0.1:/home/provisioner/solo-weaver/integration-test.json \
             ./ || echo "No integration test JSON found"
 
-      - name: Integration Test Report
+      - name: Upload VM console log (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-console-log
+          path: ${{ steps.vm-vars.outputs.VM_DIR }}/vm-console.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Integration Test Report Summary
         if: always()
         run: |
           set -euo pipefail
@@ -409,15 +440,17 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          if [ -f vm.pid ]; then
-            VM_PID=$(cat vm.pid)
-            echo "Stopping VM (PID: $VM_PID)..."
-            kill "$VM_PID" 2>/dev/null || true
-            sleep 2
-            kill -9 "$VM_PID" 2>/dev/null || true
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+
+          if [ -f "${VM_DIR}/vm.pid" ]; then
+            VM_PID="$(cat "${VM_DIR}/vm.pid" || true)"
+            if [ -n "${VM_PID}" ]; then
+              echo "Stopping VM (PID: ${VM_PID})..."
+              sudo kill "${VM_PID}" 2>/dev/null || true
+              sleep 2
+              sudo kill -9 "${VM_PID}" 2>/dev/null || true
+            fi
           fi
 
-          echo "Cleaning up VM files..."
-          rm -f vm-disk.qcow2 cloud-init.iso vm.pid vm-console.log
-          rm -f meta-data user-data
-          rm -f debian-*.qcow2 ubuntu-*.img
+          echo "Removing VM working directory..."
+          rm -rf "${VM_DIR}"
