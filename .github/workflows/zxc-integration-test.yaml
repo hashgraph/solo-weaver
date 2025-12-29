@@ -338,7 +338,7 @@ jobs:
           fi
 
           task --version
-EOSSH
+          EOSSH
 
       - name: Sync code to VM
         run: |
@@ -398,7 +398,7 @@ EOSSH
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task mocks
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task test:integration:verbose
-EOSSH
+          EOSSH
 
       - name: Retrieve test results
         if: always()
