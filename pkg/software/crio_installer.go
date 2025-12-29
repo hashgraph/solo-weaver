@@ -227,8 +227,12 @@ func (ci *crioInstaller) Install() error {
 		ContribDir + RegistriesConfFile:    filepath.Join(destDir, containersRegistriesConfdDir, RegistriesConfFile),
 	}
 	for src, dst := range configs {
-		if err := ci.installFile(filepath.Join(srcDir, src), dst, core.DefaultFilePerm); err != nil {
-			return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
+		// if dst doesn't exist then copy the file
+		_, exists, _ := ci.fileManager.PathExists(dst)
+		if !exists {
+			if err = ci.installFile(filepath.Join(srcDir, src), dst, core.DefaultFilePerm); err != nil {
+				return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
+			}
 		}
 	}
 
