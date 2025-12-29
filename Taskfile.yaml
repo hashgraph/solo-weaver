@@ -1023,10 +1023,36 @@ tasks:
     cmds:
       - |
         echo "Starting cache proxy infrastructure..."
-        if docker-compose ps | grep -q "solo-weaver-cache-proxy.*Up"; then
+        
+        # Check if required ports are already bound
+        bound_count=0
+        REQUIRED_PORTS=(3128 8081 5050)
+        
+        # Gather listening ports with available tool (ss -> netstat -> lsof)
+        LISTENING_PORTS=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print $9}' | sed -E 's/.*[:.]([0-9]+)$/\1/' | grep -E '^[0-9]+$' || true)
+        
+        # Count how many required ports are present in LISTENING_PORTS
+        for p in "${REQUIRED_PORTS[@]}"; do
+          if printf '%s\n' "$LISTENING_PORTS" | grep -x -q "$p"; then
+            echo "Port $p is already bound"
+            bound_count=$((bound_count+1))
+          fi
+        done
+        
+        if [ "$bound_count" -eq "${#REQUIRED_PORTS[@]}" ]; then
+          echo "All required ports (${REQUIRED_PORTS[*]}) are bound — skipping cache proxy start"
+          exit 0
+        fi
+        
+        if [ "$bound_count" -ne "0" ]; then
+          echo "Some required ports are bound — ensure proxy is active, skipping cache proxy start"
+          exit 0
+        fi
+        
+        if docker compose ps | grep -q "solo-weaver-cache-proxy.*Up"; then
           echo "Cache proxy is already running"
         else
-          docker-compose up -d
+          docker compose up -d
           echo "Waiting for services to be ready..."
           sleep 5
           echo ""
@@ -1060,11 +1086,13 @@ tasks:
           
           echo "Installing Squid MITM proxy CA certificate in VM..."
           
-          # Always extract fresh CA certificate from proxy container
-          # This ensures we get the correct certificate even after proxy:rebuild
-          echo "Extracting CA certificate from Squid proxy container..."
-          docker cp solo-weaver-cache-proxy:/etc/squid/certs/ca-cert.pem "$CA_CERT_PATH"
-          echo "✓ CA certificate extracted to $CA_CERT_PATH"
+          # Extract CA certificate from Squid container if not already cached
+          if [[ ! -f "$CA_CERT_PATH" ]]; then
+            echo "CA certificate not found at $CA_CERT_PATH"
+            echo "Extracting CA certificate from Squid proxy container..."
+            docker cp solo-weaver-cache-proxy:/etc/squid/certs/ca-cert.pem "$CA_CERT_PATH"
+            echo "✓ CA certificate extracted to $CA_CERT_PATH"
+          fi
           
           # Show certificate details
           echo "Certificate details:"
@@ -1105,19 +1133,19 @@ tasks:
         rm -f ca-cert.pem ca-key.pem || true
         echo "✓ Removed cached CA certificates"
         
-        docker-compose down -v || true
+        docker compose down -v || true
         docker rmi -f $(docker images -q cache-proxy-cache-proxy 2>/dev/null) 2>/dev/null || true
-        docker-compose build --no-cache
-        docker-compose up -d
+        docker compose build --no-cache
+        docker compose up -d
         sleep 2
         echo ""
         echo "✅ Proxy rebuilt and restarted with new CA certificate"
         echo ""
         echo "Checking status..."
-        docker-compose ps
+        docker compose ps
         echo ""
         echo "Recent logs:"
-        docker-compose logs --tail=5
+        docker compose logs --tail=5
         echo ""
         echo "⚠️  IMPORTANT: New CA certificate generated!"
         echo "   Run 'task proxy:install-ca-cert' to install in VM"
@@ -1127,7 +1155,7 @@ tasks:
     desc: "Stop the cache proxy server"
     dir: test/cache-proxy
     cmds:
-      - docker-compose down
+      - docker compose down
   
   proxy:status:
     desc: "Show cache proxy status and statistics"
@@ -1136,7 +1164,7 @@ tasks:
       - |
         echo "Cache Proxy Status:"
         echo "==================="
-        docker-compose ps
+        docker compose ps
         echo ""
         if docker ps | grep -q solo-weaver-cache-proxy; then
           echo "Cache sizes:"
