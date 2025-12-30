@@ -313,6 +313,8 @@ jobs:
               provisioner@127.0.0.1 << EOSSH
           set -euo pipefail
 
+          GO_VER="${GO_VER}"
+
           sudo cloud-init status --wait || true
 
           sudo apt-get update
