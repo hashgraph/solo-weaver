@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
     container_name: solo-weaver-cache-proxy
     ports:
-      - "127.0.0.1:3128:3128"
+      - "0.0.0.0:3128:3128"
     volumes:
       - cache-data:/var/cache/squid
       - ca-certs:/etc/squid/certs
@@ -16,7 +16,7 @@ services:
     image: registry:2
     container_name: solo-weaver-registry-mirror
     ports:
-      - "127.0.0.1:5000:5000"
+      - "0.0.0.0:5050:5000"
     volumes:
       - registry-data:/var/lib/registry
       - ./registry-config.yml:/etc/docker/registry/config.yml:ro
@@ -31,7 +31,7 @@ services:
     container_name: solo-weaver-goproxy
     command: server --address :8081 --cacher-dir /go/cache
     ports:
-      - "127.0.0.1:8081:8081"
+      - "0.0.0.0:8081:8081"
     volumes:
       - goproxy-cache:/go
     restart: unless-stopped
