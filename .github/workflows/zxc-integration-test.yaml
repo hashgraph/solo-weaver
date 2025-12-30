@@ -448,9 +448,9 @@ jobs:
             VM_PID="$(cat "${VM_DIR}/vm.pid" || true)"
             if [ -n "${VM_PID}" ]; then
               echo "Stopping VM (PID: ${VM_PID})..."
-              sudo kill "${VM_PID}" 2>/dev/null || true
+              kill "${VM_PID}" 2>/dev/null || true
               sleep 2
-              sudo kill -9 "${VM_PID}" 2>/dev/null || true
+              kill -9 "${VM_PID}" 2>/dev/null || true
             fi
           fi
 
