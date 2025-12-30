@@ -31,3 +31,12 @@ jobs:
       - build
     with:
       custom-job-label: Standard
+
+  integration-tests:
+    name: Integration Tests
+    uses: ./.github/workflows/zxc-integration-test.yaml
+    needs:
+      - build
+    with:
+      custom-job-label: Standard
+      vm-os: debian
