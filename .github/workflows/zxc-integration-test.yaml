@@ -247,7 +247,7 @@ jobs:
           fi
 
           echo "QEMU PID: $(cat "${VM_DIR}/vm.pid")"
-          sudo ss -lntp | grep ":${VM_PORT}" || true
+          ss -lntp | grep ":${VM_PORT}" || true
 
       - name: Wait for VM SSH to be ready
         timeout-minutes: ${{ inputs.vm-ready-timeout-minutes }}
