@@ -4,6 +4,11 @@ name: "Test Integration Setup"
 on:
   workflow_dispatch:
     inputs:
+      test-name:
+        description: "Test name pattern (regex) to run"
+        type: string
+        required: false
+        default: ""
       vm-os:
         description: 'VM OS to test'
         required: true
@@ -26,5 +31,5 @@ jobs:
     uses: ./.github/workflows/zxc-integration-test.yaml
     with:
       custom-job-label: "Test Integration (${{ inputs.vm-os }})"
-      go-version: "1.25.2"
       vm-os: ${{ inputs.vm-os }}
+      test-name: ${{ inputs.test-name }}
