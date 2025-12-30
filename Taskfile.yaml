@@ -942,9 +942,9 @@ tasks:
             netstat -tln | grep -E ':(3128|8081|5050)' || echo 'WARNING: Some tunnels may not be active yet' &&
             echo '' &&
             echo 'Testing proxy connectivity...' &&
-            timeout 5 nc -zv localhost 3128 2>&1 | grep -q succeeded && echo '✓ Squid proxy (3128) is reachable' || echo '✗ Squid proxy (3128) is NOT reachable' &&
-            timeout 5 nc -zv localhost 8081 2>&1 | grep -q succeeded && echo '✓ Go proxy (8081) is reachable' || echo '✗ Go proxy (8081) is NOT reachable' &&
-            timeout 5 nc -zv localhost 5050 2>&1 | grep -q succeeded && echo '✓ Registry mirror (5050) is reachable' || echo '✗ Registry mirror (5050) is NOT reachable' &&
+            timeout 5 nc -zv localhost 3128 2>&1 && echo '✓ Squid proxy (3128) is reachable' || echo '✗ Squid proxy (3128) is NOT reachable' &&
+            timeout 5 nc -zv localhost 8081 2>&1 && echo '✓ Go proxy (8081) is reachable' || echo '✗ Go proxy (8081) is NOT reachable' &&
+            timeout 5 nc -zv localhost 5050 2>&1 && echo '✓ Registry mirror (5050) is reachable' || echo '✗ Registry mirror (5050) is NOT reachable' &&
             echo '' &&
             export HTTP_PROXY=http://localhost:3128
             export HTTPS_PROXY=http://localhost:3128

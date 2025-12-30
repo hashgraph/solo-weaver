@@ -240,12 +240,17 @@ blockNode:
 
 		resetFlags(cmd)
 
+		// absolute path for blocknode_values.yaml
+		relativeValuesPath := "../../../../../test/config/blocknode_values.yaml"
+		absValuesPath, err := filepath.Abs(relativeValuesPath)
+		require.NoError(t, err, "failed to get absolute path for values file")
+
 		// Test with flag overrides
 		cmd.SetArgs([]string{
 			"node",
 			"install",
 			"--profile=local",
-			"--values=/mnt/solo-weaver/test/config/blocknode_values.yaml",
+			"--values=" + absValuesPath,
 			"--namespace=" + namespace,
 			"--release-name=" + releaseName,
 			"--chart-version=0.24.0",
@@ -307,11 +312,15 @@ blockNode:
 
 		resetFlags(cmd)
 
+		relativeValuesPath := "../../../../../test/config/blocknode_other_values.yaml"
+		absValuesPath, err := filepath.Abs(relativeValuesPath)
+		require.NoError(t, err, "failed to get absolute path for values file")
+
 		cmd.SetArgs([]string{
 			"node",
 			"upgrade",
 			"--profile=local",
-			"--values=/mnt/solo-weaver/test/config/blocknode_other_values.yaml",
+			"--values=" + absValuesPath,
 			"--no-reuse-values",
 		})
 		err = cmd.Execute()
@@ -341,11 +350,15 @@ blockNode:
 
 		resetFlags(cmd)
 
+		relativeValuesPath := "../../../../../test/config/blocknode_values_for_reuse_test.yaml"
+		absValuesPath, err := filepath.Abs(relativeValuesPath)
+		require.NoError(t, err, "failed to get absolute path for values file")
+
 		cmd.SetArgs([]string{
 			"node",
 			"upgrade",
 			"--profile=local",
-			"--values=/mnt/solo-weaver/test/config/blocknode_values_for_reuse_test.yaml",
+			"--values=" + absValuesPath,
 			// Note: no --no-reuse-values, so it should reuse values by default
 		})
 		err = cmd.Execute()
@@ -393,11 +406,15 @@ blockNode:
 
 		resetFlags(cmd)
 
+		relativeValuesPath := "../../../../../test/config/blocknode_values.yaml"
+		absValuesPath, err := filepath.Abs(relativeValuesPath)
+		require.NoError(t, err, "failed to get absolute path for values file")
+
 		cmd.SetArgs([]string{
 			"node",
 			"upgrade",
 			"--profile=local",
-			"--values=/mnt/solo-weaver/test/config/blocknode_values.yaml",
+			"--values=" + absValuesPath,
 			"--chart-version=0.22.1",
 			"--archive-path=/mnt/custom-archive",
 		})

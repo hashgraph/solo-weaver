@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Test Integration Setup"
+on:
+  workflow_dispatch:
+    inputs:
+      vm-os:
+        description: 'VM OS to test'
+        required: true
+        default: 'debian'
+        type: choice
+        options:
+          - debian
+          - ubuntu
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  test-integration:
+    name: Test Integration (${{ inputs.vm-os }})
+    uses: ./.github/workflows/zxc-integration-test.yaml
+    with:
+      custom-job-label: "Test Integration (${{ inputs.vm-os }})"
+      go-version: "1.25.2"
+      vm-os: ${{ inputs.vm-os }}
