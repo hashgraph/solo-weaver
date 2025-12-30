@@ -98,8 +98,8 @@ We don't need to do this often, but it's useful to know how to create and update
     rm -f go1.25.2.linux-arm64.tar.gz
     echo 'PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' | sudo tee /etc/profile.d/go.sh >/dev/null 2>&1
     source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@v1.25.2
-    source /etc/profile.d/go.sh && /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.0+auto
-    source /etc/profile.d/go.sh && sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.0+auto
+    source /etc/profile.d/go.sh && /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.2+auto
+    source /etc/profile.d/go.sh && sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.2+auto
     sudo apt clean
     sudo journalctl --vacuum-time=1s
     sudo rm -rf /tmp/*

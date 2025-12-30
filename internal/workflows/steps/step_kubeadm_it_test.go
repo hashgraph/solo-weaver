@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Execution time: ~22 seconds
 func Test_StepKubeadm_Fresh_Integration(t *testing.T) {
 	//
 	// Given
@@ -107,7 +108,7 @@ func Test_StepKubeadm_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -175,7 +176,7 @@ func Test_StepKubeadm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -232,7 +233,7 @@ func Test_StepKubeadm_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -289,7 +290,7 @@ func Test_StepKubeadm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -350,7 +351,7 @@ func Test_StepKubeadm_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -411,7 +412,7 @@ func Test_StepKubeadm_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -467,7 +468,7 @@ func Test_StepKubeadm_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	//
 	// When - Run again
 	//
-	step, err = SetupKubeadm().Build()
+	step, err = SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 
@@ -506,7 +507,7 @@ func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	testutil.Reset(t)
 
 	// Install and configure kubeadm
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
@@ -550,89 +551,13 @@ func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	require.Error(t, err, "kubeadm temp directory should be removed after rollback")
 }
 
-func Test_InitializeCluster_Fresh_Integration(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("This test requires root privileges")
-	}
-
-	//
-	// Given
-	//
-	testutil.Reset(t)
-	SetupPrerequisitesToLevel(t, SetupCrioLevel)
-
-	step, err := SetupKubeadm().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	//
-	// When
-	//
-	step, err = InitializeCluster().Build()
-
-	//
-	// Then
-	//
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-	require.NotNil(t, report)
-	require.NoError(t, report.Error)
-	require.Equal(t, automa.StatusSuccess, report.Status)
-
-	// Verify cluster is initialized by checking for kubeconfig
-	_, err = os.Stat("/etc/kubernetes/admin.conf")
-	require.NoError(t, err, "admin.conf should exist after cluster initialization")
-
-	// Verify kubectl can connect to the cluster
-	cmd := testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "nodes"))
-	output, err := cmd.Output()
-	require.NoError(t, err, "kubectl should be able to get nodes")
-	require.Contains(t, string(output), "Ready", "node should be in Ready state")
-}
-
-func Test_InitializeCluster_AlreadyInitialized_Integration(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("This test requires root privileges")
-	}
-
-	//
-	// Given
-	//
-	testutil.Reset(t)
-	SetupPrerequisitesToLevel(t, SetupCrioLevel)
-
-	step, err := SetupKubeadm().Build()
-	require.NoError(t, err)
-	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	// Initialize cluster first time
-	step, err = InitializeCluster().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-	require.NoError(t, report.Error)
-
-	//
-	// When - Try to initialize again
-	//
-	step, err = InitializeCluster().Build()
-	require.NoError(t, err)
-	report = step.Execute(context.Background())
-
-	//
-	// Then
-	//
-	require.NotNil(t, report)
-	// This may succeed or fail depending on implementation - kubeadm init typically fails if already initialized
-	// The important thing is that it handles the case gracefully
-	if report.Error != nil {
-		// If it fails, it should be a known error about cluster already being initialized
-		require.Contains(t, report.Error.Error(), "already exists")
-	}
-}
-
+// It combines multiple integration tests: fresh install, attempt to reinitialize and then rollback.
+// Execution time: 4 - 14 minutes
 func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
@@ -643,7 +568,7 @@ func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupCrioLevel)
 
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
@@ -667,6 +592,30 @@ func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	)
 	_, err = cmd.Output()
 	require.NoError(t, err, "kubectl should be able to connect after cluster initialization")
+
+	// Verify kubectl can connect to the cluster
+	cmd = testutil.Sudo(exec.Command("/usr/local/bin/kubectl", "get", "nodes"))
+	output, err := cmd.Output()
+	require.NoError(t, err, "kubectl should be able to get nodes")
+	require.Contains(t, string(output), "Ready", "node should be in Ready state")
+
+	//
+	// When - Try to initialize again
+	//
+	step, err = InitializeCluster().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+
+	//
+	// Then
+	//
+	require.NotNil(t, report)
+	// This may succeed or fail depending on implementation - kubeadm init typically fails if already initialized
+	// The important thing is that it handles the case gracefully
+	if report.Error != nil {
+		// If it fails, it should be a known error about cluster already being initialized
+		require.Contains(t, report.Error.Error(), "already exists")
+	}
 
 	//
 	// When - Rollback

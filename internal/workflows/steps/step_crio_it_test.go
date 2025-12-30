@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Execution time: ~6 seconds
 func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	//
 	// Given
@@ -60,13 +61,12 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// Execution time: ~10 seconds
 func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// Given
 	//
 	testutil.Reset(t)
-
-	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	//
 	// When
@@ -82,6 +82,18 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
+	//
+	// And When (rerun)
+	//
+	step, err = SetupCrio().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NotNil(t, report)
+	require.NoError(t, report.Error)
+
+	//
+	// Then
+	//
 	require.Equal(t, automa.StatusSkipped, report.StepReports[0].Status)
 	require.Equal(t, "true", report.StepReports[0].Metadata[AlreadyInstalled])
 	require.Empty(t, report.StepReports[0].Metadata[DownloadedByThisStep])
@@ -102,7 +114,7 @@ func Test_StepCrio_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupCrio().WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -226,7 +238,7 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupCrio().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -284,7 +296,7 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// When - Execute (should fail at extraction)
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupCrio().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 
@@ -342,7 +354,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupCrio().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -405,7 +417,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupCrio().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -471,7 +483,7 @@ func Test_StepCrio_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio().Build()
+	step, err := SetupCrio().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//

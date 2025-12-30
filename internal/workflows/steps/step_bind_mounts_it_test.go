@@ -506,7 +506,9 @@ func Test_SetupBindMounts_RollbackOnFailure_Integration(t *testing.T) {
 			setupBindMount("kubernetes", "/etc/kubernetes"),
 			setupBindMount("kubelet", "/var/lib/kubelet"),
 			setupBindMount("invalid", invalidBindMount.Target), // This should fail
-		).Build()
+		).
+		WithExecutionMode(automa.RollbackOnError).
+		Build()
 	require.NoError(t, err)
 
 	//

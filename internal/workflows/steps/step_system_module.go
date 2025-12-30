@@ -15,7 +15,7 @@ import (
 // InstallKernelModule ensures that a specific kernel module is loaded and persisted.
 // If the module is already loaded, it skips the loading process.
 // On rollback, it unloads the module only if it was loaded by this step.
-func InstallKernelModule(name string) automa.Builder {
+func InstallKernelModule(name string) *automa.StepBuilder {
 	stepId := fmt.Sprintf("load-kernel-module-%s", name)
 	loadedByThisStep := false
 

@@ -14,7 +14,7 @@ import (
 
 // CheckClusterPodsReady checks if the specified pods are running in the cluster
 // podNames is a list of strings in the format 'namespace/pod-name-prefix'
-func CheckClusterPodsReady(id string, podNames []string, timeout time.Duration, provider kube.ClientProviderFromContext) automa.Builder {
+func CheckClusterPodsReady(id string, podNames []string, timeout time.Duration, provider kube.ClientProviderFromContext) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(id).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := provider(ctx)

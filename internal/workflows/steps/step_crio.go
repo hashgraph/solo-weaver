@@ -10,7 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupCrio() automa.Builder {
+func SetupCrio() *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("setup-crio").
 		Steps(

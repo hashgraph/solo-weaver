@@ -17,7 +17,7 @@ import (
 
 const kubectlGetNodesCmd = "/usr/local/bin/kubectl get nodes"
 
-func SetupKubeadm() automa.Builder {
+func SetupKubeadm() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").
 		Steps(
 			installKubeadm(software.NewKubeadmInstaller),
@@ -173,7 +173,7 @@ func configureKubeadm(provider func(opts ...software.InstallerOption) (software.
 }
 
 // InitializeCluster checks cluster status and performs initialization only if needed
-func InitializeCluster() automa.Builder {
+func InitializeCluster() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("init-cluster").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Initializing Kubernetes cluster")
@@ -234,7 +234,7 @@ func InitializeCluster() automa.Builder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package workflows
 
 import (
@@ -17,5 +19,12 @@ func NewSelfInstallWorkflow() *automa.WorkflowBuilder {
 		CheckPrivilegesStep(),
 		steps.SetupHomeDirectoryStructure(core.Paths()),
 		steps.InstallWeaver(core.Paths().BinDir),
+	)
+}
+
+func NewSelfUninstallWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("self-uninstall-workflow").Steps(
+		CheckPrivilegesStep(),
+		steps.UninstallWeaver(core.Paths().BinDir),
 	)
 }

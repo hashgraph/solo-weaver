@@ -13,7 +13,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-func SetupHomeDirectoryStructure(pp *core.WeaverPaths) automa.Builder {
+func SetupHomeDirectoryStructure(pp *core.WeaverPaths) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("home_directories").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			if pp == nil {

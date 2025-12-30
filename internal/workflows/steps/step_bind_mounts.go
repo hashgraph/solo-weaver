@@ -21,7 +21,7 @@ const (
 	KeyAlreadyInFstab     = "alreadyInFstab"
 )
 
-func SetupBindMounts() automa.Builder {
+func SetupBindMounts() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-bind-mounts").
 		Steps(
 			setupBindMount("kubernetes", "/etc/kubernetes"),

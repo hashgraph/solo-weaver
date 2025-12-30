@@ -107,7 +107,7 @@ func Test_StepKubelet_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -176,7 +176,7 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -234,7 +234,7 @@ func Test_StepKubelet_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -292,7 +292,7 @@ func Test_StepKubelet_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -354,7 +354,7 @@ func Test_StepKubelet_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//

@@ -203,12 +203,16 @@ blockNode:
 	assert.Equal(t, "", cfg.BlockNode.Storage.LogPath, "logPath not set by flag, should be empty in config")
 }
 
-// TestHelmLifecycle_InstallAndUpgradeWithValueReuse tests a complete install flow with flag overrides
+// TestHelmLifecycle_InstallAndUpgradeWithValueReuse tests a complete installation flow with flag overrides
 // and multiple upgrade scenarios with different value reuse behaviors
 func TestHelmLifecycle_InstallAndUpgradeWithValueReuse(t *testing.T) {
 	serial(t) // Enforce sequential execution due to shared flag variables
 
 	testutil.Reset(t)
+
+	// Sets up registry proxy for CRI-O
+	err := testutil.InstallCrioRegistriesConf()
+	require.NoError(t, err)
 
 	// Create a test config file
 	configContent := `
@@ -221,7 +225,7 @@ blockNode:
     basePath: "/mnt/fast-storage"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
-	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
+	err = os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
 	require.NoError(t, err)
 
 	err = config.Initialize(tmpConfigFile)
@@ -290,7 +294,7 @@ blockNode:
 		assert.Equal(t, "5Gi", getPVStorageSize(t, "logging-storage-pv"), "logging-storage-pv should have 5Gi capacity")
 		assert.Equal(t, "5Gi", getPVCStorageSize(t, "logging-storage-pvc", namespace), "logging-storage-pvc should request 5Gi")
 
-		// Get manifest from revision 1 (initial install)
+		// Get manifest from revision 1 (initial installation)
 		manifest := getHelmManifest(t, releaseName, namespace, 1)
 		require.NotEmpty(t, manifest, "Initial install manifest should not be empty")
 
@@ -467,7 +471,7 @@ func resetFlags(cmd *cobra.Command) {
 	if cmd != nil {
 		cmd.ResetFlags()
 		// Add the profile flag since it's required by the parent block command
-		cmd.PersistentFlags().String(common.FlagProfileName, "", "profile to use for block commands")
+		cmd.PersistentFlags().String(common.FlagProfile.Name, "", "profile to use for block commands")
 	}
 }
 
