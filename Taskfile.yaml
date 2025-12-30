@@ -929,22 +929,22 @@ tasks:
               -o ServerAliveCountMax=3 \
               -R 3128:localhost:3128 \
               -R 8081:localhost:8081 \
-              -R 5000:localhost:5000 \
+              -R 5050:localhost:5050 \
               {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-weaver &&
             echo 'Using cache infrastructure via SSH tunnels:' &&
             echo '  - HTTP/HTTPS proxy at localhost:3128 (Squid with SSL MITM - binaries, packages)' &&
             echo '  - Go module proxy at localhost:8081 (Go dependencies)' &&
-            echo '  - Registry mirror at localhost:5000 (container images)' &&
+            echo '  - Registry mirror at localhost:5050 (container images)' &&
             echo '' &&
             echo 'Verifying SSH tunnels are active...' &&
-            netstat -tln | grep -E ':(3128|8081|5000)' || echo 'WARNING: Some tunnels may not be active yet' &&
+            netstat -tln | grep -E ':(3128|8081|5050)' || echo 'WARNING: Some tunnels may not be active yet' &&
             echo '' &&
             echo 'Testing proxy connectivity...' &&
             timeout 5 nc -zv localhost 3128 2>&1 | grep -q succeeded && echo '✓ Squid proxy (3128) is reachable' || echo '✗ Squid proxy (3128) is NOT reachable' &&
             timeout 5 nc -zv localhost 8081 2>&1 | grep -q succeeded && echo '✓ Go proxy (8081) is reachable' || echo '✗ Go proxy (8081) is NOT reachable' &&
-            timeout 5 nc -zv localhost 5000 2>&1 | grep -q succeeded && echo '✓ Registry mirror (5000) is reachable' || echo '✗ Registry mirror (5000) is NOT reachable' &&
+            timeout 5 nc -zv localhost 5050 2>&1 | grep -q succeeded && echo '✓ Registry mirror (5050) is reachable' || echo '✗ Registry mirror (5050) is NOT reachable' &&
             echo '' &&
             export HTTP_PROXY=http://localhost:3128
             export HTTPS_PROXY=http://localhost:3128
@@ -1035,7 +1035,7 @@ tasks:
           echo ""
           echo "Services running:"
           echo "  • HTTP/HTTPS Proxy:    http://localhost:3128 (Squid with SSL MITM)"
-          echo "  • Container Registry:  http://localhost:5000 (mirrors registry.k8s.io)"
+          echo "  • Container Registry:  http://localhost:5050 (mirrors registry.k8s.io)"
           echo "  • Go Module Proxy:     http://localhost:8081"
           echo ""
           echo "To use the proxies, set these environment variables:"
