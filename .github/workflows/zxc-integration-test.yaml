@@ -59,6 +59,9 @@ permissions:
 
 jobs:
   integration-test:
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false
     name: "${{ inputs.custom-job-label }}"
     runs-on: kvm-runner
 
