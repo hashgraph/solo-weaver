@@ -189,7 +189,14 @@ jobs:
             - curl
             - rsync
             - git
-
+            - build-essential
+            - binutils
+            - gcc
+            - libc6-dev 
+            - curl
+            - net-tools
+            - netcat-openbsd
+          
           runcmd:
             - systemctl enable --now ssh || systemctl enable --now sshd
             - sed -i 's/^#\\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config || true
@@ -325,9 +332,6 @@ jobs:
 
           sudo cloud-init status --wait || true
 
-          sudo apt-get update
-          sudo apt-get install -y rsync build-essential binutils gcc libc6-dev curl ca-certificates
-
           curl -sSLO "https://go.dev/dl/go\${GO_VER}.linux-amd64.tar.gz"
           sudo rm -rf /usr/local/go
           sudo tar -C /usr/local -xzf "go\${GO_VER}.linux-amd64.tar.gz"
@@ -348,6 +352,43 @@ jobs:
           fi
 
           task --version
+          EOSSH
+
+      - name: Install Proxy CA Certificates in VM
+        run: |
+          set -euo pipefail
+          VM_DIR="${{ steps.vm-vars.outputs.VM_DIR }}"
+          VM_PORT="${{ steps.vm-vars.outputs.VM_PORT }}"
+          CA_CERT_PATH="/home/github-runner/ca-cert.pem"
+
+          if [ ! -f "${CA_CERT_PATH}" ]; then
+            echo "Error: CA certificate file '${CA_CERT_PATH}' not found. Cannot install proxy CA certificates in VM."
+            exit 1
+          fi
+
+          echo "Copying CA certificate to VM..."
+          rsync -az \
+            -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p ${VM_PORT}" \
+            "${CA_CERT_PATH}" \
+            provisioner@127.0.0.1:/tmp/
+          
+          ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -p "${VM_PORT}" \
+              provisioner@127.0.0.1 << 'EOSSH'
+          set -euo pipefail
+          sudo cp /tmp/ca-cert.pem /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+          sudo chmod 644 /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+          sudo update-ca-certificates --fresh && \
+          echo 'Verifying CA certificate was added to bundle...' && \
+          if grep -q 'Solo Weaver Cache Proxy CA' /etc/ssl/certs/ca-certificates.crt; then \
+            echo '✓ CA certificate verified in bundle'; \
+          else \
+            echo '⚠ Warning: CA certificate not found in bundle'; \
+          fi
           EOSSH
 
       - name: Sync code to VM
@@ -392,6 +433,9 @@ jobs:
               -o ServerAliveCountMax=10 \
               -o TCPKeepAlive=yes \
               -p "${VM_PORT}" \
+              -R 3128:localhost:3128 \
+              -R 8081:localhost:8081 \
+              -R 5050:localhost:5050 \
               provisioner@127.0.0.1 << 'EOSSH'
           set -euo pipefail
 
@@ -400,18 +444,68 @@ jobs:
 
           cd /home/provisioner/solo-weaver
 
-          if ! command -v mockgen >/dev/null 2>&1; then
-            go install github.com/golang/mock/mockgen@v1.6.0
+          echo 'Using cache infrastructure via SSH tunnels:' &&
+          echo '  - HTTP/HTTPS proxy at localhost:3128 (Squid with SSL MITM - binaries, packages)' &&
+          echo '  - Go module proxy at localhost:8081 (Go dependencies)' &&
+          echo '  - Registry mirror at localhost:5050 (container images)' &&
+          echo '' &&
+          export HTTP_PROXY=http://localhost:3128
+          export HTTPS_PROXY=http://localhost:3128
+          export NO_PROXY=localhost,127.0.0.1,::1,.local,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+          export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+          export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+          export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+          export GODEBUG=http2debug=0
+          export GOPROXY=http://localhost:8081,https://proxy.golang.org,direct
+          export GOSUMDB=sum.golang.org
+          echo 'Environment variables set:' &&
+          echo '  HTTP_PROXY='\$HTTP_PROXY &&
+          echo '  HTTPS_PROXY='\$HTTPS_PROXY &&
+          echo '  NO_PROXY='\$NO_PROXY &&
+          echo '  SSL_CERT_FILE='\$SSL_CERT_FILE &&
+          echo '  GOPROXY='\$GOPROXY &&
+          echo ''
+          
+          echo 'Verifying proxy and tunnel connectivity...' &&
+          # Show listening ports for quick diagnostics
+          if command -v ss >/dev/null 2>&1; then
+            ss -tlnp | grep -E ':(3128|8081|5050)\b' || echo 'Note: expected proxy ports (3128, 8081, 5050) not found in ss output.'
+          elif command -v netstat >/dev/null 2>&1; then
+            netstat -tlnp 2>/dev/null | grep -E ':(3128|8081|5050)\b' || echo 'Note: expected proxy ports (3128, 8081, 5050) not found in netstat output.'
+          else
+            echo 'Warning: neither ss nor netstat is available; skipping listener check.'
           fi
-
+          
+          check_port() {
+            local host="$1"
+            local port="$2"
+            local descr="$3"
+            if command -v nc >/dev/null 2>&1; then
+              if nc -z -w 5 "${host}" "${port}" >/dev/null 2>&1; then
+                echo "OK: ${descr} reachable at ${host}:${port}"
+              else
+                echo "ERROR: ${descr} not reachable at ${host}:${port}"
+                exit 1
+              fi
+            else
+              echo 'Warning: nc is not available; skipping reachability check for' "${descr}"
+            fi
+          }
+          
+          check_port localhost 3128 'HTTP/HTTPS proxy'
+          check_port localhost 8081 'Go module proxy'
+          check_port localhost 5050 'registry mirror'
+          
           # If tasks must run as root, preserve PATH/GOPATH explicitly
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task mocks
           TEST_NAME="${{ inputs.test-name }}"
           if [ -n "$TEST_NAME" ]; then
-          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task test:integration:verbose TEST_NAME="$TEST_NAME"
+            sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,GOPATH,PATH \
+              task test:integration:verbose TEST_NAME="$TEST_NAME"
           else
-          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task test:integration:verbose
+            sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,GOPATH,PATH \
+              task test:integration:verbose
           fi
           EOSSH
 
