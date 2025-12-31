@@ -3,11 +3,11 @@ package core
 import (
 	"os"
 	"sync"
-	"time"
 
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
+	htime "helm.sh/helm/v3/pkg/time"
 )
 
 // StateManager defines the interface for managing the application state with IO operations.
@@ -95,7 +95,7 @@ func (m *stateManager) Flush() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.state.LastSync = timePtr(time.Now())
+	m.state.LastSync = htime.Now()
 
 	b, err := yaml.Marshal(m.state)
 	if err != nil {

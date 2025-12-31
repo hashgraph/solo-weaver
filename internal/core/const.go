@@ -154,12 +154,9 @@ func NewWeaverPaths(home string) *WeaverPaths {
 
 // Clone returns a deep copy of the WeaverPaths.
 // It is nil-safe and copies slice contents to avoid shared backing arrays.
-func (w *WeaverPaths) Clone() *WeaverPaths {
-	if w == nil {
-		return nil
-	}
+func (w WeaverPaths) Clone() *WeaverPaths {
 	// shallow copy of struct fields (strings are value-copied)
-	cp := *w
+	cp := w
 
 	// deep-copy slices to avoid sharing backing arrays
 	if w.AllDirectories != nil {
@@ -173,8 +170,8 @@ func (w *WeaverPaths) Clone() *WeaverPaths {
 	return &cp
 }
 
-func Paths() *WeaverPaths {
-	return pp
+func Paths() WeaverPaths {
+	return *pp
 }
 
 func ServiceAccount() security.ServiceAccount {
