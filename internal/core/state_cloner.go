@@ -1,19 +1,12 @@
 package core
 
-import "time"
+import (
+	"time"
+)
 
 // helper to create *time.Time
 func timePtr(t time.Time) *time.Time {
 	return &t
-}
-
-// helper to clone *time.Time
-func cloneTime(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	c := *t
-	return &c
 }
 
 // Clone creates a deep copy of SoftwareState
@@ -23,8 +16,8 @@ func (s *SoftwareState) Clone() SoftwareState {
 		Version:     s.Version,
 		Source:      s.Source,
 		Installed:   s.Installed,
-		InstalledAt: cloneTime(s.InstalledAt),
-		LastSync:    cloneTime(s.LastSync),
+		InstalledAt: s.InstalledAt,
+		LastSync:    s.LastSync,
 	}
 }
 
@@ -33,7 +26,7 @@ func (s *StorageState) Clone() StorageState {
 	return StorageState{
 		Name:      s.Name,
 		Mounted:   s.Mounted,
-		MountedAt: cloneTime(s.MountedAt),
+		MountedAt: s.MountedAt,
 	}
 }
 
@@ -42,16 +35,8 @@ func (b *BlockNodeState) Clone() *BlockNodeState {
 	if b == nil {
 		return nil
 	}
-	clone := &BlockNodeState{
-		Created:   b.Created,
-		CreatedAt: cloneTime(b.CreatedAt),
-		LastSync:  cloneTime(b.LastSync),
-	}
-	if b.Config != nil {
-		cfg := *b.Config
-		clone.Config = &cfg
-	}
-	return clone
+	clone := *b
+	return &clone
 }
 
 // Clone creates a deep copy of ClusterNodeState
@@ -77,22 +62,18 @@ func (n *ClusterNodeState) Clone() ClusterNodeState {
 		KubeletVer:  n.KubeletVer,
 		Labels:      labels,
 		Annotations: ann,
-		LastSync:    cloneTime(n.LastSync),
+		LastSync:    n.LastSync,
 	}
 }
 
-// Clone creates a deep copy of HelmReleaseState
-func (h *HelmReleaseState) Clone() HelmReleaseState {
-	return HelmReleaseState{
-		Name:      h.Name,
-		Namespace: h.Namespace,
-		Chart:     h.Chart,
-		Version:   h.Version,
-		Deployed:  h.Deployed,
-		UpdatedAt: cloneTime(h.UpdatedAt),
-		Notes:     h.Notes,
-		LastSync:  cloneTime(h.LastSync),
+// Clone creates a deep copy of HelmReleaseInfo
+func (h *HelmReleaseInfo) Clone() *HelmReleaseInfo {
+	if h == nil {
+		return nil
 	}
+
+	c := *h
+	return &c
 }
 
 // Clone creates a deep copy of MachineState
@@ -102,8 +83,8 @@ func (m *MachineState) Clone() *MachineState {
 	}
 	clone := &MachineState{
 		Initialized:   m.Initialized,
-		InitializedAt: cloneTime(m.InitializedAt),
-		LastSync:      cloneTime(m.LastSync),
+		InitializedAt: m.InitializedAt,
+		LastSync:      m.LastSync,
 	}
 	if m.Software != nil {
 		clone.Software = make(map[string]SoftwareState, len(m.Software))
@@ -148,8 +129,8 @@ func (c *ClusterState) Clone() *ClusterState {
 		Annotations:      nil,
 		Health:           c.Health,
 		Created:          c.Created,
-		CreatedAt:        cloneTime(c.CreatedAt),
-		LastSync:         cloneTime(c.LastSync),
+		CreatedAt:        c.CreatedAt,
+		LastSync:         c.LastSync,
 	}
 	// Nodes
 	if c.Nodes != nil {
@@ -162,12 +143,13 @@ func (c *ClusterState) Clone() *ClusterState {
 	}
 	// HelmReleases
 	if c.HelmReleases != nil {
-		clone.HelmReleases = make(map[string]HelmReleaseState, len(c.HelmReleases))
+		clone.HelmReleases = make(map[string]HelmReleaseInfo, len(c.HelmReleases))
 		for k, v := range c.HelmReleases {
-			clone.HelmReleases[k] = v.Clone()
+			vv := v.Clone()
+			clone.HelmReleases[k] = *vv
 		}
 	} else {
-		clone.HelmReleases = make(map[string]HelmReleaseState)
+		clone.HelmReleases = make(map[string]HelmReleaseInfo)
 	}
 	// StorageClasses slice
 	if c.StorageClasses != nil {
@@ -199,18 +181,23 @@ func (s *State) Clone() *State {
 		Version:  s.Version,
 		Commit:   s.Commit,
 		File:     s.File,
-		LastSync: cloneTime(s.LastSync),
+		LastSync: s.LastSync,
 	}
-	// Paths (shallow copy of struct value)
-	if s.Paths != nil {
-		p := *s.Paths
-		c.Paths = &p
-	}
+
+	// Paths
+	c.Paths = s.Paths
+
 	// Machine
-	c.Machine = s.Machine.Clone()
+	m := s.Machine.Clone()
+	c.Machine = *m
+
 	// Cluster
-	c.Cluster = s.Cluster.Clone()
+	cc := s.Cluster.Clone()
+	c.Cluster = *cc
+
 	// BlockNode
-	c.BlockNode = s.BlockNode.Clone()
+	bc := s.BlockNode.Clone()
+	c.BlockNode = *bc
+
 	return c
 }

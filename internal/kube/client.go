@@ -43,6 +43,7 @@ const (
 	KindJob        ResourceKind = "Job"
 	KindPVC        ResourceKind = "PersistentVolumeClaim"
 	KindCRD        ResourceKind = "CustomResourceDefinition"
+	KindPV         ResourceKind = "PersistentVolume"
 )
 
 var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
@@ -54,6 +55,7 @@ var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
 	KindDeployment: {Group: "apps", Version: "v1", Resource: "deployments"},
 	KindJob:        {Group: "batch", Version: "v1", Resource: "jobs"},
 	KindPVC:        {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	KindPV:         {Group: "", Version: "v1", Resource: "persistentvolumes"},
 	KindCRD:        {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
 }
 

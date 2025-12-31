@@ -2,9 +2,11 @@ module github.com/hashgraph/solo-weaver
 
 go 1.25.2
 
+// replace github.com/automa-saga/automa v0.8.2 => ../../automa-saga/automa
+
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/automa-saga/automa v0.8.0
+	github.com/automa-saga/automa v0.8.3
 	github.com/automa-saga/logx v0.1.0
 	github.com/bluet/syspkg v0.1.6
 	github.com/coreos/go-systemd/v22 v22.6.0
@@ -17,7 +19,6 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zcalusic/sysinfo v1.1.3
-	golang.org/x/sync v0.19.0
 	golang.org/x/text v0.32.0
 	helm.sh/helm/v3 v3.19.4
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
@@ -108,6 +109,7 @@ require (
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect

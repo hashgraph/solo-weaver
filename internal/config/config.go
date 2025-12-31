@@ -97,11 +97,12 @@ func (c Config) Validate() error {
 
 // BlockNodeConfig represents the `blockNode` configuration block.
 type BlockNodeConfig struct {
-	Namespace string           `yaml:"namespace" json:"namespace"`
-	Release   string           `yaml:"release" json:"release"`
-	Chart     string           `yaml:"chart" json:"chart"`
-	Version   string           `yaml:"version" json:"version"`
-	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
+	Version      string           `yaml:"version" json:"version"`
+	Namespace    string           `yaml:"namespace" json:"namespace"`
+	Release      string           `yaml:"release" json:"release"`
+	Chart        string           `yaml:"chart" json:"chart"`
+	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
+	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
 // AlloyConfig represents the `alloy` configuration block for observability.
@@ -145,6 +146,13 @@ func (c *BlockNodeConfig) Validate() error {
 	if c.Version != "" {
 		if err := sanity.ValidateVersion(c.Version); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid version: %s", c.Version)
+		}
+	}
+
+	// Validate chartVersion if provided (semantic version)
+	if c.ChartVersion != "" {
+		if err := sanity.ValidateVersion(c.ChartVersion); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart version: %s", c.ChartVersion)
 		}
 	}
 
