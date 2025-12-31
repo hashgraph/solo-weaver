@@ -961,7 +961,7 @@ tasks:
             echo '  SSL_CERT_FILE='\$SSL_CERT_FILE &&
             echo '  GOPROXY='\$GOPROXY &&
             echo '' &&
-            sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,PATH \
+            sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,GOPATH,PATH \
               task test:integration:verbose TEST_NAME={{.TEST_NAME}}
           "
   
