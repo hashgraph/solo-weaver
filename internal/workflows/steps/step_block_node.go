@@ -7,7 +7,6 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
@@ -24,7 +23,7 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(profile string, valuesFile string) *automa.WorkflowBuilder {
+func SetupBlockNode(inputs *core.BlocknodeInputs) *automa.WorkflowBuilder {
 	// Lazy initialization of block node manager
 	// This blocknodeManagerProvider pattern ensures that the manager is only created once
 	// and reused across all steps in the workflow steps
@@ -32,7 +31,7 @@ func SetupBlockNode(profile string, valuesFile string) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {
 			var err error
-			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
+			blockNodeManager, err = blocknode.NewManager(*inputs)
 			if err != nil {
 				return nil, err
 			}
@@ -44,7 +43,7 @@ func SetupBlockNode(profile string, valuesFile string) *automa.WorkflowBuilder {
 		setupBlockNodeStorage(blockNodeManagerProvider),
 		createBlockNodeNamespace(blockNodeManagerProvider),
 		createBlockNodePVs(blockNodeManagerProvider),
-		installBlockNode(profile, valuesFile, blockNodeManagerProvider),
+		installBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
 		annotateBlockNodeService(blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
@@ -166,7 +165,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			manager, err := blocknode.NewManager(config.Get().BlockNode)
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -310,13 +309,13 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 }
 
 // UpgradeBlockNode upgrades the block node on the cluster
-func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) *automa.WorkflowBuilder {
+func UpgradeBlockNode(inputs *core.BlocknodeInputs) *automa.WorkflowBuilder {
 	// Lazy initialization of block node manager
 	var blockNodeManager *blocknode.Manager
 	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {
 			var err error
-			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
+			blockNodeManager, err = blocknode.NewManager(*inputs)
 			if err != nil {
 				return nil, err
 			}
@@ -325,7 +324,7 @@ func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) *auto
 	}
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
-		upgradeBlockNode(profile, valuesFile, reuseValues, blockNodeManagerProvider),
+		upgradeBlockNode(inputs.Profile, inputs.ValuesFile, inputs.ReuseValues, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

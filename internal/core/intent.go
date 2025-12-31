@@ -73,29 +73,22 @@ const (
 var allowedOperations = map[ActionType][]TargetType{
 	ActionSetup:     {TargetMachine, TargetSystem, TargetCluster},
 	ActionReset:     {TargetMachine, TargetSystem, TargetCluster, TargetApplication},
-	ActionInstall:   {TargetApplication},
-	ActionUninstall: {TargetApplication},
-	ActionDeploy:    {TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
-	ActionDestroy:   {TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionInstall:   {TargetApplication, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionUninstall: {TargetApplication, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionUpgrade:   {TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionMigrate:   {TargetSystem, TargetCluster, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 }
 
 // Intent defines the desired action to be performed given certain parameters and configuration.
 type Intent struct {
-	Action     ActionType            `yaml:"action" json:"action"`
-	Target     TargetType            `yaml:"target" json:"target"`
-	Parameters map[string]*Parameter `yaml:"parameters" json:"parameters"`
+	Action ActionType `yaml:"action" json:"action"`
+	Target TargetType `yaml:"target" json:"target"`
 }
 
 // Clone creates a deep copy of the Intent.
 func (i *Intent) Clone() *Intent {
 	newIntent := Intent{
-		Action:     i.Action,
-		Parameters: make(map[string]*Parameter, len(i.Parameters)),
-	}
-	for k, v := range i.Parameters {
-		newIntent.Parameters[k] = v.Clone()
+		Action: i.Action,
 	}
 
 	return &newIntent
@@ -111,10 +104,6 @@ func (i *Intent) Clone() *Intent {
 // Even if an intent is valid, it may still be rejected during execution based on current state, configuration, or other factors.
 func (i *Intent) IsValid() bool {
 	if i.Action == "" || i.Target == "" {
-		return false
-	}
-
-	if i.Parameters == nil {
 		return false
 	}
 

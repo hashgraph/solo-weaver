@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -49,11 +48,11 @@ type Manager struct {
 	kubeClient  *kube.Client
 	clientset   *kubernetes.Clientset // Still needed for pod listing and service updates
 	logger      *zerolog.Logger
-	blockConfig *config.BlockNodeConfig
+	blockConfig core.BlocknodeInputs
 }
 
 // NewManager creates a new block node manager
-func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
+func NewManager(blockConfig core.BlocknodeInputs) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
@@ -91,7 +90,7 @@ func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
 		kubeClient:  kubeClient,
 		clientset:   clientset,
 		logger:      l,
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}, nil
 }
 
@@ -259,22 +258,33 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 		return false, nil
 	}
 
+	chartOptions := helm.InstallChartOptions{
+		ValueOpts: &values.Options{
+			ValueFiles: []string{valuesFile},
+		},
+		CreateNamespace: false, // namespace already created
+		Atomic:          true,
+		Wait:            true,
+		Timeout:         helm.DefaultTimeout,
+	}
+
+	logx.As().Debug().
+		Str("release", m.blockConfig.Release).
+		Str("chart", m.blockConfig.Chart).
+		Str("version", m.blockConfig.ChartVersion).
+		Str("namespace", m.blockConfig.Namespace).
+		Str("valuesFile", valuesFile).
+		Any("chartOptions", chartOptions).
+		Msg("Installing Block Node Helm chart")
+
 	// Install the chart
 	_, err = m.helmManager.InstallChart(
 		ctx,
 		m.blockConfig.Release,
 		m.blockConfig.Chart,
-		m.blockConfig.Version,
+		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
-		helm.InstallChartOptions{
-			ValueOpts: &values.Options{
-				ValueFiles: []string{valuesFile},
-			},
-			CreateNamespace: false, // namespace already created
-			Atomic:          true,
-			Wait:            true,
-			Timeout:         helm.DefaultTimeout,
-		},
+		chartOptions,
 	)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to install block node chart")
@@ -318,7 +328,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 		ctx,
 		m.blockConfig.Release,
 		m.blockConfig.Chart,
-		m.blockConfig.Version,
+		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		helm.UpgradeChartOptions{
 			ValueOpts: &values.Options{

@@ -47,10 +47,6 @@ func (b *BlockNodeState) Clone() *BlockNodeState {
 		CreatedAt: cloneTime(b.CreatedAt),
 		LastSync:  cloneTime(b.LastSync),
 	}
-	if b.Config != nil {
-		cfg := *b.Config
-		clone.Config = &cfg
-	}
 	return clone
 }
 
@@ -201,16 +197,21 @@ func (s *State) Clone() *State {
 		File:     s.File,
 		LastSync: cloneTime(s.LastSync),
 	}
-	// Paths (shallow copy of struct value)
-	if s.Paths != nil {
-		p := *s.Paths
-		c.Paths = &p
-	}
+
+	// Paths
+	c.Paths = s.Paths
+
 	// Machine
-	c.Machine = s.Machine.Clone()
+	m := s.Machine.Clone()
+	c.Machine = *m
+
 	// Cluster
-	c.Cluster = s.Cluster.Clone()
+	cc := s.Cluster.Clone()
+	c.Cluster = *cc
+
 	// BlockNode
-	c.BlockNode = s.BlockNode.Clone()
+	bc := s.BlockNode.Clone()
+	c.BlockNode = *bc
+
 	return c
 }

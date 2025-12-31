@@ -9,14 +9,15 @@ import (
 )
 
 type State struct {
-	Version   string          `yaml:"version" json:"version"`
-	Commit    string          `yaml:"commit" json:"commit"`
-	File      string          `yaml:"file" json:"file"` // path to state file
-	Paths     *WeaverPaths    `yaml:"paths" json:"paths"`
-	Machine   *MachineState   `yaml:"machine" json:"machine"`
-	Cluster   *ClusterState   `yaml:"cluster" json:"cluster"`
-	BlockNode *BlockNodeState `yaml:"blockNode" json:"blockNode"`
-	LastSync  *time.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Version   string         `yaml:"version" json:"version"`
+	Commit    string         `yaml:"commit" json:"commit"`
+	File      string         `yaml:"file" json:"file"` // path to state file
+	NodeType  string         `yaml:"nodeType" json:"nodeType"`
+	Paths     WeaverPaths    `yaml:"paths" json:"paths"`
+	Machine   MachineState   `yaml:"machine" json:"machine"`
+	Cluster   ClusterState   `yaml:"cluster" json:"cluster"`
+	BlockNode BlockNodeState `yaml:"blockNode" json:"blockNode"`
+	LastSync  *time.Time     `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type MachineState struct {
@@ -43,10 +44,16 @@ type StorageState struct {
 }
 
 type BlockNodeState struct {
-	Config    *config.BlockNodeConfig `yaml:"config" json:"config"`
-	Created   bool                    `yaml:"installed" json:"installed"`
-	CreatedAt *time.Time              `yaml:"createdAt,omitempty" json:"createdAt,omitempty"`
-	LastSync  *time.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Namespace    string                  `yaml:"namespace" json:"namespace"`
+	Release      string                  `yaml:"release" json:"release"`
+	Chart        string                  `yaml:"chart" json:"chart"`
+	ChartVersion string                  `yaml:"chartVersion" json:"chartVersion"`
+	Version      string                  `yaml:"version" json:"version"`
+	Storage      config.BlockNodeStorage `yaml:"storage" json:"storage"`
+	Profile      string                  `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Created      bool                    `yaml:"installed" json:"installed"`
+	CreatedAt    *time.Time              `yaml:"createdAt,omitempty" json:"createdAt,omitempty"`
+	LastSync     *time.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.
@@ -109,26 +116,21 @@ func NewState() *State {
 		File: path.Join(p.StateDir, "state.yaml"),
 
 		// Version and Commit remain zero-values and can be set elsewhere (build flags).
-		Paths: p,
+		Paths: *p,
 
-		Machine: &MachineState{
+		Machine: MachineState{
 			Software:    make(map[string]SoftwareState),
 			Storage:     make(map[string]StorageState),
 			Initialized: false,
 		},
 
-		Cluster: &ClusterState{
+		Cluster: ClusterState{
 			Nodes:        make(map[string]ClusterNodeState),
 			HelmReleases: make(map[string]HelmReleaseState),
 			Created:      false,
 		},
 
-		BlockNode: &BlockNodeState{
-			Config: &config.BlockNodeConfig{
-				Storage: config.BlockNodeStorage{
-					BasePath: "",
-				},
-			},
+		BlockNode: BlockNodeState{
 			Created: false,
 		},
 		LastSync: nil,
