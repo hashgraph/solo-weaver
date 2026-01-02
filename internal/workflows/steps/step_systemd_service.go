@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/os"
 )
@@ -101,6 +102,38 @@ func SetupSystemdService(serviceName string) *automa.StepBuilder {
 				if err != nil {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}
+			}
+
+			return automa.SuccessReport(stp)
+		})
+}
+
+// TeardownSystemdService stops and disables a systemd service
+// Used during cluster uninstall/teardown
+func TeardownSystemdService(serviceName string) *automa.StepBuilder {
+	stepId := fmt.Sprintf("teardown-systemd-service-%s", serviceName)
+
+	return automa.NewStepBuilder().WithId(stepId).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, fmt.Sprintf("Stopping and disabling %s", serviceName))
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, fmt.Sprintf("Failed to stop and disable %s", serviceName))
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, fmt.Sprintf("%s stopped and disabled successfully", serviceName))
+		}).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			err := os.StopService(ctx, serviceName)
+			if err != nil {
+				logx.As().Warn().Err(err).Msgf("Failed to stop %s, continuing with teardown", serviceName)
+				// Don't fail if service stop fails - service might not exist
+			}
+
+			err = os.DisableService(ctx, serviceName)
+			if err != nil {
+				logx.As().Warn().Err(err).Msgf("Failed to disable %s, continuing with teardown", serviceName)
 			}
 
 			return automa.SuccessReport(stp)

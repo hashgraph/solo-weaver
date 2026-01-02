@@ -78,9 +78,29 @@ func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *WorkflowExecuti
 }
 
 // UninstallClusterWorkflow creates a workflow to tear down a kubernetes cluster
-// TODO: implement teardown steps
 func UninstallClusterWorkflow() *automa.WorkflowBuilder {
+	teardownSteps := []automa.Builder{
+		// Reset the Kubernetes cluster
+		steps.ResetCluster(),
+
+		// Stop services
+		steps.TeardownSystemdService(software.CrioServiceName),
+		steps.TeardownSystemdService(software.KubeletServiceName),
+
+		// Remove bind mounts
+		steps.TeardownBindMounts(),
+
+		// Remove systemd service files
+		steps.RemoveSystemdServiceFiles(),
+
+		// Remove configuration directories
+		steps.RemoveConfigDirectories(),
+
+		// Cleanup weaver files (preserving downloads)
+		steps.CleanupWeaverFiles(),
+	}
+
 	return automa.NewWorkflowBuilder().
 		WithId("teardown-kubernetes").
-		Steps()
+		Steps(teardownSteps...)
 }

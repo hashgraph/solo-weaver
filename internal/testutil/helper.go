@@ -138,3 +138,22 @@ func FileWithPrefixExists(t *testing.T, directory string, prefix string) bool {
 	}
 	return found
 }
+
+// AssertBashCommand executes a bash command and asserts that it produces the expected output
+func AssertBashCommand(t *testing.T, command string, expectedOutput string) {
+	t.Helper()
+
+	cmd := exec.Command("bash", "-c", command)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "Command failed: %s\nOutput: %s", command, string(output))
+	require.Equal(t, expectedOutput, string(output), "Command output mismatch for: %s", command)
+}
+
+// AssertBashCommandFails executes a bash command and asserts that it fails (non-zero exit code)
+func AssertBashCommandFails(t *testing.T, command string) {
+	t.Helper()
+
+	cmd := exec.Command("bash", "-c", command)
+	err := cmd.Run()
+	require.Error(t, err, "Expected command to fail but it succeeded: %s", command)
+}
