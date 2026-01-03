@@ -58,13 +58,6 @@ var (
 		Description: "Path to custom values file for installation",
 		Default:     "",
 	}
-
-	FlagMetricsServer = FlagDefinition[bool]{
-		Name:        "metrics-server",
-		ShortName:   "m",
-		Description: "Install Metrics Server",
-		Default:     true,
-	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.

@@ -5,10 +5,8 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/pkg/sanity"
-	"github.com/joomcode/errorx"
+	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -18,52 +16,30 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := common.FlagProfile.Value(cmd, args)
+		err := initializeDependencies(cmd.Context())
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
-		}
-
-		if flagProfile == "" {
-			return errorx.IllegalArgument.New("profile flag is required")
-		}
-
-		// Apply configuration overrides from flags
-		applyConfigOverrides()
-
-		// Validate the configuration after applying overrides
-		// This catches invalid storage paths and other configuration issues early,
-		// before the workflow starts and cluster creation begins
-		if err := config.Get().Validate(); err != nil {
 			return err
 		}
 
-		// Validate the values file path if provided
-		// This is the primary security validation point for user-supplied file paths.
-		var validatedValuesFile string
-		if flagValuesFile != "" {
-			validatedValuesFile, err = sanity.ValidateInputFile(flagValuesFile)
-			if err != nil {
-				return err
-			}
+		inputs, err := prepareUserInputs(cmd, args)
+		if err != nil {
+			return err
 		}
 
-		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
-		if err != nil {
-			return errorx.Decorate(err, "failed to determine execution mode")
+		intent := core.Intent{
+			Action: core.ActionInstall,
+			Target: core.TargetBlocknode,
 		}
-		opts := workflows.DefaultWorkflowExecutionOptions()
-		opts.ExecutionMode = execMode
 
 		logx.As().Debug().
-			Strs("args", args).
-			Str("nodeType", nodeType).
-			Str("profile", flagProfile).
-			Str("valuesFile", validatedValuesFile).
-			Any("opts", opts).
+			Any("intent", intent).
+			Any("inputs", inputs).
 			Msg("Installing Hedera Block Node")
 
-		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile), opts)
+		wb, err := bll.BlockNode().IntentHandler(intent, *inputs)
+		if err != nil {
+			return err
+		}
 
 		common.RunWorkflow(cmd.Context(), wb)
 
@@ -77,25 +53,4 @@ func init() {
 	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
-}
-
-// applyConfigOverrides applies flag values to override the configuration.
-// This allows flags to take precedence over config file values.
-func applyConfigOverrides() {
-	overrides := config.BlockNodeConfig{
-		Namespace: flagNamespace,
-		Release:   flagReleaseName,
-		Chart:     flagChartRepo,
-		Version:   flagChartVersion,
-		Storage: config.BlockNodeStorage{
-			BasePath:    flagBasePath,
-			ArchivePath: flagArchivePath,
-			LivePath:    flagLivePath,
-			LogPath:     flagLogPath,
-			LiveSize:    flagLiveSize,
-			ArchiveSize: flagArchiveSize,
-			LogSize:     flagLogSize,
-		},
-	}
-	config.OverrideBlockNodeConfig(overrides)
 }
