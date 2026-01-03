@@ -186,7 +186,6 @@ jobs:
             - openssh-server
             - sudo
             - ca-certificates
-            - curl
             - rsync
             - git
             - build-essential

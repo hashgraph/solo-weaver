@@ -23,8 +23,7 @@ var (
 
 func init() {
 	clusterCmd.AddCommand(installCmd)
-	// NOTE: uninstallCmd is implemented but intentionally disabled until uninstall has been fully validated and approved for release.
-	// clusterCmd.AddCommand(uninstallCmd)
+	clusterCmd.AddCommand(uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

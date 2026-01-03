@@ -194,7 +194,7 @@ func unmountBindMount(mount BindMount) error {
 	}
 
 	// Perform the unmount
-	err = unix.Unmount(mount.Target, 0)
+	err = unix.Unmount(mount.Target, unix.MNT_DETACH)
 	if err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to unmount %s", mount.Target)
 	}

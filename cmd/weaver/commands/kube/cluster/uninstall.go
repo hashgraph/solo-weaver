@@ -13,7 +13,7 @@ import (
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall a Kubernetes Cluster",
-	Long:  "Uninstall a Kubernetes Cluster",
+	Long:  "Teardown the K8s cluster, stop services, remove bind mounts, and cleanup configuration files while preserving downloads cache",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {

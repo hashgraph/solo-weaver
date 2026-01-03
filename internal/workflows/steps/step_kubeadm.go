@@ -245,3 +245,31 @@ func InitializeCluster() *automa.StepBuilder {
 			return automa.SuccessReport(stp)
 		})
 }
+
+// ResetCluster runs kubeadm reset to tear down the Kubernetes cluster
+func ResetCluster() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("reset-cluster").
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Resetting Kubernetes cluster")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to reset Kubernetes cluster")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Kubernetes cluster reset successfully")
+		}).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			scripts := []string{
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+			}
+
+			_, err := automa_steps.RunBashScript(scripts, "")
+			if err != nil {
+				logx.As().Warn().Err(err).Msg("kubeadm reset failed, continuing with teardown")
+				// Don't fail if kubeadm reset fails - cluster might not be initialized
+			}
+
+			return automa.SuccessReport(stp)
+		})
+}
