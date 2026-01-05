@@ -8,7 +8,8 @@ RUN apt-get update && \
         squid-openssl \
         ssl-cert \
         openssl \
-        ca-certificates && \
+        ca-certificates \
+        perl && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /var/cache/squid \
         /var/log/squid \
@@ -22,6 +23,10 @@ RUN apt-get update && \
 
 # Copy Squid configuration
 COPY squid.conf /etc/squid/squid.conf
+
+# Copy store-id helper for URL normalization
+COPY store-id-helper.pl /usr/local/bin/store-id-helper.pl
+RUN chmod +x /usr/local/bin/store-id-helper.pl
 
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
