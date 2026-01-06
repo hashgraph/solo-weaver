@@ -15,6 +15,12 @@ import (
 // - currentVal: current value from the cluster/state.
 // - equal: optional equality function; if nil reflect.DeepEqual is used.
 // - isEmpty: optional emptiness check; if nil reflect.Value.IsZero is used.
+// The logic is:
+//  1. Start with default value and StrategyConfig.
+//  2. If user input is provided and not empty:
+//     a. If deployed and current differs from user input -> use current and StrategyCurrent.
+//     b. Else use user input and StrategyUserInput.
+//
 // Returns (*automa.EffectiveValue[T], usedUserInput bool, error).
 func resolveEffectiveWithFunc[T any](
 	defaultVal automa.Value[T],
