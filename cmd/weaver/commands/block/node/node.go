@@ -138,6 +138,8 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 		}
 	}
 
+	// TODO validate other flags as needed
+
 	// Determine execution mode based on flags
 	execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 	if err != nil {
@@ -145,8 +147,6 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 	}
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
-
-	// TODO validate other flags as needed
 
 	return &core.UserInputs[core.BlocknodeInputs]{
 		Common: core.CommonInputs{

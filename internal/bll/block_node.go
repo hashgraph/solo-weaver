@@ -26,7 +26,6 @@ type BlockNodeIntentHandler struct {
 }
 
 // prepareRuntime performs validation and prepare runtime with the user inputs
-// We don't perform any validation of the user inputs here as the assumption is that it should be validated as early as possible (e.g. CLI parsing)
 // This function ensures that the intent is valid and the runtime Blocknode is set up with the provided user inputs
 func (b BlockNodeIntentHandler) prepareRuntime(
 	intent core.Intent,
@@ -39,6 +38,11 @@ func (b BlockNodeIntentHandler) prepareRuntime(
 	if intent.Target != core.TargetBlocknode {
 		return nil, nil, errorx.IllegalArgument.New("invalid intent target: %s", intent.Target)
 	}
+
+	// TODO perform user inputs validation here
+	// if err := inputs.Validate(); err != nil {
+	// 	return nil, nil, errorx.IllegalArgument.New("invalid user inputs: %v", err)
+	// }
 
 	// Refresh Blocknode state before proceeding
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
