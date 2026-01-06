@@ -62,7 +62,7 @@ func resolveEffectiveWithFunc[T any](
 // It is a wrapper over resolveEffectiveWithFunc with default equality and emptiness checks.
 // - defaultVal, userInput: automa.Value[T] provided by the runtime.
 // - currentVal: current value from the cluster/state.
-// - status: release.Status to determine if deployed.
+// - status: releaseName.Status to determine if deployed.
 // - cacheResult: whether the result can be cached. It is returned back to the caller.
 // Returns (*automa.EffectiveValue[T], error).
 func resolveEffective[T any](

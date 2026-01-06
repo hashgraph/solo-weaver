@@ -72,7 +72,7 @@ func (b BlockNodeIntentHandler) prepare(intent core.Intent, inputs core.UserInpu
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node namespace as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetRelease(inputs.Custom.Release)
+	err = runtime.BlockNode().SetReleaseName(inputs.Custom.Release)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node release name as user input: %v", err)
 	}
