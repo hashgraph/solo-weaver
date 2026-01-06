@@ -67,11 +67,19 @@ func toErrorMessage(err error) (string, string) {
 }
 
 func findResolution(err error) []string {
-	if resolution, ok := errorx.ExtractProperty(err, ErrPropertyResolution); ok {
-		if resSteps, ok := resolution.([]string); ok {
-			return resSteps
+	// try to extract resolution from error properties and any nested causes
+	for ex := err; ex != nil; {
+		if resolution, ok := errorx.ExtractProperty(ex, ErrPropertyResolution); ok {
+			if resSteps, ok := resolution.([]string); ok {
+				return resSteps
+			}
+			return []string{fmt.Sprintf("%s", resolution)}
 		}
-		return []string{fmt.Sprintf("%s", resolution)}
+		e := errorx.Cast(ex)
+		if e == nil || e.Cause() == nil {
+			break
+		}
+		ex = e.Cause()
 	}
 
 	switch {
