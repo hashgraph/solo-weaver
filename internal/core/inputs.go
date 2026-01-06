@@ -28,7 +28,7 @@ type BlocknodeInputs struct {
 	Profile      string
 	Version      string
 	Namespace    string
-	Release      string
+	ReleaseName  string
 	ChartName    string
 	ChartRepo    string
 	ChartVersion string

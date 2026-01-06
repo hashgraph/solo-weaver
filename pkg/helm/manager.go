@@ -284,7 +284,7 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 	}
 
 	if rel == nil || rel.Release == nil {
-		l.Info().Str("releaseName", releaseName).Msg("Release not found, nothing to uninstall")
+		l.Info().Str("releaseName", releaseName).Msg("ReleaseName not found, nothing to uninstall")
 		return nil
 	}
 
@@ -508,9 +508,9 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 	_, statusErr := statusClient.Run(releaseName)
 
 	if statusErr != nil {
-		// Release not found → Install
+		// ReleaseName not found → Install
 		if errors.Is(statusErr, driver.ErrReleaseNotFound) {
-			l.Info().Msg("Release not found — installing chart")
+			l.Info().Msg("ReleaseName not found — installing chart")
 			return h.InstallChart(ctx, releaseName, chartRef, chartVersion, namespace, InstallChartOptions{
 				ValueOpts:       o.ValueOpts,
 				CreateNamespace: o.CreateNamespace,
@@ -524,8 +524,8 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 		return nil, errorx.IllegalState.Wrap(statusErr, "failed checking release status")
 	}
 
-	// Release exists → Upgrade
-	l.Info().Msg("Release already exists — upgrading chart")
+	// ReleaseName exists → Upgrade
+	l.Info().Msg("ReleaseName already exists — upgrading chart")
 	return h.UpgradeChart(ctx, releaseName, chartRef, chartVersion, namespace, UpgradeChartOptions{
 		ValueOpts:   o.ValueOpts,
 		Atomic:      o.Atomic,

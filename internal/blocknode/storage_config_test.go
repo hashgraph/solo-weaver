@@ -56,10 +56,10 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			basePath := filepath.Join(tempDir, "storage")
 
 			blockConfig := core.BlocknodeInputs{
-				Namespace: "test-namespace",
-				Release:   "test-release",
-				ChartRepo: "oci://ghcr.io/test/test-chart",
-				Version:   "0.1.0",
+				Namespace:   "test-namespace",
+				ReleaseName: "test-release",
+				ChartRepo:   "oci://ghcr.io/test/test-chart",
+				Version:     "0.1.0",
 				Storage: config.BlockNodeStorage{
 					BasePath:    basePath,
 					LiveSize:    tt.liveSize,
@@ -154,10 +154,10 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	basePath := filepath.Join(tempDir, "storage")
 
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "block-node",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "block-node",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    basePath,
 			LiveSize:    "10Gi",

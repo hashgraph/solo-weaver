@@ -53,8 +53,8 @@ func TestPrepareUserInputs(t *testing.T) {
 	if ui.Custom.Namespace != flagNamespace {
 		t.Fatalf("unexpected Namespace: got %q want %q", ui.Custom.Namespace, flagNamespace)
 	}
-	if ui.Custom.Release != flagReleaseName {
-		t.Fatalf("unexpected Release: got %q want %q", ui.Custom.Release, flagReleaseName)
+	if ui.Custom.ReleaseName != flagReleaseName {
+		t.Fatalf("unexpected ReleaseName: got %q want %q", ui.Custom.ReleaseName, flagReleaseName)
 	}
 	if ui.Custom.ChartRepo != flagChartRepo {
 		t.Fatalf("unexpected ChartRepo: got %q want %q", ui.Custom.ChartRepo, flagChartRepo)

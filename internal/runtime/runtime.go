@@ -92,14 +92,13 @@ func (rb *Base[T]) RefreshState(ctx context.Context) error {
 }
 
 // CurrentState returns a copy/clone of the current state.
-func (rb *Base[T]) CurrentState() *T {
+func (rb *Base[T]) CurrentState() (*T, error) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
 	if rb.clone != nil {
-		return rb.clone(&rb.current)
+		return rb.clone(&rb.current), nil
 	}
-	// default shallow copy by value
-	cp := rb.current
-	return &cp
+
+	return nil, errorx.IllegalState.New("clone function is not defined for current state")
 }

@@ -9,19 +9,19 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-// resolveEffectiveWithFunc computes the effective value and strategy for a field.
+// defaultResolveEffectiveWithFunc computes the effective value and strategy for a field.
 // - defaultVal, userInput: automa.Value[T] provided by the runtime.
 // - currentPresent: true when the resource is deployed (i.e. current should be considered).
 // - currentVal: current value from the cluster/state.
 // - equal: optional equality function; if nil reflect.DeepEqual is used.
 // - isEmpty: optional emptiness check; if nil reflect.Value.IsZero is used.
 // The logic is:
-//   - If deployed, use current value with StrategyCurrent.
+//   - If deployed, use current state's value with StrategyCurrent.
 //   - Else if user input is provided and not empty, use it with StrategyUserInput.
 //   - Else use default value with StrategyConfig.
 //
 // Returns (*automa.EffectiveValue[T], usedUserInput bool, error).
-func resolveEffectiveWithFunc[T any](
+func defaultResolveEffectiveWithFunc[T any](
 	defaultVal automa.Value[T],
 	userInput automa.Value[T],
 	currentVal T,
@@ -59,7 +59,7 @@ func resolveEffectiveWithFunc[T any](
 }
 
 // resolveEffective computes the effective value and strategy for a field.
-// It is a wrapper over resolveEffectiveWithFunc with default equality and emptiness checks.
+// It is a wrapper over defaultResolveEffectiveWithFunc with default equality and emptiness checks.
 // - defaultVal, userInput: automa.Value[T] provided by the runtime.
 // - currentVal: current value from the cluster/state.
 // - status: releaseName.Status to determine if deployed.
@@ -76,7 +76,7 @@ func resolveEffective[T any](
 		return status == release.StatusDeployed
 	}
 
-	ev, err := resolveEffectiveWithFunc[T](defaultVal, userInput, currentVal, isDeployed, nil, nil)
+	ev, err := defaultResolveEffectiveWithFunc[T](defaultVal, userInput, currentVal, isDeployed, nil, nil)
 	if err != nil {
 		return nil, cacheResult, err
 	}

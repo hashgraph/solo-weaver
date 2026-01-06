@@ -248,7 +248,7 @@ func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) e
 // InstallChart installs the block node helm chart
 func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, error) {
 	// Check if already installed
-	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.ReleaseName, m.blockConfig.Namespace)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -269,7 +269,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 	}
 
 	logx.As().Debug().
-		Str("release", m.blockConfig.Release).
+		Str("release", m.blockConfig.ReleaseName).
 		Str("chartName", m.blockConfig.ChartName).
 		Str("chartRepo", m.blockConfig.ChartRepo).
 		Str("chartVersion", m.blockConfig.ChartVersion).
@@ -282,7 +282,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 	// Install the chart
 	_, err = m.helmManager.InstallChart(
 		ctx,
-		m.blockConfig.Release,
+		m.blockConfig.ReleaseName,
 		m.blockConfig.ChartName,
 		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
@@ -297,13 +297,13 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 
 // UninstallChart uninstalls the block node helm chart
 func (m *Manager) UninstallChart(ctx context.Context) error {
-	return m.helmManager.UninstallChart(m.blockConfig.Release, m.blockConfig.Namespace)
+	return m.helmManager.UninstallChart(m.blockConfig.ReleaseName, m.blockConfig.Namespace)
 }
 
 // UpgradeChart upgrades the block node helm chart
 func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValues bool) error {
 	// Check if installed first
-	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.ReleaseName, m.blockConfig.Namespace)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -328,7 +328,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 	// Upgrade the chart
 	_, err = m.helmManager.UpgradeChart(
 		ctx,
-		m.blockConfig.Release,
+		m.blockConfig.ReleaseName,
 		m.blockConfig.ChartRepo,
 		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
@@ -351,7 +351,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
-	svcName := fmt.Sprintf("%s%s", m.blockConfig.Release, ServiceNameSuffix)
+	svcName := fmt.Sprintf("%s%s", m.blockConfig.ReleaseName, ServiceNameSuffix)
 
 	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, svcName, metav1.GetOptions{})
 	if err != nil {
