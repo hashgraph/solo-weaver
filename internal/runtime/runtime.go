@@ -11,6 +11,7 @@ import (
 )
 
 const DefaultRefreshInterval = 10 * time.Minute
+const DefaultRefreshTimeout = 60 * time.Second
 
 // Base centralizes refresh / current-state behavior for any state type T.
 // - fetch: function that returns the latest *T from the external reality/checker.
@@ -54,14 +55,14 @@ func NewRuntimeBase[T any](
 
 // RefreshState refreshes the current state using the configured fetch function.
 // It respects refreshInterval if lastSync is provided.
-func (rb *Base[T]) RefreshState(ctx context.Context) error {
+func (rb *Base[T]) RefreshState(ctx context.Context, force bool) error {
 	if rb.fetch == nil {
 		return errorx.IllegalState.New(rb.fetchName + " fetcher is not initialized")
 	}
 
 	now := htime.Now()
 	// check last sync freshness if helper provided
-	if rb.lastSync != nil {
+	if !force && rb.lastSync != nil {
 		rb.mu.Lock()
 		ls := rb.lastSync(&rb.current)
 		rb.mu.Unlock()

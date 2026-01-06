@@ -80,8 +80,16 @@ func initializeDependencies(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "invalid configuration")
 	}
 
-	currentState := core.NewState()
-	realityChecker := reality.NewChecker()
+	sm, err := core.NewStateManager()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create state manager")
+	}
+
+	currentState := sm.State()
+	realityChecker, err := reality.NewChecker(currentState)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
+	}
 
 	// initialize runtime
 	err = runtime.InitClusterRuntime(conf, currentState.Cluster, realityChecker, runtime.DefaultRefreshInterval)
@@ -94,7 +102,7 @@ func initializeDependencies(ctx context.Context) error {
 	}
 
 	// initialize BLL
-	_, err = bll.InitBlockNodeIntentHandler(conf.BlockNode)
+	_, err = bll.InitBlockNodeIntentHandler(conf.BlockNode, sm)
 	if err != nil {
 		return err
 	}

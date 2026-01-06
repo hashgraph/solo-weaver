@@ -27,6 +27,10 @@ func RunWorkflow(ctx context.Context, b automa.Builder) {
 	}
 
 	report := wb.Execute(ctx)
+	CheckWorkflowReport(ctx, report)
+}
+
+func CheckWorkflowReport(ctx context.Context, report *automa.Report) {
 	if report.Error != nil {
 		doctor.CheckReportErr(ctx, report)
 	}
