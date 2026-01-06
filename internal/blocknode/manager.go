@@ -270,7 +270,9 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 
 	logx.As().Debug().
 		Str("release", m.blockConfig.Release).
-		Str("chart", m.blockConfig.Chart).
+		Str("chartName", m.blockConfig.ChartName).
+		Str("chartUrl", m.blockConfig.ChartUrl).
+		Str("chartVersion", m.blockConfig.ChartVersion).
 		Str("version", m.blockConfig.ChartVersion).
 		Str("namespace", m.blockConfig.Namespace).
 		Str("valuesFile", valuesFile).
@@ -281,7 +283,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 	_, err = m.helmManager.InstallChart(
 		ctx,
 		m.blockConfig.Release,
-		m.blockConfig.Chart,
+		m.blockConfig.ChartName,
 		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		chartOptions,
@@ -327,7 +329,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 	_, err = m.helmManager.UpgradeChart(
 		ctx,
 		m.blockConfig.Release,
-		m.blockConfig.Chart,
+		m.blockConfig.ChartUrl,
 		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		helm.UpgradeChartOptions{

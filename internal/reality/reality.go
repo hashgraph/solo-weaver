@@ -60,13 +60,19 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 		return nil, err
 	}
 
+	if re == nil {
+		return nil, nil // no BlockNode release found
+	}
+
 	now := htime.Now()
 	bn := core.BlockNodeState{
 		ReleaseInfo: core.HelmReleaseInfo{
-			Name:          re.Name,
-			Version:       re.Chart.Metadata.AppVersion,
-			Namespace:     re.Namespace,
-			Chart:         strings.Join([]string{re.Chart.Metadata.Home, re.Chart.Metadata.Name}, "/"),
+			Name:      re.Name,
+			Version:   re.Chart.Metadata.AppVersion,
+			Namespace: re.Namespace,
+			// FIXME: it is not possible to retrieve the chart URL from the release object
+			//ChartName:         strings.Join([]string{re.ChartName.Metadata.Home, re.ChartName.Metadata.Name}, "/"),
+			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
 			LastDeployed:  re.Info.LastDeployed,
@@ -183,7 +189,7 @@ func (r *realityChecker) findBlockNodeHelmRelease() (*release.Release, error) {
 		}
 	}
 
-	return nil, errorx.IllegalState.New("no BlockNode Helm release found")
+	return nil, nil // no BlockNode release found
 }
 
 // UnmarshalManifest parses a Helm release manifest (possibly multi-doc YAML)

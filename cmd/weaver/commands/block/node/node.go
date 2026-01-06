@@ -24,7 +24,9 @@ var (
 	flagRollbackOnError bool
 	flagContinueOnError bool
 
-	flagProfile      string // inherited from parent
+	flagProfile string // inherited from parent
+	flagForce   bool   // inherited from parent
+
 	flagValuesFile   string
 	flagChartVersion string
 	flagChartRepo    string
@@ -107,6 +109,10 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 		return nil, errorx.IllegalArgument.New("profile flag is required")
 	}
 
+	flagForce, err = common.FlagForce.Value(cmd, args)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+	}
 	// Validate the values file path if provided
 	// This is the primary security validation point for user-supplied file paths.
 	var validatedValuesFile string
@@ -130,7 +136,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 	overrides := config.BlockNodeConfig{
 		Namespace:    flagNamespace,
 		Release:      flagReleaseName,
-		Chart:        flagChartRepo,
+		ChartUrl:     flagChartRepo,
 		ChartVersion: flagChartVersion,
 		Storage: config.BlockNodeStorage{
 			BasePath:    flagBasePath,
@@ -154,8 +160,8 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 	if overrides.Release != "" {
 		blockNodeConfig.Release = overrides.Release
 	}
-	if overrides.Chart != "" {
-		blockNodeConfig.Chart = overrides.Chart
+	if overrides.ChartUrl != "" {
+		blockNodeConfig.ChartUrl = overrides.ChartUrl
 	}
 	if overrides.ChartVersion != "" {
 		blockNodeConfig.ChartVersion = overrides.ChartVersion
@@ -189,7 +195,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 
 	return &core.UserInputs[core.BlocknodeInputs]{
 		Common: core.CommonInputs{
-			Force:            false,
+			Force:            flagForce,
 			NodeType:         core.NodeTypeBlock,
 			ExecutionOptions: *execOpts,
 		},
@@ -197,7 +203,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 			Version:      blockNodeConfig.Version,
 			Namespace:    blockNodeConfig.Namespace,
 			Release:      blockNodeConfig.Release,
-			Chart:        blockNodeConfig.Chart,
+			ChartUrl:     blockNodeConfig.ChartUrl,
 			ChartVersion: blockNodeConfig.ChartVersion,
 			Storage:      blockNodeConfig.Storage,
 			Profile:      flagProfile,

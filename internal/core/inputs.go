@@ -29,7 +29,8 @@ type BlocknodeInputs struct {
 	Version      string
 	Namespace    string
 	Release      string
-	Chart        string
+	ChartName    string
+	ChartUrl     string
 	ChartVersion string
 	Storage      config.BlockNodeStorage
 	ValuesFile   string

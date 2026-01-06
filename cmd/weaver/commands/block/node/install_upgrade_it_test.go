@@ -56,7 +56,7 @@ blockNode:
 	cfg := config.Get()
 	assert.Equal(t, "config-namespace", cfg.BlockNode.Namespace)
 	assert.Equal(t, "config-release", cfg.BlockNode.Release)
-	assert.Equal(t, "oci://config.example.com/chart", cfg.BlockNode.Chart)
+	assert.Equal(t, "oci://config.example.com/chart", cfg.BlockNode.ChartUrl)
 	assert.Equal(t, "0.22.1", cfg.BlockNode.Version)
 	assert.Equal(t, "/mnt/config-storage", cfg.BlockNode.Storage.BasePath)
 
@@ -75,7 +75,7 @@ blockNode:
 
 	assert.Equal(t, "flag-namespace", blockNodeInputs.Namespace, "flag should override config namespace")
 	assert.Equal(t, "flag-release", blockNodeInputs.Release, "flag should override config release")
-	assert.Equal(t, "oci://flag.example.com/chart", blockNodeInputs.Chart, "flag should override config chart")
+	assert.Equal(t, "oci://flag.example.com/chart", blockNodeInputs.ChartUrl, "flag should override config chart")
 	assert.Equal(t, "0.24.0", blockNodeInputs.ChartVersion, "flag should override config version")
 	assert.Equal(t, "/mnt/flag-storage", blockNodeInputs.Storage.BasePath, "flag should override config basePath")
 }
@@ -123,7 +123,7 @@ blockNode:
 
 	// Unchanged values (flags were empty, so config values remain)
 	assert.Equal(t, "config-release", blockNodeInputs.Release, "unspecified flag should keep config value")
-	assert.Equal(t, "oci://config.example.com/chart", blockNodeInputs.Chart, "unspecified flag should keep config value")
+	assert.Equal(t, "oci://config.example.com/chart", blockNodeInputs.ChartUrl, "unspecified flag should keep config value")
 	assert.Equal(t, "/mnt/config-storage", blockNodeInputs.Storage.BasePath, "unspecified flag should keep config value")
 }
 

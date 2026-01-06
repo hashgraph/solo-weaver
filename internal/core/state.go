@@ -66,8 +66,8 @@ type HelmReleaseInfo struct {
 	Name         string `yaml:"name" json:"name"`
 	Version      string `yaml:"version" json:"version"` // App version
 	Namespace    string `yaml:"namespace" json:"namespace"`
-	Chart        string `yaml:"chart" json:"chart"`
-	ChartVersion string `yaml:"chartVersion" json:"chartVersion"` // Chart version
+	ChartName    string `yaml:"chartname" json:"chartname"`
+	ChartVersion string `yaml:"chartVersion" json:"chartVersion"` // ChartName version
 	// Status is the current state of the release
 	Status release.Status `json:"status,omitempty"`
 	// FirstDeployed is when the release was first deployed.

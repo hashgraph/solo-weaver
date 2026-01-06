@@ -72,7 +72,7 @@ func (br *BlockNodeRuntime) SetBlockNodeConfig(user config.BlockNodeConfig) erro
 	if err := br.SetRelease(user.Release); err != nil {
 		return err
 	}
-	if err := br.SetChart(user.Chart); err != nil {
+	if err := br.SetChart(user.ChartUrl); err != nil {
 		return err
 	}
 	if err := br.SetChartVersion(user.ChartVersion); err != nil {
@@ -385,7 +385,7 @@ func (br *BlockNodeRuntime) setChartRuntime() error {
 	var err error
 
 	br.chart, err = automa.NewRuntime[string](
-		br.current.ReleaseInfo.Chart,
+		br.current.ReleaseInfo.ChartName,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -402,8 +402,8 @@ func (br *BlockNodeRuntime) setChartRuntime() error {
 					strategy := automa.StrategyUserInput
 
 					// if block-node is already created, use the current chart
-					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.Chart != userInput.Val() {
-						val = current.ReleaseInfo.Chart
+					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.ChartName != userInput.Val() {
+						val = current.ReleaseInfo.ChartName
 						strategy = automa.StrategyCurrent
 					}
 
