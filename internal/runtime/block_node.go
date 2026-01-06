@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"reflect"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -10,7 +9,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
@@ -22,7 +20,7 @@ type BlockNodeRuntime struct {
 	version      *automa.RuntimeValue[string]
 	namespace    *automa.RuntimeValue[string]
 	release      *automa.RuntimeValue[string]
-	chart        *automa.RuntimeValue[string]
+	chartUrl     *automa.RuntimeValue[string]
 	chartVersion *automa.RuntimeValue[string]
 	storage      *automa.RuntimeValue[config.BlockNodeStorage]
 }
@@ -43,8 +41,8 @@ func (br *BlockNodeRuntime) Release() (*automa.EffectiveValue[string], error) {
 	return br.release.Effective()
 }
 
-func (br *BlockNodeRuntime) Chart() (*automa.EffectiveValue[string], error) {
-	return br.chart.Effective()
+func (br *BlockNodeRuntime) ChartUrl() (*automa.EffectiveValue[string], error) {
+	return br.chartUrl.Effective()
 }
 
 func (br *BlockNodeRuntime) ChartVersion() (*automa.EffectiveValue[string], error) {
@@ -52,30 +50,32 @@ func (br *BlockNodeRuntime) ChartVersion() (*automa.EffectiveValue[string], erro
 }
 
 // SetBlockNodeConfig sets the user input for the block-node runtime values.
-func (br *BlockNodeRuntime) SetBlockNodeConfig(user config.BlockNodeConfig) error {
+func (br *BlockNodeRuntime) SetBlockNodeConfig(cfg config.Config) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
+
+	br.cfg = cfg
 
 	if br.namespace == nil {
 		return errorx.IllegalArgument.New("namespace runtime is not initialized") // should not happen
 	}
 
-	if err := br.SetNamespace(user.Namespace); err != nil {
+	if err := br.SetNamespace(cfg.BlockNode.Namespace); err != nil {
 		return err
 	}
-	if err := br.SetStorage(user.Storage); err != nil {
+	if err := br.SetStorage(cfg.BlockNode.Storage); err != nil {
 		return err
 	}
-	if err := br.SetVersion(user.Version); err != nil {
+	if err := br.SetVersion(cfg.BlockNode.Version); err != nil {
 		return err
 	}
-	if err := br.SetRelease(user.Release); err != nil {
+	if err := br.SetRelease(cfg.BlockNode.Release); err != nil {
 		return err
 	}
-	if err := br.SetChart(user.ChartUrl); err != nil {
+	if err := br.SetChartUrl(cfg.BlockNode.ChartUrl); err != nil {
 		return err
 	}
-	if err := br.SetChartVersion(user.ChartVersion); err != nil {
+	if err := br.SetChartVersion(cfg.BlockNode.ChartVersion); err != nil {
 		return err
 	}
 
@@ -150,12 +150,12 @@ func (br *BlockNodeRuntime) SetRelease(r string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetChart(c string) error {
+func (br *BlockNodeRuntime) SetChartUrl(c string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
-	if br.chart == nil {
-		return errorx.IllegalArgument.New("chart runtime is not initialized")
+	if br.chartUrl == nil {
+		return errorx.IllegalArgument.New("chartUrl runtime is not initialized")
 	}
 
 	val, err := automa.NewValue(c)
@@ -163,7 +163,7 @@ func (br *BlockNodeRuntime) SetChart(c string) error {
 		return err
 	}
 
-	br.chart.SetUserInput(val)
+	br.chartUrl.SetUserInput(val)
 	return nil
 }
 
@@ -184,11 +184,11 @@ func (br *BlockNodeRuntime) SetChartVersion(cv string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) setNamespaceRuntime() error {
+func (br *BlockNodeRuntime) initNamespaceRuntime() error {
 	var err error
 
 	br.namespace, err = automa.NewRuntime[string](
-		br.current.ReleaseInfo.Namespace,
+		br.cfg.BlockNode.Namespace,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -199,31 +199,7 @@ func (br *BlockNodeRuntime) setNamespaceRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-
-				if userInput != nil && userInput.Val() != "" {
-					val := userInput.Val()
-					strategy := automa.StrategyUserInput
-
-					// if block-node is already installed, use the current namespace
-					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.Namespace != userInput.Val() {
-						val = current.ReleaseInfo.Namespace
-						strategy = automa.StrategyCurrent
-					}
-
-					ev, err := automa.NewEffective(val, strategy)
-					if err != nil {
-						return nil, false, err
-					}
-					return ev, true, nil
-				}
-
-				// default value
-				ev, err := automa.NewEffectiveValue(defaultVal, automa.StrategyDefault)
-				if err != nil {
-					return nil, false, err
-				}
-
-				return ev, false, nil
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.Namespace, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -234,7 +210,7 @@ func (br *BlockNodeRuntime) setNamespaceRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) setStorageRuntime() error {
+func (br *BlockNodeRuntime) initStorageRuntime() error {
 	var err error
 
 	br.storage, err = automa.NewRuntime[config.BlockNodeStorage](
@@ -249,32 +225,7 @@ func (br *BlockNodeRuntime) setStorageRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-
-				if userInput != nil {
-					val := userInput.Val()
-					strategy := automa.StrategyUserInput
-
-					// if block-node is already created, do not allow changing storage:
-					// return current storage with StrategyCustom instead of error
-					if current.ReleaseInfo.Status == release.StatusDeployed && !reflect.DeepEqual(current.Storage, userInput.Val()) {
-						val = current.Storage
-						strategy = automa.StrategyCurrent
-					}
-
-					ev, err := automa.NewEffective(val, strategy)
-					if err != nil {
-						return nil, false, err
-					}
-					return ev, true, nil
-				}
-
-				// default value
-				ev, err := automa.NewEffectiveValue(defaultVal, automa.StrategyDefault)
-				if err != nil {
-					return nil, false, err
-				}
-
-				return ev, false, nil
+				return resolveEffective[config.BlockNodeStorage](defaultVal, userInput, current.Storage, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -285,7 +236,7 @@ func (br *BlockNodeRuntime) setStorageRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) setVersionRuntime() error {
+func (br *BlockNodeRuntime) initVersionRuntime() error {
 	var err error
 
 	br.version, err = automa.NewRuntime[string](
@@ -300,29 +251,7 @@ func (br *BlockNodeRuntime) setVersionRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-
-				if userInput != nil && userInput.Val() != "" {
-					val := userInput.Val()
-					strategy := automa.StrategyUserInput
-
-					// if block-node is already created, use the current version
-					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.Version != userInput.Val() {
-						val = current.ReleaseInfo.Version
-						strategy = automa.StrategyCurrent
-					}
-
-					ev, err := automa.NewEffective(val, strategy)
-					if err != nil {
-						return nil, false, err
-					}
-					return ev, true, nil
-				}
-
-				ev, err := automa.NewEffectiveValue(defaultVal, automa.StrategyDefault)
-				if err != nil {
-					return nil, false, err
-				}
-				return ev, false, nil
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.Version, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -333,7 +262,7 @@ func (br *BlockNodeRuntime) setVersionRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) setReleaseRuntime() error {
+func (br *BlockNodeRuntime) initReleaseRuntime() error {
 	var err error
 
 	br.release, err = automa.NewRuntime[string](
@@ -348,29 +277,7 @@ func (br *BlockNodeRuntime) setReleaseRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-
-				if userInput != nil && userInput.Val() != "" {
-					val := userInput.Val()
-					strategy := automa.StrategyUserInput
-
-					// if block-node is already created, use the current release
-					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.Name != userInput.Val() {
-						val = current.ReleaseInfo.Name
-						strategy = automa.StrategyCurrent
-					}
-
-					ev, err := automa.NewEffective(val, strategy)
-					if err != nil {
-						return nil, false, err
-					}
-					return ev, true, nil
-				}
-
-				ev, err := automa.NewEffectiveValue(defaultVal, automa.StrategyDefault)
-				if err != nil {
-					return nil, false, err
-				}
-				return ev, false, nil
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.Name, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -381,11 +288,11 @@ func (br *BlockNodeRuntime) setReleaseRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) setChartRuntime() error {
+func (br *BlockNodeRuntime) initChartUrlRuntime() error {
 	var err error
 
-	br.chart, err = automa.NewRuntime[string](
-		br.current.ReleaseInfo.ChartName,
+	br.chartUrl, err = automa.NewRuntime[string](
+		br.cfg.BlockNode.ChartUrl,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -396,29 +303,7 @@ func (br *BlockNodeRuntime) setChartRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-
-				if userInput != nil && userInput.Val() != "" {
-					val := userInput.Val()
-					strategy := automa.StrategyUserInput
-
-					// if block-node is already created, use the current chart
-					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.ChartName != userInput.Val() {
-						val = current.ReleaseInfo.ChartName
-						strategy = automa.StrategyCurrent
-					}
-
-					ev, err := automa.NewEffective(val, strategy)
-					if err != nil {
-						return nil, false, err
-					}
-					return ev, true, nil
-				}
-
-				ev, err := automa.NewEffectiveValue(defaultVal, automa.StrategyDefault)
-				if err != nil {
-					return nil, false, err
-				}
-				return ev, false, nil
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartUrl, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -429,7 +314,7 @@ func (br *BlockNodeRuntime) setChartRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) setChartVersionRuntime() error {
+func (br *BlockNodeRuntime) initChartVersionRuntime() error {
 	var err error
 
 	br.chartVersion, err = automa.NewRuntime[string](
@@ -444,29 +329,7 @@ func (br *BlockNodeRuntime) setChartVersionRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-
-				if userInput != nil && userInput.Val() != "" {
-					val := userInput.Val()
-					strategy := automa.StrategyUserInput
-
-					// if block-node is already created, use the current chart version
-					if current.ReleaseInfo.Status == release.StatusDeployed && current.ReleaseInfo.ChartVersion != userInput.Val() {
-						val = current.ReleaseInfo.ChartVersion
-						strategy = automa.StrategyCurrent
-					}
-
-					ev, err := automa.NewEffective(val, strategy)
-					if err != nil {
-						return nil, false, err
-					}
-					return ev, true, nil
-				}
-
-				ev, err := automa.NewEffectiveValue(defaultVal, automa.StrategyDefault)
-				if err != nil {
-					return nil, false, err
-				}
-				return ev, false, nil
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartVersion, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -485,12 +348,13 @@ func (br *BlockNodeRuntime) SetRefreshInterval(d time.Duration) {
 	br.refreshInterval = d
 }
 
-func InitBlockNodeRuntime(state core.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) error {
+func InitBlockNodeRuntime(cfg config.Config, state core.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) error {
 	if realityChecker == nil {
 		return errorx.IllegalArgument.New("reality checker cannot be nil")
 	}
 
 	rb := NewRuntimeBase[core.BlockNodeState](
+		cfg,
 		state,
 		refreshInterval,
 		// fetch function
@@ -507,22 +371,22 @@ func InitBlockNodeRuntime(state core.BlockNodeState, realityChecker reality.Chec
 		reality: realityChecker,
 	}
 
-	if err := br.setNamespaceRuntime(); err != nil {
+	if err := br.initNamespaceRuntime(); err != nil {
 		return err
 	}
-	if err := br.setStorageRuntime(); err != nil {
+	if err := br.initStorageRuntime(); err != nil {
 		return err
 	}
-	if err := br.setVersionRuntime(); err != nil {
+	if err := br.initVersionRuntime(); err != nil {
 		return err
 	}
-	if err := br.setReleaseRuntime(); err != nil {
+	if err := br.initReleaseRuntime(); err != nil {
 		return err
 	}
-	if err := br.setChartRuntime(); err != nil {
+	if err := br.initChartUrlRuntime(); err != nil {
 		return err
 	}
-	if err := br.setChartVersionRuntime(); err != nil {
+	if err := br.initChartVersionRuntime(); err != nil {
 		return err
 	}
 
