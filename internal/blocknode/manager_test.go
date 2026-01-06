@@ -6,16 +6,17 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestGetStoragePaths_AllIndividualPathsProvided tests that individual paths are used when all are provided
 func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -26,7 +27,7 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	archivePath, livePath, logPath, err := manager.GetStoragePaths()
@@ -40,10 +41,10 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 
 // TestGetStoragePaths_OnlyBasePathProvided tests that paths are derived from basePath when individual paths are empty
 func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -54,7 +55,7 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	archivePath, livePath, logPath, err := manager.GetStoragePaths()
@@ -68,10 +69,10 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 
 // TestGetStoragePaths_MixedPaths tests that individual paths override basePath-derived paths
 func TestGetStoragePaths_MixedPaths(t *testing.T) {
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -82,7 +83,7 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	archivePath, livePath, logPath, err := manager.GetStoragePaths()
@@ -97,10 +98,10 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 
 // TestGetStoragePaths_InvalidArchivePath tests that invalid archive path returns an error
 func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -111,7 +112,7 @@ func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	_, _, _, err := manager.GetStoragePaths()
@@ -121,10 +122,10 @@ func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 
 // TestGetStoragePaths_InvalidLivePath tests that invalid live path returns an error
 func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -135,7 +136,7 @@ func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	_, _, _, err := manager.GetStoragePaths()
@@ -145,10 +146,10 @@ func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 
 // TestGetStoragePaths_InvalidLogPath tests that invalid log path returns an error
 func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -159,7 +160,7 @@ func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	_, _, _, err := manager.GetStoragePaths()
@@ -171,10 +172,10 @@ func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 	// This is more of a documentation test showing the expected behavior
 	// In practice, this would need filesystem mocking to fully test
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
-		Chart:     "test-chart",
+		ChartUrl:  "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
@@ -185,7 +186,7 @@ func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	// When all individual paths are provided, the implementation should:
@@ -248,16 +249,16 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := config.BlockNodeConfig{
+			blockConfig := core.BlocknodeInputs{
 				Namespace: "test-ns",
 				Release:   "test-release",
-				Chart:     "test-chart",
+				ChartUrl:  "oci://ghcr.io/test/test-chart",
 				Version:   "0.1.0",
 				Storage:   tt.storage,
 			}
 
 			manager := &Manager{
-				blockConfig: &blockConfig,
+				blockConfig: blockConfig,
 			}
 
 			// Note: SetupStorage would need filesystem access to fully test
@@ -283,7 +284,7 @@ func TestStoragePathPrecedence(t *testing.T) {
 	// 2. BasePath-derived paths (basePath + "/archive", etc.) - LOWER PRIORITY
 
 	t.Run("individual path takes precedence", func(t *testing.T) {
-		blockConfig := config.BlockNodeConfig{
+		blockConfig := core.BlocknodeInputs{
 			Storage: config.BlockNodeStorage{
 				BasePath:    "/mnt/base",
 				ArchivePath: "/mnt/override-archive",
@@ -291,7 +292,7 @@ func TestStoragePathPrecedence(t *testing.T) {
 		}
 
 		manager := &Manager{
-			blockConfig: &blockConfig,
+			blockConfig: blockConfig,
 		}
 
 		archivePath, livePath, logPath, err := manager.GetStoragePaths()
@@ -306,7 +307,7 @@ func TestStoragePathPrecedence(t *testing.T) {
 	})
 
 	t.Run("all individual paths override base path", func(t *testing.T) {
-		blockConfig := config.BlockNodeConfig{
+		blockConfig := core.BlocknodeInputs{
 			Storage: config.BlockNodeStorage{
 				BasePath:    "/mnt/base",
 				ArchivePath: "/var/archive",
@@ -316,7 +317,7 @@ func TestStoragePathPrecedence(t *testing.T) {
 		}
 
 		manager := &Manager{
-			blockConfig: &blockConfig,
+			blockConfig: blockConfig,
 		}
 
 		archivePath, livePath, logPath, err := manager.GetStoragePaths()

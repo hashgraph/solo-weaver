@@ -25,7 +25,7 @@ func TestRealityChecker_BlockNodeState(t *testing.T) {
 	require.NotEmpty(t, st.ReleaseInfo.Name)
 	require.NotEmpty(t, st.ReleaseInfo.Version)
 	require.NotEmpty(t, st.ReleaseInfo.Namespace)
-	require.NotEmpty(t, st.ReleaseInfo.Chart)
+	require.NotEmpty(t, st.ReleaseInfo.ChartName)
 	require.NotEmpty(t, st.ReleaseInfo.ChartVersion)
 	require.NotEmpty(t, st.ReleaseInfo.Status)
 	require.NotEmpty(t, st.ReleaseInfo.FirstDeployed)

@@ -100,7 +100,8 @@ type BlockNodeConfig struct {
 	Version      string           `yaml:"version" json:"version"`
 	Namespace    string           `yaml:"namespace" json:"namespace"`
 	Release      string           `yaml:"release" json:"release"`
-	Chart        string           `yaml:"chart" json:"chart"`
+	ChartName    string           `yaml:"chartName" json:"chartName"`
+	ChartUrl     string           `yaml:"charturl" json:"charturl"`
 	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
 	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
@@ -136,9 +137,9 @@ func (c *BlockNodeConfig) Validate() error {
 	}
 
 	// Validate chart if provided (Helm chart reference: OCI, URL, or repo/chart)
-	if c.Chart != "" {
-		if err := sanity.ValidateChartReference(c.Chart); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.Chart)
+	if c.ChartUrl != "" {
+		if err := sanity.ValidateChartReference(c.ChartUrl); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.ChartUrl)
 		}
 	}
 
@@ -191,10 +192,11 @@ var globalConfig = Config{
 		FileLogging:    false,
 	},
 	BlockNode: BlockNodeConfig{
-		Namespace: deps.BLOCK_NODE_NAMESPACE,
-		Release:   deps.BLOCK_NODE_RELEASE,
-		Chart:     deps.BLOCK_NODE_CHART,
-		Version:   deps.BLOCK_NODE_VERSION,
+		Namespace:    deps.BLOCK_NODE_NAMESPACE,
+		Release:      deps.BLOCK_NODE_RELEASE,
+		ChartName:    deps.BLOCK_NODE_CHART_NAME,
+		ChartUrl:     deps.BLOCK_NODE_CHART_URL,
+		ChartVersion: deps.BLOCK_NODE_CHART_VERSION,
 		Storage: BlockNodeStorage{
 			BasePath:    deps.BLOCK_NODE_STORAGE_BASE_PATH,
 			ArchivePath: "",
@@ -269,8 +271,8 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	if overrides.Release != "" {
 		globalConfig.BlockNode.Release = overrides.Release
 	}
-	if overrides.Chart != "" {
-		globalConfig.BlockNode.Chart = overrides.Chart
+	if overrides.ChartUrl != "" {
+		globalConfig.BlockNode.ChartUrl = overrides.ChartUrl
 	}
 	if overrides.Version != "" {
 		globalConfig.BlockNode.Version = overrides.Version

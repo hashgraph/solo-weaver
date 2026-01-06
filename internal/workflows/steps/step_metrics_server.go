@@ -16,9 +16,9 @@ import (
 const (
 	MetricsServerNamespace    = "kube-system"
 	MetricsServerRelease      = "metrics-server"
-	MetricsServerChart        = "metrics-server/metrics-server"
+	MetricsServerChartName    = "metrics-server/metrics-server"
 	MetricsServerChartVersion = "3.13.0"
-	MetricsServerRepo         = "https://kubernetes-sigs.github.io/metrics-server"
+	MetricsServerChartUrl     = "https://kubernetes-sigs.github.io/metrics-server"
 )
 
 func DeployMetricsServer(valueOptions *values.Options) *automa.WorkflowBuilder {
@@ -67,7 +67,7 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(MetricsServerRelease, MetricsServerRepo, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(MetricsServerRelease, MetricsServerChartUrl, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -81,7 +81,7 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 			_, err = hm.InstallChart(
 				ctx,
 				MetricsServerRelease,
-				MetricsServerChart,
+				MetricsServerChartName,
 				chartVersion,
 				MetricsServerNamespace,
 				helm.InstallChartOptions{

@@ -58,6 +58,13 @@ var (
 		Description: "Path to custom values file for installation",
 		Default:     "",
 	}
+
+	FlagForce = FlagDefinition[bool]{
+		Name:        "force",
+		ShortName:   "y",
+		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
+		Default:     false,
+	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.

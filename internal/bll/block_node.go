@@ -10,6 +10,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/runtime"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -75,7 +76,7 @@ func (b BlockNodeIntentHandler) prepare(intent core.Intent, inputs core.UserInpu
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node release name as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetChart(inputs.Custom.Chart)
+	err = runtime.BlockNode().SetChart(inputs.Custom.ChartUrl)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node chart as user input: %v", err)
 	}
@@ -104,7 +105,8 @@ func (b BlockNodeIntentHandler) installHandler(intent *core.Intent, inputs *core
 	//    - storage-path: /data/blocknode
 
 	if runtime.BlockNode().CurrentState().ReleaseInfo.Status == release.StatusDeployed && inputs.Common.Force != true {
-		return nil, errorx.IllegalState.New("block node is already installed; cannot install again")
+		return nil, errorx.IllegalState.New("block node is already installed; cannot install again").
+			WithProperty(doctor.ErrPropertyResolution, "use 'weaver block-node upgrade' to upgrade the block node or use --force to continue")
 	}
 
 	// Determine Blocknode version
@@ -173,17 +175,17 @@ func (b BlockNodeIntentHandler) installHandler(intent *core.Intent, inputs *core
 		return nil, errorx.IllegalState.New("failed to get current block node chart: %v", err)
 	}
 	logx.As().Debug().
-		Str("inputChart", inputs.Custom.Chart).
+		Str("inputChart", inputs.Custom.ChartUrl).
 		Str("effectiveChart", effChart.Get().Val()).
 		Str("strategy", effChart.Strategy().String()).
 		Msg("Found effective block node chart")
 	if effChart.Strategy() != automa.StrategyUserInput {
 		logx.As().Warn().
-			Str("inputChart", inputs.Custom.Chart).
+			Str("inputChart", inputs.Custom.ChartUrl).
 			Str("effectiveChart", effChart.Get().Val()).
 			Str("strategy", effChart.Strategy().String()).
-			Msgf("Overriding block node chart from inputs '%s' to effective '%s'", inputs.Custom.Chart, effChart.Get().Val())
-		inputs.Custom.Chart = effChart.Get().Val()
+			Msgf("Overriding block node chart from inputs '%s' to effective '%s'", inputs.Custom.ChartUrl, effChart.Get().Val())
+		inputs.Custom.ChartUrl = effChart.Get().Val()
 	}
 
 	// Determine Blocknode chart version
