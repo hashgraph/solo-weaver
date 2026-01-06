@@ -76,7 +76,7 @@ func (b BlockNodeIntentHandler) prepare(intent core.Intent, inputs core.UserInpu
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node release name as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetChartUrl(inputs.Custom.ChartUrl)
+	err = runtime.BlockNode().SetChartRepo(inputs.Custom.ChartRepo)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node chart as user input: %v", err)
 	}
@@ -170,22 +170,22 @@ func (b BlockNodeIntentHandler) installHandler(intent *core.Intent, inputs *core
 	}
 
 	// Determine Blocknode chart name
-	effChart, err := runtime.BlockNode().ChartUrl()
+	effChart, err := runtime.BlockNode().ChartRepo()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart: %v", err)
 	}
 	logx.As().Debug().
-		Str("inputChart", inputs.Custom.ChartUrl).
+		Str("inputChart", inputs.Custom.ChartRepo).
 		Str("effectiveChart", effChart.Get().Val()).
 		Str("strategy", effChart.Strategy().String()).
 		Msg("Found effective block node chart")
 	if effChart.Strategy() != automa.StrategyUserInput {
 		logx.As().Warn().
-			Str("inputChart", inputs.Custom.ChartUrl).
+			Str("inputChart", inputs.Custom.ChartRepo).
 			Str("effectiveChart", effChart.Get().Val()).
 			Str("strategy", effChart.Strategy().String()).
-			Msgf("Overriding block node chart from inputs '%s' to effective '%s'", inputs.Custom.ChartUrl, effChart.Get().Val())
-		inputs.Custom.ChartUrl = effChart.Get().Val()
+			Msgf("Overriding block node chart from inputs '%s' to effective '%s'", inputs.Custom.ChartRepo, effChart.Get().Val())
+		inputs.Custom.ChartRepo = effChart.Get().Val()
 	}
 
 	// Determine Blocknode chart version
