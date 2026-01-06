@@ -101,7 +101,7 @@ type BlockNodeConfig struct {
 	Namespace    string           `yaml:"namespace" json:"namespace"`
 	Release      string           `yaml:"release" json:"release"`
 	ChartName    string           `yaml:"chartName" json:"chartName"`
-	ChartUrl     string           `yaml:"charturl" json:"charturl"`
+	ChartRepo    string           `yaml:"chartRepo" json:"chartRepo"`
 	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
 	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
@@ -137,9 +137,9 @@ func (c *BlockNodeConfig) Validate() error {
 	}
 
 	// Validate chart if provided (Helm chart reference: OCI, URL, or repo/chart)
-	if c.ChartUrl != "" {
-		if err := sanity.ValidateChartReference(c.ChartUrl); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.ChartUrl)
+	if c.ChartRepo != "" {
+		if err := sanity.ValidateChartReference(c.ChartRepo); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.ChartRepo)
 		}
 	}
 
@@ -195,7 +195,7 @@ var globalConfig = Config{
 		Namespace:    deps.BLOCK_NODE_NAMESPACE,
 		Release:      deps.BLOCK_NODE_RELEASE,
 		ChartName:    deps.BLOCK_NODE_CHART_NAME,
-		ChartUrl:     deps.BLOCK_NODE_CHART_URL,
+		ChartRepo:    deps.BLOCK_NODE_CHART_REPO,
 		ChartVersion: deps.BLOCK_NODE_CHART_VERSION,
 		Storage: BlockNodeStorage{
 			BasePath:    deps.BLOCK_NODE_STORAGE_BASE_PATH,
@@ -271,8 +271,8 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	if overrides.Release != "" {
 		globalConfig.BlockNode.Release = overrides.Release
 	}
-	if overrides.ChartUrl != "" {
-		globalConfig.BlockNode.ChartUrl = overrides.ChartUrl
+	if overrides.ChartRepo != "" {
+		globalConfig.BlockNode.ChartRepo = overrides.ChartRepo
 	}
 	if overrides.Version != "" {
 		globalConfig.BlockNode.Version = overrides.Version

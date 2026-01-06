@@ -58,7 +58,7 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			blockConfig := core.BlocknodeInputs{
 				Namespace: "test-namespace",
 				Release:   "test-release",
-				ChartUrl:  "oci://ghcr.io/test/test-chart",
+				ChartRepo: "oci://ghcr.io/test/test-chart",
 				Version:   "0.1.0",
 				Storage: config.BlockNodeStorage{
 					BasePath:    basePath,
@@ -156,7 +156,7 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
 		Namespace: "block-node",
 		Release:   "test-release",
-		ChartUrl:  "oci://ghcr.io/test/test-chart",
+		ChartRepo: "oci://ghcr.io/test/test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    basePath,

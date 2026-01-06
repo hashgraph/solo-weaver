@@ -6,7 +6,7 @@ const (
 	BLOCK_NODE_NAMESPACE         = "block-node"
 	BLOCK_NODE_RELEASE           = "block-node"
 	BLOCK_NODE_CHART_NAME        = "block-node-server"
-	BLOCK_NODE_CHART_URL         = "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+	BLOCK_NODE_CHART_REPO        = "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
 	BLOCK_NODE_CHART_VERSION     = "0.22.1"
 	BLOCK_NODE_STORAGE_BASE_PATH = "/mnt/fast-storage"
 )

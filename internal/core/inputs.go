@@ -30,7 +30,7 @@ type BlocknodeInputs struct {
 	Namespace    string
 	Release      string
 	ChartName    string
-	ChartUrl     string
+	ChartRepo    string
 	ChartVersion string
 	Storage      config.BlockNodeStorage
 	ValuesFile   string

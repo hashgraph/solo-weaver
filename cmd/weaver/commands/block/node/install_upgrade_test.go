@@ -37,7 +37,7 @@ log:
 blockNode:
   namespace: "config-namespace"
   release: "config-release"
-  chartUrl: "oci://config.example.com/chart"
+  chartRepo: "oci://config.example.com/chart"
   version: "0.22.1"
   storage:
     basePath: "/mnt/config-storage"
@@ -54,7 +54,7 @@ blockNode:
 	cfg := config.Get()
 	assert.Equal(t, "config-namespace", cfg.BlockNode.Namespace)
 	assert.Equal(t, "config-release", cfg.BlockNode.Release)
-	assert.Equal(t, "oci://config.example.com/chart", cfg.BlockNode.ChartUrl)
+	assert.Equal(t, "oci://config.example.com/chart", cfg.BlockNode.ChartRepo)
 	assert.Equal(t, "0.22.1", cfg.BlockNode.Version)
 	assert.Equal(t, "/mnt/config-storage", cfg.BlockNode.Storage.BasePath)
 
@@ -74,7 +74,7 @@ blockNode:
 
 	assert.Equal(t, "flag-namespace", blockNodeInputs.Namespace, "flag should override config namespace")
 	assert.Equal(t, "flag-release", blockNodeInputs.Release, "flag should override config release")
-	assert.Equal(t, "oci://flag.example.com/chart", blockNodeInputs.ChartUrl, "flag should override config chart")
+	assert.Equal(t, "oci://flag.example.com/chart", blockNodeInputs.ChartRepo, "flag should override config chart")
 	assert.Equal(t, "0.24.0", blockNodeInputs.ChartVersion, "flag should override config version")
 	assert.Equal(t, "/mnt/flag-storage", blockNodeInputs.Storage.BasePath, "flag should override config basePath")
 }
@@ -94,7 +94,7 @@ func TestFlagPrecedence_PartialOverride(t *testing.T) {
 blockNode:
   namespace: "config-namespace"
   release: "config-release"
-  chartUrl: "oci://config.example.com/chart"
+  chartRepo: "oci://config.example.com/chart"
   version: "0.20.0"
   storage:
     basePath: "/mnt/config-storage"
@@ -123,7 +123,7 @@ blockNode:
 
 	// Unchanged values (flags were empty, so config values remain)
 	assert.Equal(t, "config-release", blockNodeInputs.Release, "unspecified flag should keep config value")
-	assert.Equal(t, "oci://config.example.com/chart", blockNodeInputs.ChartUrl, "unspecified flag should keep config value")
+	assert.Equal(t, "oci://config.example.com/chart", blockNodeInputs.ChartRepo, "unspecified flag should keep config value")
 	assert.Equal(t, "/mnt/config-storage", blockNodeInputs.Storage.BasePath, "unspecified flag should keep config value")
 }
 
@@ -141,7 +141,7 @@ func TestFlagPrecedence_StoragePaths(t *testing.T) {
 blockNode:
   namespace: "block-node"
   release: "block-node"
-  chartUrl: "oci://example.com/chart"
+  chartRepo: "oci://example.com/chart"
   version: "0.20.0"
   storage:
     basePath: "/mnt/config-base"
@@ -188,7 +188,7 @@ func TestFlagPrecedence_IndividualPathsOverBasePath(t *testing.T) {
 blockNode:
   namespace: "block-node"
   release: "block-node"
-  chartUrl: "oci://example.com/chart"
+  chartRepo: "oci://example.com/chart"
   version: "0.20.0"
   storage:
     basePath: "/mnt/base-storage"
@@ -341,7 +341,7 @@ func TestNegative_InvalidValuesFilePath(t *testing.T) {
 blockNode:
   namespace: "test-ns"
   release: "test-release"
-  chartUrl: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  chartRepo: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
   storage:
     basePath: "/mnt/storage"
@@ -416,7 +416,7 @@ func TestNegative_InvalidStoragePaths(t *testing.T) {
 blockNode:
   namespace: "test-ns"
   release: "test-release"
-  chartUrl: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  chartRepo: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
 `
 			tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
@@ -463,7 +463,7 @@ func TestNegative_DirectoryAsValuesFile(t *testing.T) {
 blockNode:
   namespace: "test-ns"
   release: "test-release"
-  chartUrl: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  chartRepo: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
@@ -507,7 +507,7 @@ func TestNegative_InvalidChartVersion(t *testing.T) {
 blockNode:
   namespace: "test-ns"
   release: "test-release"
-  chartUrl: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  chartRepo: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
@@ -633,7 +633,7 @@ func TestNegative_InvalidYAMLInConfigFile(t *testing.T) {
 blockNode:
   namespace: "test-ns"
   release: [this is not valid yaml structure
-  chartUrl: "oci://example.com/chart"
+  chartRepo: "oci://example.com/chart"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "invalid-config.yaml")
 	err := os.WriteFile(tmpConfigFile, []byte(invalidYAML), 0644)

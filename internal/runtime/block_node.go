@@ -21,7 +21,7 @@ type BlockNodeRuntime struct {
 	version      *automa.RuntimeValue[string]
 	namespace    *automa.RuntimeValue[string]
 	chartName    *automa.RuntimeValue[string]
-	chartUrl     *automa.RuntimeValue[string]
+	chartRepo    *automa.RuntimeValue[string]
 	chartVersion *automa.RuntimeValue[string]
 	storage      *automa.RuntimeValue[config.BlockNodeStorage]
 }
@@ -42,8 +42,8 @@ func (br *BlockNodeRuntime) Release() (*automa.EffectiveValue[string], error) {
 	return br.releaseName.Effective()
 }
 
-func (br *BlockNodeRuntime) ChartUrl() (*automa.EffectiveValue[string], error) {
-	return br.chartUrl.Effective()
+func (br *BlockNodeRuntime) ChartRepo() (*automa.EffectiveValue[string], error) {
+	return br.chartRepo.Effective()
 }
 
 func (br *BlockNodeRuntime) ChartVersion() (*automa.EffectiveValue[string], error) {
@@ -76,7 +76,7 @@ func (br *BlockNodeRuntime) SetBlockNodeConfig(cfg config.Config) error {
 	if err := br.SetChartName(cfg.BlockNode.ChartName); err != nil {
 		return err
 	}
-	if err := br.SetChartUrl(cfg.BlockNode.ChartUrl); err != nil {
+	if err := br.SetChartRepo(cfg.BlockNode.ChartRepo); err != nil {
 		return err
 	}
 	if err := br.SetChartVersion(cfg.BlockNode.ChartVersion); err != nil {
@@ -154,12 +154,12 @@ func (br *BlockNodeRuntime) SetChartName(c string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetChartUrl(c string) error {
+func (br *BlockNodeRuntime) SetChartRepo(c string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
-	if br.chartUrl == nil {
-		return errorx.IllegalArgument.New("chartUrl runtime is not initialized")
+	if br.chartRepo == nil {
+		return errorx.IllegalArgument.New("chartRepo runtime is not initialized")
 	}
 
 	val, err := automa.NewValue(c)
@@ -167,7 +167,7 @@ func (br *BlockNodeRuntime) SetChartUrl(c string) error {
 		return err
 	}
 
-	br.chartUrl.SetUserInput(val)
+	br.chartRepo.SetUserInput(val)
 	return nil
 }
 
@@ -312,7 +312,7 @@ func (br *BlockNodeRuntime) initReleaseNameRuntime() error {
 func (br *BlockNodeRuntime) initChartNameRuntime() error {
 	var err error
 
-	br.chartUrl, err = automa.NewRuntime[string](
+	br.chartRepo, err = automa.NewRuntime[string](
 		br.cfg.BlockNode.ChartName,
 		automa.WithEffectiveFunc(
 			func(
@@ -335,11 +335,11 @@ func (br *BlockNodeRuntime) initChartNameRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initChartUrlRuntime() error {
+func (br *BlockNodeRuntime) initChartRepoRuntime() error {
 	var err error
 
-	br.chartUrl, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.ChartUrl,
+	br.chartRepo, err = automa.NewRuntime[string](
+		br.cfg.BlockNode.ChartRepo,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -350,7 +350,7 @@ func (br *BlockNodeRuntime) initChartUrlRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartUrl, current.ReleaseInfo.Status, true)
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartRepo, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -434,7 +434,7 @@ func InitBlockNodeRuntime(cfg config.Config, state core.BlockNodeState, realityC
 		return err
 	}
 
-	if err := br.initChartUrlRuntime(); err != nil {
+	if err := br.initChartRepoRuntime(); err != nil {
 		return err
 	}
 

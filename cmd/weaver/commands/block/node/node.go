@@ -147,7 +147,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 		Custom: core.BlocknodeInputs{
 			Namespace:    flagNamespace,
 			Release:      flagReleaseName,
-			ChartUrl:     flagChartRepo,
+			ChartRepo:    flagChartRepo,
 			ChartVersion: flagChartVersion,
 			Storage: config.BlockNodeStorage{
 				BasePath:    flagBasePath,
