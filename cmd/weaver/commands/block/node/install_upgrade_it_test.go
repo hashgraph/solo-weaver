@@ -515,7 +515,7 @@ blockNode:
 		//require.NoError(t, err, "failed to refresh block node runtime state")
 		//current := runtime.BlockNode().CurrentState()
 		//assert.Equal(t, namespace, current.Namespace)
-		//assert.Equal(t, releaseName, current.Release)
+		//assert.Equal(t, releaseName, current.ReleaseName)
 		//assert.Equal(t, "0.24.0", current.ChartVersion)
 		//assert.Equal(t, basePath, current.Storage.BasePath)
 		//assert.Empty(t, current.Storage.LivePath)

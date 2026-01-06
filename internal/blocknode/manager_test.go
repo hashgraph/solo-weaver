@@ -14,10 +14,10 @@ import (
 // TestGetStoragePaths_AllIndividualPathsProvided tests that individual paths are used when all are provided
 func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "/mnt/custom-archive",
@@ -42,10 +42,10 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 // TestGetStoragePaths_OnlyBasePathProvided tests that paths are derived from basePath when individual paths are empty
 func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "",
@@ -70,10 +70,10 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 // TestGetStoragePaths_MixedPaths tests that individual paths override basePath-derived paths
 func TestGetStoragePaths_MixedPaths(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "/mnt/custom-archive",
@@ -99,10 +99,10 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 // TestGetStoragePaths_InvalidArchivePath tests that invalid archive path returns an error
 func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "../relative/path", // Invalid: contains ".." segments (potential path traversal)
@@ -123,10 +123,10 @@ func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 // TestGetStoragePaths_InvalidLivePath tests that invalid live path returns an error
 func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "/mnt/archive",
@@ -147,10 +147,10 @@ func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 // TestGetStoragePaths_InvalidLogPath tests that invalid log path returns an error
 func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "/mnt/archive",
@@ -173,10 +173,10 @@ func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 	// This is more of a documentation test showing the expected behavior
 	// In practice, this would need filesystem mocking to fully test
 	blockConfig := core.BlocknodeInputs{
-		Namespace: "test-ns",
-		Release:   "test-release",
-		ChartRepo: "oci://ghcr.io/test/test-chart",
-		Version:   "0.1.0",
+		Namespace:   "test-ns",
+		ReleaseName: "test-release",
+		ChartRepo:   "oci://ghcr.io/test/test-chart",
+		Version:     "0.1.0",
 		Storage: config.BlockNodeStorage{
 			BasePath:    "/mnt/base",
 			ArchivePath: "/mnt/custom-archive",
@@ -250,11 +250,11 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			blockConfig := core.BlocknodeInputs{
-				Namespace: "test-ns",
-				Release:   "test-release",
-				ChartRepo: "oci://ghcr.io/test/test-chart",
-				Version:   "0.1.0",
-				Storage:   tt.storage,
+				Namespace:   "test-ns",
+				ReleaseName: "test-release",
+				ChartRepo:   "oci://ghcr.io/test/test-chart",
+				Version:     "0.1.0",
+				Storage:     tt.storage,
 			}
 
 			manager := &Manager{

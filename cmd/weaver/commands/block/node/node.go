@@ -138,6 +138,8 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
 
+	// TODO validate other flags as needed
+
 	return &core.UserInputs[core.BlocknodeInputs]{
 		Common: core.CommonInputs{
 			Force:            flagForce,
@@ -146,7 +148,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 		},
 		Custom: core.BlocknodeInputs{
 			Namespace:    flagNamespace,
-			Release:      flagReleaseName,
+			ReleaseName:  flagReleaseName,
 			ChartRepo:    flagChartRepo,
 			ChartVersion: flagChartVersion,
 			Storage: config.BlockNodeStorage{

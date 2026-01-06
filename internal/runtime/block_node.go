@@ -38,8 +38,12 @@ func (br *BlockNodeRuntime) Version() (*automa.EffectiveValue[string], error) {
 	return br.version.Effective()
 }
 
-func (br *BlockNodeRuntime) Release() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntime) ReleaseName() (*automa.EffectiveValue[string], error) {
 	return br.releaseName.Effective()
+}
+
+func (br *BlockNodeRuntime) ChartName() (*automa.EffectiveValue[string], error) {
+	return br.chartName.Effective()
 }
 
 func (br *BlockNodeRuntime) ChartRepo() (*automa.EffectiveValue[string], error) {

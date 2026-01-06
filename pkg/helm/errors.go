@@ -7,7 +7,7 @@ import "github.com/joomcode/errorx"
 var (
 	ErrNamespace = errorx.NewNamespace("helm")
 
-	ErrNotFound               = ErrNamespace.NewType("not_found", errorx.NotFound()) // Release or resource not found
+	ErrNotFound               = ErrNamespace.NewType("not_found", errorx.NotFound()) // ReleaseName or resource not found
 	ErrRepoInvalid            = ErrNamespace.NewType("repo_invalid")                 // Repo invalid or unreachable
 	ErrChartDependencyMissing = ErrNamespace.NewType("chart_dependency_missing")     // Chart dependencies missing
 	ErrChartLoadFailed        = ErrNamespace.NewType("chart_load_failed")            // Failed to load chart from path or repo
