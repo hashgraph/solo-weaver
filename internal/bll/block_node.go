@@ -22,9 +22,12 @@ var blockNodeIntentHandlerSingleton *BlockNodeIntentHandler
 
 type BlockNodeIntentHandler struct {
 	conf config.BlockNodeConfig
+	sm   core.StateManager
 }
 
-// prepareRuntime performs validation and preparation of intent and inputs.
+// prepareRuntime performs validation and prepare runtime with the user inputs
+// We don't perform any validation of the user inputs here as the assumption is that it should be validated as early as possible (e.g. CLI parsing)
+// This function ensures that the intent is valid and the runtime Blocknode is set up with the provided user inputs
 func (b BlockNodeIntentHandler) prepareRuntime(
 	intent core.Intent,
 	inputs core.UserInputs[core.BlocknodeInputs]) (*core.Intent, *core.UserInputs[core.BlocknodeInputs], error) {
@@ -40,7 +43,7 @@ func (b BlockNodeIntentHandler) prepareRuntime(
 	// Refresh Blocknode state before proceeding
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	err := runtime.BlockNode().RefreshState(ctx)
+	err := runtime.BlockNode().RefreshState(ctx, false) // no need to force refresh here
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to refresh block node state: %v", err)
 	}
@@ -226,11 +229,13 @@ func (b BlockNodeIntentHandler) installHandler(
 	if clusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 			steps.SetupBlockNode(&blockNodeInputs),
+			// TODO add step to persist state
 		)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 			workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile),
 			steps.SetupBlockNode(&blockNodeInputs),
+			// TODO add step to persist state
 		)
 	}
 
@@ -245,8 +250,11 @@ func (b BlockNodeIntentHandler) upgradeHandler(inputs *core.BlocknodeInputs) (*a
 	return nil, nil
 }
 
-// IntentHandler processes the given intent and user inputs, returning a workflow builder or an error.
-func (b BlockNodeIntentHandler) IntentHandler(
+// Workflow returns a workflow builder based on the given intent and user inputs.
+// It is the caller's responsibility to build and execute the workflow, and persist any state changes.
+// Returns the workflow builder and any error encountered.
+// It is better to use HandleIntent() which also refreshes the block node state after execution.
+func (b BlockNodeIntentHandler) Workflow(
 	intent core.Intent,
 	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, error) {
 	validatedIntent, validatedInputs, err := b.prepareRuntime(intent, inputs)
@@ -267,10 +275,76 @@ func (b BlockNodeIntentHandler) IntentHandler(
 	}
 }
 
+// HandleIntent executes the workflow for the given intent and user inputs.
+// It also refreshes the block node state after successful execution.
+// Returns the workflow report and any error encountered.
+func (b BlockNodeIntentHandler) HandleIntent(
+	intent core.Intent,
+	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
+	wb, err := b.Workflow(intent, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	wf, err := wb.Build()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to build workflow: %v", err)
+	}
+
+	logx.As().Info().
+		Any("intent", intent).
+		Any("inputs", inputs).
+		Msg("Running Block Node workflow for intent")
+	report := wf.Execute(context.Background())
+	logx.As().Info().
+		Any("intent", intent).
+		Any("inputs", inputs).
+		Msg("Completed Block Node workflow execution for intent")
+
+	return b.flushState(report)
+}
+
+// flushState persists the current block node state
+func (b BlockNodeIntentHandler) flushState(report *automa.Report) (*automa.Report, error) {
+	if report == nil {
+		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
+	}
+
+	if report.IsFailed() {
+		logx.As().Warn().Msg("Workflow execution failed; skipping block node state persistence")
+		return report, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), runtime.DefaultRefreshTimeout)
+	defer cancel()
+	err := runtime.BlockNode().RefreshState(ctx, true)
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to refresh block node state after workflow execution: %v", err)
+	}
+
+	// get current block node state
+	current, err := runtime.BlockNode().CurrentState()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to get current block node state after workflow execution: %v", err)
+	}
+
+	// load full state from disk and persist update block node state
+	fullState := b.sm.State()
+	fullState.BlockNode = *current
+	err = b.sm.Flush()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to persist block node state after workflow execution: %v", err)
+	}
+
+	logx.As().Info().Msg("Persisted block node state after workflow execution")
+	return report, nil
+}
+
 func NewBlockNodeIntentHandler(
 	conf config.BlockNodeConfig,
+	sm core.StateManager,
 	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
-	bn := &BlockNodeIntentHandler{conf: conf}
+	bn := &BlockNodeIntentHandler{conf: conf, sm: sm}
 
 	for _, opt := range opts {
 		if err := opt(bn); err != nil {
@@ -283,12 +357,13 @@ func NewBlockNodeIntentHandler(
 
 func InitBlockNodeIntentHandler(
 	conf config.BlockNodeConfig,
+	sm core.StateManager,
 	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
 	if blockNodeIntentHandlerSingleton != nil {
 		return blockNodeIntentHandlerSingleton, nil
 	}
 
-	bn, err := NewBlockNodeIntentHandler(conf, opts...)
+	bn, err := NewBlockNodeIntentHandler(conf, sm, opts...)
 	if err != nil {
 		return nil, err
 	}

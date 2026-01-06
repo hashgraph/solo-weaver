@@ -40,12 +40,11 @@ var (
 				Any("inputs", inputs).
 				Msg("Uninstalling Hedera Block Node")
 
-			wb, err := bll.BlockNode().IntentHandler(intent, *inputs)
+			report, err := bll.BlockNode().HandleIntent(intent, *inputs)
 			if err != nil {
 				return err
 			}
-
-			common.RunWorkflow(cmd.Context(), wb)
+			common.CheckWorkflowReport(cmd.Context(), report)
 
 			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")
 			return nil

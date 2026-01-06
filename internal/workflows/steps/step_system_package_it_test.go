@@ -441,9 +441,9 @@ func Test_KernelModuleStep_RollbackOnFailure_Integration(t *testing.T) {
 
 	// Execute the workflow - should fail on the second step
 	report := workflow.Execute(context.Background())
-	require.Error(t, report.Error, "Workflow should fail because of error")
+	require.Error(t, report.Error, "HandleIntent should fail because of error")
 	require.Equal(t, automa.StatusFailed, report.Status,
-		"Workflow should have failed status")
+		"HandleIntent should have failed status")
 
 	// Verify the valid module was loaded but then should be rolled back automatically
 	// Note: This depends on the automa framework's behavior on failure
@@ -496,9 +496,9 @@ func Test_KernelModuleStep_RollbackMixedScenario_Integration(t *testing.T) {
 
 	// Execute the workflow - should fail on the third step
 	report := workflow.Execute(context.Background())
-	require.Error(t, report.Error, "Workflow should not fail for an error")
+	require.Error(t, report.Error, "HandleIntent should not fail for an error")
 	require.Equal(t, automa.StatusFailed, report.Status,
-		"Workflow should have failed status")
+		"HandleIntent should have failed status")
 
 	// After rollback:
 	// - Pre-existing module should remain loaded/persisted (wasn't loaded by step)

@@ -37,7 +37,9 @@ type Checker interface {
 	BlockNodeState(ctx context.Context) (*core.BlockNodeState, error)
 }
 
-type realityChecker struct{}
+type realityChecker struct {
+	current *core.State
+}
 
 func (r *realityChecker) RefreshState(ctx context.Context, st *core.State) error {
 	//TODO implement me
@@ -67,11 +69,10 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 	now := htime.Now()
 	bn := core.BlockNodeState{
 		ReleaseInfo: core.HelmReleaseInfo{
-			Name:      re.Name,
-			Version:   re.Chart.Metadata.AppVersion,
-			Namespace: re.Namespace,
-			// FIXME: it is not possible to retrieve the chart URL from the release object
-			//ChartName:         strings.Join([]string{re.ChartName.Metadata.Home, re.ChartName.Metadata.Name}, "/"),
+			Name:          re.Name,
+			Version:       re.Chart.Metadata.AppVersion,
+			Namespace:     re.Namespace,
+			ChartRepo:     r.current.BlockNode.ReleaseInfo.ChartRepo, // repo info not available from release, so use current state
 			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
@@ -217,6 +218,15 @@ func UnmarshalManifest(manifest string) ([]*unstructured.Unstructured, error) {
 	return out, nil
 }
 
-func NewChecker() Checker {
-	return &realityChecker{}
+func NewChecker(current *core.State) (Checker, error) {
+	if current == nil {
+		return nil, errorx.IllegalArgument.New("current state cannot be nil")
+	}
+
+	st := current.Clone()
+	if st == nil {
+		return nil, errorx.IllegalArgument.New("failed to clone current state")
+	}
+
+	return &realityChecker{current: st}, nil
 }
