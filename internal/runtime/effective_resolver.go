@@ -16,10 +16,9 @@ import (
 // - equal: optional equality function; if nil reflect.DeepEqual is used.
 // - isEmpty: optional emptiness check; if nil reflect.Value.IsZero is used.
 // The logic is:
-//  1. Start with default value and StrategyConfig.
-//  2. If user input is provided and not empty:
-//     a. If deployed and current differs from user input -> use current and StrategyCurrent.
-//     b. Else use user input and StrategyUserInput.
+//   - If deployed, use current value with StrategyCurrent.
+//   - Else if user input is provided and not empty, use it with StrategyUserInput.
+//   - Else use default value with StrategyConfig.
 //
 // Returns (*automa.EffectiveValue[T], usedUserInput bool, error).
 func resolveEffectiveWithFunc[T any](
@@ -37,24 +36,25 @@ func resolveEffectiveWithFunc[T any](
 		isEmpty = func(v T) bool { return reflect.ValueOf(v).IsZero() }
 	}
 
+	// Start with default value and StrategyConfig
 	val := defaultVal.Val()
 	strategy := automa.StrategyConfig
 
-	if userInput != nil && !isEmpty(userInput.Val()) {
-		// if deployed and current differs from user input -> keep current
-		if isDeployed() && !equal(currentVal, userInput.Val()) {
-			val = currentVal
-			strategy = automa.StrategyCurrent
-		} else {
-			val = userInput.Val()
-			strategy = automa.StrategyUserInput
-		}
+	// if deployed, then return current value
+	// otherwise, if user input is provided and not empty, use it
+	if isDeployed() {
+		val = currentVal
+		strategy = automa.StrategyCurrent
+	} else if userInput != nil && !isEmpty(userInput.Val()) {
+		val = userInput.Val()
+		strategy = automa.StrategyUserInput
 	}
 
 	ev, err := automa.NewEffective(val, strategy)
 	if err != nil {
 		return nil, err
 	}
+
 	return ev, nil
 }
 
