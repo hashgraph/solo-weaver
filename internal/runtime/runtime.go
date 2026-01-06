@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -17,6 +18,7 @@ const DefaultRefreshInterval = 10 * time.Minute
 // - clone: optional function to clone *T safely for callers.
 type Base[T any] struct {
 	mu              sync.Mutex
+	cfg             config.Config
 	current         T
 	refreshInterval time.Duration
 
@@ -31,6 +33,7 @@ type Base[T any] struct {
 
 // NewRuntimeBase constructs a runtimeBase for a given initial value and helpers.
 func NewRuntimeBase[T any](
+	cfg config.Config,
 	initial T,
 	refreshInterval time.Duration,
 	fetch func(context.Context) (*T, error),
@@ -40,6 +43,7 @@ func NewRuntimeBase[T any](
 ) *Base[T] {
 	return &Base[T]{
 		current:         initial,
+		cfg:             cfg,
 		refreshInterval: refreshInterval,
 		fetch:           fetch,
 		lastSync:        lastSync,

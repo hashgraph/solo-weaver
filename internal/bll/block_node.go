@@ -76,7 +76,7 @@ func (b BlockNodeIntentHandler) prepare(intent core.Intent, inputs core.UserInpu
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node release name as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetChart(inputs.Custom.ChartUrl)
+	err = runtime.BlockNode().SetChartUrl(inputs.Custom.ChartUrl)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node chart as user input: %v", err)
 	}
@@ -170,7 +170,7 @@ func (b BlockNodeIntentHandler) installHandler(intent *core.Intent, inputs *core
 	}
 
 	// Determine Blocknode chart name
-	effChart, err := runtime.BlockNode().Chart()
+	effChart, err := runtime.BlockNode().ChartUrl()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart: %v", err)
 	}

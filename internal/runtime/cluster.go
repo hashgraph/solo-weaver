@@ -3,6 +3,7 @@ package runtime
 import (
 	"time"
 
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/joomcode/errorx"
@@ -18,12 +19,13 @@ type ClusterRuntime struct {
 	reality reality.Checker
 }
 
-func InitClusterRuntime(state core.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) error {
+func InitClusterRuntime(cfg config.Config, state core.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) error {
 	if realityChecker == nil {
 		return errorx.IllegalArgument.New("cluster reality checker is not initialized")
 	}
 
 	rb := NewRuntimeBase[core.ClusterState](
+		cfg,
 		state,
 		refreshInterval,
 		// fetch function
