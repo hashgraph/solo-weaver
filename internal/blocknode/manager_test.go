@@ -338,9 +338,9 @@ func TestConfigOverridePrecedence(t *testing.T) {
 	t.Run("empty override values should not change config", func(t *testing.T) {
 		// Initial config
 		initialConfig := config.BlockNodeConfig{
-			Namespace: "original-ns",
-			Release:   "original-release",
-			Version:   "0.20.0",
+			Namespace:   "original-ns",
+			ReleaseName: "original-release",
+			Version:     "0.20.0",
 			Storage: config.BlockNodeStorage{
 				BasePath: "/mnt/original",
 			},
@@ -361,7 +361,7 @@ func TestConfigOverridePrecedence(t *testing.T) {
 		// Config should remain unchanged
 		result := config.Get()
 		assert.Equal(t, "original-ns", result.BlockNode.Namespace)
-		assert.Equal(t, "original-release", result.BlockNode.Release)
+		assert.Equal(t, "original-release", result.BlockNode.ReleaseName)
 		assert.Equal(t, "0.20.0", result.BlockNode.Version)
 		assert.Equal(t, "/mnt/original", result.BlockNode.Storage.BasePath)
 	})
@@ -369,9 +369,9 @@ func TestConfigOverridePrecedence(t *testing.T) {
 	t.Run("non-empty override values should change config", func(t *testing.T) {
 		// Initial config
 		initialConfig := config.BlockNodeConfig{
-			Namespace: "original-ns",
-			Release:   "original-release",
-			Version:   "0.20.0",
+			Namespace:   "original-ns",
+			ReleaseName: "original-release",
+			Version:     "0.20.0",
 			Storage: config.BlockNodeStorage{
 				BasePath: "/mnt/original",
 			},
@@ -399,7 +399,7 @@ func TestConfigOverridePrecedence(t *testing.T) {
 		assert.Equal(t, "/mnt/new-archive", result.BlockNode.Storage.ArchivePath, "should be overridden")
 
 		// Non-overridden values should remain
-		assert.Equal(t, "original-release", result.BlockNode.Release, "should remain unchanged")
+		assert.Equal(t, "original-release", result.BlockNode.ReleaseName, "should remain unchanged")
 		assert.Equal(t, "/mnt/original", result.BlockNode.Storage.BasePath, "should remain unchanged")
 	})
 }

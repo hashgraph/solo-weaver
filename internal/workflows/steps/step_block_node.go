@@ -28,11 +28,11 @@ func SetupBlockNode(inputs *core.BlocknodeInputs) *automa.WorkflowBuilder {
 	// Lazy initialization of block node manager
 	// This blocknodeManagerProvider pattern ensures that the manager is only created once
 	// and reused across all steps in the workflow steps
-	logx.As().Debug().Any("inputs", inputs).Msg("Setting up Block Node")
 	var blockNodeManager *blocknode.Manager
 	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {
 			var err error
+			logx.As().Debug().Any("inputs", inputs).Msg("Instantiating Block Node Manager")
 			blockNodeManager, err = blocknode.NewManager(*inputs)
 			if err != nil {
 				return nil, err
