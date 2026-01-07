@@ -263,7 +263,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 			ValueFiles: []string{valuesFile},
 		},
 		CreateNamespace: false, // namespace already created
-		Atomic:          true,
+		Atomic:          false,
 		Wait:            true,
 		Timeout:         helm.DefaultTimeout,
 	}
