@@ -101,6 +101,9 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 		return nil, errorx.IllegalState.New("failed to get current block node release: %v", err)
 	}
 
+	logx.As().Debug().Str("releaseName", effReleaseName.Get().Val()).Str("strategy", effReleaseName.Strategy().String()).
+		Msg("Determined effective block node release name")
+
 	if inputs.Custom.ReleaseName != "" && effReleaseName.Strategy() != automa.StrategyUserInput && inputs.Common.Force {
 		return nil, errorx.IllegalState.New("block node release name is already set to '%s'; cannot override", effReleaseName.Get().Val()).
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
@@ -111,8 +114,10 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get effective block node version: %v", err)
 	}
+
 	logx.As().Debug().Str("version", effVersion.Get().Val()).Str("strategy", effVersion.Strategy().String()).
 		Msg("Determined effective block node version")
+
 	if inputs.Custom.Version != "" && effVersion.Strategy() != automa.StrategyUserInput && inputs.Common.Force {
 		return nil, errorx.IllegalState.New("block node version is already set to '%s'; cannot override", effVersion.Get().Val()).
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
@@ -123,8 +128,10 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node namespace: %v", err)
 	}
+
 	logx.As().Debug().Str("namespace", effNamespace.Get().Val()).Str("strategy", effNamespace.Strategy().String()).
 		Msg("Determined effective block node namespace")
+
 	if inputs.Custom.Namespace != "" && effNamespace.Strategy() != automa.StrategyUserInput && inputs.Common.Force {
 		return nil, errorx.IllegalState.New("block node namespace is already set to '%s'; cannot override", effNamespace.Get().Val()).
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
@@ -135,8 +142,10 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart name: %v", err)
 	}
+
 	logx.As().Debug().Str("chartName", effChartName.Get().Val()).Str("strategy", effChartName.Strategy().String()).
 		Msg("Determined effective block node chart name")
+
 	if inputs.Custom.ChartName != "" && effChartName.Strategy() != automa.StrategyUserInput && inputs.Common.Force {
 		return nil, errorx.IllegalState.New("block node chart name is already set to '%s'; cannot override", effChartName.Get().Val()).
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
@@ -147,8 +156,10 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart repo: %v", err)
 	}
+
 	logx.As().Debug().Str("chartRepo", effChartRepo.Get().Val()).Str("strategy", effChartRepo.Strategy().String()).
 		Msg("Determined effective block node chart repo")
+
 	if inputs.Custom.ChartRepo != "" && effChartRepo.Strategy() != automa.StrategyUserInput && inputs.Common.Force {
 		return nil, errorx.IllegalState.New("block node chart repo is already set to '%s'; cannot override", effChartRepo.Get().Val()).
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
@@ -159,8 +170,10 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart version: %v", err)
 	}
+
 	logx.As().Debug().Str("chartVersion", effChartVersion.Get().Val()).Str("strategy", effChartVersion.Strategy().String()).
 		Msg("Determined effective block node chart version")
+
 	if inputs.Custom.ChartVersion != "" && effChartVersion.Strategy() != automa.StrategyUserInput && inputs.Common.Force {
 		return nil, errorx.IllegalState.New("block node chart version is already set to '%s'; cannot override", effChartVersion.Get().Val()).
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
@@ -171,6 +184,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node storage: %v", err)
 	}
+
 	logx.As().Debug().Any("storage", effStorage.Get().Val()).Str("strategy", effStorage.Strategy().String()).
 		Msg("Determined effective block node storage")
 

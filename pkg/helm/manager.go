@@ -458,6 +458,8 @@ func (h *helmManager) GetRelease(releaseName, namespace string) (*release.Releas
 
 	st, err := statusClient.Run(releaseName)
 	if err != nil {
+		h.log.Debug().Str("releaseName", releaseName).Str("namespace", namespace).Err(err).
+			Msg("Failed to get Helm release")
 		if errors.Is(err, driver.ErrReleaseNotFound) {
 			return nil, ErrNotFound.Wrap(err, "release %q not found in namespace %q", releaseName, namespace)
 		}
@@ -480,6 +482,8 @@ func (h *helmManager) IsInstalled(releaseName, namespace string) (bool, error) {
 
 	rel, err := h.GetRelease(releaseName, namespace)
 	if err != nil {
+		h.log.Debug().Err(err).Str("releaseName", releaseName).Str("namespace", namespace).
+			Msg("Helm release not found")
 		if errorx.IsOfType(err, ErrNotFound) {
 			return false, nil
 		}
