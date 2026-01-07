@@ -358,7 +358,7 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 		return nil, errorx.IllegalState.New("failed to persist block node state after workflow execution: %v", err)
 	}
 
-	logx.As().Info().Msg("Persisted block node state after workflow execution")
+	logx.As().Info().Any("full-state", fullState).Msg("Persisted state after workflow execution")
 	return report, nil
 }
 

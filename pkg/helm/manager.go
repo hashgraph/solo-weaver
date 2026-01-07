@@ -256,7 +256,7 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return rel, err
 	}
 
-	l.Info().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
+	l.Debug().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
 		Msg("Helm chart installed successfully")
 
 	return rel, nil
