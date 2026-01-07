@@ -237,5 +237,7 @@ func NewChecker(current *core.State) (Checker, error) {
 		return nil, errorx.IllegalArgument.New("failed to clone current state")
 	}
 
+	logx.As().Debug().Any("state", st).Msg("Initialized reality checker with current state")
+
 	return &realityChecker{current: st}, nil
 }
