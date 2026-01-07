@@ -57,6 +57,11 @@ func (r *realityChecker) MachineState(ctx context.Context) (*core.MachineState, 
 }
 
 func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeState, error) {
+	if exists, err := kube.ClusterExists(); !exists {
+		logx.As().Warn().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNode state check")
+		return nil, nil // cluster does not exist, so nothing to check
+	}
+
 	re, err := r.findBlockNodeHelmRelease()
 	if err != nil {
 		return nil, err

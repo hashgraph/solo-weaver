@@ -316,7 +316,7 @@ func (br *BlockNodeRuntime) initReleaseNameRuntime() error {
 func (br *BlockNodeRuntime) initChartNameRuntime() error {
 	var err error
 
-	br.chartRepo, err = automa.NewRuntime[string](
+	br.chartName, err = automa.NewRuntime[string](
 		br.cfg.BlockNode.ChartName,
 		automa.WithEffectiveFunc(
 			func(
