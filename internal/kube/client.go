@@ -888,3 +888,27 @@ func IsCRDReady(obj *unstructured.Unstructured, err error) (bool, error) {
 
 	return established, nil
 }
+
+// ClusterExists returns true if a Kubernetes API server is reachable using the
+// configuration resolved by loadKubeConfig. It returns an error when the check
+// fails due to an unexpected/internal error (wraps the underlying error).
+func ClusterExists() (bool, error) {
+	cfg, err := loadKubeConfig()
+	if err != nil {
+		// Couldn't construct config (no kubeconfig / in-cluster config failure)
+		return false, err
+	}
+
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return false, errorx.InternalError.Wrap(err, "failed to create discovery client")
+	}
+
+	// ServerVersion performs a simple call to the API server; if it succeeds
+	// the cluster is reachable and responding.
+	if _, err := disco.ServerVersion(); err != nil {
+		return false, errorx.InternalError.Wrap(err, "failed to contact API server")
+	}
+
+	return true, nil
+}
