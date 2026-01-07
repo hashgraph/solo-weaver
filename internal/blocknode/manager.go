@@ -268,7 +268,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 		Timeout:         helm.DefaultTimeout,
 	}
 
-	logx.As().Debug().
+	logx.As().Info().
 		Str("release", m.blockConfig.ReleaseName).
 		Str("chartName", m.blockConfig.ChartName).
 		Str("chartRepo", m.blockConfig.ChartRepo).
