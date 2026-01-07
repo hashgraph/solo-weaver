@@ -283,7 +283,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 	_, err = m.helmManager.InstallChart(
 		ctx,
 		m.blockConfig.ReleaseName,
-		m.blockConfig.ChartName,
+		m.blockConfig.ChartRepo,
 		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		chartOptions,
