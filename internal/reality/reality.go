@@ -62,6 +62,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 		return nil, nil // cluster does not exist, so nothing to check
 	}
 
+	logx.As().Info().Msg("Refreshing BlockNode state from Kubernetes cluster")
 	re, err := r.findBlockNodeHelmRelease()
 	if err != nil {
 		return nil, err
@@ -158,6 +159,9 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 		}
 	}
 
+	r.current.BlockNode = bn
+	logx.As().Debug().Any("state", bn).Msg("Refreshed block node state")
+
 	return &bn, nil
 }
 
@@ -181,7 +185,7 @@ func (r *realityChecker) findBlockNodeHelmRelease() (*release.Release, error) {
 		for _, manifest := range manifests {
 			if manifest.GetKind() == "StatefulSet" {
 				for l, v := range manifest.GetLabels() {
-					if l == "block-node.hiero.com/type" && v == "block-node" {
+					if l == "app.kubernetes.io/instance" && v == "block-node" {
 						logx.As().Debug().
 							Str("releaseName", re.Name).
 							Str("namespace", manifest.GetNamespace()).
