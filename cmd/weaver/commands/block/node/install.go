@@ -31,7 +31,7 @@ var installCmd = &cobra.Command{
 			Target: core.TargetBlocknode,
 		}
 
-		logx.As().Debug().
+		logx.As().Info().
 			Any("intent", intent).
 			Any("inputs", inputs).
 			Msg("Installing Hedera Block Node")
