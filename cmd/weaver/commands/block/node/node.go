@@ -138,8 +138,6 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 		}
 	}
 
-	// TODO validate other flags as needed
-
 	// Determine execution mode based on flags
 	execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 	if err != nil {
@@ -148,7 +146,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
 
-	return &core.UserInputs[core.BlocknodeInputs]{
+	inputs := &core.UserInputs[core.BlocknodeInputs]{
 		Common: core.CommonInputs{
 			Force:            flagForce,
 			NodeType:         core.NodeTypeBlock,
@@ -162,7 +160,8 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 			Storage: config.BlockNodeStorage{
 				BasePath:    flagBasePath,
 				ArchivePath: flagArchivePath,
-				LivePath:    flagArchiveSize,
+				ArchiveSize: flagArchiveSize,
+				LivePath:    flagLivePath,
 				LiveSize:    flagLogSize,
 				LogPath:     flagLogPath,
 				LogSize:     flagLogSize,
@@ -171,5 +170,11 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 			ValuesFile:  validatedValuesFile,
 			ReuseValues: !flagNoReuseValues,
 		},
-	}, nil
+	}
+
+	if err := inputs.Validate(); err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "invalid user inputs")
+	}
+
+	return inputs, nil
 }

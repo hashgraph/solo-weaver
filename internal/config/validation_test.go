@@ -123,6 +123,16 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 			errorMsg:    "invalid namespace",
 		},
 		{
+			name: "invalid_chart_name_with_special_chars",
+			config: BlockNodeConfig{
+				Namespace: "block-node-ns",
+				Release:   "my-release",
+				ChartName: "block-node;rm -rf /",
+			},
+			expectError: true,
+			errorMsg:    "invalid chart-name",
+		},
+		{
 			name: "invalid_release_with_spaces",
 			config: BlockNodeConfig{
 				Namespace: "block-node-ns",
