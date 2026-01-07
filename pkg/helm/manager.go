@@ -490,7 +490,11 @@ func (h *helmManager) IsInstalled(releaseName, namespace string) (bool, error) {
 		Str("status", rel.Info.Status.String()).
 		Msg("Found Helm release")
 
-	return true, nil
+	if rel.Info.Status == release.StatusDeployed {
+		return true, nil
+	}
+
+	return false, errorx.IllegalState.New("release %q in namespace %q is not in deployed state (current state: %s)", releaseName, namespace, rel.Info.Status.String())
 }
 
 // DeployChart installs or upgrades a Helm chart with the given options
