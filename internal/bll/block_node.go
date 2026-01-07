@@ -229,7 +229,7 @@ func (b BlockNodeIntentHandler) installHandler(
 
 	if blockNodeState.ReleaseInfo.Status == release.StatusDeployed && inputs.Common.Force != true {
 		return nil, nil, errorx.IllegalState.New("block node is already installed; cannot install again").
-			WithProperty(doctor.ErrPropertyResolution, "use 'weaver block-node upgrade' to upgrade the block node or use --force to continue")
+			WithProperty(doctor.ErrPropertyResolution, "use 'weaver block-node upgrade' to upgrade the block node or use --force to attempt to continue")
 	}
 
 	effectiveUserInputs, err := b.prepareEffectiveUserInputsForInstall(blockNodeState, inputs)
