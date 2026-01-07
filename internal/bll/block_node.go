@@ -201,7 +201,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 }
 
 func (b BlockNodeIntentHandler) installHandler(
-	inputs *core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, error) {
+	inputs *core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, *core.UserInputs[core.BlocknodeInputs], error) {
 	// intent: block node install --profile <profile> --blocknode-version v0.3 --storage-path /data/blocknode
 	// inputs: version: v0.3, storage-path: /data/blocknode
 	// current: version: v0.1 (on disk), storage-path: /mnt/fast-storage
@@ -210,41 +210,39 @@ func (b BlockNodeIntentHandler) installHandler(
 
 	blockNodeState, err := runtime.BlockNode().CurrentState()
 	if err != nil {
-		return nil, errorx.IllegalState.New("failed to get current block node state: %v", err)
+		return nil, nil, errorx.IllegalState.New("failed to get current block node state: %v", err)
 	}
 
 	if blockNodeState.ReleaseInfo.Status == release.StatusDeployed && inputs.Common.Force != true {
-		return nil, errorx.IllegalState.New("block node is already installed; cannot install again").
+		return nil, nil, errorx.IllegalState.New("block node is already installed; cannot install again").
 			WithProperty(doctor.ErrPropertyResolution, "use 'weaver block-node upgrade' to upgrade the block node or use --force to continue")
 	}
 
 	effectiveUserInputs, err := b.prepareEffectiveUserInputsForInstall(blockNodeState, inputs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var wb *automa.WorkflowBuilder
 
 	clusterState, err := runtime.Cluster().CurrentState()
 	if err != nil {
-		return nil, errorx.IllegalState.New("failed to get current cluster state: %v", err)
+		return nil, nil, errorx.IllegalState.New("failed to get current cluster state: %v", err)
 	}
 
 	blockNodeInputs := effectiveUserInputs.Custom
 	if clusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 			steps.SetupBlockNode(&blockNodeInputs),
-			// TODO add step to persist state
 		)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 			workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile),
 			steps.SetupBlockNode(&blockNodeInputs),
-			// TODO add step to persist state
 		)
 	}
 
-	return workflows.WithWorkflowExecutionMode(wb, &inputs.Common.ExecutionOptions), nil
+	return workflows.WithWorkflowExecutionMode(wb, &inputs.Common.ExecutionOptions), effectiveUserInputs, nil
 }
 
 func (b BlockNodeIntentHandler) uninstallHandler(inputs *core.BlocknodeInputs) (*automa.WorkflowBuilder, error) {
@@ -261,22 +259,22 @@ func (b BlockNodeIntentHandler) upgradeHandler(inputs *core.BlocknodeInputs) (*a
 // It is better to use HandleIntent() which also refreshes the block node state after execution.
 func (b BlockNodeIntentHandler) Workflow(
 	intent core.Intent,
-	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, error) {
+	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, *core.UserInputs[core.BlocknodeInputs], error) {
 	validatedIntent, validatedInputs, err := b.prepareRuntime(intent, inputs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	switch validatedIntent.Action {
 	case core.ActionInstall:
-		wfBuilder, err := b.installHandler(validatedInputs)
+		wfBuilder, effectiveUserInputs, err := b.installHandler(validatedInputs)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return wfBuilder, nil
+		return wfBuilder, effectiveUserInputs, nil
 
 	default:
-		return nil, errorx.IllegalArgument.New("unsupported action '%s' for block node", validatedIntent.Action)
+		return nil, nil, errorx.IllegalArgument.New("unsupported action '%s' for block node", validatedIntent.Action)
 	}
 }
 
@@ -286,7 +284,7 @@ func (b BlockNodeIntentHandler) Workflow(
 func (b BlockNodeIntentHandler) HandleIntent(
 	intent core.Intent,
 	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
-	wb, err := b.Workflow(intent, inputs)
+	wb, effectiveInputs, err := b.Workflow(intent, inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -299,11 +297,13 @@ func (b BlockNodeIntentHandler) HandleIntent(
 	logx.As().Info().
 		Any("intent", intent).
 		Any("inputs", inputs).
+		Any("effectiveInputs", effectiveInputs).
 		Msg("Running Block Node workflow for intent")
 	report := wf.Execute(context.Background())
 	logx.As().Info().
 		Any("intent", intent).
 		Any("inputs", inputs).
+		Any("effectiveInputs", effectiveInputs).
 		Msg("Completed Block Node workflow execution for intent")
 
 	return b.flushState(report)

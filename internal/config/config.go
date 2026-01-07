@@ -30,6 +30,17 @@ type BlockNodeStorage struct {
 	LogSize     string `yaml:"logSize" json:"logSize"`
 }
 
+// IsEmpty returns true when all BlockNodeStorage fields are empty (after trimming).
+func (s *BlockNodeStorage) IsEmpty() bool {
+	return strings.TrimSpace(s.BasePath) == "" &&
+		strings.TrimSpace(s.ArchivePath) == "" &&
+		strings.TrimSpace(s.LivePath) == "" &&
+		strings.TrimSpace(s.LogPath) == "" &&
+		strings.TrimSpace(s.LiveSize) == "" &&
+		strings.TrimSpace(s.ArchiveSize) == "" &&
+		strings.TrimSpace(s.LogSize) == ""
+}
+
 // Validate validates all storage paths to ensure they are safe and secure.
 // This performs early validation of user-provided paths to catch security issues
 // before workflow execution begins.
