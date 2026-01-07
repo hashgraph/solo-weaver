@@ -312,7 +312,7 @@ func (b BlockNodeIntentHandler) HandleIntent(
 		Any("intent", intent).
 		Any("inputs", inputs).
 		Any("effectiveInputs", effectiveInputs).
-		Msg("Running Block Node workflow for intent")
+		Msgf("Running Block Node workflow for intent %q", intent.Action)
 	report := wf.Execute(context.Background())
 	logx.As().Info().
 		Any("intent", intent).
