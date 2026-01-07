@@ -110,7 +110,7 @@ func (c Config) Validate() error {
 type BlockNodeConfig struct {
 	Version      string           `yaml:"version" json:"version"`
 	Namespace    string           `yaml:"namespace" json:"namespace"`
-	Release      string           `yaml:"release" json:"release"`
+	ReleaseName  string           `yaml:"releaseName" json:"releaseName"`
 	ChartName    string           `yaml:"chartName" json:"chartName"`
 	ChartRepo    string           `yaml:"chartRepo" json:"chartRepo"`
 	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
@@ -141,9 +141,9 @@ func (c *BlockNodeConfig) Validate() error {
 	}
 
 	// Validate release name if provided (must be a valid Helm release identifier)
-	if c.Release != "" {
-		if err := sanity.ValidateIdentifier(c.Release); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid release name: %s", c.Release)
+	if c.ReleaseName != "" {
+		if err := sanity.ValidateIdentifier(c.ReleaseName); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid release name: %s", c.ReleaseName)
 		}
 	}
 
@@ -211,7 +211,7 @@ var globalConfig = Config{
 	},
 	BlockNode: BlockNodeConfig{
 		Namespace:    deps.BLOCK_NODE_NAMESPACE,
-		Release:      deps.BLOCK_NODE_RELEASE,
+		ReleaseName:  deps.BLOCK_NODE_RELEASE,
 		ChartName:    deps.BLOCK_NODE_CHART_NAME,
 		ChartRepo:    deps.BLOCK_NODE_CHART_REPO,
 		ChartVersion: deps.BLOCK_NODE_CHART_VERSION,
@@ -286,8 +286,8 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	if overrides.Namespace != "" {
 		globalConfig.BlockNode.Namespace = overrides.Namespace
 	}
-	if overrides.Release != "" {
-		globalConfig.BlockNode.Release = overrides.Release
+	if overrides.ReleaseName != "" {
+		globalConfig.BlockNode.ReleaseName = overrides.ReleaseName
 	}
 	if overrides.ChartRepo != "" {
 		globalConfig.BlockNode.ChartRepo = overrides.ChartRepo

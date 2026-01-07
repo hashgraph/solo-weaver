@@ -66,7 +66,7 @@ func (br *BlockNodeRuntime) SetBlockNodeConfig(cfg config.Config) error {
 		return errorx.IllegalArgument.New("namespace runtime is not initialized") // should not happen
 	}
 
-	if err := br.SetReleaseName(cfg.BlockNode.Release); err != nil {
+	if err := br.SetReleaseName(cfg.BlockNode.ReleaseName); err != nil {
 		return err
 	}
 	if err := br.SetVersion(cfg.BlockNode.Version); err != nil {
@@ -284,7 +284,7 @@ func (br *BlockNodeRuntime) initVersionRuntime() error {
 	var err error
 
 	br.version, err = automa.NewRuntime[string](
-		br.current.ReleaseInfo.Version,
+		br.cfg.BlockNode.Version,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -310,7 +310,7 @@ func (br *BlockNodeRuntime) initReleaseNameRuntime() error {
 	var err error
 
 	br.releaseName, err = automa.NewRuntime[string](
-		br.current.ReleaseInfo.Name,
+		br.cfg.BlockNode.ReleaseName,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -388,7 +388,7 @@ func (br *BlockNodeRuntime) initChartVersionRuntime() error {
 	var err error
 
 	br.chartVersion, err = automa.NewRuntime[string](
-		br.current.ReleaseInfo.ChartVersion,
+		br.cfg.BlockNode.ChartVersion,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,

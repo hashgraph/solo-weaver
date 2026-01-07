@@ -103,10 +103,10 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "valid_config",
 			config: BlockNodeConfig{
-				Namespace: "block-node-ns",
-				Release:   "my-release",
-				ChartRepo: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
-				Version:   "0.24.0",
+				Namespace:   "block-node-ns",
+				ReleaseName: "my-release",
+				ChartRepo:   "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+				Version:     "0.24.0",
 				Storage: BlockNodeStorage{
 					BasePath: "/mnt/storage",
 				},
@@ -116,8 +116,8 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_namespace_with_special_chars",
 			config: BlockNodeConfig{
-				Namespace: "block-node;rm -rf /",
-				Release:   "my-release",
+				Namespace:   "block-node;rm -rf /",
+				ReleaseName: "my-release",
 			},
 			expectError: true,
 			errorMsg:    "invalid namespace",
@@ -125,9 +125,9 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_chart_name_with_special_chars",
 			config: BlockNodeConfig{
-				Namespace: "block-node-ns",
-				Release:   "my-release",
-				ChartName: "block-node;rm -rf /",
+				Namespace:   "block-node-ns",
+				ReleaseName: "my-release",
+				ChartName:   "block-node;rm -rf /",
 			},
 			expectError: true,
 			errorMsg:    "invalid chart-name",
@@ -135,8 +135,8 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_release_with_spaces",
 			config: BlockNodeConfig{
-				Namespace: "block-node-ns",
-				Release:   "my release with spaces",
+				Namespace:   "block-node-ns",
+				ReleaseName: "my release with spaces",
 			},
 			expectError: true,
 			errorMsg:    "invalid release name",
@@ -152,8 +152,8 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_storage_path",
 			config: BlockNodeConfig{
-				Namespace: "block-node-ns",
-				Release:   "my-release",
+				Namespace:   "block-node-ns",
+				ReleaseName: "my-release",
 				Storage: BlockNodeStorage{
 					BasePath: "/mnt/storage | cat",
 				},
