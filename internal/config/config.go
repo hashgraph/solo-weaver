@@ -136,6 +136,13 @@ func (c *BlockNodeConfig) Validate() error {
 		}
 	}
 
+	// Validate chart name
+	if c.ChartName != "" {
+		if err := sanity.ValidateIdentifier(c.ChartName); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart-name: %s", c.ChartName)
+		}
+	}
+
 	// Validate chart if provided (Helm chart reference: OCI, URL, or repo/chart)
 	if c.ChartRepo != "" {
 		if err := sanity.ValidateChartReference(c.ChartRepo); err != nil {

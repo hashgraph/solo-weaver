@@ -5,6 +5,7 @@ package core
 import (
 	"path"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/security"
 )
 
@@ -33,18 +34,27 @@ const (
 	ProfileMainnet = "mainnet"
 )
 
-var allProfiles = []string{
-	ProfileLocal,
-	ProfilePerfnet,
-	ProfileTestnet,
-	ProfileMainnet,
+func AllProfiles() []string {
+	return []string{
+		ProfileLocal,
+		ProfilePerfnet,
+		ProfileTestnet,
+		ProfileMainnet,
+	}
 }
 
-func AllProfiles() []string {
-	// return a copy to prevent modification
-	profilesCopy := make([]string, len(allProfiles))
-	copy(profilesCopy, allProfiles)
-	return profilesCopy
+func AllNodeTypes() []string {
+	return []string{
+		NodeTypeLocal,
+		NodeTypeBlock,
+		NodeTypeConsensus,
+		NodeTypeMirror,
+		NodeTypeRelay,
+	}
+}
+
+func AllExecutionModes() []automa.TypeMode {
+	return []automa.TypeMode{automa.RollbackOnError, automa.StopOnError, automa.ContinueOnError}
 }
 
 var (
