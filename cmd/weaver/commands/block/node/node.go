@@ -91,11 +91,13 @@ func initializeDependencies(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
 	}
 
-	// initialize runtime
+	// initialize cluster runtime
 	err = runtime.InitClusterRuntime(conf, currentState.Cluster, realityChecker, runtime.DefaultRefreshInterval)
 	if err != nil {
 		return err
 	}
+
+	// initialize block node runtime
 	err = runtime.InitBlockNodeRuntime(conf, currentState.BlockNode, realityChecker, runtime.DefaultRefreshInterval)
 	if err != nil {
 		return err

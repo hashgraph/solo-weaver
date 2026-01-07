@@ -116,7 +116,7 @@ func (c *BlocknodeInputs) Validate() error {
 
 	// Validate chart name
 	if c.ChartName != "" {
-		if err := sanity.ValidateIdentifier(c.ChartName); err != nil {
+		if err := sanity.ValidateChartReference(c.ChartName); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid chart-name: %s", c.ChartName)
 		}
 	}
