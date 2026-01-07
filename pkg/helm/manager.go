@@ -443,7 +443,7 @@ func (h *helmManager) ListAll() ([]*release.Release, error) {
 // GetRelease retrieves a Helm release by name in the specified namespace
 // It returns ErrNotFound if the release does not exist
 func (h *helmManager) GetRelease(releaseName, namespace string) (*release.Release, error) {
-	h.log.Info().
+	h.log.Debug().
 		Str("releaseName", releaseName).
 		Str("namespace", namespace).
 		Msg("Getting Helm release")
@@ -464,13 +464,16 @@ func (h *helmManager) GetRelease(releaseName, namespace string) (*release.Releas
 		return nil, errorx.InternalError.Wrap(err, "failed to get release status")
 	}
 
+	h.log.Debug().Str("releaseName", releaseName).Str("namespace", namespace).Any("status", st.Info.Status).
+		Msg("Helm release retrieved successfully")
+
 	return st, nil
 }
 
 // IsInstalled checks if a Helm release is installed in the specified namespace
 // It considers only releases in deployed state as "installed"
 func (h *helmManager) IsInstalled(releaseName, namespace string) (bool, error) {
-	h.log.Info().
+	h.log.Debug().
 		Str("releaseName", releaseName).
 		Str("namespace", namespace).
 		Msg("Checking if Helm release is installed")
@@ -483,8 +486,11 @@ func (h *helmManager) IsInstalled(releaseName, namespace string) (bool, error) {
 		return false, err
 	}
 
-	// Consider only releases in deployed state as "installed"
-	return rel.Info.Status == release.StatusDeployed, nil
+	h.log.Debug().Str("releaseName", releaseName).Str("namespace", namespace).Any("status", rel.Info.Status).
+		Str("status", rel.Info.Status.String()).
+		Msg("Found Helm release")
+
+	return true, nil
 }
 
 // DeployChart installs or upgrades a Helm chart with the given options
@@ -510,7 +516,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 	if statusErr != nil {
 		// ReleaseName not found → Install
 		if errors.Is(statusErr, driver.ErrReleaseNotFound) {
-			l.Info().Msg("ReleaseName not found — installing chart")
+			l.Info().Msg("Release not found — installing chart")
 			return h.InstallChart(ctx, releaseName, chartRef, chartVersion, namespace, InstallChartOptions{
 				ValueOpts:       o.ValueOpts,
 				CreateNamespace: o.CreateNamespace,
@@ -525,7 +531,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 	}
 
 	// ReleaseName exists → Upgrade
-	l.Info().Msg("ReleaseName already exists — upgrading chart")
+	l.Info().Msg("Release already exists — upgrading chart")
 	return h.UpgradeChart(ctx, releaseName, chartRef, chartVersion, namespace, UpgradeChartOptions{
 		ValueOpts:   o.ValueOpts,
 		Atomic:      o.Atomic,
