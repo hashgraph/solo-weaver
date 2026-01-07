@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
@@ -60,16 +61,22 @@ func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
 		}
 	}
 
-	if m.state == nil {
-		m.state = NewState()
-	}
-
 	if m.fm == nil {
 		fm, err := fsx.NewManager()
 		if err != nil {
 			return nil, errorx.InternalError.Wrap(err, "failed to create file manager for state manager")
 		}
 		m.fm = fm
+	}
+
+	// if state is not provided, create a new one and try to refresh from disk
+	if m.state == nil {
+		m.state = NewState()
+		err := m.Refresh()
+		if err != nil {
+			logx.As().Debug().Err(err).Any("state", m.state).
+				Msg("Failed to refresh state from disk, starting with a default state")
+		}
 	}
 
 	return m, nil
