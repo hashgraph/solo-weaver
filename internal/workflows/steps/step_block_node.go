@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
@@ -27,6 +28,7 @@ func SetupBlockNode(inputs *core.BlocknodeInputs) *automa.WorkflowBuilder {
 	// Lazy initialization of block node manager
 	// This blocknodeManagerProvider pattern ensures that the manager is only created once
 	// and reused across all steps in the workflow steps
+	logx.As().Debug().Any("inputs", inputs).Msg("Setting up Block Node")
 	var blockNodeManager *blocknode.Manager
 	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {

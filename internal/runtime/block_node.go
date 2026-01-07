@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
@@ -239,7 +240,7 @@ func (br *BlockNodeRuntime) initStorageRuntime() error {
 	var err error
 
 	br.storage, err = automa.NewRuntime[config.BlockNodeStorage](
-		br.current.Storage,
+		br.cfg.BlockNode.Storage,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
@@ -250,7 +251,25 @@ func (br *BlockNodeRuntime) initStorageRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[config.BlockNodeStorage](defaultVal, userInput, current.Storage, current.ReleaseInfo.Status, true)
+
+				eff, err2 := resolveEffectiveWithFunc[config.BlockNodeStorage](
+					defaultVal,
+					userInput,
+					current.Storage,
+					func() bool {
+						return current.ReleaseInfo.Status == release.StatusDeployed
+					},
+					nil,
+					func(v config.BlockNodeStorage) bool {
+						return v.IsEmpty()
+					},
+				)
+
+				if err2 != nil {
+					return nil, false, err2
+				}
+
+				return eff, true, nil
 			},
 		),
 	)
