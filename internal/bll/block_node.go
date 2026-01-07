@@ -320,11 +320,11 @@ func (b BlockNodeIntentHandler) HandleIntent(
 		Any("effectiveInputs", effectiveInputs).
 		Msg("Completed Block Node workflow execution for intent")
 
-	return b.flushState(report)
+	return b.flushState(report, effectiveInputs)
 }
 
 // flushState persists the current block node state
-func (b BlockNodeIntentHandler) flushState(report *automa.Report) (*automa.Report, error) {
+func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInputs *core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
@@ -346,6 +346,9 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report) (*automa.Repor
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node state after workflow execution: %v", err)
 	}
+
+	// chartRepo from user inputs since it is not available in the helm release info in the cluster
+	current.ReleaseInfo.ChartRepo = effectiveInputs.Custom.ChartRepo
 
 	// load full state from disk and persist update block node state
 	fullState := b.sm.State()
