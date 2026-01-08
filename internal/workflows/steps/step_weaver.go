@@ -47,6 +47,7 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 					Err(errWithResolution).
 					Str("exePath", exePath).
 					Str("expectedPath", expectedPath).
+					Str("resolution", resolution).
 					Msg("Weaver installation check failed: current executable is not in the expected bin directory")
 
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithResolution))
