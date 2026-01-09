@@ -84,15 +84,10 @@ func (b BlockNodeIntentHandler) prepareRuntime(
 
 // prepareEffectiveUserInputsForInstall determines the effective user inputs based on current runtime state and provided inputs.
 func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
-	currentState *core.BlockNodeState,
 	inputs *core.UserInputs[core.BlocknodeInputs]) (*core.UserInputs[core.BlocknodeInputs], error) {
 
 	if inputs == nil {
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
-	}
-
-	if currentState == nil {
-		return nil, errorx.IllegalArgument.New("current block node state cannot be nil")
 	}
 
 	// Determine Blocknode release name
@@ -232,7 +227,7 @@ func (b BlockNodeIntentHandler) installHandler(
 			WithProperty(doctor.ErrPropertyResolution, "use 'weaver block-node upgrade' to upgrade the block node or use --force to attempt to continue")
 	}
 
-	effectiveUserInputs, err := b.prepareEffectiveUserInputsForInstall(blockNodeState, inputs)
+	effectiveUserInputs, err := b.prepareEffectiveUserInputsForInstall(inputs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -329,7 +324,7 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
 
-	if report.IsFailed() {
+	if report.IsFailed() && effectiveInputs.Common.ExecutionOptions.ExecutionMode != automa.StopOnError {
 		logx.As().Warn().Msg("Workflow execution failed; skipping block node state persistence")
 		return report, nil
 	}
