@@ -5,6 +5,7 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -30,7 +31,7 @@ var checkCmd = &cobra.Command{
 			Str("profile", flagProfile).
 			Msg("Running preflight checks for Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodePreflightCheckWorkflow(flagProfile))
+		common.RunWorkflow(cmd.Context(), workflows.NewNodeSafetyCheckWorkflow(core.NodeTypeBlock, flagProfile))
 
 		logx.As().Info().Msg("Node preflight checks completed successfully for block node")
 		return nil

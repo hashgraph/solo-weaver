@@ -59,11 +59,11 @@ var (
 		Default:     "",
 	}
 
-	FlagMetricsServer = FlagDefinition[bool]{
-		Name:        "metrics-server",
-		ShortName:   "m",
-		Description: "Install Metrics Server",
-		Default:     true,
+	FlagForce = FlagDefinition[bool]{
+		Name:        "force",
+		ShortName:   "y",
+		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
+		Default:     false,
 	}
 )
 

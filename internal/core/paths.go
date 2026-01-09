@@ -5,6 +5,7 @@ package core
 import (
 	"path"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/security"
 )
 
@@ -33,18 +34,27 @@ const (
 	ProfileMainnet = "mainnet"
 )
 
-var allProfiles = []string{
-	ProfileLocal,
-	ProfilePerfnet,
-	ProfileTestnet,
-	ProfileMainnet,
+func AllProfiles() []string {
+	return []string{
+		ProfileLocal,
+		ProfilePerfnet,
+		ProfileTestnet,
+		ProfileMainnet,
+	}
 }
 
-func AllProfiles() []string {
-	// return a copy to prevent modification
-	profilesCopy := make([]string, len(allProfiles))
-	copy(profilesCopy, allProfiles)
-	return profilesCopy
+func AllNodeTypes() []string {
+	return []string{
+		NodeTypeLocal,
+		NodeTypeBlock,
+		NodeTypeConsensus,
+		NodeTypeMirror,
+		NodeTypeRelay,
+	}
+}
+
+func AllExecutionModes() []automa.TypeMode {
+	return []automa.TypeMode{automa.RollbackOnError, automa.StopOnError, automa.ContinueOnError}
 }
 
 var (
@@ -152,8 +162,26 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	return pp
 }
 
-func Paths() *WeaverPaths {
-	return pp
+// Clone returns a deep copy of the WeaverPaths.
+// It is nil-safe and copies slice contents to avoid shared backing arrays.
+func (w WeaverPaths) Clone() *WeaverPaths {
+	// shallow copy of struct fields (strings are value-copied)
+	cp := w
+
+	// deep-copy slices to avoid sharing backing arrays
+	if w.AllDirectories != nil {
+		cp.AllDirectories = make([]string, len(w.AllDirectories))
+		copy(cp.AllDirectories, w.AllDirectories)
+	}
+	if w.SandboxDirectories != nil {
+		cp.SandboxDirectories = make([]string, len(w.SandboxDirectories))
+		copy(cp.SandboxDirectories, w.SandboxDirectories)
+	}
+	return &cp
+}
+
+func Paths() WeaverPaths {
+	return *pp
 }
 
 func ServiceAccount() security.ServiceAccount {

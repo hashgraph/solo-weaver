@@ -3,3 +3,6 @@
 .vscode
 bin
 vendor
+pkg
+bin
+node_modules

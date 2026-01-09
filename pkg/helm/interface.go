@@ -13,7 +13,7 @@ import (
 type Status string
 
 const (
-	DefaultTimeout        = 5 * time.Minute
+	DefaultTimeout        = 15 * time.Minute
 	StatusReady    Status = "ready"
 	StatusDeleted  Status = "deleted"
 )

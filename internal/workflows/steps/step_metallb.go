@@ -23,9 +23,9 @@ import (
 const (
 	MetalLBNamespace             = "metallb-system"
 	MetalLBRelease               = "metallb"
-	MetalLBChart                 = "metallb/metallb"
+	MetalLBChartName             = "metallb/metallb"
 	MetalLBVersion               = "0.15.2"
-	MetalLBRepo                  = "https://metallb.github.io/metallb"
+	MetalLBChartRepo             = "https://metallb.github.io/metallb"
 	SetupMetalLBStepId           = "setup-metallb"
 	InstallMetalLBStepId         = "install-metallb"
 	MetalLBTemplatePath          = "files/metallb/metallb.yaml"
@@ -79,7 +79,7 @@ func installMetalLB() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(MetalLBRelease, MetalLBRepo, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(MetalLBRelease, MetalLBChartRepo, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -93,7 +93,7 @@ func installMetalLB() automa.Builder {
 			_, err = hm.InstallChart(
 				ctx,
 				MetalLBRelease,
-				MetalLBChart,
+				MetalLBChartName,
 				chartVersion,
 				MetalLBNamespace,
 				helm.InstallChartOptions{
