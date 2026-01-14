@@ -17,7 +17,7 @@ func NewLocalNodeSpec(hostProfile HostProfile) Spec {
 			nodeType:          "Local Node",
 			actualHostProfile: hostProfile,
 			minimalRequirements: BaselineRequirements{
-				MinCpuCores:    1,
+				MinCpuCores:    3,
 				MinMemoryGB:    1,
 				MinStorageGB:   1,
 				MinSupportedOS: []string{"Ubuntu 18", "Debian 10"},

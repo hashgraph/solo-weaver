@@ -1,0 +1,345 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+/*
+ * Discovery Configuration
+ */
+
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+/*
+ * Prometheus Remote Write Configuration
+ */
+
+prometheus.remote_write "physical" {
+  endpoint {
+    url = "{{.PrometheusURL}}"
+
+    basic_auth {
+      username = "{{.PrometheusUsername}}"
+      password = sys.env("PROMETHEUS_PASSWORD")
+    }
+  }
+}
+
+/*
+ * Loki Remote Write Configuration
+ */
+
+loki.write "physical" {
+  endpoint {
+    url = "{{.LokiURL}}"
+
+    basic_auth {
+      username = "{{.LokiUsername}}"
+      password = sys.env("LOKI_PASSWORD")
+    }
+  }
+}
+
+/*
+ * Alloy Agent Metrics
+ */
+
+prometheus.exporter.self "alloy" { }
+
+discovery.relabel "alloy" {
+  targets = prometheus.exporter.self.alloy.targets
+
+  rule {
+    target_label = "latitude_cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+
+  rule {
+    action = "replace"
+    source_labels = ["job"]
+    target_label = "job"
+    replacement = "alloy"
+  }
+}
+
+prometheus.scrape "alloy" {
+  targets = discovery.relabel.alloy.output
+  forward_to = [prometheus.relabel.alloy.receiver]
+
+  scrape_interval = "10s"
+
+  clustering {
+    enabled = false
+  }
+}
+
+prometheus.relabel "alloy" {
+  forward_to = [prometheus.remote_write.physical.receiver]
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+/*
+ * Node Exporter Metrics
+ */
+
+discovery.kubernetes "node_exporter" {
+  role = "endpoints"
+  namespaces {
+    names = ["node-exporter"]
+  }
+}
+
+discovery.relabel "node_exporter" {
+  targets = discovery.kubernetes.node_exporter.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+    regex         = "node-exporter"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_endpoint_port_name"]
+    regex         = "metrics"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_service_name"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_node_name"]
+    target_label  = "node"
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "node-exporter"
+  }
+}
+
+prometheus.scrape "node_exporter" {
+  targets    = discovery.relabel.node_exporter.output
+  forward_to = [prometheus.remote_write.physical.receiver]
+  job_name   = "node-exporter"
+
+  scrape_interval = "15s"
+  scrape_timeout  = "5s"
+}
+
+/*
+ * Kubelet/cAdvisor Metrics
+ */
+
+discovery.relabel "kubelet" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    replacement  = "kubernetes.default.svc:443"
+    target_label = "__address__"
+  }
+
+  rule {
+    regex         = "(.+)"
+    source_labels = ["__meta_kubernetes_node_name"]
+    replacement   = "/api/v1/nodes/$1/proxy/metrics"
+    target_label  = "__metrics_path__"
+  }
+}
+
+prometheus.scrape "kubelet" {
+  job_name    = "integrations/kubernetes/kubelet"
+  forward_to  = [prometheus.relabel.kubelet.receiver]
+  targets     = discovery.relabel.kubelet.output
+  scheme      = "https"
+
+  tls_config {
+    server_name          = "kubernetes"
+    ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = false
+  }
+
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+}
+
+prometheus.relabel "kubelet" {
+  forward_to = [prometheus.remote_write.physical.receiver]
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+discovery.relabel "cadvisor" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    replacement  = "kubernetes.default.svc:443"
+    target_label = "__address__"
+  }
+
+  rule {
+    regex         = "(.+)"
+    source_labels = ["__meta_kubernetes_node_name"]
+    replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+    target_label  = "__metrics_path__"
+  }
+}
+
+prometheus.scrape "cadvisor" {
+  job_name    = "integrations/kubernetes/cadvisor"
+  targets     = discovery.relabel.cadvisor.output
+  forward_to  = [prometheus.relabel.cadvisor.receiver]
+  scheme      = "https"
+
+  tls_config {
+    server_name          = "kubernetes"
+    ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = false
+  }
+
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+}
+
+prometheus.relabel "cadvisor" {
+  forward_to = [prometheus.remote_write.physical.receiver]
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+/*
+ * System Logs - syslog
+ */
+
+loki.relabel "syslog" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal__priority_keyword"]
+    target_label  = "priority"
+  }
+
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    target_label  = "syslog_identifier"
+  }
+
+  rule {
+    source_labels = ["__journal___pid"]
+    target_label  = "pid"
+  }
+
+  rule {
+    source_labels = ["__journal__uid"]
+    target_label  = "uid"
+  }
+
+  rule {
+    source_labels = ["__journal__comm"]
+    target_label  = "command"
+  }
+
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label  = "transport"
+  }
+}
+
+loki.source.journal "syslog" {
+  forward_to = [loki.write.physical.receiver]
+
+  path = "/host/var/log/journal"
+
+  labels = {
+    cluster = "{{.ClusterName}}",
+  }
+
+  relabel_rules = loki.relabel.syslog.rules
+}
+{{if .MonitorBlockNode}}
+/*
+ * Block Node Metrics & Logs
+ */
+
+prometheus.operator.servicemonitors "block_node_server" {
+  forward_to = [prometheus.remote_write.physical.receiver]
+
+  clustering {
+    enabled = false
+  }
+
+  scrape {
+    default_scrape_interval = "15s"
+    default_scrape_timeout  = "5s"
+  }
+
+  selector {
+    match_expression {
+      key      = "app.kubernetes.io/name"
+      operator = "In"
+      values   = ["block-node-server"]
+    }
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+loki.relabel "block_node_server" {
+  forward_to = [loki.write.physical.receiver]
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+loki.source.podlogs "block_node_server" {
+  forward_to = [loki.relabel.block_node_server.receiver]
+
+  clustering {
+    enabled = false
+  }
+
+  selector {
+    match_expression {
+      key      = "app.kubernetes.io/name"
+      operator = "In"
+      values   = ["block-node-server"]
+    }
+  }
+}
+{{end}}

@@ -20,3 +20,12 @@ type KubeadmInitData struct {
 type MetallbData struct {
 	MachineIP string
 }
+
+type AlloyData struct {
+	ClusterName        string
+	PrometheusURL      string
+	PrometheusUsername string
+	LokiURL            string
+	LokiUsername       string
+	MonitorBlockNode   bool
+}

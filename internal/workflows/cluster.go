@@ -57,8 +57,9 @@ func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBui
 
 		steps.SetupMetalLB(),
 
-		steps.DeployMetricsServer(nil),
+		steps.ConditionalSetupAlloy(),
 
+		steps.DeployMetricsServer(nil),
 		steps.CheckClusterHealth(),
 	}
 

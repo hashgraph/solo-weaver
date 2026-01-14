@@ -614,8 +614,22 @@ tasks:
       - task: vm:start
       - task: vm:configure:ssh
       - task: proxy:install-ca-cert
-      - cmd: echo "✓ VM reset and configured successfully with proxy support."
-  
+      - task: vm:observability:start
+      - cmd: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ VM reset complete with full development environment!"
+          echo ""
+          echo "Configured:"
+          echo "  ✅ SSH access with passwordless login"
+          echo "  ✅ MITM proxy with CA certificate"
+          echo "  ✅ Docker installed and configured"
+          echo "  ✅ Observability stack (Prometheus, Loki, Grafana)"
+          echo ""
+          echo "Ready for Block Node deployment:"
+          echo "  task vm:ssh"
+          echo "  sudo weaver block node install -p local -c /mnt/solo-weaver/test/config/config.yaml"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   vm:start:
     desc: "Start the working VM instance"
     deps:
@@ -1202,4 +1216,249 @@ tasks:
           echo "Cache proxy is not running"
           echo "Start it with: task proxy:start"
         fi
+
+  # ===========================
+  # Observability (Core Tasks)
+  # ===========================
+  # Note: These tasks are used by:
+  #   - vm:observability:start (VM-based development)
+  #   - CI/CD workflows (GitHub Actions, GitLab CI, etc.)
+  #   - Local Kind/k3d Kubernetes clusters
+
+  observability:start:
+    desc: "Start observability stack (used by VM, CI/CD, and Kind/k3d)"
+    dir: test/observability
+    cmds:
+      - docker compose up -d
+      - |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Observability stack started!"
+        echo ""
+        echo "📦 This task is used by:"
+        echo "   • VM development (via task vm:observability:start)"
+        echo "   • CI/CD workflows (GitHub Actions, GitLab CI)"
+        echo "   • Local Kind/k3d clusters"
+        echo ""
+        echo "🌐 Services:"
+        echo "   • Prometheus: http://localhost:9090"
+        echo "   • Loki:       http://localhost:3100"
+        echo "   • Grafana:    http://localhost:3000"
+        echo ""
+        echo "📝 For Kind/k3d clusters, configure Alloy with:"
+        echo "   prometheusUrl: \"http://host.docker.internal:9090/api/v1/write\""
+        echo "   lokiUrl: \"http://host.docker.internal:3100/loki/api/v1/push\""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  observability:stop:
+    desc: "Stop observability stack"
+    dir: test/observability
+    cmds:
+      - docker compose down
+
+  observability:clean:
+    desc: "Stop and remove all observability data (volumes)"
+    dir: test/observability
+    cmds:
+      - docker compose down -v
+      - echo "✅ Observability stack stopped and data removed"
+
+  observability:logs:
+    desc: "Show logs from observability stack"
+    dir: test/observability
+    cmds:
+      - docker compose logs -f
+
+  observability:status:
+    desc: "Show observability stack status"
+    dir: test/observability
+    cmds:
+      - |
+        echo "Observability Stack Status:"
+        echo "==========================="
+        docker compose ps
+        echo ""
+        if docker ps | grep -q solo-weaver-prometheus; then
+          echo "Service URLs:"
+          echo "  • Prometheus: http://localhost:9090"
+          echo "  • Loki:       http://localhost:3100"
+          echo "  • Grafana:    http://localhost:3000"
+        else
+          echo "Observability stack is not running"
+          echo "Start it with: task observability:start"
+          echo ""
+          echo "💡 For VM-based development, use: task vm:observability:start"
+        fi
+
+  # ===========================
+  # VM Docker & Observability Setup
+  # ===========================
+
+  vm:install-docker:
+    desc: "Install Docker in the VM (Debian/Ubuntu)"
+    deps: [vm:start]
+    cmds:
+      - |
+        echo "🔧 Installing Docker in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP 'bash -s' <<'ENDSSH'
+        set -euo pipefail
+        
+        echo "📦 Checking if Docker is already installed..."
+        if command -v docker &> /dev/null; then
+          echo "✅ Docker is already installed"
+          docker --version
+          exit 0
+        fi
+        
+        echo "📥 Installing Docker..."
+        
+        # Update package index
+        sudo apt-get update
+        
+        # Install prerequisites
+        sudo apt-get install -y \
+          ca-certificates \
+          curl \
+          gnupg \
+          lsb-release
+        
+        # Add Docker's official GPG key
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        
+        # Set up the repository
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') \
+          $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        
+        # Install Docker Engine
+        sudo apt-get update
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        
+        # Add current user to docker group
+        sudo usermod -aG docker $USER
+        
+        # Start and enable Docker
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        
+        echo "✅ Docker installed successfully!"
+        docker --version
+        docker compose version
+        
+        echo ""
+        echo "⚠️  Note: You may need to log out and back in for group changes to take effect"
+        echo "   Or run: newgrp docker"
+        ENDSSH
+
+  vm:observability:start:
+    desc: "Set up observability stack in the VM"
+    deps: [vm:install-docker]
+    cmds:
+      - |
+        echo "🚀 Setting up observability stack in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        echo "🔧 Starting observability stack in VM..."
+        # Task is already installed in the VM and /mnt/solo-weaver is already synced
+        # So we can just use 'task observability:start' directly!
+        # Use sudo newgrp to ensure docker group permissions are active
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task observability:start'"
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Observability stack setup complete!"
+        echo ""
+        echo "📋 Next steps:"
+        echo "   1. SSH into VM: task vm:ssh"
+        echo "   2. Deploy Block Node: sudo weaver block node install -p local -c /mnt/solo-weaver/test/config/config.yaml"
+        echo ""
+        echo "💡 To access from your Mac, use SSH port forwarding:"
+        echo "   ssh -L 9090:localhost:9090 -L 3000:localhost:3000 -i {{.SSH_PRIVATE_KEY}} {{.VM_USER}}@$VM_IP"
+        echo "   or use: task vm:observability-forward"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "   ssh -L 9090:localhost:9090 -L 3000:localhost:3000 -i {{.SSH_PRIVATE_KEY}} {{.VM_USER}}@$VM_IP"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  vm:observability:stop:
+    desc: "Stop observability stack in the VM"
+    cmds:
+      - |
+        echo "🛑 Stopping observability stack in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task observability:stop'"
+        echo "✅ Observability stack stopped"
+
+  vm:observability:clean:
+    desc: "Stop and remove all observability data in the VM"
+    cmds:
+      - |
+        echo "🧹 Cleaning observability stack in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task observability:clean'"
+        echo "✅ Observability stack cleaned"
+
+  vm:observability-forward:
+    desc: "Forward observability ports from VM to Mac (Prometheus:9090, Loki:3100, Grafana:3000)"
+    cmds:
+      - |
+        echo "🔌 Setting up port forwarding for observability stack..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🌐 Forwarding ports from VM to your Mac:"
+        echo "   • Prometheus: localhost:9090 → VM:9090"
+        echo "   • Loki:       localhost:3100 → VM:3100"
+        echo "   • Grafana:    localhost:3000 → VM:3000"
+        echo ""
+        echo "📊 Access in your browser:"
+        echo "   • http://localhost:9090 (Prometheus)"
+        echo "   • http://localhost:3000 (Grafana)"
+        echo ""
+        echo "⚠️  Press Ctrl+C to stop port forwarding"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no \
+          -L 9090:localhost:9090 \
+          -L 3100:localhost:3100 \
+          -L 3000:localhost:3000 \
+          {{.VM_USER}}@$VM_IP \
+          'echo "✅ Port forwarding active. Press Ctrl+C to stop..." && tail -f /dev/null'
 

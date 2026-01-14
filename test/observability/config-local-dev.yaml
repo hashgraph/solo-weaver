@@ -1,0 +1,45 @@
+# Example Alloy Configuration for Local Development Inside VM
+# The observability stack (Prometheus, Loki, Grafana) runs in Docker inside the VM
+# alongside the Kubernetes cluster
+
+log:
+  level: Debug
+  consoleLogging: true
+  fileLogging: false
+
+alloy:
+  enabled: true
+  monitorBlockNode: false  # Set to true if you have Block Node deployed
+
+  # For VM-based clusters (kubeadm/k3s):
+  # Use localhost - Alloy automatically enables hostNetwork for localhost URLs
+  # This allows pods to access services running on the VM host
+  prometheusUrl: "http://localhost:9090/api/v1/write"
+  prometheusUsername: "local-dev"
+  prometheusPassword: "local-dev"
+
+  lokiUrl: "http://localhost:3100/loki/api/v1/push"
+  lokiUsername: "local-dev"
+  lokiPassword: "local-dev"
+
+  clusterName: "vm-dev-cluster"
+
+# Alternative configurations:
+#
+# For Kind or k3d (Docker-in-Docker), use host.docker.internal:
+# alloy:
+#   prometheusUrl: "http://host.docker.internal:9090/api/v1/write"
+#   lokiUrl: "http://host.docker.internal:3100/loki/api/v1/push"
+#
+# For production with remote endpoints, use full URLs:
+# alloy:
+#   prometheusUrl: "https://prometheus.example.com/api/v1/write"
+#   lokiUrl: "https://loki.example.com/loki/api/v1/push"
+
+# Optional: Configure Block Node
+# blockNode:
+#   namespace: "default"
+#   release: "block-node"
+#   chart: "oci://ghcr.io/hashgraph/full-stack-testing/block-node-helm-chart"
+#   version: "0.54.0"
+

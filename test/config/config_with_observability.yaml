@@ -1,0 +1,21 @@
+log:
+  level: debug
+  consoleLogging: true
+  fileLogging: false
+blockNode:
+  namespace: "block-node"
+  release: "block-node"
+  chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  version: "0.22.1"
+  storage:
+    basePath: "/mnt/fast-storage"
+alloy:
+  enabled: true
+  monitorBlockNode: true
+  prometheusUrl: "http://localhost:9090/api/v1/write"
+  prometheusUsername: "local"
+  prometheusPassword: "local"
+  lokiUrl: "http://localhost:3100/loki/api/v1/push"
+  lokiUsername: "local"
+  lokiPassword: "local"
+  clusterName: "vm-cluster"
