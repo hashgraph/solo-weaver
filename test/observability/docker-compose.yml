@@ -1,6 +1,30 @@
 version: '3.8'
 
 services:
+  # HashiCorp Vault for secret management
+  vault:
+    image: hashicorp/vault:1.15.4
+    container_name: solo-weaver-vault
+    ports:
+      - "8200:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=devtoken
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      - VAULT_ADDR=http://127.0.0.1:8200
+    cap_add:
+      - IPC_LOCK
+    command: server -dev
+    volumes:
+      - vault-data:/vault/data
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - observability
+
   # Prometheus for metrics storage
   prometheus:
     image: prom/prometheus:v2.48.0
@@ -56,6 +80,7 @@ services:
       - observability
 
 volumes:
+  vault-data:
   prometheus-data:
   loki-data:
   grafana-data:

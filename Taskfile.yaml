@@ -1225,11 +1225,136 @@ tasks:
   #   - CI/CD workflows (GitHub Actions, GitLab CI, etc.)
   #   - Local Kind/k3d Kubernetes clusters
 
+  vault:start:
+    desc: "Start Vault and initialize with development secrets"
+    dir: test/observability
+    cmds:
+      - |
+        echo "🚀 Starting Vault..."
+        docker compose up -d vault
+      - |
+        echo "⏳ Initializing Vault with secrets..."
+        ./init-vault.sh
+      - |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Vault started and configured!"
+        echo ""
+        echo "🔐 Vault UI:  http://localhost:8200"
+        echo "🔑 Token:     devtoken"
+        echo "👤 ESO User:  eso-user / eso-password"
+        echo ""
+        echo "📦 Secrets created for cluster: vm-cluster"
+        echo "   • secret/grafana/alloy/vm-cluster/prometheus"
+        echo "   • secret/grafana/alloy/vm-cluster/loki"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  vault:stop:
+    desc: "Stop Vault container"
+    dir: test/observability
+    cmds:
+      - docker compose stop vault
+
+  vault:clean:
+    desc: "Stop Vault and remove all data"
+    dir: test/observability
+    cmds:
+      - docker compose down vault
+      - docker volume rm solo-weaver-vault-data 2>/dev/null || true
+
+  vault:setup-secret-store:
+    desc: "Configure ClusterSecretStore to connect ESO to Vault (auto-detects node IP)"
+    dir: test/observability
+    cmds:
+      - |
+        echo "🔧 Configuring ClusterSecretStore for kubeadm cluster..."
+        
+        # Check if External Secrets Operator is installed
+        echo "📋 Checking for External Secrets Operator..."
+        if ! kubectl get crd clustersecretstores.external-secrets.io &>/dev/null; then
+          echo "❌ Error: External Secrets Operator CRDs not found!"
+          echo ""
+          echo "External Secrets Operator must be installed first."
+          echo ""
+          echo "To install ESO, run:"
+          echo "  weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config.yaml"
+          echo ""
+          echo "Or check if ESO pods are running:"
+          echo "  kubectl get pods -n external-secrets"
+          exit 1
+        fi
+        echo "✓ External Secrets Operator CRDs found"
+        
+        # Check if ESO pods are running
+        if ! kubectl get pods -n external-secrets &>/dev/null; then
+          echo "⚠️  Warning: external-secrets namespace not found"
+          echo "ESO may not be fully installed yet"
+        else
+          POD_COUNT=$(kubectl get pods -n external-secrets --no-headers 2>/dev/null | wc -l)
+          echo "✓ Found $POD_COUNT ESO pod(s) in external-secrets namespace"
+        fi
+        
+        # Get the node's internal IP (works for kubeadm)
+        NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+        
+        if [ -z "$NODE_IP" ]; then
+          echo "❌ Error: Could not determine node IP from Kubernetes"
+          echo "Trying alternative method..."
+          NODE_IP=$(ip route get 1 | awk '{print $7; exit}')
+        fi
+        
+        if [ -z "$NODE_IP" ]; then
+          echo "❌ Error: Could not determine node IP"
+          exit 1
+        fi
+        
+        echo "✓ Detected node IP: $NODE_IP"
+        echo "✓ Vault URL will be: http://$NODE_IP:8200"
+        
+        # Create temporary file with IP replaced
+        TEMP_FILE=$(mktemp)
+        sed "s|REPLACE_WITH_NODE_IP|http://$NODE_IP:8200|g" cluster-secret-store-local.yaml > "$TEMP_FILE"
+        
+        # Apply the configured manifest
+        echo "📝 Applying ClusterSecretStore..."
+        kubectl apply -f "$TEMP_FILE"
+        
+        # Cleanup
+        rm -f "$TEMP_FILE"
+        
+        echo ""
+        echo "⏳ Waiting for ClusterSecretStore to be ready..."
+        sleep 3
+        
+        # Check status
+        STATUS=$(kubectl get clustersecretstore vault-secret-store -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+        
+        if [ "$STATUS" = "True" ]; then
+          echo "✅ ClusterSecretStore is ready!"
+        else
+          echo "⚠️  ClusterSecretStore status: $STATUS"
+          echo ""
+          echo "Checking details:"
+          kubectl describe clustersecretstore vault-secret-store | tail -20
+        fi
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ ClusterSecretStore configured!"
+        echo ""
+        echo "📋 Configuration:"
+        echo "   Vault URL: http://$NODE_IP:8200"
+        echo "   ESO User:  eso-user"
+        echo ""
+        echo "📝 Next step: Install observability"
+        echo "   weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config_with_observability.yaml"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   observability:start:
     desc: "Start observability stack (used by VM, CI/CD, and Kind/k3d)"
     dir: test/observability
+    deps: [vault:start]
     cmds:
-      - docker compose up -d
+      - docker compose up -d prometheus loki grafana
       - |
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ Observability stack started!"
@@ -1240,13 +1365,15 @@ tasks:
         echo "   • Local Kind/k3d clusters"
         echo ""
         echo "🌐 Services:"
+        echo "   • Vault:      http://localhost:8200 (token: devtoken)"
         echo "   • Prometheus: http://localhost:9090"
         echo "   • Loki:       http://localhost:3100"
         echo "   • Grafana:    http://localhost:3000"
         echo ""
-        echo "📝 For Kind/k3d clusters, configure Alloy with:"
-        echo "   prometheusUrl: \"http://host.docker.internal:9090/api/v1/write\""
-        echo "   lokiUrl: \"http://host.docker.internal:3100/loki/api/v1/push\""
+        echo "🔐 Vault has been initialized with development secrets"
+        echo ""
+        echo "📝 Next step: Apply ClusterSecretStore to connect ESO to Vault"
+        echo "   kubectl apply -f test/observability/cluster-secret-store-local.yaml"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   observability:stop:
@@ -1383,15 +1510,15 @@ tasks:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ Observability stack setup complete!"
         echo ""
+        echo "🔐 Vault has been initialized with development secrets"
+        echo ""
         echo "📋 Next steps:"
         echo "   1. SSH into VM: task vm:ssh"
-        echo "   2. Deploy Block Node: sudo weaver block node install -p local -c /mnt/solo-weaver/test/config/config.yaml"
+        echo "   2. Apply ClusterSecretStore: task vault:setup-secret-store"
+        echo "   3. Deploy with Alloy: sudo weaver kube cluster install --alloy-enabled ..."
         echo ""
         echo "💡 To access from your Mac, use SSH port forwarding:"
-        echo "   ssh -L 9090:localhost:9090 -L 3000:localhost:3000 -i {{.SSH_PRIVATE_KEY}} {{.VM_USER}}@$VM_IP"
-        echo "   or use: task vm:observability-forward"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "   ssh -L 9090:localhost:9090 -L 3000:localhost:3000 -i {{.SSH_PRIVATE_KEY}} {{.VM_USER}}@$VM_IP"
+        echo "   task vm:observability-forward"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   vm:observability:stop:
@@ -1429,7 +1556,7 @@ tasks:
         echo "✅ Observability stack cleaned"
 
   vm:observability-forward:
-    desc: "Forward observability ports from VM to Mac (Prometheus:9090, Loki:3100, Grafana:3000)"
+    desc: "Forward observability ports from VM to Mac (Vault:8200, Prometheus:9090, Loki:3100, Grafana:3000)"
     cmds:
       - |
         echo "🔌 Setting up port forwarding for observability stack..."
@@ -1443,11 +1570,13 @@ tasks:
         
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "🌐 Forwarding ports from VM to your Mac:"
+        echo "   • Vault:      localhost:8200 → VM:8200"
         echo "   • Prometheus: localhost:9090 → VM:9090"
         echo "   • Loki:       localhost:3100 → VM:3100"
         echo "   • Grafana:    localhost:3000 → VM:3000"
         echo ""
         echo "📊 Access in your browser:"
+        echo "   • http://localhost:8200 (Vault UI, token: devtoken)"
         echo "   • http://localhost:9090 (Prometheus)"
         echo "   • http://localhost:3000 (Grafana)"
         echo ""
@@ -1456,6 +1585,7 @@ tasks:
         echo ""
         
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no \
+          -L 8200:localhost:8200 \
           -L 9090:localhost:9090 \
           -L 3100:localhost:3100 \
           -L 3000:localhost:3000 \

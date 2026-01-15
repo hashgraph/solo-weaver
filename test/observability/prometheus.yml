@@ -2,10 +2,6 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# Enable remote write receiver for Alloy to push metrics
-remote_write:
-  - url: http://localhost:9090/api/v1/write
-
 scrape_configs:
   # Scrape Prometheus itself
   - job_name: 'prometheus'

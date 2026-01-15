@@ -21,45 +21,52 @@ import (
 )
 
 const (
-	AlloyNamespace            = "grafana-alloy"
-	AlloyRelease              = "grafana-alloy"
-	AlloyChart                = "grafana/alloy"
-	AlloyVersion              = "1.3.0"
-	AlloyRepo                 = "https://grafana.github.io/helm-charts"
-	NodeExporterNamespace     = "node-exporter"
-	NodeExporterRelease       = "node-exporter"
-	NodeExporterChart         = "oci://registry-1.docker.io/bitnamicharts/node-exporter"
-	NodeExporterVersion       = "4.5.19"
-	SetupAlloyStepId          = "setup-alloy"
-	InstallAlloyStepId        = "install-alloy"
-	InstallNodeExporterStepId = "install-node-exporter"
-	AlloyTemplatePath         = "files/alloy/config.alloy"
-	DeployAlloyConfigStepId   = "deploy-alloy-config"
-	CreateAlloySecretsStepId  = "create-alloy-secrets"
-	IsAlloyReadyStepId        = "is-alloy-ready"
-	IsNodeExporterReadyStepId = "is-node-exporter-ready"
-	AlloyConfigMapName        = "grafana-alloy-cm"
-	AlloySecretsName          = "grafana-alloy-secrets"
+	AlloyNamespace              = "grafana-alloy"
+	AlloyRelease                = "grafana-alloy"
+	AlloyChart                  = "grafana/alloy"
+	AlloyVersion                = "1.4.0"
+	AlloyRepo                   = "https://grafana.github.io/helm-charts"
+	NodeExporterNamespace       = "node-exporter"
+	NodeExporterRelease         = "node-exporter"
+	NodeExporterChart           = "oci://registry-1.docker.io/bitnamicharts/node-exporter"
+	NodeExporterVersion         = "4.5.19"
+	SetupAlloyStepId            = "setup-alloy"
+	InstallAlloyStepId          = "install-alloy"
+	InstallNodeExporterStepId   = "install-node-exporter"
+	AlloyTemplatePath           = "files/alloy/config.alloy"
+	DeployAlloyConfigStepId     = "deploy-alloy-config"
+	CreateAlloyNamespaceStepId  = "create-alloy-namespace"
+	CreateAlloySecretsStepId    = "create-alloy-secrets"
+	IsAlloyReadyStepId          = "is-alloy-ready"
+	IsNodeExporterReadyStepId   = "is-node-exporter-ready"
+	AlloyConfigMapName          = "grafana-alloy-cm"
+	AlloySecretsName            = "grafana-alloy-secrets"
+	AlloyExternalSecretName     = "grafana-alloy-external-secret"
+	AlloyClusterSecretStoreName = "vault-secret-store"
 )
 
-// ConditionalSetupAlloy returns a step that checks if Alloy is enabled and either runs the setup or logs a skip message.
+// ConditionalSetupObservability sets up the complete observability stack if Alloy is enabled.
+// This includes:
+// - Prometheus Operator CRDs (for ServiceMonitor/PodMonitor support)
+// - Alloy (metrics and logs collection)
+// - Node Exporter (system metrics)
 // This ensures the check and logging happens at execution time, not at workflow build time.
-func ConditionalSetupAlloy() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("conditional-setup-alloy").
+func ConditionalSetupObservability() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("conditional-setup-observability").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
 			if !cfg.Enabled {
-				logx.As().Info().Msg("Skipping Alloy setup (disabled in configuration)")
+				logx.As().Info().Msg("Skipping observability stack (Alloy disabled in configuration)")
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			// Execute the SetupAlloy workflow
-			setupAlloyWf, err := SetupAlloy().Build()
+			// Execute the observability workflow
+			observabilityWf, err := SetupObservability().Build()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			report := setupAlloyWf.Execute(ctx)
+			report := observabilityWf.Execute(ctx)
 			if report.Error != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
 			}
@@ -68,12 +75,32 @@ func ConditionalSetupAlloy() *automa.StepBuilder {
 		})
 }
 
+// SetupObservability returns a workflow builder that sets up the complete observability stack.
+// This includes Prometheus Operator CRDs and Grafana Alloy.
+func SetupObservability() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("setup-observability").Steps(
+		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
+		SetupAlloy(),                  // Install Alloy with Node Exporter
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up observability stack")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup observability stack")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Observability stack setup successfully")
+		})
+}
+
 // SetupAlloy returns a workflow builder that sets up Grafana Alloy for observability.
 func SetupAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupAlloyStepId).Steps(
+		createAlloyNamespace(),
 		installNodeExporter(),
 		isNodeExporterPodsReady(),
-		createAlloySecrets(),
+		createAlloyExternalSecret(),
 		deployAlloyConfig(),
 		installAlloy(),
 		isAlloyPodsReady(),
@@ -204,7 +231,50 @@ func isNodeExporterPodsReady() automa.Builder {
 		})
 }
 
-func createAlloySecrets() automa.Builder {
+func createAlloyNamespace() automa.Builder {
+	return automa.NewStepBuilder().WithId(CreateAlloyNamespaceStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			// Create namespace manifest
+			namespaceManifestPath := path.Join(core.Paths().TempDir, "alloy-namespace.yaml")
+			namespaceManifest := `---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ` + AlloyNamespace + `
+`
+
+			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), 0644)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = k.ApplyManifest(ctx, namespaceManifestPath)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			meta[InstalledByThisStep] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Creating Alloy namespace")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to create Alloy namespace")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy namespace created successfully")
+		})
+}
+
+func createAlloyExternalSecret() automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateAlloySecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
@@ -214,32 +284,57 @@ func createAlloySecrets() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Create temporary manifest file for namespace and secret
-			secretManifestPath := path.Join(core.Paths().TempDir, "alloy-secrets.yaml")
+			// Create ExternalSecret manifest
+			externalSecretPath := path.Join(core.Paths().TempDir, "alloy-external-secret.yaml")
 
-			secretManifest := `---
-apiVersion: v1
-kind: Namespace
+			// Get cluster name from hostname if not provided
+			clusterName := cfg.ClusterName
+			if clusterName == "" {
+				hostname, err := os.Hostname()
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+				clusterName = hostname
+			}
+
+			externalSecretManifest := `---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
 metadata:
-  name: ` + AlloyNamespace + `
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ` + AlloySecretsName + `
+  name: ` + AlloyExternalSecretName + `
   namespace: ` + AlloyNamespace + `
-type: Opaque
-stringData:
-  PROMETHEUS_PASSWORD: "` + cfg.PrometheusPassword + `"
-  LOKI_PASSWORD: "` + cfg.LokiPassword + `"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: ` + AlloyClusterSecretStoreName + `
+    kind: ClusterSecretStore
+  target:
+    name: ` + AlloySecretsName + `
+    creationPolicy: Owner
+    template:
+      type: Opaque
+      engineVersion: v2
+      metadata:
+        labels:
+          app: grafana-alloy
+          cluster: ` + clusterName + `
+  data:
+    - secretKey: PROMETHEUS_PASSWORD
+      remoteRef:
+        key: "grafana/alloy/` + clusterName + `/prometheus"
+        property: password
+    - secretKey: LOKI_PASSWORD
+      remoteRef:
+        key: "grafana/alloy/` + clusterName + `/loki"
+        property: password
 `
 
-			err = os.WriteFile(secretManifestPath, []byte(secretManifest), 0600)
+			err = os.WriteFile(externalSecretPath, []byte(externalSecretManifest), 0600)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = k.ApplyManifest(ctx, secretManifestPath)
+			err = k.ApplyManifest(ctx, externalSecretPath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -247,7 +342,7 @@ stringData:
 			meta := map[string]string{}
 			meta[InstalledByThisStep] = "true"
 			stp.State().Set(InstalledByThisStep, true)
-			stp.State().Set("secretManifestPath", secretManifestPath)
+			stp.State().Set("externalSecretPath", externalSecretPath)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -261,9 +356,9 @@ stringData:
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			secretManifestPath := stp.State().String("secretManifestPath")
-			if secretManifestPath != "" {
-				err = k.DeleteManifest(ctx, secretManifestPath)
+			externalSecretPath := stp.State().String("externalSecretPath")
+			if externalSecretPath != "" {
+				err = k.DeleteManifest(ctx, externalSecretPath)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
@@ -272,14 +367,14 @@ stringData:
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating Alloy secrets")
+			notify.As().StepStart(ctx, stp, "Creating Alloy ExternalSecret")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to create Alloy secrets")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to create Alloy ExternalSecret")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Alloy secrets created successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy ExternalSecret created successfully")
 		})
 }
 
@@ -328,7 +423,7 @@ func installAlloy() automa.Builder {
 				"alloy.enableReporting=false",
 				"alloy.mounts.varlog=false",
 				"controller.type=daemonset",
-				"serviceMonitor.enabled=false",
+				"serviceMonitor.enabled=true", // Enable ServiceMonitor for Prometheus Operator integration
 				// Environment variables from secrets
 				"alloy.extraEnv[0].name=PROMETHEUS_PASSWORD",
 				"alloy.extraEnv[0].valueFrom.secretKeyRef.name=" + AlloySecretsName,
@@ -354,9 +449,6 @@ func installAlloy() automa.Builder {
 			}
 
 			chartVersion := AlloyVersion
-			if !strings.HasPrefix(chartVersion, "v") {
-				chartVersion = "v" + chartVersion
-			}
 
 			_, err = hm.InstallChart(
 				ctx,

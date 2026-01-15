@@ -14,8 +14,9 @@ alloy:
   monitorBlockNode: true
   prometheusUrl: "http://localhost:9090/api/v1/write"
   prometheusUsername: "local"
-  prometheusPassword: "local"
+  # prometheusPassword: Managed by Vault (see init-vault.sh)
   lokiUrl: "http://localhost:3100/loki/api/v1/push"
   lokiUsername: "local"
-  lokiPassword: "local"
+  # lokiPassword: Managed by Vault (see init-vault.sh)
   clusterName: "vm-cluster"
+

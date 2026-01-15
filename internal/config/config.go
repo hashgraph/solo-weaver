@@ -3,7 +3,6 @@
 package config
 
 import (
-	"os"
 	"strings"
 
 	"github.com/automa-saga/logx"
@@ -106,15 +105,14 @@ type BlockNodeConfig struct {
 }
 
 // AlloyConfig represents the `alloy` configuration block for observability.
+// Note: Passwords are managed via Vault and External Secrets Operator, not in config files.
 type AlloyConfig struct {
 	Enabled            bool   `yaml:"enabled" json:"enabled"`
 	MonitorBlockNode   bool   `yaml:"monitorBlockNode" json:"monitorBlockNode"`
 	PrometheusURL      string `yaml:"prometheusUrl" json:"prometheusUrl"`
 	PrometheusUsername string `yaml:"prometheusUsername" json:"prometheusUsername"`
-	PrometheusPassword string `yaml:"prometheusPassword" json:"prometheusPassword"`
 	LokiURL            string `yaml:"lokiUrl" json:"lokiUrl"`
 	LokiUsername       string `yaml:"lokiUsername" json:"lokiUsername"`
-	LokiPassword       string `yaml:"lokiPassword" json:"lokiPassword"`
 	ClusterName        string `yaml:"clusterName" json:"clusterName"`
 }
 
@@ -204,10 +202,8 @@ var globalConfig = Config{
 		MonitorBlockNode:   false,
 		PrometheusURL:      "",
 		PrometheusUsername: "",
-		PrometheusPassword: "",
 		LokiURL:            "",
 		LokiUsername:       "",
-		LokiPassword:       "",
 		ClusterName:        "",
 	},
 }
@@ -241,14 +237,6 @@ func Initialize(path string) error {
 	}
 
 	return nil
-}
-
-// overrideWithEnv overrides configuration values with environment variables.
-func overrideWithEnv(value string) string {
-	if envValue := os.Getenv(value); envValue != "" {
-		return envValue
-	}
-	return value
 }
 
 // Get returns the loaded configuration.
@@ -304,6 +292,7 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 
 // OverrideAlloyConfig updates the Alloy configuration with provided overrides.
 // Empty string values are ignored (not applied), except for Enabled which is always applied.
+// Note: Passwords are managed via Vault and External Secrets Operator.
 func OverrideAlloyConfig(overrides AlloyConfig) {
 	globalConfig.Alloy.Enabled = overrides.Enabled
 	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
@@ -313,17 +302,11 @@ func OverrideAlloyConfig(overrides AlloyConfig) {
 	if overrides.PrometheusUsername != "" {
 		globalConfig.Alloy.PrometheusUsername = overrides.PrometheusUsername
 	}
-	if overrides.PrometheusPassword != "" {
-		globalConfig.Alloy.PrometheusPassword = overrides.PrometheusPassword
-	}
 	if overrides.LokiURL != "" {
 		globalConfig.Alloy.LokiURL = overrides.LokiURL
 	}
 	if overrides.LokiUsername != "" {
 		globalConfig.Alloy.LokiUsername = overrides.LokiUsername
-	}
-	if overrides.LokiPassword != "" {
-		globalConfig.Alloy.LokiPassword = overrides.LokiPassword
 	}
 	if overrides.ClusterName != "" {
 		globalConfig.Alloy.ClusterName = overrides.ClusterName

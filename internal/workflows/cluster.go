@@ -57,7 +57,11 @@ func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBui
 
 		steps.SetupMetalLB(),
 
-		steps.ConditionalSetupAlloy(),
+		// External Secrets Operator (general-purpose secret management for the cluster)
+		steps.SetupExternalSecrets(),
+
+		// Observability stack (Prometheus CRDs + Alloy + Node Exporter)
+		steps.ConditionalSetupObservability(),
 
 		steps.DeployMetricsServer(nil),
 		steps.CheckClusterHealth(),

@@ -3,8 +3,6 @@
 package cluster
 
 import (
-	"os"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
@@ -60,21 +58,15 @@ func init() {
 
 // applyConfigOverrides applies flag values to override the configuration.
 // This allows flags to take precedence over config file values.
-// Passwords are read from environment variables for security (not exposed as flags).
+// Note: Passwords are managed via Vault and External Secrets Operator, not via flags or env vars.
 func applyConfigOverrides() {
-	// Read passwords from environment variables (more secure than command-line flags)
-	prometheusPassword := os.Getenv("ALLOY_PROMETHEUS_PASSWORD")
-	lokiPassword := os.Getenv("ALLOY_LOKI_PASSWORD")
-
 	overrides := config.AlloyConfig{
 		Enabled:            flagAlloyEnabled,
 		MonitorBlockNode:   flagAlloyMonitorBlockNode,
 		PrometheusURL:      flagAlloyPrometheusURL,
 		PrometheusUsername: flagAlloyPrometheusUsername,
-		PrometheusPassword: prometheusPassword,
 		LokiURL:            flagAlloyLokiURL,
 		LokiUsername:       flagAlloyLokiUsername,
-		LokiPassword:       lokiPassword,
 		ClusterName:        flagAlloyClusterName,
 	}
 	config.OverrideAlloyConfig(overrides)

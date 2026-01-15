@@ -28,7 +28,7 @@ on:
         description: "VM vCPUs"
         type: number
         required: false
-        default: 2
+        default: 3
       vm-mem-mb:
         description: "VM memory (MB)"
         type: number
