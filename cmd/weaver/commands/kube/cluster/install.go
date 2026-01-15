@@ -3,8 +3,11 @@
 package cluster
 
 import (
+	"os"
+
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -23,6 +26,9 @@ var installCmd = &cobra.Command{
 		if flagProfile == "" {
 			return errorx.IllegalArgument.New("profile flag is required")
 		}
+
+		// Apply configuration overrides from flags
+		applyConfigOverrides()
 
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {
@@ -50,4 +56,26 @@ func init() {
 	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
+}
+
+// applyConfigOverrides applies flag values to override the configuration.
+// This allows flags to take precedence over config file values.
+// Passwords are read from environment variables for security (not exposed as flags).
+func applyConfigOverrides() {
+	// Read passwords from environment variables (more secure than command-line flags)
+	prometheusPassword := os.Getenv("ALLOY_PROMETHEUS_PASSWORD")
+	lokiPassword := os.Getenv("ALLOY_LOKI_PASSWORD")
+
+	overrides := config.AlloyConfig{
+		Enabled:            flagAlloyEnabled,
+		MonitorBlockNode:   flagAlloyMonitorBlockNode,
+		PrometheusURL:      flagAlloyPrometheusURL,
+		PrometheusUsername: flagAlloyPrometheusUsername,
+		PrometheusPassword: prometheusPassword,
+		LokiURL:            flagAlloyLokiURL,
+		LokiUsername:       flagAlloyLokiUsername,
+		LokiPassword:       lokiPassword,
+		ClusterName:        flagAlloyClusterName,
+	}
+	config.OverrideAlloyConfig(overrides)
 }
