@@ -886,3 +886,23 @@ func IsCRDReady(obj *unstructured.Unstructured, err error) (bool, error) {
 
 	return established, nil
 }
+
+// CRDExists checks if a CustomResourceDefinition exists in the cluster.
+// The crdName should be in the format "resource.group.domain" (e.g., "servicemonitors.monitoring.coreos.com").
+func (c *Client) CRDExists(ctx context.Context, crdName string) (bool, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+
+	_, err := c.Dyn.Resource(gvr).Get(ctx, crdName, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, errorx.InternalError.Wrap(err, "failed to check CRD existence: %s", crdName)
+	}
+
+	return true, nil
+}
