@@ -16,8 +16,11 @@ func NewLocalNodeSpec(hostProfile HostProfile) Spec {
 		baseNode: baseNode{
 			nodeType:          "Local Node",
 			actualHostProfile: hostProfile,
+			// Note: The minimum CPU cores requirement is set to 3 (instead of 1) to ensure
+			// that observability components (e.g., Alloy, Node Exporter, etc.) can run
+			// alongside the local cluster workloads on the same node.
 			minimalRequirements: BaselineRequirements{
-				MinCpuCores:    1,
+				MinCpuCores:    3,
 				MinMemoryGB:    1,
 				MinStorageGB:   1,
 				MinSupportedOS: []string{"Ubuntu 18", "Debian 10"},

@@ -3,7 +3,6 @@
 package config
 
 import (
-	"os"
 	"strings"
 
 	"github.com/automa-saga/logx"
@@ -17,6 +16,7 @@ import (
 type Config struct {
 	Log       logx.LoggingConfig `yaml:"log" json:"log"`
 	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
+	Alloy     AlloyConfig        `yaml:"alloy" json:"alloy"`
 }
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.
@@ -86,7 +86,13 @@ func (s *BlockNodeStorage) Validate() error {
 
 // Validate validates all configuration fields to ensure they are safe and secure.
 func (c Config) Validate() error {
-	return c.BlockNode.Validate()
+	if err := c.BlockNode.Validate(); err != nil {
+		return err
+	}
+	if err := c.Alloy.Validate(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // BlockNodeConfig represents the `blockNode` configuration block.
@@ -96,6 +102,18 @@ type BlockNodeConfig struct {
 	Chart     string           `yaml:"chart" json:"chart"`
 	Version   string           `yaml:"version" json:"version"`
 	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
+}
+
+// AlloyConfig represents the `alloy` configuration block for observability.
+// Note: Passwords are managed via Vault and External Secrets Operator, not in config files.
+type AlloyConfig struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`
+	MonitorBlockNode   bool   `yaml:"monitorBlockNode" json:"monitorBlockNode"`
+	PrometheusURL      string `yaml:"prometheusUrl" json:"prometheusUrl"`
+	PrometheusUsername string `yaml:"prometheusUsername" json:"prometheusUsername"`
+	LokiURL            string `yaml:"lokiUrl" json:"lokiUrl"`
+	LokiUsername       string `yaml:"lokiUsername" json:"lokiUsername"`
+	ClusterName        string `yaml:"clusterName" json:"clusterName"`
 }
 
 // Validate validates all block node configuration fields to ensure they are safe and secure.
@@ -138,6 +156,26 @@ func (c *BlockNodeConfig) Validate() error {
 	return nil
 }
 
+// Validate validates all Alloy configuration fields.
+func (c *AlloyConfig) Validate() error {
+	// Only validate if Alloy is enabled
+	if !c.Enabled {
+		return nil
+	}
+
+	// Validate cluster name if provided
+	if c.ClusterName != "" {
+		if err := sanity.ValidateIdentifier(c.ClusterName); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid cluster name: %s", c.ClusterName)
+		}
+	}
+
+	// Note: URLs and credentials are validated at runtime when they're used
+	// to avoid overly restrictive validation here
+
+	return nil
+}
+
 var globalConfig = Config{
 	Log: logx.LoggingConfig{
 		Level:          "Debug",
@@ -158,6 +196,15 @@ var globalConfig = Config{
 			ArchiveSize: "",
 			LogSize:     "",
 		},
+	},
+	Alloy: AlloyConfig{
+		Enabled:            false,
+		MonitorBlockNode:   false,
+		PrometheusURL:      "",
+		PrometheusUsername: "",
+		LokiURL:            "",
+		LokiUsername:       "",
+		ClusterName:        "",
 	},
 }
 
@@ -190,14 +237,6 @@ func Initialize(path string) error {
 	}
 
 	return nil
-}
-
-// overrideWithEnv overrides configuration values with environment variables.
-func overrideWithEnv(value string) string {
-	if envValue := os.Getenv(value); envValue != "" {
-		return envValue
-	}
-	return value
 }
 
 // Get returns the loaded configuration.
@@ -248,5 +287,28 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	}
 	if overrides.Storage.LogSize != "" {
 		globalConfig.BlockNode.Storage.LogSize = overrides.Storage.LogSize
+	}
+}
+
+// OverrideAlloyConfig updates the Alloy configuration with provided overrides.
+// Empty string values are ignored (not applied), except for Enabled which is always applied.
+// Note: Passwords are managed via Vault and External Secrets Operator.
+func OverrideAlloyConfig(overrides AlloyConfig) {
+	globalConfig.Alloy.Enabled = overrides.Enabled
+	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
+	if overrides.PrometheusURL != "" {
+		globalConfig.Alloy.PrometheusURL = overrides.PrometheusURL
+	}
+	if overrides.PrometheusUsername != "" {
+		globalConfig.Alloy.PrometheusUsername = overrides.PrometheusUsername
+	}
+	if overrides.LokiURL != "" {
+		globalConfig.Alloy.LokiURL = overrides.LokiURL
+	}
+	if overrides.LokiUsername != "" {
+		globalConfig.Alloy.LokiUsername = overrides.LokiUsername
+	}
+	if overrides.ClusterName != "" {
+		globalConfig.Alloy.ClusterName = overrides.ClusterName
 	}
 }
