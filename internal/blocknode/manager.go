@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -49,11 +48,11 @@ type Manager struct {
 	kubeClient  *kube.Client
 	clientset   *kubernetes.Clientset // Still needed for pod listing and service updates
 	logger      *zerolog.Logger
-	blockConfig *config.BlockNodeConfig
+	blockConfig core.BlocknodeInputs
 }
 
 // NewManager creates a new block node manager
-func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
+func NewManager(blockConfig core.BlocknodeInputs) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
@@ -91,7 +90,7 @@ func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
 		kubeClient:  kubeClient,
 		clientset:   clientset,
 		logger:      l,
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}, nil
 }
 
@@ -249,7 +248,7 @@ func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) e
 // InstallChart installs the block node helm chart
 func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, error) {
 	// Check if already installed
-	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.ReleaseName, m.blockConfig.Namespace)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -259,22 +258,35 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 		return false, nil
 	}
 
+	chartOptions := helm.InstallChartOptions{
+		ValueOpts: &values.Options{
+			ValueFiles: []string{valuesFile},
+		},
+		CreateNamespace: false, // namespace already created
+		Atomic:          false,
+		Wait:            true,
+		Timeout:         helm.DefaultTimeout,
+	}
+
+	logx.As().Info().
+		Str("release", m.blockConfig.ReleaseName).
+		Str("chartName", m.blockConfig.ChartName).
+		Str("chartRepo", m.blockConfig.ChartRepo).
+		Str("chartVersion", m.blockConfig.ChartVersion).
+		Str("version", m.blockConfig.ChartVersion).
+		Str("namespace", m.blockConfig.Namespace).
+		Str("valuesFile", valuesFile).
+		Any("chartOptions", chartOptions).
+		Msg("Installing Block Node Helm chart")
+
 	// Install the chart
 	_, err = m.helmManager.InstallChart(
 		ctx,
-		m.blockConfig.Release,
-		m.blockConfig.Chart,
-		m.blockConfig.Version,
+		m.blockConfig.ReleaseName,
+		m.blockConfig.ChartRepo,
+		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
-		helm.InstallChartOptions{
-			ValueOpts: &values.Options{
-				ValueFiles: []string{valuesFile},
-			},
-			CreateNamespace: false, // namespace already created
-			Atomic:          true,
-			Wait:            true,
-			Timeout:         helm.DefaultTimeout,
-		},
+		chartOptions,
 	)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to install block node chart")
@@ -285,13 +297,13 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 
 // UninstallChart uninstalls the block node helm chart
 func (m *Manager) UninstallChart(ctx context.Context) error {
-	return m.helmManager.UninstallChart(m.blockConfig.Release, m.blockConfig.Namespace)
+	return m.helmManager.UninstallChart(m.blockConfig.ReleaseName, m.blockConfig.Namespace)
 }
 
 // UpgradeChart upgrades the block node helm chart
 func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValues bool) error {
 	// Check if installed first
-	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.ReleaseName, m.blockConfig.Namespace)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -316,9 +328,9 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 	// Upgrade the chart
 	_, err = m.helmManager.UpgradeChart(
 		ctx,
-		m.blockConfig.Release,
-		m.blockConfig.Chart,
-		m.blockConfig.Version,
+		m.blockConfig.ReleaseName,
+		m.blockConfig.ChartRepo,
+		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		helm.UpgradeChartOptions{
 			ValueOpts: &values.Options{
@@ -339,7 +351,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
-	svcName := fmt.Sprintf("%s%s", m.blockConfig.Release, ServiceNameSuffix)
+	svcName := fmt.Sprintf("%s%s", m.blockConfig.ReleaseName, ServiceNameSuffix)
 
 	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, svcName, metav1.GetOptions{})
 	if err != nil {

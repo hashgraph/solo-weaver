@@ -30,6 +30,17 @@ type BlockNodeStorage struct {
 	LogSize     string `yaml:"logSize" json:"logSize"`
 }
 
+// IsEmpty returns true when all BlockNodeStorage fields are empty (after trimming).
+func (s *BlockNodeStorage) IsEmpty() bool {
+	return strings.TrimSpace(s.BasePath) == "" &&
+		strings.TrimSpace(s.ArchivePath) == "" &&
+		strings.TrimSpace(s.LivePath) == "" &&
+		strings.TrimSpace(s.LogPath) == "" &&
+		strings.TrimSpace(s.LiveSize) == "" &&
+		strings.TrimSpace(s.ArchiveSize) == "" &&
+		strings.TrimSpace(s.LogSize) == ""
+}
+
 // Validate validates all storage paths to ensure they are safe and secure.
 // This performs early validation of user-provided paths to catch security issues
 // before workflow execution begins.
@@ -97,11 +108,13 @@ func (c Config) Validate() error {
 
 // BlockNodeConfig represents the `blockNode` configuration block.
 type BlockNodeConfig struct {
-	Namespace string           `yaml:"namespace" json:"namespace"`
-	Release   string           `yaml:"release" json:"release"`
-	Chart     string           `yaml:"chart" json:"chart"`
-	Version   string           `yaml:"version" json:"version"`
-	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
+	Version      string           `yaml:"version" json:"version"`
+	Namespace    string           `yaml:"namespace" json:"namespace"`
+	ReleaseName  string           `yaml:"releaseName" json:"releaseName"`
+	ChartName    string           `yaml:"chartName" json:"chartName"`
+	ChartRepo    string           `yaml:"chartRepo" json:"chartRepo"`
+	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
+	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
 // AlloyConfig represents the `alloy` configuration block for observability.
@@ -128,16 +141,23 @@ func (c *BlockNodeConfig) Validate() error {
 	}
 
 	// Validate release name if provided (must be a valid Helm release identifier)
-	if c.Release != "" {
-		if err := sanity.ValidateIdentifier(c.Release); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid release name: %s", c.Release)
+	if c.ReleaseName != "" {
+		if err := sanity.ValidateIdentifier(c.ReleaseName); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid release name: %s", c.ReleaseName)
+		}
+	}
+
+	// Validate chart name
+	if c.ChartName != "" {
+		if err := sanity.ValidateChartReference(c.ChartName); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart-name: %s", c.ChartName)
 		}
 	}
 
 	// Validate chart if provided (Helm chart reference: OCI, URL, or repo/chart)
-	if c.Chart != "" {
-		if err := sanity.ValidateChartReference(c.Chart); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.Chart)
+	if c.ChartRepo != "" {
+		if err := sanity.ValidateChartReference(c.ChartRepo); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.ChartRepo)
 		}
 	}
 
@@ -145,6 +165,13 @@ func (c *BlockNodeConfig) Validate() error {
 	if c.Version != "" {
 		if err := sanity.ValidateVersion(c.Version); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid version: %s", c.Version)
+		}
+	}
+
+	// Validate chartVersion if provided (semantic version)
+	if c.ChartVersion != "" {
+		if err := sanity.ValidateVersion(c.ChartVersion); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart version: %s", c.ChartVersion)
 		}
 	}
 
@@ -183,10 +210,11 @@ var globalConfig = Config{
 		FileLogging:    false,
 	},
 	BlockNode: BlockNodeConfig{
-		Namespace: deps.BLOCK_NODE_NAMESPACE,
-		Release:   deps.BLOCK_NODE_RELEASE,
-		Chart:     deps.BLOCK_NODE_CHART,
-		Version:   deps.BLOCK_NODE_VERSION,
+		Namespace:    deps.BLOCK_NODE_NAMESPACE,
+		ReleaseName:  deps.BLOCK_NODE_RELEASE,
+		ChartName:    deps.BLOCK_NODE_CHART_NAME,
+		ChartRepo:    deps.BLOCK_NODE_CHART_REPO,
+		ChartVersion: deps.BLOCK_NODE_CHART_VERSION,
 		Storage: BlockNodeStorage{
 			BasePath:    deps.BLOCK_NODE_STORAGE_BASE_PATH,
 			ArchivePath: "",
@@ -258,11 +286,11 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	if overrides.Namespace != "" {
 		globalConfig.BlockNode.Namespace = overrides.Namespace
 	}
-	if overrides.Release != "" {
-		globalConfig.BlockNode.Release = overrides.Release
+	if overrides.ReleaseName != "" {
+		globalConfig.BlockNode.ReleaseName = overrides.ReleaseName
 	}
-	if overrides.Chart != "" {
-		globalConfig.BlockNode.Chart = overrides.Chart
+	if overrides.ChartRepo != "" {
+		globalConfig.BlockNode.ChartRepo = overrides.ChartRepo
 	}
 	if overrides.Version != "" {
 		globalConfig.BlockNode.Version = overrides.Version

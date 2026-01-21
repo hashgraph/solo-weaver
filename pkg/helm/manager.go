@@ -256,7 +256,7 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return rel, err
 	}
 
-	l.Info().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
+	l.Debug().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
 		Msg("Helm chart installed successfully")
 
 	return rel, nil
@@ -284,7 +284,7 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 	}
 
 	if rel == nil || rel.Release == nil {
-		l.Info().Str("releaseName", releaseName).Msg("Release not found, nothing to uninstall")
+		l.Info().Str("releaseName", releaseName).Msg("ReleaseName not found, nothing to uninstall")
 		return nil
 	}
 
@@ -443,7 +443,7 @@ func (h *helmManager) ListAll() ([]*release.Release, error) {
 // GetRelease retrieves a Helm release by name in the specified namespace
 // It returns ErrNotFound if the release does not exist
 func (h *helmManager) GetRelease(releaseName, namespace string) (*release.Release, error) {
-	h.log.Info().
+	h.log.Debug().
 		Str("releaseName", releaseName).
 		Str("namespace", namespace).
 		Msg("Getting Helm release")
@@ -458,11 +458,16 @@ func (h *helmManager) GetRelease(releaseName, namespace string) (*release.Releas
 
 	st, err := statusClient.Run(releaseName)
 	if err != nil {
+		h.log.Debug().Str("releaseName", releaseName).Str("namespace", namespace).Err(err).
+			Msg("Failed to get Helm release")
 		if errors.Is(err, driver.ErrReleaseNotFound) {
 			return nil, ErrNotFound.Wrap(err, "release %q not found in namespace %q", releaseName, namespace)
 		}
 		return nil, errorx.InternalError.Wrap(err, "failed to get release status")
 	}
+
+	h.log.Debug().Str("releaseName", releaseName).Str("namespace", namespace).Any("status", st.Info.Status).
+		Msg("Helm release retrieved successfully")
 
 	return st, nil
 }
@@ -470,21 +475,30 @@ func (h *helmManager) GetRelease(releaseName, namespace string) (*release.Releas
 // IsInstalled checks if a Helm release is installed in the specified namespace
 // It considers only releases in deployed state as "installed"
 func (h *helmManager) IsInstalled(releaseName, namespace string) (bool, error) {
-	h.log.Info().
+	h.log.Debug().
 		Str("releaseName", releaseName).
 		Str("namespace", namespace).
 		Msg("Checking if Helm release is installed")
 
 	rel, err := h.GetRelease(releaseName, namespace)
 	if err != nil {
+		h.log.Debug().Err(err).Str("releaseName", releaseName).Str("namespace", namespace).
+			Msg("Helm release not found")
 		if errorx.IsOfType(err, ErrNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
 
-	// Consider only releases in deployed state as "installed"
-	return rel.Info.Status == release.StatusDeployed, nil
+	h.log.Debug().Str("releaseName", releaseName).Str("namespace", namespace).Any("status", rel.Info.Status).
+		Str("status", rel.Info.Status.String()).
+		Msg("Found Helm release")
+
+	if rel.Info.Status == release.StatusDeployed {
+		return true, nil
+	}
+
+	return false, errorx.IllegalState.New("release %q in namespace %q is not in deployed state (current state: %s)", releaseName, namespace, rel.Info.Status.String())
 }
 
 // DeployChart installs or upgrades a Helm chart with the given options
@@ -508,7 +522,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 	_, statusErr := statusClient.Run(releaseName)
 
 	if statusErr != nil {
-		// Release not found → Install
+		// ReleaseName not found → Install
 		if errors.Is(statusErr, driver.ErrReleaseNotFound) {
 			l.Info().Msg("Release not found — installing chart")
 			return h.InstallChart(ctx, releaseName, chartRef, chartVersion, namespace, InstallChartOptions{
@@ -524,7 +538,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 		return nil, errorx.IllegalState.Wrap(statusErr, "failed checking release status")
 	}
 
-	// Release exists → Upgrade
+	// ReleaseName exists → Upgrade
 	l.Info().Msg("Release already exists — upgrading chart")
 	return h.UpgradeChart(ctx, releaseName, chartRef, chartVersion, namespace, UpgradeChartOptions{
 		ValueOpts:   o.ValueOpts,

@@ -4,19 +4,14 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// WorkflowExecutionOptions defines options for setting up various components of the cluster
-type WorkflowExecutionOptions struct {
-	ExecutionMode automa.TypeMode
-	RollbackMode  automa.TypeMode
-}
-
 // DefaultWorkflowExecutionOptions returns WorkflowExecutionOptions with all boolean options defaulted to true.
-func DefaultWorkflowExecutionOptions() *WorkflowExecutionOptions {
-	return &WorkflowExecutionOptions{
+func DefaultWorkflowExecutionOptions() *core.WorkflowExecutionOptions {
+	return &core.WorkflowExecutionOptions{
 		ExecutionMode: automa.StopOnError,
 		RollbackMode:  automa.ContinueOnError,
 	}
@@ -74,7 +69,7 @@ func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBui
 
 // WithWorkflowExecutionMode applies the given WorkflowExecutionOptions to the provided WorkflowBuilder.
 // If opts is nil, it uses DefaultWorkflowExecutionOptions.
-func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *WorkflowExecutionOptions) *automa.WorkflowBuilder {
+func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *core.WorkflowExecutionOptions) *automa.WorkflowBuilder {
 	if opts == nil {
 		opts = DefaultWorkflowExecutionOptions()
 	}

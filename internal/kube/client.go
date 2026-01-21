@@ -43,6 +43,7 @@ const (
 	KindJob        ResourceKind = "Job"
 	KindPVC        ResourceKind = "PersistentVolumeClaim"
 	KindCRD        ResourceKind = "CustomResourceDefinition"
+	KindPV         ResourceKind = "PersistentVolume"
 )
 
 var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
@@ -54,6 +55,7 @@ var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
 	KindDeployment: {Group: "apps", Version: "v1", Resource: "deployments"},
 	KindJob:        {Group: "batch", Version: "v1", Resource: "jobs"},
 	KindPVC:        {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	KindPV:         {Group: "", Version: "v1", Resource: "persistentvolumes"},
 	KindCRD:        {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
 }
 
@@ -885,6 +887,30 @@ func IsCRDReady(obj *unstructured.Unstructured, err error) (bool, error) {
 	}
 
 	return established, nil
+}
+
+// ClusterExists returns true if a Kubernetes API server is reachable using the
+// configuration resolved by loadKubeConfig. It returns an error when the check
+// fails due to an unexpected/internal error (wraps the underlying error).
+func ClusterExists() (bool, error) {
+	cfg, err := loadKubeConfig()
+	if err != nil {
+		// Couldn't construct config (no kubeconfig / in-cluster config failure)
+		return false, err
+	}
+
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return false, errorx.InternalError.Wrap(err, "failed to create discovery client")
+	}
+
+	// ServerVersion performs a simple call to the API server; if it succeeds
+	// the cluster is reachable and responding.
+	if _, err := disco.ServerVersion(); err != nil {
+		return false, errorx.InternalError.Wrap(err, "failed to contact API server")
+	}
+
+	return true, nil
 }
 
 // CRDExists checks if a CustomResourceDefinition exists in the cluster.
