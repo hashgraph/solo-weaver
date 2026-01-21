@@ -23,6 +23,7 @@ type State struct {
 
 type MachineState struct {
 	Software      map[string]SoftwareState `yaml:"software" json:"software"`
+	Hardware      map[string]HardwareState `yaml:"hardware" json:"hardware"` // e.g. CPU, RAM, Disk info
 	Storage       map[string]StorageState  `yaml:"storage" json:"storage"`
 	Initialized   bool                     `yaml:"initialized" json:"initialized"`
 	InitializedAt htime.Time               `yaml:"initializedAt,omitempty" json:"initializedAt,omitempty"`
@@ -31,11 +32,19 @@ type MachineState struct {
 
 type SoftwareState struct {
 	Name        string     `yaml:"name" json:"name"`
+	Type        string     `yaml:"type" json:"type"` // e.g. "binary", "container", "script"
 	Version     string     `yaml:"version" json:"version"`
 	Source      string     `yaml:"source" json:"source"`
 	Installed   bool       `yaml:"installed" json:"installed"`
 	InstalledAt htime.Time `yaml:"installedAt,omitempty" json:"installedAt,omitempty"`
 	LastSync    htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+}
+
+type HardwareState struct {
+	Type  string `yaml:"type" json:"type"`                       // e.g. "CPU", "RAM", "Disk"
+	Info  string `yaml:"info" json:"info"`                       // e.g. "Intel i7", "16GB", "1TB SSD"
+	Count int    `yaml:"count,omitempty" json:"count,omitempty"` // e.g. number of CPUs
+	Size  string `yaml:"size,omitempty" json:"size,omitempty"`   // e.g. size for RAM or Disk
 }
 
 type StorageState struct {
