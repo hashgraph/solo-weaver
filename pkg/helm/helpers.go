@@ -4,9 +4,11 @@ package helm
 
 import (
 	"os"
+	"path/filepath"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/registry"
 )
 
@@ -14,6 +16,32 @@ import (
 
 // helmDriver is the Helm storage driver, default is "secrets"
 var helmDriver string = os.Getenv("HELM_DRIVER")
+
+func init() {
+	// Fix for fieldManager length issue - Kubernetes API rejects field managers > 128 bytes.
+	// When running via `go test` or IntelliJ, os.Args[0] can be a very long temp path like
+	// "/private/var/folders/.../go_build_github_com_hashgraph_solo_weaver_..." which exceeds 128 bytes.
+	// We truncate to ensure it stays under the limit while preserving as much useful info as possible.
+	kube.ManagedFieldsManager = truncateFieldManager(os.Args[0], 128)
+}
+
+// truncateFieldManager ensures the field manager name doesn't exceed maxLen bytes.
+// It uses the base name of the path and truncates if necessary.
+func truncateFieldManager(path string, maxLen int) string {
+	if path == "" {
+		return "helm"
+	}
+
+	// Use base name to get a shorter, more meaningful name
+	name := filepath.Base(path)
+
+	// If still too long, truncate from the beginning to keep the end (usually more meaningful)
+	if len(name) > maxLen {
+		name = name[len(name)-maxLen:]
+	}
+
+	return name
+}
 
 func initActionConfig(settings *cli.EnvSettings, debug action.DebugLog) (*action.Configuration, error) {
 	return initActionConfigList(settings, debug, false)
