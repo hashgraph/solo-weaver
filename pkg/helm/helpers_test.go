@@ -5,6 +5,8 @@ package helm
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestTruncateFieldManager(t *testing.T) {
@@ -27,7 +29,7 @@ func TestTruncateFieldManager(t *testing.T) {
 			expected: "weaver",
 		},
 		{
-			name:     "long IntelliJ test path truncated",
+			name:     "long IntelliJ test path base name extracted",
 			path:     "/private/var/folders/30/yl_b12wx77q66hvnshhf66c40000gp/T/GoLand/___go_build_github_com_hashgraph_solo_weaver_cmd_weaver_commands_block_node",
 			maxLen:   128,
 			expected: "___go_build_github_com_hashgraph_solo_weaver_cmd_weaver_commands_block_node",
@@ -42,7 +44,7 @@ func TestTruncateFieldManager(t *testing.T) {
 			name:     "base name over limit truncated from start",
 			path:     "/some/path/" + strings.Repeat("a", 10) + strings.Repeat("b", 130),
 			maxLen:   128,
-			expected: strings.Repeat("a", 10) + strings.Repeat("b", 130),
+			expected: strings.Repeat("b", 128),
 		},
 	}
 
@@ -52,13 +54,8 @@ func TestTruncateFieldManager(t *testing.T) {
 			if len(result) > tt.maxLen {
 				t.Errorf("truncateFieldManager() returned %d bytes, want <= %d", len(result), tt.maxLen)
 			}
-			// For paths that should result in base name, verify
-			if tt.path != "" && len(result) <= tt.maxLen {
-				// Result should not exceed maxLen
-				if len(result) > tt.maxLen {
-					t.Errorf("Result length %d exceeds maxLen %d", len(result), tt.maxLen)
-				}
-			}
+			require.Equal(t, tt.expected, result)
+
 		})
 	}
 }
