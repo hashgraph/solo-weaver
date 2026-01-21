@@ -194,6 +194,7 @@ func calculateSHA256(data []byte) string {
 
 // Test scenarios using table-driven tests
 func Test_BaseInstaller_Scenarios(t *testing.T) {
+	testutil.Serial(t) // Enforce sequential execution due to shared system state
 	requireLinux(t)
 	requireRoot(t)
 
@@ -589,6 +590,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 
 // Test successful download
 func Test_BaseInstaller_Download_Success(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -609,6 +611,7 @@ func Test_BaseInstaller_Download_Success(t *testing.T) {
 
 // Test when download fails due to invalid configuration
 func Test_BaseInstaller_Download_Fails(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -631,6 +634,7 @@ func Test_BaseInstaller_Download_Fails(t *testing.T) {
 
 // Test when checksum fails (this test might need adjustment based on actual config)
 func Test_BaseInstaller_Download_ChecksumFails(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -668,6 +672,7 @@ func Test_BaseInstaller_Download_ChecksumFails(t *testing.T) {
 
 // Test idempotency with existing valid file
 func Test_BaseInstaller_Download_Idempotency_ExistingFile(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -692,6 +697,7 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile(t *testing.T) {
 }
 
 func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -723,6 +729,7 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testi
 }
 
 func Test_BaseInstaller_Extract_Success(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -750,6 +757,7 @@ func Test_BaseInstaller_Extract_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_Extract_Error(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -824,6 +832,7 @@ func Test_BaseInstaller_replaceAllInFile(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -897,6 +906,7 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
+	testutil.Serial(t)
 	testutil.RequireChattrSupport(t)
 	testutil.ResetTestEnvironment(t)
 
@@ -961,6 +971,7 @@ func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1026,6 +1037,7 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_VersionNotFound(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1068,6 +1080,7 @@ func Test_BaseInstaller_Uninstall_VersionNotFound(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1166,6 +1179,7 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 }
 
 func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1241,6 +1255,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 
 // Tests for RemoveConfiguration method
 func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1312,6 +1327,7 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1392,6 +1408,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 }
 
 func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//
@@ -1483,6 +1500,7 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
+	testutil.Serial(t)
 	testutil.RequireChattrSupport(t)
 	testutil.ResetTestEnvironment(t)
 
@@ -1552,6 +1570,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 }
 
 func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
+	testutil.Serial(t)
 	testutil.ResetTestEnvironment(t)
 
 	//

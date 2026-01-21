@@ -18,7 +18,7 @@ import (
 // TestHelmLifecycle_InstallAndUpgradeWithValueReuse tests a complete installation flow with flag overrides
 // and multiple upgrade scenarios with different value reuse behaviors
 func TestHelmLifecycle_InstallAndUpgradeWithValueReuse(t *testing.T) {
-	serial(t) // Enforce sequential execution due to shared flag variables
+	testutil.Serial(t) // Enforce sequential execution due to shared flag variables
 
 	testutil.Reset(t)
 
