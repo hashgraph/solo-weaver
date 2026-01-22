@@ -36,6 +36,11 @@ func (m *mockStep) State() automa.StateBag {
 	return m.state
 }
 
+func (m *mockStep) WithState(s automa.StateBag) automa.Step {
+	m.state = s
+	return m
+}
+
 func (m *mockStep) Id() string { return m.id }
 
 func TestNotificationHandler_Callbacks(t *testing.T) {

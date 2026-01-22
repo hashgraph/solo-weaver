@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
@@ -17,19 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// serialMu enforces sequential execution of tests that manipulate shared package-level flag variables.
-// Tests acquire this lock at the start and release it via t.Cleanup, ensuring mutual exclusion.
-var serialMu sync.Mutex
-
-// serial ensures a test runs sequentially, never in parallel with other tests using this function.
-// It acquires a mutex that is released when the test completes (via t.Cleanup).
-// This protects shared package-level flag variables from concurrent access.
-func serial(t *testing.T) {
-	t.Helper()
-	serialMu.Lock()
-	t.Cleanup(serialMu.Unlock)
-}
 
 // resetFlags resets all flag variables to empty strings
 func resetFlags(cmd *cobra.Command) {
@@ -95,7 +81,7 @@ func getPVCStorageSize(t *testing.T, pvcName, namespace string) string {
 
 // TestNegative_InvalidValuesFilePath tests that invalid values file paths are rejected
 func TestNegative_InvalidValuesFilePath(t *testing.T) {
-	serial(t)
+	testutil.Serial(t)
 
 	testCases := []struct {
 		name          string
@@ -175,7 +161,7 @@ blockNode:
 // TestNegative_InvalidStoragePaths tests that invalid storage paths are rejected
 // when they are actually validated in GetStoragePaths() during the workflow execution
 func TestNegative_InvalidStoragePaths(t *testing.T) {
-	serial(t)
+	testutil.Serial(t)
 
 	testCases := []struct {
 		name          string
@@ -256,7 +242,7 @@ blockNode:
 
 // TestNegative_DirectoryAsValuesFile tests that directories are rejected as values files
 func TestNegative_DirectoryAsValuesFile(t *testing.T) {
-	serial(t)
+	testutil.Serial(t)
 
 	testutil.Reset(t)
 
@@ -294,7 +280,7 @@ blockNode:
 
 // TestNegative_InvalidChartVersion tests various invalid chart version formats
 func TestNegative_InvalidChartVersion(t *testing.T) {
-	serial(t)
+	testutil.Serial(t)
 
 	cmd := testutil.PrepareSubCmdForTest(GetCmd())
 	resetFlags(cmd)
@@ -425,7 +411,7 @@ blockNode:
 
 // TestNegative_InvalidYAMLInConfigFile tests that invalid YAML in config file is handled
 func TestNegative_InvalidYAMLInConfigFile(t *testing.T) {
-	serial(t)
+	testutil.Serial(t)
 
 	testutil.Reset(t)
 

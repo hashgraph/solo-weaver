@@ -7,12 +7,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
+
+// serialMu enforces sequential execution of tests that manipulate shared system state.
+// Tests acquire this lock at the start and release it via t.Cleanup, ensuring mutual exclusion.
+var serialMu sync.Mutex
+
+// Serial ensures a test runs sequentially, never in parallel with other tests using this function.
+// It acquires a mutex that is released when the test completes (via t.Cleanup).
+// This protects shared system state (e.g., /opt/solo/weaver, /usr/local/bin) from concurrent access.
+func Serial(t *testing.T) {
+	t.Helper()
+	serialMu.Lock()
+	t.Cleanup(serialMu.Unlock)
+}
 
 // PrepareSubCmdForTest creates a root command with the given subcommand added.
 // Use this from tests in other packages to avoid duplicating the helper.

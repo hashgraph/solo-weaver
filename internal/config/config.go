@@ -258,6 +258,10 @@ func Initialize(path string) error {
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 
+		// Migrate old config field names to new names for backward compatibility
+		// Old format: release, chart -> New format: releaseName, chartRepo
+		migrateOldConfigKeys()
+
 		if err := viper.Unmarshal(&globalConfig); err != nil {
 			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
 				WithProperty(errorx.PropertyPayload(), path)

@@ -57,7 +57,7 @@ func NewRuntimeBase[T any](
 // It respects refreshInterval if lastSync is provided.
 func (rb *Base[T]) RefreshState(ctx context.Context, force bool) error {
 	if rb.fetch == nil {
-		return errorx.IllegalState.New(rb.fetchName + " fetcher is not initialized")
+		return errorx.IllegalState.New("%s fetcher is not initialized", rb.fetchName)
 	}
 
 	now := htime.Now()
