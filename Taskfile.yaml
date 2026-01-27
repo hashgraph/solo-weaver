@@ -8,6 +8,7 @@ vars:
   ARCH: [ amd64, arm64 ]
   GO_VERSION: 1.25.2
   LDFLAGS: "-w -s"
+  LDFLAGS_RELEASE: "-w -s -X 'github.com/hashgraph/solo-weaver/internal/version.buildMode=release'"
   # VM configuration
   VM_OS_TYPE: '{{.VM_OS_TYPE | default "debian"}}'  # Options: debian, ubuntu
   VM_NAME: "solo-weaver-{{.VM_OS_TYPE}}"
@@ -75,10 +76,24 @@ tasks:
     generates:
       - "bin/weaver-linux-*"
       - "bin/weaver-darwin-*"
-  
+
+  build:release:
+    desc: "Build all binaries for release (production mode)"
+    deps:
+      - "vendor"
+    cmds:
+      - task: "clean"
+      - task: "generate"
+      - task: "build:weaver:release:all"
+    sources:
+      - "**/*.go"
+    generates:
+      - "bin/weaver-linux-*"
+      - "bin/weaver-darwin-*"
+
   hash:
     deps:
-      - "build"
+      - "build:release"
     cmds:
       - task: "hash:weaver:all"
     sources:
@@ -86,13 +101,13 @@ tasks:
       - "bin/weaver-darwin-*"
     generates:
       - "bin/*.sha256"
-  
+
   sign:
     deps:
-      - "build"
+      - "build:release"
     cmds:
       - task: "sign:weaver:all"
-  
+
   build:image:
     deps:
       - task: "hash"
@@ -130,7 +145,7 @@ tasks:
           GOARCH: "{{.ITEM}}"
   
   build:weaver:
-    desc: "Build the binary for the specified operating system and architecture"
+    desc: "Build the binary for the specified operating system and architecture (dev mode)"
     env:
       GOOS: "{{coalesce .GOOS OS}}"
       GOARCH: "{{coalesce .GOARCH ARCH}}"
@@ -138,6 +153,39 @@ tasks:
       - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
       - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
   
+  build:weaver:release:
+    desc: "Build the binary for release (production mode - disables dev-only features)"
+    env:
+      GOOS: "{{coalesce .GOOS OS}}"
+      GOARCH: "{{coalesce .GOARCH ARCH}}"
+    cmds:
+      - cmd: go build -ldflags='{{.LDFLAGS_RELEASE}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
+      - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
+
+  build:weaver:release:all:
+    desc: "Build release binaries for all configured operating systems and architectures"
+    cmds:
+      - task: build:weaver:release:all:os
+
+  build:weaver:release:all:os:
+    internal: true
+    cmds:
+      - for:
+          var: OS
+        task: build:weaver:release:all:arch
+        vars:
+          GOOS: "{{.ITEM}}"
+
+  build:weaver:release:all:arch:
+    internal: true
+    cmds:
+      - for:
+          var: ARCH
+        task: build:weaver:release
+        vars:
+          GOOS: "{{.GOOS}}"
+          GOARCH: "{{.ITEM}}"
+
   hash:weaver:all:
     desc: "Hash the binary binaries for all configured operating systems and architectures"
     cmds:
@@ -1592,3 +1640,340 @@ tasks:
           {{.VM_USER}}@$VM_IP \
           'echo "✅ Port forwarding active. Press Ctrl+C to stop..." && tail -f /dev/null'
 
+  # ===========================
+  # Teleport Local Development
+  # ===========================
+
+  teleport:start:
+    desc: "Start Teleport server and generate values file for local development"
+    dir: test/teleport
+    cmds:
+      - |
+        echo "🔧 Setting up Teleport server..."
+        
+        # Step 1: Get node IP first (we need it for the server config)
+        NODE_IP=""
+        if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null; then
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+        fi
+        if [ -z "$NODE_IP" ]; then
+          NODE_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+        fi
+        if [ -z "$NODE_IP" ]; then
+          NODE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+        fi
+        if [ -z "$NODE_IP" ]; then
+          echo "❌ Could not determine node IP address"
+          exit 1
+        fi
+        echo "✓ Detected node IP: $NODE_IP"
+        
+        # Step 2: Create volumes
+        docker volume create teleport_teleport-config 2>/dev/null || true
+        docker volume create teleport_teleport-data 2>/dev/null || true
+        
+        # Step 3: Remove existing config file if present
+        docker run --rm -v teleport_teleport-config:/etc/teleport alpine rm -f /etc/teleport/teleport.yaml 2>/dev/null || true
+        
+        # Step 4: Generate config file with the node IP as public_addr
+        # This is critical - the agent needs to know the real address to connect back to
+        echo "📝 Generating Teleport configuration with public_addr=$NODE_IP:3080..."
+        docker run --hostname "$NODE_IP" --rm \
+          --entrypoint=/usr/local/bin/teleport \
+          -v teleport_teleport-config:/etc/teleport \
+          public.ecr.aws/gravitational/teleport-distroless:18.6.4 \
+          configure --roles=proxy,auth --public-addr="$NODE_IP:3080" -o /etc/teleport/teleport.yaml
+        
+        # Step 5: Start Teleport
+        echo "🚀 Starting Teleport server..."
+        docker compose up -d
+        
+        # Step 6: Wait for it to be ready
+        echo "⏳ Waiting for Teleport to be ready..."
+        max_attempts=30
+        attempt=0
+        while ! curl --insecure -s https://localhost:3080/webapi/ping > /dev/null 2>&1; do
+          attempt=$((attempt + 1))
+          if [ $attempt -ge $max_attempts ]; then
+            echo "⚠️  Teleport may still be starting. Check logs with: docker logs solo-weaver-teleport"
+            exit 1
+          fi
+          echo "   Waiting... (attempt $attempt/$max_attempts)"
+          sleep 2
+        done
+        
+        echo "✅ Teleport server is running!"
+        
+        # Step 7: Add certificate to system trust store
+        echo ""
+        echo "🔐 Adding Teleport certificate to system trust store..."
+        CERT_FILE="/tmp/teleport-server.crt"
+        echo | openssl s_client -connect localhost:3080 -showcerts 2>/dev/null | \
+          openssl x509 -outform PEM > "$CERT_FILE"
+        if [ -s "$CERT_FILE" ]; then
+          sudo cp "$CERT_FILE" /usr/local/share/ca-certificates/teleport-server.crt
+          sudo update-ca-certificates
+          echo "✅ Certificate added to system trust store"
+        else
+          echo "⚠️  Could not extract certificate (will need manual trust setup)"
+        fi
+        
+        # Step 8: Generate a join token
+        echo ""
+        echo "🎫 Generating Teleport join token..."
+        TOKEN=$(docker exec solo-weaver-teleport tctl tokens add --type=kube --ttl=24h --format=text 2>/dev/null)
+        
+        if [ -z "$TOKEN" ]; then
+          echo "⚠️  Could not generate token automatically. Use 'task teleport:new-token' later."
+          TOKEN="REPLACE_WITH_JOIN_TOKEN"
+        fi
+        
+        # Step 9: Create the configured values file
+        OUTPUT_FILE="/tmp/teleport-values-configured.yaml"
+        sed "s|REPLACE_WITH_NODE_IP|$NODE_IP|g; s|REPLACE_WITH_JOIN_TOKEN|$TOKEN|g" teleport-values-local.yaml > "$OUTPUT_FILE"
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Teleport is ready for local development!"
+        echo ""
+        echo "🌐 Web UI: https://localhost:3080"
+        echo "          https://$NODE_IP:3080 (from k8s pods)"
+        echo ""
+        echo "📋 Configuration:"
+        echo "   Proxy Addr: $NODE_IP:3080"
+        echo "   Values file: $OUTPUT_FILE"
+        echo ""
+        echo "📝 Next step: Install cluster with Teleport agent"
+        echo "   sudo weaver block node install \\"
+        echo "     --profile=local \\"
+        echo "     --teleport-enabled \\"
+        echo "     --teleport-values=$OUTPUT_FILE"
+        echo ""
+        echo "👤 To create an admin user:"
+        echo "   docker exec solo-weaver-teleport tctl users add admin --roles=editor,access --logins=root"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  teleport:stop:
+    desc: "Stop Teleport server"
+    dir: test/teleport
+    cmds:
+      - docker compose down
+
+  teleport:clean:
+    desc: "Stop and remove all Teleport data (volumes)"
+    dir: test/teleport
+    cmds:
+      - docker compose down -v
+      - docker volume rm teleport_teleport-config teleport_teleport-data 2>/dev/null || true
+      - echo "✅ Teleport server stopped and data removed"
+
+  teleport:logs:
+    desc: "Show logs from Teleport server"
+    dir: test/teleport
+    cmds:
+      - docker compose logs -f
+
+  teleport:kube-token:
+    desc: "Generate a new Kubernetes agent join token"
+    dir: test/teleport
+    cmds:
+      - |
+        echo "🎫 Generating new Teleport Kubernetes agent join token..."
+        TOKEN=$(docker exec solo-weaver-teleport tctl tokens add --type=kube --ttl=24h --format=text 2>/dev/null)
+        if [ -z "$TOKEN" ]; then
+          echo "❌ Failed to generate token. Is Teleport running?"
+          exit 1
+        fi
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ New Kubernetes agent join token generated!"
+        echo ""
+        echo "Token: $TOKEN"
+        echo ""
+        echo "📝 Run 'task teleport:start' to regenerate the values file with this token"
+        echo "   Or manually update: /tmp/teleport-values-configured.yaml"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  teleport:status:
+    desc: "Show Teleport server status"
+    dir: test/teleport
+    cmds:
+      - |
+        echo "Teleport Server Status:"
+        echo "======================="
+        docker compose ps
+        echo ""
+        if docker ps | grep -q solo-weaver-teleport; then
+          echo "Service URLs:"
+          echo "  • Web UI: https://localhost:3080"
+          echo ""
+          echo "Cluster info:"
+          docker exec solo-weaver-teleport tctl status 2>/dev/null || echo "  (waiting for Teleport to be ready...)"
+        else
+          echo "Teleport server is not running"
+          echo "Start it with: task teleport:start"
+        fi
+
+  teleport:node-agent-token:
+    desc: "Generate a fresh node agent token for local dev"
+    dir: test/teleport
+    cmds:
+      - |
+        echo "🔧 Generating Teleport node agent token..."
+        
+        # Check if Teleport server is running
+        if ! docker ps | grep -q solo-weaver-teleport; then
+          echo "❌ Teleport server is not running. Start it first with: task teleport:start"
+          exit 1
+        fi
+        
+        # Generate a fresh token with short TTL (15 minutes)
+        echo "🎫 Generating fresh node agent token (15 minute TTL)..."
+        NEW_TOKEN=$(docker exec solo-weaver-teleport tctl tokens add --type=node --ttl=15m --format=text 2>/dev/null)
+        
+        if [ -z "$NEW_TOKEN" ]; then
+          echo "❌ Failed to generate token. Is Teleport ready?"
+          exit 1
+        fi
+        
+        # Get node IP for the proxy address
+        NODE_IP=""
+        if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null; then
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+        fi
+        if [ -z "$NODE_IP" ]; then
+          NODE_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+        fi
+        if [ -z "$NODE_IP" ]; then
+          NODE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+        fi
+        
+        if [ -z "$NODE_IP" ]; then
+          echo "❌ Could not determine node IP"
+          exit 1
+        fi
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Node agent token generated!"
+        echo ""
+        echo "📋 Token:     $NEW_TOKEN"
+        echo "🌐 Proxy:     ${NODE_IP}:3080"
+        echo "⏱️  Expires:   15 minutes"
+        echo ""
+        echo "📝 To install with weaver, run:"
+        echo "   sudo weaver block node install \\"
+        echo "     --profile=local \\"
+        echo "     --teleport-enabled \\"
+        echo "     --teleport-values=/tmp/teleport-values-configured.yaml \\"
+        echo "     --teleport-node-agent-token=$NEW_TOKEN \\"
+        echo "     --teleport-node-agent-proxy=${NODE_IP}:3080"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ===========================
+  # VM Teleport Setup
+  # ===========================
+
+  vm:teleport:start:
+    desc: "Start Teleport server in the VM"
+    deps: [vm:install-docker]
+    cmds:
+      - |
+        echo "🚀 Starting Teleport server in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task teleport:start'"
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Teleport server started in VM!"
+        echo ""
+        echo "📋 Next steps:"
+        echo "   1. SSH into VM: task vm:ssh"
+        echo "   2. Install with Teleport:"
+        echo "      sudo weaver block node install \\"
+        echo "        --profile=local \\"
+        echo "        --teleport-enabled \\"
+        echo "        --teleport-values=/mnt/solo-weaver/test/teleport/teleport-values-local.yaml"
+        echo ""
+        echo "💡 To access Teleport Web UI from your Mac:"
+        echo "   task vm:teleport-forward"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  vm:teleport:stop:
+    desc: "Stop Teleport server in the VM"
+    cmds:
+      - |
+        echo "🛑 Stopping Teleport server in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task teleport:stop'"
+        echo "✅ Teleport server stopped"
+
+  vm:teleport:clean:
+    desc: "Stop and remove all Teleport data in the VM"
+    cmds:
+      - |
+        echo "🧹 Cleaning Teleport server in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task teleport:clean'"
+        echo "✅ Teleport server cleaned"
+
+  vm:teleport-forward:
+    desc: "Forward Teleport ports from VM to Mac (Web UI:3080)"
+    cmds:
+      - |
+        echo "🔌 Setting up port forwarding for Teleport..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🌐 Forwarding Teleport ports from VM to your Mac:"
+        echo "   • Web UI:  localhost:3080 → VM:3080"
+        echo "   • SSH:     localhost:3023 → VM:3023"
+        echo "   • Tunnel:  localhost:3024 → VM:3024"
+        echo "   • Auth:    localhost:3025 → VM:3025"
+        echo "   • Kube:    localhost:3026 → VM:3026"
+        echo ""
+        echo "📊 Access in your browser:"
+        echo "   • https://localhost:3080 (Teleport Web UI)"
+        echo ""
+        echo "⚠️  Press Ctrl+C to stop port forwarding"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no \
+          -L 3080:localhost:3080 \
+          -L 3023:localhost:3023 \
+          -L 3024:localhost:3024 \
+          -L 3025:localhost:3025 \
+          -L 3026:localhost:3026 \
+          {{.VM_USER}}@$VM_IP \
+          'echo "✅ Port forwarding active. Press Ctrl+C to stop..." && tail -f /dev/null'

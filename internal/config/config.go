@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/version"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -17,6 +18,7 @@ type Config struct {
 	Log       logx.LoggingConfig `yaml:"log" json:"log"`
 	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
 	Alloy     AlloyConfig        `yaml:"alloy" json:"alloy"`
+	Teleport  TeleportConfig     `yaml:"teleport" json:"teleport"`
 }
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.
@@ -90,6 +92,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Alloy.Validate(); err != nil {
+		return err
+	}
+	if err := c.Teleport.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -176,6 +181,58 @@ func (c *AlloyConfig) Validate() error {
 	return nil
 }
 
+// TeleportConfig represents the `teleport` configuration block for secure access.
+// Teleport configuration is provided via a Helm values file, similar to block node.
+type TeleportConfig struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`
+	Version            string `yaml:"version" json:"version"`
+	ValuesFile         string `yaml:"valuesFile" json:"valuesFile"`
+	NodeAgentToken     string `yaml:"nodeAgentToken" json:"nodeAgentToken"`         // Join token for host-level SSH agent
+	NodeAgentProxyAddr string `yaml:"nodeAgentProxyAddr" json:"nodeAgentProxyAddr"` // Teleport proxy address (default: hashgraph.teleport.sh, use IP:port for local dev)
+}
+
+// Default Teleport proxy address for production
+const DefaultTeleportProxyAddr = "hashgraph.teleport.sh"
+
+// Validate validates all Teleport configuration fields.
+func (c *TeleportConfig) Validate() error {
+	// Only validate if Teleport is enabled
+	if !c.Enabled {
+		return nil
+	}
+
+	// ValuesFile is required when enabled
+	if c.ValuesFile == "" {
+		return errorx.IllegalArgument.New("teleport valuesFile is required when enabled")
+	}
+
+	// Validate ValuesFile path
+	if _, err := sanity.SanitizePath(c.ValuesFile); err != nil {
+		return errorx.IllegalArgument.Wrap(err, "invalid teleport valuesFile path: %s", c.ValuesFile)
+	}
+
+	// Validate NodeAgentToken if provided - must be alphanumeric (hex token)
+	if c.NodeAgentToken != "" {
+		if err := sanity.ValidateHexToken(c.NodeAgentToken); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentToken: %s", c.NodeAgentToken)
+		}
+	}
+
+	// Validate NodeAgentProxyAddr if provided
+	if c.NodeAgentProxyAddr != "" {
+		// In release builds, custom proxy addresses are not allowed for security
+		if version.IsReleaseBuild() {
+			return errorx.IllegalArgument.New("teleport nodeAgentProxyAddr is not allowed in release builds (must use %s)", DefaultTeleportProxyAddr)
+		}
+		// Basic validation for dev builds
+		if err := sanity.ValidateHostPort(c.NodeAgentProxyAddr); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentProxyAddr: %s", c.NodeAgentProxyAddr)
+		}
+	}
+
+	return nil
+}
+
 var globalConfig = Config{
 	Log: logx.LoggingConfig{
 		Level:          "Debug",
@@ -205,6 +262,11 @@ var globalConfig = Config{
 		LokiURL:            "",
 		LokiUsername:       "",
 		ClusterName:        "",
+	},
+	Teleport: TeleportConfig{
+		Enabled:    false,
+		Version:    "18.6.4",
+		ValuesFile: "",
 	},
 }
 
@@ -310,5 +372,23 @@ func OverrideAlloyConfig(overrides AlloyConfig) {
 	}
 	if overrides.ClusterName != "" {
 		globalConfig.Alloy.ClusterName = overrides.ClusterName
+	}
+}
+
+// OverrideTeleportConfig updates the Teleport configuration with provided overrides.
+// Empty string values are ignored (not applied), except for Enabled which is always applied.
+func OverrideTeleportConfig(overrides TeleportConfig) {
+	globalConfig.Teleport.Enabled = overrides.Enabled
+	if overrides.Version != "" {
+		globalConfig.Teleport.Version = overrides.Version
+	}
+	if overrides.ValuesFile != "" {
+		globalConfig.Teleport.ValuesFile = overrides.ValuesFile
+	}
+	if overrides.NodeAgentToken != "" {
+		globalConfig.Teleport.NodeAgentToken = overrides.NodeAgentToken
+	}
+	if overrides.NodeAgentProxyAddr != "" {
+		globalConfig.Teleport.NodeAgentProxyAddr = overrides.NodeAgentProxyAddr
 	}
 }

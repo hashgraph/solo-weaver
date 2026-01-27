@@ -98,4 +98,16 @@ func applyConfigOverrides() {
 		},
 	}
 	config.OverrideBlockNodeConfig(overrides)
+
+	// Apply Teleport overrides if any flags are set
+	if flagTeleportEnabled || flagTeleportVersion != "" || flagTeleportValuesFile != "" || flagTeleportNodeAgentToken != "" || flagTeleportNodeAgentProxyAddr != "" {
+		teleportOverrides := config.TeleportConfig{
+			Enabled:            flagTeleportEnabled,
+			Version:            flagTeleportVersion,
+			ValuesFile:         flagTeleportValuesFile,
+			NodeAgentToken:     flagTeleportNodeAgentToken,
+			NodeAgentProxyAddr: flagTeleportNodeAgentProxyAddr,
+		}
+		config.OverrideTeleportConfig(teleportOverrides)
+	}
 }

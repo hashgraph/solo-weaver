@@ -1,0 +1,18 @@
+log:
+  level: debug
+  consoleLogging: true
+  fileLogging: false
+blockNode:
+  namespace: "block-node"
+  release: "block-node"
+  chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  version: "0.22.1"
+  storage:
+    basePath: "/mnt/fast-storage"
+teleport:
+  enabled: true
+  version: "18.6.4"
+  valuesFile: "/mnt/solo-weaver/test/teleport/teleport-values-local.yaml"  # Required: path to Helm values file
+  # nodeAgentToken: "58566f1f672c0db769bf1fe7681121dc"  # Optional: join token for host-level SSH agent
+  # nodeAgentProxyAddr: "192.168.1.100:3080"  # Optional: for local dev (default: hashgraph.teleport.sh)
+

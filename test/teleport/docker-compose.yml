@@ -1,0 +1,29 @@
+services:
+  # Teleport Server for local development
+  # Following official docs: https://goteleport.com/docs/installation/docker/
+  #
+  # NOTE: Container processes are visible to host's `ps` (Linux kernel design).
+  # This causes the Teleport node agent install script to detect a "running teleport".
+  # Use `task teleport:install-node-agent` which handles stopping/starting the container.
+  teleport:
+    image: public.ecr.aws/gravitational/teleport-distroless:18.6.4
+    container_name: solo-weaver-teleport
+    hostname: localhost
+    ports:
+      - "3025:3025"   # Auth service
+      - "3080:3080"   # Web UI, proxy, and all services (TLS routing)
+    volumes:
+      - teleport-config:/etc/teleport
+      - teleport-data:/var/lib/teleport
+    restart: unless-stopped
+    networks:
+      - teleport
+
+volumes:
+  teleport-config:
+  teleport-data:
+
+networks:
+  teleport:
+    name: solo-weaver-teleport
+

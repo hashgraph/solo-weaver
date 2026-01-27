@@ -96,6 +96,71 @@ func ValidateIdentifier(s string) error {
 	return nil
 }
 
+// ValidateHexToken validates that a string is a valid hexadecimal token.
+// This is used for tokens like Teleport join tokens which are hex strings.
+// The token must:
+//  1. Not be empty
+//  2. Contain only hexadecimal characters (0-9, a-f, A-F)
+//  3. Have a reasonable length (between 16 and 64 characters)
+func ValidateHexToken(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("token cannot be empty")
+	}
+
+	// Check length - tokens should be between 16 and 64 hex characters
+	if len(s) < 16 || len(s) > 64 {
+		return errorx.IllegalArgument.New("token must be between 16 and 64 characters, got %d", len(s))
+	}
+
+	// Check if all characters are valid hex digits
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return errorx.IllegalArgument.New("token contains non-hexadecimal characters: %s", s)
+		}
+	}
+
+	return nil
+}
+
+// ValidateHostPort validates a host:port string.
+// Accepts formats like:
+//   - hostname (assumes default port)
+//   - hostname:port
+//   - IP:port (e.g., 192.168.1.1:3080)
+//
+// Does NOT allow:
+//   - Path traversal sequences
+//   - Shell metacharacters
+//   - URLs (use ValidateURL for those)
+func ValidateHostPort(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("host:port cannot be empty")
+	}
+
+	// Check for path traversal
+	if strings.Contains(s, "..") || strings.Contains(s, "/") {
+		return errorx.IllegalArgument.New("host:port cannot contain path components: %s", s)
+	}
+
+	// Check for shell metacharacters
+	if shellMetachars.MatchString(s) {
+		return errorx.IllegalArgument.New("host:port contains invalid characters: %s", s)
+	}
+
+	// Basic format validation - should be host or host:port
+	// Allow alphanumeric, dots, hyphens, and colons (for port)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '.' || c == '-' || c == ':') {
+			return errorx.IllegalArgument.New("host:port contains invalid character '%c': %s", c, s)
+		}
+	}
+
+	return nil
+}
+
 // Filename is an alias for Identifier
 func Filename(s string) (string, error) {
 	return Identifier(s)
