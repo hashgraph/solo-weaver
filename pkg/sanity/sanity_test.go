@@ -1752,3 +1752,465 @@ func TestSanity_ValidateStorageSize(t *testing.T) {
 		})
 	}
 }
+
+func TestSanity_ValidateHexToken(t *testing.T) {
+	testCases := []struct {
+		name        string
+		token       string
+		expectError bool
+		errorMsg    string
+	}{
+		// Valid hex tokens
+		{
+			name:        "valid 16-char lowercase hex token",
+			token:       "0123456789abcdef",
+			expectError: false,
+		},
+		{
+			name:        "valid 16-char uppercase hex token",
+			token:       "0123456789ABCDEF",
+			expectError: false,
+		},
+		{
+			name:        "valid 16-char mixed case hex token",
+			token:       "0123456789AbCdEf",
+			expectError: false,
+		},
+		{
+			name:        "valid 32-char hex token",
+			token:       "0123456789abcdef0123456789abcdef",
+			expectError: false,
+		},
+		{
+			name:        "valid 64-char hex token (max length)",
+			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			expectError: false,
+		},
+		{
+			name:        "valid hex token with all digits",
+			token:       "1234567890123456",
+			expectError: false,
+		},
+		{
+			name:        "valid hex token with all lowercase letters",
+			token:       "abcdefabcdefabcd",
+			expectError: false,
+		},
+		{
+			name:        "valid hex token with all uppercase letters",
+			token:       "ABCDEFABCDEFABCD",
+			expectError: false,
+		},
+
+		// Invalid hex tokens - empty
+		{
+			name:        "empty token",
+			token:       "",
+			expectError: true,
+			errorMsg:    "token cannot be empty",
+		},
+
+		// Invalid hex tokens - too short
+		{
+			name:        "token too short: 15 chars",
+			token:       "0123456789abcde",
+			expectError: true,
+			errorMsg:    "token must be between 16 and 64 characters",
+		},
+		{
+			name:        "token too short: 1 char",
+			token:       "a",
+			expectError: true,
+			errorMsg:    "token must be between 16 and 64 characters",
+		},
+		{
+			name:        "token too short: 8 chars",
+			token:       "12345678",
+			expectError: true,
+			errorMsg:    "token must be between 16 and 64 characters",
+		},
+
+		// Invalid hex tokens - too long
+		{
+			name:        "token too long: 65 chars",
+			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+			expectError: true,
+			errorMsg:    "token must be between 16 and 64 characters",
+		},
+		{
+			name:        "token too long: 100 chars",
+			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123",
+			expectError: true,
+			errorMsg:    "token must be between 16 and 64 characters",
+		},
+
+		// Invalid hex tokens - non-hex characters
+		{
+			name:        "token with letter g",
+			token:       "0123456789abcdeg",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with letter z",
+			token:       "0123456789abcdez",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with space",
+			token:       "0123456789abcde ",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with hyphen",
+			token:       "0123-4567-89ab-cdef",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with underscore",
+			token:       "0123_456789abcdef",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with special characters",
+			token:       "0123456789abcd!@",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with newline",
+			token:       "0123456789abcde\n",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with shell metacharacter semicolon",
+			token:       "0123456789abcde;",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with shell metacharacter pipe",
+			token:       "0123456789abcde|",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "token with shell metacharacter backtick",
+			token:       "0123456789abcde`",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+
+		// Potential attack vectors
+		{
+			name:        "command injection attempt",
+			token:       "0123456789abcdef; rm -rf /",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+		{
+			name:        "path traversal attempt",
+			token:       "../etc/passwd0123",
+			expectError: true,
+			errorMsg:    "token contains non-hexadecimal characters",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateHexToken(tc.token)
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSanity_ValidateHostPort(t *testing.T) {
+	testCases := []struct {
+		name        string
+		hostPort    string
+		expectError bool
+		errorMsg    string
+	}{
+		// Valid host:port strings
+		{
+			name:        "simple hostname",
+			hostPort:    "localhost",
+			expectError: false,
+		},
+		{
+			name:        "hostname with port",
+			hostPort:    "localhost:3080",
+			expectError: false,
+		},
+		{
+			name:        "domain name",
+			hostPort:    "example.com",
+			expectError: false,
+		},
+		{
+			name:        "domain name with port",
+			hostPort:    "example.com:443",
+			expectError: false,
+		},
+		{
+			name:        "subdomain",
+			hostPort:    "api.example.com",
+			expectError: false,
+		},
+		{
+			name:        "subdomain with port",
+			hostPort:    "api.example.com:8080",
+			expectError: false,
+		},
+		{
+			name:        "IPv4 address",
+			hostPort:    "192.168.1.1",
+			expectError: false,
+		},
+		{
+			name:        "IPv4 address with port",
+			hostPort:    "192.168.1.1:3080",
+			expectError: false,
+		},
+		{
+			name:        "hostname with hyphen",
+			hostPort:    "my-server",
+			expectError: false,
+		},
+		{
+			name:        "hostname with hyphen and port",
+			hostPort:    "my-server:8080",
+			expectError: false,
+		},
+		{
+			name:        "complex hostname with hyphen and subdomain",
+			hostPort:    "my-api.example-domain.com:9000",
+			expectError: false,
+		},
+		{
+			name:        "hostname with numbers",
+			hostPort:    "server123.example.com",
+			expectError: false,
+		},
+		{
+			name:        "uppercase hostname",
+			hostPort:    "LOCALHOST:3080",
+			expectError: false,
+		},
+		{
+			name:        "mixed case hostname",
+			hostPort:    "MyServer.Example.COM:443",
+			expectError: false,
+		},
+
+		// Invalid host:port strings - empty
+		{
+			name:        "empty string",
+			hostPort:    "",
+			expectError: true,
+			errorMsg:    "host:port cannot be empty",
+		},
+
+		// Invalid host:port strings - path traversal
+		{
+			name:        "path traversal with double dots",
+			hostPort:    "example..com",
+			expectError: true,
+			errorMsg:    "host:port cannot contain path components",
+		},
+		{
+			name:        "path with forward slash",
+			hostPort:    "example.com/path",
+			expectError: true,
+			errorMsg:    "host:port cannot contain path components",
+		},
+		{
+			name:        "path traversal attempt",
+			hostPort:    "../etc/passwd",
+			expectError: true,
+			errorMsg:    "host:port cannot contain path components",
+		},
+
+		// Invalid host:port strings - shell metacharacters
+		{
+			name:        "semicolon injection",
+			hostPort:    "localhost;rm -rf",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "pipe injection",
+			hostPort:    "localhost|cat",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "ampersand injection",
+			hostPort:    "localhost&command",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "dollar sign injection",
+			hostPort:    "localhost$VAR",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "backtick injection",
+			hostPort:    "localhost`cmd`",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "greater than injection",
+			hostPort:    "localhost>file",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "less than injection",
+			hostPort:    "localhost<file",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "parentheses injection",
+			hostPort:    "localhost(test)",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "braces injection",
+			hostPort:    "localhost{test}",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "brackets injection",
+			hostPort:    "localhost[test]",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "asterisk injection",
+			hostPort:    "localhost*",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "question mark injection",
+			hostPort:    "localhost?",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+		{
+			name:        "tilde injection",
+			hostPort:    "localhost~",
+			expectError: true,
+			errorMsg:    "host:port contains invalid characters",
+		},
+
+		// Invalid host:port strings - invalid characters
+		{
+			name:        "with space",
+			hostPort:    "local host:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with underscore",
+			hostPort:    "local_host:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with at sign",
+			hostPort:    "user@localhost:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with hash",
+			hostPort:    "localhost#anchor",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with percent",
+			hostPort:    "localhost%20:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with exclamation",
+			hostPort:    "localhost!:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with newline",
+			hostPort:    "localhost\n:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with tab",
+			hostPort:    "localhost\t:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+		{
+			name:        "with null byte",
+			hostPort:    "localhost\x00:3080",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+
+		// Potential attack vectors
+		{
+			name:        "URL instead of host:port",
+			hostPort:    "https://example.com",
+			expectError: true,
+			errorMsg:    "host:port cannot contain path components",
+		},
+		{
+			name:        "command injection attempt",
+			hostPort:    "localhost:3080; rm -rf /",
+			expectError: true,
+			errorMsg:    "host:port cannot contain path components",
+		},
+		{
+			name:        "SQL injection attempt",
+			hostPort:    "localhost' OR '1'='1",
+			expectError: true,
+			errorMsg:    "host:port contains invalid character",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateHostPort(tc.hostPort)
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

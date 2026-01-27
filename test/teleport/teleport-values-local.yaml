@@ -1,6 +1,6 @@
 # Teleport Kubernetes Agent Helm Values - Local Development
 # This file is configured for local development with the Teleport server
-# running in Docker alongside the observability stack.
+# running in Docker alongside the Alloy stack.
 
 # Role: kube enables Kubernetes access
 roles: kube

@@ -23,7 +23,7 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - observability
+      - alloy
 
   # Prometheus for metrics storage
   prometheus:
@@ -43,7 +43,7 @@ services:
       - '--web.enable-remote-write-receiver'
     restart: unless-stopped
     networks:
-      - observability
+      - alloy
 
   # Loki for log aggregation
   loki:
@@ -57,7 +57,7 @@ services:
     command: -config.file=/etc/loki/local-config.yaml
     restart: unless-stopped
     networks:
-      - observability
+      - alloy
 
   # Grafana for visualization
   grafana:
@@ -77,7 +77,7 @@ services:
       - loki
     restart: unless-stopped
     networks:
-      - observability
+      - alloy
 
 volumes:
   vault-data:
@@ -86,7 +86,7 @@ volumes:
   grafana-data:
 
 networks:
-  observability:
-    name: solo-weaver-observability
+  alloy:
+    name: solo-weaver-alloy
 
 

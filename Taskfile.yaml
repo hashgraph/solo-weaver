@@ -662,7 +662,7 @@ tasks:
       - task: vm:start
       - task: vm:configure:ssh
       - task: proxy:install-ca-cert
-      - task: vm:observability:start
+      - task: vm:alloy:start
       - cmd: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ VM reset complete with full development environment!"
@@ -671,7 +671,7 @@ tasks:
           echo "  ✅ SSH access with passwordless login"
           echo "  ✅ MITM proxy with CA certificate"
           echo "  ✅ Docker installed and configured"
-          echo "  ✅ Observability stack (Prometheus, Loki, Grafana)"
+          echo "  ✅ Alloy stack (Prometheus, Loki, Grafana)"
           echo ""
           echo "Ready for Block Node deployment:"
           echo "  task vm:ssh"
@@ -1266,16 +1266,16 @@ tasks:
         fi
 
   # ===========================
-  # Observability (Core Tasks)
+  # Alloy (Core Tasks)
   # ===========================
   # Note: These tasks are used by:
-  #   - vm:observability:start (VM-based development)
+  #   - vm:alloy:start (VM-based development)
   #   - CI/CD workflows (GitHub Actions, GitLab CI, etc.)
   #   - Local Kind/k3d Kubernetes clusters
 
   vault:start:
     desc: "Start Vault and initialize with development secrets"
-    dir: test/observability
+    dir: test/alloy
     cmds:
       - |
         echo "🚀 Starting Vault..."
@@ -1298,20 +1298,20 @@ tasks:
 
   vault:stop:
     desc: "Stop Vault container"
-    dir: test/observability
+    dir: test/alloy
     cmds:
       - docker compose stop vault
 
   vault:clean:
     desc: "Stop Vault and remove all data"
-    dir: test/observability
+    dir: test/alloy
     cmds:
       - docker compose down vault
       - docker volume rm solo-weaver-vault-data 2>/dev/null || true
 
   vault:setup-secret-store:
     desc: "Configure ClusterSecretStore to connect ESO to Vault (auto-detects node IP)"
-    dir: test/observability
+    dir: test/alloy
     cmds:
       - |
         echo "🔧 Configuring ClusterSecretStore for kubeadm cluster..."
@@ -1393,22 +1393,22 @@ tasks:
         echo "   Vault URL: http://$NODE_IP:8200"
         echo "   ESO User:  eso-user"
         echo ""
-        echo "📝 Next step: Install observability"
-        echo "   weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config_with_observability.yaml"
+        echo "📝 Next step: Install Alloy"
+        echo "   weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config_with_alloy.yaml"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  observability:start:
-    desc: "Start observability stack (used by VM, CI/CD, and Kind/k3d)"
-    dir: test/observability
+  alloy:start:
+    desc: "Start Alloy stack (used by VM, CI/CD, and Kind/k3d)"
+    dir: test/alloy
     deps: [vault:start]
     cmds:
       - docker compose up -d prometheus loki grafana
       - |
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "✅ Observability stack started!"
+        echo "✅ Alloy stack started!"
         echo ""
         echo "📦 This task is used by:"
-        echo "   • VM development (via task vm:observability:start)"
+        echo "   • VM development (via task vm:alloy:start)"
         echo "   • CI/CD workflows (GitHub Actions, GitLab CI)"
         echo "   • Local Kind/k3d clusters"
         echo ""
@@ -1421,35 +1421,35 @@ tasks:
         echo "🔐 Vault has been initialized with development secrets"
         echo ""
         echo "📝 Next step: Apply ClusterSecretStore to connect ESO to Vault"
-        echo "   kubectl apply -f test/observability/cluster-secret-store-local.yaml"
+        echo "   kubectl apply -f test/alloy/cluster-secret-store-local.yaml"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  observability:stop:
-    desc: "Stop observability stack"
-    dir: test/observability
+  alloy:stop:
+    desc: "Stop Alloy stack"
+    dir: test/alloy
     cmds:
       - docker compose down
 
-  observability:clean:
-    desc: "Stop and remove all observability data (volumes)"
-    dir: test/observability
+  alloy:clean:
+    desc: "Stop and remove all Alloy data (volumes)"
+    dir: test/alloy
     cmds:
       - docker compose down -v
-      - echo "✅ Observability stack stopped and data removed"
+      - echo "✅ Alloy stack stopped and data removed"
 
-  observability:logs:
-    desc: "Show logs from observability stack"
-    dir: test/observability
+  alloy:logs:
+    desc: "Show logs from Alloy stack"
+    dir: test/alloy
     cmds:
       - docker compose logs -f
 
-  observability:status:
-    desc: "Show observability stack status"
-    dir: test/observability
+  alloy:status:
+    desc: "Show Alloy stack status"
+    dir: test/alloy
     cmds:
       - |
-        echo "Observability Stack Status:"
-        echo "==========================="
+        echo "Alloy Stack Status:"
+        echo "==================="
         docker compose ps
         echo ""
         if docker ps | grep -q solo-weaver-prometheus; then
@@ -1458,14 +1458,14 @@ tasks:
           echo "  • Loki:       http://localhost:3100"
           echo "  • Grafana:    http://localhost:3000"
         else
-          echo "Observability stack is not running"
-          echo "Start it with: task observability:start"
+          echo "Alloy stack is not running"
+          echo "Start it with: task alloy:start"
           echo ""
-          echo "💡 For VM-based development, use: task vm:observability:start"
+          echo "💡 For VM-based development, use: task vm:alloy:start"
         fi
 
   # ===========================
-  # VM Docker & Observability Setup
+  # VM Docker & Alloy Setup
   # ===========================
 
   vm:install-docker:
@@ -1533,12 +1533,12 @@ tasks:
         echo "   Or run: newgrp docker"
         ENDSSH
 
-  vm:observability:start:
-    desc: "Set up observability stack in the VM"
+  vm:alloy:start:
+    desc: "Set up Alloy stack in the VM"
     deps: [vm:install-docker]
     cmds:
       - |
-        echo "🚀 Setting up observability stack in VM..."
+        echo "🚀 Setting up Alloy stack in VM..."
         {{.GET_VM_IP}}
         VM_IP=$(get_vm_ip)
         
@@ -1547,16 +1547,16 @@ tasks:
           exit 1
         fi
         
-        echo "🔧 Starting observability stack in VM..."
+        echo "🔧 Starting Alloy stack in VM..."
         # Task is already installed in the VM and /mnt/solo-weaver is already synced
-        # So we can just use 'task observability:start' directly!
+        # So we can just use 'task alloy:start' directly!
         # Use sudo newgrp to ensure docker group permissions are active
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
-          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task observability:start'"
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:start'"
         
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "✅ Observability stack setup complete!"
+        echo "✅ Alloy stack setup complete!"
         echo ""
         echo "🔐 Vault has been initialized with development secrets"
         echo ""
@@ -1566,14 +1566,14 @@ tasks:
         echo "   3. Deploy with Alloy: sudo weaver kube cluster install --alloy-enabled ..."
         echo ""
         echo "💡 To access from your Mac, use SSH port forwarding:"
-        echo "   task vm:observability-forward"
+        echo "   task vm:alloy-forward"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  vm:observability:stop:
-    desc: "Stop observability stack in the VM"
+  vm:alloy:stop:
+    desc: "Stop Alloy stack in the VM"
     cmds:
       - |
-        echo "🛑 Stopping observability stack in VM..."
+        echo "🛑 Stopping Alloy stack in VM..."
         {{.GET_VM_IP}}
         VM_IP=$(get_vm_ip)
         
@@ -1583,14 +1583,14 @@ tasks:
         fi
         
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
-          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task observability:stop'"
-        echo "✅ Observability stack stopped"
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:stop'"
+        echo "✅ Alloy stack stopped"
 
-  vm:observability:clean:
-    desc: "Stop and remove all observability data in the VM"
+  vm:alloy:clean:
+    desc: "Stop and remove all Alloy data in the VM"
     cmds:
       - |
-        echo "🧹 Cleaning observability stack in VM..."
+        echo "🧹 Cleaning Alloy stack in VM..."
         {{.GET_VM_IP}}
         VM_IP=$(get_vm_ip)
         
@@ -1600,14 +1600,14 @@ tasks:
         fi
         
         ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
-          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task observability:clean'"
-        echo "✅ Observability stack cleaned"
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:clean'"
+        echo "✅ Alloy stack cleaned"
 
-  vm:observability-forward:
-    desc: "Forward observability ports from VM to Mac (Vault:8200, Prometheus:9090, Loki:3100, Grafana:3000)"
+  vm:alloy-forward:
+    desc: "Forward Alloy ports from VM to Mac (Vault:8200, Prometheus:9090, Loki:3100, Grafana:3000)"
     cmds:
       - |
-        echo "🔌 Setting up port forwarding for observability stack..."
+        echo "🔌 Setting up port forwarding for Alloy stack..."
         {{.GET_VM_IP}}
         VM_IP=$(get_vm_ip)
         

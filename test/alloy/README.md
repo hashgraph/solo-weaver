@@ -1,6 +1,6 @@
-# Observability Stack - Grafana Alloy with Vault
+# Alloy Stack - Grafana Alloy with Vault
 
-Complete observability stack for Solo Weaver with Vault-managed secrets.
+Complete Alloy observability stack for Solo Weaver with Vault-managed secrets.
 
 **Components:**
 - Grafana Alloy - Metrics and log collection
@@ -29,14 +29,33 @@ Alloy Pod (metrics/logs)       Alloy Pod (metrics/logs)
 
 ## 🚀 Quick Start - Local Development
 
-### Step 1: Start Observability Stack
+### Prerequisites: Build Weaver
 
-From your Mac:
+From your Mac, ensure you have the latest build:
 ```bash
-task vm:observability:start
+task build
+```
+
+### Step 1: Start Alloy Stack
+
+Start and SSH into a fresh VM:
+```bash
+task vm:ssh
+```
+
+Then, from within the VM, start the Alloy stack:
+```bash
+task alloy:start
 ```
 
 ### Step 2: Install Cluster
+
+Copy the weaver binary:
+```bash
+cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
+
+sudo ~/weaver-linux-arm64 install
+```
 
 Inside the VM (`task vm:ssh`):
 ```bash
@@ -52,13 +71,13 @@ Inside the VM:
 task vault:setup-secret-store
 ```
 
-### Step 4: Add Observability
+### Step 4: Add Alloy
 
 Inside the VM:
 ```bash
 sudo weaver block node install \
   --profile=local \
-  --config=/mnt/solo-weaver/test/config/config_with_observability.yaml
+  --config=/mnt/solo-weaver/test/config/config_with_alloy.yaml
 ```
 
 Wait ~30 seconds for secrets to sync, then check pods:
@@ -71,7 +90,7 @@ kubectl get pods -n grafana-alloy
 
 From your Mac:
 ```bash
-task vm:observability-forward
+task vm:alloy-forward
 ```
 
 Open http://localhost:3000
@@ -111,11 +130,11 @@ node_cpu_seconds_total
 ## 🧹 Cleanup
 
 ```bash
-# Stop observability stack
-task vm:observability:stop
+# Stop Alloy stack
+task vm:alloy:stop
 
 # Remove all data
-task vm:observability:clean
+task vm:alloy:clean
 ```
 
 ---
@@ -180,7 +199,7 @@ spec:
 | `docker-compose.yml` | Container definitions |
 | `init-vault.sh` | Initialize Vault with dev secrets |
 | `cluster-secret-store-local.yaml` | ESO → Vault connection template |
-| `config_with_observability.yaml` | Weaver config with Alloy enabled |
+| `config_with_alloy.yaml` | Weaver config with Alloy enabled |
 | `prometheus.yml` | Prometheus configuration |
 | `loki-config.yml` | Loki configuration |
 | `grafana-datasources.yml` | Grafana datasources |

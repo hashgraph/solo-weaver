@@ -1,5 +1,5 @@
 # Example Alloy Configuration for Local Development Inside VM
-# The observability stack (Prometheus, Loki, Grafana, Vault) runs in Docker inside the VM
+# The Alloy stack (Prometheus, Loki, Grafana, Vault) runs in Docker inside the VM
 # alongside the Kubernetes cluster
 #
 # IMPORTANT: Passwords are managed by Vault via External Secrets Operator
