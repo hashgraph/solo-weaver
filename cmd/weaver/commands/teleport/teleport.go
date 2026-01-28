@@ -14,7 +14,7 @@ var (
 		Use:   "teleport",
 		Short: "Manage Teleport agents for secure access",
 		Long:  "Manage Teleport agents for secure access. Includes node-level SSH agent and Kubernetes cluster agent.",
-		RunE:  common.DefaultRunE, // ensure we have a default action to make it runnable so that sub-commands would inherit parent flags
+		RunE:  common.DefaultRunE, // provide a default action so the parent command is runnable and its PersistentPreRunE hooks are invoked; persistent flags are inherited by subcommands regardless
 	}
 )
 

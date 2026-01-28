@@ -69,6 +69,7 @@ var allowedDomains = []string{
 
 	// Teleport - secure access platform
 	"hashgraph.teleport.sh",
+	"cdn.teleport.dev",
 }
 
 // AllowedDomains returns the allowlist of trusted domains for software downloads.

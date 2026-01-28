@@ -1702,7 +1702,7 @@ tasks:
         echo "   2. Install Teleport cluster agent:"
         echo "      sudo weaver teleport cluster install --values=$OUTPUT_FILE"
         echo ""
-        echo "   3. (Optional) Install Teleport node agent for SSH access:"
+        echo "   3. (Optional) Generate Teleport node agent token for SSH access:"
         echo "      task teleport:node-agent-token"
         echo ""
         echo "👤 To create an admin user:"

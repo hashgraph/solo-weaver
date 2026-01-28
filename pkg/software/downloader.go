@@ -212,6 +212,11 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 			// Validate and canonicalize the extraction path to prevent path traversal attacks
 			targetPath := filepath.Join(cleanDestDir, hdr.Name)
 
+			// Validate that the target path is within the extraction directory
+			if _, err := sanity.ValidatePathWithinBase(cleanDestDir, targetPath); err != nil {
+				return NewExtractionError(fmt.Errorf("path traversal attempt in hdr.Name: %s", hdr.Name), cleanCompressedPath, cleanDestDir)
+			}
+
 			switch hdr.Typeflag {
 			case tar.TypeDir:
 				// Create directories
@@ -239,8 +244,70 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				if err := os.Chmod(targetPath, hdr.FileInfo().Mode()); err != nil {
 					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
 				}
+			case tar.TypeSymlink:
+				// Validate symlink target to prevent path traversal attacks
+				// Reject absolute paths in symlink targets
+				if filepath.IsAbs(hdr.Linkname) {
+					return NewExtractionError(fmt.Errorf("absolute symlink target not allowed: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+				}
+
+				// Resolve the symlink target relative to the symlink's parent directory
+				// and verify it stays within the extraction directory
+				symlinkDir := filepath.Dir(targetPath)
+				resolvedTarget := filepath.Join(symlinkDir, hdr.Linkname)
+				if _, err := sanity.ValidatePathWithinBase(cleanDestDir, resolvedTarget); err != nil {
+					return NewExtractionError(fmt.Errorf("symlink target escapes extraction directory: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+				}
+
+				// Ensure parent directory exists
+				if err := os.MkdirAll(filepath.Dir(targetPath), core.DefaultDirOrExecPerm); err != nil {
+					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
+				}
+
+				// Remove existing symlink if it exists
+				if _, err := os.Lstat(targetPath); err == nil {
+					if err := os.Remove(targetPath); err != nil {
+						return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
+					}
+				}
+
+				// Create symlink - hdr.Linkname contains the target of the symlink
+				if err := os.Symlink(hdr.Linkname, targetPath); err != nil {
+					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
+				}
+			case tar.TypeLink:
+				// Validate hardlink target to prevent path traversal attacks
+				// Reject absolute paths in hardlink targets
+				if filepath.IsAbs(hdr.Linkname) {
+					return NewExtractionError(fmt.Errorf("absolute hardlink target not allowed: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+				}
+
+				// Hard links - hdr.Linkname contains the target path (relative to archive root)
+				linkTarget := filepath.Join(cleanDestDir, hdr.Linkname)
+				if _, err := sanity.ValidatePathWithinBase(cleanDestDir, linkTarget); err != nil {
+					return NewExtractionError(fmt.Errorf("hardlink target escapes extraction directory: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+				}
+
+				// Ensure parent directory exists
+				if err := os.MkdirAll(filepath.Dir(targetPath), core.DefaultDirOrExecPerm); err != nil {
+					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
+				}
+
+				// Remove existing file if it exists
+				if _, err := os.Lstat(targetPath); err == nil {
+					if err := os.Remove(targetPath); err != nil {
+						return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
+					}
+				}
+
+				// Create hard link
+				if err := os.Link(linkTarget, targetPath); err != nil {
+					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
+				}
 			default:
-				return NewExtractionError(fmt.Errorf("unknown type flag: %c", hdr.Typeflag), cleanCompressedPath, cleanDestDir)
+				// Skip unknown type flags instead of failing
+				// This allows extracting archives with special file types we don't handle
+				continue
 			}
 		}
 	}

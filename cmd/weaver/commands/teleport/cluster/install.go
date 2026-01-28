@@ -30,7 +30,6 @@ var installCmd = &cobra.Command{
 
 		// Apply Teleport configuration overrides
 		teleportOverrides := config.TeleportConfig{
-			Enabled:    true, // Always enabled when installing
 			Version:    flagVersion,
 			ValuesFile: validatedValuesFile,
 		}
@@ -38,7 +37,7 @@ var installCmd = &cobra.Command{
 
 		// Validate the configuration
 		cfg := config.Get()
-		if err := cfg.Teleport.Validate(); err != nil {
+		if err := cfg.Teleport.ValidateClusterAgent(); err != nil {
 			return err
 		}
 

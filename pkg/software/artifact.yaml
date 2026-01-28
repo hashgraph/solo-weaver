@@ -208,3 +208,60 @@ artifact:
             arm64:
               algorithm: 'sha256'
               checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'
+
+- name: teleport
+  versions:
+    18.6.2:
+      archives:
+        - name: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          url: 'https://cdn.teleport.dev/teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '034e9f4cae2cfbb000af8f47340cf6eeb7bfd354072c5cd1c2b9b79c9dff4d65' # from https://cdn.teleport.dev/teleport-ent-v18.6.2-linux-amd64-bin.tar.gz.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: '412d72f659298a3118ca8f6f20ee402d925140a7892686797fe08b1b3f8cac59' # from https://cdn.teleport.dev/teleport-ent-v18.6.2-linux-arm64-bin.tar.gz.sha256
+      binaries:
+        - name: 'teleport-ent/teleport'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'dd46670115f4d017743a00050c675147531eca377687f856b86239324c7ce1ce'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '3ba706400852f31adae8ffe41a79dbe208f8cae45eb5e646a6c4a680f75e4aeb'
+        - name: 'teleport-ent/teleport-update'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'dce7c1949bffbb27530750fae9fd81d8d9a8aa7c3426f3b57122f58e2810953f'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '30b6b6d8dbf527fa22d7a47f96e2b85b2f28b21913ce88f5c473baedfc8b36b6'
+        - name: 'teleport-ent/tctl'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '553ea3b5af25e3b2816a3c26e29bcfe5238eaf048f35bcd14d35ce910b8d399b'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'ea8fce557d282ba70331bf5a62c513fc82c106b9fe7418846c6c5a8681638bc2'
+        - name: 'teleport-ent/tsh'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '0ac1834dd91b3e7ff54704a3acf07c040dd17c0f04e99ace4f7899681a4f24cf'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '9cc66f15335ca2e388e51d212fe65b505de23cda4b728897285cbff18ded1148'
+      configs:
+        - name: 'teleport-ent/examples/systemd/production/node/teleport.service'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          algorithm: 'sha256'
+          checksum: 'd3a4773d2402b72a257ab187b8a2771d45747876320679fe8eaf267ed1a40c41'
+

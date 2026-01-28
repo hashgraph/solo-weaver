@@ -70,7 +70,19 @@ This single command will:
 - Generate a join token
 - Create `/tmp/teleport-values-configured.yaml` with correct values
 
-### Step 2: Generate Node Agent Token
+### Step 2: Install Kubernetes Cluster
+
+Before installing Teleport agents, you need a Kubernetes cluster:
+
+```bash
+cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
+
+sudo ~/weaver-linux-arm64 install
+
+sudo weaver kube cluster install --profile=local --node-type=block
+```
+
+### Step 3: Generate Node Agent Token
 
 Generate a fresh token for the node agent:
 ```bash
@@ -83,19 +95,7 @@ Token: abc123def456...
 Proxy: 192.168.64.5:3080
 ```
 
-**Note these values for Step 4.**
-
-### Step 3: Install Kubernetes Cluster
-
-Before installing Teleport agents, you need a Kubernetes cluster:
-
-```bash
-cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
-
-sudo ~/weaver-linux-arm64 install
-
-sudo weaver kube cluster install --profile=local --node-type=block
-```
+**Note these values for next step.**
 
 ### Step 4: Install Teleport Agents
 
@@ -106,13 +106,13 @@ sudo weaver teleport node install \
   --proxy=<PROXY>
 ```
 
+> **Note:** Replace `<TOKEN>` and `<PROXY>` with values from Step 3.
+
 **Install Kubernetes Cluster Agent:**
 ```bash
 sudo weaver teleport cluster install \
   --values=/tmp/teleport-values-configured.yaml
 ```
-
-> **Note:** Replace `<TOKEN>` and `<PROXY>` with values from Step 2.
 
 This installs:
 - **Kubernetes Agent** - Secure kubectl access via Teleport

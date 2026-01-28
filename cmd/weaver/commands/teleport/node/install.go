@@ -23,7 +23,6 @@ var installCmd = &cobra.Command{
 
 		// Apply Teleport configuration overrides
 		teleportOverrides := config.TeleportConfig{
-			Enabled:            true, // Always enabled when installing
 			NodeAgentToken:     flagNodeAgentToken,
 			NodeAgentProxyAddr: flagNodeAgentProxyAddr,
 		}
