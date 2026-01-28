@@ -193,7 +193,7 @@ type TeleportConfig struct {
 }
 
 // Validate validates all Teleport configuration fields.
-func (c *TeleportConfig) Validate() error {
+func (c TeleportConfig) Validate() error {
 	// Only validate if Teleport is enabled
 	if !c.Enabled {
 		return nil
@@ -223,6 +223,33 @@ func (c *TeleportConfig) Validate() error {
 
 	// Validate NodeAgentProxyAddr if provided
 	if c.NodeAgentProxyAddr != "" {
+		if err := sanity.ValidateHostPort(c.NodeAgentProxyAddr); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentProxyAddr: %s", c.NodeAgentProxyAddr)
+		}
+	}
+
+	return nil
+}
+
+// ValidateNodeAgent validates configuration for the node agent only.
+// This is a lighter validation that doesn't require the ValuesFile.
+func (c TeleportConfig) ValidateNodeAgent() error {
+	// Validate NodeAgentToken - required for node agent
+	if c.NodeAgentToken == "" {
+		return errorx.IllegalArgument.New("teleport nodeAgentToken is required for node agent installation")
+	}
+
+	if err := sanity.ValidateHexToken(c.NodeAgentToken); err != nil {
+		return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentToken: %s", c.NodeAgentToken)
+	}
+
+	// Validate NodeAgentProxyAddr if provided
+	if c.NodeAgentProxyAddr != "" {
+		// In release builds, custom proxy addresses are not allowed for security
+		if version.IsReleaseBuild() {
+			return errorx.IllegalArgument.New("teleport nodeAgentProxyAddr is not allowed in release builds (must use %s)", DefaultTeleportProxyAddr)
+		}
+		// Basic validation for dev builds
 		if err := sanity.ValidateHostPort(c.NodeAgentProxyAddr); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentProxyAddr: %s", c.NodeAgentProxyAddr)
 		}

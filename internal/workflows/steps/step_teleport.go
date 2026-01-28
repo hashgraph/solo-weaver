@@ -102,14 +102,14 @@ func SetupTeleport() *automa.WorkflowBuilder {
 
 	// If NodeAgentToken is provided, install the host-level SSH agent first
 	if cfg.NodeAgentToken != "" {
-		steps = append(steps, installTeleportNodeAgent())
+		steps = append(steps, InstallTeleportNodeAgent())
 	}
 
 	// Always install the Kubernetes agent
 	steps = append(steps,
-		createTeleportNamespace(),
-		installTeleport(),
-		isTeleportPodsReady(),
+		CreateTeleportNamespace(),
+		InstallTeleportKubeAgent(),
+		IsTeleportPodsReady(),
 	)
 
 	return automa.NewWorkflowBuilder().WithId(SetupTeleportStepId).Steps(steps...).
@@ -125,10 +125,10 @@ func SetupTeleport() *automa.WorkflowBuilder {
 		})
 }
 
-// installTeleportNodeAgent installs the Teleport node agent on the host.
+// InstallTeleportNodeAgent installs the Teleport node agent on the host.
 // This provides SSH access to the node via Teleport with full session recording.
 // The URL is constructed from the configured proxy address (or default) + the provided join token.
-func installTeleportNodeAgent() automa.Builder {
+func InstallTeleportNodeAgent() automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallTeleportNodeAgentStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get()
@@ -205,7 +205,7 @@ func installTeleportNodeAgent() automa.Builder {
 		})
 }
 
-func createTeleportNamespace() automa.Builder {
+func CreateTeleportNamespace() automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateTeleportNamespaceStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := kube.NewClient()
@@ -248,7 +248,7 @@ metadata:
 		})
 }
 
-func installTeleport() automa.Builder {
+func InstallTeleportKubeAgent() automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallTeleportStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Teleport
@@ -339,7 +339,7 @@ func installTeleport() automa.Builder {
 		})
 }
 
-func isTeleportPodsReady() automa.Builder {
+func IsTeleportPodsReady() automa.Builder {
 	return automa.NewStepBuilder().WithId(IsTeleportReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 
