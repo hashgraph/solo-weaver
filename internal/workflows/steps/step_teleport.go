@@ -37,22 +37,15 @@ const (
 )
 
 // buildNodeAgentURL constructs the Teleport node agent install script URL.
-// Uses the configured proxy address or defaults to hashgraph.teleport.sh.
+// The proxy address must be explicitly specified in config.
 func buildNodeAgentURL(proxyAddr, token string) string {
-	if proxyAddr == "" {
-		proxyAddr = config.DefaultTeleportProxyAddr
-	}
 	return fmt.Sprintf("https://%s/scripts/%s/install-node.sh", proxyAddr, token)
 }
 
 // getAllowedDomains returns the allowed domains for URL validation.
-// For production (hashgraph.teleport.sh), strict validation is enforced.
 // For local dev (custom proxy address), the custom address is allowed.
 func getAllowedDomains(proxyAddr string) []string {
-	if proxyAddr == "" || proxyAddr == config.DefaultTeleportProxyAddr {
-		return []string{"hashgraph.teleport.sh"}
-	}
-	// For local dev, extract the hostname from the proxy address (remove port if present)
+	// Extract the hostname from the proxy address (remove port if present)
 	host := proxyAddr
 	if idx := strings.LastIndex(proxyAddr, ":"); idx != -1 {
 		// Check if this looks like a port (all digits after colon)
@@ -138,25 +131,26 @@ func SetupTeleport() *automa.WorkflowBuilder {
 func installTeleportNodeAgent() automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallTeleportNodeAgentStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			cfg := config.Get().Teleport
+			cfg := config.Get()
+			teleportCfg := cfg.Teleport
 			l := logx.As()
 
-			if cfg.NodeAgentToken == "" {
+			if teleportCfg.NodeAgentToken == "" {
 				l.Info().Msg("Skipping Teleport node agent (no token configured)")
 				return automa.StepSkippedReport(stp.Id())
 			}
 
 			// Construct the URL from the proxy address and the token
-			nodeAgentURL := buildNodeAgentURL(cfg.NodeAgentProxyAddr, cfg.NodeAgentToken)
+			nodeAgentURL := buildNodeAgentURL(teleportCfg.NodeAgentProxyAddr, teleportCfg.NodeAgentToken)
 			l.Info().Str("url", nodeAgentURL).Msg("Installing Teleport node agent")
 
 			// Use the Downloader with allowed domains based on configuration
-			allowedDomains := getAllowedDomains(cfg.NodeAgentProxyAddr)
+			allowedDomains := getAllowedDomains(teleportCfg.NodeAgentProxyAddr)
 			l.Debug().Strs("allowedDomains", allowedDomains).Msg("URL validation domains")
 
-			// When custom proxy is used (local dev), enable insecure TLS for self-signed certs
-			// This is safe because custom proxy is only allowed in dev builds
-			isLocalDev := cfg.NodeAgentProxyAddr != "" && cfg.NodeAgentProxyAddr != config.DefaultTeleportProxyAddr
+			// Local profile indicates local development environment
+			// Enable insecure TLS for self-signed certs in local dev
+			isLocalDev := cfg.IsLocalProfile()
 			if isLocalDev {
 				l.Debug().Msg("Using insecure TLS for local dev (self-signed certs)")
 			}

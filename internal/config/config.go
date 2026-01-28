@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/version"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -15,6 +15,7 @@ import (
 
 // Config holds the global configuration for the application.
 type Config struct {
+	Profile   string             `yaml:"profile" json:"profile"` // Deployment profile (local, perfnet, testnet, mainnet)
 	Log       logx.LoggingConfig `yaml:"log" json:"log"`
 	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
 	Alloy     AlloyConfig        `yaml:"alloy" json:"alloy"`
@@ -188,11 +189,8 @@ type TeleportConfig struct {
 	Version            string `yaml:"version" json:"version"`
 	ValuesFile         string `yaml:"valuesFile" json:"valuesFile"`
 	NodeAgentToken     string `yaml:"nodeAgentToken" json:"nodeAgentToken"`         // Join token for host-level SSH agent
-	NodeAgentProxyAddr string `yaml:"nodeAgentProxyAddr" json:"nodeAgentProxyAddr"` // Teleport proxy address (default: hashgraph.teleport.sh, use IP:port for local dev)
+	NodeAgentProxyAddr string `yaml:"nodeAgentProxyAddr" json:"nodeAgentProxyAddr"` // Teleport proxy address (required when NodeAgentToken is set)
 }
-
-// Default Teleport proxy address for production
-const DefaultTeleportProxyAddr = "hashgraph.teleport.sh"
 
 // Validate validates all Teleport configuration fields.
 func (c *TeleportConfig) Validate() error {
@@ -216,15 +214,15 @@ func (c *TeleportConfig) Validate() error {
 		if err := sanity.ValidateHexToken(c.NodeAgentToken); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentToken: %s", c.NodeAgentToken)
 		}
+
+		// NodeAgentProxyAddr is required when NodeAgentToken is set
+		if c.NodeAgentProxyAddr == "" {
+			return errorx.IllegalArgument.New("teleport nodeAgentProxyAddr is required when nodeAgentToken is set")
+		}
 	}
 
 	// Validate NodeAgentProxyAddr if provided
 	if c.NodeAgentProxyAddr != "" {
-		// In release builds, custom proxy addresses are not allowed for security
-		if version.IsReleaseBuild() {
-			return errorx.IllegalArgument.New("teleport nodeAgentProxyAddr is not allowed in release builds (must use %s)", DefaultTeleportProxyAddr)
-		}
-		// Basic validation for dev builds
 		if err := sanity.ValidateHostPort(c.NodeAgentProxyAddr); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentProxyAddr: %s", c.NodeAgentProxyAddr)
 		}
@@ -312,6 +310,16 @@ func Get() Config {
 func Set(c *Config) error {
 	globalConfig = *c
 	return nil
+}
+
+// SetProfile sets the deployment profile in the global configuration.
+func SetProfile(profile string) {
+	globalConfig.Profile = profile
+}
+
+// IsLocalProfile returns true if the current profile is the local development profile.
+func (c Config) IsLocalProfile() bool {
+	return c.Profile == core.ProfileLocal
 }
 
 // OverrideBlockNodeConfig updates the block node configuration with provided overrides.

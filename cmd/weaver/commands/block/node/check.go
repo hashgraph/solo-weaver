@@ -5,6 +5,7 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -23,6 +24,9 @@ var checkCmd = &cobra.Command{
 		if flagProfile == "" {
 			return errorx.IllegalArgument.New("profile flag is required")
 		}
+
+		// Set the profile in the global config so other components can access it
+		config.SetProfile(flagProfile)
 
 		logx.As().Debug().
 			Strs("args", args).

@@ -1782,7 +1782,7 @@ func TestSanity_ValidateHexToken(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:        "valid 64-char hex token (max length)",
+			name:        "valid 64-char hex token",
 			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			expectError: false,
 		},
@@ -1801,6 +1801,21 @@ func TestSanity_ValidateHexToken(t *testing.T) {
 			token:       "ABCDEFABCDEFABCD",
 			expectError: false,
 		},
+		{
+			name:        "valid short token: 1 char",
+			token:       "a",
+			expectError: false,
+		},
+		{
+			name:        "valid short token: 8 chars",
+			token:       "12345678",
+			expectError: false,
+		},
+		{
+			name:        "valid long token: 100 chars",
+			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123",
+			expectError: false,
+		},
 
 		// Invalid hex tokens - empty
 		{
@@ -1810,38 +1825,12 @@ func TestSanity_ValidateHexToken(t *testing.T) {
 			errorMsg:    "token cannot be empty",
 		},
 
-		// Invalid hex tokens - too short
+		// Invalid hex tokens - too long (exceeds 4096)
 		{
-			name:        "token too short: 15 chars",
-			token:       "0123456789abcde",
+			name:        "token too long: exceeds 4096 chars",
+			token:       strings.Repeat("a", 4097),
 			expectError: true,
-			errorMsg:    "token must be between 16 and 64 characters",
-		},
-		{
-			name:        "token too short: 1 char",
-			token:       "a",
-			expectError: true,
-			errorMsg:    "token must be between 16 and 64 characters",
-		},
-		{
-			name:        "token too short: 8 chars",
-			token:       "12345678",
-			expectError: true,
-			errorMsg:    "token must be between 16 and 64 characters",
-		},
-
-		// Invalid hex tokens - too long
-		{
-			name:        "token too long: 65 chars",
-			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
-			expectError: true,
-			errorMsg:    "token must be between 16 and 64 characters",
-		},
-		{
-			name:        "token too long: 100 chars",
-			token:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123",
-			expectError: true,
-			errorMsg:    "token must be between 16 and 64 characters",
+			errorMsg:    "token exceeds maximum length of 4096 characters",
 		},
 
 		// Invalid hex tokens - non-hex characters
@@ -2014,6 +2003,16 @@ func TestSanity_ValidateHostPort(t *testing.T) {
 			hostPort:    "MyServer.Example.COM:443",
 			expectError: false,
 		},
+		{
+			name:        "port 1 (minimum valid)",
+			hostPort:    "localhost:1",
+			expectError: false,
+		},
+		{
+			name:        "port 65535 (maximum valid)",
+			hostPort:    "localhost:65535",
+			expectError: false,
+		},
 
 		// Invalid host:port strings - empty
 		{
@@ -2021,6 +2020,38 @@ func TestSanity_ValidateHostPort(t *testing.T) {
 			hostPort:    "",
 			expectError: true,
 			errorMsg:    "host:port cannot be empty",
+		},
+
+		// Invalid host:port strings - invalid port
+		{
+			name:        "port 0 (below minimum)",
+			hostPort:    "localhost:0",
+			expectError: true,
+			errorMsg:    "port must be between 1 and 65535",
+		},
+		{
+			name:        "port 65536 (above maximum)",
+			hostPort:    "localhost:65536",
+			expectError: true,
+			errorMsg:    "port must be between 1 and 65535",
+		},
+		{
+			name:        "port negative",
+			hostPort:    "localhost:-1",
+			expectError: true,
+			errorMsg:    "port must be between 1 and 65535",
+		},
+		{
+			name:        "port non-numeric",
+			hostPort:    "localhost:abc",
+			expectError: true,
+			errorMsg:    "invalid port number",
+		},
+		{
+			name:        "port with spaces",
+			hostPort:    "localhost: 80",
+			expectError: true,
+			errorMsg:    "invalid port number",
 		},
 
 		// Invalid host:port strings - path traversal
@@ -2128,55 +2159,55 @@ func TestSanity_ValidateHostPort(t *testing.T) {
 			name:        "with space",
 			hostPort:    "local host:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with underscore",
 			hostPort:    "local_host:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with at sign",
 			hostPort:    "user@localhost:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with hash",
 			hostPort:    "localhost#anchor",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with percent",
 			hostPort:    "localhost%20:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with exclamation",
 			hostPort:    "localhost!:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with newline",
 			hostPort:    "localhost\n:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with tab",
 			hostPort:    "localhost\t:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 		{
 			name:        "with null byte",
 			hostPort:    "localhost\x00:3080",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 
 		// Potential attack vectors
@@ -2196,7 +2227,7 @@ func TestSanity_ValidateHostPort(t *testing.T) {
 			name:        "SQL injection attempt",
 			hostPort:    "localhost' OR '1'='1",
 			expectError: true,
-			errorMsg:    "host:port contains invalid character",
+			errorMsg:    "invalid host format",
 		},
 	}
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/joomcode/errorx"
@@ -24,6 +25,9 @@ var (
 	// validPathChars ensures paths only contain safe characters
 	// Allows: alphanumeric, forward slash, dash, underscore, dot
 	validPathChars = regexp.MustCompile(`^[a-zA-Z0-9/_.\-]+$`)
+
+	// hostPattern validates hostname/IP format (alphanumeric, dots, hyphens)
+	hostPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.\-]*$`)
 )
 
 // Alphanumeric ensures the input string to be ascii alphanumeric
@@ -101,15 +105,16 @@ func ValidateIdentifier(s string) error {
 // The token must:
 //  1. Not be empty
 //  2. Contain only hexadecimal characters (0-9, a-f, A-F)
-//  3. Have a reasonable length (between 16 and 64 characters)
+//  3. Have a reasonable maximum length (4096 characters) to prevent buffer overflow attacks
 func ValidateHexToken(s string) error {
 	if s == "" {
 		return errorx.IllegalArgument.New("token cannot be empty")
 	}
 
-	// Check length - tokens should be between 16 and 64 hex characters
-	if len(s) < 16 || len(s) > 64 {
-		return errorx.IllegalArgument.New("token must be between 16 and 64 characters, got %d", len(s))
+	// Check length - enforce a reasonable upper bound to prevent buffer overflow attacks
+	// No minimum length since token formats may vary
+	if len(s) > 4096 {
+		return errorx.IllegalArgument.New("token exceeds maximum length of 4096 characters, got %d", len(s))
 	}
 
 	// Check if all characters are valid hex digits
@@ -148,13 +153,25 @@ func ValidateHostPort(s string) error {
 		return errorx.IllegalArgument.New("host:port contains invalid characters: %s", s)
 	}
 
-	// Basic format validation - should be host or host:port
-	// Allow alphanumeric, dots, hyphens, and colons (for port)
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-			c == '.' || c == '-' || c == ':') {
-			return errorx.IllegalArgument.New("host:port contains invalid character '%c': %s", c, s)
+	hostPort := strings.Split(s, ":")
+	if len(hostPort) > 2 || len(hostPort) < 1 {
+		return errorx.IllegalArgument.New("invalid host:port format: %s", s)
+	}
+
+	// Validate host - must match hostname/IP pattern (alphanumeric, dots, hyphens)
+	if !hostPattern.MatchString(hostPort[0]) {
+		return errorx.IllegalArgument.New("invalid host format: %s", hostPort[0])
+	}
+
+	// Validate port if present
+	if len(hostPort) == 2 {
+		portStr := hostPort[1]
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return errorx.IllegalArgument.New("invalid port number: %s", portStr)
+		}
+		if port < 1 || port > 65535 {
+			return errorx.IllegalArgument.New("port must be between 1 and 65535, got %d", port)
 		}
 	}
 

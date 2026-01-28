@@ -8,7 +8,6 @@ vars:
   ARCH: [ amd64, arm64 ]
   GO_VERSION: 1.25.2
   LDFLAGS: "-w -s"
-  LDFLAGS_RELEASE: "-w -s -X 'github.com/hashgraph/solo-weaver/internal/version.buildMode=release'"
   # VM configuration
   VM_OS_TYPE: '{{.VM_OS_TYPE | default "debian"}}'  # Options: debian, ubuntu
   VM_NAME: "solo-weaver-{{.VM_OS_TYPE}}"
@@ -77,23 +76,9 @@ tasks:
       - "bin/weaver-linux-*"
       - "bin/weaver-darwin-*"
 
-  build:release:
-    desc: "Build all binaries for release (production mode)"
-    deps:
-      - "vendor"
-    cmds:
-      - task: "clean"
-      - task: "generate"
-      - task: "build:weaver:release:all"
-    sources:
-      - "**/*.go"
-    generates:
-      - "bin/weaver-linux-*"
-      - "bin/weaver-darwin-*"
-
   hash:
     deps:
-      - "build:release"
+      - "build"
     cmds:
       - task: "hash:weaver:all"
     sources:
@@ -104,7 +89,7 @@ tasks:
 
   sign:
     deps:
-      - "build:release"
+      - "build"
     cmds:
       - task: "sign:weaver:all"
 
@@ -152,39 +137,6 @@ tasks:
     cmds:
       - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
       - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
-  
-  build:weaver:release:
-    desc: "Build the binary for release (production mode - disables dev-only features)"
-    env:
-      GOOS: "{{coalesce .GOOS OS}}"
-      GOARCH: "{{coalesce .GOARCH ARCH}}"
-    cmds:
-      - cmd: go build -ldflags='{{.LDFLAGS_RELEASE}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
-      - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
-
-  build:weaver:release:all:
-    desc: "Build release binaries for all configured operating systems and architectures"
-    cmds:
-      - task: build:weaver:release:all:os
-
-  build:weaver:release:all:os:
-    internal: true
-    cmds:
-      - for:
-          var: OS
-        task: build:weaver:release:all:arch
-        vars:
-          GOOS: "{{.ITEM}}"
-
-  build:weaver:release:all:arch:
-    internal: true
-    cmds:
-      - for:
-          var: ARCH
-        task: build:weaver:release
-        vars:
-          GOOS: "{{.GOOS}}"
-          GOARCH: "{{.ITEM}}"
 
   hash:weaver:all:
     desc: "Hash the binary binaries for all configured operating systems and architectures"
