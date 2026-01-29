@@ -95,9 +95,6 @@ func (c Config) Validate() error {
 	if err := c.Alloy.Validate(); err != nil {
 		return err
 	}
-	if err := c.Teleport.Validate(); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -183,25 +180,21 @@ func (c *AlloyConfig) Validate() error {
 }
 
 // TeleportConfig represents the `teleport` configuration block for secure access.
-// Teleport configuration is provided via a Helm values file, similar to block node.
+// Teleport configuration for node agent and cluster agent.
+// Node agent: Uses NodeAgentToken and NodeAgentProxyAddr
+// Cluster agent: Uses Version and ValuesFile (passed directly to Helm)
 type TeleportConfig struct {
-	Enabled            bool   `yaml:"enabled" json:"enabled"`
-	Version            string `yaml:"version" json:"version"`
-	ValuesFile         string `yaml:"valuesFile" json:"valuesFile"`
+	Version            string `yaml:"version" json:"version"`                       // Helm chart version for cluster agent
+	ValuesFile         string `yaml:"valuesFile" json:"valuesFile"`                 // Path to Helm values file for cluster agent
 	NodeAgentToken     string `yaml:"nodeAgentToken" json:"nodeAgentToken"`         // Join token for host-level SSH agent
 	NodeAgentProxyAddr string `yaml:"nodeAgentProxyAddr" json:"nodeAgentProxyAddr"` // Teleport proxy address (required when NodeAgentToken is set)
 }
 
-// Validate validates all Teleport configuration fields.
-func (c *TeleportConfig) Validate() error {
-	// Only validate if Teleport is enabled
-	if !c.Enabled {
-		return nil
-	}
-
-	// ValuesFile is required when enabled
+// ValidateClusterAgent validates configuration for the cluster agent.
+func (c TeleportConfig) ValidateClusterAgent() error {
+	// ValuesFile is required for cluster agent
 	if c.ValuesFile == "" {
-		return errorx.IllegalArgument.New("teleport valuesFile is required when enabled")
+		return errorx.IllegalArgument.New("teleport valuesFile is required for cluster agent installation")
 	}
 
 	// Validate ValuesFile path
@@ -209,16 +202,18 @@ func (c *TeleportConfig) Validate() error {
 		return errorx.IllegalArgument.Wrap(err, "invalid teleport valuesFile path: %s", c.ValuesFile)
 	}
 
-	// Validate NodeAgentToken if provided - must be alphanumeric (hex token)
-	if c.NodeAgentToken != "" {
-		if err := sanity.ValidateHexToken(c.NodeAgentToken); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentToken: %s", c.NodeAgentToken)
-		}
+	return nil
+}
 
-		// NodeAgentProxyAddr is required when NodeAgentToken is set
-		if c.NodeAgentProxyAddr == "" {
-			return errorx.IllegalArgument.New("teleport nodeAgentProxyAddr is required when nodeAgentToken is set")
-		}
+// ValidateNodeAgent validates configuration for the node agent.
+func (c TeleportConfig) ValidateNodeAgent() error {
+	// Validate NodeAgentToken - required for node agent
+	if c.NodeAgentToken == "" {
+		return errorx.IllegalArgument.New("teleport nodeAgentToken is required for node agent installation")
+	}
+
+	if err := sanity.ValidateHexToken(c.NodeAgentToken); err != nil {
+		return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentToken (value redacted)")
 	}
 
 	// Validate NodeAgentProxyAddr if provided
@@ -262,8 +257,7 @@ var globalConfig = Config{
 		ClusterName:        "",
 	},
 	Teleport: TeleportConfig{
-		Enabled:    false,
-		Version:    "18.6.4",
+		Version:    deps.TELEPORT_VERSION,
 		ValuesFile: "",
 	},
 }
@@ -384,9 +378,8 @@ func OverrideAlloyConfig(overrides AlloyConfig) {
 }
 
 // OverrideTeleportConfig updates the Teleport configuration with provided overrides.
-// Empty string values are ignored (not applied), except for Enabled which is always applied.
+// Empty string values are ignored (not applied).
 func OverrideTeleportConfig(overrides TeleportConfig) {
-	globalConfig.Teleport.Enabled = overrides.Enabled
 	if overrides.Version != "" {
 		globalConfig.Teleport.Version = overrides.Version
 	}

@@ -3,6 +3,8 @@
 package software
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -432,4 +434,474 @@ func Test_validateRedirect_DirectCall(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Test_Downloader_Extract_Symlink tests extraction of tar archives containing symlinks
+func Test_Downloader_Extract_Symlink(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir, err := os.MkdirTemp("", "test_extract_symlink_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	// Create test tar.gz file with a symlink
+	tarGzPath := filepath.Join(tempDir, "test_symlink.tar.gz")
+	err = createTarGzWithSymlink(tarGzPath, "target.txt", "This is the target file", "link.txt", "target.txt")
+	require.NoError(t, err, "Failed to create test tar.gz with symlink")
+
+	// Create extraction destination
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	// Test extraction
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.NoError(t, err, "Extract with symlink failed")
+
+	// Verify the target file exists
+	targetPath := filepath.Join(extractDir, "target.txt")
+	content, err := os.ReadFile(targetPath)
+	require.NoError(t, err, "Failed to read target file")
+	require.Equal(t, "This is the target file", string(content), "Target file content mismatch")
+
+	// Verify the symlink exists and points to the correct target
+	linkPath := filepath.Join(extractDir, "link.txt")
+	linkTarget, err := os.Readlink(linkPath)
+	require.NoError(t, err, "Failed to read symlink")
+	require.Equal(t, "target.txt", linkTarget, "Symlink target mismatch")
+
+	// Verify we can read through the symlink
+	linkContent, err := os.ReadFile(linkPath)
+	require.NoError(t, err, "Failed to read through symlink")
+	require.Equal(t, "This is the target file", string(linkContent), "Content read through symlink mismatch")
+}
+
+// Test_Downloader_Extract_Hardlink tests extraction of tar archives containing hardlinks
+func Test_Downloader_Extract_Hardlink(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir, err := os.MkdirTemp("", "test_extract_hardlink_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	// Create test tar.gz file with a hardlink
+	tarGzPath := filepath.Join(tempDir, "test_hardlink.tar.gz")
+	err = createTarGzWithHardlink(tarGzPath, "original.txt", "This is the original file", "hardlink.txt", "original.txt")
+	require.NoError(t, err, "Failed to create test tar.gz with hardlink")
+
+	// Create extraction destination
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	// Test extraction
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.NoError(t, err, "Extract with hardlink failed")
+
+	// Verify the original file exists
+	originalPath := filepath.Join(extractDir, "original.txt")
+	content, err := os.ReadFile(originalPath)
+	require.NoError(t, err, "Failed to read original file")
+	require.Equal(t, "This is the original file", string(content), "Original file content mismatch")
+
+	// Verify the hardlink exists and has the same content
+	hardlinkPath := filepath.Join(extractDir, "hardlink.txt")
+	hardlinkContent, err := os.ReadFile(hardlinkPath)
+	require.NoError(t, err, "Failed to read hardlink")
+	require.Equal(t, "This is the original file", string(hardlinkContent), "Hardlink content mismatch")
+
+	// Verify they share the same inode (hardlink property)
+	originalInfo, err := os.Stat(originalPath)
+	require.NoError(t, err, "Failed to stat original file")
+	hardlinkInfo, err := os.Stat(hardlinkPath)
+	require.NoError(t, err, "Failed to stat hardlink")
+
+	// On Unix systems, hardlinks should have the same inode
+	// We can't easily check inode in a portable way, but we can verify
+	// that modifying one affects the other
+	err = os.WriteFile(originalPath, []byte("Modified content"), 0644)
+	require.NoError(t, err, "Failed to modify original file")
+
+	// Read through hardlink - should see modified content
+	modifiedContent, err := os.ReadFile(hardlinkPath)
+	require.NoError(t, err, "Failed to read hardlink after modification")
+	require.Equal(t, "Modified content", string(modifiedContent), "Hardlink should reflect changes to original")
+
+	// Verify sizes match (another property of hardlinks)
+	require.Equal(t, originalInfo.Size(), hardlinkInfo.Size(), "Hardlink and original should have same size")
+}
+
+// Test_Downloader_Extract_SymlinkPathTraversal tests that symlinks with path traversal in target are rejected
+func Test_Downloader_Extract_SymlinkPathTraversal(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir, err := os.MkdirTemp("", "test_extract_symlink_traversal_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	// Create test tar.gz file with a symlink that tries to escape via its target (linkname)
+	// The symlink target points outside the extraction directory
+	tarGzPath := filepath.Join(tempDir, "test_symlink_escape.tar.gz")
+	err = createTarGzWithSymlink(tarGzPath, "safe.txt", "Safe content", "malicious_link", "../../../etc/passwd")
+	require.NoError(t, err, "Failed to create test tar.gz with malicious symlink")
+
+	// Create extraction destination
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	// Test extraction - symlink with path traversal target should be rejected
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.Error(t, err, "Extract should fail for symlink with path traversal target")
+	require.Contains(t, err.Error(), "symlink target escapes extraction directory", "Error should mention symlink target escape")
+
+	// Verify the malicious symlink was NOT created
+	linkPath := filepath.Join(extractDir, "malicious_link")
+	_, err = os.Lstat(linkPath)
+	require.True(t, os.IsNotExist(err), "Malicious symlink should not be created")
+}
+
+// Test_Downloader_Extract_MaliciousHeaderName tests that tar entries with path traversal in hdr.Name are rejected
+func Test_Downloader_Extract_MaliciousHeaderName(t *testing.T) {
+	// Create a temporary directory for test files
+	tempDir, err := os.MkdirTemp("", "test_extract_malicious_name_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	// Create test tar.gz file with a file that has path traversal in its name
+	tarGzPath := filepath.Join(tempDir, "test_malicious_name.tar.gz")
+	err = createTarGzWithMaliciousName(tarGzPath, "../../../tmp/pwned.txt", "You've been pwned!")
+	require.NoError(t, err, "Failed to create test tar.gz with malicious name")
+
+	// Create extraction destination
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	// Test extraction - should fail because path traversal in hdr.Name is rejected
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.Error(t, err, "Extract should fail for path traversal in hdr.Name")
+	require.Contains(t, err.Error(), "path traversal attempt", "Error should mention path traversal")
+}
+
+// Test_Downloader_Extract_SymlinkInSubdirectory tests symlinks in subdirectories
+func Test_Downloader_Extract_SymlinkInSubdirectory(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_extract_symlink_subdir_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	tarGzPath := filepath.Join(tempDir, "test_symlink_subdir.tar.gz")
+	err = createTarGzWithSymlinkInSubdir(tarGzPath)
+	require.NoError(t, err, "Failed to create test tar.gz")
+
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.NoError(t, err, "Extract failed")
+
+	// Verify the symlink in the subdirectory
+	linkPath := filepath.Join(extractDir, "subdir", "link_to_file.txt")
+	linkTarget, err := os.Readlink(linkPath)
+	require.NoError(t, err, "Failed to read symlink")
+	require.Equal(t, "../file.txt", linkTarget, "Symlink target mismatch")
+
+	// Verify we can read through the symlink
+	content, err := os.ReadFile(linkPath)
+	require.NoError(t, err, "Failed to read through symlink")
+	require.Equal(t, "File content", string(content), "Content read through symlink mismatch")
+}
+
+// Test_Downloader_Extract_OverwriteExistingSymlink tests that existing symlinks are overwritten
+func Test_Downloader_Extract_OverwriteExistingSymlink(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_extract_overwrite_symlink_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	// Create extraction destination with a pre-existing symlink
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	// Create a file and an existing symlink pointing to it
+	existingTarget := filepath.Join(extractDir, "existing_target.txt")
+	err = os.WriteFile(existingTarget, []byte("Existing target"), 0644)
+	require.NoError(t, err, "Failed to create existing target")
+
+	existingLink := filepath.Join(extractDir, "link.txt")
+	err = os.Symlink("existing_target.txt", existingLink)
+	require.NoError(t, err, "Failed to create existing symlink")
+
+	// Create tar.gz with a symlink that should overwrite the existing one
+	tarGzPath := filepath.Join(tempDir, "test_overwrite.tar.gz")
+	err = createTarGzWithSymlink(tarGzPath, "new_target.txt", "New target content", "link.txt", "new_target.txt")
+	require.NoError(t, err, "Failed to create test tar.gz")
+
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.NoError(t, err, "Extract should succeed and overwrite existing symlink")
+
+	// Verify the symlink now points to the new target
+	linkTarget, err := os.Readlink(existingLink)
+	require.NoError(t, err, "Failed to read symlink")
+	require.Equal(t, "new_target.txt", linkTarget, "Symlink should point to new target")
+
+	// Verify content through symlink
+	content, err := os.ReadFile(existingLink)
+	require.NoError(t, err, "Failed to read through symlink")
+	require.Equal(t, "New target content", string(content), "Content should be from new target")
+}
+
+// Test_Downloader_Extract_AbsoluteSymlinkTarget tests that absolute symlink targets are rejected
+func Test_Downloader_Extract_AbsoluteSymlinkTarget(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_extract_absolute_symlink_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	tarGzPath := filepath.Join(tempDir, "test_absolute_symlink.tar.gz")
+	err = createTarGzWithSymlink(tarGzPath, "safe.txt", "Safe content", "absolute_link", "/etc/passwd")
+	require.NoError(t, err, "Failed to create test tar.gz")
+
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.Error(t, err, "Extract should fail for absolute symlink target")
+	require.Contains(t, err.Error(), "absolute symlink target not allowed", "Error should mention absolute symlink")
+}
+
+// Test_Downloader_Extract_HardlinkPathTraversal tests that hardlinks with path traversal are rejected
+func Test_Downloader_Extract_HardlinkPathTraversal(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_extract_hardlink_traversal_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	tarGzPath := filepath.Join(tempDir, "test_hardlink_escape.tar.gz")
+	err = createTarGzWithHardlink(tarGzPath, "safe.txt", "Safe content", "malicious_hardlink", "../../../etc/passwd")
+	require.NoError(t, err, "Failed to create test tar.gz")
+
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.Error(t, err, "Extract should fail for hardlink with path traversal target")
+	require.Contains(t, err.Error(), "hardlink target escapes extraction directory", "Error should mention hardlink target escape")
+}
+
+// Test_Downloader_Extract_AbsoluteHardlinkTarget tests that absolute hardlink targets are rejected
+func Test_Downloader_Extract_AbsoluteHardlinkTarget(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test_extract_absolute_hardlink_*")
+	require.NoError(t, err, "Failed to create temp dir")
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	tarGzPath := filepath.Join(tempDir, "test_absolute_hardlink.tar.gz")
+	err = createTarGzWithHardlink(tarGzPath, "safe.txt", "Safe content", "absolute_hardlink", "/etc/passwd")
+	require.NoError(t, err, "Failed to create test tar.gz")
+
+	extractDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err, "Failed to create extraction directory")
+
+	downloader := NewDownloader(
+		WithBasePath(filepath.Dir(tempDir)),
+	)
+	err = downloader.Extract(tarGzPath, extractDir)
+	require.Error(t, err, "Extract should fail for absolute hardlink target")
+	require.Contains(t, err.Error(), "absolute hardlink target not allowed", "Error should mention absolute hardlink")
+}
+
+// Helper functions to create tar.gz files with symlinks and hardlinks
+
+func createTarGzWithSymlink(outputPath, targetName, targetContent, linkName, linkTarget string) error {
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	// Write the target file first
+	targetData := []byte(targetContent)
+	err = tw.WriteHeader(&tar.Header{
+		Name:    targetName,
+		Mode:    0644,
+		Size:    int64(len(targetData)),
+		ModTime: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := tw.Write(targetData); err != nil {
+		return err
+	}
+
+	// Write the symlink
+	err = tw.WriteHeader(&tar.Header{
+		Name:     linkName,
+		Mode:     0777,
+		Typeflag: tar.TypeSymlink,
+		Linkname: linkTarget,
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createTarGzWithHardlink(outputPath, originalName, originalContent, linkName, linkTarget string) error {
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	// Write the original file first
+	originalData := []byte(originalContent)
+	err = tw.WriteHeader(&tar.Header{
+		Name:    originalName,
+		Mode:    0644,
+		Size:    int64(len(originalData)),
+		ModTime: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := tw.Write(originalData); err != nil {
+		return err
+	}
+
+	// Write the hardlink
+	err = tw.WriteHeader(&tar.Header{
+		Name:     linkName,
+		Mode:     0644,
+		Typeflag: tar.TypeLink,
+		Linkname: linkTarget,
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createTarGzWithMaliciousName(outputPath, maliciousName, content string) error {
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	// Write a file with path traversal in its name
+	data := []byte(content)
+	err = tw.WriteHeader(&tar.Header{
+		Name:    maliciousName,
+		Mode:    0644,
+		Size:    int64(len(data)),
+		ModTime: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createTarGzWithSymlinkInSubdir(outputPath string) error {
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	gw := gzip.NewWriter(outFile)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	// Create subdirectory
+	err = tw.WriteHeader(&tar.Header{
+		Name:     "subdir/",
+		Mode:     0755,
+		Typeflag: tar.TypeDir,
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+
+	// Write a file at root level
+	fileContent := []byte("File content")
+	err = tw.WriteHeader(&tar.Header{
+		Name:    "file.txt",
+		Mode:    0644,
+		Size:    int64(len(fileContent)),
+		ModTime: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := tw.Write(fileContent); err != nil {
+		return err
+	}
+
+	// Write a symlink in subdirectory pointing to parent file
+	err = tw.WriteHeader(&tar.Header{
+		Name:     "subdir/link_to_file.txt",
+		Mode:     0777,
+		Typeflag: tar.TypeSymlink,
+		Linkname: "../file.txt",
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

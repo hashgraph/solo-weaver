@@ -13,10 +13,9 @@ Teleport provides **two types of agents**:
 ### 1. Host-Level Agent (Node Agent)
 Installed directly on the host machine for SSH access to the node itself.
 
-| Environment | Method | Notes |
-|-------------|--------|-------|
-| Local Dev | `weaver --teleport-node-agent-proxy` | Requires `task teleport:start` to trust the server cert |
-| Production | `weaver --teleport-node-agent-token` | Uses `hashgraph.teleport.sh` |
+```bash
+weaver teleport node install --token=<join-token> [--proxy=<proxy-address>]
+```
 
 > **Local dev note:** The `task teleport:start` command automatically extracts the Teleport
 > server's certificate and adds it to the system trust store. This allows the node agent
@@ -25,6 +24,10 @@ Installed directly on the host machine for SSH access to the node itself.
 
 ### 2. Kubernetes Agent
 Installed via Helm chart to provide secure access to the Kubernetes cluster.
+
+```bash
+weaver teleport cluster install --values=<path-to-values.yaml> [--version=<version>]
+```
 
 ```
 Local Dev (Docker):                 Production (Teleport Cloud):
@@ -67,73 +70,86 @@ This single command will:
 - Generate a join token
 - Create `/tmp/teleport-values-configured.yaml` with correct values
 
-### Step 2: Generate Node Agent Token
+### Step 2: Install Kubernetes Cluster
+
+Before installing Teleport agents, you need a Kubernetes cluster:
+
+```bash
+cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
+
+sudo ~/weaver-linux-arm64 install
+
+sudo weaver kube cluster install --profile=local --node-type=block
+```
+
+### Step 3: Generate Node Agent Token
 
 Generate a fresh token for the node agent:
 ```bash
 task teleport:node-agent-token
 ```
 
-This will output the token and node IP. **Note these values for Step 3.**
-
-### Step 3: Install Cluster with Teleport Agents
-
-Copy the weaver binary:
-```bash
-cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
-
-sudo ~/weaver-linux-arm64 install
+This will output the token and proxy address. Example output:
+```
+Token: abc123def456...
+Proxy: 192.168.64.5:3080
 ```
 
-Install the cluster with both Kubernetes and Node agents:
+**Note these values for next step.**
+
+### Step 4: Install Teleport Agents
+
+**Install Node Agent (SSH access):**
 ```bash
-sudo weaver block node install \
-  --profile=local \
-  --teleport-enabled \
-  --teleport-values=/tmp/teleport-values-configured.yaml \
-  --teleport-node-agent-token=<TOKEN> \
-  --teleport-node-agent-proxy=<NODE_IP>:3080
+sudo weaver teleport node install \
+  --token=<TOKEN> \
+  --proxy=<PROXY>
 ```
 
-> **Note:** Replace `<TOKEN>` and `<NODE_IP>` with values from Step 2.
+> **Note:** Replace `<TOKEN>` and `<PROXY>` with values from Step 3.
+
+**Install Kubernetes Cluster Agent:**
+```bash
+sudo weaver teleport cluster install \
+  --values=/tmp/teleport-values-configured.yaml
+```
 
 This installs:
 - **Kubernetes Agent** - Secure kubectl access via Teleport
 - **Node Agent** - SSH access to the host via Teleport
 
 
-### Step 4: Create Admin User
+### Step 5: Create Admin User
 
-Inside the VM, create an admin user:
+**First, start port forwarding from your Mac** (in a new terminal):
+```bash
+task vm:teleport-forward
+```
+
+This forwards `localhost:3080` to the Teleport server in the VM.
+
+**Then, inside the VM**, create an admin user:
 ```bash
 docker exec solo-weaver-teleport tctl users add admin --roles=editor,access --logins=root
 ```
 
-This command will output a **signup link** like:
+This outputs a signup link like:
 ```
-User "admin" has been created but requires a password. Share this URL with the user to complete user setup:
-https://<NODE_IP>:3080/web/invite/<token>
-
-NOTE: Make sure <NODE_IP>:3080 points at a Teleport proxy that users can access.
+https://192.168.64.5:3080/web/invite/abc123...
 ```
 
-To access the signup URL from your Mac:
+> ⚠️ **Important:** The URL shows the VM's IP address, but you must access it via `localhost` since port forwarding is active.
 
-1. Start port forwarding (from your Mac, in a new terminal):
-   ```bash
-   task vm:teleport-forward
-   ```
+**Open the signup URL in your browser**, replacing the IP with `localhost`:
+```
+https://localhost:3080/web/invite/abc123...
+```
 
-2. Open the signup URL in your browser, replacing `<NODE_IP>` with `localhost`:
-   ```
-   https://localhost:3080/web/invite/<token>
-   ```
+Complete the signup:
+- Set your password
+- Configure your second factor (OTP authenticator app like Google Authenticator, Authy, etc.)
 
-3. Complete the signup:
-   - Set your password
-   - Configure your second factor (OTP authenticator app like Google Authenticator, Authy, etc.)
-
-### Step 5: Access Teleport Web UI
+### Step 6: Access Teleport Web UI
 
 From your Mac:
 ```bash
@@ -282,32 +298,58 @@ This usually means the agent can't reach the Teleport server. Verify:
 
 For production with Teleport Cloud/Enterprise (e.g., `hashgraph.teleport.sh`):
 
-### Step 1: Install Host-Level Agent (Optional)
-
-On each node that needs SSH access, provide the join token from Teleport Cloud:
+**Step 1: Install Kubernetes Cluster Agent**
 ```bash
-sudo weaver block node install \
-  --teleport-enabled \
-  --teleport-values=/path/to/values.yaml \
-  --teleport-node-agent-token="58566f1f672c0db769bf1fe7681121dc"
+sudo weaver teleport cluster install \
+  --values=/path/to/teleport-values.yaml \
+  --version=18.6.4
 ```
 
-Or in config file:
-```yaml
-teleport:
-  enabled: true
-  valuesFile: "/path/to/teleport-values.yaml"
-  nodeAgentToken: "58566f1f672c0db769bf1fe7681121dc"
+**Step 2: Install Host-Level SSH Agent (Optional)**
+
+On each node that needs SSH access:
+```bash
+sudo weaver teleport node install \
+  --token="58566f1f672c0db769bf1fe7681121dc" \
+  --proxy="proxy.teleport.sh:443"
 ```
 
-The URL is automatically constructed as:
-```
-https://hashgraph.teleport.sh/scripts/<token>/install-node.sh
-```
-
-### Step 2: Create Values File
 
 See `teleport-values-prod-example.yaml` for a complete example.
+
+---
+
+## 📖 CLI Reference
+
+### Teleport Node Agent Commands
+
+```bash
+# Install Teleport SSH node agent
+weaver teleport node install --token=<join-token> --proxy=<proxy-address>
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--token` | Join token for Teleport node agent (required) | - |
+| `--proxy` | Teleport proxy address (required, e.g., proxy.example.com:443) | - |
+| `--stop-on-error` | Stop execution on first error | `true` |
+| `--rollback-on-error` | Rollback executed steps on error | `false` |
+| `--continue-on-error` | Continue executing steps even if some fail | `false` |
+
+### Teleport Cluster Agent Commands
+
+```bash
+# Install Teleport Kubernetes cluster agent
+weaver teleport cluster install --values=<path-to-values.yaml> [--version=<version>]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--values` | Path to Teleport Helm values file (required) | - |
+| `--version` | Teleport Helm chart version | `18.6.4` |
+| `--stop-on-error` | Stop execution on first error | `true` |
+| `--rollback-on-error` | Rollback executed steps on error | `false` |
+| `--continue-on-error` | Continue executing steps even if some fail | `false` |
 
 ---
 
