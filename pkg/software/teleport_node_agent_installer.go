@@ -110,10 +110,6 @@ func (ti *teleportNodeAgentInstaller) Configure() error {
 		return errorx.IllegalArgument.New("teleport configure options not provided")
 	}
 
-	if ti.configureOpts.ProxyAddr == "" {
-		return errorx.IllegalArgument.New("teleport proxy address is required")
-	}
-
 	if ti.configureOpts.JoinToken == "" {
 		return errorx.IllegalArgument.New("teleport join token is required")
 	}

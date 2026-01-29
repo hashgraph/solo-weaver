@@ -27,7 +27,7 @@ var (
 func init() {
 	// Node agent configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagNodeAgentToken, "token", "", "Join token for Teleport node agent SSH access (required)")
-	nodeCmd.PersistentFlags().StringVar(&flagNodeAgentProxyAddr, "proxy", "", "Teleport proxy address (default: hashgraph.teleport.sh, use IP:port for local dev)")
+	nodeCmd.PersistentFlags().StringVar(&flagNodeAgentProxyAddr, "proxy", "", "Teleport proxy address (required, e.g., proxy.example.com or proxy.example.com:443)")
 
 	nodeCmd.AddCommand(installCmd)
 }
