@@ -66,6 +66,9 @@ var allowedDomains = []string{
 
 	// HashiCorp releases
 	"releases.hashicorp.com",
+
+	// Teleport - secure access platform
+	"hashgraph.teleport.sh",
 }
 
 // AllowedDomains returns the allowlist of trusted domains for software downloads.

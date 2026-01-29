@@ -173,3 +173,73 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestTeleportConfig_Validate tests the validation of Teleport configuration
+func TestTeleportConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      TeleportConfig
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid_config",
+			config: TeleportConfig{
+				Enabled:    true,
+				Version:    "18.2.0",
+				ValuesFile: "/path/to/teleport-values.yaml",
+			},
+			expectError: false,
+		},
+		{
+			name: "disabled_config_skips_validation",
+			config: TeleportConfig{
+				Enabled: false,
+				// Missing ValuesFile, but should pass since disabled
+			},
+			expectError: false,
+		},
+		{
+			name: "missing_values_file",
+			config: TeleportConfig{
+				Enabled: true,
+				Version: "18.2.0",
+			},
+			expectError: true,
+			errorMsg:    "valuesFile is required",
+		},
+		{
+			name: "invalid_values_file_with_shell_metacharacters",
+			config: TeleportConfig{
+				Enabled:    true,
+				Version:    "18.2.0",
+				ValuesFile: "/path/to/values.yaml; rm -rf /",
+			},
+			expectError: true,
+			errorMsg:    "invalid teleport valuesFile path",
+		},
+		{
+			name: "invalid_values_file_with_path_traversal",
+			config: TeleportConfig{
+				Enabled:    true,
+				Version:    "18.2.0",
+				ValuesFile: "/path/../../../etc/passwd",
+			},
+			expectError: true,
+			errorMsg:    "invalid teleport valuesFile path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+
+			if tt.expectError {
+				require.Error(t, err, "Expected validation error")
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				require.NoError(t, err, "Expected no validation error")
+			}
+		})
+	}
+}

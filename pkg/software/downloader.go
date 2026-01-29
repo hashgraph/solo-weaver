@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,7 @@ type Downloader struct {
 	timeout        time.Duration
 	basePath       string   // Base directory for validating download/extraction paths
 	allowedDomains []string // List of allowed domains for SSRF protection
+	insecureTLS    bool     // Skip TLS certificate verification (for local dev with self-signed certs)
 }
 
 // DownloaderOption is a function that configures a Downloader
@@ -59,6 +61,15 @@ func WithHTTPClient(client *http.Client) DownloaderOption {
 	}
 }
 
+// WithInsecureTLS skips TLS certificate verification.
+// WARNING: Only use this for local development with self-signed certificates!
+// This option is ignored in release builds for security.
+func WithInsecureTLS(insecure bool) DownloaderOption {
+	return func(d *Downloader) {
+		d.insecureTLS = insecure
+	}
+}
+
 // validateRedirect validates redirect URLs to prevent redirect-based SSRF attacks
 // where an attacker redirects from a trusted domain to an internal service.
 func (fd *Downloader) validateRedirect(req *http.Request, via []*http.Request) error {
@@ -83,6 +94,7 @@ func NewDownloader(opts ...DownloaderOption) *Downloader {
 		timeout:        30 * time.Minute,
 		basePath:       core.Paths().HomeDir,
 		allowedDomains: sanity.AllowedDomains(),
+		insecureTLS:    false,
 	}
 
 	// Apply options
@@ -95,6 +107,13 @@ func NewDownloader(opts ...DownloaderOption) *Downloader {
 		transport := &http.Transport{
 			// Use ProxyFromEnvironment to respect HTTP_PROXY, HTTPS_PROXY, and NO_PROXY
 			Proxy: http.ProxyFromEnvironment,
+		}
+
+		// Configure TLS if insecure mode is requested (for local dev with self-signed certs)
+		if downloader.insecureTLS {
+			transport.TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // Intentional for local dev only
+			}
 		}
 
 		downloader.client = &http.Client{

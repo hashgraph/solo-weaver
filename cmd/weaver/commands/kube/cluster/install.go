@@ -25,6 +25,9 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("profile flag is required")
 		}
 
+		// Set the profile in the global config so other components can access it
+		config.SetProfile(flagProfile)
+
 		// Apply configuration overrides from flags
 		applyConfigOverrides()
 

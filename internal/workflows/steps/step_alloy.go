@@ -45,28 +45,28 @@ const (
 	AlloyClusterSecretStoreName = "vault-secret-store"
 )
 
-// ConditionalSetupObservability sets up the complete observability stack if Alloy is enabled.
+// ConditionalSetupAlloy sets up the complete Alloy observability stack if enabled.
 // This includes:
 // - Prometheus Operator CRDs (for ServiceMonitor/PodMonitor support)
 // - Alloy (metrics and logs collection)
 // - Node Exporter (system metrics)
 // This ensures the check and logging happens at execution time, not at workflow build time.
-func ConditionalSetupObservability() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("conditional-setup-observability").
+func ConditionalSetupAlloy() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("conditional-setup-alloy").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
 			if !cfg.Enabled {
-				logx.As().Info().Msg("Skipping observability stack (Alloy disabled in configuration)")
+				logx.As().Info().Msg("Skipping Alloy setup (disabled in configuration)")
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			// Execute the observability workflow
-			observabilityWf, err := SetupObservability().Build()
+			// Execute the Alloy setup workflow
+			alloyWf, err := SetupAlloyStack().Build()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			report := observabilityWf.Execute(ctx)
+			report := alloyWf.Execute(ctx)
 			if report.Error != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
 			}
@@ -75,22 +75,22 @@ func ConditionalSetupObservability() *automa.StepBuilder {
 		})
 }
 
-// SetupObservability returns a workflow builder that sets up the complete observability stack.
+// SetupAlloyStack returns a workflow builder that sets up the complete Alloy observability stack.
 // This includes Prometheus Operator CRDs and Grafana Alloy.
-func SetupObservability() *automa.WorkflowBuilder {
-	return automa.NewWorkflowBuilder().WithId("setup-observability").Steps(
+func SetupAlloyStack() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("setup-alloy-stack").Steps(
 		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
 		SetupAlloy(),                  // Install Alloy with Node Exporter
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up observability stack")
+			notify.As().StepStart(ctx, stp, "Setting up Alloy observability stack")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup observability stack")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Alloy observability stack")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Observability stack setup successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy observability stack setup successfully")
 		})
 }
 

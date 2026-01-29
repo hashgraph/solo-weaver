@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/joomcode/errorx"
@@ -24,6 +25,9 @@ var (
 	// validPathChars ensures paths only contain safe characters
 	// Allows: alphanumeric, forward slash, dash, underscore, dot
 	validPathChars = regexp.MustCompile(`^[a-zA-Z0-9/_.\-]+$`)
+
+	// hostPattern validates hostname/IP format (alphanumeric, dots, hyphens)
+	hostPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.\-]*$`)
 )
 
 // Alphanumeric ensures the input string to be ascii alphanumeric
@@ -90,6 +94,84 @@ func ValidateIdentifier(s string) error {
 	for i := 0; i < len(s); i++ {
 		if !isValidIdentifierChar(s[i]) {
 			return errorx.IllegalArgument.New("identifier contains invalid characters: %s", s)
+		}
+	}
+
+	return nil
+}
+
+// ValidateHexToken validates that a string is a valid hexadecimal token.
+// This is used for tokens like Teleport join tokens which are hex strings.
+// The token must:
+//  1. Not be empty
+//  2. Contain only hexadecimal characters (0-9, a-f, A-F)
+//  3. Have a reasonable maximum length (4096 characters) to prevent buffer overflow attacks
+func ValidateHexToken(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("token cannot be empty")
+	}
+
+	// Check length - enforce a reasonable upper bound to prevent buffer overflow attacks
+	// No minimum length since token formats may vary
+	if len(s) > 4096 {
+		return errorx.IllegalArgument.New("token exceeds maximum length of 4096 characters, got %d", len(s))
+	}
+
+	// Check if all characters are valid hex digits
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return errorx.IllegalArgument.New("token contains non-hexadecimal characters: %s", s)
+		}
+	}
+
+	return nil
+}
+
+// ValidateHostPort validates a host:port string.
+// Accepts formats like:
+//   - hostname (assumes default port)
+//   - hostname:port
+//   - IP:port (e.g., 192.168.1.1:3080)
+//
+// Does NOT allow:
+//   - Path traversal sequences
+//   - Shell metacharacters
+//   - URLs (use ValidateURL for those)
+func ValidateHostPort(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("host:port cannot be empty")
+	}
+
+	// Check for path traversal
+	if strings.Contains(s, "..") || strings.Contains(s, "/") {
+		return errorx.IllegalArgument.New("host:port cannot contain path components: %s", s)
+	}
+
+	// Check for shell metacharacters
+	if shellMetachars.MatchString(s) {
+		return errorx.IllegalArgument.New("host:port contains invalid characters: %s", s)
+	}
+
+	hostPort := strings.Split(s, ":")
+	if len(hostPort) > 2 || len(hostPort) < 1 {
+		return errorx.IllegalArgument.New("invalid host:port format: %s", s)
+	}
+
+	// Validate host - must match hostname/IP pattern (alphanumeric, dots, hyphens)
+	if !hostPattern.MatchString(hostPort[0]) {
+		return errorx.IllegalArgument.New("invalid host format: %s", hostPort[0])
+	}
+
+	// Validate port if present
+	if len(hostPort) == 2 {
+		portStr := hostPort[1]
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return errorx.IllegalArgument.New("invalid port number: %s", portStr)
+		}
+		if port < 1 || port > 65535 {
+			return errorx.IllegalArgument.New("port must be between 1 and 65535, got %d", port)
 		}
 	}
 

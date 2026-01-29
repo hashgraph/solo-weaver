@@ -1,3 +1,7 @@
+/*
+ * CORE CONFIG
+ */
+
 logging {
   level  = "info"
   format = "logfmt"
@@ -42,7 +46,7 @@ loki.write "physical" {
 }
 
 /*
- * Alloy Agent Metrics
+ * ALLOY AGENT METRICS CONFIG
  */
 
 prometheus.exporter.self "alloy" { }
@@ -84,7 +88,7 @@ prometheus.relabel "alloy" {
 }
 
 /*
- * Node Exporter Metrics
+ * NODE EXPORTER CONFIG
  */
 
 prometheus.operator.servicemonitors "node_exporter" {
@@ -114,8 +118,9 @@ prometheus.operator.servicemonitors "node_exporter" {
   }
 }
 
+
 /*
- * Kubelet/cAdvisor Metrics
+ * KUBELET/CADVISOR METRIC CONFIG
  */
 
 discovery.relabel "kubelet" {
@@ -199,7 +204,7 @@ prometheus.relabel "cadvisor" {
 }
 
 /*
- * System Logs - syslog
+ * SYSLOG CONFIG
  */
 
 loki.relabel "syslog" {
@@ -255,7 +260,7 @@ loki.source.journal "syslog" {
 
 {{if .MonitorBlockNode}}
 /*
- * Block Node Metrics & Logs
+ * BLOCK NODE METRIC CONFIG
  */
 
 prometheus.operator.servicemonitors "block_node_server" {

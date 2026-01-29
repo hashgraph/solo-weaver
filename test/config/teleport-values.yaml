@@ -1,0 +1,64 @@
+# Teleport Kubernetes Agent Helm Values
+# See https://goteleport.com/docs/kubernetes-access/helm/kubernetes-access/
+
+# Role: kube enables Kubernetes access
+roles: kube
+
+# Authentication token for joining the Teleport cluster
+# Get this from your Teleport admin or generate via `tctl tokens add --type=kube`
+authToken: "YOUR_AUTH_TOKEN_HERE"
+
+# Teleport proxy address
+proxyAddr: "hashgraph.teleport.sh:443"
+
+# Kubernetes cluster name as it will appear in Teleport
+kubeClusterName: "rfh01.previewnet.blocknode.hashgraph-devops.com"
+
+# Labels for this Kubernetes cluster
+labels:
+  cloud: gcp
+  cloud-project-id: block-node-previewnet-prod
+  cloud-project-name: block-node-previewnet-prod
+  owner-manager: "Nana Essilfie-Conduah"
+  owner-team: "Block Node"
+  technical-contact-team: "NodeOps"
+  technical-contact-manager: "Keifer Furzland"
+  ticket-number: "RESD-428"
+  location: "us-central1"
+  purpose: "block-node"
+  environment: "preview-network"
+
+# Enterprise features (requires Teleport Enterprise license)
+enterprise: true
+
+# Automatic updates configuration
+updater:
+  enabled: true
+  releaseChannel: "stable/cloud"
+
+# High availability configuration
+highAvailability:
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# Resource limits (optional, adjust based on cluster size)
+# resources:
+#   requests:
+#     cpu: "100m"
+#     memory: "256Mi"
+#   limits:
+#     cpu: "500m"
+#     memory: "512Mi"
+
+# Node selector (optional)
+# nodeSelector:
+#   kubernetes.io/os: linux
+
+# Tolerations (optional)
+# tolerations: []
+
+# Affinity rules (optional)
+# affinity: {}
+

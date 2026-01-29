@@ -27,6 +27,9 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("profile flag is required")
 		}
 
+		// Set the profile in the global config so other components can access it
+		config.SetProfile(flagProfile)
+
 		// Apply configuration overrides from flags
 		applyConfigOverrides()
 
@@ -98,4 +101,16 @@ func applyConfigOverrides() {
 		},
 	}
 	config.OverrideBlockNodeConfig(overrides)
+
+	// Apply Teleport overrides if any flags are set
+	if flagTeleportEnabled || flagTeleportVersion != "" || flagTeleportValuesFile != "" || flagTeleportNodeAgentToken != "" || flagTeleportNodeAgentProxyAddr != "" {
+		teleportOverrides := config.TeleportConfig{
+			Enabled:            flagTeleportEnabled,
+			Version:            flagTeleportVersion,
+			ValuesFile:         flagTeleportValuesFile,
+			NodeAgentToken:     flagTeleportNodeAgentToken,
+			NodeAgentProxyAddr: flagTeleportNodeAgentProxyAddr,
+		}
+		config.OverrideTeleportConfig(teleportOverrides)
+	}
 }

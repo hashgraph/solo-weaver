@@ -28,6 +28,13 @@ var (
 	flagArchiveSize  string
 	flagLogSize      string
 
+	// Teleport flags
+	flagTeleportEnabled            bool
+	flagTeleportVersion            string
+	flagTeleportValuesFile         string
+	flagTeleportNodeAgentToken     string
+	flagTeleportNodeAgentProxyAddr string
+
 	nodeCmd = &cobra.Command{
 		Use:   "node",
 		Short: "Manage lifecycle of a Hedera Block Node",
@@ -53,6 +60,13 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagLiveSize, "live-size", "", "Size for live storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagArchiveSize, "archive-size", "", "Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagLogSize, "log-size", "", "Size for log storage PV/PVC (e.g., 5Gi, 10Gi)")
+
+	// Teleport configuration flags
+	nodeCmd.PersistentFlags().BoolVar(&flagTeleportEnabled, "teleport-enabled", false, "Enable Teleport agent for secure cluster access")
+	nodeCmd.PersistentFlags().StringVar(&flagTeleportVersion, "teleport-version", "", "Teleport Helm chart version (default: 18.6.4)")
+	nodeCmd.PersistentFlags().StringVar(&flagTeleportValuesFile, "teleport-values", "", "Path to Teleport Helm values file (required when --teleport-enabled)")
+	nodeCmd.PersistentFlags().StringVar(&flagTeleportNodeAgentToken, "teleport-node-agent-token", "", "Join token for Teleport node agent SSH access")
+	nodeCmd.PersistentFlags().StringVar(&flagTeleportNodeAgentProxyAddr, "teleport-node-agent-proxy", "", "Teleport proxy address for node agent (default: hashgraph.teleport.sh, use IP:port for local dev)")
 
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd)
 }
