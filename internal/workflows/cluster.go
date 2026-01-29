@@ -63,9 +63,6 @@ func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBui
 		// Alloy observability stack (Prometheus CRDs + Alloy + Node Exporter)
 		steps.ConditionalSetupAlloy(),
 
-		// Teleport agent (secure access and audit logging)
-		steps.ConditionalSetupTeleport(),
-
 		steps.DeployMetricsServer(nil),
 		steps.CheckClusterHealth(),
 	}

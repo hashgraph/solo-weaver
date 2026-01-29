@@ -174,8 +174,8 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 	}
 }
 
-// TestTeleportConfig_Validate tests the validation of Teleport configuration
-func TestTeleportConfig_Validate(t *testing.T) {
+// TestTeleportConfig_ValidateClusterAgent tests the validation of Teleport cluster agent configuration
+func TestTeleportConfig_ValidateClusterAgent(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      TeleportConfig
@@ -185,24 +185,14 @@ func TestTeleportConfig_Validate(t *testing.T) {
 		{
 			name: "valid_config",
 			config: TeleportConfig{
-				Enabled:    true,
 				Version:    "18.2.0",
 				ValuesFile: "/path/to/teleport-values.yaml",
 			},
 			expectError: false,
 		},
 		{
-			name: "disabled_config_skips_validation",
-			config: TeleportConfig{
-				Enabled: false,
-				// Missing ValuesFile, but should pass since disabled
-			},
-			expectError: false,
-		},
-		{
 			name: "missing_values_file",
 			config: TeleportConfig{
-				Enabled: true,
 				Version: "18.2.0",
 			},
 			expectError: true,
@@ -211,7 +201,6 @@ func TestTeleportConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_values_file_with_shell_metacharacters",
 			config: TeleportConfig{
-				Enabled:    true,
 				Version:    "18.2.0",
 				ValuesFile: "/path/to/values.yaml; rm -rf /",
 			},
@@ -221,7 +210,6 @@ func TestTeleportConfig_Validate(t *testing.T) {
 		{
 			name: "invalid_values_file_with_path_traversal",
 			config: TeleportConfig{
-				Enabled:    true,
 				Version:    "18.2.0",
 				ValuesFile: "/path/../../../etc/passwd",
 			},
@@ -232,7 +220,63 @@ func TestTeleportConfig_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.ValidateClusterAgent()
+
+			if tt.expectError {
+				require.Error(t, err, "Expected validation error")
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				require.NoError(t, err, "Expected no validation error")
+			}
+		})
+	}
+}
+
+// TestTeleportConfig_ValidateNodeAgent tests the validation of Teleport node agent configuration
+func TestTeleportConfig_ValidateNodeAgent(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      TeleportConfig
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid_config_with_token",
+			config: TeleportConfig{
+				NodeAgentToken: "abc123def456",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_config_with_proxy_addr",
+			config: TeleportConfig{
+				NodeAgentToken:     "abc123def456",
+				NodeAgentProxyAddr: "192.168.1.1:3080",
+			},
+			expectError: false,
+		},
+		{
+			name: "missing_token",
+			config: TeleportConfig{
+				NodeAgentProxyAddr: "192.168.1.1:3080",
+			},
+			expectError: true,
+			errorMsg:    "nodeAgentToken is required",
+		},
+		{
+			name: "invalid_proxy_addr_with_shell_metacharacter",
+			config: TeleportConfig{
+				NodeAgentToken:     "abc123def456",
+				NodeAgentProxyAddr: "192.168.1.1:3080; rm -rf /",
+			},
+			expectError: true,
+			errorMsg:    "invalid teleport nodeAgentProxyAddr",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.ValidateNodeAgent()
 
 			if tt.expectError {
 				require.Error(t, err, "Expected validation error")
