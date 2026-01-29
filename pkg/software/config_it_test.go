@@ -97,7 +97,11 @@ func Test_Config_LoadArtifactYAML(t *testing.T) {
 					// Validate configs (if present)
 					for i, config := range details.Configs {
 						require.NotEmpty(t, config.Name, "Config %d name should not be empty", i)
-						require.NotEmpty(t, config.URL, "Config %d URL should not be empty", i)
+						// Binary should have either a URL or an Archive reference
+						hasURL := config.URL != ""
+						hasArchive := config.Archive != ""
+						require.True(t, hasURL || hasArchive,
+							"Config %s should have either URL or Archive reference", config.Name)
 						require.NotEmpty(t, config.Algorithm, "Config %d algorithm should not be empty", i)
 						require.NotEmpty(t, config.Value, "Config %d checksum value should not be empty", i)
 					}

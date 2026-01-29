@@ -4,11 +4,8 @@ package steps
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -17,195 +14,225 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/software"
-	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 const (
-	TeleportNamespace              = "teleport-agent"
-	TeleportRelease                = "teleport-agent"
-	TeleportChart                  = "teleport/teleport-kube-agent"
-	TeleportRepo                   = "https://charts.releases.teleport.dev"
-	TeleportDefaultVersion         = "18.6.4"
-	SetupTeleportStepId            = "setup-teleport"
-	InstallTeleportStepId          = "install-teleport"
-	InstallTeleportNodeAgentStepId = "install-teleport-node-agent"
-	CreateTeleportNamespaceStepId  = "create-teleport-namespace"
-	IsTeleportReadyStepId          = "is-teleport-ready"
+	TeleportNamespace             = "teleport-agent"
+	TeleportRelease               = "teleport-agent"
+	TeleportChart                 = "teleport/teleport-kube-agent"
+	TeleportRepo                  = "https://charts.releases.teleport.dev"
+	TeleportDefaultVersion        = deps.TELEPORT_VERSION
+	SetupTeleportStepId           = "setup-teleport"
+	InstallTeleportStepId         = "install-teleport"
+	CreateTeleportNamespaceStepId = "create-teleport-namespace"
+	IsTeleportReadyStepId         = "is-teleport-ready"
 )
 
-// buildNodeAgentURL constructs the Teleport node agent install script URL.
-// The proxy address must be explicitly specified in config.
-func buildNodeAgentURL(proxyAddr, token string) string {
-	return fmt.Sprintf("https://%s/scripts/%s/install-node.sh", proxyAddr, token)
-}
-
-// getAllowedDomains returns the allowed domains for URL validation.
-// For local dev (custom proxy address), the custom address is allowed.
-func getAllowedDomains(proxyAddr string) []string {
-	// Extract the hostname from the proxy address (remove port if present)
-	host := proxyAddr
-	if idx := strings.LastIndex(proxyAddr, ":"); idx != -1 {
-		// Check if this looks like a port (all digits after colon)
-		potentialPort := proxyAddr[idx+1:]
-		isPort := true
-		for _, c := range potentialPort {
-			if c < '0' || c > '9' {
-				isPort = false
-				break
-			}
-		}
-		if isPort {
-			host = proxyAddr[:idx]
-		}
-	}
-	return []string{host}
-}
-
-// ConditionalSetupTeleport sets up the Teleport agent if Teleport is enabled.
-// This ensures the check and logging happens at execution time, not at workflow build time.
-func ConditionalSetupTeleport() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("conditional-setup-teleport").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			cfg := config.Get().Teleport
-			if !cfg.Enabled {
-				logx.As().Info().Msg("Skipping Teleport agent (Teleport disabled in configuration)")
-				return automa.StepSkippedReport(stp.Id())
-			}
-
-			// Execute the Teleport workflow
-			teleportWf, err := SetupTeleport().Build()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			report := teleportWf.Execute(ctx)
-			if report.Error != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
-			}
-
-			return automa.StepSuccessReport(stp.Id())
-		})
-}
-
-// SetupTeleport returns a workflow builder that sets up the Teleport Kubernetes agent.
-// This provides secure, identity-aware access to the Kubernetes cluster with full audit logging.
-// All configuration including RBAC is provided via the Helm values file.
-// If NodeAgentToken is configured, it will also install the host-level SSH agent.
-func SetupTeleport() *automa.WorkflowBuilder {
+// SetupTeleportNodeAgent returns a workflow builder that sets up the Teleport node agent.
+// This provides SSH access to the node via Teleport with full session recording.
+// Used by 'weaver teleport node install' command.
+func SetupTeleportNodeAgent() *automa.WorkflowBuilder {
 	cfg := config.Get().Teleport
 
-	// Build steps list - conditionally include node agent installation
-	var steps []automa.Builder
+	return automa.NewWorkflowBuilder().WithId("setup-teleport-node-agent").
+		Steps(
+			installTeleportNodeAgent(newTeleportInstallerProvider(cfg)),
+			configureTeleportNodeAgent(newTeleportInstallerProvider(cfg)),
+			SetupSystemdService(software.TeleportServiceName),
+		).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up Teleport node agent")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Teleport node agent")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Teleport node agent setup successfully")
+		})
+}
 
-	// If NodeAgentToken is provided, install the host-level SSH agent first
-	if cfg.NodeAgentToken != "" {
-		steps = append(steps, installTeleportNodeAgent())
+// SetupTeleportClusterAgent returns a workflow builder that sets up the Teleport Kubernetes agent.
+// This provides secure, identity-aware access to the Kubernetes cluster with full audit logging.
+// All configuration including RBAC is provided via the Helm values file.
+// Used by 'weaver teleport cluster install' command.
+func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId(SetupTeleportStepId).
+		Steps(
+			CreateTeleportNamespace(),
+			InstallTeleportKubeAgent(),
+			IsTeleportPodsReady(),
+		).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Setting up Teleport cluster agent")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Teleport cluster agent")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Teleport cluster agent setup successfully")
+		})
+}
+
+// teleportInstallerProvider is a function type that creates a teleport installer with config
+type teleportInstallerProvider func(opts ...software.InstallerOption) (software.Software, error)
+
+// newTeleportInstallerProvider creates a provider function that includes the teleport configuration
+func newTeleportInstallerProvider(cfg config.TeleportConfig) teleportInstallerProvider {
+	return func(opts ...software.InstallerOption) (software.Software, error) {
+		configOpts := &software.TeleportNodeAgentConfigureOptions{
+			ProxyAddr: cfg.NodeAgentProxyAddr,
+			JoinToken: cfg.NodeAgentToken,
+		}
+
+		return software.NewTeleportNodeAgentInstallerWithConfig(configOpts, opts...)
 	}
+}
 
-	// Always install the Kubernetes agent
-	steps = append(steps,
-		createTeleportNamespace(),
-		installTeleport(),
-		isTeleportPodsReady(),
-	)
-
-	return automa.NewWorkflowBuilder().WithId(SetupTeleportStepId).Steps(steps...).
+// installTeleportNodeAgent installs the Teleport binaries (following kubelet pattern)
+func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId("install-teleport-node-agent").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up Teleport agent")
+			notify.As().StepStart(ctx, stp, "Installing Teleport node agent binaries")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Teleport agent")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Teleport node agent binaries")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Teleport agent setup successfully")
-		})
-}
-
-// installTeleportNodeAgent installs the Teleport node agent on the host.
-// This provides SSH access to the node via Teleport with full session recording.
-// The URL is constructed from the configured proxy address (or default) + the provided join token.
-func installTeleportNodeAgent() automa.Builder {
-	return automa.NewStepBuilder().WithId(InstallTeleportNodeAgentStepId).
+			notify.As().StepCompletion(ctx, stp, rpt, "Teleport node agent binaries installed successfully")
+		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			cfg := config.Get()
-			teleportCfg := cfg.Teleport
-			l := logx.As()
-
-			if teleportCfg.NodeAgentToken == "" {
-				l.Info().Msg("Skipping Teleport node agent (no token configured)")
-				return automa.StepSkippedReport(stp.Id())
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
-			// Construct the URL from the proxy address and the token
-			nodeAgentURL := buildNodeAgentURL(teleportCfg.NodeAgentProxyAddr, teleportCfg.NodeAgentToken)
-			l.Info().Str("url", nodeAgentURL).Msg("Installing Teleport node agent")
-
-			// Use the Downloader with allowed domains based on configuration
-			allowedDomains := getAllowedDomains(teleportCfg.NodeAgentProxyAddr)
-			l.Debug().Strs("allowedDomains", allowedDomains).Msg("URL validation domains")
-
-			// Local profile indicates local development environment
-			// Enable insecure TLS for self-signed certs in local dev
-			isLocalDev := cfg.IsLocalProfile()
-			if isLocalDev {
-				l.Debug().Msg("Using insecure TLS for local dev (self-signed certs)")
-			}
-
-			downloader := software.NewDownloader(
-				software.WithAllowedDomains(allowedDomains),
-				software.WithTimeout(2*time.Minute),
-				software.WithInsecureTLS(isLocalDev),
-			)
-
-			// Download the install script to a temporary file
-			scriptPath := path.Join(core.Paths().TempDir, "teleport-install-node.sh")
-			if err := downloader.Download(nodeAgentURL, scriptPath); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.InternalError.Wrap(err, "failed to download node agent install script")))
-			}
-
-			// Build the command arguments
-			// For local dev, use -i flag to ignore existing process/config checks
-			// This is needed because the Teleport server container's processes are visible to ps
-			// Note: Certificate trust is handled by 'task teleport:start' which adds the cert to system CA store
-			args := []string{scriptPath}
-			if isLocalDev {
-				l.Debug().Msg("Using -i flag for local dev (ignore existing process checks)")
-				args = []string{scriptPath, "-i"}
-			}
-
-			// Execute the install script
-			l.Info().Msg("Executing Teleport node agent install script (requires sudo)")
-			cmd := exec.CommandContext(ctx, "bash", args...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-
-			if err := cmd.Run(); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.InternalError.Wrap(err, "failed to execute node agent install script")))
-			}
-
+			// Prepare metadata for reporting
 			meta := map[string]string{}
+
+			installed, err := installer.IsInstalled()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
+			if installed {
+				meta[AlreadyInstalled] = "true"
+				return automa.SkippedReport(stp, automa.WithDetail("teleport is already installed"), automa.WithMetadata(meta))
+			}
+
+			err = installer.Download()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
+			meta[DownloadedByThisStep] = "true"
+
+			err = installer.Extract()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
+
+			err = installer.Install()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
 			meta[InstalledByThisStep] = "true"
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+			stp.State().Set(InstalledByThisStep, true)
+
+			err = installer.Cleanup()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
+			meta[CleanedUpByThisStep] = "true"
+
+			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Teleport node agent (SSH access)")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Teleport node agent")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Teleport node agent installed successfully")
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			if !installedByThisStep {
+				return automa.SkippedReport(stp, automa.WithDetail("teleport was not installed by this step, skipping rollback"))
+			}
+
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			err = installer.Uninstall()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			return automa.SuccessReport(stp)
 		})
 }
 
-func createTeleportNamespace() automa.Builder {
+// configureTeleportNodeAgent configures the Teleport node agent (following kubelet pattern)
+// This runs "teleport configure" to generate the config file and creates the systemd service
+func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId("configure-teleport-node-agent").
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Configuring Teleport node agent")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure Teleport node agent")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Teleport node agent configured successfully")
+		}).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			// Prepare metadata for reporting
+			meta := map[string]string{}
+
+			configured, err := installer.IsConfigured()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
+			if configured {
+				meta[AlreadyConfigured] = "true"
+				return automa.SkippedReport(stp, automa.WithDetail("teleport is already configured"), automa.WithMetadata(meta))
+			}
+
+			err = installer.Configure()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
+			}
+			meta[ConfiguredByThisStep] = "true"
+			stp.State().Set(ConfiguredByThisStep, true)
+
+			return automa.SuccessReport(stp, automa.WithMetadata(meta))
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			if !configuredByThisStep {
+				return automa.SkippedReport(stp, automa.WithDetail("teleport was not configured by this step, skipping rollback"))
+			}
+
+			installer, err := provider()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			err = installer.RemoveConfiguration()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			return automa.SuccessReport(stp)
+		})
+}
+
+func CreateTeleportNamespace() automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateTeleportNamespaceStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := kube.NewClient()
@@ -248,7 +275,7 @@ metadata:
 		})
 }
 
-func installTeleport() automa.Builder {
+func InstallTeleportKubeAgent() automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallTeleportStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Teleport
@@ -339,7 +366,7 @@ func installTeleport() automa.Builder {
 		})
 }
 
-func isTeleportPodsReady() automa.Builder {
+func IsTeleportPodsReady() automa.Builder {
 	return automa.NewStepBuilder().WithId(IsTeleportReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 

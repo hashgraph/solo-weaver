@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
@@ -65,6 +66,7 @@ func init() {
 	rootCmd.AddCommand(selfUninstallCmd)
 	rootCmd.AddCommand(kube.GetCmd())
 	rootCmd.AddCommand(block.GetCmd())
+	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(version.GetCmd())
 }
 
