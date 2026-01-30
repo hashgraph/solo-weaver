@@ -45,36 +45,6 @@ const (
 	AlloyClusterSecretStoreName = "vault-secret-store"
 )
 
-// ConditionalSetupAlloy sets up the complete Alloy observability stack if enabled.
-// This includes:
-// - Prometheus Operator CRDs (for ServiceMonitor/PodMonitor support)
-// - Alloy (metrics and logs collection)
-// - Node Exporter (system metrics)
-// This ensures the check and logging happens at execution time, not at workflow build time.
-func ConditionalSetupAlloy() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("conditional-setup-alloy").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			cfg := config.Get().Alloy
-			if !cfg.Enabled {
-				logx.As().Info().Msg("Skipping Alloy setup (disabled in configuration)")
-				return automa.StepSkippedReport(stp.Id())
-			}
-
-			// Execute the Alloy setup workflow
-			alloyWf, err := SetupAlloyStack().Build()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			report := alloyWf.Execute(ctx)
-			if report.Error != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
-			}
-
-			return automa.StepSuccessReport(stp.Id())
-		})
-}
-
 // SetupAlloyStack returns a workflow builder that sets up the complete Alloy observability stack.
 // This includes Prometheus Operator CRDs and Grafana Alloy.
 func SetupAlloyStack() *automa.WorkflowBuilder {

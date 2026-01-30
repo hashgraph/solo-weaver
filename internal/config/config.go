@@ -95,6 +95,9 @@ func (c Config) Validate() error {
 	if err := c.Alloy.Validate(); err != nil {
 		return err
 	}
+	if err := c.Teleport.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -110,7 +113,6 @@ type BlockNodeConfig struct {
 // AlloyConfig represents the `alloy` configuration block for observability.
 // Note: Passwords are managed via Vault and External Secrets Operator, not in config files.
 type AlloyConfig struct {
-	Enabled            bool   `yaml:"enabled" json:"enabled"`
 	MonitorBlockNode   bool   `yaml:"monitorBlockNode" json:"monitorBlockNode"`
 	PrometheusURL      string `yaml:"prometheusUrl" json:"prometheusUrl"`
 	PrometheusUsername string `yaml:"prometheusUsername" json:"prometheusUsername"`
@@ -161,10 +163,6 @@ func (c *BlockNodeConfig) Validate() error {
 
 // Validate validates all Alloy configuration fields.
 func (c *AlloyConfig) Validate() error {
-	// Only validate if Alloy is enabled
-	if !c.Enabled {
-		return nil
-	}
 
 	// Validate cluster name if provided
 	if c.ClusterName != "" {
@@ -188,6 +186,30 @@ type TeleportConfig struct {
 	ValuesFile         string `yaml:"valuesFile" json:"valuesFile"`                 // Path to Helm values file for cluster agent
 	NodeAgentToken     string `yaml:"nodeAgentToken" json:"nodeAgentToken"`         // Join token for host-level SSH agent
 	NodeAgentProxyAddr string `yaml:"nodeAgentProxyAddr" json:"nodeAgentProxyAddr"` // Teleport proxy address (required when NodeAgentToken is set)
+}
+
+// Validate validates Teleport configuration fields that are set.
+// This performs basic validation without context-specific requirements.
+// Use ValidateClusterAgent() or ValidateNodeAgent() for use-case specific validation.
+func (c TeleportConfig) Validate() error {
+	// Validate ValuesFile path if provided
+	if c.ValuesFile != "" {
+		if _, err := sanity.SanitizePath(c.ValuesFile); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid teleport valuesFile path: %s", c.ValuesFile)
+		}
+	}
+
+	// Validate NodeAgentProxyAddr if provided
+	if c.NodeAgentProxyAddr != "" {
+		if err := sanity.ValidateHostPort(c.NodeAgentProxyAddr); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid teleport nodeAgentProxyAddr: %s", c.NodeAgentProxyAddr)
+		}
+	}
+
+	// Note: NodeAgentToken is validated only when actually used (in ValidateNodeAgent)
+	// to avoid exposing token validation errors when teleport is not being configured
+
+	return nil
 }
 
 // ValidateClusterAgent validates configuration for the cluster agent.
@@ -248,7 +270,6 @@ var globalConfig = Config{
 		},
 	},
 	Alloy: AlloyConfig{
-		Enabled:            false,
 		MonitorBlockNode:   false,
 		PrometheusURL:      "",
 		PrometheusUsername: "",
@@ -355,10 +376,9 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 }
 
 // OverrideAlloyConfig updates the Alloy configuration with provided overrides.
-// Empty string values are ignored (not applied), except for Enabled which is always applied.
+// Empty string values are ignored (not applied).
 // Note: Passwords are managed via Vault and External Secrets Operator.
 func OverrideAlloyConfig(overrides AlloyConfig) {
-	globalConfig.Alloy.Enabled = overrides.Enabled
 	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
 	if overrides.PrometheusURL != "" {
 		globalConfig.Alloy.PrometheusURL = overrides.PrometheusURL

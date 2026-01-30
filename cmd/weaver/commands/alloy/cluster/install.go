@@ -18,7 +18,6 @@ var installCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Apply Alloy configuration overrides
 		alloyOverrides := config.AlloyConfig{
-			Enabled:            true, // Always enabled when running install command
 			MonitorBlockNode:   flagMonitorBlockNode,
 			PrometheusURL:      flagPrometheusURL,
 			PrometheusUsername: flagPrometheusUsername,
