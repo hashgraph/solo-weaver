@@ -110,7 +110,7 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to teardown Alloy observability stack")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Alloy observability stack teardown successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy observability stack torn down successfully")
 		})
 }
 
