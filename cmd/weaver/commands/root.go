@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/alloy"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/block"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
@@ -67,6 +68,7 @@ func init() {
 	rootCmd.AddCommand(kube.GetCmd())
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
+	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.GetCmd())
 }
 

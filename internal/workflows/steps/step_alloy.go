@@ -94,6 +94,26 @@ func SetupAlloyStack() *automa.WorkflowBuilder {
 		})
 }
 
+// TeardownAlloyStack returns a workflow builder that tears down the complete Alloy observability stack.
+// This removes Grafana Alloy, Node Exporter, and Prometheus Operator CRDs.
+func TeardownAlloyStack() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("teardown-alloy-stack").Steps(
+		uninstallAlloy(),
+		uninstallNodeExporter(),
+		TeardownPrometheusOperatorCRDs(),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Tearing down Alloy observability stack")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to teardown Alloy observability stack")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy observability stack teardown successfully")
+		})
+}
+
 // SetupAlloy returns a workflow builder that sets up Grafana Alloy for observability.
 func SetupAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupAlloyStepId).Steps(
@@ -642,5 +662,87 @@ func isAlloyPodsReady() automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Alloy is ready")
+		})
+}
+
+// uninstallAlloy removes the Grafana Alloy installation
+func uninstallAlloy() automa.Builder {
+	return automa.NewStepBuilder().WithId("uninstall-alloy").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			l := logx.As()
+			hm, err := helm.NewManager(helm.WithLogger(*l))
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			isInstalled, err := hm.IsInstalled(AlloyRelease, AlloyNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if !isInstalled {
+				l.Info().Msg("Grafana Alloy is not installed, skipping uninstallation")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			err = hm.UninstallChart(AlloyRelease, AlloyNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta["uninstalled"] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Grafana Alloy")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Grafana Alloy")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Grafana Alloy uninstalled successfully")
+		})
+}
+
+// uninstallNodeExporter removes the Node Exporter installation
+func uninstallNodeExporter() automa.Builder {
+	return automa.NewStepBuilder().WithId("uninstall-node-exporter").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			l := logx.As()
+			hm, err := helm.NewManager(helm.WithLogger(*l))
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			isInstalled, err := hm.IsInstalled(NodeExporterRelease, NodeExporterNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if !isInstalled {
+				l.Info().Msg("Node Exporter is not installed, skipping uninstallation")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			err = hm.UninstallChart(NodeExporterRelease, NodeExporterNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta["uninstalled"] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Node Exporter")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Node Exporter")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Node Exporter uninstalled successfully")
 		})
 }

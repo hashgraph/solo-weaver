@@ -153,3 +153,61 @@ func isPrometheusOperatorCRDsReady() automa.Builder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Prometheus Operator CRDs are ready")
 		})
 }
+
+// TeardownPrometheusOperatorCRDs returns a workflow builder that tears down Prometheus Operator CRDs.
+func TeardownPrometheusOperatorCRDs() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("teardown-prometheus-crds").Steps(
+		uninstallPrometheusOperatorCRDs(),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Tearing down Prometheus Operator CRDs")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to teardown Prometheus Operator CRDs")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Prometheus Operator CRDs teardown successfully")
+		})
+}
+
+// uninstallPrometheusOperatorCRDs removes the Prometheus Operator CRDs installation
+func uninstallPrometheusOperatorCRDs() automa.Builder {
+	return automa.NewStepBuilder().WithId("uninstall-prometheus-crds").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			l := logx.As()
+			hm, err := helm.NewManager(helm.WithLogger(*l))
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			isInstalled, err := hm.IsInstalled(PrometheusOperatorCRDsRelease, PrometheusOperatorCRDsNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if !isInstalled {
+				l.Info().Msg("Prometheus Operator CRDs are not installed, skipping uninstallation")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			err = hm.UninstallChart(PrometheusOperatorCRDsRelease, PrometheusOperatorCRDsNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta["uninstalled"] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Prometheus Operator CRDs")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Prometheus Operator CRDs")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Prometheus Operator CRDs uninstalled successfully")
+		})
+}
