@@ -71,14 +71,18 @@ Inside the VM:
 task vault:setup-secret-store
 ```
 
+This will auto-detect the node IP and print the exact command to run next.
+
 ### Step 4: Add Alloy
 
-Inside the VM:
+Inside the VM, run the command printed by the previous step. It will look like:
 ```bash
-sudo weaver block node install \
-  --profile=local \
-  --config=/mnt/solo-weaver/test/config/config_with_alloy.yaml
+sudo weaver alloy cluster install \
+  --prometheus-url=http://<NODE_IP>:9090/api/v1/write \
+  --loki-url=http://<NODE_IP>:3100/loki/api/v1/push \
+  --cluster-name=vm-cluster
 ```
+
 
 Wait ~30 seconds for secrets to sync, then check pods:
 ```bash
@@ -128,6 +132,15 @@ node_cpu_seconds_total
 ---
 
 ## 🧹 Cleanup
+
+### Uninstall Alloy from Kubernetes
+
+Inside the VM:
+```bash
+sudo weaver alloy cluster uninstall
+```
+
+### Stop Local Stack
 
 ```bash
 # Stop Alloy stack

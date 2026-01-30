@@ -1346,7 +1346,10 @@ tasks:
         echo "   ESO User:  eso-user"
         echo ""
         echo "📝 Next step: Install Alloy"
-        echo "   weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config_with_alloy.yaml"
+        echo "   sudo weaver alloy cluster install \\"
+        echo "     --prometheus-url=http://$NODE_IP:9090/api/v1/write \\"
+        echo "     --loki-url=http://$NODE_IP:3100/loki/api/v1/push \\"
+        echo "     --cluster-name=vm-cluster"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   alloy:start:

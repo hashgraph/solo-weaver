@@ -276,7 +276,8 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 	}
 
 	uninstallClient := action.NewUninstall(actionConfig)
-	uninstallClient.DeletionPropagation = "foreground" // "background" or "orphan"
+	uninstallClient.Wait = true
+	uninstallClient.Timeout = DefaultTimeout
 
 	rel, err := uninstallClient.Run(releaseName)
 	if err != nil {
@@ -286,11 +287,6 @@ func (h *helmManager) UninstallChart(releaseName, namespace string) error {
 	if rel == nil || rel.Release == nil {
 		l.Info().Str("releaseName", releaseName).Msg("Release not found, nothing to uninstall")
 		return nil
-	}
-
-	err = h.waitFor(settings, rel.Release, StatusDeleted, uninstallClient.Timeout)
-	if err != nil {
-		return err
 	}
 
 	l.Info().Any("info", rel.Info).Msg("Uninstalled Helm release successfully")

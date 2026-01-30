@@ -28,9 +28,6 @@ var installCmd = &cobra.Command{
 		// Set the profile in the global config so other components can access it
 		config.SetProfile(flagProfile)
 
-		// Apply configuration overrides from flags
-		applyConfigOverrides()
-
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {
 			return errorx.Decorate(err, "failed to determine execution mode")
@@ -57,20 +54,4 @@ func init() {
 	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
-}
-
-// applyConfigOverrides applies flag values to override the configuration.
-// This allows flags to take precedence over config file values.
-// Note: Passwords are managed via Vault and External Secrets Operator, not via flags or env vars.
-func applyConfigOverrides() {
-	overrides := config.AlloyConfig{
-		Enabled:            flagAlloyEnabled,
-		MonitorBlockNode:   flagAlloyMonitorBlockNode,
-		PrometheusURL:      flagAlloyPrometheusURL,
-		PrometheusUsername: flagAlloyPrometheusUsername,
-		LokiURL:            flagAlloyLokiURL,
-		LokiUsername:       flagAlloyLokiUsername,
-		ClusterName:        flagAlloyClusterName,
-	}
-	config.OverrideAlloyConfig(overrides)
 }
