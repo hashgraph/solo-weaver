@@ -167,7 +167,7 @@ func TeardownPrometheusOperatorCRDs() *automa.WorkflowBuilder {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to teardown Prometheus Operator CRDs")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Prometheus Operator CRDs teardown successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Prometheus Operator CRDs torn down successfully")
 		})
 }
 
