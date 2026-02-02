@@ -60,9 +60,6 @@ func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBui
 		// External Secrets Operator (general-purpose secret management for the cluster)
 		steps.SetupExternalSecrets(),
 
-		// Alloy observability stack (Prometheus CRDs + Alloy + Node Exporter)
-		steps.ConditionalSetupAlloy(),
-
 		steps.DeployMetricsServer(nil),
 		steps.CheckClusterHealth(),
 	}
