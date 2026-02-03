@@ -20,10 +20,11 @@ func TestBlockNodeStorage_Validate(t *testing.T) {
 		{
 			name: "valid_all_paths",
 			storage: BlockNodeStorage{
-				BasePath:    "/mnt/storage",
-				ArchivePath: "/mnt/storage/archive",
-				LivePath:    "/mnt/storage/live",
-				LogPath:     "/mnt/storage/logs",
+				BasePath:         "/mnt/storage",
+				ArchivePath:      "/mnt/storage/archive",
+				LivePath:         "/mnt/storage/live",
+				LogPath:          "/mnt/storage/logs",
+				VerificationPath: "/mnt/storage/verification",
 			},
 			expectError: false,
 		},
@@ -65,6 +66,71 @@ func TestBlockNodeStorage_Validate(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "shell metacharacters",
+		},
+		{
+			name: "invalid_verification_path_with_shell_metacharacters",
+			storage: BlockNodeStorage{
+				VerificationPath: "/mnt/verification; echo hacked",
+			},
+			expectError: true,
+			errorMsg:    "shell metacharacters",
+		},
+		{
+			name: "invalid_verification_path_with_path_traversal",
+			storage: BlockNodeStorage{
+				VerificationPath: "/mnt/../etc/shadow",
+			},
+			expectError: true,
+			errorMsg:    "'..' segments",
+		},
+		{
+			name: "valid_verification_path",
+			storage: BlockNodeStorage{
+				VerificationPath: "/mnt/storage/verification",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_storage_sizes",
+			storage: BlockNodeStorage{
+				LiveSize:         "10Gi",
+				ArchiveSize:      "100Gi",
+				LogSize:          "5Gi",
+				VerificationSize: "50Gi",
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid_live_size",
+			storage: BlockNodeStorage{
+				LiveSize: "invalid-size",
+			},
+			expectError: true,
+			errorMsg:    "invalid live storage size",
+		},
+		{
+			name: "invalid_archive_size",
+			storage: BlockNodeStorage{
+				ArchiveSize: "abc",
+			},
+			expectError: true,
+			errorMsg:    "invalid archive storage size",
+		},
+		{
+			name: "invalid_log_size",
+			storage: BlockNodeStorage{
+				LogSize: "10GB; rm -rf /",
+			},
+			expectError: true,
+			errorMsg:    "invalid log storage size",
+		},
+		{
+			name: "invalid_verification_size",
+			storage: BlockNodeStorage{
+				VerificationSize: "not-a-size",
+			},
+			expectError: true,
+			errorMsg:    "invalid verification storage size",
 		},
 		{
 			name: "empty_all_paths",

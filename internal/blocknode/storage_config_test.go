@@ -18,34 +18,39 @@ import (
 // TestCreatePersistentVolumes_ValidYAMLOutput verifies that the generated storage config is valid YAML
 func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 	tests := []struct {
-		name        string
-		liveSize    string
-		archiveSize string
-		logSize     string
+		name             string
+		liveSize         string
+		archiveSize      string
+		logSize          string
+		verificationSize string
 	}{
 		{
-			name:        "default sizes",
-			liveSize:    "5Gi",
-			archiveSize: "5Gi",
-			logSize:     "5Gi",
+			name:             "default sizes",
+			liveSize:         "5Gi",
+			archiveSize:      "5Gi",
+			logSize:          "5Gi",
+			verificationSize: "5Gi",
 		},
 		{
-			name:        "custom sizes",
-			liveSize:    "10Gi",
-			archiveSize: "20Gi",
-			logSize:     "5Gi",
+			name:             "custom sizes",
+			liveSize:         "10Gi",
+			archiveSize:      "20Gi",
+			logSize:          "5Gi",
+			verificationSize: "15Gi",
 		},
 		{
-			name:        "large sizes",
-			liveSize:    "100Gi",
-			archiveSize: "500Gi",
-			logSize:     "50Gi",
+			name:             "large sizes",
+			liveSize:         "100Gi",
+			archiveSize:      "500Gi",
+			logSize:          "50Gi",
+			verificationSize: "200Gi",
 		},
 		{
-			name:        "mixed units",
-			liveSize:    "1024Mi",
-			archiveSize: "1Ti",
-			logSize:     "512Mi",
+			name:             "mixed units",
+			liveSize:         "1024Mi",
+			archiveSize:      "1Ti",
+			logSize:          "512Mi",
+			verificationSize: "2048Mi",
 		},
 	}
 
@@ -60,10 +65,11 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 				Chart:     "test-chart",
 				Version:   "0.1.0",
 				Storage: config.BlockNodeStorage{
-					BasePath:    basePath,
-					LiveSize:    tt.liveSize,
-					ArchiveSize: tt.archiveSize,
-					LogSize:     tt.logSize,
+					BasePath:         basePath,
+					LiveSize:         tt.liveSize,
+					ArchiveSize:      tt.archiveSize,
+					LogSize:          tt.logSize,
+					VerificationSize: tt.verificationSize,
 				},
 			}
 
@@ -72,26 +78,30 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			}
 
 			// Get the computed storage paths
-			archivePath, livePath, logPath, err := manager.GetStoragePaths()
+			archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 			require.NoError(t, err)
 
 			// Prepare template data
 			data := struct {
-				Namespace   string
-				LivePath    string
-				ArchivePath string
-				LogPath     string
-				LiveSize    string
-				ArchiveSize string
-				LogSize     string
+				Namespace        string
+				LivePath         string
+				ArchivePath      string
+				LogPath          string
+				VerificationPath string
+				LiveSize         string
+				ArchiveSize      string
+				LogSize          string
+				VerificationSize string
 			}{
-				Namespace:   manager.blockConfig.Namespace,
-				LivePath:    livePath,
-				ArchivePath: archivePath,
-				LogPath:     logPath,
-				LiveSize:    manager.blockConfig.Storage.LiveSize,
-				ArchiveSize: manager.blockConfig.Storage.ArchiveSize,
-				LogSize:     manager.blockConfig.Storage.LogSize,
+				Namespace:        manager.blockConfig.Namespace,
+				LivePath:         livePath,
+				ArchivePath:      archivePath,
+				LogPath:          logPath,
+				VerificationPath: verificationPath,
+				LiveSize:         manager.blockConfig.Storage.LiveSize,
+				ArchiveSize:      manager.blockConfig.Storage.ArchiveSize,
+				LogSize:          manager.blockConfig.Storage.LogSize,
+				VerificationSize: manager.blockConfig.Storage.VerificationSize,
 			}
 
 			// Render the storage config template
@@ -120,25 +130,27 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 				}
 			}
 
-			// Should have 6 documents (3 PVs + 3 PVCs)
-			assert.Equal(t, 6, len(documents), "Should have 6 Kubernetes resources")
+			// Should have 8 documents (4 PVs + 4 PVCs)
+			assert.Equal(t, 8, len(documents), "Should have 8 Kubernetes resources")
 
 			// Count occurrences of each size in the YAML
 			yamlStr := string(yamlContent)
 
 			// When all sizes are the same, we need to handle it differently
-			if tt.liveSize == tt.archiveSize && tt.archiveSize == tt.logSize {
-				// All sizes are the same, should appear 6 times total (3 PVs + 3 PVCs)
+			if tt.liveSize == tt.archiveSize && tt.archiveSize == tt.logSize && tt.logSize == tt.verificationSize {
+				// All sizes are the same, should appear 8 times total (4 PVs + 4 PVCs)
 				count := strings.Count(yamlStr, "storage: "+tt.liveSize)
-				assert.Equal(t, 6, count, "When all sizes are equal, should appear 6 times total")
+				assert.Equal(t, 8, count, "When all sizes are equal, should appear 8 times total")
 			} else {
 				liveCount := strings.Count(yamlStr, "storage: "+tt.liveSize)
 				archiveCount := strings.Count(yamlStr, "storage: "+tt.archiveSize)
 				logCount := strings.Count(yamlStr, "storage: "+tt.logSize)
+				verificationCount := strings.Count(yamlStr, "storage: "+tt.verificationSize)
 
 				assert.Equal(t, 2, liveCount, "Live storage size should appear twice (PV + PVC)")
 				assert.Equal(t, 2, archiveCount, "Archive storage size should appear twice (PV + PVC)")
 				assert.Equal(t, 2, logCount, "Log storage size should appear twice (PV + PVC)")
+				assert.Equal(t, 2, verificationCount, "Verification storage size should appear twice (PV + PVC)")
 			}
 
 			// Verify namespace is correctly set for PVCs
@@ -158,10 +170,11 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    basePath,
-			LiveSize:    "10Gi",
-			ArchiveSize: "20Gi",
-			LogSize:     "5Gi",
+			BasePath:         basePath,
+			LiveSize:         "10Gi",
+			ArchiveSize:      "20Gi",
+			LogSize:          "5Gi",
+			VerificationSize: "15Gi",
 		},
 	}
 
@@ -170,26 +183,30 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	}
 
 	// Get the computed storage paths
-	archivePath, livePath, logPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// Prepare template data
 	data := struct {
-		Namespace   string
-		LivePath    string
-		ArchivePath string
-		LogPath     string
-		LiveSize    string
-		ArchiveSize string
-		LogSize     string
+		Namespace        string
+		LivePath         string
+		ArchivePath      string
+		LogPath          string
+		VerificationPath string
+		LiveSize         string
+		ArchiveSize      string
+		LogSize          string
+		VerificationSize string
 	}{
-		Namespace:   manager.blockConfig.Namespace,
-		LivePath:    livePath,
-		ArchivePath: archivePath,
-		LogPath:     logPath,
-		LiveSize:    manager.blockConfig.Storage.LiveSize,
-		ArchiveSize: manager.blockConfig.Storage.ArchiveSize,
-		LogSize:     manager.blockConfig.Storage.LogSize,
+		Namespace:        manager.blockConfig.Namespace,
+		LivePath:         livePath,
+		ArchivePath:      archivePath,
+		LogPath:          logPath,
+		VerificationPath: verificationPath,
+		LiveSize:         manager.blockConfig.Storage.LiveSize,
+		ArchiveSize:      manager.blockConfig.Storage.ArchiveSize,
+		LogSize:          manager.blockConfig.Storage.LogSize,
+		VerificationSize: manager.blockConfig.Storage.VerificationSize,
 	}
 
 	// Render the storage config template
@@ -217,9 +234,11 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	assert.Contains(t, yamlStr, "storage: 10Gi", "Should contain live storage size")
 	assert.Contains(t, yamlStr, "storage: 20Gi", "Should contain archive storage size")
 	assert.Contains(t, yamlStr, "storage: 5Gi", "Should contain log storage size")
+	assert.Contains(t, yamlStr, "storage: 15Gi", "Should contain verification storage size")
 
 	// Count occurrences to ensure proper replacement
 	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 10Gi"), "Should have exactly 2 occurrences of 10Gi (live PV + PVC)")
 	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 20Gi"), "Should have exactly 2 occurrences of 20Gi (archive PV + PVC)")
 	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 5Gi"), "Should have exactly 2 occurrences of 5Gi (log PV + PVC)")
+	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 15Gi"), "Should have exactly 2 occurrences of 15Gi (verification PV + PVC)")
 }

@@ -91,13 +91,15 @@ func applyConfigOverrides() {
 		Chart:     flagChartRepo,
 		Version:   flagChartVersion,
 		Storage: config.BlockNodeStorage{
-			BasePath:    flagBasePath,
-			ArchivePath: flagArchivePath,
-			LivePath:    flagLivePath,
-			LogPath:     flagLogPath,
-			LiveSize:    flagLiveSize,
-			ArchiveSize: flagArchiveSize,
-			LogSize:     flagLogSize,
+			BasePath:         flagBasePath,
+			ArchivePath:      flagArchivePath,
+			LivePath:         flagLivePath,
+			LogPath:          flagLogPath,
+			VerificationPath: flagVerificationPath,
+			LiveSize:         flagLiveSize,
+			ArchiveSize:      flagArchiveSize,
+			LogSize:          flagLogSize,
+			VerificationSize: flagVerificationSize,
 		},
 	}
 	config.OverrideBlockNodeConfig(overrides)
