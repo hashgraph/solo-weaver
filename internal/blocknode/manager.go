@@ -39,13 +39,12 @@ const (
 	ValuesPath        = "files/block-node/full-values.yaml"
 	NanoValuesPath    = "files/block-node/nano-values.yaml"
 
+	// Template paths for v0.26.2+ (includes verification storage)
+	ValuesPathV0262     = "files/block-node/full-values-v0.26.2.yaml"
+	NanoValuesPathV0262 = "files/block-node/nano-values-v0.26.2.yaml"
+
 	// Timeouts
 	PodReadyTimeoutSeconds = 300
-
-	// VerificationStorageMinVersion is the minimum Block Node version that requires verification storage.
-	// Block Node v0.26.2 introduced a new PersistentVolume for verification data.
-	// Upgrading from versions < 0.26.2 to >= 0.26.2 requires uninstall + reinstall.
-	VerificationStorageMinVersion = "0.26.2"
 )
 
 // Manager handles block node setup and management operations
@@ -387,8 +386,12 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 	return nil
 }
 
-// ComputeValuesFile generates the values file for helm installation based on profile.
+// ComputeValuesFile generates the values file for helm installation based on profile and version.
 // It provides the path to the generated values file.
+//
+// The method selects the appropriate values template based on the target Block Node version:
+// - For versions >= 0.26.2: Uses values templates with verification storage configuration
+// - For versions < 0.26.2: Uses values templates without verification storage
 //
 // NOTE: This method implements defense-in-depth validation. Even though the CLI layer
 // validates paths using sanity.ValidateInputFile(), this method also validates to ensure
@@ -399,11 +402,24 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	var err error
 
 	if valuesFile == "" {
-		// Use embedded template based on profile
+		// Determine if we need v0.26.2+ values (with verification storage)
+		needsVerificationStorage := m.requiresVerificationStorage()
+
+		// Use embedded template based on profile and version
 		valuesTemplatePath := ValuesPath
 		if profile == core.ProfileLocal {
-			valuesTemplatePath = NanoValuesPath
-			logx.As().Info().Msg("Using nano values configuration for local profile")
+			if needsVerificationStorage {
+				valuesTemplatePath = NanoValuesPathV0262
+				logx.As().Info().Msg("Using nano values configuration with verification storage for local profile")
+			} else {
+				valuesTemplatePath = NanoValuesPath
+				logx.As().Info().Msg("Using nano values configuration for local profile")
+			}
+		} else {
+			if needsVerificationStorage {
+				valuesTemplatePath = ValuesPathV0262
+				logx.As().Info().Msg("Using full values configuration with verification storage")
+			}
 		}
 
 		valuesContent, err = templates.Read(valuesTemplatePath)
@@ -516,112 +532,36 @@ func (m *Manager) GetInstalledVersion() (string, error) {
 	return "", nil
 }
 
-// RequiresReinstall checks if upgrading from the currently installed version to the target version
-// requires a full reinstall (uninstall + install) due to breaking Helm chart changes.
-//
-// Known breaking changes:
-// - v0.26.2: Added verification storage PV/PVC (StatefulSet volumeMounts changed)
-func (m *Manager) RequiresReinstall() (bool, string, error) {
-	installedVersion, err := m.GetInstalledVersion()
-	if err != nil {
-		return false, "", err
-	}
+// getTempDir returns the temporary directory path for storing manifests
+func (m *Manager) getTempDir() string {
+	return core.Paths().TempDir
+}
 
-	// If not installed, no reinstall needed
-	if installedVersion == "" {
-		m.logger.Info().Msg("Block Node not installed, no reinstall needed")
-		return false, "", nil
-	}
-
+// requiresVerificationStorage checks if the target version requires verification storage.
+// Returns true if the target version is >= 0.26.2, false otherwise.
+func (m *Manager) requiresVerificationStorage() bool {
 	targetVersion := m.blockConfig.Version
-
-	m.logger.Info().
-		Str("installedVersion", installedVersion).
-		Str("targetVersion", targetVersion).
-		Str("verificationMinVersion", VerificationStorageMinVersion).
-		Msg("Checking if migration is required for upgrade")
-
-	// Parse versions for comparison
-	installed, err := semver.NewSemver(installedVersion)
-	if err != nil {
-		m.logger.Warn().Err(err).Str("version", installedVersion).Msg("Failed to parse installed version, assuming no migration needed")
-		return false, "", nil
-	}
 
 	target, err := semver.NewSemver(targetVersion)
 	if err != nil {
-		m.logger.Warn().Err(err).Str("version", targetVersion).Msg("Failed to parse target version, assuming no migration needed")
-		return false, "", nil
+		// If we can't parse the version, assume it doesn't need verification storage
+		// to maintain backward compatibility
+		m.logger.Warn().
+			Err(err).
+			Str("version", targetVersion).
+			Msg("Could not parse target version, assuming no verification storage needed")
+		return false
 	}
 
-	verificationMinVersion, _ := semver.NewSemver(VerificationStorageMinVersion)
-
-	// Check if upgrading across the verification storage boundary (< 0.26.2 to >= 0.26.2)
-	installedLessThanMin := installed.LessThan(verificationMinVersion)
-	targetNotLessThanMin := !target.LessThan(verificationMinVersion)
-
-	m.logger.Info().
-		Bool("installedLessThanMin", installedLessThanMin).
-		Bool("targetNotLessThanMin", targetNotLessThanMin).
-		Msg("Version comparison results")
-
-	if installedLessThanMin && targetNotLessThanMin {
-		reason := fmt.Sprintf("Block Node v%s introduced new verification storage PV/PVC. "+
-			"Upgrading from v%s to v%s requires uninstall + reinstall due to StatefulSet changes.",
-			VerificationStorageMinVersion, installedVersion, targetVersion)
-		m.logger.Info().Str("reason", reason).Msg("Migration reinstall required")
-		return true, reason, nil
-	}
-
-	m.logger.Info().Msg("No migration required, proceeding with normal upgrade")
-	return false, "", nil
-}
-
-// PerformMigrationReinstall handles the uninstall + reinstall flow for breaking chart changes.
-// It preserves the existing values and data while recreating the Helm release with new storage.
-func (m *Manager) PerformMigrationReinstall(ctx context.Context, profile string, valuesFile string) error {
-	m.logger.Info().Msg("Performing migration reinstall for breaking chart changes")
-
-	// Step 1: Setup the new verification storage directory
-	_, _, _, verificationPath, err := m.GetStoragePaths()
+	minVersion, err := semver.NewSemver(VerificationStorageMinVersion)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to get storage paths for migration")
+		m.logger.Panic().
+			Err(err).
+			Str("version", VerificationStorageMinVersion).
+			Msg("Invalid VerificationStorageMinVersion constant; this is a programming error")
+		return false
 	}
 
-	if verificationPath != "" {
-		if err := m.fsManager.CreateDirectory(verificationPath, true); err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to create verification storage directory")
-		}
-		if err := m.fsManager.WritePermissions(verificationPath, core.DefaultDirOrExecPerm, true); err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to set permissions on verification storage")
-		}
-		m.logger.Info().Str("path", verificationPath).Msg("Created verification storage directory")
-	}
-
-	// Step 2: Uninstall the current release
-	m.logger.Info().Msg("Uninstalling current Block Node release for migration")
-	if err := m.UninstallChart(ctx); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to uninstall chart for migration")
-	}
-
-	// Step 3: Recreate PVs/PVCs with new verification storage
-	m.logger.Info().Msg("Creating updated PersistentVolumes with verification storage")
-	if err := m.CreatePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create PVs for migration")
-	}
-
-	// Step 4: Reinstall with the new chart version
-	m.logger.Info().Msg("Reinstalling Block Node with new chart version")
-	valuesFilePath, err := m.ComputeValuesFile(profile, valuesFile)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to compute values file for migration")
-	}
-
-	_, err = m.InstallChart(ctx, valuesFilePath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to reinstall chart after migration")
-	}
-
-	m.logger.Info().Msg("Migration reinstall completed successfully")
-	return nil
+	// Requires verification storage if target >= 0.26.2
+	return !target.LessThan(minVersion)
 }

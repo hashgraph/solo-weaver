@@ -352,16 +352,16 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Check if this upgrade requires a reinstall due to breaking chart changes
-			requiresReinstall, reason, err := manager.RequiresReinstall()
+			// Check if this upgrade requires migrations due to breaking chart changes
+			requiresMigration, reason, err := blocknode.RequiresMigration(manager)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if requiresReinstall {
+			if requiresMigration {
 				logx.As().Info().Str("reason", reason).Msg("Breaking chart change detected, performing automatic migration (uninstall + reinstall)")
 
-				if err := manager.PerformMigrationReinstall(ctx, profile, valuesFile); err != nil {
+				if err := blocknode.ExecuteMigration(ctx, manager, profile, valuesFile); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 

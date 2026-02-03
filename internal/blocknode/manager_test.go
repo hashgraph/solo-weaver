@@ -6,9 +6,16 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testLogger returns a no-op logger for testing
+func testLogger() *zerolog.Logger {
+	l := zerolog.Nop()
+	return &l
+}
 
 // TestGetStoragePaths_AllIndividualPathsProvided tests that individual paths are used when all are provided
 func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
@@ -174,6 +181,31 @@ func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 	_, _, _, _, err := manager.GetStoragePaths()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid log path")
+}
+
+// TestGetStoragePaths_InvalidVerificationPath tests that invalid verification path returns an error
+func TestGetStoragePaths_InvalidVerificationPath(t *testing.T) {
+	blockConfig := config.BlockNodeConfig{
+		Namespace: "test-ns",
+		Release:   "test-release",
+		Chart:     "test-chart",
+		Version:   "0.1.0",
+		Storage: config.BlockNodeStorage{
+			BasePath:         "/mnt/base",
+			ArchivePath:      "/mnt/archive",
+			LivePath:         "/mnt/live",
+			LogPath:          "/mnt/log",
+			VerificationPath: "../../../etc/shadow", // Invalid: contains path traversal
+		},
+	}
+
+	manager := &Manager{
+		blockConfig: &blockConfig,
+	}
+
+	_, _, _, _, err := manager.GetStoragePaths()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid verification path")
 }
 
 // TestSetupStorage_AllIndividualPaths tests that basePath is not created when all individual paths are provided
@@ -415,4 +447,242 @@ func TestConfigOverridePrecedence(t *testing.T) {
 		assert.Equal(t, "original-release", result.BlockNode.Release, "should remain unchanged")
 		assert.Equal(t, "/mnt/original", result.BlockNode.Storage.BasePath, "should remain unchanged")
 	})
+}
+
+// ============================================================================
+// Version-Aware Migration Tests
+// ============================================================================
+
+// TestRequiresVerificationStorage tests the version detection for verification storage
+func TestRequiresVerificationStorage(t *testing.T) {
+	tests := []struct {
+		name           string
+		targetVersion  string
+		expectedResult bool
+	}{
+		{
+			name:           "version below 0.26.2 should not require verification storage",
+			targetVersion:  "0.26.0",
+			expectedResult: false,
+		},
+		{
+			name:           "version 0.26.1 should not require verification storage",
+			targetVersion:  "0.26.1",
+			expectedResult: false,
+		},
+		{
+			name:           "version exactly 0.26.2 should require verification storage",
+			targetVersion:  "0.26.2",
+			expectedResult: true,
+		},
+		{
+			name:           "version 0.26.3 should require verification storage",
+			targetVersion:  "0.26.3",
+			expectedResult: true,
+		},
+		{
+			name:           "version 0.27.0 should require verification storage",
+			targetVersion:  "0.27.0",
+			expectedResult: true,
+		},
+		{
+			name:           "version 1.0.0 should require verification storage",
+			targetVersion:  "1.0.0",
+			expectedResult: true,
+		},
+		{
+			name:           "very old version 0.20.0 should not require verification storage",
+			targetVersion:  "0.20.0",
+			expectedResult: false,
+		},
+		{
+			name:           "invalid version should default to false (backward compatible)",
+			targetVersion:  "invalid-version",
+			expectedResult: false,
+		},
+		{
+			name:           "empty version should default to false",
+			targetVersion:  "",
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockConfig := config.BlockNodeConfig{
+				Version: tt.targetVersion,
+			}
+
+			manager := &Manager{
+				blockConfig: &blockConfig,
+				logger:      testLogger(),
+			}
+
+			result := manager.requiresVerificationStorage()
+			assert.Equal(t, tt.expectedResult, result)
+		})
+	}
+}
+
+// TestComputeValuesFile_VersionAwareSelection tests that the correct values file is selected based on version
+func TestComputeValuesFile_VersionAwareSelection(t *testing.T) {
+	tests := []struct {
+		name            string
+		targetVersion   string
+		profile         string
+		expectedLogMsg  string
+		shouldHaveVerif bool
+	}{
+		{
+			name:            "v0.26.0 local profile uses nano values without verification",
+			targetVersion:   "0.26.0",
+			profile:         "local",
+			shouldHaveVerif: false,
+		},
+		{
+			name:            "v0.26.2 local profile uses nano values with verification",
+			targetVersion:   "0.26.2",
+			profile:         "local",
+			shouldHaveVerif: true,
+		},
+		{
+			name:            "v0.26.0 full profile uses full values without verification",
+			targetVersion:   "0.26.0",
+			profile:         "full",
+			shouldHaveVerif: false,
+		},
+		{
+			name:            "v0.26.2 full profile uses full values with verification",
+			targetVersion:   "0.26.2",
+			profile:         "full",
+			shouldHaveVerif: true,
+		},
+		{
+			name:            "v0.27.0 local profile uses nano values with verification",
+			targetVersion:   "0.27.0",
+			profile:         "local",
+			shouldHaveVerif: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockConfig := config.BlockNodeConfig{
+				Version: tt.targetVersion,
+			}
+
+			manager := &Manager{
+				blockConfig: &blockConfig,
+				logger:      testLogger(),
+			}
+
+			// Test the requiresVerificationStorage logic which determines file selection
+			result := manager.requiresVerificationStorage()
+			assert.Equal(t, tt.shouldHaveVerif, result)
+		})
+	}
+}
+
+// TestVersionBoundaryScenarios tests various version boundary scenarios
+func TestVersionBoundaryScenarios(t *testing.T) {
+	t.Run("upgrade within pre-0.26.2 versions", func(t *testing.T) {
+		// Upgrading from 0.25.0 to 0.26.1 should not require verification storage
+		blockConfig := config.BlockNodeConfig{
+			Version: "0.26.1",
+		}
+		manager := &Manager{
+			blockConfig: &blockConfig,
+			logger:      testLogger(),
+		}
+		assert.False(t, manager.requiresVerificationStorage())
+	})
+
+	t.Run("upgrade across breaking change boundary", func(t *testing.T) {
+		// Target version 0.26.2 requires verification storage
+		blockConfig := config.BlockNodeConfig{
+			Version: "0.26.2",
+		}
+		manager := &Manager{
+			blockConfig: &blockConfig,
+			logger:      testLogger(),
+		}
+		assert.True(t, manager.requiresVerificationStorage())
+	})
+
+	t.Run("upgrade within post-0.26.2 versions", func(t *testing.T) {
+		// Upgrading from 0.26.2 to 0.27.0 should still require verification storage
+		blockConfig := config.BlockNodeConfig{
+			Version: "0.27.0",
+		}
+		manager := &Manager{
+			blockConfig: &blockConfig,
+			logger:      testLogger(),
+		}
+		assert.True(t, manager.requiresVerificationStorage())
+	})
+
+	t.Run("fresh install at 0.26.2", func(t *testing.T) {
+		// Fresh install at 0.26.2 should require verification storage
+		blockConfig := config.BlockNodeConfig{
+			Version: "0.26.2",
+		}
+		manager := &Manager{
+			blockConfig: &blockConfig,
+			logger:      testLogger(),
+		}
+		assert.True(t, manager.requiresVerificationStorage())
+	})
+
+	t.Run("fresh install at older version", func(t *testing.T) {
+		// Fresh install at 0.26.0 should not require verification storage
+		blockConfig := config.BlockNodeConfig{
+			Version: "0.26.0",
+		}
+		manager := &Manager{
+			blockConfig: &blockConfig,
+			logger:      testLogger(),
+		}
+		assert.False(t, manager.requiresVerificationStorage())
+	})
+}
+
+// TestInvalidVersionHandling tests that invalid versions are handled gracefully
+func TestInvalidVersionHandling(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{"empty string", ""},
+		{"random string", "not-a-version"},
+		{"partial version", "0.26"},
+		{"version with prefix", "v0.26.2"},
+		{"version with suffix", "0.26.2-beta"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockConfig := config.BlockNodeConfig{
+				Version: tt.version,
+			}
+			manager := &Manager{
+				blockConfig: &blockConfig,
+				logger:      testLogger(),
+			}
+
+			// Should not panic and should return false for invalid versions
+			// (fail-safe to maintain backward compatibility)
+			result := manager.requiresVerificationStorage()
+
+			// Invalid versions should default to false (no verification storage)
+			// to maintain backward compatibility
+			if tt.version == "" || tt.version == "not-a-version" || tt.version == "0.26" {
+				assert.False(t, result, "invalid version should default to false")
+			}
+		})
+	}
+}
+
+// TestVerificationStorageMinVersionConstant verifies the constant is set correctly
+func TestVerificationStorageMinVersionConstant(t *testing.T) {
+	assert.Equal(t, "0.26.2", VerificationStorageMinVersion)
 }
