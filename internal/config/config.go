@@ -24,13 +24,15 @@ type Config struct {
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.
 type BlockNodeStorage struct {
-	BasePath    string `yaml:"basePath" json:"basePath"`
-	ArchivePath string `yaml:"archivePath" json:"archivePath"`
-	LivePath    string `yaml:"livePath" json:"livePath"`
-	LogPath     string `yaml:"logPath" json:"logPath"`
-	LiveSize    string `yaml:"liveSize" json:"liveSize"`
-	ArchiveSize string `yaml:"archiveSize" json:"archiveSize"`
-	LogSize     string `yaml:"logSize" json:"logSize"`
+	BasePath         string `yaml:"basePath" json:"basePath"`
+	ArchivePath      string `yaml:"archivePath" json:"archivePath"`
+	LivePath         string `yaml:"livePath" json:"livePath"`
+	LogPath          string `yaml:"logPath" json:"logPath"`
+	VerificationPath string `yaml:"verificationPath" json:"verificationPath"`
+	LiveSize         string `yaml:"liveSize" json:"liveSize"`
+	ArchiveSize      string `yaml:"archiveSize" json:"archiveSize"`
+	LogSize          string `yaml:"logSize" json:"logSize"`
+	VerificationSize string `yaml:"verificationSize" json:"verificationSize"`
 }
 
 // Validate validates all storage paths to ensure they are safe and secure.
@@ -65,6 +67,13 @@ func (s *BlockNodeStorage) Validate() error {
 		}
 	}
 
+	// Validate VerificationPath if provided
+	if s.VerificationPath != "" {
+		if _, err := sanity.SanitizePath(s.VerificationPath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid verification path: %s", s.VerificationPath)
+		}
+	}
+
 	// Validate storage sizes if provided
 	if s.LiveSize != "" {
 		if err := sanity.ValidateStorageSize(s.LiveSize); err != nil {
@@ -81,6 +90,12 @@ func (s *BlockNodeStorage) Validate() error {
 	if s.LogSize != "" {
 		if err := sanity.ValidateStorageSize(s.LogSize); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid log storage size: %s", s.LogSize)
+		}
+	}
+
+	if s.VerificationSize != "" {
+		if err := sanity.ValidateStorageSize(s.VerificationSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid verification storage size: %s", s.VerificationSize)
 		}
 	}
 
@@ -364,6 +379,9 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	if overrides.Storage.LogPath != "" {
 		globalConfig.BlockNode.Storage.LogPath = overrides.Storage.LogPath
 	}
+	if overrides.Storage.VerificationPath != "" {
+		globalConfig.BlockNode.Storage.VerificationPath = overrides.Storage.VerificationPath
+	}
 	if overrides.Storage.LiveSize != "" {
 		globalConfig.BlockNode.Storage.LiveSize = overrides.Storage.LiveSize
 	}
@@ -372,6 +390,9 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	}
 	if overrides.Storage.LogSize != "" {
 		globalConfig.BlockNode.Storage.LogSize = overrides.Storage.LogSize
+	}
+	if overrides.Storage.VerificationSize != "" {
+		globalConfig.BlockNode.Storage.VerificationSize = overrides.Storage.VerificationSize
 	}
 }
 

@@ -76,3 +76,29 @@ spec:
     requests:
       storage: {{ or .LogSize "5Gi" }}
   volumeName: logging-storage-pv
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: verification-storage-pv
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: {{ or .VerificationSize "5Gi" }}
+  hostPath:
+    path: {{ or .VerificationPath "/opt/weaver/block-node-storage/verification" }}
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: verification-storage-pvc
+  namespace: {{ or .Namespace "block-node" }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ or .VerificationSize "5Gi" }}
+  volumeName: verification-storage-pv

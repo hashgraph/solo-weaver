@@ -18,10 +18,11 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "/mnt/custom-archive",
-			LivePath:    "/mnt/custom-live",
-			LogPath:     "/mnt/custom-log",
+			BasePath:         "/mnt/base",
+			ArchivePath:      "/mnt/custom-archive",
+			LivePath:         "/mnt/custom-live",
+			LogPath:          "/mnt/custom-log",
+			VerificationPath: "/mnt/custom-verification",
 		},
 	}
 
@@ -29,13 +30,14 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// All individual paths should be returned as-is
 	assert.Equal(t, "/mnt/custom-archive", archivePath)
 	assert.Equal(t, "/mnt/custom-live", livePath)
 	assert.Equal(t, "/mnt/custom-log", logPath)
+	assert.Equal(t, "/mnt/custom-verification", verificationPath)
 }
 
 // TestGetStoragePaths_OnlyBasePathProvided tests that paths are derived from basePath when individual paths are empty
@@ -46,10 +48,11 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "",
-			LivePath:    "",
-			LogPath:     "",
+			BasePath:         "/mnt/base",
+			ArchivePath:      "",
+			LivePath:         "",
+			LogPath:          "",
+			VerificationPath: "",
 		},
 	}
 
@@ -57,13 +60,14 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// Paths should be derived from basePath
 	assert.Equal(t, "/mnt/base/archive", archivePath)
 	assert.Equal(t, "/mnt/base/live", livePath)
 	assert.Equal(t, "/mnt/base/logs", logPath)
+	assert.Equal(t, "/mnt/base/verification", verificationPath)
 }
 
 // TestGetStoragePaths_MixedPaths tests that individual paths override basePath-derived paths
@@ -74,10 +78,11 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "/mnt/custom-archive",
-			LivePath:    "", // Should derive from basePath
-			LogPath:     "/mnt/custom-log",
+			BasePath:         "/mnt/base",
+			ArchivePath:      "/mnt/custom-archive",
+			LivePath:         "", // Should derive from basePath
+			LogPath:          "/mnt/custom-log",
+			VerificationPath: "", // Should derive from basePath
 		},
 	}
 
@@ -85,14 +90,15 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// Individual paths should be used when provided
 	assert.Equal(t, "/mnt/custom-archive", archivePath)
 	assert.Equal(t, "/mnt/custom-log", logPath)
-	// Live path should derive from basePath
+	// Live and verification paths should derive from basePath
 	assert.Equal(t, "/mnt/base/live", livePath)
+	assert.Equal(t, "/mnt/base/verification", verificationPath)
 }
 
 // TestGetStoragePaths_InvalidArchivePath tests that invalid archive path returns an error
@@ -103,10 +109,11 @@ func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "../relative/path", // Invalid: contains ".." segments (potential path traversal)
-			LivePath:    "/mnt/live",
-			LogPath:     "/mnt/log",
+			BasePath:         "/mnt/base",
+			ArchivePath:      "../relative/path", // Invalid: contains ".." segments (potential path traversal)
+			LivePath:         "/mnt/live",
+			LogPath:          "/mnt/log",
+			VerificationPath: "/mnt/verification",
 		},
 	}
 
@@ -114,7 +121,7 @@ func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	_, _, _, err := manager.GetStoragePaths()
+	_, _, _, _, err := manager.GetStoragePaths()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid archive path")
 }
@@ -127,10 +134,11 @@ func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "/mnt/archive",
-			LivePath:    "../../../etc/passwd", // Invalid: contains path traversal
-			LogPath:     "/mnt/log",
+			BasePath:         "/mnt/base",
+			ArchivePath:      "/mnt/archive",
+			LivePath:         "../../../etc/passwd", // Invalid: contains path traversal
+			LogPath:          "/mnt/log",
+			VerificationPath: "/mnt/verification",
 		},
 	}
 
@@ -138,7 +146,7 @@ func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	_, _, _, err := manager.GetStoragePaths()
+	_, _, _, _, err := manager.GetStoragePaths()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid live path")
 }
@@ -151,10 +159,11 @@ func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "/mnt/archive",
-			LivePath:    "/mnt/live",
-			LogPath:     "/mnt/log;rm -rf /", // Invalid: contains shell metacharacters
+			BasePath:         "/mnt/base",
+			ArchivePath:      "/mnt/archive",
+			LivePath:         "/mnt/live",
+			LogPath:          "/mnt/log;rm -rf /", // Invalid: contains shell metacharacters
+			VerificationPath: "/mnt/verification",
 		},
 	}
 
@@ -162,7 +171,7 @@ func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	_, _, _, err := manager.GetStoragePaths()
+	_, _, _, _, err := manager.GetStoragePaths()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid log path")
 }
@@ -177,10 +186,11 @@ func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 		Chart:     "test-chart",
 		Version:   "0.1.0",
 		Storage: config.BlockNodeStorage{
-			BasePath:    "/mnt/base",
-			ArchivePath: "/mnt/custom-archive",
-			LivePath:    "/mnt/custom-live",
-			LogPath:     "/mnt/custom-log",
+			BasePath:         "/mnt/base",
+			ArchivePath:      "/mnt/custom-archive",
+			LivePath:         "/mnt/custom-live",
+			LogPath:          "/mnt/custom-log",
+			VerificationPath: "/mnt/custom-verification",
 		},
 	}
 
@@ -189,9 +199,9 @@ func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 	}
 
 	// When all individual paths are provided, the implementation should:
-	// 1. Validate all three paths (archive, live, log)
+	// 1. Validate all four paths (archive, live, log, verification)
 	// 2. NOT create or use BasePath
-	// 3. Only create the three individual path directories
+	// 3. Only create the four individual path directories
 
 	// Note: Full integration test would verify actual filesystem operations
 	// Here we just verify the manager can be created with this config
@@ -199,6 +209,7 @@ func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 	assert.Equal(t, "/mnt/custom-archive", blockConfig.Storage.ArchivePath)
 	assert.Equal(t, "/mnt/custom-live", blockConfig.Storage.LivePath)
 	assert.Equal(t, "/mnt/custom-log", blockConfig.Storage.LogPath)
+	assert.Equal(t, "/mnt/custom-verification", blockConfig.Storage.VerificationPath)
 }
 
 // TestSetupStorage_PathValidation tests that SetupStorage validates all paths
@@ -262,7 +273,7 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 
 			// Note: SetupStorage would need filesystem access to fully test
 			// Here we verify that GetStoragePaths (which is called by SetupStorage) validates properly
-			_, _, _, err := manager.GetStoragePaths()
+			_, _, _, _, err := manager.GetStoragePaths()
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -279,7 +290,7 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 // TestStoragePathPrecedence documents the precedence order
 func TestStoragePathPrecedence(t *testing.T) {
 	// This test documents the expected precedence order:
-	// 1. Individual paths (archivePath, livePath, logPath) - HIGHEST PRIORITY
+	// 1. Individual paths (archivePath, livePath, logPath, verificationPath) - HIGHEST PRIORITY
 	// 2. BasePath-derived paths (basePath + "/archive", etc.) - LOWER PRIORITY
 
 	t.Run("individual path takes precedence", func(t *testing.T) {
@@ -294,24 +305,26 @@ func TestStoragePathPrecedence(t *testing.T) {
 			blockConfig: &blockConfig,
 		}
 
-		archivePath, livePath, logPath, err := manager.GetStoragePaths()
+		archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 		require.NoError(t, err)
 
 		// Archive path should use the individual path, not derived from base
 		assert.Equal(t, "/mnt/override-archive", archivePath, "individual archivePath should take precedence")
 
-		// Live and log should derive from base since not specified
+		// Live, log, and verification should derive from base since not specified
 		assert.Equal(t, "/mnt/base/live", livePath, "should derive from basePath when not specified")
 		assert.Equal(t, "/mnt/base/logs", logPath, "should derive from basePath when not specified")
+		assert.Equal(t, "/mnt/base/verification", verificationPath, "should derive from basePath when not specified")
 	})
 
 	t.Run("all individual paths override base path", func(t *testing.T) {
 		blockConfig := config.BlockNodeConfig{
 			Storage: config.BlockNodeStorage{
-				BasePath:    "/mnt/base",
-				ArchivePath: "/var/archive",
-				LivePath:    "/var/live",
-				LogPath:     "/var/log",
+				BasePath:         "/mnt/base",
+				ArchivePath:      "/var/archive",
+				LivePath:         "/var/live",
+				LogPath:          "/var/log",
+				VerificationPath: "/var/verification",
 			},
 		}
 
@@ -319,13 +332,14 @@ func TestStoragePathPrecedence(t *testing.T) {
 			blockConfig: &blockConfig,
 		}
 
-		archivePath, livePath, logPath, err := manager.GetStoragePaths()
+		archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
 		require.NoError(t, err)
 
 		// All paths should use individual values, not derived from base
 		assert.Equal(t, "/var/archive", archivePath)
 		assert.Equal(t, "/var/live", livePath)
 		assert.Equal(t, "/var/log", logPath)
+		assert.Equal(t, "/var/verification", verificationPath)
 	})
 }
 

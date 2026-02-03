@@ -17,6 +17,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
+	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -40,6 +41,11 @@ const (
 
 	// Timeouts
 	PodReadyTimeoutSeconds = 300
+
+	// VerificationStorageMinVersion is the minimum Block Node version that requires verification storage.
+	// Block Node v0.26.2 introduced a new PersistentVolume for verification data.
+	// Upgrading from versions < 0.26.2 to >= 0.26.2 requires uninstall + reinstall.
+	VerificationStorageMinVersion = "0.26.2"
 )
 
 // Manager handles block node setup and management operations
@@ -111,7 +117,7 @@ func getKubeConfig() (*rest.Config, error) {
 // SetupStorage creates the required directories for block node storage
 func (m *Manager) SetupStorage(ctx context.Context) error {
 	// Get storage paths (already validated by GetStoragePaths)
-	archivePath, livePath, logPath, err := m.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := m.GetStoragePaths()
 	if err != nil {
 		return err
 	}
@@ -120,6 +126,7 @@ func (m *Manager) SetupStorage(ctx context.Context) error {
 		archivePath,
 		livePath,
 		logPath,
+		verificationPath,
 	}
 
 	for _, dirPath := range storagePaths {
@@ -184,28 +191,32 @@ func (m *Manager) DeleteNamespace(ctx context.Context, tempDir string) error {
 // CreatePersistentVolumes creates PVs and PVCs from the storage config
 func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) error {
 	// Get the computed storage paths
-	archivePath, livePath, logPath, err := m.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := m.GetStoragePaths()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
 	}
 
 	// Prepare template data
 	data := struct {
-		Namespace   string
-		LivePath    string
-		ArchivePath string
-		LogPath     string
-		LiveSize    string
-		ArchiveSize string
-		LogSize     string
+		Namespace        string
+		LivePath         string
+		ArchivePath      string
+		LogPath          string
+		VerificationPath string
+		LiveSize         string
+		ArchiveSize      string
+		LogSize          string
+		VerificationSize string
 	}{
-		Namespace:   m.blockConfig.Namespace,
-		LivePath:    livePath,
-		ArchivePath: archivePath,
-		LogPath:     logPath,
-		LiveSize:    m.blockConfig.Storage.LiveSize,
-		ArchiveSize: m.blockConfig.Storage.ArchiveSize,
-		LogSize:     m.blockConfig.Storage.LogSize,
+		Namespace:        m.blockConfig.Namespace,
+		LivePath:         livePath,
+		ArchivePath:      archivePath,
+		LogPath:          logPath,
+		VerificationPath: verificationPath,
+		LiveSize:         m.blockConfig.Storage.LiveSize,
+		ArchiveSize:      m.blockConfig.Storage.ArchiveSize,
+		LogSize:          m.blockConfig.Storage.LogSize,
+		VerificationSize: m.blockConfig.Storage.VerificationSize,
 	}
 
 	// Render the storage config template
@@ -226,7 +237,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	}
 
 	// Wait for all PVCs to be bound
-	pvcNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
+	pvcNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc", "verification-storage-pvc"}
 	timeout := 2 * time.Minute
 
 	for _, pvcName := range pvcNames {
@@ -427,17 +438,18 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 // GetStoragePaths returns the computed storage paths based on configuration.
 // If individual paths are specified, they are used; otherwise, paths are derived from basePath.
 // All paths are validated using sanity checks.
-func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err error) {
+func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath, verificationPath string, err error) {
 	archivePath = m.blockConfig.Storage.ArchivePath
 	livePath = m.blockConfig.Storage.LivePath
 	logPath = m.blockConfig.Storage.LogPath
+	verificationPath = m.blockConfig.Storage.VerificationPath
 
 	// Sanitize basePath before using it to construct other paths
 	basePath := m.blockConfig.Storage.BasePath
 	if basePath != "" {
 		basePath, err = sanity.SanitizePath(basePath)
 		if err != nil {
-			return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid base storage path")
+			return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid base storage path")
 		}
 	}
 
@@ -445,8 +457,8 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err 
 	// Do not allow deriving defaults from an empty basePath, as that would
 	// create relative paths and cause storage to depend on the current
 	// working directory.
-	if basePath == "" && (archivePath == "" || livePath == "" || logPath == "") {
-		return "", "", "", errorx.IllegalArgument.New("at least one storage path is not set and base storage path is empty")
+	if basePath == "" && (archivePath == "" || livePath == "" || logPath == "" || verificationPath == "") {
+		return "", "", "", "", errorx.IllegalArgument.New("at least one storage path is not set and base storage path is empty")
 	}
 
 	if archivePath == "" {
@@ -458,22 +470,158 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err 
 	if logPath == "" {
 		logPath = path.Join(basePath, "logs")
 	}
+	if verificationPath == "" {
+		verificationPath = path.Join(basePath, "verification")
+	}
 
 	// Validate all paths using sanity checks
 	archivePath, err = sanity.SanitizePath(archivePath)
 	if err != nil {
-		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid archive path")
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid archive path")
 	}
 
 	livePath, err = sanity.SanitizePath(livePath)
 	if err != nil {
-		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid live path")
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid live path")
 	}
 
 	logPath, err = sanity.SanitizePath(logPath)
 	if err != nil {
-		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid log path")
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid log path")
 	}
 
-	return archivePath, livePath, logPath, nil
+	verificationPath, err = sanity.SanitizePath(verificationPath)
+	if err != nil {
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid verification path")
+	}
+
+	return archivePath, livePath, logPath, verificationPath, nil
+}
+
+// GetInstalledVersion returns the currently installed Block Node chart version.
+// Returns empty string if not installed.
+func (m *Manager) GetInstalledVersion() (string, error) {
+	rel, err := m.helmManager.GetRelease(m.blockConfig.Release, m.blockConfig.Namespace)
+	if err != nil {
+		if errorx.IsOfType(err, helm.ErrNotFound) {
+			return "", nil
+		}
+		return "", errorx.IllegalState.Wrap(err, "failed to get current release")
+	}
+
+	if rel.Chart != nil && rel.Chart.Metadata != nil {
+		return rel.Chart.Metadata.Version, nil
+	}
+
+	return "", nil
+}
+
+// RequiresReinstall checks if upgrading from the currently installed version to the target version
+// requires a full reinstall (uninstall + install) due to breaking Helm chart changes.
+//
+// Known breaking changes:
+// - v0.26.2: Added verification storage PV/PVC (StatefulSet volumeMounts changed)
+func (m *Manager) RequiresReinstall() (bool, string, error) {
+	installedVersion, err := m.GetInstalledVersion()
+	if err != nil {
+		return false, "", err
+	}
+
+	// If not installed, no reinstall needed
+	if installedVersion == "" {
+		m.logger.Info().Msg("Block Node not installed, no reinstall needed")
+		return false, "", nil
+	}
+
+	targetVersion := m.blockConfig.Version
+
+	m.logger.Info().
+		Str("installedVersion", installedVersion).
+		Str("targetVersion", targetVersion).
+		Str("verificationMinVersion", VerificationStorageMinVersion).
+		Msg("Checking if migration is required for upgrade")
+
+	// Parse versions for comparison
+	installed, err := semver.NewSemver(installedVersion)
+	if err != nil {
+		m.logger.Warn().Err(err).Str("version", installedVersion).Msg("Failed to parse installed version, assuming no migration needed")
+		return false, "", nil
+	}
+
+	target, err := semver.NewSemver(targetVersion)
+	if err != nil {
+		m.logger.Warn().Err(err).Str("version", targetVersion).Msg("Failed to parse target version, assuming no migration needed")
+		return false, "", nil
+	}
+
+	verificationMinVersion, _ := semver.NewSemver(VerificationStorageMinVersion)
+
+	// Check if upgrading across the verification storage boundary (< 0.26.2 to >= 0.26.2)
+	installedLessThanMin := installed.LessThan(verificationMinVersion)
+	targetNotLessThanMin := !target.LessThan(verificationMinVersion)
+
+	m.logger.Info().
+		Bool("installedLessThanMin", installedLessThanMin).
+		Bool("targetNotLessThanMin", targetNotLessThanMin).
+		Msg("Version comparison results")
+
+	if installedLessThanMin && targetNotLessThanMin {
+		reason := fmt.Sprintf("Block Node v%s introduced new verification storage PV/PVC. "+
+			"Upgrading from v%s to v%s requires uninstall + reinstall due to StatefulSet changes.",
+			VerificationStorageMinVersion, installedVersion, targetVersion)
+		m.logger.Info().Str("reason", reason).Msg("Migration reinstall required")
+		return true, reason, nil
+	}
+
+	m.logger.Info().Msg("No migration required, proceeding with normal upgrade")
+	return false, "", nil
+}
+
+// PerformMigrationReinstall handles the uninstall + reinstall flow for breaking chart changes.
+// It preserves the existing values and data while recreating the Helm release with new storage.
+func (m *Manager) PerformMigrationReinstall(ctx context.Context, profile string, valuesFile string) error {
+	m.logger.Info().Msg("Performing migration reinstall for breaking chart changes")
+
+	// Step 1: Setup the new verification storage directory
+	_, _, _, verificationPath, err := m.GetStoragePaths()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get storage paths for migration")
+	}
+
+	if verificationPath != "" {
+		if err := m.fsManager.CreateDirectory(verificationPath, true); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to create verification storage directory")
+		}
+		if err := m.fsManager.WritePermissions(verificationPath, core.DefaultDirOrExecPerm, true); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to set permissions on verification storage")
+		}
+		m.logger.Info().Str("path", verificationPath).Msg("Created verification storage directory")
+	}
+
+	// Step 2: Uninstall the current release
+	m.logger.Info().Msg("Uninstalling current Block Node release for migration")
+	if err := m.UninstallChart(ctx); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to uninstall chart for migration")
+	}
+
+	// Step 3: Recreate PVs/PVCs with new verification storage
+	m.logger.Info().Msg("Creating updated PersistentVolumes with verification storage")
+	if err := m.CreatePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create PVs for migration")
+	}
+
+	// Step 4: Reinstall with the new chart version
+	m.logger.Info().Msg("Reinstalling Block Node with new chart version")
+	valuesFilePath, err := m.ComputeValuesFile(profile, valuesFile)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to compute values file for migration")
+	}
+
+	_, err = m.InstallChart(ctx, valuesFilePath)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to reinstall chart after migration")
+	}
+
+	m.logger.Info().Msg("Migration reinstall completed successfully")
+	return nil
 }
