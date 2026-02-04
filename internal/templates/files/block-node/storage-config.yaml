@@ -76,6 +76,7 @@ spec:
     requests:
       storage: {{ or .LogSize "5Gi" }}
   volumeName: logging-storage-pv
+{{- if .IncludeVerification }}
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -102,3 +103,4 @@ spec:
     requests:
       storage: {{ or .VerificationSize "5Gi" }}
   volumeName: verification-storage-pv
+{{- end }}

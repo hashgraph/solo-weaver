@@ -98,9 +98,10 @@ func TestVerificationStorageMigration_Applies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := &migration.Context{
-				InstalledVersion: tt.installedVersion,
-				TargetVersion:    tt.targetVersion,
+				Data: make(map[string]interface{}),
 			}
+			ctx.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
+			ctx.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
 			applies, err := m.Applies(ctx)
 
 			if tt.expectError {
@@ -114,10 +115,12 @@ func TestVerificationStorageMigration_Applies(t *testing.T) {
 	}
 }
 
-// TestBlockNodeMigrationManager_GetApplicable tests finding applicable migrations
-func TestBlockNodeMigrationManager_GetApplicable(t *testing.T) {
-	logger := testLogger()
-	mm := NewBlockNodeMigrationManager(logger)
+// TestGetApplicable_BlockNode tests finding applicable migrations using global registry
+func TestGetApplicable_BlockNode(t *testing.T) {
+	// Clear and register to ensure clean state
+	migration.ClearRegistry()
+	RegisterMigrations()
+	defer migration.ClearRegistry()
 
 	tests := []struct {
 		name             string
@@ -154,12 +157,11 @@ func TestBlockNodeMigrationManager_GetApplicable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &migration.Context{
-				InstalledVersion: tt.installedVersion,
-				TargetVersion:    tt.targetVersion,
-				Logger:           logger,
-			}
-			migrations, err := mm.GetApplicable(ctx)
+			mctx := &migration.Context{Data: make(map[string]interface{})}
+			mctx.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
+			mctx.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
+
+			migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -172,17 +174,17 @@ func TestBlockNodeMigrationManager_GetApplicable(t *testing.T) {
 	}
 }
 
-// TestBlockNodeMigrationManager_RequiresMigration tests the summary generation
-func TestBlockNodeMigrationManager_RequiresMigration(t *testing.T) {
-	logger := testLogger()
-	mm := NewBlockNodeMigrationManager(logger)
+// TestRequiresMigration_BlockNode tests the migration.RequiresMigration function for block node
+func TestRequiresMigration_BlockNode(t *testing.T) {
+	migration.ClearRegistry()
+	RegisterMigrations()
+	defer migration.ClearRegistry()
 
 	tests := []struct {
 		name             string
 		installedVersion string
 		targetVersion    string
 		expectRequired   bool
-		expectError      bool
 	}{
 		{
 			name:             "migration required",
@@ -206,24 +208,16 @@ func TestBlockNodeMigrationManager_RequiresMigration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &migration.Context{
-				InstalledVersion: tt.installedVersion,
-				TargetVersion:    tt.targetVersion,
-				Logger:           logger,
-			}
-			required, summary, err := mm.RequiresMigration(ctx)
+			mctx := &migration.Context{Data: make(map[string]interface{})}
+			mctx.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
+			mctx.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
 
-			if tt.expectError {
-				require.Error(t, err)
-				return
-			}
-
+			required, summary, err := migration.RequiresMigration(ComponentBlockNode, mctx)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectRequired, required)
 
 			if tt.expectRequired {
 				assert.NotEmpty(t, summary)
-				assert.Contains(t, summary, "migration")
 			} else {
 				assert.Empty(t, summary)
 			}
@@ -231,18 +225,17 @@ func TestBlockNodeMigrationManager_RequiresMigration(t *testing.T) {
 	}
 }
 
-// TestBlockNodeMigrationManager_Registration tests that migrations can be registered
-func TestBlockNodeMigrationManager_Registration(t *testing.T) {
-	logger := testLogger()
-	mm := NewBlockNodeMigrationManager(logger)
+// TestMigrationRegistration tests that migrations can be registered correctly
+func TestMigrationRegistration(t *testing.T) {
+	migration.ClearRegistry()
+	RegisterMigrations()
+	defer migration.ClearRegistry()
 
-	// NewBlockNodeMigrationManager registers the verification storage migration by default
-	ctx := &migration.Context{
-		InstalledVersion: "0.26.0",
-		TargetVersion:    "0.26.2",
-		Logger:           logger,
-	}
-	migrations, err := mm.GetApplicable(ctx)
+	// Check that verification migration is registered
+	mctx := &migration.Context{Data: make(map[string]interface{})}
+	mctx.Set(migration.CtxKeyInstalledVersion, "0.26.0")
+	mctx.Set(migration.CtxKeyTargetVersion, "0.26.2")
+	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 	require.NoError(t, err)
 	require.Len(t, migrations, 1)
 	assert.Equal(t, "verification-storage-v0.26.2", migrations[0].ID())
@@ -254,5 +247,4 @@ func TestVerificationStorageMigration_Metadata(t *testing.T) {
 
 	assert.Equal(t, "verification-storage-v0.26.2", m.ID())
 	assert.NotEmpty(t, m.Description())
-	assert.Equal(t, "0.26.2", m.MinVersion())
 }

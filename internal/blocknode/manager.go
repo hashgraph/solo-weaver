@@ -17,7 +17,6 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
-	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -200,30 +199,43 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
 	}
 
+	includeVerification := m.requiresVerificationStorage()
+
+	m.logger.Debug().
+		Str("archivePath", archivePath).
+		Str("livePath", livePath).
+		Str("logPath", logPath).
+		Str("verificationPath", verificationPath).
+		Bool("includeVerification", includeVerification).
+		Msg("Storage paths computed")
+
 	// Prepare template data
 	data := struct {
-		Namespace        string
-		LivePath         string
-		ArchivePath      string
-		LogPath          string
-		VerificationPath string
-		LiveSize         string
-		ArchiveSize      string
-		LogSize          string
-		VerificationSize string
+		Namespace           string
+		LivePath            string
+		ArchivePath         string
+		LogPath             string
+		VerificationPath    string
+		LiveSize            string
+		ArchiveSize         string
+		LogSize             string
+		VerificationSize    string
+		IncludeVerification bool
 	}{
-		Namespace:        m.blockConfig.Namespace,
-		LivePath:         livePath,
-		ArchivePath:      archivePath,
-		LogPath:          logPath,
-		VerificationPath: verificationPath,
-		LiveSize:         m.blockConfig.Storage.LiveSize,
-		ArchiveSize:      m.blockConfig.Storage.ArchiveSize,
-		LogSize:          m.blockConfig.Storage.LogSize,
-		VerificationSize: m.blockConfig.Storage.VerificationSize,
+		Namespace:           m.blockConfig.Namespace,
+		LivePath:            livePath,
+		ArchivePath:         archivePath,
+		LogPath:             logPath,
+		VerificationPath:    verificationPath,
+		LiveSize:            m.blockConfig.Storage.LiveSize,
+		ArchiveSize:         m.blockConfig.Storage.ArchiveSize,
+		LogSize:             m.blockConfig.Storage.LogSize,
+		VerificationSize:    m.blockConfig.Storage.VerificationSize,
+		IncludeVerification: includeVerification,
 	}
 
 	// Render the storage config template
+	m.logger.Debug().Str("template", StorageConfigPath).Msg("Rendering storage config template")
 	storageConfig, err := templates.Render(StorageConfigPath, data)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to render storage config template")
@@ -231,14 +243,18 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 
 	// Write to temp file
 	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
+	m.logger.Debug().Str("configFile", configFilePath).Msg("Writing storage config to temp file")
 	if err := os.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write storage config to temp file")
 	}
 
 	// Apply the configuration
+	m.logger.Debug().Str("configFile", configFilePath).Msg("Applying storage manifest")
 	if err := m.kubeClient.ApplyManifest(ctx, configFilePath); err != nil {
+		m.logger.Error().Err(err).Str("configFile", configFilePath).Msg("Failed to apply storage manifest")
 		return errorx.IllegalState.Wrap(err, "failed to apply storage configuration")
 	}
+	m.logger.Debug().Msg("Storage manifest applied successfully")
 
 	// Wait for all PVCs to be bound
 	pvcNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
@@ -567,33 +583,4 @@ func (m *Manager) GetReleaseValues() (map[string]interface{}, error) {
 
 	// rel.Config contains the user-supplied values (not the computed/merged values)
 	return rel.Config, nil
-}
-
-// requiresVerificationStorage checks if the target version requires verification storage.
-// Returns true if the target version is >= 0.26.2, false otherwise.
-func (m *Manager) requiresVerificationStorage() bool {
-	targetVersion := m.blockConfig.Version
-
-	target, err := semver.NewSemver(targetVersion)
-	if err != nil {
-		// If we can't parse the version, assume it doesn't need verification storage
-		// to maintain backward compatibility
-		m.logger.Warn().
-			Err(err).
-			Str("version", targetVersion).
-			Msg("Could not parse target version, assuming no verification storage needed")
-		return false
-	}
-
-	minVersion, err := semver.NewSemver(VerificationStorageMinVersion)
-	if err != nil {
-		m.logger.Panic().
-			Err(err).
-			Str("version", VerificationStorageMinVersion).
-			Msg("Invalid VerificationStorageMinVersion constant; this is a programming error")
-		return false
-	}
-
-	// Requires verification storage if target >= 0.26.2
-	return !target.LessThan(minVersion)
 }

@@ -12,8 +12,10 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +51,11 @@ var (
 	}
 )
 
+// Register state migrations at startup
 func init() {
+	// Register all migrations at startup
+	state.RegisterMigrations()
+
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
 
 	// support '--version', '-v' to show version information

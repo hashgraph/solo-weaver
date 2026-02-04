@@ -353,16 +353,22 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 			}
 
 			// Check if this upgrade requires migrations due to breaking chart changes
-			requiresMigration, reason, err := blocknode.RequiresMigration(manager)
+			migrationWorkflow, err := blocknode.GetMigrationWorkflow(manager, profile, valuesFile, reuseValues)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if requiresMigration {
-				logx.As().Info().Str("reason", reason).Msg("Breaking chart change detected, performing automatic migration (uninstall + reinstall)")
+			if migrationWorkflow != nil {
+				logx.As().Info().Msg("Breaking chart change detected, performing automatic migration")
 
-				if err := blocknode.ExecuteMigration(ctx, manager, profile, valuesFile, reuseValues); err != nil {
+				workflow, err := migrationWorkflow.Build()
+				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+
+				report := workflow.Execute(ctx)
+				if report.Error != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
 				}
 
 				meta["migrated"] = "true"

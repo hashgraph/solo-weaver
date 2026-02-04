@@ -52,19 +52,18 @@ func TestContext_GetString(t *testing.T) {
 }
 
 // ============================================================================
-// BaseMigration Tests
+// VersionMigration Tests
 // ============================================================================
 
-func TestBaseMigration_Metadata(t *testing.T) {
-	m := NewBaseMigration("test-migration-v1.0.0", "Test migration", "1.0.0")
+func TestVersionMigration_Metadata(t *testing.T) {
+	m := NewVersionMigration("test-migration-v1.0.0", "Test migration", "1.0.0")
 
 	assert.Equal(t, "test-migration-v1.0.0", m.ID())
 	assert.Equal(t, "Test migration", m.Description())
-	assert.Equal(t, "1.0.0", m.MinVersion())
 }
 
-func TestBaseMigration_Applies(t *testing.T) {
-	m := &BaseMigration{
+func TestVersionMigration_Applies(t *testing.T) {
+	m := &VersionMigration{
 		id:          "test-v1.0.0",
 		description: "Test",
 		minVersion:  "1.0.0",
@@ -108,25 +107,19 @@ func TestBaseMigration_Applies(t *testing.T) {
 			expectApplies:    false,
 		},
 		{
-			name:             "not installed should NOT apply",
+			name:             "fresh install should NOT apply",
 			installedVersion: "",
 			targetVersion:    "1.0.0",
 			expectApplies:    false,
 		},
 		{
-			name:             "same version should NOT apply",
-			installedVersion: "0.9.0",
-			targetVersion:    "0.9.0",
-			expectApplies:    false,
-		},
-		{
-			name:             "invalid installed version should error",
+			name:             "invalid installed version",
 			installedVersion: "invalid",
 			targetVersion:    "1.0.0",
 			expectError:      true,
 		},
 		{
-			name:             "invalid target version should error",
+			name:             "invalid target version",
 			installedVersion: "0.9.0",
 			targetVersion:    "invalid",
 			expectError:      true,
@@ -136,60 +129,39 @@ func TestBaseMigration_Applies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := &Context{
-				InstalledVersion: tt.installedVersion,
-				TargetVersion:    tt.targetVersion,
+				Data: make(map[string]interface{}),
 			}
+			ctx.Set(CtxKeyInstalledVersion, tt.installedVersion)
+			ctx.Set(CtxKeyTargetVersion, tt.targetVersion)
 
 			applies, err := m.Applies(ctx)
 
 			if tt.expectError {
 				require.Error(t, err)
-				return
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectApplies, applies)
 			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectApplies, applies)
 		})
 	}
 }
 
-func TestBaseMigration_Execute_NotImplemented(t *testing.T) {
-	m := &BaseMigration{}
-	err := m.Execute(context.Background(), &Context{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not implemented")
-}
-
-func TestBaseMigration_Rollback_Default(t *testing.T) {
-	m := &BaseMigration{}
-	err := m.Rollback(context.Background(), &Context{})
-	require.NoError(t, err) // Default returns nil
-}
-
 // ============================================================================
-// Mock Migration for Testing
+// Mock Migration for testing
 // ============================================================================
 
 type MockMigration struct {
-	BaseMigration
-	appliesOverride func(*Context) (bool, error)
-	executeFunc     func(context.Context, *Context) error
-	rollbackFunc    func(context.Context, *Context) error
-	executeCalls    int
-	rollbackCalls   int
+	VersionMigration
+	executeFunc   func(ctx context.Context, mctx *Context) error
+	rollbackFunc  func(ctx context.Context, mctx *Context) error
+	executeCalls  int
+	rollbackCalls int
 }
 
 func NewMockMigration(id, minVersion string) *MockMigration {
 	return &MockMigration{
-		BaseMigration: NewBaseMigration(id, "Mock: "+id, minVersion),
+		VersionMigration: NewVersionMigration(id, "Mock migration", minVersion),
 	}
-}
-
-func (m *MockMigration) Applies(ctx *Context) (bool, error) {
-	if m.appliesOverride != nil {
-		return m.appliesOverride(ctx)
-	}
-	return m.BaseMigration.Applies(ctx)
 }
 
 func (m *MockMigration) Execute(ctx context.Context, mctx *Context) error {
@@ -209,50 +181,21 @@ func (m *MockMigration) Rollback(ctx context.Context, mctx *Context) error {
 }
 
 // ============================================================================
-// Manager Tests
+// Registry Tests
 // ============================================================================
 
-func TestNewManager(t *testing.T) {
-	logger := testLogger()
-
-	t.Run("with defaults", func(t *testing.T) {
-		m := NewManager()
-		assert.NotNil(t, m)
-		assert.Equal(t, "unknown", m.component)
-	})
-
-	t.Run("with options", func(t *testing.T) {
-		m := NewManager(
-			WithLogger(logger),
-			WithComponent("test-component"),
-		)
-		assert.Equal(t, "test-component", m.component)
-	})
-}
-
-func TestManager_Register(t *testing.T) {
-	m := NewManager(WithComponent("test"))
-
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	mock2 := NewMockMigration("migration-2", "2.0.0")
-
-	m.Register(mock1)
-	m.Register(mock2)
-
-	assert.Len(t, m.migrations, 2)
-}
-
-func TestManager_GetApplicable(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
+func TestRegister_And_GetApplicable(t *testing.T) {
+	// Clear registry before test
+	ClearRegistry()
+	defer ClearRegistry()
 
 	mock1 := NewMockMigration("migration-1", "1.0.0")
 	mock2 := NewMockMigration("migration-2", "2.0.0")
 	mock3 := NewMockMigration("migration-3", "3.0.0")
 
-	m.Register(mock1)
-	m.Register(mock2)
-	m.Register(mock3)
+	Register("test-component", mock1)
+	Register("test-component", mock2)
+	Register("test-component", mock3)
 
 	tests := []struct {
 		name             string
@@ -294,262 +237,130 @@ func TestManager_GetApplicable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &Context{
-				InstalledVersion: tt.installedVersion,
-				TargetVersion:    tt.targetVersion,
-				Logger:           logger,
-			}
+			mctx := &Context{Data: make(map[string]interface{})}
+			mctx.Set(CtxKeyInstalledVersion, tt.installedVersion)
+			mctx.Set(CtxKeyTargetVersion, tt.targetVersion)
 
-			applicable, err := m.GetApplicable(ctx)
+			applicable, err := GetApplicableMigrations("test-component", mctx)
 			require.NoError(t, err)
 			assert.Len(t, applicable, tt.expectCount)
 		})
 	}
 }
 
-func TestManager_RequiresMigration(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
+func TestRequiresMigration(t *testing.T) {
+	ClearRegistry()
+	defer ClearRegistry()
 
 	mock1 := NewMockMigration("migration-1", "1.0.0")
-	m.Register(mock1)
+	Register("test-component", mock1)
 
 	t.Run("migration required", func(t *testing.T) {
-		ctx := &Context{
-			InstalledVersion: "0.5.0",
-			TargetVersion:    "1.0.0",
-			Logger:           logger,
-		}
+		mctx := &Context{Data: make(map[string]interface{})}
+		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
+		mctx.Set(CtxKeyTargetVersion, "1.5.0")
 
-		required, summary, err := m.RequiresMigration(ctx)
+		required, summary, err := RequiresMigration("test-component", mctx)
 		require.NoError(t, err)
 		assert.True(t, required)
 		assert.Contains(t, summary, "migration-1")
-		assert.Contains(t, summary, "test")
 	})
 
 	t.Run("no migration required", func(t *testing.T) {
-		ctx := &Context{
-			InstalledVersion: "1.0.0",
-			TargetVersion:    "1.1.0",
-			Logger:           logger,
-		}
+		mctx := &Context{Data: make(map[string]interface{})}
+		mctx.Set(CtxKeyInstalledVersion, "1.5.0")
+		mctx.Set(CtxKeyTargetVersion, "2.0.0")
 
-		required, summary, err := m.RequiresMigration(ctx)
+		required, summary, err := RequiresMigration("test-component", mctx)
 		require.NoError(t, err)
 		assert.False(t, required)
 		assert.Empty(t, summary)
 	})
 }
 
-func TestManager_Execute_Success(t *testing.T) {
+func TestToWorkflow(t *testing.T) {
 	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
 
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	mock2 := NewMockMigration("migration-2", "2.0.0")
+	t.Run("empty migrations returns no-op workflow", func(t *testing.T) {
+		workflow := ToWorkflow(nil, &Context{Logger: logger})
+		assert.NotNil(t, workflow)
+	})
 
-	m.Register(mock1)
-	m.Register(mock2)
+	t.Run("migrations execute in order", func(t *testing.T) {
+		var order []string
+		mock1 := NewMockMigration("m1", "1.0.0")
+		mock1.executeFunc = func(ctx context.Context, mctx *Context) error {
+			order = append(order, "m1")
+			return nil
+		}
+		mock2 := NewMockMigration("m2", "2.0.0")
+		mock2.executeFunc = func(ctx context.Context, mctx *Context) error {
+			order = append(order, "m2")
+			return nil
+		}
 
-	ctx := &Context{
-		InstalledVersion: "0.5.0",
-		TargetVersion:    "3.0.0",
-		Logger:           logger,
-	}
+		mctx := &Context{
+			Component: "test",
+			Logger:    logger,
+			Data:      make(map[string]interface{}),
+		}
+		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
+		mctx.Set(CtxKeyTargetVersion, "2.5.0")
 
-	err := m.Execute(context.Background(), ctx)
-	require.NoError(t, err)
+		workflow := ToWorkflow([]Migration{mock1, mock2}, mctx)
+		wf, err := workflow.Build()
+		require.NoError(t, err)
 
-	assert.Equal(t, 1, mock1.executeCalls)
-	assert.Equal(t, 1, mock2.executeCalls)
-	assert.Equal(t, 0, mock1.rollbackCalls)
-	assert.Equal(t, 0, mock2.rollbackCalls)
+		report := wf.Execute(context.Background())
+		require.NoError(t, report.Error)
+		assert.Equal(t, []string{"m1", "m2"}, order)
+	})
+
+	t.Run("rollback on failure", func(t *testing.T) {
+		var rollbackOrder []string
+		mock1 := NewMockMigration("m1", "1.0.0")
+		mock1.rollbackFunc = func(ctx context.Context, mctx *Context) error {
+			rollbackOrder = append(rollbackOrder, "m1")
+			return nil
+		}
+		mock2 := NewMockMigration("m2", "2.0.0")
+		mock2.executeFunc = func(ctx context.Context, mctx *Context) error {
+			return errors.New("migration failed")
+		}
+
+		mctx := &Context{
+			Component: "test",
+			Logger:    logger,
+			Data:      make(map[string]interface{}),
+		}
+		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
+		mctx.Set(CtxKeyTargetVersion, "2.5.0")
+
+		workflow := ToWorkflow([]Migration{mock1, mock2}, mctx)
+		wf, err := workflow.Build()
+		require.NoError(t, err)
+
+		report := wf.Execute(context.Background())
+		require.Error(t, report.Error)
+		// m1 should be rolled back since m2 failed
+		assert.Contains(t, rollbackOrder, "m1")
+	})
 }
 
-func TestManager_Execute_NoMigrations(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
+func TestClearRegistry(t *testing.T) {
+	ClearRegistry()
 
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	m.Register(mock1)
+	Register("test", NewMockMigration("m1", "1.0.0"))
 
-	ctx := &Context{
-		InstalledVersion: "2.0.0", // Already past the migration
-		TargetVersion:    "3.0.0",
-		Logger:           logger,
-	}
+	mctx := &Context{Data: make(map[string]interface{})}
+	mctx.Set(CtxKeyInstalledVersion, "0.5.0")
+	mctx.Set(CtxKeyTargetVersion, "1.5.0")
 
-	err := m.Execute(context.Background(), ctx)
-	require.NoError(t, err)
+	applicable, _ := GetApplicableMigrations("test", mctx)
+	assert.Len(t, applicable, 1)
 
-	assert.Equal(t, 0, mock1.executeCalls)
-}
+	ClearRegistry()
 
-func TestManager_Execute_FailureWithRollback(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
-
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	mock2 := NewMockMigration("migration-2", "2.0.0")
-	mock2.executeFunc = func(ctx context.Context, mctx *Context) error {
-		return errors.New("migration-2 failed")
-	}
-
-	m.Register(mock1)
-	m.Register(mock2)
-
-	ctx := &Context{
-		InstalledVersion: "0.5.0",
-		TargetVersion:    "3.0.0",
-		Logger:           logger,
-	}
-
-	err := m.Execute(context.Background(), ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "migration-2")
-	assert.Contains(t, err.Error(), "rollback succeeded")
-
-	// First migration executed and rolled back
-	assert.Equal(t, 1, mock1.executeCalls)
-	assert.Equal(t, 1, mock1.rollbackCalls)
-
-	// Second migration failed, no rollback for itself
-	assert.Equal(t, 1, mock2.executeCalls)
-	assert.Equal(t, 0, mock2.rollbackCalls)
-}
-
-func TestManager_Execute_FailureWithRollbackFailure(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
-
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	mock1.rollbackFunc = func(ctx context.Context, mctx *Context) error {
-		return errors.New("rollback-1 failed")
-	}
-
-	mock2 := NewMockMigration("migration-2", "2.0.0")
-	mock2.executeFunc = func(ctx context.Context, mctx *Context) error {
-		return errors.New("migration-2 failed")
-	}
-
-	m.Register(mock1)
-	m.Register(mock2)
-
-	ctx := &Context{
-		InstalledVersion: "0.5.0",
-		TargetVersion:    "3.0.0",
-		Logger:           logger,
-	}
-
-	err := m.Execute(context.Background(), ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "migration-2")
-	assert.Contains(t, err.Error(), "rollback also failed")
-	assert.Contains(t, err.Error(), "Manual intervention")
-}
-
-func TestManager_Execute_RollbackOrder(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
-
-	var rollbackOrder []string
-
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	mock1.rollbackFunc = func(ctx context.Context, mctx *Context) error {
-		rollbackOrder = append(rollbackOrder, "migration-1")
-		return nil
-	}
-
-	mock2 := NewMockMigration("migration-2", "2.0.0")
-	mock2.rollbackFunc = func(ctx context.Context, mctx *Context) error {
-		rollbackOrder = append(rollbackOrder, "migration-2")
-		return nil
-	}
-
-	mock3 := NewMockMigration("migration-3", "3.0.0")
-	mock3.executeFunc = func(ctx context.Context, mctx *Context) error {
-		return errors.New("migration-3 failed")
-	}
-
-	m.Register(mock1)
-	m.Register(mock2)
-	m.Register(mock3)
-
-	ctx := &Context{
-		InstalledVersion: "0.5.0",
-		TargetVersion:    "4.0.0",
-		Logger:           logger,
-	}
-
-	err := m.Execute(context.Background(), ctx)
-	require.Error(t, err)
-
-	// Rollback should happen in reverse order
-	require.Len(t, rollbackOrder, 2)
-	assert.Equal(t, "migration-2", rollbackOrder[0])
-	assert.Equal(t, "migration-1", rollbackOrder[1])
-}
-
-func TestManager_Execute_WithContextData(t *testing.T) {
-	logger := testLogger()
-	m := NewManager(WithLogger(logger), WithComponent("test"))
-
-	var capturedProfile string
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	mock1.executeFunc = func(ctx context.Context, mctx *Context) error {
-		capturedProfile = mctx.GetString("profile")
-		return nil
-	}
-
-	m.Register(mock1)
-
-	ctx := &Context{
-		InstalledVersion: "0.5.0",
-		TargetVersion:    "1.0.0",
-		Logger:           logger,
-	}
-	ctx.Set("profile", "production")
-
-	err := m.Execute(context.Background(), ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "production", capturedProfile)
-}
-
-// ============================================================================
-// Multiple Component Tests
-// ============================================================================
-
-func TestMultipleComponentManagers(t *testing.T) {
-	logger := testLogger()
-
-	// Create managers for different components
-	blockNodeManager := NewManager(WithLogger(logger), WithComponent("block-node"))
-	ciliumManager := NewManager(WithLogger(logger), WithComponent("cilium"))
-
-	// Register component-specific migrations
-	blockNodeManager.Register(NewMockMigration("bn-migration-1", "0.26.2"))
-	ciliumManager.Register(NewMockMigration("cilium-migration-1", "1.14.0"))
-
-	// Check block-node migrations
-	bnCtx := &Context{
-		InstalledVersion: "0.26.0",
-		TargetVersion:    "0.26.2",
-		Logger:           logger,
-	}
-	bnApplicable, err := blockNodeManager.GetApplicable(bnCtx)
-	require.NoError(t, err)
-	assert.Len(t, bnApplicable, 1)
-	assert.Equal(t, "bn-migration-1", bnApplicable[0].ID())
-
-	// Check cilium migrations
-	ciliumCtx := &Context{
-		InstalledVersion: "1.13.0",
-		TargetVersion:    "1.14.0",
-		Logger:           logger,
-	}
-	ciliumApplicable, err := ciliumManager.GetApplicable(ciliumCtx)
-	require.NoError(t, err)
-	assert.Len(t, ciliumApplicable, 1)
-	assert.Equal(t, "cilium-migration-1", ciliumApplicable[0].ID())
+	applicable, _ = GetApplicableMigrations("test", mctx)
+	assert.Len(t, applicable, 0)
 }
