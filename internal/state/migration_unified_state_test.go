@@ -110,7 +110,7 @@ func TestUnifiedState_YAMLMarshal(t *testing.T) {
 
 func TestRegisterMigrations_State(t *testing.T) {
 	migration.ClearRegistry()
-	RegisterMigrations()
+	InitMigrations()
 	defer migration.ClearRegistry()
 
 	// Verify migration is registered - state-based migrations don't need versions

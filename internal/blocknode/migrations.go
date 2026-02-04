@@ -1,5 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// migrations.go provides the component-level orchestration for block node migrations.
+//
+// This file contains:
+//   - InitMigrations(): Registers all block node migrations at startup (called from root.go)
+//   - BuildMigrationWorkflow(): Builds an automa workflow for applicable migrations during upgrades
+//
+// Individual migration implementations are in separate migration_*.go files:
+//   - migration_verification_storage.go: Handles v0.26.2 verification storage PV/PVC addition
+//
+// To add a new migration:
+//  1. Create a new migration_<name>.go file implementing the migration.Migration interface
+//  2. Register it in InitMigrations() below
+//
+// See docs/dev/migration-framework.md for the full guide.
+
 package blocknode
 
 import (
@@ -11,15 +26,15 @@ import (
 // ComponentBlockNode is the component name for block node migrations.
 const ComponentBlockNode = "block-node"
 
-// RegisterMigrations registers all block node migrations.
+// InitMigrations registers all block node migrations.
 // Called once at startup from root.go.
-func RegisterMigrations() {
+func InitMigrations() {
 	migration.Register(ComponentBlockNode, NewVerificationStorageMigration())
 }
 
-// GetMigrationWorkflow returns an automa workflow for executing applicable migrations.
-// Returns nil if no migrations are needed.
-func GetMigrationWorkflow(manager *Manager, profile, valuesFile string, reuseValues bool) (*automa.WorkflowBuilder, error) {
+// BuildMigrationWorkflow returns an automa workflow for executing applicable migrations.
+// Returns nil if no migrations are needed (installed version is empty or no applicable migrations).
+func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*automa.WorkflowBuilder, error) {
 	installedVersion, err := manager.GetInstalledVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to get installed version")
@@ -48,22 +63,10 @@ func GetMigrationWorkflow(manager *Manager, profile, valuesFile string, reuseVal
 	}
 
 	// Capture release values if needed
-	var capturedValues map[string]interface{}
-	if reuseValues && valuesFile == "" {
-		capturedValues, err = manager.GetReleaseValues()
-		if err != nil {
-			return nil, errorx.IllegalState.Wrap(err, "failed to capture release values")
-		}
-	}
-
-	// Add remaining context data
+	// Add context data
 	mctx.Set(ctxKeyManager, manager)
 	mctx.Set(ctxKeyProfile, profile)
 	mctx.Set(ctxKeyValuesFile, valuesFile)
-	mctx.Set(ctxKeyReuseValues, reuseValues)
-	if capturedValues != nil {
-		mctx.Set(ctxKeyCapturedValues, capturedValues)
-	}
 
-	return migration.ToWorkflow(migrations, mctx), nil
+	return migration.MigrationsToWorkflow(migrations, mctx), nil
 }

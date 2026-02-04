@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// migration_unified_state.go implements the unified state file migration.
+//
+// This migration consolidates multiple legacy state files (network state, block node state, etc.)
+// into a single unified state file at ~/.weaver/state.yaml. It:
+//   - Detects legacy state files from previous weaver versions
+//   - Migrates their contents into the new unified format
+//   - Preserves the old files as backups during rollback
+//
+// This file is registered in migrations.go via InitMigrations().
+
 package state
 
 import (
@@ -168,7 +178,7 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 		return errorx.IllegalState.Wrap(err, "failed to marshal unified state")
 	}
 
-	if err := os.WriteFile(unifiedPath, data, 0644); err != nil {
+	if err := os.WriteFile(unifiedPath, data, core.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write unified state file")
 	}
 
@@ -208,14 +218,14 @@ func (m *UnifiedStateMigration) Rollback(ctx context.Context, mctx *migration.Co
 		if state.Installed != nil {
 			content := formatStateContent("installed", state.Installed.Version)
 			filePath := filepath.Join(stateDir, componentName+".installed")
-			if err := os.WriteFile(filePath, []byte(content), 0755); err != nil {
+			if err := os.WriteFile(filePath, []byte(content), core.DefaultFilePerm); err != nil {
 				return errorx.IllegalState.Wrap(err, "failed to restore %s.installed", componentName)
 			}
 		}
 		if state.Configured != nil {
 			content := formatStateContent("configured", state.Configured.Version)
 			filePath := filepath.Join(stateDir, componentName+".configured")
-			if err := os.WriteFile(filePath, []byte(content), 0755); err != nil {
+			if err := os.WriteFile(filePath, []byte(content), core.DefaultFilePerm); err != nil {
 				return errorx.IllegalState.Wrap(err, "failed to restore %s.configured", componentName)
 			}
 		}

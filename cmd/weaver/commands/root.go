@@ -53,9 +53,6 @@ var (
 
 // Register state migrations at startup
 func init() {
-	// Register all migrations at startup
-	state.RegisterMigrations()
-
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
 
 	// support '--version', '-v' to show version information
@@ -76,6 +73,10 @@ func init() {
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.GetCmd())
+
+	// Register all migrations at startup
+	blocknode.InitMigrations()
+	state.InitMigrations()
 }
 
 // Execute executes the root command.

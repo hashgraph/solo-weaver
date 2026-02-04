@@ -33,10 +33,11 @@ const (
 	MetalLBAnnotation = "metallb.io/address-pool=public-address-pool"
 
 	// Template paths
-	NamespacePath     = "files/block-node/namespace.yaml"
-	StorageConfigPath = "files/block-node/storage-config.yaml"
-	ValuesPath        = "files/block-node/full-values.yaml"
-	NanoValuesPath    = "files/block-node/nano-values.yaml"
+	NamespacePath           = "files/block-node/namespace.yaml"
+	StorageConfigPath       = "files/block-node/storage-config.yaml"
+	VerificationStoragePath = "files/block-node/verification-storage.yaml"
+	ValuesPath              = "files/block-node/full-values.yaml"
+	NanoValuesPath          = "files/block-node/nano-values.yaml"
 
 	// Template paths for v0.26.2+ (includes verification storage)
 	ValuesPathV0262     = "files/block-node/full-values-v0.26.2.yaml"
@@ -281,6 +282,57 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) error {
 	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
 	return m.kubeClient.DeleteManifest(ctx, configFilePath)
+}
+
+// CreateVerificationStorage creates only the verification PV/PVC.
+// Used during migration when other PVs already exist.
+func (m *Manager) CreateVerificationStorage(ctx context.Context, tempDir string) error {
+	_, _, _, verificationPath, err := m.GetStoragePaths()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
+	}
+
+	data := struct {
+		Namespace        string
+		VerificationPath string
+		VerificationSize string
+	}{
+		Namespace:        m.blockConfig.Namespace,
+		VerificationPath: verificationPath,
+		VerificationSize: m.blockConfig.Storage.VerificationSize,
+	}
+
+	m.logger.Debug().
+		Str("verificationPath", verificationPath).
+		Str("verificationSize", m.blockConfig.Storage.VerificationSize).
+		Msg("Creating verification storage")
+
+	// Render the verification storage template
+	storageConfig, err := templates.Render(VerificationStoragePath, data)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to render verification storage template")
+	}
+
+	// Write to temp file
+	configFilePath := path.Join(tempDir, "block-node-verification-storage.yaml")
+	if err := os.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to write verification storage config")
+	}
+
+	// Apply the configuration
+	if err := m.kubeClient.ApplyManifest(ctx, configFilePath); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to apply verification storage")
+	}
+
+	// Wait for PVC to be bound
+	m.logger.Info().Str("pvc", "verification-storage-pvc").Msg("Waiting for verification PVC to be bound...")
+	timeout := 2 * time.Minute
+	if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockConfig.Namespace, "verification-storage-pvc", kube.IsPVCBound, timeout); err != nil {
+		return errorx.IllegalState.Wrap(err, "verification PVC did not become bound in time")
+	}
+	m.logger.Info().Str("pvc", "verification-storage-pvc").Msg("Verification PVC is bound")
+
+	return nil
 }
 
 // InstallChart installs the block node helm chart

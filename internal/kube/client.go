@@ -363,6 +363,34 @@ func (c *Client) DeleteManifest(ctx context.Context, manifestPath string) error 
 	return c.processResources(ctx, objs, handler)
 }
 
+// DeletePV deletes a PersistentVolume by name.
+// Returns nil if the PV doesn't exist.
+func (c *Client) DeletePV(ctx context.Context, name string) error {
+	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumes"}
+	policy := metav1.DeletePropagationBackground
+	err := c.Dyn.Resource(gvr).Delete(ctx, name, metav1.DeleteOptions{
+		PropagationPolicy: &policy,
+	})
+	if err != nil && !kerrors.IsNotFound(err) {
+		return errorx.InternalError.Wrap(err, "failed to delete PV %s", name)
+	}
+	return nil
+}
+
+// DeletePVC deletes a PersistentVolumeClaim by name and namespace.
+// Returns nil if the PVC doesn't exist.
+func (c *Client) DeletePVC(ctx context.Context, namespace, name string) error {
+	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
+	policy := metav1.DeletePropagationBackground
+	err := c.Dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{
+		PropagationPolicy: &policy,
+	})
+	if err != nil && !kerrors.IsNotFound(err) {
+		return errorx.InternalError.Wrap(err, "failed to delete PVC %s/%s", namespace, name)
+	}
+	return nil
+}
+
 // =====================
 // Generic WaitFor
 // =====================

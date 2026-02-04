@@ -22,11 +22,11 @@ internal/migration/
 └── version_migration.go        # VersionMigration base implementation
 
 internal/blocknode/
-├── migrations.go               # RegisterMigrations(), GetMigrationWorkflow()
+├── migrations.go               # InitMigrations(), BuildMigrationWorkflow()
 └── migration_verification_storage.go  # Specific migration
 
 internal/state/
-├── migrations.go               # RegisterMigrations(), GetMigrationWorkflow()
+├── migrations.go               # InitMigrations(), BuildMigrationWorkflow()
 └── migration_unified_state.go  # Specific migration (state-based)
 ```
 
@@ -86,10 +86,12 @@ mctx.Set(migration.CtxKeyTargetVersion, targetVersion)
 migrations, err := migration.GetApplicableMigrations("block-node", mctx)
 
 // Check if migration is needed
-required, summary, err := migration.RequiresMigration("block-node", mctx)
+if len(migrations) == 0 {
+    // No migrations needed
+}
 
 // Convert to automa workflow
-workflow := migration.ToWorkflow(migrations, mctx)
+workflow := migration.MigrationsToWorkflow(migrations, mctx)
 ```
 
 ## Migration Types
@@ -219,15 +221,15 @@ import (
 
 const MigrationComponent = "my-component"
 
-// RegisterMigrations registers all migrations for this component.
+// InitMigrations registers all migrations for this component.
 // Called once at startup from root.go.
-func RegisterMigrations() {
+func InitMigrations() {
     migration.Register(MigrationComponent, NewMyFeatureMigration())
     // Add future migrations here in chronological order
 }
 
-// GetMigrationWorkflow returns an automa workflow for applicable migrations.
-func GetMigrationWorkflow(manager *Manager, ...) (*automa.WorkflowBuilder, error) {
+// BuildMigrationWorkflow returns an automa workflow for applicable migrations.
+func BuildMigrationWorkflow(manager *Manager, ...) (*automa.WorkflowBuilder, error) {
     installedVersion, err := manager.GetInstalledVersion()
     if err != nil {
         return nil, err
@@ -258,7 +260,7 @@ func GetMigrationWorkflow(manager *Manager, ...) (*automa.WorkflowBuilder, error
     // Add component-specific data
     mctx.Set("mycomponent.manager", manager)
 
-    return migration.ToWorkflow(migrations, mctx), nil
+    return migration.MigrationsToWorkflow(migrations, mctx), nil
 }
 ```
 
@@ -269,9 +271,9 @@ Add the registration call in `cmd/weaver/commands/root.go`:
 ```go
 func init() {
     // Register all migrations at startup
-    blocknode.RegisterMigrations()
-    state.RegisterMigrations()
-    mycomponent.RegisterMigrations()  // Add new component
+    blocknode.InitMigrations()
+    state.InitMigrations()
+    mycomponent.InitMigrations()  // Add new component
     
     // ...
 }
@@ -286,7 +288,7 @@ func upgradeMyComponent(...) automa.Builder {
     return automa.NewStepBuilder().WithId("upgrade-mycomponent").
         WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
             // Check for migrations
-            workflow, err := mycomponent.GetMigrationWorkflow(manager, ...)
+            workflow, err := mycomponent.BuildMigrationWorkflow(manager, ...)
             if err != nil {
                 return automa.StepFailureReport(stp.Id(), automa.WithError(err))
             }
@@ -310,7 +312,7 @@ func upgradeMyComponent(...) automa.Builder {
 
 ### Block Node: Verification Storage Migration
 
-**Purpose**: Block Node v0.26.2 added a new PersistentVolume for verification data. Upgrading from < 0.26.2 requires uninstall + reinstall.
+**Purpose**: Block Node v0.26.2 added a new PersistentVolume for verification data. Upgrading from < 0.26.2 requires adding the new PV/PVC before the Helm upgrade.
 
 **Type**: Version-based (uses `VersionMigration`)
 
@@ -319,10 +321,10 @@ func upgradeMyComponent(...) automa.Builder {
 - `internal/blocknode/migration_verification_storage.go`
 
 **Steps**:
-1. Create verification storage directory
-2. Uninstall current release
-3. Recreate PVs/PVCs with verification storage
-4. Reinstall with new chart
+1. Create verification storage directory on host
+2. Create verification PV/PVC (existing PVs are kept)
+3. Ensure values file has correct verification persistence settings
+4. Perform in-place Helm upgrade with new chart version
 
 ### State: Unified State Migration
 
@@ -397,9 +399,9 @@ func TestMyMigration_Applies(t *testing.T) {
 ### Test Registration
 
 ```go
-func TestRegisterMigrations(t *testing.T) {
+func TestInitMigrations(t *testing.T) {
     migration.ClearRegistry()
-    RegisterMigrations()
+    InitMigrations()
     defer migration.ClearRegistry()
 
     mctx := &migration.Context{Data: make(map[string]interface{})}
@@ -425,12 +427,12 @@ internal/migration/
 └── migration_test.go
 
 internal/blocknode/
-├── migrations.go                        # RegisterMigrations, GetMigrationWorkflow
+├── migrations.go                        # InitMigrations, BuildMigrationWorkflow
 ├── migration_verification_storage.go    # v0.26.2 migration
 └── migration_test.go
 
 internal/state/
-├── migrations.go                        # RegisterMigrations, GetMigrationWorkflow
+├── migrations.go                        # InitMigrations, BuildMigrationWorkflow
 ├── migration_unified_state.go           # Unified state migration
 └── migration_unified_state_test.go
 ```

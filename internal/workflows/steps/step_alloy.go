@@ -49,6 +49,7 @@ const (
 // This includes Prometheus Operator CRDs and Grafana Alloy.
 func SetupAlloyStack() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-alloy-stack").Steps(
+		SetupExternalSecrets(),        // External Secrets Operator (general-purpose secret management for the cluster)
 		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
 		SetupAlloy(),                  // Install Alloy with Node Exporter
 	).

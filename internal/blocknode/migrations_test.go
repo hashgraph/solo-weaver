@@ -119,7 +119,7 @@ func TestVerificationStorageMigration_Applies(t *testing.T) {
 func TestGetApplicable_BlockNode(t *testing.T) {
 	// Clear and register to ensure clean state
 	migration.ClearRegistry()
-	RegisterMigrations()
+	InitMigrations()
 	defer migration.ClearRegistry()
 
 	tests := []struct {
@@ -174,61 +174,10 @@ func TestGetApplicable_BlockNode(t *testing.T) {
 	}
 }
 
-// TestRequiresMigration_BlockNode tests the migration.RequiresMigration function for block node
-func TestRequiresMigration_BlockNode(t *testing.T) {
-	migration.ClearRegistry()
-	RegisterMigrations()
-	defer migration.ClearRegistry()
-
-	tests := []struct {
-		name             string
-		installedVersion string
-		targetVersion    string
-		expectRequired   bool
-	}{
-		{
-			name:             "migration required",
-			installedVersion: "0.26.0",
-			targetVersion:    "0.26.2",
-			expectRequired:   true,
-		},
-		{
-			name:             "no migration required",
-			installedVersion: "0.26.2",
-			targetVersion:    "0.26.3",
-			expectRequired:   false,
-		},
-		{
-			name:             "fresh install",
-			installedVersion: "",
-			targetVersion:    "0.26.2",
-			expectRequired:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mctx := &migration.Context{Data: make(map[string]interface{})}
-			mctx.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
-			mctx.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
-
-			required, summary, err := migration.RequiresMigration(ComponentBlockNode, mctx)
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectRequired, required)
-
-			if tt.expectRequired {
-				assert.NotEmpty(t, summary)
-			} else {
-				assert.Empty(t, summary)
-			}
-		})
-	}
-}
-
 // TestMigrationRegistration tests that migrations can be registered correctly
 func TestMigrationRegistration(t *testing.T) {
 	migration.ClearRegistry()
-	RegisterMigrations()
+	InitMigrations()
 	defer migration.ClearRegistry()
 
 	// Check that verification migration is registered

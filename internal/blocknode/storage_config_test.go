@@ -83,25 +83,27 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 
 			// Prepare template data
 			data := struct {
-				Namespace        string
-				LivePath         string
-				ArchivePath      string
-				LogPath          string
-				VerificationPath string
-				LiveSize         string
-				ArchiveSize      string
-				LogSize          string
-				VerificationSize string
+				Namespace           string
+				LivePath            string
+				ArchivePath         string
+				LogPath             string
+				VerificationPath    string
+				LiveSize            string
+				ArchiveSize         string
+				LogSize             string
+				VerificationSize    string
+				IncludeVerification bool
 			}{
-				Namespace:        manager.blockConfig.Namespace,
-				LivePath:         livePath,
-				ArchivePath:      archivePath,
-				LogPath:          logPath,
-				VerificationPath: verificationPath,
-				LiveSize:         manager.blockConfig.Storage.LiveSize,
-				ArchiveSize:      manager.blockConfig.Storage.ArchiveSize,
-				LogSize:          manager.blockConfig.Storage.LogSize,
-				VerificationSize: manager.blockConfig.Storage.VerificationSize,
+				Namespace:           manager.blockConfig.Namespace,
+				LivePath:            livePath,
+				ArchivePath:         archivePath,
+				LogPath:             logPath,
+				VerificationPath:    verificationPath,
+				LiveSize:            manager.blockConfig.Storage.LiveSize,
+				ArchiveSize:         manager.blockConfig.Storage.ArchiveSize,
+				LogSize:             manager.blockConfig.Storage.LogSize,
+				VerificationSize:    manager.blockConfig.Storage.VerificationSize,
+				IncludeVerification: true, // Include verification storage in tests
 			}
 
 			// Render the storage config template
@@ -188,25 +190,27 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 
 	// Prepare template data
 	data := struct {
-		Namespace        string
-		LivePath         string
-		ArchivePath      string
-		LogPath          string
-		VerificationPath string
-		LiveSize         string
-		ArchiveSize      string
-		LogSize          string
-		VerificationSize string
+		Namespace           string
+		LivePath            string
+		ArchivePath         string
+		LogPath             string
+		VerificationPath    string
+		LiveSize            string
+		ArchiveSize         string
+		LogSize             string
+		VerificationSize    string
+		IncludeVerification bool
 	}{
-		Namespace:        manager.blockConfig.Namespace,
-		LivePath:         livePath,
-		ArchivePath:      archivePath,
-		LogPath:          logPath,
-		VerificationPath: verificationPath,
-		LiveSize:         manager.blockConfig.Storage.LiveSize,
-		ArchiveSize:      manager.blockConfig.Storage.ArchiveSize,
-		LogSize:          manager.blockConfig.Storage.LogSize,
-		VerificationSize: manager.blockConfig.Storage.VerificationSize,
+		Namespace:           manager.blockConfig.Namespace,
+		LivePath:            livePath,
+		ArchivePath:         archivePath,
+		LogPath:             logPath,
+		VerificationPath:    verificationPath,
+		LiveSize:            manager.blockConfig.Storage.LiveSize,
+		ArchiveSize:         manager.blockConfig.Storage.ArchiveSize,
+		LogSize:             manager.blockConfig.Storage.LogSize,
+		VerificationSize:    manager.blockConfig.Storage.VerificationSize,
+		IncludeVerification: true,
 	}
 
 	// Render the storage config template

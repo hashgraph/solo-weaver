@@ -248,41 +248,11 @@ func TestRegister_And_GetApplicable(t *testing.T) {
 	}
 }
 
-func TestRequiresMigration(t *testing.T) {
-	ClearRegistry()
-	defer ClearRegistry()
-
-	mock1 := NewMockMigration("migration-1", "1.0.0")
-	Register("test-component", mock1)
-
-	t.Run("migration required", func(t *testing.T) {
-		mctx := &Context{Data: make(map[string]interface{})}
-		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
-		mctx.Set(CtxKeyTargetVersion, "1.5.0")
-
-		required, summary, err := RequiresMigration("test-component", mctx)
-		require.NoError(t, err)
-		assert.True(t, required)
-		assert.Contains(t, summary, "migration-1")
-	})
-
-	t.Run("no migration required", func(t *testing.T) {
-		mctx := &Context{Data: make(map[string]interface{})}
-		mctx.Set(CtxKeyInstalledVersion, "1.5.0")
-		mctx.Set(CtxKeyTargetVersion, "2.0.0")
-
-		required, summary, err := RequiresMigration("test-component", mctx)
-		require.NoError(t, err)
-		assert.False(t, required)
-		assert.Empty(t, summary)
-	})
-}
-
-func TestToWorkflow(t *testing.T) {
+func TestMigrationsToWorkflow(t *testing.T) {
 	logger := testLogger()
 
 	t.Run("empty migrations returns no-op workflow", func(t *testing.T) {
-		workflow := ToWorkflow(nil, &Context{Logger: logger})
+		workflow := MigrationsToWorkflow(nil, &Context{Logger: logger})
 		assert.NotNil(t, workflow)
 	})
 
@@ -307,7 +277,7 @@ func TestToWorkflow(t *testing.T) {
 		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
 		mctx.Set(CtxKeyTargetVersion, "2.5.0")
 
-		workflow := ToWorkflow([]Migration{mock1, mock2}, mctx)
+		workflow := MigrationsToWorkflow([]Migration{mock1, mock2}, mctx)
 		wf, err := workflow.Build()
 		require.NoError(t, err)
 
@@ -336,7 +306,7 @@ func TestToWorkflow(t *testing.T) {
 		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
 		mctx.Set(CtxKeyTargetVersion, "2.5.0")
 
-		workflow := ToWorkflow([]Migration{mock1, mock2}, mctx)
+		workflow := MigrationsToWorkflow([]Migration{mock1, mock2}, mctx)
 		wf, err := workflow.Build()
 		require.NoError(t, err)
 

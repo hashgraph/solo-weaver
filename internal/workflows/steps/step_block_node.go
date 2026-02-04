@@ -353,7 +353,7 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 			}
 
 			// Check if this upgrade requires migrations due to breaking chart changes
-			migrationWorkflow, err := blocknode.GetMigrationWorkflow(manager, profile, valuesFile, reuseValues)
+			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, profile, valuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

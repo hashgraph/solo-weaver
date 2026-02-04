@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// migration_verification_storage.go implements the verification storage migration for Block Node v0.26.2+.
+//
+// This migration handles the breaking change where a new verification PersistentVolume was added
+// to the Block Node StatefulSet. It:
+//   - Creates the verification storage directory on the host
+//   - Creates the verification PV/PVC (existing storage PVs are preserved)
+//   - Ensures the Helm values file has correct verification persistence settings
+//   - Performs an in-place Helm upgrade
+//
+// This file is registered in migrations.go via InitMigrations().
+
 package blocknode
 
 import (
 	"context"
-	"os"
-	"path"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/joomcode/errorx"
-	"gopkg.in/yaml.v3"
 )
 
 // VerificationStorageMinVersion is the minimum Block Node version that requires verification storage.
@@ -19,11 +27,9 @@ const VerificationStorageMinVersion = "0.26.2"
 
 // Context keys for migration data
 const (
-	ctxKeyManager        = "blocknode.manager"
-	ctxKeyProfile        = "blocknode.profile"
-	ctxKeyValuesFile     = "blocknode.valuesFile"
-	ctxKeyReuseValues    = "blocknode.reuseValues"
-	ctxKeyCapturedValues = "blocknode.capturedValues"
+	ctxKeyManager    = "blocknode.manager"
+	ctxKeyProfile    = "blocknode.profile"
+	ctxKeyValuesFile = "blocknode.valuesFile"
 )
 
 // requiresVerificationStorage checks if the target version requires verification storage.
@@ -84,7 +90,7 @@ func (m *VerificationStorageMigration) Execute(ctx context.Context, mctx *migrat
 
 	logger.Info().Msg("Executing verification storage migration")
 
-	// Step 1: Create the verification storage directory
+	// Step 1: Create the verification storage directory on host
 	_, _, _, verificationPath, err := manager.GetStoragePaths()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
@@ -100,35 +106,25 @@ func (m *VerificationStorageMigration) Execute(ctx context.Context, mctx *migrat
 		}
 	}
 
-	// Step 2: Uninstall the current release
-	logger.Info().Msg("Uninstalling current Block Node release")
-	if err := manager.UninstallChart(ctx); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to uninstall chart")
+	// Step 2: Create only the verification PV/PVC (existing PVs are kept)
+	logger.Info().Msg("Creating verification storage PV/PVC")
+	if err := manager.CreateVerificationStorage(ctx, core.Paths().TempDir); err != nil {
+		logger.Error().Err(err).Msg("Failed to create verification storage")
+		return errorx.IllegalState.Wrap(err, "failed to create verification storage")
 	}
 
-	// Step 3: Recreate PVs/PVCs with verification storage
-	logger.Info().Msg("Creating PersistentVolumes with verification storage")
-	if err := manager.CreatePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
-		logger.Error().Err(err).Msg("Failed to create PersistentVolumes")
-		return errorx.IllegalState.Wrap(err, "failed to create PVs")
-	}
-
-	// Step 5: Determine values file for reinstall
+	// Step 3: Determine values file for upgrade
 	// IMPORTANT: We must use the profile defaults (nano-values-v0.26.2.yaml or full-values-v0.26.2.yaml)
 	// because they have the correct verification persistence settings (create: false, existingClaim).
-	// Captured values from older versions won't have these settings, causing the chart to create
-	// a duplicate PVC via StatefulSet volumeClaimTemplates.
 	var valuesFilePath string
 
 	if valuesFile != "" {
-		// User provided a values file, use it (they're responsible for correct settings)
 		valuesFilePath, err = manager.ComputeValuesFile(profile, valuesFile)
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to compute values file")
 		}
 		logger.Info().Str("valuesFile", valuesFilePath).Msg("Using user-provided values file")
 	} else {
-		// Use profile defaults which have correct verification storage settings
 		valuesFilePath, err = manager.ComputeValuesFile(profile, "")
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to compute values file")
@@ -136,11 +132,10 @@ func (m *VerificationStorageMigration) Execute(ctx context.Context, mctx *migrat
 		logger.Info().Str("valuesFile", valuesFilePath).Msg("Using profile default values file")
 	}
 
-	// Step 6: Reinstall with new chart version
-	logger.Info().Msg("Reinstalling Block Node with new chart version")
-	_, err = manager.InstallChart(ctx, valuesFilePath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to install chart")
+	// Step 4: Upgrade the Helm chart (not uninstall/reinstall)
+	logger.Info().Msg("Upgrading Block Node chart to new version")
+	if err := manager.UpgradeChart(ctx, valuesFilePath, false); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to upgrade chart")
 	}
 
 	logger.Info().Msg("Verification storage migration completed")
@@ -155,42 +150,26 @@ func (m *VerificationStorageMigration) Rollback(ctx context.Context, mctx *migra
 
 	profile := mctx.GetString(ctxKeyProfile)
 	valuesFile := mctx.GetString(ctxKeyValuesFile)
-	reuseValues := getReuseValues(mctx)
-	capturedValues := getCapturedValues(mctx)
 	logger := mctx.Logger
 	installedVersion := mctx.GetString(migration.CtxKeyInstalledVersion)
 
 	logger.Warn().Msg("Attempting rollback of verification storage migration")
 
-	// Temporarily set version back to installed version
+	// Temporarily set version back to installed version for ComputeValuesFile
 	originalVersion := manager.blockConfig.Version
 	manager.blockConfig.Version = installedVersion
 	defer func() {
 		manager.blockConfig.Version = originalVersion
 	}()
 
-	// Determine values file for rollback reinstall
+	// Determine values file for rollback
 	var valuesFilePath string
-	var tempValuesFile string
 
 	if valuesFile != "" {
 		valuesFilePath, err = manager.ComputeValuesFile(profile, valuesFile)
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "rollback failed: could not compute values file")
 		}
-	} else if reuseValues && capturedValues != nil && len(capturedValues) > 0 {
-		// Use captured values for rollback
-		logger.Info().Int("numKeys", len(capturedValues)).Msg("Using captured release values for rollback")
-
-		tempValuesFile = path.Join(core.Paths().TempDir, "rollback-values.yaml")
-		yamlData, err := yaml.Marshal(capturedValues)
-		if err != nil {
-			return errorx.IllegalState.Wrap(err, "rollback failed: could not marshal captured values")
-		}
-		if err := os.WriteFile(tempValuesFile, yamlData, core.DefaultFilePerm); err != nil {
-			return errorx.IllegalState.Wrap(err, "rollback failed: could not write captured values to temp file")
-		}
-		valuesFilePath = tempValuesFile
 	} else {
 		valuesFilePath, err = manager.ComputeValuesFile(profile, "")
 		if err != nil {
@@ -198,22 +177,26 @@ func (m *VerificationStorageMigration) Rollback(ctx context.Context, mctx *migra
 		}
 	}
 
-	// Try to reinstall the previous version
-	_, err = manager.InstallChart(ctx, valuesFilePath)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "rollback failed: could not reinstall previous version")
+	// Downgrade to the previous version
+	logger.Info().Str("version", installedVersion).Msg("Downgrading to previous version")
+	if err := manager.UpgradeChart(ctx, valuesFilePath, false); err != nil {
+		return errorx.IllegalState.Wrap(err, "rollback failed: could not downgrade chart")
 	}
 
-	// Clean up temp values file if created
-	if tempValuesFile != "" {
-		_ = os.Remove(tempValuesFile)
+	// Clean up verification storage PV/PVC (optional, best-effort)
+	logger.Info().Msg("Cleaning up verification storage PV/PVC")
+	if err := manager.kubeClient.DeletePVC(ctx, manager.blockConfig.Namespace, "verification-storage-pvc"); err != nil {
+		logger.Warn().Err(err).Msg("Could not delete verification PVC")
+	}
+	if err := manager.kubeClient.DeletePV(ctx, "verification-storage-pv"); err != nil {
+		logger.Warn().Err(err).Msg("Could not delete verification PV")
 	}
 
 	logger.Info().Str("version", installedVersion).Msg("Rollback successful")
 	return nil
 }
 
-// Helper functions for extracting typed data from migration context
+// Helper function for extracting manager from migration context
 
 func getManager(mctx *migration.Context) (*Manager, error) {
 	v, ok := mctx.Get(ctxKeyManager)
@@ -225,21 +208,4 @@ func getManager(mctx *migration.Context) (*Manager, error) {
 		return nil, errorx.IllegalState.New("invalid manager type")
 	}
 	return m, nil
-}
-func getReuseValues(mctx *migration.Context) bool {
-	v, ok := mctx.Get(ctxKeyReuseValues)
-	if !ok {
-		return false
-	}
-	b, _ := v.(bool)
-	return b
-}
-
-func getCapturedValues(mctx *migration.Context) map[string]interface{} {
-	v, ok := mctx.Get(ctxKeyCapturedValues)
-	if !ok {
-		return nil
-	}
-	m, _ := v.(map[string]interface{})
-	return m
 }

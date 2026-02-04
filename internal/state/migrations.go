@@ -1,5 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// migrations.go provides the component-level orchestration for state migrations.
+//
+// This file contains:
+//   - InitMigrations(): Registers all state migrations at startup (called from root.go)
+//   - BuildMigrationWorkflow(): Builds an automa workflow for applicable migrations
+//
+// Individual migration implementations are in separate migration_*.go files:
+//   - migration_unified_state.go: Handles unified state file migration
+//
+// To add a new migration:
+//  1. Create a new migration_<name>.go file implementing the migration.Migration interface
+//  2. Register it in InitMigrations() below
+//
+// See docs/dev/migration-framework.md for the full guide.
+
 package state
 
 import (
@@ -11,15 +26,15 @@ import (
 // MigrationComponent is the component name for state migrations.
 const MigrationComponent = "state"
 
-// RegisterMigrations registers all state migrations.
+// InitMigrations registers all state migrations.
 // Called once at startup from root.go.
-func RegisterMigrations() {
+func InitMigrations() {
 	migration.Register(MigrationComponent, NewUnifiedStateMigration())
 }
 
-// GetMigrationWorkflow returns an automa workflow for executing applicable state migrations.
+// BuildMigrationWorkflow returns an automa workflow for executing applicable state migrations.
 // Returns nil if no migrations are needed.
-func GetMigrationWorkflow() (*automa.WorkflowBuilder, error) {
+func BuildMigrationWorkflow() (*automa.WorkflowBuilder, error) {
 	mctx := &migration.Context{
 		Component: MigrationComponent,
 		Data:      make(map[string]interface{}),
@@ -34,5 +49,5 @@ func GetMigrationWorkflow() (*automa.WorkflowBuilder, error) {
 		return nil, nil
 	}
 
-	return migration.ToWorkflow(migrations, mctx), nil
+	return migration.MigrationsToWorkflow(migrations, mctx), nil
 }

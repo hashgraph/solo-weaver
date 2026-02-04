@@ -25,7 +25,7 @@
 //
 //	mctx := &migration.Context{Component: "block-node", Data: make(map[string]interface{})}
 //	migrations, _ := migration.GetApplicableMigrations("block-node", mctx)
-//	workflow := migration.ToWorkflow(migrations, mctx)
+//	workflow := migration.MigrationsToWorkflow(migrations, mctx)
 package migration
 
 import (
@@ -135,32 +135,10 @@ func GetApplicableMigrations(component string, mctx *Context) ([]Migration, erro
 	return applicable, nil
 }
 
-// RequiresMigration checks if any migrations are needed for the given context.
-func RequiresMigration(component string, mctx *Context) (bool, string, error) {
-	applicable, err := GetApplicableMigrations(component, mctx)
-	if err != nil {
-		return false, "", err
-	}
-
-	if len(applicable) == 0 {
-		return false, "", nil
-	}
-
-	// Build summary
-	if len(applicable) == 1 {
-		return true, fmt.Sprintf("%s: %s", applicable[0].ID(), applicable[0].Description()), nil
-	}
-
-	summary := fmt.Sprintf("%d migrations required:", len(applicable))
-	for _, m := range applicable {
-		summary += fmt.Sprintf("\n  - %s: %s", m.ID(), m.Description())
-	}
-	return true, summary, nil
-}
-
-// ToWorkflow converts a list of migrations into an automa workflow.
+// MigrationsToWorkflow converts a list of migrations into an automa workflow.
+// Each migration becomes a step with execute and rollback handlers.
 // The workflow executes migrations in order with rollback on failure.
-func ToWorkflow(migrations []Migration, mctx *Context) *automa.WorkflowBuilder {
+func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.WorkflowBuilder {
 	if len(migrations) == 0 {
 		return automa.NewWorkflowBuilder().WithId("no-migrations")
 	}
