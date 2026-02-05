@@ -91,6 +91,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
         run: |
+          set -euo pipefail
+          
           FLAGS=""
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             FLAGS="--dry-run"
@@ -100,9 +102,9 @@ jobs:
           
           # Extract the next version from semantic-release output for dry-run
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
-            NEXT_VERSION=$(grep -oP "The next release version is \K[0-9]+\.[0-9]+\.[0-9]+" semantic-release-output.txt || echo "")
+            NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' semantic-release-output.txt || echo "")
             if [[ -n "$NEXT_VERSION" ]]; then
-              echo "next-version=v${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
+              echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
               echo "::notice::Dry-run: Next release would be v${NEXT_VERSION}"
             else
               echo "::notice::Dry-run: No new release would be created"
@@ -112,6 +114,8 @@ jobs:
       - name: Retrieve Release Version
         id: version
         run: |
+          set -euo pipefail
+          
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             VERSION="${{ steps.semantic-release.outputs.next-version }}"
             if [[ -n "$VERSION" ]]; then
