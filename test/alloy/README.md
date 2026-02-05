@@ -1,6 +1,6 @@
 # Alloy Stack - Grafana Alloy with Vault
 
-Complete Alloy observability stack for Solo Weaver with Vault-managed secrets.
+Complete Alloy observability stack for Solo Provisioner with Vault-managed secrets.
 
 **Components:**
 - Grafana Alloy - Metrics and log collection
@@ -29,7 +29,7 @@ Alloy Pod (metrics/logs)       Alloy Pod (metrics/logs)
 
 ## 🚀 Quick Start - Local Development
 
-### Prerequisites: Build Weaver
+### Prerequisites: Build Solo Provisioner
 
 From your Mac, ensure you have the latest build:
 ```bash
@@ -50,16 +50,16 @@ task alloy:start
 
 ### Step 2: Install Cluster
 
-Copy the weaver binary:
+Copy the solo-provisioner binary:
 ```bash
-cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
+cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 ~/.
 
-sudo ~/weaver-linux-arm64 install
+sudo ~/solo-provisioner-linux-arm64 install
 ```
 
 Inside the VM (`task vm:ssh`):
 ```bash
-sudo weaver block node install \
+sudo solo-provisioner block node install \
   --profile=local \
   --config=/mnt/solo-weaver/test/config/config.yaml
 ```
@@ -77,7 +77,7 @@ This will auto-detect the node IP and print the exact command to run next.
 
 Inside the VM, run the command printed by the previous step. It will look like:
 ```bash
-sudo weaver alloy cluster install \
+sudo solo-provisioner alloy cluster install \
   --prometheus-url=http://<NODE_IP>:9090/api/v1/write \
   --loki-url=http://<NODE_IP>:3100/loki/api/v1/push \
   --cluster-name=vm-cluster
@@ -137,7 +137,7 @@ node_cpu_seconds_total
 
 Inside the VM:
 ```bash
-sudo weaver alloy cluster uninstall
+sudo solo-provisioner alloy cluster uninstall
 ```
 
 ### Stop Local Stack
@@ -212,7 +212,7 @@ spec:
 | `docker-compose.yml` | Container definitions |
 | `init-vault.sh` | Initialize Vault with dev secrets |
 | `cluster-secret-store-local.yaml` | ESO → Vault connection template |
-| `config_with_alloy.yaml` | Weaver config with Alloy enabled |
+| `config_with_alloy.yaml` | Solo Provisioner config with Alloy enabled |
 | `prometheus.yml` | Prometheus configuration |
 | `loki-config.yml` | Loki configuration |
 | `grafana-datasources.yml` | Grafana datasources |

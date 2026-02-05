@@ -57,7 +57,7 @@ Alternatively, to run system packages tests in one command (handles Docker setup
 # Debug scenarios  
 ./debug-run.sh test         # Debug all tests (default behavior)
 ./debug-run.sh test ./pkg/semver  # Debug specific package tests
-./debug-run.sh app [args...]      # Debug weaver application
+./debug-run.sh app [args...]      # Debug solo-provisioner application
 
 # Task aliases (from project root)
 task debug                           # Setup debug environment and show help

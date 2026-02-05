@@ -17,11 +17,11 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-const weaverBinaryName = "weaver"
+const weaverBinaryName = "solo-provisioner"
 
-var errWeaverInstallationRequired = errorx.IllegalState.New("weaver installation or re-installation required")
+var errWeaverInstallationRequired = errorx.IllegalState.New("solo-provisioner installation or re-installation required")
 
-// CheckWeaverInstallation checks if weaver is installed at the given binDir.
+// CheckWeaverInstallation checks if solo-provisioner is installed at the given binDir.
 func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("check-weaver-installation").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -38,8 +38,8 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 					args = " " + strings.TrimSpace(strings.Join(os.Args[1:], " "))
 				}
 
-				resolution := fmt.Sprintf("install or re-install weaver binary; "+
-					"run `sudo %s install` to install and then run `weaver%s`.", exePath, args)
+				resolution := fmt.Sprintf("install or re-install solo-provisioner binary; "+
+					"run `sudo %s install` to install and then run `solo-provisioner%s`.", exePath, args)
 
 				errWithResolution := errWeaverInstallationRequired.WithProperty(doctor.ErrPropertyResolution, resolution)
 
@@ -47,7 +47,7 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 					Err(errWithResolution).
 					Str("exePath", exePath).
 					Str("expectedPath", expectedPath).
-					Msg("Weaver installation check failed: current executable is not in the expected bin directory")
+					Msg("Solo Provisioner installation check failed: current executable is not in the expected bin directory")
 
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithResolution))
 			}
@@ -62,17 +62,17 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 		})
 }
 
-// InstallWeaver installs the currently running executable as the `weaver` binary
+// InstallWeaver installs the currently running executable as the `solo-provisioner` binary
 // into the provided `binDir` and attempts to create a convenience symlink in
 // `/usr/local/bin`.
 //
 // Behavior
 //   - The step locates the currently running executable (source).
 //   - It ensures `binDir` exists and then copies the source executable into a
-//     temporary file created inside `binDir` (pattern `weaver.tmp.*`).
+//     temporary file created inside `binDir` (pattern `solo-provisioner.tmp.*`).
 //   - After the copy completes the temp file is closed, its mode is set to
 //     executable (`0o755`), and the temp file is atomically renamed to the final
-//     destination `binDir/weaver`.
+//     destination `binDir/solo-provisioner`.
 //
 // Why a temp file + rename
 //   - Atomic replacement: renaming a file within the same filesystem is atomic on
@@ -90,7 +90,7 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 // Implementation notes
 //   - The temp file is created inside `binDir` to ensure the rename is a same-
 //     filesystem move (required for atomicity).
-//   - If creating a symlink at `/usr/local/bin/weaver` fails the step logs a
+//   - If creating a symlink at `/usr/local/bin/solo-provisioner` fails the step logs a
 //     warning but does not treat this as a hard error (installation can still
 //     succeed without the symlink).
 //   - The step returns an automa success or failure report describing the outcome.
@@ -168,17 +168,17 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 					Str("weaver_path", destPath).
 					Str("symlink_path", symlinkPath).
 					Err(err).
-					Msg("Failed to create symlink to weaver binary in /usr/local/bin")
+					Msg("Failed to create symlink to solo-provisioner binary in /usr/local/bin")
 			} else {
 				logx.As().Info().
 					Str("weaver_path", destPath).
 					Str("symlink_path", symlinkPath).
-					Msg("Created symlink to weaver binary in /usr/local/bin")
+					Msg("Created symlink to solo-provisioner binary in /usr/local/bin")
 			}
 
 			logx.As().Info().
 				Str("weaver_path", destPath).
-				Msg("Weaver installed successfully")
+				Msg("Solo Provisioner installed successfully")
 
 			return automa.StepSuccessReport(stp.Id())
 		})
@@ -192,7 +192,7 @@ func UninstallWeaver(binDir string) *automa.StepBuilder {
 			if err := os.Remove(destPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.
-						Wrap(err, "failed to remove weaver binary at %s", destPath)))
+						Wrap(err, "failed to remove solo-provisioner binary at %s", destPath)))
 			}
 
 			symlinkPath := filepath.Join("/usr/local/bin", weaverBinaryName)
@@ -200,7 +200,7 @@ func UninstallWeaver(binDir string) *automa.StepBuilder {
 
 			logx.As().Info().
 				Str("weaver_path", destPath).
-				Msg("Weaver uninstalled successfully")
+				Msg("Solo Provisioner uninstalled successfully")
 
 			return automa.StepSuccessReport(stp.Id())
 		})

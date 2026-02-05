@@ -34,6 +34,7 @@ import (
 	"sync"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 )
@@ -117,17 +118,29 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 	}
 
 	var steps []automa.Builder
+
+	// First step: log that migrations are being performed
+	migrationCount := len(migrations)
+	component := mctx.Component
+	steps = append(steps, automa.NewStepBuilder().
+		WithId("migration-start").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			logx.As().Info().
+				Str("component", component).
+				Int("migrationCount", migrationCount).
+				Msg("Breaking change detected, performing automatic migration")
+			return automa.StepSuccessReport(stp.Id())
+		}))
+
 	for _, m := range migrations {
 		migration := m // capture for closure
 		step := automa.NewStepBuilder().
 			WithId(fmt.Sprintf("migration-%s", migration.ID())).
 			WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-				if mctx.Logger != nil {
-					mctx.Logger.Info().
-						Str("migrationID", migration.ID()).
-						Str("description", migration.Description()).
-						Msg("Executing migration")
-				}
+				logx.As().Info().
+					Str("migrationID", migration.ID()).
+					Str("description", migration.Description()).
+					Msg("Executing migration")
 
 				if err := migration.Execute(ctx, mctx); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
@@ -135,13 +148,15 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 				return automa.StepSuccessReport(stp.Id())
 			}).
 			WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-				if mctx.Logger != nil {
-					mctx.Logger.Warn().Str("migrationID", migration.ID()).Msg("Rolling back migration")
-				}
+				logx.As().Warn().
+					Str("migrationID", migration.ID()).
+					Msg("Rolling back migration")
+
 				if err := migration.Rollback(ctx, mctx); err != nil {
-					if mctx.Logger != nil {
-						mctx.Logger.Error().Err(err).Str("migrationID", migration.ID()).Msg("Rollback failed")
-					}
+					logx.As().Error().
+						Err(err).
+						Str("migrationID", migration.ID()).
+						Msg("Rollback failed")
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 				return automa.StepSuccessReport(stp.Id())

@@ -73,8 +73,8 @@ tasks:
     sources:
       - "**/*.go"
     generates:
-      - "bin/weaver-linux-*"
-      - "bin/weaver-darwin-*"
+      - "bin/solo-provisioner-linux-*"
+      - "bin/solo-provisioner-darwin-*"
 
   hash:
     deps:
@@ -82,8 +82,8 @@ tasks:
     cmds:
       - task: "hash:weaver:all"
     sources:
-      - "bin/weaver-linux-*"
-      - "bin/weaver-darwin-*"
+      - "bin/solo-provisioner-linux-*"
+      - "bin/solo-provisioner-darwin-*"
     generates:
       - "bin/*.sha256"
 
@@ -135,8 +135,8 @@ tasks:
       GOOS: "{{coalesce .GOOS OS}}"
       GOARCH: "{{coalesce .GOARCH ARCH}}"
     cmds:
-      - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
-      - cmd: chmod +x bin/weaver-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
+      - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
+      - cmd: chmod +x bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
 
   hash:weaver:all:
     desc: "Hash the binary binaries for all configured operating systems and architectures"
@@ -169,8 +169,8 @@ tasks:
     desc: "Hash the binary binaries for the specified operating system and architecture"
     dir: bin
     cmds:
-      - cmd: sha256sum weaver-{{.GOOS}}-{{.GOARCH}} > weaver-{{.GOOS}}-{{.GOARCH}}.sha256
-  
+      - cmd: sha256sum solo-provisioner-{{.GOOS}}-{{.GOARCH}} > solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
+
   sign:weaver:all:
     desc: "Sign the binary binaries for all configured operating systems and architectures"
     cmds:
@@ -208,8 +208,8 @@ tasks:
         vars:
           GOOS: "{{.GOOS}}"
           GOARCH: "{{.GOARCH}}"
-      - cmd: gpg --batch --yes --armor --output bin/weaver-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/weaver-{{.GOOS}}-{{.GOARCH}}.sha256
-      - cmd: gpg --batch --yes --armor --output bin/weaver-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/weaver-{{.GOOS}}-{{.GOARCH}}
+      - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
+      - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}
   
   test:
     cmds:

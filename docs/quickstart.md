@@ -1,6 +1,6 @@
 # Quickstart Guide
 
-Below is a quickstart guide to get you up and running with Solo Weaver.
+Below is a quickstart guide to get you up and running with Solo Provisioner.
 
 ## Prerequisites
 
@@ -18,137 +18,554 @@ curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.s
 - Verify installation:
 
 ```
-weaver --help
+solo-provisioner --help
 ```
+
+### Uninstall
+
+```bash
+sudo solo-provisioner uninstall
+```
+
+---
+
+## Global Flags
+
+These flags are available for all commands:
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--config` | `-c` | Path to configuration file | None |
+| `--profile` | `-p` | Deployment profile | Required for most commands |
+| `--output` | `-o` | Output format (yaml\|json) | `yaml` |
+| `--version` | `-v` | Show version | - |
+| `--help` | `-h` | Show help | - |
+
+### Error Handling Flags
+
+Most installation commands support these execution control flags:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--stop-on-error` | Stop execution on first error | `true` |
+| `--rollback-on-error` | Rollback executed steps on error | `false` |
+| `--continue-on-error` | Continue executing steps even if some fail | `false` |
+
+---
+
+## Deployment Profiles
+
+Solo Provisioner supports four deployment profiles that configure behavior and defaults:
+
+| Profile | Description | Use Case |
+|---------|-------------|----------|
+| `local` | Local development and testing | Development, CI/CD |
+| `perfnet` | Performance testing network | Load testing |
+| `testnet` | Hedera Testnet | Integration testing |
+| `mainnet` | Hedera Mainnet | Production deployment |
+
+> **Important**: Always use `--profile` to specify your target environment.
+
+---
+
+## Command Reference
+
+### Block Node Commands
+
+The primary commands for managing Hedera Block Nodes.
+
+#### Check System Readiness
+
+Run preflight checks to validate the system is ready for Block Node deployment:
+
+```bash
+# Basic preflight check
+sudo solo-provisioner block node check --profile=mainnet
+
+# With custom config file
+sudo solo-provisioner block node check --profile=testnet --config=/path/to/config.yaml
+```
+
+**What it checks**:
+- System requirements (CPU, memory, disk)
+- Required dependencies
+- Network connectivity
+- Storage availability
+
+#### Install Block Node
+
+Deploy a complete Hedera Block Node with Kubernetes cluster:
+
+```bash
+# Basic installation with defaults
+sudo solo-provisioner block node install --profile=local
+
+# Production installation with custom values
+sudo solo-provisioner block node install \
+  --profile=mainnet \
+  --config=/path/to/config.yaml \
+  --values=/path/to/custom-values.yaml
+
+# With custom storage configuration
+sudo solo-provisioner block node install \
+  --profile=mainnet \
+  --base-path=/mnt/nvme \
+  --live-size=50Gi \
+  --archive-size=500Gi \
+  --verification-size=50Gi \
+  --log-size=10Gi
+
+# With specific chart version
+sudo solo-provisioner block node install \
+  --profile=testnet \
+  --chart-version=0.22.1 \
+  --namespace=hedera-block
+```
+
+**Available Flags**:
+
+| Flag | Description |
+|------|-------------|
+| `--values`, `-f` | Custom Helm values file |
+| `--chart-repo` | Helm chart repository URL |
+| `--chart-version` | Specific chart version |
+| `--namespace` | Kubernetes namespace |
+| `--release-name` | Helm release name |
+| `--base-path` | Base path for all storage |
+| `--archive-path` | Archive storage path |
+| `--live-path` | Live storage path |
+| `--verification-path` | Verification storage path |
+| `--log-path` | Log storage path |
+| `--live-size` | Live storage size (e.g., 10Gi) |
+| `--archive-size` | Archive storage size |
+| `--verification-size` | Verification storage size |
+| `--log-size` | Log storage size |
+
+#### Upgrade Block Node
+
+Upgrade an existing Block Node deployment:
+
+```bash
+# Upgrade with new values file
+sudo solo-provisioner block node upgrade \
+  --profile=mainnet \
+  --values=/path/to/new-values.yaml
+
+# Upgrade to specific chart version
+sudo solo-provisioner block node upgrade \
+  --profile=mainnet \
+  --chart-version=0.23.0
+
+# Upgrade and reset to chart defaults (don't reuse previous values)
+sudo solo-provisioner block node upgrade \
+  --profile=mainnet \
+  --values=/path/to/values.yaml \
+  --no-reuse-values
+```
+
+**Additional Flags**:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--no-reuse-values` | Don't reuse previous release values | `false` |
+
+---
+
+### Kubernetes Commands
+
+Manage the underlying Kubernetes cluster and its components.
+
+#### Install Kubernetes Cluster
+
+Sets up a complete single-node Kubernetes environment with all required components:
+
+**Components Installed**:
+- **kubeadm/kubelet**: Kubernetes cluster initialization and node agent
+- **CRI-O**: Container runtime
+- **Cilium**: Container networking (CNI)
+- **MetalLB**: Load balancer for bare-metal Kubernetes
+- **Helm**: Kubernetes package manager
+- **kubectl**: Kubernetes CLI
+- **k9s**: Terminal-based Kubernetes UI
+- **External Secrets Operator**: Secret management integration
+- **Metrics Server**: Resource metrics for pods and nodes
+
+```bash
+# Install full Kubernetes stack for block nodes
+sudo solo-provisioner kube cluster install \
+  --profile=local \
+  --node-type=block
+
+# With error handling
+sudo solo-provisioner kube cluster install \
+  --profile=mainnet \
+  --node-type=block \
+  --rollback-on-error
+```
+
+**Flags**:
+
+| Flag | Short | Description | Required |
+|------|-------|-------------|----------|
+| `--node-type` | `-n` | Type of node (block\|consensus\|mirror) | Yes |
+
+#### Uninstall Kubernetes Cluster
+
+Tears down the entire Kubernetes stack including all components (kubeadm, CRI-O, Cilium, etc.) while preserving the downloads cache:
+
+```bash
+# Basic uninstall
+sudo solo-provisioner kube cluster uninstall
+
+# Continue even if some steps fail
+sudo solo-provisioner kube cluster uninstall --continue-on-error
+```
+
+> **Warning**: This tears down the entire cluster. All running workloads will be stopped.
+
+---
+
+### Teleport Commands
+
+Configure secure access using Teleport agents.
+
+#### Install Node Agent (SSH Access)
+
+Install the Teleport node agent for secure SSH access to the host:
+
+```bash
+# Install with required token and proxy address
+sudo solo-provisioner teleport node install \
+  --token=<join-token> \
+  --proxy=proxy.teleport.example.com:443
+
+# With error handling
+sudo solo-provisioner teleport node install \
+  --token=<join-token> \
+  --proxy=proxy.teleport.example.com \
+  --stop-on-error
+```
+
+**Required Flags**:
+
+| Flag | Description |
+|------|-------------|
+| `--token` | Join token for Teleport agent |
+| `--proxy` | Teleport proxy address (host:port) |
+
+#### Install Cluster Agent (kubectl Access)
+
+Install the Teleport Kubernetes cluster agent for secure kubectl access:
+
+```bash
+# Install with values file
+sudo solo-provisioner teleport cluster install \
+  --values=/path/to/teleport-values.yaml
+
+# With specific version
+sudo solo-provisioner teleport cluster install \
+  --values=/path/to/teleport-values.yaml \
+  --version=16.0.0
+```
+
+**Required Flags**:
+
+| Flag | Description |
+|------|-------------|
+| `--values` | Path to Teleport Helm values file |
+
+**Optional Flags**:
+
+| Flag | Description |
+|------|-------------|
+| `--version` | Teleport Helm chart version |
+
+---
+
+### Alloy Commands
+
+Manage Grafana Alloy observability stack for metrics and logs.
+
+#### Install Alloy Stack
+
+```bash
+# Basic installation
+sudo solo-provisioner alloy cluster install
+
+# Full configuration with monitoring
+sudo solo-provisioner alloy cluster install \
+  --monitor-block-node \
+  --cluster-name=mainnet-block-01 \
+  --prometheus-url=https://prometheus.example.com/api/v1/write \
+  --prometheus-username=metrics-user \
+  --loki-url=https://loki.example.com/loki/api/v1/push \
+  --loki-username=logs-user
+```
+
+**Available Flags**:
+
+| Flag | Description |
+|------|-------------|
+| `--monitor-block-node` | Enable Block Node specific monitoring |
+| `--cluster-name` | Cluster name for metrics/logs labels |
+| `--prometheus-url` | Prometheus remote write URL |
+| `--prometheus-username` | Prometheus authentication username |
+| `--loki-url` | Loki remote write URL |
+| `--loki-username` | Loki authentication username |
+
+> **Note**: Passwords are managed via Vault and External Secrets Operator, not via CLI flags.
+
+#### Uninstall Alloy Stack
+
+```bash
+sudo solo-provisioner alloy cluster uninstall
+```
+
+---
+
+### Utility Commands
+
+#### Show Version
+
+```bash
+# Default YAML output
+solo-provisioner version
+
+# JSON output
+solo-provisioner version --output=json
+
+# Short flag
+solo-provisioner -v
+```
+
+---
 
 ## Configuration
 
-Solo Weaver accepts a configuration file. See the documentation or comments in sample [config.yaml](../test/config/config.yaml) for
-all options.
+### Configuration File
 
-## Setup Block Node
+Solo Provisioner supports YAML configuration files with the `--config` flag:
 
-Solo Weaver deploys a Kubernetes cluster and deploys a Hedera Block Node on it using a Helm chart. It comes with
-pre-configured profiles for local, mainnet, and testnet deployment mode.
+```yaml
+# config.yaml
+log:
+  level: debug           # Log level: debug, info, warn, error
+  consoleLogging: true   # Enable console output
+  fileLogging: false     # Enable file logging
 
-```
-$ weaver block node -h
-Manage lifecycle of a Hedera Block Node
+blockNode:
+  namespace: "block-node"
+  release: "block-node"
+  chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  version: "0.22.1"
+  storage:
+    basePath: "/mnt/fast-storage"
+    archivePath: ""       # Optional: defaults to basePath/archive
+    livePath: ""          # Optional: defaults to basePath/live
+    logPath: ""           # Optional: defaults to basePath/log
+    liveSize: "10Gi"
+    archiveSize: "100Gi"
+    logSize: "5Gi"
 
-Usage:
-  weaver block node [flags]
-  weaver block node [command]
+alloy:
+  monitorBlockNode: true
+  clusterName: "mainnet-block-01"
+  prometheusUrl: "https://prometheus.example.com/api/v1/write"
+  prometheusUsername: "metrics"
+  lokiUrl: "https://loki.example.com/loki/api/v1/push"
+  lokiUsername: "logs"
 
-Available Commands:
-  check       Runs safety checks to validate system readiness for Hedera Block node
-  install     Install a Hedera Block Node
-  upgrade     Upgrade a Hedera Block Node
-
-Flags:
-  -h, --help   help for node
-
-Global Flags:
-  -c, --config string    config file path
-  -o, --output string    Output format (yaml|json) (default "yaml")
-  -p, --profile string   Deployment profiles [local perfnet testnet mainnet]
-  -v, --version          Show version
-
-Use "weaver block node [command] --help" for more information about a command. 
-```
-
-If you would like to customize the configuration, create a copy of the example config file and modify it as needed.
-Also, if you would like to use custom BlockNode configurations, you can create a custom values file for BlockNode Helm
-chart and pass using `--values` flag
-
-```
-$ weaver block node install -h
-Run safety checks, setup a K8s cluster and install a Hedera Block Node
-
-Usage:
-  weaver block node install [flags]
-
-Aliases:
-  install, setup
-
-Flags:
-  -h, --help                    help for install
-  -f, --values string           Values file
-      --chart-repo string       Helm chart repository URL
-      --chart-version string    Helm chart version to use
-      --namespace string        Kubernetes namespace for block node
-      --release-name string     Helm release name
-      --base-path string        Base path for all storage (used when individual paths are not specified)
-      --archive-path string     Path for archive storage
-      --live-path string        Path for live storage
-      --log-path string         Path for log storage
-      --live-size string        Size for live storage PV/PVC (e.g., 5Gi, 10Gi)
-      --archive-size string     Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)
-      --log-size string         Size for log storage PV/PVC (e.g., 5Gi, 10Gi)
-
-Global Flags:
-  -c, --config string    config file path
-  -o, --output string    Output format (yaml|json) (default "yaml")
-  -p, --profile string   Deployment profiles [local perfnet testnet mainnet]
-  -v, --version          Show version 
+teleport:
+  version: "16.0.0"
+  valuesFile: "/path/to/teleport-values.yaml"
+  nodeAgentToken: ""      # Set via flag for security
+  nodeAgentProxyAddr: "proxy.teleport.example.com:443"
 ```
 
-To set up a block node, run (use appropriate profile and values file as required):
+### Configuration Precedence
 
-``` 
-sudo weaver block node install --profile <local | mainnet | testnet> --values <custom-values-file>
+Solo Provisioner uses this precedence order (highest to lowest):
 
-# For example to deploy with a 'local' profile (local dev testing), run the below command:
-# sudo weaver block node install --profile=local 
+1. Command-line flags
+2. Environment variables (when using `--config`)
+3. Configuration file
+4. Built-in defaults
 
-# To install with custom storage sizes:
-# sudo weaver block node install --profile=local --live-size=10Gi --archive-size=20Gi --log-size=5Gi
+### Environment Variables
+
+Environment variables can override configuration file values. They require a config file to be provided via `--config` flag.
+
+**Format**: `SOLO_PROVISIONER_<SECTION>_<FIELD>` (uppercase, underscores for nested fields)
+
+```bash
+# Override block node storage base path
+export SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH=/data/block-node
+
+# Override block node namespace
+export SOLO_PROVISIONER_BLOCKNODE_NAMESPACE=my-block-node
+
+# Then run with a config file
+sudo solo-provisioner block node install --profile=mainnet --config=/etc/solo-provisioner/config.yaml
 ```
 
-This command will take a while (~5mins) to complete as it sets up the entire environment. Keep an eye on the console logs.
+---
 
-## Upgrade Block Node
+## Workflow Examples
 
-To upgrade an existing Hedera Block Node deployment with new configuration:
+### Complete Block Node Deployment (Production)
 
-```
-$ weaver block node upgrade -h
-Upgrade an existing Hedera Block Node deployment with new configuration
+```bash
+# Step 1: Deploy the block node (includes preflight checks and K8s setup)
+sudo solo-provisioner block node install \
+  --profile=mainnet \
+  --config=/etc/solo-provisioner/config.yaml \
+  --values=/etc/solo-provisioner/block-node-values.yaml
 
-Usage:
-  weaver block node upgrade [flags]
+# Step 2: (Optional) Set up secure SSH access
+sudo solo-provisioner teleport node install \
+  --token=$TELEPORT_JOIN_TOKEN \
+  --proxy=teleport.hedera.com:443
 
-Flags:
-  -h, --help                    help for upgrade
-  -f, --values string           Values file
-      --no-reuse-values         Don't reuse the last release's values (resets to chart defaults)
-      --chart-repo string       Helm chart repository URL
-      --chart-version string    Helm chart version to use
-      --namespace string        Kubernetes namespace for block node
-      --release-name string     Helm release name
-      --base-path string        Base path for all storage (used when individual paths are not specified)
-      --archive-path string     Path for archive storage
-      --live-path string        Path for live storage
-      --log-path string         Path for log storage
-      --live-size string        Size for live storage PV/PVC (e.g., 5Gi, 10Gi)
-      --archive-size string     Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)
-      --log-size string         Size for log storage PV/PVC (e.g., 5Gi, 10Gi)
+# Step 3: (Optional) Set up secure kubectl access
+sudo solo-provisioner teleport cluster install \
+  --values=/etc/solo-provisioner/teleport-kube-values.yaml
 
-Global Flags:
-  -c, --config string    config file path
-  -o, --output string    Output format (yaml|json) (default "yaml")
-  -p, --profile string   Deployment profiles [local perfnet testnet mainnet]
-  -v, --version          Show version 
+# Step 4: (Optional) Set up monitoring
+sudo solo-provisioner alloy cluster install \
+  --monitor-block-node \
+  --cluster-name=mainnet-block-01 \
+  --prometheus-url=https://metrics.hedera.internal/write \
+  --prometheus-username=block-metrics
 ```
 
-To upgrade a block node, run:
+### Development Environment Setup
 
+```bash
+# Quick local setup for development
+sudo solo-provisioner block node install --profile=local
+
+# Verify deployment
+kubectl get pods -n block-node
 ```
-sudo weaver block node upgrade --profile <local | mainnet | testnet> --values <custom-values-file>
 
-# For example to upgrade with a 'local' profile and custom chart version:
-# sudo weaver block node upgrade --profile=local --chart-version=1.2.3
+### Upgrade Workflow
 
-# To upgrade without reusing previous release values (reset to chart defaults):
-# sudo weaver block node upgrade --profile=local --values=custom-values.yaml --no-reuse-values
+```bash
+# Step 1: Prepare new values file with updated config
+
+# Step 2: Perform upgrade
+sudo solo-provisioner block node upgrade \
+  --profile=mainnet \
+  --values=/etc/solo-provisioner/block-node-values-v2.yaml \
+  --chart-version=0.24.0
+
+# Step 3: Verify
+kubectl get pods -n block-node
 ```
+
+### Clean Teardown
+
+```bash
+# Remove Alloy monitoring
+sudo solo-provisioner alloy cluster uninstall
+
+# Remove Kubernetes cluster (removes block node)
+sudo solo-provisioner kube cluster uninstall
+
+# Uninstall Solo Provisioner itself
+sudo solo-provisioner uninstall
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**1. Permission Denied**
+```bash
+# Most commands require root privileges
+sudo solo-provisioner block node install --profile=local
+```
+
+**2. Profile Not Specified**
+```bash
+# Error: profile flag is required
+# Solution: Always specify --profile
+sudo solo-provisioner block node check --profile=mainnet
+```
+
+**3. Invalid Storage Path**
+```bash
+# Error: invalid base path
+# Ensure path exists and has correct permissions
+sudo mkdir -p /mnt/storage
+sudo solo-provisioner block node install --profile=mainnet --base-path=/mnt/storage
+```
+
+**4. Helm Chart Issues**
+```bash
+# Check specific chart version availability
+# Use explicit version if needed
+sudo solo-provisioner block node install \
+  --profile=mainnet \
+  --chart-version=0.22.1
+```
+
+### Getting Help
+
+```bash
+# General help
+solo-provisioner --help
+
+# Command-specific help
+solo-provisioner block --help
+solo-provisioner block node --help
+solo-provisioner block node install --help
+```
+
+### Debug Output
+
+Enable debug logging in your config file:
+
+```yaml
+log:
+  level: debug
+  consoleLogging: true
+```
+
+---
+
+## Quick Reference Card
+
+```bash
+# INSTALLATION
+# Download from: https://github.com/hashgraph/solo-weaver/releases
+sudo ./solo-provisioner install
+
+# BLOCK NODE
+sudo solo-provisioner block node check   --profile=<profile>
+sudo solo-provisioner block node install --profile=<profile> [--values=<file>]
+sudo solo-provisioner block node upgrade --profile=<profile> [--values=<file>]
+
+# KUBERNETES
+sudo solo-provisioner kube cluster install   --profile=<profile> --node-type=block
+sudo solo-provisioner kube cluster uninstall
+
+# TELEPORT
+sudo solo-provisioner teleport node install    --token=<token> --proxy=<addr>
+sudo solo-provisioner teleport cluster install --values=<file>
+
+# ALLOY
+sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-name=<name>]
+sudo solo-provisioner alloy cluster uninstall
+
+# UTILITIES
+solo-provisioner version [--output=json|yaml]
+solo-provisioner --help
+```
+
+---
+
+*Document Version: 1.0.0 | Last Updated: January 2026*
 

@@ -103,7 +103,7 @@ func CheckPrivilegesStep() automa.Builder {
 		})
 }
 
-// CheckWeaverUserStep validates that the weaver user and group exist with the correct IDs
+// CheckWeaverUserStep validates that the provisioner user and group exist with the correct IDs
 func CheckWeaverUserStep() automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-weaver-user").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -132,7 +132,7 @@ func CheckWeaverUserStep() automa.Builder {
 				meta["user_id_mismatch"] = "true"
 				meta["expected_user_id"] = weaverUserId
 				meta["actual_user_id"] = weaverUser.Uid
-				errors = append(errors, errorx.IllegalState.New("weaver user exists with incorrect UID: expected %s, got %s", weaverUserId, weaverUser.Uid))
+				errors = append(errors, errorx.IllegalState.New("provisioner user exists with incorrect UID: expected %s, got %s", weaverUserId, weaverUser.Uid))
 				instructions += fmt.Sprintf("User '%s' exists but has incorrect UID.\n", weaverUsername)
 				instructions += fmt.Sprintf("Expected: %s, Found: %s\n\n", weaverUserId, weaverUser.Uid)
 			}
@@ -142,7 +142,7 @@ func CheckWeaverUserStep() automa.Builder {
 				meta["group_id_mismatch"] = "true"
 				meta["expected_group_id"] = weaverGroupId
 				meta["actual_group_id"] = weaverGroup.Gid
-				errors = append(errors, errorx.IllegalState.New("weaver group exists with incorrect GID: expected %s, got %s", weaverGroupId, weaverGroup.Gid))
+				errors = append(errors, errorx.IllegalState.New("provisioner group exists with incorrect GID: expected %s, got %s", weaverGroupId, weaverGroup.Gid))
 				instructions += fmt.Sprintf("Group '%s' exists but has incorrect GID.\n", weaverGroupName)
 				instructions += fmt.Sprintf("Expected: %s, Found: %s\n\n", weaverGroupId, weaverGroup.Gid)
 			}
@@ -199,7 +199,7 @@ func CheckWeaverUserStep() automa.Builder {
 					instructions += fmt.Sprintf("  • Primary group: %s (GID %s)\n", weaverGroupName, weaverGroupId)
 					instructions += "  • Home directory with bash shell"
 				} else {
-					instructions = fmt.Sprintf("The weaver group '%s' does not exist.\n\n", weaverGroupName)
+					instructions = fmt.Sprintf("The provisioner group '%s' does not exist.\n\n", weaverGroupName)
 					instructions += "Please create it with the following command:\n\n"
 					instructions += fmt.Sprintf("  sudo groupadd -g %s %s\n\n", weaverGroupId, weaverGroupName)
 					instructions += fmt.Sprintf("This will create the group with GID %s.", weaverGroupId)
@@ -209,11 +209,11 @@ func CheckWeaverUserStep() automa.Builder {
 
 				var errMsg string
 				if !userExists && !groupExists {
-					errMsg = fmt.Sprintf("weaver user '%s' and group '%s' do not exist", weaverUsername, weaverGroupName)
+					errMsg = fmt.Sprintf("provisioner user '%s' and group '%s' do not exist", weaverUsername, weaverGroupName)
 				} else if !userExists {
-					errMsg = fmt.Sprintf("weaver user '%s' does not exist", weaverUsername)
+					errMsg = fmt.Sprintf("provisioner user '%s' does not exist", weaverUsername)
 				} else {
-					errMsg = fmt.Sprintf("weaver group '%s' does not exist", weaverGroupName)
+					errMsg = fmt.Sprintf("provisioner group '%s' does not exist", weaverGroupName)
 				}
 
 				return automa.FailureReport(stp,
@@ -232,19 +232,19 @@ func CheckWeaverUserStep() automa.Builder {
 				Str("user_id", weaverUserId).
 				Str("group", weaverGroupName).
 				Str("group_id", weaverGroupId).
-				Msg("Weaver user and group validated")
+				Msg("Solo Provisioner user and group validated")
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting weaver user validation")
+			notify.As().StepStart(ctx, stp, "Starting Solo Provisioner user validation")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Weaver user validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Solo Provisioner user validation failed")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Weaver user validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner user validation step completed successfully")
 		})
 }
 

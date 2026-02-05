@@ -33,7 +33,7 @@ blockNode:
 	tmpFile.Close()
 
 	// set environment variable to override the storage.basePath
-	envKey := "WEAVER_BLOCKNODE_STORAGE_BASEPATH"
+	envKey := "SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH"
 	expected := "/data/block-node"
 	orig := os.Getenv(envKey)
 	if err := os.Setenv(envKey, expected); err != nil {

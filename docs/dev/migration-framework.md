@@ -1,6 +1,6 @@
 # Migration Framework
 
-This document describes the migration framework used in Weaver to handle breaking changes during software upgrades.
+This document describes the migration framework used in Solo Provisioner to handle breaking changes during software upgrades.
 
 ## Overview
 

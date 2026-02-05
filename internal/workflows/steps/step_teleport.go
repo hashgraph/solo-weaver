@@ -34,7 +34,7 @@ const (
 
 // SetupTeleportNodeAgent returns a workflow builder that sets up the Teleport node agent.
 // This provides SSH access to the node via Teleport with full session recording.
-// Used by 'weaver teleport node install' command.
+// Used by 'solo-provisioner teleport node install' command.
 func SetupTeleportNodeAgent() *automa.WorkflowBuilder {
 	cfg := config.Get().Teleport
 
@@ -59,7 +59,7 @@ func SetupTeleportNodeAgent() *automa.WorkflowBuilder {
 // SetupTeleportClusterAgent returns a workflow builder that sets up the Teleport Kubernetes agent.
 // This provides secure, identity-aware access to the Kubernetes cluster with full audit logging.
 // All configuration including RBAC is provided via the Helm values file.
-// Used by 'weaver teleport cluster install' command.
+// Used by 'solol-provisioner teleport cluster install' command.
 func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupTeleportStepId).
 		Steps(

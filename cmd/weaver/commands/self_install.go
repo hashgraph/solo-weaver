@@ -11,22 +11,22 @@ import (
 
 var selfInstallCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Perform self-installation of Solo Weaver",
-	Long:  "Perform self-installation of Solo Weaver on the local system",
+	Short: "Perform self-installation of Solo Provisioner",
+	Long:  "Perform self-installation of Solo Provisioner on the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflow(cmd.Context(), workflows.NewSelfInstallWorkflow())
-		logx.As().Info().Msg("Solo Weaver is installed successfully; run 'weaver -h' to see available commands")
+		logx.As().Info().Msg("Solo Provisioner is installed successfully; run 'solo-provisioner -h' to see available commands")
 		return nil
 	},
 }
 
 var selfUninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Uninstall Solo Weaver from the local system",
-	Long:  "Uninstall Solo Weaver from the local system",
+	Short: "Uninstall Solo Provisioner from the local system",
+	Long:  "Uninstall Solo Provisioner from the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflow(cmd.Context(), workflows.NewSelfUninstallWorkflow())
-		logx.As().Info().Msg("Solo Weaver is uninstalled successfully")
+		logx.As().Info().Msg("Solo Provisioner is uninstalled successfully")
 		return nil
 	},
 }
