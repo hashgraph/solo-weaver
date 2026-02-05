@@ -68,34 +68,7 @@ type Context struct {
 	Logger *zerolog.Logger
 
 	// Data holds migration-specific data (versions, managers, etc.)
-	Data map[string]interface{}
-}
-
-// Get retrieves a value from the Data map.
-func (c *Context) Get(key string) (interface{}, bool) {
-	if c.Data == nil {
-		return nil, false
-	}
-	v, ok := c.Data[key]
-	return v, ok
-}
-
-// GetString retrieves a string value from the Data map.
-func (c *Context) GetString(key string) string {
-	if v, ok := c.Get(key); ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-// Set stores a value in the Data map.
-func (c *Context) Set(key string, value interface{}) {
-	if c.Data == nil {
-		c.Data = make(map[string]interface{})
-	}
-	c.Data[key] = value
+	Data automa.StateBag
 }
 
 // Global registry of migrations per component

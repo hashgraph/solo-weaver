@@ -84,8 +84,8 @@ func (m *VerificationStorageMigration) Execute(ctx context.Context, mctx *migrat
 		return err
 	}
 
-	profile := mctx.GetString(ctxKeyProfile)
-	valuesFile := mctx.GetString(ctxKeyValuesFile)
+	profile := mctx.Data.String(ctxKeyProfile)
+	valuesFile := mctx.Data.String(ctxKeyValuesFile)
 	logger := mctx.Logger
 
 	logger.Info().Msg("Executing verification storage migration")
@@ -148,10 +148,10 @@ func (m *VerificationStorageMigration) Rollback(ctx context.Context, mctx *migra
 		return err
 	}
 
-	profile := mctx.GetString(ctxKeyProfile)
-	valuesFile := mctx.GetString(ctxKeyValuesFile)
+	profile := mctx.Data.String(ctxKeyProfile)
+	valuesFile := mctx.Data.String(ctxKeyValuesFile)
 	logger := mctx.Logger
-	installedVersion := mctx.GetString(migration.CtxKeyInstalledVersion)
+	installedVersion := mctx.Data.String(migration.CtxKeyInstalledVersion)
 
 	logger.Warn().Msg("Attempting rollback of verification storage migration")
 
@@ -199,7 +199,7 @@ func (m *VerificationStorageMigration) Rollback(ctx context.Context, mctx *migra
 // Helper function for extracting manager from migration context
 
 func getManager(mctx *migration.Context) (*Manager, error) {
-	v, ok := mctx.Get(ctxKeyManager)
+	v, ok := mctx.Data.Get(ctxKeyManager)
 	if !ok {
 		return nil, errorx.IllegalState.New("manager not found in context")
 	}

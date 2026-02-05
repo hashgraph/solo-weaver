@@ -37,7 +37,7 @@ func InitMigrations() {
 func BuildMigrationWorkflow() (*automa.WorkflowBuilder, error) {
 	mctx := &migration.Context{
 		Component: MigrationComponent,
-		Data:      make(map[string]interface{}),
+		Data:      &automa.SyncStateBag{},
 	}
 
 	migrations, err := migration.GetApplicableMigrations(MigrationComponent, mctx)

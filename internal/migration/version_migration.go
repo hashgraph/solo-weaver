@@ -33,8 +33,8 @@ func (v *VersionMigration) Description() string { return v.description }
 
 // Applies returns true if upgrading across the version boundary.
 func (v *VersionMigration) Applies(mctx *Context) (bool, error) {
-	installedVersion := mctx.GetString(CtxKeyInstalledVersion)
-	targetVersion := mctx.GetString(CtxKeyTargetVersion)
+	installedVersion := mctx.Data.String(CtxKeyInstalledVersion)
+	targetVersion := mctx.Data.String(CtxKeyTargetVersion)
 
 	if installedVersion == "" {
 		return false, nil

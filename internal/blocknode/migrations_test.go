@@ -5,6 +5,7 @@ package blocknode
 import (
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,10 +99,10 @@ func TestVerificationStorageMigration_Applies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := &migration.Context{
-				Data: make(map[string]interface{}),
+				Data: &automa.SyncStateBag{},
 			}
-			ctx.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
-			ctx.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
+			ctx.Data.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
+			ctx.Data.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
 			applies, err := m.Applies(ctx)
 
 			if tt.expectError {
@@ -157,9 +158,9 @@ func TestGetApplicable_BlockNode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mctx := &migration.Context{Data: make(map[string]interface{})}
-			mctx.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
-			mctx.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
+			mctx := &migration.Context{Data: &automa.SyncStateBag{}}
+			mctx.Data.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
+			mctx.Data.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
 
 			migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 
@@ -181,9 +182,9 @@ func TestMigrationRegistration(t *testing.T) {
 	defer migration.ClearRegistry()
 
 	// Check that verification migration is registered
-	mctx := &migration.Context{Data: make(map[string]interface{})}
-	mctx.Set(migration.CtxKeyInstalledVersion, "0.26.0")
-	mctx.Set(migration.CtxKeyTargetVersion, "0.26.2")
+	mctx := &migration.Context{Data: &automa.SyncStateBag{}}
+	mctx.Data.Set(migration.CtxKeyInstalledVersion, "0.26.0")
+	mctx.Data.Set(migration.CtxKeyTargetVersion, "0.26.2")
 	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 	require.NoError(t, err)
 	require.Len(t, migrations, 1)

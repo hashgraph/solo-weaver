@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,40 +16,6 @@ import (
 func testLogger() *zerolog.Logger {
 	l := zerolog.Nop()
 	return &l
-}
-
-// ============================================================================
-// Context Tests
-// ============================================================================
-
-func TestContext_GetSet(t *testing.T) {
-	ctx := &Context{}
-
-	// Test Set and Get
-	ctx.Set("key1", "value1")
-	ctx.Set("key2", 42)
-
-	v1, ok := ctx.Get("key1")
-	require.True(t, ok)
-	assert.Equal(t, "value1", v1)
-
-	v2, ok := ctx.Get("key2")
-	require.True(t, ok)
-	assert.Equal(t, 42, v2)
-
-	// Test missing key
-	_, ok = ctx.Get("missing")
-	assert.False(t, ok)
-}
-
-func TestContext_GetString(t *testing.T) {
-	ctx := &Context{}
-	ctx.Set("str", "hello")
-	ctx.Set("int", 42)
-
-	assert.Equal(t, "hello", ctx.GetString("str"))
-	assert.Equal(t, "", ctx.GetString("int"))     // wrong type
-	assert.Equal(t, "", ctx.GetString("missing")) // missing key
 }
 
 // ============================================================================
@@ -129,10 +96,10 @@ func TestVersionMigration_Applies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := &Context{
-				Data: make(map[string]interface{}),
+				Data: &automa.SyncStateBag{},
 			}
-			ctx.Set(CtxKeyInstalledVersion, tt.installedVersion)
-			ctx.Set(CtxKeyTargetVersion, tt.targetVersion)
+			ctx.Data.Set(CtxKeyInstalledVersion, tt.installedVersion)
+			ctx.Data.Set(CtxKeyTargetVersion, tt.targetVersion)
 
 			applies, err := m.Applies(ctx)
 
@@ -237,9 +204,9 @@ func TestRegister_And_GetApplicable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mctx := &Context{Data: make(map[string]interface{})}
-			mctx.Set(CtxKeyInstalledVersion, tt.installedVersion)
-			mctx.Set(CtxKeyTargetVersion, tt.targetVersion)
+			mctx := &Context{Data: &automa.SyncStateBag{}}
+			mctx.Data.Set(CtxKeyInstalledVersion, tt.installedVersion)
+			mctx.Data.Set(CtxKeyTargetVersion, tt.targetVersion)
 
 			applicable, err := GetApplicableMigrations("test-component", mctx)
 			require.NoError(t, err)
@@ -272,10 +239,10 @@ func TestMigrationsToWorkflow(t *testing.T) {
 		mctx := &Context{
 			Component: "test",
 			Logger:    logger,
-			Data:      make(map[string]interface{}),
+			Data:      &automa.SyncStateBag{},
 		}
-		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
-		mctx.Set(CtxKeyTargetVersion, "2.5.0")
+		mctx.Data.Set(CtxKeyInstalledVersion, "0.5.0")
+		mctx.Data.Set(CtxKeyTargetVersion, "2.5.0")
 
 		workflow := MigrationsToWorkflow([]Migration{mock1, mock2}, mctx)
 		wf, err := workflow.Build()
@@ -301,10 +268,10 @@ func TestMigrationsToWorkflow(t *testing.T) {
 		mctx := &Context{
 			Component: "test",
 			Logger:    logger,
-			Data:      make(map[string]interface{}),
+			Data:      &automa.SyncStateBag{},
 		}
-		mctx.Set(CtxKeyInstalledVersion, "0.5.0")
-		mctx.Set(CtxKeyTargetVersion, "2.5.0")
+		mctx.Data.Set(CtxKeyInstalledVersion, "0.5.0")
+		mctx.Data.Set(CtxKeyTargetVersion, "2.5.0")
 
 		workflow := MigrationsToWorkflow([]Migration{mock1, mock2}, mctx)
 		wf, err := workflow.Build()
@@ -322,9 +289,9 @@ func TestClearRegistry(t *testing.T) {
 
 	Register("test", NewMockMigration("m1", "1.0.0"))
 
-	mctx := &Context{Data: make(map[string]interface{})}
-	mctx.Set(CtxKeyInstalledVersion, "0.5.0")
-	mctx.Set(CtxKeyTargetVersion, "1.5.0")
+	mctx := &Context{Data: &automa.SyncStateBag{}}
+	mctx.Data.Set(CtxKeyInstalledVersion, "0.5.0")
+	mctx.Data.Set(CtxKeyTargetVersion, "1.5.0")
 
 	applicable, _ := GetApplicableMigrations("test", mctx)
 	assert.Len(t, applicable, 1)

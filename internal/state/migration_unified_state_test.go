@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,7 +117,7 @@ func TestRegisterMigrations_State(t *testing.T) {
 	// Verify migration is registered - state-based migrations don't need versions
 	mctx := &migration.Context{
 		Component: MigrationComponent,
-		Data:      make(map[string]interface{}),
+		Data:      &automa.SyncStateBag{},
 	}
 	migrations, err := migration.GetApplicableMigrations(MigrationComponent, mctx)
 	require.NoError(t, err)

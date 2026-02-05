@@ -48,10 +48,10 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 	mctx := &migration.Context{
 		Component: ComponentBlockNode,
 		Logger:    manager.logger,
-		Data:      make(map[string]interface{}),
+		Data:      &automa.SyncStateBag{},
 	}
-	mctx.Set(migration.CtxKeyInstalledVersion, installedVersion)
-	mctx.Set(migration.CtxKeyTargetVersion, manager.blockConfig.Version)
+	mctx.Data.Set(migration.CtxKeyInstalledVersion, installedVersion)
+	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockConfig.Version)
 
 	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 	if err != nil {
@@ -64,9 +64,9 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 
 	// Capture release values if needed
 	// Add context data
-	mctx.Set(ctxKeyManager, manager)
-	mctx.Set(ctxKeyProfile, profile)
-	mctx.Set(ctxKeyValuesFile, valuesFile)
+	mctx.Data.Set(ctxKeyManager, manager)
+	mctx.Data.Set(ctxKeyProfile, profile)
+	mctx.Data.Set(ctxKeyValuesFile, valuesFile)
 
 	return migration.MigrationsToWorkflow(migrations, mctx), nil
 }
