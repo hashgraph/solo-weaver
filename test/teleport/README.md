@@ -1,6 +1,6 @@
 # Teleport Local Development Setup
 
-Local Teleport server for testing the Teleport Kubernetes agent integration with Solo Weaver.
+Local Teleport server for testing the Teleport Kubernetes agent integration with Solo Provisioner.
 
 **Components:**
 - Teleport Server - Authentication, proxy, and audit logging
@@ -14,7 +14,7 @@ Teleport provides **two types of agents**:
 Installed directly on the host machine for SSH access to the node itself.
 
 ```bash
-weaver teleport node install --token=<join-token> [--proxy=<proxy-address>]
+solo-provisioner teleport node install --token=<join-token> [--proxy=<proxy-address>]
 ```
 
 > **Local dev note:** The `task teleport:start` command automatically extracts the Teleport
@@ -26,7 +26,7 @@ weaver teleport node install --token=<join-token> [--proxy=<proxy-address>]
 Installed via Helm chart to provide secure access to the Kubernetes cluster.
 
 ```bash
-weaver teleport cluster install --values=<path-to-values.yaml> [--version=<version>]
+solo-provisioner teleport cluster install --values=<path-to-values.yaml> [--version=<version>]
 ```
 
 ```
@@ -43,7 +43,7 @@ Kubernetes API Access              Kubernetes API Access
 
 ## 🚀 Quick Start - Local Development
 
-### Prerequisites: Build Weaver
+### Prerequisites: Build Solo Provisioner
 
 From your Mac, ensure you have the latest build:
 ```bash
@@ -75,11 +75,11 @@ This single command will:
 Before installing Teleport agents, you need a Kubernetes cluster:
 
 ```bash
-cp /mnt/solo-weaver/bin/weaver-linux-arm64 ~/.
+cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 ~/.
 
-sudo ~/weaver-linux-arm64 install
+sudo ~/solo-provisioner-linux-arm64 install
 
-sudo weaver kube cluster install --profile=local --node-type=block
+sudo solo-provisioner kube cluster install --profile=local --node-type=block
 ```
 
 ### Step 3: Generate Node Agent Token
@@ -101,7 +101,7 @@ Proxy: 192.168.64.5:3080
 
 **Install Node Agent (SSH access):**
 ```bash
-sudo weaver teleport node install \
+sudo solo-provisioner teleport node install \
   --token=<TOKEN> \
   --proxy=<PROXY>
 ```
@@ -110,7 +110,7 @@ sudo weaver teleport node install \
 
 **Install Kubernetes Cluster Agent:**
 ```bash
-sudo weaver teleport cluster install \
+sudo solo-provisioner teleport cluster install \
   --values=/tmp/teleport-values-configured.yaml
 ```
 
@@ -261,7 +261,7 @@ docker exec solo-weaver-teleport tctl tokens add --type=kube --ttl=24h
 5. **If the token expired**, generate a new one and reinstall:
    ```bash
    task teleport:node-agent-token
-   # Then re-run weaver install with the new token
+   # Then re-run solo-provisioner install with the new token
    ```
 
 ### Agent can't connect to server
@@ -300,7 +300,7 @@ For production with Teleport Cloud/Enterprise (e.g., `hashgraph.teleport.sh`):
 
 **Step 1: Install Kubernetes Cluster Agent**
 ```bash
-sudo weaver teleport cluster install \
+sudo solo-provisioner teleport cluster install \
   --values=/path/to/teleport-values.yaml \
   --version=18.6.4
 ```
@@ -309,7 +309,7 @@ sudo weaver teleport cluster install \
 
 On each node that needs SSH access:
 ```bash
-sudo weaver teleport node install \
+sudo solo-provisioner teleport node install \
   --token="58566f1f672c0db769bf1fe7681121dc" \
   --proxy="proxy.teleport.sh:443"
 ```
@@ -325,7 +325,7 @@ See `teleport-values-prod-example.yaml` for a complete example.
 
 ```bash
 # Install Teleport SSH node agent
-weaver teleport node install --token=<join-token> --proxy=<proxy-address>
+solo-provisioner teleport node install --token=<join-token> --proxy=<proxy-address>
 ```
 
 | Flag | Description | Default |
@@ -340,7 +340,7 @@ weaver teleport node install --token=<join-token> --proxy=<proxy-address>
 
 ```bash
 # Install Teleport Kubernetes cluster agent
-weaver teleport cluster install --values=<path-to-values.yaml> [--version=<version>]
+solo-provisioner teleport cluster install --values=<path-to-values.yaml> [--version=<version>]
 ```
 
 | Flag | Description | Default |

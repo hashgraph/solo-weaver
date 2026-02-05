@@ -310,7 +310,7 @@ func Initialize(path string) error {
 		globalConfig = Config{}
 		viper.Reset()
 		viper.SetConfigFile(path)
-		viper.SetEnvPrefix("weaver")
+		viper.SetEnvPrefix("SOLO_PROVISIONER")
 		viper.AutomaticEnv()
 		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 

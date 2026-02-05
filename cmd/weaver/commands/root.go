@@ -16,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -34,9 +35,9 @@ var (
 	flagOutputFormat string
 
 	rootCmd = &cobra.Command{
-		Use:   "weaver",
+		Use:   "solo-provisioner",
 		Short: "A user friendly tool to provision Hedera network components",
-		Long:  "Solo Weaver - A user friendly tool to provision Hedera network components",
+		Long:  "Solo Provisioner - A user friendly tool to provision Hedera network components",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return common.RunGlobalChecks(cmd, args)
 		},
@@ -77,6 +78,7 @@ func init() {
 	// Register all migrations at startup
 	blocknode.InitMigrations()
 	state.InitMigrations()
+	workflows.InitMigrations()
 }
 
 // Execute executes the root command.

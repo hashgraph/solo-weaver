@@ -99,27 +99,27 @@ task vm:test:unit
 task vm:test:integration
 ```
 
-#### SSH into the VM to run the weaver CLI directly
+#### SSH into the VM to run the Solo Provisioner CLI directly
 
 1. SSH into the VM:
 ```sh
 task vm:ssh
 ```
 
-2. Inside the VM, first copy the weaver binary to `/tmp`:
+2. Inside the VM, first copy the solo-provisioner binary to `/tmp`:
 ```sh
-# we need to copy the weaver binary to /tmp first rather than running from the mounted folder
-cd /tmp && cp /mnt/solo-weaver/bin/weaver-linux-arm64 .
+# we need to copy the solo-provisioner binary to /tmp first rather than running from the mounted folder
+cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
 
-provisioner@debian:/tmp$ ./weaver-linux-arm64 -h
-Solo Weaver - A user friendly tool to provision Hedera network components
+provisioner@debian:/tmp$ ./solo-provisioner-linux-arm64 -h
+Solo Provisioner - A user friendly tool to provision Hedera network components
 
 Usage:
-  weaver [flags]
-  weaver [command]
+  solo-provisioner [flags]
+  solo-provisioner [command]
 
 Available Commands:
-  install     Perform self-installation of Solo Weaver
+  install     Perform self-installation of Solo Provisioner
   block       Manage a Hedera Block Node & its components
   version     Show version
   help        Help about any command
@@ -127,11 +127,11 @@ Available Commands:
 
 Flags:
   -c, --config string   config file path
-  -h, --help            help for weaver
+  -h, --help            help for solo-provisioner
   -o, --output string   Output format (yaml|json) (default "yaml")
   -v, --version         Show version
 
-Use "weaver [command] --help" for more information about a command.
+Use "solo-provisioner [command] --help" for more information about a command.
 ```
 
 ##### Debug using IntelliJ IDEA (Recommended)

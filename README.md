@@ -1,4 +1,4 @@
-# solo-weaver
+# solo-provisioner
 A Go-based tool for provisioning Hedera network components in a streamlined and automated way.
 
 ## Getting Started

@@ -143,12 +143,12 @@ verify_checksum() {
 }
 
 # ------------------------------------
-# Function: Install Weaver
+# Function: Install Solo Provisioner
 # ------------------------------------
-install_weaver() {
+install_solo_provisioner() {
   local file="$1"
 
-  echo "Installing Solo Weaver..."
+  echo "Installing Solo Provisioner..."
 
   # Allow sudo prompt if needed
   if ! sudo -n true 2>/dev/null; then
@@ -156,7 +156,7 @@ install_weaver() {
   fi
 
   sudo "./$file" install
-  echo "🎉 Solo Weaver installed successfully!"
+  echo "🎉 Solo Provisioner installed successfully!"
 }
 
 # ======================================================================
@@ -165,7 +165,7 @@ install_weaver() {
 
 fetch_release_json
 
-TARGET_BINARY="weaver-linux-$ARCH"
+TARGET_BINARY="solo-provisioner-linux-$ARCH"
 TARGET_CHECKSUM="$TARGET_BINARY.sha256"
 
 BINARY_ID=$(extract_asset_id "$TMP_JSON" "$TARGET_BINARY" || true)
@@ -193,10 +193,10 @@ chmod +x "$TARGET_BINARY"
 verify_checksum "$TARGET_BINARY" "$TARGET_CHECKSUM"
 
 # Install
-install_weaver "$TARGET_BINARY"
+install_solo_provisioner "$TARGET_BINARY"
 
 # Cleanup
 rm -f "$TARGET_BINARY" "$TARGET_CHECKSUM"
 
 # Test run
-weaver -h
+solo-provisioner -h
