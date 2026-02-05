@@ -33,10 +33,15 @@ const (
 	MetalLBAnnotation = "metallb.io/address-pool=public-address-pool"
 
 	// Template paths
-	NamespacePath     = "files/block-node/namespace.yaml"
-	StorageConfigPath = "files/block-node/storage-config.yaml"
-	ValuesPath        = "files/block-node/full-values.yaml"
-	NanoValuesPath    = "files/block-node/nano-values.yaml"
+	NamespacePath           = "files/block-node/namespace.yaml"
+	StorageConfigPath       = "files/block-node/storage-config.yaml"
+	VerificationStoragePath = "files/block-node/verification-storage.yaml"
+	ValuesPath              = "files/block-node/full-values.yaml"
+	NanoValuesPath          = "files/block-node/nano-values.yaml"
+
+	// Template paths for v0.26.2+ (includes verification storage)
+	ValuesPathV0262     = "files/block-node/full-values-v0.26.2.yaml"
+	NanoValuesPathV0262 = "files/block-node/nano-values-v0.26.2.yaml"
 
 	// Timeouts
 	PodReadyTimeoutSeconds = 300
@@ -111,15 +116,21 @@ func getKubeConfig() (*rest.Config, error) {
 // SetupStorage creates the required directories for block node storage
 func (m *Manager) SetupStorage(ctx context.Context) error {
 	// Get storage paths (already validated by GetStoragePaths)
-	archivePath, livePath, logPath, err := m.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := m.GetStoragePaths()
 	if err != nil {
 		return err
 	}
 
+	// Core storage paths are always required
 	storagePaths := []string{
 		archivePath,
 		livePath,
 		logPath,
+	}
+
+	// Verification storage is only needed for Block Node versions >= 0.26.2
+	if m.requiresVerificationStorage() && verificationPath != "" {
+		storagePaths = append(storagePaths, verificationPath)
 	}
 
 	for _, dirPath := range storagePaths {
@@ -184,31 +195,48 @@ func (m *Manager) DeleteNamespace(ctx context.Context, tempDir string) error {
 // CreatePersistentVolumes creates PVs and PVCs from the storage config
 func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) error {
 	// Get the computed storage paths
-	archivePath, livePath, logPath, err := m.GetStoragePaths()
+	archivePath, livePath, logPath, verificationPath, err := m.GetStoragePaths()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
 	}
 
+	includeVerification := m.requiresVerificationStorage()
+
+	m.logger.Debug().
+		Str("archivePath", archivePath).
+		Str("livePath", livePath).
+		Str("logPath", logPath).
+		Str("verificationPath", verificationPath).
+		Bool("includeVerification", includeVerification).
+		Msg("Storage paths computed")
+
 	// Prepare template data
 	data := struct {
-		Namespace   string
-		LivePath    string
-		ArchivePath string
-		LogPath     string
-		LiveSize    string
-		ArchiveSize string
-		LogSize     string
+		Namespace           string
+		LivePath            string
+		ArchivePath         string
+		LogPath             string
+		VerificationPath    string
+		LiveSize            string
+		ArchiveSize         string
+		LogSize             string
+		VerificationSize    string
+		IncludeVerification bool
 	}{
-		Namespace:   m.blockConfig.Namespace,
-		LivePath:    livePath,
-		ArchivePath: archivePath,
-		LogPath:     logPath,
-		LiveSize:    m.blockConfig.Storage.LiveSize,
-		ArchiveSize: m.blockConfig.Storage.ArchiveSize,
-		LogSize:     m.blockConfig.Storage.LogSize,
+		Namespace:           m.blockConfig.Namespace,
+		LivePath:            livePath,
+		ArchivePath:         archivePath,
+		LogPath:             logPath,
+		VerificationPath:    verificationPath,
+		LiveSize:            m.blockConfig.Storage.LiveSize,
+		ArchiveSize:         m.blockConfig.Storage.ArchiveSize,
+		LogSize:             m.blockConfig.Storage.LogSize,
+		VerificationSize:    m.blockConfig.Storage.VerificationSize,
+		IncludeVerification: includeVerification,
 	}
 
 	// Render the storage config template
+	m.logger.Debug().Str("template", StorageConfigPath).Msg("Rendering storage config template")
 	storageConfig, err := templates.Render(StorageConfigPath, data)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to render storage config template")
@@ -216,17 +244,27 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 
 	// Write to temp file
 	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
+	m.logger.Debug().Str("configFile", configFilePath).Msg("Writing storage config to temp file")
 	if err := os.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write storage config to temp file")
 	}
 
 	// Apply the configuration
+	m.logger.Debug().Str("configFile", configFilePath).Msg("Applying storage manifest")
 	if err := m.kubeClient.ApplyManifest(ctx, configFilePath); err != nil {
+		m.logger.Error().Err(err).Str("configFile", configFilePath).Msg("Failed to apply storage manifest")
 		return errorx.IllegalState.Wrap(err, "failed to apply storage configuration")
 	}
+	m.logger.Debug().Msg("Storage manifest applied successfully")
 
 	// Wait for all PVCs to be bound
 	pvcNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
+
+	// Verification storage PVC is only needed for Block Node versions >= 0.26.2
+	if m.requiresVerificationStorage() {
+		pvcNames = append(pvcNames, "verification-storage-pvc")
+	}
+
 	timeout := 2 * time.Minute
 
 	for _, pvcName := range pvcNames {
@@ -244,6 +282,57 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) error {
 	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
 	return m.kubeClient.DeleteManifest(ctx, configFilePath)
+}
+
+// CreateVerificationStorage creates only the verification PV/PVC.
+// Used during migration when other PVs already exist.
+func (m *Manager) CreateVerificationStorage(ctx context.Context, tempDir string) error {
+	_, _, _, verificationPath, err := m.GetStoragePaths()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
+	}
+
+	data := struct {
+		Namespace        string
+		VerificationPath string
+		VerificationSize string
+	}{
+		Namespace:        m.blockConfig.Namespace,
+		VerificationPath: verificationPath,
+		VerificationSize: m.blockConfig.Storage.VerificationSize,
+	}
+
+	m.logger.Debug().
+		Str("verificationPath", verificationPath).
+		Str("verificationSize", m.blockConfig.Storage.VerificationSize).
+		Msg("Creating verification storage")
+
+	// Render the verification storage template
+	storageConfig, err := templates.Render(VerificationStoragePath, data)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to render verification storage template")
+	}
+
+	// Write to temp file
+	configFilePath := path.Join(tempDir, "block-node-verification-storage.yaml")
+	if err := os.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to write verification storage config")
+	}
+
+	// Apply the configuration
+	if err := m.kubeClient.ApplyManifest(ctx, configFilePath); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to apply verification storage")
+	}
+
+	// Wait for PVC to be bound
+	m.logger.Info().Str("pvc", "verification-storage-pvc").Msg("Waiting for verification PVC to be bound...")
+	timeout := 2 * time.Minute
+	if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockConfig.Namespace, "verification-storage-pvc", kube.IsPVCBound, timeout); err != nil {
+		return errorx.IllegalState.Wrap(err, "verification PVC did not become bound in time")
+	}
+	m.logger.Info().Str("pvc", "verification-storage-pvc").Msg("Verification PVC is bound")
+
+	return nil
 }
 
 // InstallChart installs the block node helm chart
@@ -376,8 +465,12 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 	return nil
 }
 
-// ComputeValuesFile generates the values file for helm installation based on profile.
+// ComputeValuesFile generates the values file for helm installation based on profile and version.
 // It provides the path to the generated values file.
+//
+// The method selects the appropriate values template based on the target Block Node version:
+// - For versions >= 0.26.2: Uses values templates with verification storage configuration
+// - For versions < 0.26.2: Uses values templates without verification storage
 //
 // NOTE: This method implements defense-in-depth validation. Even though the CLI layer
 // validates paths using sanity.ValidateInputFile(), this method also validates to ensure
@@ -388,11 +481,24 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	var err error
 
 	if valuesFile == "" {
-		// Use embedded template based on profile
+		// Determine if we need v0.26.2+ values (with verification storage)
+		needsVerificationStorage := m.requiresVerificationStorage()
+
+		// Use embedded template based on profile and version
 		valuesTemplatePath := ValuesPath
 		if profile == core.ProfileLocal {
-			valuesTemplatePath = NanoValuesPath
-			logx.As().Info().Msg("Using nano values configuration for local profile")
+			if needsVerificationStorage {
+				valuesTemplatePath = NanoValuesPathV0262
+				logx.As().Info().Msg("Using nano values configuration with verification storage for local profile")
+			} else {
+				valuesTemplatePath = NanoValuesPath
+				logx.As().Info().Msg("Using nano values configuration for local profile")
+			}
+		} else {
+			if needsVerificationStorage {
+				valuesTemplatePath = ValuesPathV0262
+				logx.As().Info().Msg("Using full values configuration with verification storage")
+			}
 		}
 
 		valuesContent, err = templates.Read(valuesTemplatePath)
@@ -427,17 +533,22 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 // GetStoragePaths returns the computed storage paths based on configuration.
 // If individual paths are specified, they are used; otherwise, paths are derived from basePath.
 // All paths are validated using sanity checks.
-func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err error) {
+// verificationPath is only required/derived/validated when the target version requires verification storage (>= 0.26.2).
+func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath, verificationPath string, err error) {
 	archivePath = m.blockConfig.Storage.ArchivePath
 	livePath = m.blockConfig.Storage.LivePath
 	logPath = m.blockConfig.Storage.LogPath
+	verificationPath = m.blockConfig.Storage.VerificationPath
+
+	// Determine if verification storage is needed based on target version
+	needsVerificationStorage := m.requiresVerificationStorage()
 
 	// Sanitize basePath before using it to construct other paths
 	basePath := m.blockConfig.Storage.BasePath
 	if basePath != "" {
 		basePath, err = sanity.SanitizePath(basePath)
 		if err != nil {
-			return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid base storage path")
+			return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid base storage path")
 		}
 	}
 
@@ -445,8 +556,11 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err 
 	// Do not allow deriving defaults from an empty basePath, as that would
 	// create relative paths and cause storage to depend on the current
 	// working directory.
-	if basePath == "" && (archivePath == "" || livePath == "" || logPath == "") {
-		return "", "", "", errorx.IllegalArgument.New("at least one storage path is not set and base storage path is empty")
+	// Note: verificationPath is only required for versions >= 0.26.2.
+	corePathsMissing := archivePath == "" || livePath == "" || logPath == ""
+	verificationPathMissing := needsVerificationStorage && verificationPath == ""
+	if basePath == "" && (corePathsMissing || verificationPathMissing) {
+		return "", "", "", "", errorx.IllegalArgument.New("at least one storage path is not set and base storage path is empty")
 	}
 
 	if archivePath == "" {
@@ -458,22 +572,67 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, err 
 	if logPath == "" {
 		logPath = path.Join(basePath, "logs")
 	}
+	if needsVerificationStorage && verificationPath == "" {
+		verificationPath = path.Join(basePath, "verification")
+	}
 
 	// Validate all paths using sanity checks
 	archivePath, err = sanity.SanitizePath(archivePath)
 	if err != nil {
-		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid archive path")
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid archive path")
 	}
 
 	livePath, err = sanity.SanitizePath(livePath)
 	if err != nil {
-		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid live path")
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid live path")
 	}
 
 	logPath, err = sanity.SanitizePath(logPath)
 	if err != nil {
-		return "", "", "", errorx.IllegalArgument.Wrap(err, "invalid log path")
+		return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid log path")
 	}
 
-	return archivePath, livePath, logPath, nil
+	// Always sanitize verificationPath when non-empty to prevent bypassing security checks.
+	// This handles the case where a user sets verificationPath while targeting < 0.26.2.
+	if verificationPath != "" {
+		verificationPath, err = sanity.SanitizePath(verificationPath)
+		if err != nil {
+			return "", "", "", "", errorx.IllegalArgument.Wrap(err, "invalid verification path")
+		}
+	}
+
+	return archivePath, livePath, logPath, verificationPath, nil
+}
+
+// GetInstalledVersion returns the currently installed Block Node chart version.
+// Returns empty string if not installed.
+func (m *Manager) GetInstalledVersion() (string, error) {
+	rel, err := m.helmManager.GetRelease(m.blockConfig.Release, m.blockConfig.Namespace)
+	if err != nil {
+		if errorx.IsOfType(err, helm.ErrNotFound) {
+			return "", nil
+		}
+		return "", errorx.IllegalState.Wrap(err, "failed to get current release")
+	}
+
+	if rel.Chart != nil && rel.Chart.Metadata != nil {
+		return rel.Chart.Metadata.Version, nil
+	}
+
+	return "", nil
+}
+
+// GetReleaseValues returns the user-supplied values from the currently installed release.
+// Returns nil if not installed or if no user values were supplied.
+func (m *Manager) GetReleaseValues() (map[string]interface{}, error) {
+	rel, err := m.helmManager.GetRelease(m.blockConfig.Release, m.blockConfig.Namespace)
+	if err != nil {
+		if errorx.IsOfType(err, helm.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, errorx.IllegalState.Wrap(err, "failed to get current release")
+	}
+
+	// rel.Config contains the user-supplied values (not the computed/merged values)
+	return rel.Config, nil
 }

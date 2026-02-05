@@ -12,8 +12,10 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +51,7 @@ var (
 	}
 )
 
+// Register state migrations at startup
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
 
@@ -70,6 +73,10 @@ func init() {
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.GetCmd())
+
+	// Register all migrations at startup
+	blocknode.InitMigrations()
+	state.InitMigrations()
 }
 
 // Execute executes the root command.

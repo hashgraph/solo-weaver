@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+# Values file for Block Node v0.26.2+ with nano/local profile (includes verification storage)
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "1"
+    memory: "1.5Gi"
+
+blockNode:
+  config:
+    JAVA_OPTS: '-Xms1G -Xmx1G -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath="/tmp/dump.hprof"'
+    MESSAGING_BLOCK_ITEM_QUEUE_SIZE: "128"
+    MESSAGING_BLOCK_NOTIFICATION_QUEUE_SIZE: "16"
+    BACKFILL_FETCH_BATCH_SIZE: "5"
+  logs:
+    level: "INFO"
+    loggingProperties:
+      org.hiero.block.level: "FINEST"
+      java.util.logging.ConsoleHandler.level: "FINEST"
+      java.util.logging.FileHandler.level: "FINEST"
+  initContainers:
+    - name: init-storage-dirs
+      image: docker.io/library/busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          chown 2000:2000 /live-pvc && \
+          chmod 700 /live-pvc && \
+          chown 2000:2000 /archive-pvc && \
+          chmod 700 /archive-pvc && \
+          chown 2000:2000 /logging-pvc && \
+          chmod 700 /logging-pvc && \
+          chown 2000:2000 /verification-pvc && \
+          chmod 700 /verification-pvc
+      volumeMounts:
+        - name: live-storage
+          mountPath: /live-pvc
+        - name: archive-storage
+          mountPath: /archive-pvc
+        - name: logging-storage
+          mountPath: /logging-pvc
+        - name: verification-storage
+          mountPath: /verification-pvc
+  persistence:
+    live:
+      create: false
+      existingClaim: live-storage-pvc
+      subPath: ""
+    archive:
+      create: false
+      existingClaim: archive-storage-pvc
+      subPath: ""
+    logging:
+      create: false
+      existingClaim: logging-storage-pvc
+      subPath: ""
+    verification:
+      create: false
+      existingClaim: verification-storage-pvc
+      subPath: ""
+
+kubepromstack:
+  enabled: false
+
+loki:
+  enabled: false
+
+promtail:
+  enabled: false
+
+service:
+  type: LoadBalancer
+  port: 40840
+

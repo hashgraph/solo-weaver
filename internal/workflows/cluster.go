@@ -57,9 +57,6 @@ func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBui
 
 		steps.SetupMetalLB(),
 
-		// External Secrets Operator (general-purpose secret management for the cluster)
-		steps.SetupExternalSecrets(),
-
 		steps.DeployMetricsServer(nil),
 		steps.CheckClusterHealth(),
 	}

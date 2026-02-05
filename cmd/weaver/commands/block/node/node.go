@@ -15,18 +15,20 @@ var (
 	flagRollbackOnError bool
 	flagContinueOnError bool
 
-	flagValuesFile   string
-	flagChartVersion string
-	flagChartRepo    string
-	flagNamespace    string
-	flagReleaseName  string
-	flagBasePath     string
-	flagArchivePath  string
-	flagLivePath     string
-	flagLogPath      string
-	flagLiveSize     string
-	flagArchiveSize  string
-	flagLogSize      string
+	flagValuesFile       string
+	flagChartVersion     string
+	flagChartRepo        string
+	flagNamespace        string
+	flagReleaseName      string
+	flagBasePath         string
+	flagArchivePath      string
+	flagLivePath         string
+	flagLogPath          string
+	flagVerificationPath string
+	flagLiveSize         string
+	flagArchiveSize      string
+	flagLogSize          string
+	flagVerificationSize string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -48,11 +50,13 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagArchivePath, "archive-path", "", "Path for archive storage")
 	nodeCmd.PersistentFlags().StringVar(&flagLivePath, "live-path", "", "Path for live storage")
 	nodeCmd.PersistentFlags().StringVar(&flagLogPath, "log-path", "", "Path for log storage")
+	nodeCmd.PersistentFlags().StringVar(&flagVerificationPath, "verification-path", "", "Path for verification storage")
 
 	// Storage size configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagLiveSize, "live-size", "", "Size for live storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagArchiveSize, "archive-size", "", "Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagLogSize, "log-size", "", "Size for log storage PV/PVC (e.g., 5Gi, 10Gi)")
+	nodeCmd.PersistentFlags().StringVar(&flagVerificationSize, "verification-size", "", "Size for verification storage PV/PVC (e.g., 5Gi, 10Gi)")
 
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd)
 }

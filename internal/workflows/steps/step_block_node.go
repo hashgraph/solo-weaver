@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
@@ -351,6 +352,31 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
+			// Check if this upgrade requires migrations due to breaking chart changes
+			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, profile, valuesFile)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if migrationWorkflow != nil {
+				logx.As().Info().Msg("Breaking chart change detected, performing automatic migration")
+
+				workflow, err := migrationWorkflow.Build()
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+
+				report := workflow.Execute(ctx)
+				if report.Error != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
+				}
+
+				meta["migrated"] = "true"
+				meta["upgraded"] = "true"
+				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+			}
+
+			// Normal upgrade path
 			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
