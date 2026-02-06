@@ -87,16 +87,49 @@ jobs:
         run: npm install -g semantic-release@24.2.4 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@8.0.0
 
       - name: Publish Semantic Release
+        id: semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
         run: |
+          set -euo pipefail
+          
           FLAGS=""
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             FLAGS="--dry-run"
           fi
           
-          npx semantic-release ${FLAGS}
+          npx semantic-release ${FLAGS} 2>&1 | tee semantic-release-output.txt
+          
+          # Extract the next version from semantic-release output for dry-run
+          if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
+            NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' semantic-release-output.txt || echo "")
+            if [[ -n "$NEXT_VERSION" ]]; then
+              echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Dry-run: Next release would be v${NEXT_VERSION}"
+            else
+              echo "::notice::Dry-run: No new release would be created"
+            fi
+          fi
 
       - name: Retrieve Release Version
         id: version
-        run: echo "number=$(cat internal/version/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
+        run: |
+          set -euo pipefail
+          
+          if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
+            VERSION="${{ steps.semantic-release.outputs.next-version }}"
+            if [[ -n "$VERSION" ]]; then
+              echo "number=${VERSION}" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Dry-run mode - predicted version: ${VERSION}"
+            else
+              echo "number=dry-run-no-release" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Dry-run mode - no release would be created"
+            fi
+          else
+            if [[ -f "internal/version/VERSION" ]]; then
+              echo "number=$(cat internal/version/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
+            else
+              echo "::error::VERSION file not found after release"
+              exit 1
+            fi
+          fi
