@@ -567,6 +567,37 @@ func (m *unixManager) RemoveAll(path string) error {
 	return os.RemoveAll(path)
 }
 
+func (m *unixManager) RemoveContents(path string) error {
+	// Verify the path exists and is a directory
+	fi, exists, err := m.PathExists(path)
+	if err != nil {
+		return FileSystemError.New("failed to check path %q", path).WithUnderlyingErrors(err)
+	}
+	if !exists {
+		return FileNotFound.New("directory does not exist: %s", path)
+	}
+	if !m.IsDirectoryByFileInfo(fi) {
+		return FileSystemError.New("path is not a directory: %s", path)
+	}
+
+	// Capture the original permissions and ownership before removal
+	originalMode := fi.Mode().Perm()
+
+	// For directories with many files, removing and recreating the directory
+	// is more efficient than iterating through entries individually.
+	// os.RemoveAll handles arbitrarily deep directory trees efficiently.
+	if err := os.RemoveAll(path); err != nil {
+		return FileSystemError.New("failed to remove directory %q", path).WithUnderlyingErrors(err)
+	}
+
+	// Recreate the directory with original permissions
+	if err := os.Mkdir(path, originalMode); err != nil {
+		return FileSystemError.New("failed to recreate directory %q", path).WithUnderlyingErrors(err)
+	}
+
+	return nil
+}
+
 func (m *unixManager) ExcludeFromPath(path string, exclusions []string) (string, error) {
 	pathParts, finalPath := pathToComponents(path)
 

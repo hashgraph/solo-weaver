@@ -290,3 +290,95 @@ func TestToPhase(t *testing.T) {
 		})
 	}
 }
+
+// TestWaitOptions_AsListOptions verifies that WaitOptions correctly converts to ListOptions
+func TestWaitOptions_AsListOptions(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     WaitOptions
+		wantList string
+		wantFld  string
+	}{
+		{
+			name:     "empty options",
+			opts:     WaitOptions{},
+			wantList: "",
+			wantFld:  "",
+		},
+		{
+			name:     "label selector only",
+			opts:     WaitOptions{LabelSelector: "app=test"},
+			wantList: "app=test",
+			wantFld:  "",
+		},
+		{
+			name:     "field selector only",
+			opts:     WaitOptions{FieldSelector: "metadata.name=foo"},
+			wantList: "",
+			wantFld:  "metadata.name=foo",
+		},
+		{
+			name:     "both selectors",
+			opts:     WaitOptions{LabelSelector: "app=test", FieldSelector: "metadata.name=foo"},
+			wantList: "app=test",
+			wantFld:  "metadata.name=foo",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			lo := tc.opts.AsListOptions()
+			if lo.LabelSelector != tc.wantList {
+				t.Errorf("LabelSelector = %q, want %q", lo.LabelSelector, tc.wantList)
+			}
+			if lo.FieldSelector != tc.wantFld {
+				t.Errorf("FieldSelector = %q, want %q", lo.FieldSelector, tc.wantFld)
+			}
+		})
+	}
+}
+
+// TestWaitOptions_String verifies the string representation of WaitOptions
+func TestWaitOptions_String(t *testing.T) {
+	tests := []struct {
+		name string
+		opts WaitOptions
+		want string
+	}{
+		{
+			name: "empty",
+			opts: WaitOptions{},
+			want: "[]",
+		},
+		{
+			name: "name prefix only",
+			opts: WaitOptions{NamePrefix: "test-"},
+			want: "[namePrefix=test-]",
+		},
+		{
+			name: "label selector only",
+			opts: WaitOptions{LabelSelector: "app=test"},
+			want: "[labelSelector=app=test]",
+		},
+		{
+			name: "all options",
+			opts: WaitOptions{
+				NamePrefix:    "test-",
+				LabelSelector: "app=test",
+				FieldSelector: "metadata.name=foo",
+			},
+			want: "[namePrefix=test-, labelSelector=app=test, fieldSelector=metadata.name=foo]",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.opts.String()
+			if got != tc.want {
+				t.Errorf("String() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
