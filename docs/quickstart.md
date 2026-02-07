@@ -168,6 +168,48 @@ sudo solo-provisioner block node upgrade \
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--no-reuse-values` | Don't reuse previous release values | `false` |
+| `--with-reset` | Reset storage (clear all data) before upgrade | `false` |
+
+#### Reset Block Node
+
+Reset Block Node storage by clearing all data files. This is useful for re-provisioning or when you need to start fresh:
+
+```bash
+# Basic reset - clears all storage directories
+sudo solo-provisioner block node reset --profile=mainnet
+
+# Reset with custom config
+sudo solo-provisioner block node reset \
+  --profile=mainnet \
+  --config=/path/to/config.yaml
+```
+
+**What it does**:
+1. Scales down the Block Node StatefulSet to 0 replicas
+2. Waits for all pods to terminate
+3. Clears all storage directories (archive, live, log, verification)
+4. Scales the StatefulSet back up to 1 replica
+5. Waits for pods to become ready
+
+> **Warning**: This command will delete all block data. Use with caution in production environments.
+
+**Upgrade with Reset**:
+
+If you need to upgrade and reset storage in one operation, use the upgrade command with `--with-reset`:
+
+```bash
+# Upgrade chart version and reset storage
+sudo solo-provisioner block node upgrade \
+  --profile=mainnet \
+  --chart-version=0.24.0 \
+  --with-reset
+
+# Upgrade with new values and reset
+sudo solo-provisioner block node upgrade \
+  --profile=mainnet \
+  --values=/path/to/new-values.yaml \
+  --with-reset
+```
 
 ---
 
@@ -546,7 +588,8 @@ sudo ./solo-provisioner install
 # BLOCK NODE
 sudo solo-provisioner block node check   --profile=<profile>
 sudo solo-provisioner block node install --profile=<profile> [--values=<file>]
-sudo solo-provisioner block node upgrade --profile=<profile> [--values=<file>]
+sudo solo-provisioner block node upgrade --profile=<profile> [--values=<file>] [--with-reset]
+sudo solo-provisioner block node reset   --profile=<profile>
 
 # KUBERNETES
 sudo solo-provisioner kube cluster install   --profile=<profile> --node-type=block
@@ -567,5 +610,5 @@ solo-provisioner --help
 
 ---
 
-*Document Version: 1.0.0 | Last Updated: January 2026*
+*Document Version: 1.1.0 | Last Updated: February 2026*
 

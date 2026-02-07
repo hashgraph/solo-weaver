@@ -567,6 +567,36 @@ func (m *unixManager) RemoveAll(path string) error {
 	return os.RemoveAll(path)
 }
 
+func (m *unixManager) RemoveContents(path string) error {
+	// Verify the path exists and is a directory
+	fi, exists, err := m.PathExists(path)
+	if err != nil {
+		return FileSystemError.New("failed to check path %q", path).WithUnderlyingErrors(err)
+	}
+	if !exists {
+		return FileNotFound.New("directory does not exist: %s", path)
+	}
+	if !m.IsDirectoryByFileInfo(fi) {
+		return FileSystemError.New("path is not a directory: %s", path)
+	}
+
+	// Remove all entries inside the directory while preserving the directory itself,
+	// including its inode, ownership, ACLs, extended attributes, and special mode bits.
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return FileSystemError.New("failed to list directory contents for %q", path).WithUnderlyingErrors(err)
+	}
+
+	for _, entry := range entries {
+		childPath := filepath.Join(path, entry.Name())
+		if err := os.RemoveAll(childPath); err != nil {
+			return FileSystemError.New("failed to remove directory entry %q", childPath).WithUnderlyingErrors(err)
+		}
+	}
+
+	return nil
+}
+
 func (m *unixManager) ExcludeFromPath(path string, exclusions []string) (string, error) {
 	pathParts, finalPath := pathToComponents(path)
 

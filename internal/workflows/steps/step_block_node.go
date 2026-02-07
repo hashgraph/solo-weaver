@@ -14,14 +14,20 @@ import (
 )
 
 const (
-	SetupBlockNodeStepId           = "setup-block-node"
-	SetupBlockNodeStorageStepId    = "setup-block-node-storage"
-	CreateBlockNodeNamespaceStepId = "create-block-node-namespace"
-	CreateBlockNodePVsStepId       = "create-block-node-pvs"
-	InstallBlockNodeStepId         = "install-block-node"
-	UpgradeBlockNodeStepId         = "upgrade-block-node"
-	AnnotateBlockNodeServiceStepId = "annotate-block-node-service"
-	WaitForBlockNodeStepId         = "wait-for-block-node"
+	SetupBlockNodeStepId             = "setup-block-node"
+	SetupBlockNodeStorageStepId      = "setup-block-node-storage"
+	CreateBlockNodeNamespaceStepId   = "create-block-node-namespace"
+	CreateBlockNodePVsStepId         = "create-block-node-pvs"
+	InstallBlockNodeStepId           = "install-block-node"
+	UpgradeBlockNodeStepId           = "upgrade-block-node"
+	AnnotateBlockNodeServiceStepId   = "annotate-block-node-service"
+	WaitForBlockNodeStepId           = "wait-for-block-node"
+	ResetBlockNodeStepId             = "reset-block-node"
+	PurgeBlockNodeStorageStepId      = "purge-block-node-storage"
+	ScaleDownBlockNodeStepId         = "scale-down-block-node"
+	ClearBlockNodeStorageStepId      = "clear-block-node-storage"
+	ScaleUpBlockNodeStepId           = "scale-up-block-node"
+	WaitForBlockNodeTerminatedStepId = "wait-for-block-node-terminated"
 )
 
 // SetupBlockNode sets up the block node on the cluster
@@ -399,5 +405,229 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node chart upgraded successfully")
+		})
+}
+
+// newBlockNodeManagerProvider creates a lazy-initialized block node manager provider
+func newBlockNodeManagerProvider() func() (*blocknode.Manager, error) {
+	var blockNodeManager *blocknode.Manager
+	return func() (*blocknode.Manager, error) {
+		if blockNodeManager == nil {
+			var err error
+			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return blockNodeManager, nil
+	}
+}
+
+// purgeBlockNodeStorageSteps returns the steps to scale down, wait for termination, and clear storage
+func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, error)) []automa.Builder {
+	return []automa.Builder{
+		scaleDownBlockNode(managerProvider),
+		waitForBlockNodeTerminated(managerProvider),
+		clearBlockNodeStorage(managerProvider),
+	}
+}
+
+// ResetBlockNode resets the block node by clearing all storage and restarting the pod
+func ResetBlockNode(profile string) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider()
+
+	return automa.NewWorkflowBuilder().WithId(ResetBlockNodeStepId).Steps(
+		append(purgeBlockNodeStorageSteps(managerProvider),
+			scaleUpBlockNode(managerProvider),
+			waitForBlockNode(managerProvider),
+		)...,
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Resetting Block Node")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to reset Block Node")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node reset successfully")
+		})
+}
+
+// PurgeBlockNodeStorage scales down the block node and clears all storage.
+// This does NOT scale back up - use ResetBlockNode if you need to restart the pod after clearing.
+func PurgeBlockNodeStorage(profile string) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider()
+
+	return automa.NewWorkflowBuilder().WithId(PurgeBlockNodeStorageStepId).Steps(
+		purgeBlockNodeStorageSteps(managerProvider)...,
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Purging Block Node storage")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to purge Block Node storage")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node storage purged")
+		})
+}
+
+// scaleDownBlockNode scales down the block node StatefulSet to 0 replicas
+func scaleDownBlockNode(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(ScaleDownBlockNodeStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if err := manager.ScaleStatefulSet(ctx, 0); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta[ConfiguredByThisStep] = "true"
+			stp.State().Set(ConfiguredByThisStep, true)
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// On rollback, scale back up
+			if !stp.State().Bool(ConfiguredByThisStep) {
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if err := manager.ScaleStatefulSet(ctx, 1); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Scaling down Block Node StatefulSet")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to scale down Block Node StatefulSet")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node StatefulSet scaled down successfully")
+		})
+}
+
+// waitForBlockNodeTerminated waits for all block node pods to terminate
+func waitForBlockNodeTerminated(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(WaitForBlockNodeTerminatedStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if err := manager.WaitForPodsTerminated(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta[ConfiguredByThisStep] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Waiting for Block Node pods to terminate")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Block Node pods failed to terminate")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node pods terminated")
+		})
+}
+
+// clearBlockNodeStorage clears all block node storage directories
+func clearBlockNodeStorage(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(ClearBlockNodeStorageStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if err := manager.ResetStorage(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta[ConfiguredByThisStep] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Clearing Block Node storage")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to clear Block Node storage")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node storage cleared successfully")
+		})
+}
+
+// scaleUpBlockNode scales up the block node StatefulSet to 1 replica
+func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(ScaleUpBlockNodeStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if err := manager.ScaleStatefulSet(ctx, 1); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta[ConfiguredByThisStep] = "true"
+			stp.State().Set(ConfiguredByThisStep, true)
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// On rollback, scale back down (though this is an unusual case)
+			if !stp.State().Bool(ConfiguredByThisStep) {
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if err := manager.ScaleStatefulSet(ctx, 0); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Scaling up Block Node StatefulSet")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to scale up Block Node StatefulSet")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node StatefulSet scaled up successfully")
 		})
 }

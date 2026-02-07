@@ -593,3 +593,405 @@ func TestIsCRDReady(t *testing.T) {
 		})
 	}
 }
+
+// TestScaleDeployment_Integration tests scaling a deployment up and down
+func TestScaleDeployment_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Create unique namespace for isolation
+	nsName := fmt.Sprintf("it-scale-%d", time.Now().UnixNano())
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	nsObj := createUnstructured("Namespace", "v1", "", nsName, nil)
+	createAndWait(t, c, nsGVR, "", nsObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsName, 2*time.Minute)
+
+	// Create a deployment with 1 replica
+	deployName := "deploy-scale-test"
+	deployGVR := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	deployObj := createUnstructured("Deployment", "apps/v1", nsName, deployName, map[string]interface{}{
+		"spec": map[string]interface{}{
+			"replicas": int64(1),
+			"selector": map[string]interface{}{
+				"matchLabels": map[string]interface{}{"app": deployName},
+			},
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{"app": deployName},
+				},
+				"spec": map[string]interface{}{
+					"containers": []interface{}{
+						map[string]interface{}{
+							"name":  "nginx",
+							"image": "nginx:1.21",
+						},
+					},
+				},
+			},
+		},
+	})
+	createAndWait(t, c, deployGVR, nsName, deployObj, IsDeploymentReady, 2*time.Minute)
+	defer deleteAndWait(t, c, deployGVR, nsName, deployName, 2*time.Minute)
+
+	// Scale down to 0
+	if err := c.ScaleDeployment(ctx, nsName, deployName, 0); err != nil {
+		t.Fatalf("ScaleDeployment to 0 failed: %v", err)
+	}
+
+	// Verify replicas is 0
+	deploy, err := c.Dyn.Resource(deployGVR).Namespace(nsName).Get(ctx, deployName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(deploy.Object, "spec", "replicas")
+	if replicas != 0 {
+		t.Fatalf("expected 0 replicas, got %d", replicas)
+	}
+
+	// Scale back up to 2
+	if err := c.ScaleDeployment(ctx, nsName, deployName, 2); err != nil {
+		t.Fatalf("ScaleDeployment to 2 failed: %v", err)
+	}
+
+	// Verify replicas is 2
+	deploy, err = c.Dyn.Resource(deployGVR).Namespace(nsName).Get(ctx, deployName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get deployment: %v", err)
+	}
+	replicas, _, _ = unstructured.NestedInt64(deploy.Object, "spec", "replicas")
+	if replicas != 2 {
+		t.Fatalf("expected 2 replicas, got %d", replicas)
+	}
+}
+
+// TestScaleDeployment_NotFound tests scaling a non-existent deployment
+func TestScaleDeployment_NotFound(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	err := c.ScaleDeployment(ctx, "default", "nonexistent-deployment", 1)
+	if err == nil {
+		t.Fatal("expected error for non-existent deployment, got nil")
+	}
+}
+
+// TestAnnotateResource_Service_Integration tests annotating a service
+func TestAnnotateResource_Service_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Create unique namespace for isolation
+	nsName := fmt.Sprintf("it-annotate-%d", time.Now().UnixNano())
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	nsObj := createUnstructured("Namespace", "v1", "", nsName, nil)
+	createAndWait(t, c, nsGVR, "", nsObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsName, 2*time.Minute)
+
+	// Create a service
+	svcName := "svc-annotate-test"
+	svcGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}
+	svcObj := createUnstructured("Service", "v1", nsName, svcName, map[string]interface{}{
+		"spec": map[string]interface{}{
+			"selector": map[string]interface{}{"app": "test"},
+			"ports": []interface{}{
+				map[string]interface{}{
+					"port":       int64(80),
+					"targetPort": int64(80),
+				},
+			},
+		},
+	})
+
+	dr := c.Dyn.Resource(svcGVR).Namespace(nsName)
+	if _, err := dr.Create(ctx, svcObj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
+	defer deleteAndWait(t, c, svcGVR, nsName, svcName, 1*time.Minute)
+
+	// Annotate the service
+	annotations := map[string]string{
+		"test.io/annotation": "value1",
+		"metallb.io/pool":    "test-pool",
+	}
+	if err := c.AnnotateResource(ctx, KindService, nsName, svcName, annotations); err != nil {
+		t.Fatalf("AnnotateResource failed: %v", err)
+	}
+
+	// Verify annotations were added
+	svc, err := dr.Get(ctx, svcName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get service: %v", err)
+	}
+	gotAnnotations := svc.GetAnnotations()
+	if gotAnnotations["test.io/annotation"] != "value1" {
+		t.Errorf("expected annotation 'test.io/annotation=value1', got %v", gotAnnotations)
+	}
+	if gotAnnotations["metallb.io/pool"] != "test-pool" {
+		t.Errorf("expected annotation 'metallb.io/pool=test-pool', got %v", gotAnnotations)
+	}
+
+	// Add another annotation (should merge with existing)
+	if err := c.AnnotateResource(ctx, KindService, nsName, svcName, map[string]string{"new/annotation": "new-value"}); err != nil {
+		t.Fatalf("AnnotateResource (merge) failed: %v", err)
+	}
+
+	svc, err = dr.Get(ctx, svcName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get service after merge: %v", err)
+	}
+	gotAnnotations = svc.GetAnnotations()
+	// Original annotations should still be present
+	if gotAnnotations["test.io/annotation"] != "value1" {
+		t.Errorf("original annotation missing after merge")
+	}
+	// New annotation should be added
+	if gotAnnotations["new/annotation"] != "new-value" {
+		t.Errorf("new annotation not found after merge")
+	}
+}
+
+// TestAnnotateResource_ConfigMap_Integration tests annotating a configmap
+func TestAnnotateResource_ConfigMap_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Create unique namespace for isolation
+	nsName := fmt.Sprintf("it-annotate-cm-%d", time.Now().UnixNano())
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	nsObj := createUnstructured("Namespace", "v1", "", nsName, nil)
+	createAndWait(t, c, nsGVR, "", nsObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsName, 2*time.Minute)
+
+	// Create a configmap
+	cmName := "cm-annotate-test"
+	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+	cmObj := createUnstructured("ConfigMap", "v1", nsName, cmName, map[string]interface{}{
+		"data": map[string]interface{}{
+			"key": "value",
+		},
+	})
+
+	dr := c.Dyn.Resource(cmGVR).Namespace(nsName)
+	if _, err := dr.Create(ctx, cmObj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("failed to create configmap: %v", err)
+	}
+	defer deleteAndWait(t, c, cmGVR, nsName, cmName, 1*time.Minute)
+
+	// Annotate the configmap
+	annotations := map[string]string{
+		"config.io/version": "v1.0.0",
+	}
+	if err := c.AnnotateResource(ctx, KindConfigMap, nsName, cmName, annotations); err != nil {
+		t.Fatalf("AnnotateResource failed: %v", err)
+	}
+
+	// Verify annotations were added
+	cm, err := dr.Get(ctx, cmName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get configmap: %v", err)
+	}
+	gotAnnotations := cm.GetAnnotations()
+	if gotAnnotations["config.io/version"] != "v1.0.0" {
+		t.Errorf("expected annotation 'config.io/version=v1.0.0', got %v", gotAnnotations)
+	}
+}
+
+// TestAnnotateResource_NotFound tests annotating a non-existent resource
+func TestAnnotateResource_NotFound(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	err := c.AnnotateResource(ctx, KindService, "default", "nonexistent-service", map[string]string{"key": "value"})
+	if err == nil {
+		t.Fatal("expected error for non-existent resource, got nil")
+	}
+}
+
+// TestScaleStatefulSet_Integration tests scaling a statefulset up and down
+func TestScaleStatefulSet_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Create unique namespace for isolation
+	nsName := fmt.Sprintf("it-scale-sts-%d", time.Now().UnixNano())
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	nsObj := createUnstructured("Namespace", "v1", "", nsName, nil)
+	createAndWait(t, c, nsGVR, "", nsObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsName, 2*time.Minute)
+
+	// Create a statefulset with 1 replica
+	stsName := "sts-scale-test"
+	stsGVR := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
+	stsObj := createUnstructured("StatefulSet", "apps/v1", nsName, stsName, map[string]interface{}{
+		"spec": map[string]interface{}{
+			"replicas":    int64(1),
+			"serviceName": stsName,
+			"selector": map[string]interface{}{
+				"matchLabels": map[string]interface{}{"app": stsName},
+			},
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{"app": stsName},
+				},
+				"spec": map[string]interface{}{
+					"containers": []interface{}{
+						map[string]interface{}{
+							"name":  "nginx",
+							"image": "nginx:1.21",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// Create headless service required for statefulset
+	svcGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}
+	svcObj := createUnstructured("Service", "v1", nsName, stsName, map[string]interface{}{
+		"spec": map[string]interface{}{
+			"clusterIP": "None",
+			"selector":  map[string]interface{}{"app": stsName},
+			"ports": []interface{}{
+				map[string]interface{}{
+					"port":       int64(80),
+					"targetPort": int64(80),
+				},
+			},
+		},
+	})
+	svcDr := c.Dyn.Resource(svcGVR).Namespace(nsName)
+	if _, err := svcDr.Create(ctx, svcObj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("failed to create headless service: %v", err)
+	}
+	defer deleteAndWait(t, c, svcGVR, nsName, stsName, 1*time.Minute)
+
+	// Create statefulset
+	stsDr := c.Dyn.Resource(stsGVR).Namespace(nsName)
+	if _, err := stsDr.Create(ctx, stsObj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("failed to create statefulset: %v", err)
+	}
+	defer deleteAndWait(t, c, stsGVR, nsName, stsName, 2*time.Minute)
+
+	// Wait for statefulset to be ready (at least 1 ready replica), instead of using a fixed sleep
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf("timed out waiting for statefulset %s/%s to have at least 1 ready replica: %v", nsName, stsName, waitCtx.Err())
+		default:
+		}
+
+		sts, err := stsDr.Get(waitCtx, stsName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("failed to get statefulset while waiting for readiness: %v", err)
+		}
+
+		readyReplicas, _, _ := unstructured.NestedInt64(sts.Object, "status", "readyReplicas")
+		if readyReplicas >= 1 {
+			break
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+	// Scale down to 0
+	if err := c.ScaleStatefulSet(ctx, nsName, stsName, 0); err != nil {
+		t.Fatalf("ScaleStatefulSet to 0 failed: %v", err)
+	}
+
+	// Verify replicas is 0
+	sts, err := stsDr.Get(ctx, stsName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get statefulset: %v", err)
+	}
+	replicas, _, _ := unstructured.NestedInt64(sts.Object, "spec", "replicas")
+	if replicas != 0 {
+		t.Fatalf("expected 0 replicas, got %d", replicas)
+	}
+
+	// Scale back up to 2
+	if err := c.ScaleStatefulSet(ctx, nsName, stsName, 2); err != nil {
+		t.Fatalf("ScaleStatefulSet to 2 failed: %v", err)
+	}
+
+	// Verify replicas is 2
+	sts, err = stsDr.Get(ctx, stsName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get statefulset: %v", err)
+	}
+	replicas, _, _ = unstructured.NestedInt64(sts.Object, "spec", "replicas")
+	if replicas != 2 {
+		t.Fatalf("expected 2 replicas, got %d", replicas)
+	}
+}
+
+// TestScaleStatefulSet_NotFound tests scaling a non-existent statefulset
+func TestScaleStatefulSet_NotFound(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	err := c.ScaleStatefulSet(ctx, "default", "nonexistent-statefulset", 1)
+	if err == nil {
+		t.Fatal("expected error for non-existent statefulset, got nil")
+	}
+}
+
+// TestWaitForResourcesDeletion_Integration tests waiting for pods to be deleted
+func TestWaitForResourcesDeletion_Integration(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Create unique namespace for isolation
+	nsName := fmt.Sprintf("it-wait-delete-%d", time.Now().UnixNano())
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	nsObj := createUnstructured("Namespace", "v1", "", nsName, nil)
+	createAndWait(t, c, nsGVR, "", nsObj, IsPhase("Active"), 1*time.Minute)
+	defer deleteAndWait(t, c, nsGVR, "", nsName, 2*time.Minute)
+
+	// Create a pod
+	podName := "pod-delete-test"
+	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+	podObj := createPodUnstructured(nsName, podName, "sleep 300", map[string]interface{}{"test": "deletion"})
+	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 2*time.Minute)
+
+	// Start deletion in background
+	go func() {
+		time.Sleep(2 * time.Second)
+		_ = c.Dyn.Resource(podGVR).Namespace(nsName).Delete(ctx, podName, metav1.DeleteOptions{})
+	}()
+
+	// Wait for pod deletion
+	opts := WaitOptions{LabelSelector: "test=deletion"}
+	err := c.WaitForResourcesDeletion(ctx, KindPod, nsName, 1*time.Minute, opts)
+	if err != nil {
+		t.Fatalf("WaitForResourcesDeletion failed: %v", err)
+	}
+
+	// Verify pod is gone
+	_, err = c.Dyn.Resource(podGVR).Namespace(nsName).Get(ctx, podName, metav1.GetOptions{})
+	if !kerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound error, got: %v", err)
+	}
+}
+
+// TestWaitForResourcesDeletion_AlreadyDeleted tests waiting when no matching resources exist
+func TestWaitForResourcesDeletion_AlreadyDeleted(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Wait for pods with a label that doesn't exist - should return immediately
+	opts := WaitOptions{LabelSelector: "nonexistent-label=nonexistent-value"}
+	err := c.WaitForResourcesDeletion(ctx, KindPod, "default", 5*time.Second, opts)
+	if err != nil {
+		t.Fatalf("WaitForResourcesDeletion should succeed when no resources match: %v", err)
+	}
+}

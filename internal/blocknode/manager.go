@@ -4,7 +4,6 @@ package blocknode
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
 	"time"
@@ -20,17 +19,12 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/cli/values"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
 	// Kubernetes resources
-	ServiceNameSuffix = "-block-node-server"
-	PodLabelSelector  = "app.kubernetes.io/name=block-node-server"
-	MetalLBAnnotation = "metallb.io/address-pool=public-address-pool"
+	ResourceNameSuffix = "-block-node-server"
+	PodLabelSelector   = "app.kubernetes.io/name=block-node-server"
 
 	// Template paths
 	NamespacePath           = "files/block-node/namespace.yaml"
@@ -52,7 +46,6 @@ type Manager struct {
 	fsManager   fsx.Manager
 	helmManager helm.Manager
 	kubeClient  *kube.Client
-	clientset   *kubernetes.Clientset // Still needed for pod listing and service updates
 	logger      *zerolog.Logger
 	blockConfig *config.BlockNodeConfig
 }
@@ -79,38 +72,13 @@ func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create kubernetes client")
 	}
 
-	// Kubernetes clientset for namespace operations
-	config, err := getKubeConfig()
-	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to get kubeconfig")
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to create kubernetes clientset")
-	}
-
 	return &Manager{
 		fsManager:   fsManager,
 		helmManager: helmManager,
 		kubeClient:  kubeClient,
-		clientset:   clientset,
 		logger:      l,
 		blockConfig: &blockConfig,
 	}, nil
-}
-
-// getKubeConfig returns the kubernetes rest config
-func getKubeConfig() (*rest.Config, error) {
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		return rest.InClusterConfig()
-	}
-
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		kubeconfig = os.Getenv("HOME") + "/.kube/config"
-	}
-	return clientcmd.BuildConfigFromFlags("", kubeconfig)
 }
 
 // SetupStorage creates the required directories for block node storage
@@ -420,30 +388,113 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 		},
 	)
 	if err != nil {
+		m.logger.Error().
+			Err(err).
+			Str("chart", m.blockConfig.Chart).
+			Str("version", m.blockConfig.Version).
+			Str("namespace", m.blockConfig.Namespace).
+			Msg("Helm upgrade failed")
 		return errorx.IllegalState.Wrap(err, "failed to upgrade block node chart")
 	}
 
 	return nil
 }
 
+// ScaleStatefulSet scales the block node statefulset to the specified number of replicas
+func (m *Manager) ScaleStatefulSet(ctx context.Context, replicas int32) error {
+	resourceName := m.blockConfig.Release + ResourceNameSuffix
+
+	m.logger.Info().
+		Str("statefulset", resourceName).
+		Int32("replicas", replicas).
+		Msg("Scaling block node statefulset")
+
+	if err := m.kubeClient.ScaleStatefulSet(ctx, m.blockConfig.Namespace, resourceName, replicas); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to scale statefulset: %s", resourceName)
+	}
+
+	return nil
+}
+
+// WaitForPodsTerminated waits until all pods matching the block node label selector are terminated
+func (m *Manager) WaitForPodsTerminated(ctx context.Context) error {
+	m.logger.Info().Msg("Waiting for Block Node pods to terminate...")
+
+	timeout := time.Duration(PodReadyTimeoutSeconds) * time.Second
+	opts := kube.WaitOptions{
+		LabelSelector: PodLabelSelector,
+	}
+
+	// Wait until no pods exist with the block node label
+	if err := m.kubeClient.WaitForResourcesDeletion(ctx, kube.KindPod, m.blockConfig.Namespace, timeout, opts); err != nil {
+		return errorx.IllegalState.Wrap(err, "pods did not terminate in time")
+	}
+
+	return nil
+}
+
+// ClearStorageDirectory removes all files and subdirectories from a storage directory
+// while preserving the directory itself
+func (m *Manager) ClearStorageDirectory(dirPath string) error {
+	m.logger.Info().Str("path", dirPath).Msg("Clearing storage directory")
+
+	_, exists, err := m.fsManager.PathExists(dirPath)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to check path existence: %s", dirPath)
+	}
+
+	if !exists {
+		m.logger.Debug().Str("path", dirPath).Msg("Directory does not exist, skipping")
+		return nil
+	}
+
+	// Remove all contents of the directory
+	if err := m.fsManager.RemoveContents(dirPath); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to clear directory contents: %s", dirPath)
+	}
+
+	return nil
+}
+
+// ResetStorage clears all block node storage directories
+func (m *Manager) ResetStorage(ctx context.Context) error {
+	archivePath, livePath, logPath, verificationPath, err := m.GetStoragePaths()
+	if err != nil {
+		return err
+	}
+
+	// Clear core storage paths
+	storagePaths := []string{
+		archivePath,
+		livePath,
+		logPath,
+	}
+
+	// Include verification storage if applicable
+	if m.requiresVerificationStorage() && verificationPath != "" {
+		storagePaths = append(storagePaths, verificationPath)
+	}
+
+	for _, dirPath := range storagePaths {
+		if err := m.ClearStorageDirectory(dirPath); err != nil {
+			return err
+		}
+	}
+
+	m.logger.Info().Msg("All storage directories cleared successfully")
+	return nil
+}
+
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
-	svcName := fmt.Sprintf("%s%s", m.blockConfig.Release, ServiceNameSuffix)
+	resourceName := m.blockConfig.Release + ResourceNameSuffix
 
-	svc, err := m.clientset.CoreV1().Services(m.blockConfig.Namespace).Get(ctx, svcName, metav1.GetOptions{})
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to get service: %s", svcName)
+	annotations := map[string]string{
+		"metallb.io/address-pool": "public-address-pool",
 	}
 
-	if svc.Annotations == nil {
-		svc.Annotations = make(map[string]string)
-	}
-
-	svc.Annotations["metallb.io/address-pool"] = "public-address-pool"
-
-	_, err = m.clientset.CoreV1().Services(m.blockConfig.Namespace).Update(ctx, svc, metav1.UpdateOptions{})
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", svcName)
+	if err := m.kubeClient.AnnotateResource(ctx, kube.KindService, m.blockConfig.Namespace, resourceName, annotations); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", resourceName)
 	}
 
 	return nil
