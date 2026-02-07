@@ -34,27 +34,29 @@ type ResourceKind string
 func (k ResourceKind) String() string { return string(k) }
 
 const (
-	KindNode       ResourceKind = "Node"
-	KindService    ResourceKind = "Service"
-	KindNamespace  ResourceKind = "Namespace"
-	KindConfigMap  ResourceKind = "ConfigMap"
-	KindPod        ResourceKind = "Pod"
-	KindDeployment ResourceKind = "Deployment"
-	KindJob        ResourceKind = "Job"
-	KindPVC        ResourceKind = "PersistentVolumeClaim"
-	KindCRD        ResourceKind = "CustomResourceDefinition"
+	KindNode        ResourceKind = "Node"
+	KindService     ResourceKind = "Service"
+	KindNamespace   ResourceKind = "Namespace"
+	KindConfigMap   ResourceKind = "ConfigMap"
+	KindPod         ResourceKind = "Pod"
+	KindDeployment  ResourceKind = "Deployment"
+	KindStatefulSet ResourceKind = "StatefulSet"
+	KindJob         ResourceKind = "Job"
+	KindPVC         ResourceKind = "PersistentVolumeClaim"
+	KindCRD         ResourceKind = "CustomResourceDefinition"
 )
 
 var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
-	KindNode:       {Group: "", Version: "v1", Resource: "nodes"},
-	KindService:    {Group: "", Version: "v1", Resource: "services"},
-	KindNamespace:  {Group: "", Version: "v1", Resource: "namespaces"},
-	KindConfigMap:  {Group: "", Version: "v1", Resource: "configmaps"},
-	KindPod:        {Group: "", Version: "v1", Resource: "pods"},
-	KindDeployment: {Group: "apps", Version: "v1", Resource: "deployments"},
-	KindJob:        {Group: "batch", Version: "v1", Resource: "jobs"},
-	KindPVC:        {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
-	KindCRD:        {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
+	KindNode:        {Group: "", Version: "v1", Resource: "nodes"},
+	KindService:     {Group: "", Version: "v1", Resource: "services"},
+	KindNamespace:   {Group: "", Version: "v1", Resource: "namespaces"},
+	KindConfigMap:   {Group: "", Version: "v1", Resource: "configmaps"},
+	KindPod:         {Group: "", Version: "v1", Resource: "pods"},
+	KindDeployment:  {Group: "apps", Version: "v1", Resource: "deployments"},
+	KindStatefulSet: {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	KindJob:         {Group: "batch", Version: "v1", Resource: "jobs"},
+	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	KindCRD:         {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
 }
 
 func RegisterKind(kind ResourceKind, gvr schema.GroupVersionResource) {
@@ -548,6 +550,56 @@ func (c *Client) WaitForResources(
 	}
 }
 
+// WaitForResourcesDeletion waits until all resources of the given kind matching the options
+// are deleted from the specified namespace within the timeout.
+// It returns nil when no matching resources exist, or an error if the timeout is reached.
+func (c *Client) WaitForResourcesDeletion(
+	ctx context.Context,
+	kind ResourceKind,
+	namespace string,
+	timeout time.Duration,
+	opts WaitOptions,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return errorx.IllegalState.New(
+				"timed out waiting for %s deletion in ns=%s with opts=%s",
+				kind, namespace, opts.String(),
+			)
+
+		case <-ticker.C:
+			items, err := c.List(ctx, kind, namespace, opts)
+			if err != nil {
+				if kerrors.IsNotFound(err) {
+					// Resource type not found or namespace gone → resources are deleted
+					return nil
+				}
+
+				if isFatalAPIError(err) {
+					return errorx.InternalError.Wrap(err, "fatal API error listing for %s in ns=%s", kind, namespace)
+				}
+
+				return errorx.InternalError.Wrap(
+					err, "list failed while waiting for %s deletion in ns=%s",
+					kind, namespace,
+				)
+			}
+
+			// No items means all resources have been deleted
+			if len(items.Items) == 0 {
+				return nil
+			}
+		}
+	}
+}
+
 // WaitForResource waits until the specified resource of the given kind in the specified namespace
 // satisfies the condition defined by checkFn within the timeout.
 // It returns an error if the timeout is reached or if any fatal API errors occur.
@@ -933,4 +985,95 @@ func (c *Client) CRDExists(ctx context.Context, crdName string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// ScaleDeployment scales a Deployment to the specified number of replicas.
+// It uses the scale subresource for atomic scaling operations.
+func (c *Client) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) error {
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+
+	// Get the current deployment to retrieve resourceVersion
+	deployment, err := c.Dyn.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get deployment: %s/%s", namespace, name)
+	}
+
+	// Update the replicas field
+	if err := unstructured.SetNestedField(deployment.Object, int64(replicas), "spec", "replicas"); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to set replicas field")
+	}
+
+	// Update the deployment
+	_, err = c.Dyn.Resource(gvr).Namespace(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to scale deployment: %s/%s", namespace, name)
+	}
+
+	return nil
+}
+
+// ScaleStatefulSet scales a StatefulSet to the specified number of replicas.
+func (c *Client) ScaleStatefulSet(ctx context.Context, namespace, name string, replicas int32) error {
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
+
+	// Get the current statefulset to retrieve resourceVersion
+	sts, err := c.Dyn.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get statefulset: %s/%s", namespace, name)
+	}
+
+	// Update the replicas field
+	if err := unstructured.SetNestedField(sts.Object, int64(replicas), "spec", "replicas"); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to set replicas field")
+	}
+
+	// Update the statefulset
+	_, err = c.Dyn.Resource(gvr).Namespace(namespace).Update(ctx, sts, metav1.UpdateOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to scale statefulset: %s/%s", namespace, name)
+	}
+
+	return nil
+}
+
+// AnnotateResource adds or updates annotations on a resource.
+// The annotations map is merged with existing annotations.
+func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namespace, name string, annotations map[string]string) error {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
+
+	var dr dynamic.ResourceInterface
+	if namespace != "" {
+		dr = c.Dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(gvr)
+	}
+
+	// Get the current resource
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get %s: %s/%s", kind, namespace, name)
+	}
+
+	// Get existing annotations or create empty map
+	existingAnnotations := obj.GetAnnotations()
+	if existingAnnotations == nil {
+		existingAnnotations = make(map[string]string)
+	}
+
+	// Merge new annotations
+	for k, v := range annotations {
+		existingAnnotations[k] = v
+	}
+	obj.SetAnnotations(existingAnnotations)
+
+	// Update the resource
+	_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to annotate %s: %s/%s", kind, namespace, name)
+	}
+
+	return nil
 }
