@@ -30,12 +30,10 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}
 
-		if flagProfile == "" {
-			return errorx.IllegalArgument.New("profile flag is required")
+		// Set the profile in the global config if provided
+		if flagProfile != "" {
+			config.SetProfile(flagProfile)
 		}
-
-		// Set the profile in the global config
-		config.SetProfile(flagProfile)
 
 		// Apply configuration overrides from flags
 		applyConfigOverrides()
@@ -60,7 +58,7 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			Msg("Resetting Hedera Block Node")
 
 		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewBlockNodeResetWorkflow(flagProfile), opts)
+			workflows.NewBlockNodeResetWorkflow(), opts)
 
 		common.RunWorkflow(cmd.Context(), wb)
 

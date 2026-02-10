@@ -988,7 +988,7 @@ func (c *Client) CRDExists(ctx context.Context, crdName string) (bool, error) {
 }
 
 // ScaleDeployment scales a Deployment to the specified number of replicas.
-// It uses a JSON strategic merge patch on spec.replicas for atomic scaling
+// It uses a JSON Merge Patch (RFC 7386) on spec.replicas for atomic scaling
 // with minimal RBAC requirements and reduced conflict potential.
 func (c *Client) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) error {
 	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
@@ -996,7 +996,7 @@ func (c *Client) ScaleDeployment(ctx context.Context, namespace, name string, re
 }
 
 // ScaleStatefulSet scales a StatefulSet to the specified number of replicas.
-// It uses a JSON strategic merge patch on spec.replicas for atomic scaling
+// It uses a JSON Merge Patch (RFC 7386) on spec.replicas for atomic scaling
 // with minimal RBAC requirements and reduced conflict potential.
 func (c *Client) ScaleStatefulSet(ctx context.Context, namespace, name string, replicas int32) error {
 	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}

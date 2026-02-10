@@ -433,7 +433,7 @@ func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, erro
 }
 
 // ResetBlockNode resets the block node by clearing all storage and restarting the pod
-func ResetBlockNode(profile string) *automa.WorkflowBuilder {
+func ResetBlockNode() *automa.WorkflowBuilder {
 	managerProvider := newBlockNodeManagerProvider()
 
 	return automa.NewWorkflowBuilder().WithId(ResetBlockNodeStepId).Steps(
@@ -456,7 +456,7 @@ func ResetBlockNode(profile string) *automa.WorkflowBuilder {
 
 // PurgeBlockNodeStorage scales down the block node and clears all storage.
 // This does NOT scale back up - use ResetBlockNode if you need to restart the pod after clearing.
-func PurgeBlockNodeStorage(profile string) *automa.WorkflowBuilder {
+func PurgeBlockNodeStorage() *automa.WorkflowBuilder {
 	managerProvider := newBlockNodeManagerProvider()
 
 	return automa.NewWorkflowBuilder().WithId(PurgeBlockNodeStorageStepId).Steps(
