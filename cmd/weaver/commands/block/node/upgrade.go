@@ -16,6 +16,7 @@ import (
 
 var (
 	flagNoReuseValues bool
+	flagWithReset     bool
 
 	upgradeCmd = &cobra.Command{
 		Use:   "upgrade",
@@ -60,11 +61,12 @@ var (
 				Str("profile", flagProfile).
 				Str("valuesFile", validatedValuesFile).
 				Bool("noReuseValues", flagNoReuseValues).
+				Bool("withReset", flagWithReset).
 				Any("opts", opts).
 				Msg("Upgrading Hedera Block Node")
 
 			wb := workflows.WithWorkflowExecutionMode(
-				workflows.NewBlockNodeUpgradeWorkflow(flagProfile, validatedValuesFile, !flagNoReuseValues), opts)
+				workflows.NewBlockNodeUpgradeWorkflow(flagProfile, validatedValuesFile, !flagNoReuseValues, flagWithReset), opts)
 
 			common.RunWorkflow(cmd.Context(), wb)
 
@@ -79,6 +81,8 @@ func init() {
 		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
 	upgradeCmd.Flags().BoolVar(
 		&flagNoReuseValues, "no-reuse-values", false, "Don't reuse the last release's values (resets to chart defaults)")
+	upgradeCmd.Flags().BoolVar(
+		&flagWithReset, "with-reset", false, "Reset block node storage before upgrading (clears all data)")
 
 	common.FlagStopOnError.SetVarP(upgradeCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError.SetVarP(upgradeCmd, &flagRollbackOnError, false)

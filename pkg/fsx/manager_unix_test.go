@@ -1008,3 +1008,184 @@ func assertFileHash(t *testing.T, path string, expectedHash [32]byte) {
 
 	req.Equal(expectedHash, actualHash)
 }
+
+func TestUnixManager_RemoveContents_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Create a temporary directory with some content
+	tempDir := t.TempDir()
+	testDir := filepath.Join(tempDir, "test-remove")
+	assert.NoError(os.MkdirAll(testDir, 0755))
+
+	// Create files
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	assert.NoError(os.WriteFile(file1, []byte("content1"), 0644))
+	assert.NoError(os.WriteFile(file2, []byte("content2"), 0644))
+
+	// Create subdirectory with files
+	subDir := filepath.Join(testDir, "subdir")
+	assert.NoError(os.MkdirAll(subDir, 0755))
+	subFile := filepath.Join(subDir, "subfile.txt")
+	assert.NoError(os.WriteFile(subFile, []byte("sub content"), 0644))
+
+	// Verify content exists
+	entries, err := os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Len(entries, 3) // file1.txt, file2.txt, subdir
+
+	// Remove contents
+	err = manager.RemoveContents(testDir)
+	assert.NoError(err)
+
+	// Verify directory still exists
+	assert.True(manager.IsDirectory(testDir))
+
+	// Verify content is gone
+	entries, err = os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Empty(entries)
+}
+
+func TestUnixManager_RemoveContents_EmptyDirectory(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Create an empty directory
+	tempDir := t.TempDir()
+	emptyDir := filepath.Join(tempDir, "empty")
+	assert.NoError(os.MkdirAll(emptyDir, 0755))
+
+	// Remove contents of empty directory should succeed
+	err := manager.RemoveContents(emptyDir)
+	assert.NoError(err)
+
+	// Directory should still exist
+	assert.True(manager.IsDirectory(emptyDir))
+}
+
+func TestUnixManager_RemoveContents_NonExistent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Try to remove contents of non-existent directory
+	err := manager.RemoveContents("/nonexistent/path/that/does/not/exist")
+	assert.Error(err)
+	assert.True(errorx.IsOfType(err, FileNotFound))
+}
+
+func TestUnixManager_RemoveContents_NotADirectory(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Create a file
+	tempDir := t.TempDir()
+	file := filepath.Join(tempDir, "file.txt")
+	assert.NoError(os.WriteFile(file, []byte("content"), 0644))
+
+	// Try to remove contents of a file (not a directory)
+	err := manager.RemoveContents(file)
+	assert.Error(err)
+	assert.True(errorx.IsOfType(err, FileSystemError))
+}
+
+func TestUnixManager_RemoveContents_PreservesPermissions(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Create a directory with specific permissions
+	tempDir := t.TempDir()
+	testDir := filepath.Join(tempDir, "test-perms")
+	assert.NoError(os.MkdirAll(testDir, 0700))
+
+	// Create some content
+	file := filepath.Join(testDir, "file.txt")
+	assert.NoError(os.WriteFile(file, []byte("content"), 0644))
+
+	// Get original permissions
+	originalInfo, err := os.Stat(testDir)
+	assert.NoError(err)
+	originalMode := originalInfo.Mode().Perm()
+
+	// Remove contents
+	err = manager.RemoveContents(testDir)
+	assert.NoError(err)
+
+	// Verify permissions are preserved
+	newInfo, err := os.Stat(testDir)
+	assert.NoError(err)
+	assert.Equal(originalMode, newInfo.Mode().Perm())
+}
+
+func TestUnixManager_RemoveContents_DeepNesting(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Create a deeply nested directory structure
+	tempDir := t.TempDir()
+	testDir := filepath.Join(tempDir, "test-deep")
+	assert.NoError(os.MkdirAll(testDir, 0755))
+
+	// Create deep nesting
+	deepPath := testDir
+	for i := 0; i < 10; i++ {
+		deepPath = filepath.Join(deepPath, fmt.Sprintf("level%d", i))
+	}
+	assert.NoError(os.MkdirAll(deepPath, 0755))
+	assert.NoError(os.WriteFile(filepath.Join(deepPath, "deep-file.txt"), []byte("deep"), 0644))
+
+	// Remove contents
+	err := manager.RemoveContents(testDir)
+	assert.NoError(err)
+
+	// Verify directory exists and is empty
+	assert.True(manager.IsDirectory(testDir))
+	entries, err := os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Empty(entries)
+}
+
+func TestUnixManager_RemoveContents_ManyFiles(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	// Create a directory with many files
+	tempDir := t.TempDir()
+	testDir := filepath.Join(tempDir, "test-many")
+	assert.NoError(os.MkdirAll(testDir, 0755))
+
+	// Create 100 files
+	for i := 0; i < 100; i++ {
+		file := filepath.Join(testDir, fmt.Sprintf("file%d.txt", i))
+		assert.NoError(os.WriteFile(file, []byte(fmt.Sprintf("content %d", i)), 0644))
+	}
+
+	// Verify files exist
+	entries, err := os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Len(entries, 100)
+
+	// Remove contents
+	err = manager.RemoveContents(testDir)
+	assert.NoError(err)
+
+	// Verify directory is empty
+	entries, err = os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Empty(entries)
+}

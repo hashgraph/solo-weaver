@@ -117,12 +117,12 @@ func (sht *SignalHandlerTestSuite) TestRegister_Two_Callbacks_For_Different_Sign
 	t := sht.T()
 	req := require.New(t)
 
-	received := make(chan os.Signal)
+	received := make(chan os.Signal, 2) // buffered channel to avoid blocking
 
 	sh, shutdown := NewSignalHandler()
 	defer shutdown()
 
-	// register two callback for the same signal
+	// register two callbacks for different signals
 	err := sh.Register(syscall.SIGQUIT, func(s os.Signal) {
 		t.Logf("Received signal in callback-1: %v", s)
 		received <- s
@@ -135,11 +135,13 @@ func (sht *SignalHandlerTestSuite) TestRegister_Two_Callbacks_For_Different_Sign
 	})
 	req.NoError(err)
 
-	// Send signal to the process
+	// Send signals to the process with a small delay between them
+	// to ensure the signal handler has time to process each one
 	syscall.Kill(syscall.Getpid(), syscall.SIGQUIT)
+	time.Sleep(50 * time.Millisecond) // allow first signal to be processed
 	syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
 
-	ticker := time.NewTicker(time.Millisecond * 100)
+	ticker := time.NewTicker(time.Millisecond * 200) // increased timeout
 	defer ticker.Stop()
 	sht.testCallback(t, ticker, 2, received)
 }

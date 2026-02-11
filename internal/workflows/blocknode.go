@@ -22,8 +22,21 @@ func NewBlockNodeInstallWorkflow(profile string, valuesFile string) *automa.Work
 }
 
 // NewBlockNodeUpgradeWorkflow creates an upgrade workflow for block node
-func NewBlockNodeUpgradeWorkflow(profile string, valuesFile string, reuseValues bool) *automa.WorkflowBuilder {
+func NewBlockNodeUpgradeWorkflow(profile string, valuesFile string, reuseValues bool, withReset bool) *automa.WorkflowBuilder {
+	if withReset {
+		return automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").Steps(
+			steps.PurgeBlockNodeStorage(),
+			steps.UpgradeBlockNode(profile, valuesFile, reuseValues),
+		)
+	}
 	return automa.NewWorkflowBuilder().WithId("block-node-upgrade").Steps(
 		steps.UpgradeBlockNode(profile, valuesFile, reuseValues),
+	)
+}
+
+// NewBlockNodeResetWorkflow creates a reset workflow for block node
+func NewBlockNodeResetWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("block-node-reset").Steps(
+		steps.ResetBlockNode(),
 	)
 }

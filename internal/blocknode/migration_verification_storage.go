@@ -135,6 +135,7 @@ func (m *VerificationStorageMigration) Execute(ctx context.Context, mctx *migrat
 	// Step 4: Upgrade the Helm chart (not uninstall/reinstall)
 	logger.Info().Msg("Upgrading Block Node chart to new version")
 	if err := manager.UpgradeChart(ctx, valuesFilePath, false); err != nil {
+		logger.Error().Err(err).Msg("Failed to upgrade Block Node chart during migration")
 		return errorx.IllegalState.Wrap(err, "failed to upgrade chart")
 	}
 

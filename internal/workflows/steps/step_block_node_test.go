@@ -198,3 +198,78 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
 	require.Equal(t, "true", installReport.Metadata[AlreadyInstalled], "Block node should already be installed")
 }
+
+func TestResetBlockNode_Success(t *testing.T) {
+	// Check if system has at least 16GB memory for block node
+	hostProfile := hardware.GetHostProfile()
+	totalMemoryGB := hostProfile.GetTotalMemoryGB()
+	if totalMemoryGB < 16 {
+		t.Skipf("Skipping test: Block node requires at least 16GB memory, but system has only %dGB", totalMemoryGB)
+	}
+
+	//
+	// Given - ensure block node is installed first
+	//
+
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
+
+	// Install block node first
+	installWb := SetupBlockNode(core.ProfileLocal, "")
+	require.NotNil(t, installWb)
+	installWorkflow, err := installWb.Build()
+	require.NoError(t, err)
+	installReport := installWorkflow.Execute(context.Background())
+	require.NoError(t, installReport.Error, "Block node must be installed before reset test")
+	require.Equal(t, automa.StatusSuccess, installReport.Status)
+
+	// Now test the reset workflow
+	wb := ResetBlockNode()
+	require.NotNil(t, wb)
+
+	workflow, err := wb.Build()
+	require.NoError(t, err)
+	require.NotNil(t, workflow)
+
+	//
+	// When
+	//
+
+	report := workflow.Execute(context.Background())
+
+	//
+	// Then
+	//
+
+	require.NoError(t, report.Error)
+	require.Equal(t, automa.StatusSuccess, report.Status)
+	assert.Equal(t, ResetBlockNodeStepId, workflow.Id())
+
+	// Verify all substeps were executed successfully
+	require.Len(t, report.StepReports, 5, "Expected 5 substeps: scale-down, wait-terminated, clear-storage, scale-up, wait-ready")
+
+	// Verify scale down step
+	scaleDownReport := report.StepReports[0]
+	require.Equal(t, ScaleDownBlockNodeStepId, scaleDownReport.Id)
+	require.Equal(t, automa.StatusSuccess, scaleDownReport.Status)
+
+	// Verify wait for terminated step
+	waitTerminatedReport := report.StepReports[1]
+	require.Equal(t, WaitForBlockNodeTerminatedStepId, waitTerminatedReport.Id)
+	require.Equal(t, automa.StatusSuccess, waitTerminatedReport.Status)
+
+	// Verify clear storage step
+	clearStorageReport := report.StepReports[2]
+	require.Equal(t, ClearBlockNodeStorageStepId, clearStorageReport.Id)
+	require.Equal(t, automa.StatusSuccess, clearStorageReport.Status)
+
+	// Verify scale up step
+	scaleUpReport := report.StepReports[3]
+	require.Equal(t, ScaleUpBlockNodeStepId, scaleUpReport.Id)
+	require.Equal(t, automa.StatusSuccess, scaleUpReport.Status)
+
+	// Verify wait for ready step
+	waitReadyReport := report.StepReports[4]
+	require.Equal(t, WaitForBlockNodeStepId, waitReadyReport.Id)
+	require.Equal(t, automa.StatusSuccess, waitReadyReport.Status)
+}

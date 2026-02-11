@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -34,27 +36,29 @@ type ResourceKind string
 func (k ResourceKind) String() string { return string(k) }
 
 const (
-	KindNode       ResourceKind = "Node"
-	KindService    ResourceKind = "Service"
-	KindNamespace  ResourceKind = "Namespace"
-	KindConfigMap  ResourceKind = "ConfigMap"
-	KindPod        ResourceKind = "Pod"
-	KindDeployment ResourceKind = "Deployment"
-	KindJob        ResourceKind = "Job"
-	KindPVC        ResourceKind = "PersistentVolumeClaim"
-	KindCRD        ResourceKind = "CustomResourceDefinition"
+	KindNode        ResourceKind = "Node"
+	KindService     ResourceKind = "Service"
+	KindNamespace   ResourceKind = "Namespace"
+	KindConfigMap   ResourceKind = "ConfigMap"
+	KindPod         ResourceKind = "Pod"
+	KindDeployment  ResourceKind = "Deployment"
+	KindStatefulSet ResourceKind = "StatefulSet"
+	KindJob         ResourceKind = "Job"
+	KindPVC         ResourceKind = "PersistentVolumeClaim"
+	KindCRD         ResourceKind = "CustomResourceDefinition"
 )
 
 var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
-	KindNode:       {Group: "", Version: "v1", Resource: "nodes"},
-	KindService:    {Group: "", Version: "v1", Resource: "services"},
-	KindNamespace:  {Group: "", Version: "v1", Resource: "namespaces"},
-	KindConfigMap:  {Group: "", Version: "v1", Resource: "configmaps"},
-	KindPod:        {Group: "", Version: "v1", Resource: "pods"},
-	KindDeployment: {Group: "apps", Version: "v1", Resource: "deployments"},
-	KindJob:        {Group: "batch", Version: "v1", Resource: "jobs"},
-	KindPVC:        {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
-	KindCRD:        {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
+	KindNode:        {Group: "", Version: "v1", Resource: "nodes"},
+	KindService:     {Group: "", Version: "v1", Resource: "services"},
+	KindNamespace:   {Group: "", Version: "v1", Resource: "namespaces"},
+	KindConfigMap:   {Group: "", Version: "v1", Resource: "configmaps"},
+	KindPod:         {Group: "", Version: "v1", Resource: "pods"},
+	KindDeployment:  {Group: "apps", Version: "v1", Resource: "deployments"},
+	KindStatefulSet: {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	KindJob:         {Group: "batch", Version: "v1", Resource: "jobs"},
+	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	KindCRD:         {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
 }
 
 func RegisterKind(kind ResourceKind, gvr schema.GroupVersionResource) {
@@ -448,11 +452,9 @@ func (c *Client) List(ctx context.Context, kind ResourceKind, namespace string, 
 
 	list, err := dr.List(ctx, opts.AsListOptions())
 	if err != nil {
-		return nil, errorx.InternalError.Wrap(
-			err,
-			"list failed for %s (namespace=%s, opts=%s)",
-			gvr.Resource, namespace, opts.String(),
-		)
+		// Return the unwrapped error to preserve Kubernetes error semantics
+		// (e.g., kerrors.IsNotFound) for callers that need to check error types
+		return nil, err
 	}
 
 	// No prefix filtering required
@@ -542,6 +544,56 @@ func (c *Client) WaitForResources(
 			}
 
 			if allReady {
+				return nil
+			}
+		}
+	}
+}
+
+// WaitForResourcesDeletion waits until all resources of the given kind matching the options
+// are deleted from the specified namespace within the timeout.
+// It returns nil when no matching resources exist, or an error if the timeout is reached.
+func (c *Client) WaitForResourcesDeletion(
+	ctx context.Context,
+	kind ResourceKind,
+	namespace string,
+	timeout time.Duration,
+	opts WaitOptions,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return errorx.IllegalState.New(
+				"timed out waiting for %s deletion in ns=%s with opts=%s",
+				kind, namespace, opts.String(),
+			)
+
+		case <-ticker.C:
+			items, err := c.List(ctx, kind, namespace, opts)
+			if err != nil {
+				if kerrors.IsNotFound(err) {
+					// Resource type not found or namespace gone → resources are deleted
+					return nil
+				}
+
+				if isFatalAPIError(err) {
+					return errorx.InternalError.Wrap(err, "fatal API error listing for %s in ns=%s", kind, namespace)
+				}
+
+				return errorx.InternalError.Wrap(
+					err, "list failed while waiting for %s deletion in ns=%s",
+					kind, namespace,
+				)
+			}
+
+			// No items means all resources have been deleted
+			if len(items.Items) == 0 {
 				return nil
 			}
 		}
@@ -933,4 +985,80 @@ func (c *Client) CRDExists(ctx context.Context, crdName string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// ScaleDeployment scales a Deployment to the specified number of replicas.
+// It uses a JSON Merge Patch (RFC 7386) on spec.replicas for atomic scaling
+// with minimal RBAC requirements and reduced conflict potential.
+func (c *Client) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) error {
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	return c.patchReplicas(ctx, gvr, namespace, name, replicas)
+}
+
+// ScaleStatefulSet scales a StatefulSet to the specified number of replicas.
+// It uses a JSON Merge Patch (RFC 7386) on spec.replicas for atomic scaling
+// with minimal RBAC requirements and reduced conflict potential.
+func (c *Client) ScaleStatefulSet(ctx context.Context, namespace, name string, replicas int32) error {
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
+	return c.patchReplicas(ctx, gvr, namespace, name, replicas)
+}
+
+// patchReplicas patches the spec.replicas field of a scalable resource.
+func (c *Client) patchReplicas(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int32) error {
+	patch := []byte(`{"spec":{"replicas":` + strconv.FormatInt(int64(replicas), 10) + `}}`)
+
+	_, err := c.Dyn.Resource(gvr).Namespace(namespace).Patch(
+		ctx,
+		name,
+		types.MergePatchType,
+		patch,
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to scale %s: %s/%s", gvr.Resource, namespace, name)
+	}
+
+	return nil
+}
+
+// AnnotateResource adds or updates annotations on a resource.
+// The annotations map is merged with existing annotations.
+func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namespace, name string, annotations map[string]string) error {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
+
+	var dr dynamic.ResourceInterface
+	if namespace != "" {
+		dr = c.Dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(gvr)
+	}
+
+	// Get the current resource
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to get %s: %s/%s", kind, namespace, name)
+	}
+
+	// Get existing annotations or create empty map
+	existingAnnotations := obj.GetAnnotations()
+	if existingAnnotations == nil {
+		existingAnnotations = make(map[string]string)
+	}
+
+	// Merge new annotations
+	for k, v := range annotations {
+		existingAnnotations[k] = v
+	}
+	obj.SetAnnotations(existingAnnotations)
+
+	// Update the resource
+	_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to annotate %s: %s/%s", kind, namespace, name)
+	}
+
+	return nil
 }

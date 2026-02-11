@@ -89,6 +89,10 @@ type Manager interface {
 	// It is a wrapper of os.RemoveAll. This interface exists to help us mock the functionality during tests.
 	RemoveAll(path string) error
 
+	// RemoveContents removes all files and subdirectories inside a directory but preserves the directory itself.
+	// Returns an error if the path does not exist or is not a directory.
+	RemoveContents(path string) error
+
 	// ExcludeFromPath trims the path by removing the first occurrence, closest to the filesystem root,
 	// matching any excluded element from the path, and it's all children.
 	// For example, for a location "/a/b/c/d/f" and exclusions = ["d", "e", "f"] it returns "/a/b/c"
