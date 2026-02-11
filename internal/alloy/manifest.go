@@ -3,52 +3,86 @@
 package alloy
 
 import (
+	"sort"
+
 	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/templates"
 )
 
+// ConfigMapTemplateData holds data for the ConfigMap template.
+type ConfigMapTemplateData struct {
+	ConfigMapName string
+	Namespace     string
+	Modules       []ModuleTemplateData
+}
+
+// ModuleTemplateData holds module data for the template.
+type ModuleTemplateData struct {
+	Name            string
+	Filename        string
+	IndentedContent string
+}
+
 // ConfigMapManifest generates the Alloy ConfigMap manifest.
-func ConfigMapManifest(renderedConfig string) string {
-	return `---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ` + ConfigMapName + `
-  namespace: ` + Namespace + `
-data:
-  config.alloy: |
-` + IndentLines(renderedConfig, "    ")
+// Uses the configmap.yaml template file.
+func ConfigMapManifest(modules []ModuleConfig) string {
+	// Sort modules by name for consistent output
+	sortedModules := make([]ModuleConfig, len(modules))
+	copy(sortedModules, modules)
+	sort.Slice(sortedModules, func(i, j int) bool {
+		return sortedModules[i].Name < sortedModules[j].Name
+	})
+
+	// Convert to template data with pre-indented content
+	templateModules := make([]ModuleTemplateData, len(sortedModules))
+	for i, m := range sortedModules {
+		templateModules[i] = ModuleTemplateData{
+			Name:            m.Name,
+			Filename:        m.Filename,
+			IndentedContent: IndentLines(m.Content, "    "),
+		}
+	}
+
+	data := ConfigMapTemplateData{
+		ConfigMapName: ConfigMapName,
+		Namespace:     Namespace,
+		Modules:       templateModules,
+	}
+
+	result, _ := templates.Render("files/alloy/configmap.yaml", data)
+	return result
+}
+
+// ExternalSecretTemplateData holds data for the ExternalSecret template.
+type ExternalSecretTemplateData struct {
+	ExternalSecretName     string
+	Namespace              string
+	ClusterSecretStoreName string
+	SecretsName            string
+	ClusterName            string
+	SecretDataEntries      string
 }
 
 // ExternalSecretManifest generates the Alloy ExternalSecret manifest.
+// Uses the external-secret.yaml template file.
 func ExternalSecretManifest(cfg config.AlloyConfig, clusterName string) string {
 	secretDataEntries := BuildExternalSecretDataEntries(cfg, clusterName)
 
-	return `---
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: ` + ExternalSecretName + `
-  namespace: ` + Namespace + `
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: ` + ClusterSecretStoreName + `
-    kind: ClusterSecretStore
-  target:
-    name: ` + SecretsName + `
-    creationPolicy: Owner
-    template:
-      type: Opaque
-      engineVersion: v2
-      metadata:
-        labels:
-          app: grafana-alloy
-          cluster: ` + clusterName + `
-  data:
-` + secretDataEntries
+	data := ExternalSecretTemplateData{
+		ExternalSecretName:     ExternalSecretName,
+		Namespace:              Namespace,
+		ClusterSecretStoreName: ClusterSecretStoreName,
+		SecretsName:            SecretsName,
+		ClusterName:            clusterName,
+		SecretDataEntries:      secretDataEntries,
+	}
+
+	result, _ := templates.Render("files/alloy/external-secret.yaml", data)
+	return result
 }
 
 // BaseHelmValues returns the base Helm values for Alloy installation.
+// Configures Alloy to load config from a single config.alloy key in the ConfigMap.
 func BaseHelmValues() []string {
 	return []string{
 		"crds.create=true",

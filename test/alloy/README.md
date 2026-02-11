@@ -120,30 +120,113 @@ This forwards:
 
 ### Step 7: Verify in Grafana
 
-Navigate to **Explore** and test these queries:
+Navigate to **Explore** and test these queries organized by module:
+
+#### Agent Metrics Module (agent-metrics.alloy)
 
 **Prometheus queries:**
 ```promql
 # Alloy is running
 up{job="alloy"}
 
-# Node metrics
-node_cpu_seconds_total
+# Alloy internal metrics
+alloy_build_info{cluster="vm-cluster"}
 
-# Block Node metrics (if monitorBlockNode: true)
-{namespace="block-node"}
+# Alloy component health
+alloy_component_controller_running_components
 ```
+
+#### Node Exporter Module (node-exporter.alloy)
+
+**Prometheus queries:**
+```promql
+# CPU usage
+node_cpu_seconds_total{cluster="vm-cluster"}
+
+# Memory usage
+node_memory_MemAvailable_bytes{cluster="vm-cluster"}
+node_memory_MemTotal_bytes{cluster="vm-cluster"}
+
+# Disk usage
+node_filesystem_avail_bytes{cluster="vm-cluster"}
+node_filesystem_size_bytes{cluster="vm-cluster"}
+
+# Network I/O
+node_network_receive_bytes_total{cluster="vm-cluster"}
+node_network_transmit_bytes_total{cluster="vm-cluster"}
+```
+
+#### Kubelet/cAdvisor Module (kubelet.alloy)
+
+**Prometheus queries:**
+```promql
+# Container CPU usage
+container_cpu_usage_seconds_total{cluster="vm-cluster"}
+
+# Container memory usage
+container_memory_usage_bytes{cluster="vm-cluster"}
+
+# Container network I/O
+container_network_receive_bytes_total{cluster="vm-cluster"}
+container_network_transmit_bytes_total{cluster="vm-cluster"}
+
+# Kubelet metrics
+kubelet_running_pods{cluster="vm-cluster"}
+kubelet_running_containers{cluster="vm-cluster"}
+```
+
+#### Syslog Module (syslog.alloy)
 
 **Loki queries** (switch datasource to Loki):
 ```logql
-# System logs (journald)
+# All system logs from journald
 {cluster="vm-cluster"}
 
-# Alloy logs
-{namespace="grafana-alloy"}
+# Filter by systemd unit
+{cluster="vm-cluster", unit="k3s.service"}
+{cluster="vm-cluster", unit="docker.service"}
 
-# Block Node logs
-{namespace="block-node"}
+# Filter by priority (err, warning, info, debug)
+{cluster="vm-cluster"} | priority = "err"
+
+# Filter by syslog identifier
+{cluster="vm-cluster", syslog_identifier="kernel"}
+```
+
+#### Block Node Module (block-node.alloy) - if `--monitor-block-node` is used
+
+**Prometheus queries:**
+```promql
+# Block Node application metrics
+{cluster="vm-cluster", namespace="block-node"}
+
+# Block Node up status
+up{cluster="vm-cluster", namespace="block-node"}
+```
+
+**Loki queries:**
+```logql
+# Block Node pod logs
+{cluster="vm-cluster", namespace="block-node"}
+
+# Filter Block Node logs by pod
+{cluster="vm-cluster", namespace="block-node", pod=~"block-node-server.*"}
+
+# Search for errors in Block Node logs
+{cluster="vm-cluster", namespace="block-node"} |= "error"
+```
+
+#### Remotes Module (remotes.alloy) - if remotes are configured
+
+The remotes module doesn't produce metrics itself - it configures where metrics and logs are sent. To verify remotes are working:
+
+**Prometheus queries:**
+```promql
+# Check remote write status (should show samples being sent)
+prometheus_remote_storage_samples_total
+
+# Check for remote write failures
+prometheus_remote_storage_failed_samples_total
 ```
 
 ---
@@ -247,17 +330,41 @@ sudo solo-provisioner alloy cluster install \
 
 ### Modular Configuration
 
-Alloy configuration is now modular - different components are loaded based on flags:
+Alloy configuration is built from modular template files in `internal/templates/files/alloy/`. 
+The ConfigMap contains a single `config.alloy` key with all modules concatenated:
+
+```
+internal/templates/files/alloy/
+├── agent-metrics.alloy  # Alloy self-monitoring
+├── core.alloy           # Basic Alloy setup, logging config
+├── kubelet.alloy        # Kubelet/cAdvisor container metrics
+├── node-exporter.alloy  # Host metrics via ServiceMonitor
+├── remotes.alloy        # Prometheus/Loki remote write (if configured)
+├── syslog.alloy         # System logs via journald
+├── block-node.alloy     # Block Node monitoring (if --monitor-block-node)
+├── configmap.yaml       # ConfigMap manifest template
+└── external-secret.yaml # ExternalSecret manifest template
+
+grafana-alloy-cm ConfigMap:
+└── config.alloy         # Concatenated modules (used by Alloy)
+```
+
+Modules are conditionally included based on the flags you provide:
 
 | Module | Condition | What it monitors |
 |--------|-----------|------------------|
 | Core | Always | Basic Alloy setup, logging config |
-| Remotes | Always (if remotes configured) | Prometheus/Loki remote write endpoints |
+| Remotes | If remotes configured | Prometheus/Loki remote write endpoints |
 | Agent Metrics | Always | Alloy self-monitoring |
 | Node Exporter | Always | Host metrics (CPU, memory, disk) |
 | Kubelet/cAdvisor | Always | Container metrics |
 | Syslog | Always | System logs via journald |
 | Block Node | `--monitor-block-node` | Block Node metrics and logs |
+
+To view the current ConfigMap contents:
+```bash
+kubectl get configmap grafana-alloy-cm -n grafana-alloy -o yaml
+```
 
 ### Manage Vault Separately
 

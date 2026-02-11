@@ -10,11 +10,17 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/templates"
 )
 
-// RenderModularConfigWithModules renders all modular Alloy configuration files into a single config
-// and returns the list of modules that were loaded.
-func RenderModularConfigWithModules(cb *ConfigBuilder) (string, []string) {
-	var configParts []string
-	var modules []string
+// ModuleConfig represents a single Alloy configuration module.
+type ModuleConfig struct {
+	Name     string // Module name (e.g., "core", "remotes", "block-node")
+	Filename string // Filename for the ConfigMap key (e.g., "core.alloy")
+	Content  string // Rendered template content
+}
+
+// RenderModularConfigs renders all Alloy configuration modules as separate configs.
+// Returns a slice of ModuleConfig with the module name, filename, and content.
+func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
+	var modules []ModuleConfig
 
 	prometheusRemotes, lokiRemotes := cb.ToTemplateRemotes()
 	prometheusForwardTo := cb.PrometheusForwardTo()
@@ -23,8 +29,11 @@ func RenderModularConfigWithModules(cb *ConfigBuilder) (string, []string) {
 	// 1. Core config (always included)
 	coreConfig, err := templates.Render(CoreTemplatePath, nil)
 	if err == nil {
-		configParts = append(configParts, coreConfig)
-		modules = append(modules, "core")
+		modules = append(modules, ModuleConfig{
+			Name:     "core",
+			Filename: "core.alloy",
+			Content:  coreConfig,
+		})
 	}
 
 	// 2. Remotes config (always included if remotes are configured)
@@ -36,8 +45,11 @@ func RenderModularConfigWithModules(cb *ConfigBuilder) (string, []string) {
 		}
 		remotesConfig, err := templates.Render(RemotesTemplatePath, remotesData)
 		if err == nil {
-			configParts = append(configParts, remotesConfig)
-			modules = append(modules, "remotes")
+			modules = append(modules, ModuleConfig{
+				Name:     "remotes",
+				Filename: "remotes.alloy",
+				Content:  remotesConfig,
+			})
 		}
 	}
 
@@ -51,41 +63,65 @@ func RenderModularConfigWithModules(cb *ConfigBuilder) (string, []string) {
 	// 3. Agent metrics config (always included)
 	agentMetricsConfig, err := templates.Render(AgentMetricsTemplatePath, moduleData)
 	if err == nil {
-		configParts = append(configParts, agentMetricsConfig)
-		modules = append(modules, "agent-metrics")
+		modules = append(modules, ModuleConfig{
+			Name:     "agent-metrics",
+			Filename: "agent-metrics.alloy",
+			Content:  agentMetricsConfig,
+		})
 	}
 
 	// 4. Node exporter config (always included)
 	nodeExporterConfig, err := templates.Render(NodeExporterTemplatePath, moduleData)
 	if err == nil {
-		configParts = append(configParts, nodeExporterConfig)
-		modules = append(modules, "node-exporter")
+		modules = append(modules, ModuleConfig{
+			Name:     "node-exporter",
+			Filename: "node-exporter.alloy",
+			Content:  nodeExporterConfig,
+		})
 	}
 
 	// 5. Kubelet/cAdvisor config (always included)
 	kubeletConfig, err := templates.Render(KubeletTemplatePath, moduleData)
 	if err == nil {
-		configParts = append(configParts, kubeletConfig)
-		modules = append(modules, "kubelet")
+		modules = append(modules, ModuleConfig{
+			Name:     "kubelet",
+			Filename: "kubelet.alloy",
+			Content:  kubeletConfig,
+		})
 	}
 
 	// 6. Syslog config (always included)
 	syslogConfig, err := templates.Render(SyslogTemplatePath, moduleData)
 	if err == nil {
-		configParts = append(configParts, syslogConfig)
-		modules = append(modules, "syslog")
+		modules = append(modules, ModuleConfig{
+			Name:     "syslog",
+			Filename: "syslog.alloy",
+			Content:  syslogConfig,
+		})
 	}
 
 	// 7. Block node config (conditional)
 	if cb.MonitorBlockNode() {
 		blockNodeConfig, err := templates.Render(BlockNodeTemplatePath, moduleData)
 		if err == nil {
-			configParts = append(configParts, blockNodeConfig)
-			modules = append(modules, "block-node")
+			modules = append(modules, ModuleConfig{
+				Name:     "block-node",
+				Filename: "block-node.alloy",
+				Content:  blockNodeConfig,
+			})
 		}
 	}
 
-	return strings.Join(configParts, "\n"), modules
+	return modules
+}
+
+// GetModuleNames returns just the module names from the configs.
+func GetModuleNames(modules []ModuleConfig) []string {
+	names := make([]string, len(modules))
+	for i, m := range modules {
+		names[i] = m.Name
+	}
+	return names
 }
 
 // BuildExternalSecretDataEntries builds the data entries for the ExternalSecret manifest.

@@ -456,18 +456,19 @@ func deployAlloyConfig() automa.Builder {
 			// Build config using the alloy package
 			cb := alloy.NewConfigBuilder(cfg)
 
-			// Render Alloy configuration and get list of modules
-			renderedConfig, modules := alloy.RenderModularConfigWithModules(cb)
+			// Render Alloy configuration modules
+			modules := alloy.RenderModularConfigs(cb)
+			moduleNames := alloy.GetModuleNames(modules)
 
 			// Log which modules are being installed
 			l.Info().
-				Strs("modules", modules).
+				Strs("modules", moduleNames).
 				Str("clusterName", cb.ClusterName()).
 				Bool("monitorBlockNode", cb.MonitorBlockNode()).
 				Msg("Alloy configuration modules")
 
-			// Create ConfigMap manifest with the rendered configuration
-			configMapManifest := alloy.ConfigMapManifest(renderedConfig)
+			// Create ConfigMap manifest with multiple .alloy files
+			configMapManifest := alloy.ConfigMapManifest(modules)
 
 			// Write manifest to temp file for kubectl apply
 			configMapManifestPath := path.Join(core.Paths().TempDir, "alloy-configmap.yaml")
@@ -483,7 +484,7 @@ func deployAlloyConfig() automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			meta["modules"] = strings.Join(modules, ",")
+			meta["modules"] = strings.Join(moduleNames, ",")
 			stp.State().Set(InstalledByThisStep, true)
 			stp.State().Set("configMapManifestPath", configMapManifestPath)
 
