@@ -183,7 +183,7 @@ kubelet_running_containers{cluster="vm-cluster"}
 {cluster="vm-cluster"}
 
 # Filter by systemd unit
-{cluster="vm-cluster", unit="k3s.service"}
+{cluster="vm-cluster", unit="kubelet.service"}
 {cluster="vm-cluster", unit="docker.service"}
 
 # Filter by priority (err, warning, info, debug)
@@ -197,23 +197,23 @@ kubelet_running_containers{cluster="vm-cluster"}
 
 **Prometheus queries:**
 ```promql
-# Block Node application metrics
-{cluster="vm-cluster", namespace="block-node"}
+# Block Node application metrics (via ServiceMonitor)
+up{cluster="vm-cluster", job=~".*block-node.*"}
 
-# Block Node up status
-up{cluster="vm-cluster", namespace="block-node"}
+# Block Node service metrics
+{cluster="vm-cluster", job=~".*block-node.*"}
 ```
 
 **Loki queries:**
 ```logql
 # Block Node pod logs
-{cluster="vm-cluster", namespace="block-node"}
+{cluster="vm-cluster", pod=~"block-node-server.*"}
 
-# Filter Block Node logs by pod
-{cluster="vm-cluster", namespace="block-node", pod=~"block-node-server.*"}
+# Filter Block Node logs by container
+{cluster="vm-cluster", pod=~"block-node-server.*", container="block-node-server"}
 
 # Search for errors in Block Node logs
-{cluster="vm-cluster", namespace="block-node"} |= "error"
+{cluster="vm-cluster", pod=~"block-node-server.*"} |= "error"
 ```
 
 #### Remotes Module (remotes.alloy) - if remotes are configured

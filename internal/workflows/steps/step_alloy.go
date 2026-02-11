@@ -119,7 +119,7 @@ func installNodeExporter() automa.Builder {
 				"resourceType=daemonset",
 				"resourcesPreset=small",
 				"rbac.pspEnabled=false",
-				"serviceMonitor.enabled=false",
+				"serviceMonitor.enabled=true",
 				"image.repository=bitnamilegacy/node-exporter",
 			}
 
