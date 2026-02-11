@@ -1,0 +1,54 @@
+// SYSLOG CONFIG
+// This file contains journal/syslog log collection configuration.
+
+loki.relabel "syslog" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal__priority_keyword"]
+    target_label  = "priority"
+  }
+
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    target_label  = "syslog_identifier"
+  }
+
+  rule {
+    source_labels = ["__journal___pid"]
+    target_label  = "pid"
+  }
+
+  rule {
+    source_labels = ["__journal__uid"]
+    target_label  = "uid"
+  }
+
+  rule {
+    source_labels = ["__journal__comm"]
+    target_label  = "command"
+  }
+
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label  = "transport"
+  }
+}
+
+loki.source.journal "syslog" {
+  forward_to = [{{.LokiForwardTo}}]
+
+  path = "/host/var/log/journal"
+
+  labels = {
+    cluster = "{{.ClusterName}}",
+  }
+
+  relabel_rules = loki.relabel.syslog.rules
+}
+

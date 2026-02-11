@@ -1,0 +1,55 @@
+// BLOCK NODE METRIC CONFIG
+// This file contains Block Node monitoring configuration.
+// Only loaded when block node is installed.
+
+prometheus.operator.servicemonitors "block_node_server" {
+  forward_to = [{{.PrometheusForwardTo}}]
+
+  clustering {
+    enabled = false
+  }
+
+  scrape {
+    default_scrape_interval = "15s"
+    default_scrape_timeout  = "5s"
+  }
+
+  selector {
+    match_expression {
+      key      = "app.kubernetes.io/name"
+      operator = "In"
+      values   = ["block-node-server"]
+    }
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+loki.relabel "block_node_server" {
+  forward_to = [{{.LokiForwardTo}}]
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+
+loki.source.podlogs "block_node_server" {
+  forward_to = [loki.relabel.block_node_server.receiver]
+
+  clustering {
+    enabled = false
+  }
+
+  selector {
+    match_expression {
+      key      = "app.kubernetes.io/name"
+      operator = "In"
+      values   = ["block-node-server"]
+    }
+  }
+}
+

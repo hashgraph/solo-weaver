@@ -1,0 +1,32 @@
+// REMOTE WRITE CONFIGURATION
+// This file contains Prometheus and Loki remote write configurations.
+// Supports multiple remotes for redundancy or multi-tenant setups.
+
+{{range .PrometheusRemotes}}
+// Prometheus Remote Write Configuration: {{.Name}}
+prometheus.remote_write "{{.Name}}" {
+  endpoint {
+    url = "{{.URL}}"
+
+    basic_auth {
+      username = "{{.Username}}"
+      password = sys.env("{{.PasswordEnvVar}}")
+    }
+  }
+}
+{{end}}
+
+{{range .LokiRemotes}}
+// Loki Remote Write Configuration: {{.Name}}
+loki.write "{{.Name}}" {
+  endpoint {
+    url = "{{.URL}}"
+
+    basic_auth {
+      username = "{{.Username}}"
+      password = sys.env("{{.PasswordEnvVar}}")
+    }
+  }
+}
+{{end}}
+

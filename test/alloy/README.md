@@ -64,44 +64,61 @@ sudo solo-provisioner block node install \
   --config=/mnt/solo-weaver/test/config/config.yaml
 ```
 
-### Step 3: Connect Vault
+### Step 3: Install Alloy (Minimal)
 
-Inside the VM:
+Install Alloy without remote endpoints. This installs External Secrets Operator and the basic Alloy stack without requiring secrets from Vault:
+
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=vm-cluster
+```
+
+> **Note:** Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs in "local-only" mode. No secrets are required.
+
+### Step 4: Configure Vault Connection
+
+Now that ESO is installed, configure the ClusterSecretStore to connect to Vault:
 ```bash
 task vault:setup-secret-store
 ```
 
-This will auto-detect the node IP and print the exact command to run next.
+This will auto-detect the node IP and configure the ClusterSecretStore.
 
-### Step 4: Add Alloy
+### Step 5: Upgrade Alloy with Remotes
 
-Inside the VM, run the command printed by the previous step. It will look like:
+Now that secrets can sync, upgrade Alloy with remote endpoints:
 ```bash
+# Get the node IP for remote endpoints
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+echo "Node IP: $NODE_IP"
+
 sudo solo-provisioner alloy cluster install \
-  --prometheus-url=http://<NODE_IP>:9090/api/v1/write \
-  --loki-url=http://<NODE_IP>:3100/loki/api/v1/push \
-  --cluster-name=vm-cluster
+  --add-prometheus-remote=local:http://$NODE_IP:9090/api/v1/write:admin \
+  --add-loki-remote=local:http://$NODE_IP:3100/loki/api/v1/push:admin \
+  --cluster-name=vm-cluster \
+  --monitor-block-node
 ```
 
+> **Note:** The `--add-*-remote` flags use the format `name:url:username`. The password is fetched from Vault at path `grafana/alloy/{clusterName}/{prometheus|loki}/{remoteName}`.
 
-Wait ~30 seconds for secrets to sync, then check pods:
+Wait for pods to be ready:
 ```bash
 kubectl get pods -n grafana-alloy
-# Should show Running after secret sync completes
+# Should show Running
 ```
 
-### Step 5: Access Grafana
+### Step 6: Access Grafana and Vault UI
 
-From your Mac:
+From your Mac, forward the ports:
 ```bash
 task vm:alloy-forward
 ```
 
-Open http://localhost:3000
+This forwards:
+- **Grafana:** http://localhost:3000 (anonymous auth enabled - no login required)
+- **Vault UI:** http://localhost:8200 (token: `devtoken`)
 
-**Note:** Anonymous authentication is enabled - you'll be logged in automatically as Admin. No username/password required.
-
-### Step 6: Verify in Grafana
+### Step 7: Verify in Grafana
 
 Navigate to **Explore** and test these queries:
 
@@ -161,7 +178,7 @@ task vm:alloy:clean
 - ✅ System logs from journald (syslog)
 - ✅ Alloy self-monitoring
 
-**When `monitorBlockNode: true`:**
+**When `--monitor-block-node` flag is used:**
 - ✅ Block Node application metrics (via ServiceMonitor)
 - ✅ Block Node pod logs
 - ✅ Block Node container metrics (CPU, memory, disk via cAdvisor)
@@ -170,6 +187,78 @@ task vm:alloy:clean
 
 ## 🔧 Advanced
 
+### Multiple Remote Endpoints
+
+You can configure multiple Prometheus and Loki remote endpoints for redundancy or multi-tenancy:
+
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=vm-cluster \
+  --add-prometheus-remote=primary:http://prom1:9090/api/v1/write:user1 \
+  --add-prometheus-remote=backup:http://prom2:9090/api/v1/write:user2 \
+  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1 \
+  --add-loki-remote=grafana-cloud:https://logs.grafana.net/loki/api/v1/push:12345 \
+  --monitor-block-node
+```
+
+Each remote requires a corresponding Vault secret at:
+- `grafana/alloy/{clusterName}/prometheus/{remoteName}` → property: `password`
+- `grafana/alloy/{clusterName}/loki/{remoteName}` → property: `password`
+
+### Managing Remote Endpoints
+
+The `alloy cluster install` command is **declarative** - it replaces the entire configuration with what you specify. To manage endpoints:
+
+**Add a new remote:** Include all existing remotes plus the new one:
+```bash
+# If you had 'primary', and want to add 'backup':
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=vm-cluster \
+  --add-prometheus-remote=primary:http://prom1:9090/api/v1/write:user1 \
+  --add-prometheus-remote=backup:http://prom2:9090/api/v1/write:user2 \
+  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1
+```
+
+**Remove a remote:** Simply omit it from the command:
+```bash
+# Remove 'backup', keep only 'primary':
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=vm-cluster \
+  --add-prometheus-remote=primary:http://prom1:9090/api/v1/write:user1 \
+  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1
+```
+
+**Modify a remote URL:** Specify the same name with the new URL:
+```bash
+# Change 'primary' Prometheus URL:
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=vm-cluster \
+  --add-prometheus-remote=primary:http://new-prom:9090/api/v1/write:user1 \
+  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1
+```
+
+**Remove all remotes (local-only mode):**
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=vm-cluster
+```
+
+> **Important:** Each run replaces the previous configuration. Always specify all the remotes you want to keep.
+
+### Modular Configuration
+
+Alloy configuration is now modular - different components are loaded based on flags:
+
+| Module | Condition | What it monitors |
+|--------|-----------|------------------|
+| Core | Always | Basic Alloy setup, logging config |
+| Remotes | Always (if remotes configured) | Prometheus/Loki remote write endpoints |
+| Agent Metrics | Always | Alloy self-monitoring |
+| Node Exporter | Always | Host metrics (CPU, memory, disk) |
+| Kubelet/cAdvisor | Always | Container metrics |
+| Syslog | Always | System logs via journald |
+| Block Node | `--monitor-block-node` | Block Node metrics and logs |
+
 ### Manage Vault Separately
 
 ```bash
@@ -177,6 +266,33 @@ task vault:start   # Start Vault only
 task vault:stop    # Stop Vault
 task vault:clean   # Remove Vault data
 ```
+
+### Check Vault Secrets
+
+To verify secrets exist in local Vault (useful for debugging):
+
+```bash
+# List all secrets under the alloy path
+docker exec -e VAULT_ADDR='http://localhost:8200' -e VAULT_TOKEN='devtoken' \
+  solo-weaver-vault vault kv list secret/grafana/alloy/vm-cluster/prometheus
+
+# Read a specific secret (e.g., for the 'local' remote)
+docker exec -e VAULT_ADDR='http://localhost:8200' -e VAULT_TOKEN='devtoken' \
+  solo-weaver-vault vault kv get secret/grafana/alloy/vm-cluster/prometheus/local
+
+# Read Loki secret
+docker exec -e VAULT_ADDR='http://localhost:8200' -e VAULT_TOKEN='devtoken' \
+  solo-weaver-vault vault kv get secret/grafana/alloy/vm-cluster/loki/local
+```
+
+To manually add a secret for a new remote:
+```bash
+# Add secret for a remote named 'myremote'
+docker exec -e VAULT_ADDR='http://localhost:8200' -e VAULT_TOKEN='devtoken' \
+  solo-weaver-vault vault kv put secret/grafana/alloy/vm-cluster/prometheus/myremote password="my-password"
+```
+
+You can also access the Vault UI at http://localhost:8200 (token: `devtoken`) after running `task vm:alloy-forward`.
 
 ### Production Setup
 

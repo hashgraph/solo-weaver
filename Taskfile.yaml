@@ -1273,13 +1273,10 @@ tasks:
         if ! kubectl get crd clustersecretstores.external-secrets.io &>/dev/null; then
           echo "❌ Error: External Secrets Operator CRDs not found!"
           echo ""
-          echo "External Secrets Operator must be installed first."
+          echo "Install Alloy first (minimal mode installs ESO without requiring secrets):"
+          echo "  sudo solo-provisioner alloy cluster install --cluster-name=vm-cluster"
           echo ""
-          echo "To install ESO, run:"
-          echo "  weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config.yaml"
-          echo ""
-          echo "Or check if ESO pods are running:"
-          echo "  kubectl get pods -n external-secrets"
+          echo "Then run this task again to configure Vault connection."
           exit 1
         fi
         echo "✓ External Secrets Operator CRDs found"
@@ -1345,11 +1342,8 @@ tasks:
         echo "   Vault URL: http://$NODE_IP:8200"
         echo "   ESO User:  eso-user"
         echo ""
-        echo "📝 Next step: Install Alloy"
-        echo "   sudo weaver alloy cluster install \\"
-        echo "     --prometheus-url=http://$NODE_IP:9090/api/v1/write \\"
-        echo "     --loki-url=http://$NODE_IP:3100/loki/api/v1/push \\"
-        echo "     --cluster-name=vm-cluster"
+        echo "📝 Secrets should now sync automatically."
+        echo "   Check Alloy pods: kubectl get pods -n grafana-alloy"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   alloy:start:
