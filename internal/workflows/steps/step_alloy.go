@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -120,6 +122,12 @@ func installNodeExporter() automa.Builder {
 				"resourcesPreset=small",
 				"rbac.pspEnabled=false",
 				"serviceMonitor.enabled=true",
+				"serviceMonitor.interval=15s",
+				"serviceMonitor.scrapeTimeout=5s",
+				"serviceMonitor.jobLabel=node",
+				"serviceMonitor.attachMetadata.node=true",
+				"extraArgs.collector\\.systemd=",
+				"extraArgs.collector\\.processes=",
 				"image.repository=bitnamilegacy/node-exporter",
 			}
 
@@ -216,16 +224,14 @@ func createAlloyNamespace() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Create namespace manifest
+			// Create namespace manifest using template
 			namespaceManifestPath := path.Join(core.Paths().TempDir, "alloy-namespace.yaml")
-			namespaceManifest := `---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ` + alloy.Namespace + `
-`
+			namespaceManifest, err := alloy.NamespaceManifest()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
-			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), 0644)
+			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), core.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -267,33 +273,34 @@ func createAlloyExternalSecret() automa.Builder {
 
 			meta := map[string]string{}
 			var manifestPath string
+			var manifest string
 
 			if hasRemotes {
 				// Create ExternalSecret to fetch passwords from Vault
 				manifestPath = path.Join(core.Paths().TempDir, "alloy-external-secret.yaml")
 
 				// Build config to get cluster name
-				cb := alloy.NewConfigBuilder(cfg)
+				cb, err := alloy.NewConfigBuilder(cfg)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
 				clusterName := cb.ClusterName()
 
 				// Generate the ExternalSecret manifest using the alloy package
-				manifest := alloy.ExternalSecretManifest(cfg, clusterName)
-				err = os.WriteFile(manifestPath, []byte(manifest), 0600)
+				manifest, err = alloy.ExternalSecretManifest(cfg, clusterName)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
 			} else {
 				// Create an empty secret so the pod doesn't fail looking for it
 				manifestPath = path.Join(core.Paths().TempDir, "alloy-empty-secret.yaml")
-				manifest := `---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ` + alloy.SecretsName + `
-  namespace: ` + alloy.Namespace + `
-type: Opaque
-data: {}
-`
-				err = os.WriteFile(manifestPath, []byte(manifest), 0600)
+				manifest, err = alloy.EmptySecretManifest()
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
 			}
 
+			err = os.WriteFile(manifestPath, []byte(manifest), 0600)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -354,8 +361,15 @@ func installAlloy() automa.Builder {
 
 			meta := map[string]string{}
 
-			// Check if already installed to provide better logging
-			isInstalled, _ := hm.IsInstalled(alloy.Release, alloy.Namespace)
+			// Check if already installed to provide better logging and track for rollback
+			isInstalled, err := hm.IsInstalled(alloy.Release, alloy.Namespace)
+			if err != nil {
+				l.Warn().Err(err).Msg("Failed to check if Grafana Alloy is installed, proceeding with install/upgrade")
+			}
+
+			// Track whether this is a fresh install (for rollback purposes)
+			isFreshInstall := !isInstalled
+
 			if isInstalled {
 				l.Info().Msg("Grafana Alloy is already installed, upgrading configuration")
 			} else {
@@ -368,7 +382,10 @@ func installAlloy() automa.Builder {
 			}
 
 			// Build config to check if host network is needed
-			cb := alloy.NewConfigBuilder(cfg)
+			cb, err := alloy.NewConfigBuilder(cfg)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 			useHostNetwork := cb.ShouldUseHostNetwork()
 
 			// Prepare helm values
@@ -406,8 +423,14 @@ func installAlloy() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			// Only set InstalledByThisStep if this was a fresh install
+			// This prevents rollback from uninstalling a pre-existing release
+			if isFreshInstall {
+				meta[InstalledByThisStep] = "true"
+				stp.State().Set(InstalledByThisStep, true)
+			} else {
+				meta["upgraded"] = "true"
+			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -454,10 +477,16 @@ func deployAlloyConfig() automa.Builder {
 			}
 
 			// Build config using the alloy package
-			cb := alloy.NewConfigBuilder(cfg)
+			cb, err := alloy.NewConfigBuilder(cfg)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
 			// Render Alloy configuration modules
-			modules := alloy.RenderModularConfigs(cb)
+			modules, err := alloy.RenderModularConfigs(cb)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 			moduleNames := alloy.GetModuleNames(modules)
 
 			// Log which modules are being installed
@@ -468,11 +497,14 @@ func deployAlloyConfig() automa.Builder {
 				Msg("Alloy configuration modules")
 
 			// Create ConfigMap manifest with multiple .alloy files
-			configMapManifest := alloy.ConfigMapManifest(modules)
+			configMapManifest, err := alloy.ConfigMapManifest(modules)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
 			// Write manifest to temp file for kubectl apply
 			configMapManifestPath := path.Join(core.Paths().TempDir, "alloy-configmap.yaml")
-			err = os.WriteFile(configMapManifestPath, []byte(configMapManifest), 0644)
+			err = os.WriteFile(configMapManifestPath, []byte(configMapManifest), core.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -481,6 +513,54 @@ func deployAlloyConfig() automa.Builder {
 			err = k.ApplyManifest(ctx, configMapManifestPath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			// If monitoring block-node, deploy the ServiceMonitor and PodLogs for discovery
+			if cb.MonitorBlockNode() {
+				// Discover block node namespace from Helm
+				blockNodeNamespace, err := state.GetBlockNodeNamespace()
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(fmt.Errorf("failed to discover block node namespace: %w", err)))
+				}
+				if blockNodeNamespace == "" {
+					l.Warn().Msg("Block node monitoring enabled but block node not found; skipping ServiceMonitor and PodLogs deployment")
+				} else {
+					// Deploy ServiceMonitor for metrics discovery
+					serviceMonitorManifest, err := alloy.BlockNodeServiceMonitorManifest(blockNodeNamespace)
+					if err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+					serviceMonitorPath := path.Join(core.Paths().TempDir, "block-node-servicemonitor.yaml")
+					err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), core.DefaultFilePerm)
+					if err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+
+					err = k.ApplyManifest(ctx, serviceMonitorPath)
+					if err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+					stp.State().Set("serviceMonitorPath", serviceMonitorPath)
+
+					// Deploy PodLogs for logs discovery
+					podLogsManifest, err := alloy.BlockNodePodLogsManifest(blockNodeNamespace)
+					if err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+					podLogsPath := path.Join(core.Paths().TempDir, "block-node-podlogs.yaml")
+					err = os.WriteFile(podLogsPath, []byte(podLogsManifest), core.DefaultFilePerm)
+					if err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+
+					err = k.ApplyManifest(ctx, podLogsPath)
+					if err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+					stp.State().Set("podLogsPath", podLogsPath)
+
+					l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor and PodLogs deployed for metrics/logs discovery")
+				}
 			}
 
 			meta[InstalledByThisStep] = "true"
@@ -506,6 +586,18 @@ func deployAlloyConfig() automa.Builder {
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
+			}
+
+			// Clean up ServiceMonitor if it was deployed
+			serviceMonitorPath := stp.State().String("serviceMonitorPath")
+			if serviceMonitorPath != "" {
+				_ = k.DeleteManifest(ctx, serviceMonitorPath) // Ignore error - may not exist
+			}
+
+			// Clean up PodLogs if it was deployed
+			podLogsPath := stp.State().String("podLogsPath")
+			if podLogsPath != "" {
+				_ = k.DeleteManifest(ctx, podLogsPath) // Ignore error - may not exist
 			}
 
 			return automa.StepSuccessReport(stp.Id())

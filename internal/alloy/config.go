@@ -4,6 +4,7 @@
 package alloy
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -30,13 +31,15 @@ const (
 	NodeExporterVersion   = "4.5.19"
 
 	// Template paths
-	CoreTemplatePath         = "files/alloy/core.alloy"
-	RemotesTemplatePath      = "files/alloy/remotes.alloy"
-	AgentMetricsTemplatePath = "files/alloy/agent-metrics.alloy"
-	NodeExporterTemplatePath = "files/alloy/node-exporter.alloy"
-	KubeletTemplatePath      = "files/alloy/kubelet.alloy"
-	SyslogTemplatePath       = "files/alloy/syslog.alloy"
-	BlockNodeTemplatePath    = "files/alloy/block-node.alloy"
+	CoreTemplatePath            = "files/alloy/core.alloy"
+	RemotesTemplatePath         = "files/alloy/remotes.alloy"
+	AgentMetricsTemplatePath    = "files/alloy/agent-metrics.alloy"
+	NodeExporterTemplatePath    = "files/alloy/node-exporter.alloy"
+	KubeletTemplatePath         = "files/alloy/kubelet.alloy"
+	SyslogTemplatePath          = "files/alloy/syslog.alloy"
+	BlockNodeTemplatePath       = "files/alloy/block-node.alloy"
+	BlockNodeServiceMonitorPath = "files/alloy/block-node-servicemonitor.yaml"
+	BlockNodePodLogsPath        = "files/alloy/block-node-podlogs.yaml"
 
 	// Vault path prefix for secrets
 	VaultPathPrefix = "grafana/alloy/"
@@ -59,7 +62,8 @@ type ConfigBuilder struct {
 }
 
 // NewConfigBuilder creates a new ConfigBuilder from the application config.
-func NewConfigBuilder(cfg config.AlloyConfig) *ConfigBuilder {
+// Returns an error if cluster name cannot be determined (neither provided nor hostname available).
+func NewConfigBuilder(cfg config.AlloyConfig) (*ConfigBuilder, error) {
 	cb := &ConfigBuilder{
 		monitorBlockNode: cfg.MonitorBlockNode,
 	}
@@ -68,9 +72,10 @@ func NewConfigBuilder(cfg config.AlloyConfig) *ConfigBuilder {
 	cb.clusterName = cfg.ClusterName
 	if cb.clusterName == "" {
 		hostname, err := os.Hostname()
-		if err == nil {
-			cb.clusterName = hostname
+		if err != nil {
+			return nil, fmt.Errorf("cluster name not provided and failed to get hostname: %w", err)
 		}
+		cb.clusterName = hostname
 	}
 
 	// Build Prometheus remotes
@@ -79,7 +84,7 @@ func NewConfigBuilder(cfg config.AlloyConfig) *ConfigBuilder {
 	// Build Loki remotes
 	cb.lokiRemotes = buildLokiRemotes(cfg)
 
-	return cb
+	return cb, nil
 }
 
 // ClusterName returns the cluster name.
@@ -170,7 +175,7 @@ func buildPrometheusRemotes(cfg config.AlloyConfig) []Remote {
 				Name:           r.Name,
 				URL:            r.URL,
 				Username:       r.Username,
-				PasswordEnvVar: "PROMETHEUS_PASSWORD_" + strings.ToUpper(r.Name),
+				PasswordEnvVar: "PROMETHEUS_PASSWORD_" + toEnvVarName(r.Name),
 			})
 		}
 	} else if cfg.PrometheusURL != "" {
@@ -196,7 +201,7 @@ func buildLokiRemotes(cfg config.AlloyConfig) []Remote {
 				Name:           r.Name,
 				URL:            r.URL,
 				Username:       r.Username,
-				PasswordEnvVar: "LOKI_PASSWORD_" + strings.ToUpper(r.Name),
+				PasswordEnvVar: "LOKI_PASSWORD_" + toEnvVarName(r.Name),
 			})
 		}
 	} else if cfg.LokiURL != "" {
@@ -210,6 +215,13 @@ func buildLokiRemotes(cfg config.AlloyConfig) []Remote {
 	}
 
 	return remotes
+}
+
+// toEnvVarName converts a name to a valid Kubernetes environment variable name.
+// Env var names must match [A-Z0-9_]+ and cannot start with a digit.
+func toEnvVarName(name string) string {
+	// Replace dashes with underscores and convert to uppercase
+	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
 // isLocalhostURL checks if the URL points to localhost.

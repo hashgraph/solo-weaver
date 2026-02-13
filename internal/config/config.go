@@ -198,6 +198,7 @@ func (c *AlloyConfig) Validate() error {
 	}
 
 	// Validate Prometheus remotes
+	prometheusNames := make(map[string]bool)
 	for i, remote := range c.PrometheusRemotes {
 		if remote.Name == "" {
 			return errorx.IllegalArgument.New("prometheus remote[%d]: name is required", i)
@@ -205,12 +206,25 @@ func (c *AlloyConfig) Validate() error {
 		if err := sanity.ValidateIdentifier(remote.Name); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "prometheus remote[%d]: invalid name: %s", i, remote.Name)
 		}
+		if prometheusNames[remote.Name] {
+			return errorx.IllegalArgument.New("prometheus remote[%d]: duplicate name: %s", i, remote.Name)
+		}
+		prometheusNames[remote.Name] = true
 		if remote.URL == "" {
 			return errorx.IllegalArgument.New("prometheus remote[%d] (%s): url is required", i, remote.Name)
+		}
+		if err := sanity.ValidateURL(remote.URL, &sanity.ValidateURLOptions{AllowHTTP: true}); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "prometheus remote[%d] (%s): invalid url", i, remote.Name)
+		}
+		if remote.Username != "" {
+			if err := sanity.ValidateIdentifier(remote.Username); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "prometheus remote[%d] (%s): invalid username", i, remote.Name)
+			}
 		}
 	}
 
 	// Validate Loki remotes
+	lokiNames := make(map[string]bool)
 	for i, remote := range c.LokiRemotes {
 		if remote.Name == "" {
 			return errorx.IllegalArgument.New("loki remote[%d]: name is required", i)
@@ -218,8 +232,20 @@ func (c *AlloyConfig) Validate() error {
 		if err := sanity.ValidateIdentifier(remote.Name); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "loki remote[%d]: invalid name: %s", i, remote.Name)
 		}
+		if lokiNames[remote.Name] {
+			return errorx.IllegalArgument.New("loki remote[%d]: duplicate name: %s", i, remote.Name)
+		}
+		lokiNames[remote.Name] = true
 		if remote.URL == "" {
 			return errorx.IllegalArgument.New("loki remote[%d] (%s): url is required", i, remote.Name)
+		}
+		if err := sanity.ValidateURL(remote.URL, &sanity.ValidateURLOptions{AllowHTTP: true}); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "loki remote[%d] (%s): invalid url", i, remote.Name)
+		}
+		if remote.Username != "" {
+			if err := sanity.ValidateIdentifier(remote.Username); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "loki remote[%d] (%s): invalid username", i, remote.Name)
+			}
 		}
 	}
 
@@ -435,6 +461,7 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 
 // OverrideAlloyConfig updates the Alloy configuration with provided overrides.
 // Empty string values are ignored (not applied).
+// Remote arrays are always replaced (declarative semantics) - pass empty arrays to clear remotes.
 // Note: Passwords are managed via Vault and External Secrets Operator.
 func OverrideAlloyConfig(overrides AlloyConfig) {
 	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
@@ -442,13 +469,9 @@ func OverrideAlloyConfig(overrides AlloyConfig) {
 		globalConfig.Alloy.ClusterName = overrides.ClusterName
 	}
 
-	// Handle multi-remote configuration
-	if len(overrides.PrometheusRemotes) > 0 {
-		globalConfig.Alloy.PrometheusRemotes = overrides.PrometheusRemotes
-	}
-	if len(overrides.LokiRemotes) > 0 {
-		globalConfig.Alloy.LokiRemotes = overrides.LokiRemotes
-	}
+	// Handle multi-remote configuration (declarative - always replace, even with empty slices)
+	globalConfig.Alloy.PrometheusRemotes = overrides.PrometheusRemotes
+	globalConfig.Alloy.LokiRemotes = overrides.LokiRemotes
 
 	// Legacy single-remote flags (for backward compatibility)
 	if overrides.PrometheusURL != "" {

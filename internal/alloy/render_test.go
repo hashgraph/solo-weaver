@@ -20,47 +20,73 @@ func TestRenderModularConfigs(t *testing.T) {
 		expectedModuleCount int
 	}{
 		{
-			name: "minimal config - no remotes, no block node",
+			name: "local-only mode - no remotes, no block node",
 			cfg: config.AlloyConfig{
 				ClusterName: "test-cluster",
 			},
-			expectedModules:     []string{"core", "agent-metrics", "node-exporter", "kubelet", "syslog"},
-			unexpectedModules:   []string{"remotes", "block-node"},
-			expectedModuleCount: 5,
+			expectedModules:     []string{"core"},
+			unexpectedModules:   []string{"remotes", "block-node", "agent-metrics", "node-exporter", "kubelet", "syslog"},
+			expectedModuleCount: 1,
 		},
 		{
-			name: "with block node monitoring",
+			name: "local-only mode with block node monitoring - still skipped without remotes",
 			cfg: config.AlloyConfig{
 				ClusterName:      "test-cluster",
 				MonitorBlockNode: true,
 			},
-			expectedModules:     []string{"core", "agent-metrics", "node-exporter", "kubelet", "syslog", "block-node"},
-			unexpectedModules:   []string{"remotes"},
-			expectedModuleCount: 6,
+			expectedModules:     []string{"core"},
+			unexpectedModules:   []string{"remotes", "block-node", "agent-metrics", "node-exporter", "kubelet", "syslog"},
+			expectedModuleCount: 1,
 		},
 		{
-			name: "with prometheus remote",
+			name: "with prometheus remote only",
 			cfg: config.AlloyConfig{
 				ClusterName: "test-cluster",
 				PrometheusRemotes: []config.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
 				},
 			},
-			expectedModules:     []string{"core", "remotes", "agent-metrics", "node-exporter", "kubelet", "syslog"},
-			unexpectedModules:   []string{"block-node"},
-			expectedModuleCount: 6,
+			expectedModules:     []string{"core", "remotes", "agent-metrics", "node-exporter", "kubelet"},
+			unexpectedModules:   []string{"block-node", "syslog"},
+			expectedModuleCount: 5,
 		},
 		{
-			name: "with loki remote",
+			name: "with prometheus remote only and block node monitoring - block-node skipped without loki",
+			cfg: config.AlloyConfig{
+				ClusterName:      "test-cluster",
+				MonitorBlockNode: true,
+				PrometheusRemotes: []config.AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
+				},
+			},
+			expectedModules:     []string{"core", "remotes", "agent-metrics", "node-exporter", "kubelet"},
+			unexpectedModules:   []string{"block-node", "syslog"},
+			expectedModuleCount: 5,
+		},
+		{
+			name: "with loki remote only",
 			cfg: config.AlloyConfig{
 				ClusterName: "test-cluster",
 				LokiRemotes: []config.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
 				},
 			},
-			expectedModules:     []string{"core", "remotes", "agent-metrics", "node-exporter", "kubelet", "syslog"},
-			unexpectedModules:   []string{"block-node"},
-			expectedModuleCount: 6,
+			expectedModules:     []string{"core", "remotes", "syslog"},
+			unexpectedModules:   []string{"block-node", "agent-metrics", "node-exporter", "kubelet"},
+			expectedModuleCount: 3,
+		},
+		{
+			name: "with loki remote only and block node monitoring - block-node skipped without prometheus",
+			cfg: config.AlloyConfig{
+				ClusterName:      "test-cluster",
+				MonitorBlockNode: true,
+				LokiRemotes: []config.AlloyRemoteConfig{
+					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
+				},
+			},
+			expectedModules:     []string{"core", "remotes", "syslog"},
+			unexpectedModules:   []string{"block-node", "agent-metrics", "node-exporter", "kubelet"},
+			expectedModuleCount: 3,
 		},
 		{
 			name: "full config - all modules",
@@ -81,8 +107,10 @@ func TestRenderModularConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cb := NewConfigBuilder(tt.cfg)
-			modules := RenderModularConfigs(cb)
+			cb, err := NewConfigBuilder(tt.cfg)
+			require.NoError(t, err)
+			modules, err := RenderModularConfigs(cb)
+			require.NoError(t, err)
 
 			// Check module count
 			assert.Len(t, modules, tt.expectedModuleCount)
@@ -116,7 +144,8 @@ func TestConfigMapManifest(t *testing.T) {
 		{Name: "block-node", Filename: "block-node.alloy", Content: "// block node config"},
 	}
 
-	manifest := ConfigMapManifest(modules)
+	manifest, err := ConfigMapManifest(modules)
+	require.NoError(t, err)
 
 	// Verify it's a valid YAML-ish structure
 	assert.Contains(t, manifest, "apiVersion: v1")
@@ -144,7 +173,8 @@ func TestConfigMapManifest_Sorted(t *testing.T) {
 		{Name: "mid", Filename: "mid.alloy", Content: "// mid"},
 	}
 
-	manifest := ConfigMapManifest(modules)
+	manifest, err := ConfigMapManifest(modules)
+	require.NoError(t, err)
 
 	// Find positions of each module header in the main config.alloy section
 	alphaPos := strings.Index(manifest, "// Module: alpha")
@@ -175,4 +205,27 @@ func TestGetModuleNames_Empty(t *testing.T) {
 	modules := []ModuleConfig{}
 	names := GetModuleNames(modules)
 	assert.Empty(t, names)
+}
+
+func TestNamespaceManifest(t *testing.T) {
+	manifest, err := NamespaceManifest()
+	require.NoError(t, err)
+
+	// Verify it's a valid namespace manifest
+	assert.Contains(t, manifest, "apiVersion: v1")
+	assert.Contains(t, manifest, "kind: Namespace")
+	assert.Contains(t, manifest, "name: "+Namespace)
+}
+
+func TestEmptySecretManifest(t *testing.T) {
+	manifest, err := EmptySecretManifest()
+	require.NoError(t, err)
+
+	// Verify it's a valid secret manifest
+	assert.Contains(t, manifest, "apiVersion: v1")
+	assert.Contains(t, manifest, "kind: Secret")
+	assert.Contains(t, manifest, "name: "+SecretsName)
+	assert.Contains(t, manifest, "namespace: "+Namespace)
+	assert.Contains(t, manifest, "type: Opaque")
+	assert.Contains(t, manifest, "data: {}")
 }

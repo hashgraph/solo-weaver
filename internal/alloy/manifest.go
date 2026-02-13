@@ -25,7 +25,7 @@ type ModuleTemplateData struct {
 
 // ConfigMapManifest generates the Alloy ConfigMap manifest.
 // Uses the configmap.yaml template file.
-func ConfigMapManifest(modules []ModuleConfig) string {
+func ConfigMapManifest(modules []ModuleConfig) (string, error) {
 	// Sort modules by name for consistent output
 	sortedModules := make([]ModuleConfig, len(modules))
 	copy(sortedModules, modules)
@@ -49,8 +49,7 @@ func ConfigMapManifest(modules []ModuleConfig) string {
 		Modules:       templateModules,
 	}
 
-	result, _ := templates.Render("files/alloy/configmap.yaml", data)
-	return result
+	return templates.Render("files/alloy/configmap.yaml", data)
 }
 
 // ExternalSecretTemplateData holds data for the ExternalSecret template.
@@ -65,7 +64,7 @@ type ExternalSecretTemplateData struct {
 
 // ExternalSecretManifest generates the Alloy ExternalSecret manifest.
 // Uses the external-secret.yaml template file.
-func ExternalSecretManifest(cfg config.AlloyConfig, clusterName string) string {
+func ExternalSecretManifest(cfg config.AlloyConfig, clusterName string) (string, error) {
 	secretDataEntries := BuildExternalSecretDataEntries(cfg, clusterName)
 
 	data := ExternalSecretTemplateData{
@@ -77,8 +76,7 @@ func ExternalSecretManifest(cfg config.AlloyConfig, clusterName string) string {
 		SecretDataEntries:      secretDataEntries,
 	}
 
-	result, _ := templates.Render("files/alloy/external-secret.yaml", data)
-	return result
+	return templates.Render("files/alloy/external-secret.yaml", data)
 }
 
 // BaseHelmValues returns the base Helm values for Alloy installation.
@@ -109,4 +107,68 @@ func HostNetworkHelmValues() []string {
 		"controller.hostNetwork=true",
 		"controller.dnsPolicy=ClusterFirstWithHostNet",
 	}
+}
+
+// BlockNodeServiceMonitorTemplateData holds data for the block-node ServiceMonitor template.
+type BlockNodeServiceMonitorTemplateData struct {
+	Namespace string
+}
+
+// BlockNodeServiceMonitorManifest generates the ServiceMonitor manifest for block-node.
+// This is required for Alloy to discover and scrape block-node metrics.
+// The namespace parameter should be the block node's configured namespace.
+func BlockNodeServiceMonitorManifest(namespace string) (string, error) {
+	data := BlockNodeServiceMonitorTemplateData{
+		Namespace: namespace,
+	}
+
+	return templates.Render(BlockNodeServiceMonitorPath, data)
+}
+
+// BlockNodePodLogsTemplateData holds data for the block-node PodLogs template.
+type BlockNodePodLogsTemplateData struct {
+	Namespace string
+}
+
+// BlockNodePodLogsManifest generates the PodLogs manifest for block-node.
+// This is required for Alloy to discover and collect block-node logs.
+// The namespace parameter should be the block node's configured namespace.
+func BlockNodePodLogsManifest(namespace string) (string, error) {
+	data := BlockNodePodLogsTemplateData{
+		Namespace: namespace,
+	}
+
+	return templates.Render(BlockNodePodLogsPath, data)
+}
+
+// NamespaceTemplateData holds data for the namespace template.
+type NamespaceTemplateData struct {
+	Namespace string
+}
+
+// NamespaceManifest generates the Alloy namespace manifest.
+// Uses the namespace.yaml template file.
+func NamespaceManifest() (string, error) {
+	data := NamespaceTemplateData{
+		Namespace: Namespace,
+	}
+
+	return templates.Render("files/alloy/namespace.yaml", data)
+}
+
+// EmptySecretTemplateData holds data for the empty secret template.
+type EmptySecretTemplateData struct {
+	SecretsName string
+	Namespace   string
+}
+
+// EmptySecretManifest generates an empty secret manifest.
+// Used when no remotes are configured so the pod doesn't fail looking for the secret.
+func EmptySecretManifest() (string, error) {
+	data := EmptySecretTemplateData{
+		SecretsName: SecretsName,
+		Namespace:   Namespace,
+	}
+
+	return templates.Render("files/alloy/empty-secret.yaml", data)
 }

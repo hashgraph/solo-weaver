@@ -3,6 +3,7 @@
 package alloy
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -19,24 +20,29 @@ type ModuleConfig struct {
 
 // RenderModularConfigs renders all Alloy configuration modules as separate configs.
 // Returns a slice of ModuleConfig with the module name, filename, and content.
-func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
+// Returns an error if any required template fails to render.
+func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	var modules []ModuleConfig
 
 	prometheusRemotes, lokiRemotes := cb.ToTemplateRemotes()
 	prometheusForwardTo := cb.PrometheusForwardTo()
 	lokiForwardTo := cb.LokiForwardTo()
 
-	// 1. Core config (always included)
-	coreConfig, err := templates.Render(CoreTemplatePath, nil)
-	if err == nil {
-		modules = append(modules, ModuleConfig{
-			Name:     "core",
-			Filename: "core.alloy",
-			Content:  coreConfig,
-		})
-	}
+	hasPrometheusRemotes := prometheusForwardTo != ""
+	hasLokiRemotes := lokiForwardTo != ""
 
-	// 2. Remotes config (always included if remotes are configured)
+	// 1. Core config (always required)
+	coreConfig, err := templates.Render(CoreTemplatePath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render core config: %w", err)
+	}
+	modules = append(modules, ModuleConfig{
+		Name:     "core",
+		Filename: "core.alloy",
+		Content:  coreConfig,
+	})
+
+	// 2. Remotes config (only if remotes are configured)
 	if len(prometheusRemotes) > 0 || len(lokiRemotes) > 0 {
 		remotesData := templates.AlloyData{
 			ClusterName:       cb.ClusterName(),
@@ -44,13 +50,14 @@ func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
 			LokiRemotes:       lokiRemotes,
 		}
 		remotesConfig, err := templates.Render(RemotesTemplatePath, remotesData)
-		if err == nil {
-			modules = append(modules, ModuleConfig{
-				Name:     "remotes",
-				Filename: "remotes.alloy",
-				Content:  remotesConfig,
-			})
+		if err != nil {
+			return nil, fmt.Errorf("failed to render remotes config: %w", err)
 		}
+		modules = append(modules, ModuleConfig{
+			Name:     "remotes",
+			Filename: "remotes.alloy",
+			Content:  remotesConfig,
+		})
 	}
 
 	// Common module data for most modules
@@ -60,9 +67,12 @@ func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
 		LokiForwardTo:       lokiForwardTo,
 	}
 
-	// 3. Agent metrics config (always included)
-	agentMetricsConfig, err := templates.Render(AgentMetricsTemplatePath, moduleData)
-	if err == nil {
+	// 3. Agent metrics config (only if Prometheus remotes are configured)
+	if hasPrometheusRemotes {
+		agentMetricsConfig, err := templates.Render(AgentMetricsTemplatePath, moduleData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render agent-metrics config: %w", err)
+		}
 		modules = append(modules, ModuleConfig{
 			Name:     "agent-metrics",
 			Filename: "agent-metrics.alloy",
@@ -70,9 +80,12 @@ func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
 		})
 	}
 
-	// 4. Node exporter config (always included)
-	nodeExporterConfig, err := templates.Render(NodeExporterTemplatePath, moduleData)
-	if err == nil {
+	// 4. Node exporter config (only if Prometheus remotes are configured)
+	if hasPrometheusRemotes {
+		nodeExporterConfig, err := templates.Render(NodeExporterTemplatePath, moduleData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render node-exporter config: %w", err)
+		}
 		modules = append(modules, ModuleConfig{
 			Name:     "node-exporter",
 			Filename: "node-exporter.alloy",
@@ -80,9 +93,12 @@ func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
 		})
 	}
 
-	// 5. Kubelet/cAdvisor config (always included)
-	kubeletConfig, err := templates.Render(KubeletTemplatePath, moduleData)
-	if err == nil {
+	// 5. Kubelet/cAdvisor config (only if Prometheus remotes are configured)
+	if hasPrometheusRemotes {
+		kubeletConfig, err := templates.Render(KubeletTemplatePath, moduleData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render kubelet config: %w", err)
+		}
 		modules = append(modules, ModuleConfig{
 			Name:     "kubelet",
 			Filename: "kubelet.alloy",
@@ -90,9 +106,12 @@ func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
 		})
 	}
 
-	// 6. Syslog config (always included)
-	syslogConfig, err := templates.Render(SyslogTemplatePath, moduleData)
-	if err == nil {
+	// 6. Syslog config (only if Loki remotes are configured)
+	if hasLokiRemotes {
+		syslogConfig, err := templates.Render(SyslogTemplatePath, moduleData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render syslog config: %w", err)
+		}
 		modules = append(modules, ModuleConfig{
 			Name:     "syslog",
 			Filename: "syslog.alloy",
@@ -100,19 +119,21 @@ func RenderModularConfigs(cb *ConfigBuilder) []ModuleConfig {
 		})
 	}
 
-	// 7. Block node config (conditional)
-	if cb.MonitorBlockNode() {
+	// 7. Block node config (only if monitoring is enabled AND both remote types are configured)
+	// Block node monitoring requires both Prometheus (for metrics) and Loki (for logs)
+	if cb.MonitorBlockNode() && hasPrometheusRemotes && hasLokiRemotes {
 		blockNodeConfig, err := templates.Render(BlockNodeTemplatePath, moduleData)
-		if err == nil {
-			modules = append(modules, ModuleConfig{
-				Name:     "block-node",
-				Filename: "block-node.alloy",
-				Content:  blockNodeConfig,
-			})
+		if err != nil {
+			return nil, fmt.Errorf("failed to render block-node config: %w", err)
 		}
+		modules = append(modules, ModuleConfig{
+			Name:     "block-node",
+			Filename: "block-node.alloy",
+			Content:  blockNodeConfig,
+		})
 	}
 
-	return modules
+	return modules, nil
 }
 
 // GetModuleNames returns just the module names from the configs.
@@ -131,7 +152,7 @@ func BuildExternalSecretDataEntries(cfg config.AlloyConfig, clusterName string) 
 	// Handle Prometheus remotes
 	if len(cfg.PrometheusRemotes) > 0 {
 		for _, r := range cfg.PrometheusRemotes {
-			envVarName := "PROMETHEUS_PASSWORD_" + strings.ToUpper(r.Name)
+			envVarName := "PROMETHEUS_PASSWORD_" + toEnvVarName(r.Name)
 			vaultKey := VaultPathPrefix + clusterName + "/prometheus/" + r.Name
 			entries = append(entries, buildSecretDataEntry(envVarName, vaultKey, "password"))
 		}
@@ -143,7 +164,7 @@ func BuildExternalSecretDataEntries(cfg config.AlloyConfig, clusterName string) 
 	// Handle Loki remotes
 	if len(cfg.LokiRemotes) > 0 {
 		for _, r := range cfg.LokiRemotes {
-			envVarName := "LOKI_PASSWORD_" + strings.ToUpper(r.Name)
+			envVarName := "LOKI_PASSWORD_" + toEnvVarName(r.Name)
 			vaultKey := VaultPathPrefix + clusterName + "/loki/" + r.Name
 			entries = append(entries, buildSecretDataEntry(envVarName, vaultKey, "password"))
 		}
@@ -172,7 +193,7 @@ func BuildHelmEnvVars(cfg config.AlloyConfig) []string {
 	// Handle Prometheus remotes
 	if len(cfg.PrometheusRemotes) > 0 {
 		for _, r := range cfg.PrometheusRemotes {
-			envVarName := "PROMETHEUS_PASSWORD_" + strings.ToUpper(r.Name)
+			envVarName := "PROMETHEUS_PASSWORD_" + toEnvVarName(r.Name)
 			envVars = append(envVars, buildEnvVarHelmValues(idx, envVarName)...)
 			idx++
 		}
@@ -185,7 +206,7 @@ func BuildHelmEnvVars(cfg config.AlloyConfig) []string {
 	// Handle Loki remotes
 	if len(cfg.LokiRemotes) > 0 {
 		for _, r := range cfg.LokiRemotes {
-			envVarName := "LOKI_PASSWORD_" + strings.ToUpper(r.Name)
+			envVarName := "LOKI_PASSWORD_" + toEnvVarName(r.Name)
 			envVars = append(envVars, buildEnvVarHelmValues(idx, envVarName)...)
 			idx++
 		}

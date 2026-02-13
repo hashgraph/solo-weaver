@@ -37,9 +37,9 @@ func init() {
 
 	// Multi-remote flags (repeatable)
 	clusterCmd.PersistentFlags().StringArrayVar(&flagPrometheusRemotes, "add-prometheus-remote", nil,
-		"Add a Prometheus remote (format: name:url:username). Can be specified multiple times")
+		"Add a Prometheus remote (format: name=<name>,url=<url>,username=<username>). Can be specified multiple times")
 	clusterCmd.PersistentFlags().StringArrayVar(&flagLokiRemotes, "add-loki-remote", nil,
-		"Add a Loki remote (format: name:url:username). Can be specified multiple times")
+		"Add a Loki remote (format: name=<name>,url=<url>,username=<username>). Can be specified multiple times")
 
 	// Legacy single-remote flags (kept for backward compatibility)
 	clusterCmd.PersistentFlags().StringVar(&flagPrometheusURL, "prometheus-url", "", "Prometheus remote write URL (deprecated: use --add-prometheus-remote)")

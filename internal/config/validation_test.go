@@ -353,3 +353,197 @@ func TestTeleportConfig_ValidateNodeAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestAlloyConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      AlloyConfig
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid_config_with_multiple_prometheus_remotes",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
+					{Name: "backup", URL: "http://prom2:9090/api/v1/write", Username: "user2"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_config_with_multiple_loki_remotes",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://loki1:3100/loki/api/v1/push", Username: "user1"},
+					{Name: "backup", URL: "http://loki2:3100/loki/api/v1/push", Username: "user2"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid_duplicate_prometheus_remote_names",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
+					{Name: "primary", URL: "http://prom2:9090/api/v1/write", Username: "user2"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "duplicate name: primary",
+		},
+		{
+			name: "invalid_duplicate_loki_remote_names",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "backup", URL: "http://loki1:3100/loki/api/v1/push", Username: "user1"},
+					{Name: "backup", URL: "http://loki2:3100/loki/api/v1/push", Username: "user2"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "duplicate name: backup",
+		},
+		{
+			name: "valid_same_name_across_prometheus_and_loki",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
+				},
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://loki1:3100/loki/api/v1/push", Username: "user1"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid_prometheus_remote_missing_name",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "name is required",
+		},
+		{
+			name: "invalid_prometheus_remote_missing_url",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "url is required",
+		},
+		{
+			name: "invalid_loki_remote_missing_name",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "", URL: "http://loki1:3100/loki/api/v1/push", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "name is required",
+		},
+		{
+			name: "invalid_loki_remote_missing_url",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "url is required",
+		},
+		{
+			name: "invalid_prometheus_remote_invalid_scheme",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "ftp://prom:9090/api/v1/write", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "URL scheme must be http or https",
+		},
+		{
+			name: "invalid_loki_remote_invalid_scheme",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "javascript:alert('xss')", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "URL scheme must be http or https",
+		},
+		{
+			name: "invalid_prometheus_remote_non_ascii_url",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://прометей:9090/api/v1/write", Username: "user1"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "URL must contain only ASCII characters",
+		},
+		{
+			name: "invalid_prometheus_remote_malicious_username",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user; echo hacked"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid username",
+		},
+		{
+			name: "invalid_loki_remote_malicious_username",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user`whoami`"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid username",
+		},
+		{
+			name: "invalid_cluster_name_with_special_chars",
+			config: AlloyConfig{
+				ClusterName: "test-cluster; echo hacked",
+			},
+			expectError: true,
+			errorMsg:    "invalid cluster name",
+		},
+		{
+			name:        "valid_empty_config",
+			config:      AlloyConfig{},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+
+			if tt.expectError {
+				require.Error(t, err, "Expected validation error")
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				require.NoError(t, err, "Expected no validation error")
+			}
+		})
+	}
+}

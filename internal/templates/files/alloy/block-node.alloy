@@ -44,12 +44,18 @@ loki.source.podlogs "block_node_server" {
     enabled = false
   }
 
+  // Select the PodLogs CRD we created (block-node-podlogs.yaml)
+  // The PodLogs CRD has label app.kubernetes.io/name=block-node-server
   selector {
     match_expression {
       key      = "app.kubernetes.io/name"
       operator = "In"
       values   = ["block-node-server"]
     }
+  }
+
+  // Allow discovering PodLogs in any namespace
+  namespace_selector {
   }
 }
 

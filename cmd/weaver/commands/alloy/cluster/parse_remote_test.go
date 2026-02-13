@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build linux
-
 package cluster
 
 import (
@@ -32,7 +30,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		},
 		{
 			name:  "single remote with http URL and port",
-			flags: []string{"local:http://192.168.1.100:9090/api/v1/write:admin"},
+			flags: []string{"name=local,url=http://192.168.1.100:9090/api/v1/write,username=admin"},
 			expected: []config.AlloyRemoteConfig{
 				{
 					Name:     "local",
@@ -43,7 +41,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		},
 		{
 			name:  "single remote with https URL",
-			flags: []string{"primary:https://prom1.example.com/api/v1/write:user1"},
+			flags: []string{"name=primary,url=https://prom1.example.com/api/v1/write,username=user1"},
 			expected: []config.AlloyRemoteConfig{
 				{
 					Name:     "primary",
@@ -55,8 +53,8 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name: "multiple remotes",
 			flags: []string{
-				"primary:https://prom1.example.com/api/v1/write:user1",
-				"backup:https://prom2.example.com/api/v1/write:user2",
+				"name=primary,url=https://prom1.example.com/api/v1/write,username=user1",
+				"name=backup,url=https://prom2.example.com/api/v1/write,username=user2",
 			},
 			expected: []config.AlloyRemoteConfig{
 				{
@@ -72,8 +70,8 @@ func TestParseRemoteFlags(t *testing.T) {
 			},
 		},
 		{
-			name:  "URL with multiple ports (edge case)",
-			flags: []string{"grafana-cloud:https://logs.grafana.net:443/loki/api/v1/push:12345"},
+			name:  "URL with explicit port",
+			flags: []string{"name=grafana-cloud,url=https://logs.grafana.net:443/loki/api/v1/push,username=12345"},
 			expected: []config.AlloyRemoteConfig{
 				{
 					Name:     "grafana-cloud",
@@ -83,8 +81,8 @@ func TestParseRemoteFlags(t *testing.T) {
 			},
 		},
 		{
-			name:  "empty username is allowed",
-			flags: []string{"local:http://localhost:9090/api/v1/write:"},
+			name:  "without username (optional)",
+			flags: []string{"name=local,url=http://localhost:9090/api/v1/write"},
 			expected: []config.AlloyRemoteConfig{
 				{
 					Name:     "local",
@@ -94,8 +92,8 @@ func TestParseRemoteFlags(t *testing.T) {
 			},
 		},
 		{
-			name:  "whitespace is trimmed",
-			flags: []string{" local : http://localhost:9090/api/v1/write : admin "},
+			name:  "keys in different order",
+			flags: []string{"url=http://localhost:9090/api/v1/write,username=admin,name=local"},
 			expected: []config.AlloyRemoteConfig{
 				{
 					Name:     "local",
@@ -105,28 +103,39 @@ func TestParseRemoteFlags(t *testing.T) {
 			},
 		},
 		{
-			name:        "missing colon - invalid format",
-			flags:       []string{"invalid-no-colon"},
-			expectError: true,
-			errorMsg:    "expected name:url:username",
+			name:  "URL with commas in query parameters",
+			flags: []string{"name=complex,url=http://example.com/api?labels=a,b,c&other=value,username=admin"},
+			expected: []config.AlloyRemoteConfig{
+				{
+					Name:     "complex",
+					URL:      "http://example.com/api?labels=a,b,c&other=value",
+					Username: "admin",
+				},
+			},
 		},
 		{
-			name:        "only one colon - missing username separator",
-			flags:       []string{"name:urlwithoutusername"},
+			name:        "missing name key",
+			flags:       []string{"url=http://localhost:9090/api/v1/write,username=admin"},
 			expectError: true,
-			errorMsg:    "expected name:url:username",
+			errorMsg:    "missing required 'name'",
 		},
 		{
-			name:        "empty name",
-			flags:       []string{":http://localhost:9090:admin"},
+			name:        "missing url key",
+			flags:       []string{"name=local,username=admin"},
 			expectError: true,
-			errorMsg:    "remote name cannot be empty",
+			errorMsg:    "missing required 'url'",
 		},
 		{
-			name:        "empty URL",
-			flags:       []string{"local::admin"},
+			name:        "unknown key is rejected",
+			flags:       []string{"name=local,url=http://localhost:9090,password=secret"},
 			expectError: true,
-			errorMsg:    "remote URL cannot be empty",
+			errorMsg:    "unknown key",
+		},
+		{
+			name:        "missing equals sign",
+			flags:       []string{"name:local,url=http://localhost:9090"},
+			expectError: true,
+			errorMsg:    "invalid key=value pair",
 		},
 	}
 
@@ -157,35 +166,35 @@ func TestParseRemoteFlags_URLPatterns(t *testing.T) {
 	}{
 		{
 			name:     "localhost with port",
-			input:    "dev:http://localhost:9090/api/v1/write:testuser",
+			input:    "name=dev,url=http://localhost:9090/api/v1/write,username=testuser",
 			wantName: "dev",
 			wantURL:  "http://localhost:9090/api/v1/write",
 			wantUser: "testuser",
 		},
 		{
 			name:     "IP address with port",
-			input:    "prod:http://10.0.0.1:9090/api/v1/write:admin",
+			input:    "name=prod,url=http://10.0.0.1:9090/api/v1/write,username=admin",
 			wantName: "prod",
 			wantURL:  "http://10.0.0.1:9090/api/v1/write",
 			wantUser: "admin",
 		},
 		{
 			name:     "HTTPS without explicit port",
-			input:    "cloud:https://metrics.example.com/api/v1/write:clouduser",
+			input:    "name=cloud,url=https://metrics.example.com/api/v1/write,username=clouduser",
 			wantName: "cloud",
 			wantURL:  "https://metrics.example.com/api/v1/write",
 			wantUser: "clouduser",
 		},
 		{
 			name:     "Loki push endpoint",
-			input:    "loki:http://loki.monitoring.svc:3100/loki/api/v1/push:lokiuser",
+			input:    "name=loki,url=http://loki.monitoring.svc:3100/loki/api/v1/push,username=lokiuser",
 			wantName: "loki",
 			wantURL:  "http://loki.monitoring.svc:3100/loki/api/v1/push",
 			wantUser: "lokiuser",
 		},
 		{
 			name:     "Grafana Cloud style",
-			input:    "grafana:https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push:123456",
+			input:    "name=grafana,url=https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push,username=123456",
 			wantName: "grafana",
 			wantURL:  "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push",
 			wantUser: "123456",

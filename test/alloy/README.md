@@ -78,6 +78,7 @@ sudo solo-provisioner alloy cluster install \
 ### Step 4: Configure Vault Connection
 
 Now that ESO is installed, configure the ClusterSecretStore to connect to Vault:
+
 ```bash
 task vault:setup-secret-store
 ```
@@ -93,13 +94,13 @@ NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="
 echo "Node IP: $NODE_IP"
 
 sudo solo-provisioner alloy cluster install \
-  --add-prometheus-remote=local:http://$NODE_IP:9090/api/v1/write:admin \
-  --add-loki-remote=local:http://$NODE_IP:3100/loki/api/v1/push:admin \
+  --add-prometheus-remote=name=local,url=http://$NODE_IP:9090/api/v1/write,username=admin \
+  --add-loki-remote=name=local,url=http://$NODE_IP:3100/loki/api/v1/push,username=admin \
   --cluster-name=vm-cluster \
   --monitor-block-node
 ```
 
-> **Note:** The `--add-*-remote` flags use the format `name:url:username`. The password is fetched from Vault at path `grafana/alloy/{clusterName}/{prometheus|loki}/{remoteName}`.
+> **Note:** The `--add-*-remote` flags use the format `name=<name>,url=<url>,username=<username>`. The password is fetched from Vault at path `grafana/alloy/{clusterName}/{prometheus|loki}/{remoteName}`.
 
 Wait for pods to be ready:
 ```bash
@@ -207,13 +208,10 @@ up{cluster="vm-cluster", job=~".*block-node.*"}
 **Loki queries:**
 ```logql
 # Block Node pod logs
-{cluster="vm-cluster", pod=~"block-node-server.*"}
-
-# Filter Block Node logs by container
-{cluster="vm-cluster", pod=~"block-node-server.*", container="block-node-server"}
+{cluster="vm-cluster", job="block-node/block-node-server"}
 
 # Search for errors in Block Node logs
-{cluster="vm-cluster", pod=~"block-node-server.*"} |= "error"
+{cluster="vm-cluster", job="block-node/block-node-server"} |= "error"
 ```
 
 #### Remotes Module (remotes.alloy) - if remotes are configured
@@ -262,8 +260,8 @@ task vm:alloy:clean
 - ✅ Alloy self-monitoring
 
 **When `--monitor-block-node` flag is used:**
-- ✅ Block Node application metrics (via ServiceMonitor)
-- ✅ Block Node pod logs
+- ✅ Block Node application metrics (via ServiceMonitor - auto-created by solo-provisioner)
+- ✅ Block Node pod logs (via PodLogs CRD - auto-created by solo-provisioner)
 - ✅ Block Node container metrics (CPU, memory, disk via cAdvisor)
 
 ---
@@ -277,10 +275,10 @@ You can configure multiple Prometheus and Loki remote endpoints for redundancy o
 ```bash
 sudo solo-provisioner alloy cluster install \
   --cluster-name=vm-cluster \
-  --add-prometheus-remote=primary:http://prom1:9090/api/v1/write:user1 \
-  --add-prometheus-remote=backup:http://prom2:9090/api/v1/write:user2 \
-  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1 \
-  --add-loki-remote=grafana-cloud:https://logs.grafana.net/loki/api/v1/push:12345 \
+  --add-prometheus-remote=name=primary,url=http://prom1:9090/api/v1/write,username=user1 \
+  --add-prometheus-remote=name=backup,url=http://prom2:9090/api/v1/write,username=user2 \
+  --add-loki-remote=name=primary,url=http://loki1:3100/loki/api/v1/push,username=user1 \
+  --add-loki-remote=name=grafana-cloud,url=https://logs.grafana.net/loki/api/v1/push,username=12345 \
   --monitor-block-node
 ```
 
@@ -297,9 +295,9 @@ The `alloy cluster install` command is **declarative** - it replaces the entire 
 # If you had 'primary', and want to add 'backup':
 sudo solo-provisioner alloy cluster install \
   --cluster-name=vm-cluster \
-  --add-prometheus-remote=primary:http://prom1:9090/api/v1/write:user1 \
-  --add-prometheus-remote=backup:http://prom2:9090/api/v1/write:user2 \
-  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1
+  --add-prometheus-remote=name=primary,url=http://prom1:9090/api/v1/write,username=user1 \
+  --add-prometheus-remote=name=backup,url=http://prom2:9090/api/v1/write,username=user2 \
+  --add-loki-remote=name=primary,url=http://loki1:3100/loki/api/v1/push,username=user1
 ```
 
 **Remove a remote:** Simply omit it from the command:
@@ -307,8 +305,8 @@ sudo solo-provisioner alloy cluster install \
 # Remove 'backup', keep only 'primary':
 sudo solo-provisioner alloy cluster install \
   --cluster-name=vm-cluster \
-  --add-prometheus-remote=primary:http://prom1:9090/api/v1/write:user1 \
-  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1
+  --add-prometheus-remote=name=primary,url=http://prom1:9090/api/v1/write,username=user1 \
+  --add-loki-remote=name=primary,url=http://loki1:3100/loki/api/v1/push,username=user1
 ```
 
 **Modify a remote URL:** Specify the same name with the new URL:
@@ -316,8 +314,8 @@ sudo solo-provisioner alloy cluster install \
 # Change 'primary' Prometheus URL:
 sudo solo-provisioner alloy cluster install \
   --cluster-name=vm-cluster \
-  --add-prometheus-remote=primary:http://new-prom:9090/api/v1/write:user1 \
-  --add-loki-remote=primary:http://loki1:3100/loki/api/v1/push:user1
+  --add-prometheus-remote=name=primary,url=http://new-prom:9090/api/v1/write,username=user1 \
+  --add-loki-remote=name=primary,url=http://loki1:3100/loki/api/v1/push,username=user1
 ```
 
 **Remove all remotes (local-only mode):**
@@ -335,15 +333,17 @@ The ConfigMap contains a single `config.alloy` key with all modules concatenated
 
 ```
 internal/templates/files/alloy/
-├── agent-metrics.alloy  # Alloy self-monitoring
-├── core.alloy           # Basic Alloy setup, logging config
-├── kubelet.alloy        # Kubelet/cAdvisor container metrics
-├── node-exporter.alloy  # Host metrics via ServiceMonitor
-├── remotes.alloy        # Prometheus/Loki remote write (if configured)
-├── syslog.alloy         # System logs via journald
-├── block-node.alloy     # Block Node monitoring (if --monitor-block-node)
-├── configmap.yaml       # ConfigMap manifest template
-└── external-secret.yaml # ExternalSecret manifest template
+├── agent-metrics.alloy          # Alloy self-monitoring
+├── core.alloy                   # Basic Alloy setup, logging config
+├── kubelet.alloy                # Kubelet/cAdvisor container metrics
+├── node-exporter.alloy          # Host metrics via ServiceMonitor
+├── remotes.alloy                # Prometheus/Loki remote write (if configured)
+├── syslog.alloy                 # System logs via journald
+├── block-node.alloy             # Block Node monitoring (if --monitor-block-node)
+├── block-node-servicemonitor.yaml  # ServiceMonitor for Block Node metrics
+├── block-node-podlogs.yaml      # PodLogs for Block Node logs
+├── configmap.yaml               # ConfigMap manifest template
+└── external-secret.yaml         # ExternalSecret manifest template
 
 grafana-alloy-cm ConfigMap:
 └── config.alloy         # Concatenated modules (used by Alloy)
@@ -439,4 +439,3 @@ spec:
 | `prometheus.yml` | Prometheus configuration |
 | `loki-config.yml` | Loki configuration |
 | `grafana-datasources.yml` | Grafana datasources |
-
