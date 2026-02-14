@@ -80,7 +80,7 @@ func (fd *Downloader) validateRedirect(req *http.Request, via []*http.Request) e
 	}
 
 	// Validate the redirect URL against the allowlist
-	if err := sanity.ValidateURL(req.URL.String(), fd.allowedDomains); err != nil {
+	if err := sanity.ValidateURL(req.URL.String(), &sanity.ValidateURLOptions{AllowedDomains: fd.allowedDomains}); err != nil {
 		return fmt.Errorf("redirect to untrusted domain: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func NewDownloader(opts ...DownloaderOption) *Downloader {
 // Download downloads a file from the given URL to the specified destination
 func (fd *Downloader) Download(url, destination string) error {
 	// Validate URL before attempting download
-	if err := sanity.ValidateURL(url, fd.allowedDomains); err != nil {
+	if err := sanity.ValidateURL(url, &sanity.ValidateURLOptions{AllowedDomains: fd.allowedDomains}); err != nil {
 		return NewInvalidURLError(err, url)
 	}
 

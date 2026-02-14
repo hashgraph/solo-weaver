@@ -1,0 +1,13 @@
+// CORE CONFIG
+// This file contains the core Alloy configuration that is always required.
+
+// Discovery Configuration
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+

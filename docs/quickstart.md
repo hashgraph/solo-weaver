@@ -328,34 +328,117 @@ sudo solo-provisioner teleport cluster install \
 
 Manage Grafana Alloy observability stack for metrics and logs.
 
+#### Prerequisites
+
+When installing Alloy with remote endpoints (`--add-prometheus-remote` or `--add-loki-remote`), ensure the following prerequisites are met:
+
+| Prerequisite | Description |
+|--------------|-------------|
+| **Running Kubernetes Cluster** | A cluster must be set up via `solo-provisioner block node install` or `solo-provisioner kube cluster install` |
+| **ClusterSecretStore** | A `ClusterSecretStore` named `vault-secret-store` (or custom name via `--cluster-secret-store`) must exist and be configured to connect to Vault |
+| **Reachable Vault** | The Vault server referenced in the ClusterSecretStore must be reachable |
+| **Reachable Remote Endpoints** | Prometheus/Loki URLs must be reachable from the cluster |
+| **Vault Secrets** | Secrets must exist at `grafana/alloy/{clusterName}/{prometheus\|loki}/{remoteName}` with a `password` key |
+| **Block Node (optional)** | If using `--monitor-block-node`, the block node must be installed first |
+
+> **Note**: Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs in "local-only" mode and does not require Vault secrets or a ClusterSecretStore.
+
 #### Install Alloy Stack
 
 ```bash
-# Basic installation
-sudo solo-provisioner alloy cluster install
-
-# Full configuration with monitoring
+# Basic installation with single remote (legacy mode)
 sudo solo-provisioner alloy cluster install \
-  --monitor-block-node \
   --cluster-name=mainnet-block-01 \
   --prometheus-url=https://prometheus.example.com/api/v1/write \
   --prometheus-username=metrics-user \
   --loki-url=https://loki.example.com/loki/api/v1/push \
   --loki-username=logs-user
+
+# Multiple remotes using repeatable flags (recommended)
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=mainnet-block-01 \
+  --add-prometheus-remote=name=primary,url=https://prom1.example.com/api/v1/write,username=user1 \
+  --add-prometheus-remote=name=backup,url=https://prom2.example.com/api/v1/write,username=user2 \
+  --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1 \
+  --add-loki-remote=name=backup,url=https://loki2.example.com/loki/api/v1/push,username=user2 \
+  --monitor-block-node
 ```
 
 **Available Flags**:
 
 | Flag | Description |
 |------|-------------|
-| `--monitor-block-node` | Enable Block Node specific monitoring |
 | `--cluster-name` | Cluster name for metrics/logs labels |
-| `--prometheus-url` | Prometheus remote write URL |
-| `--prometheus-username` | Prometheus authentication username |
-| `--loki-url` | Loki remote write URL |
-| `--loki-username` | Loki authentication username |
+| `--monitor-block-node` | Enable Block Node specific monitoring |
+| `--cluster-secret-store` | Name of the ClusterSecretStore for Vault access (default: `vault-secret-store`) |
+| `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
+| `--add-loki-remote` | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
+| `--prometheus-url` | Prometheus remote write URL *(deprecated: use `--add-prometheus-remote`)* |
+| `--prometheus-username` | Prometheus authentication username *(deprecated)* |
+| `--loki-url` | Loki remote write URL *(deprecated: use `--add-loki-remote`)* |
+| `--loki-username` | Loki authentication username *(deprecated)* |
 
 > **Note**: Passwords are managed via Vault and External Secrets Operator, not via CLI flags.
+
+#### Multiple Remote Endpoints
+
+The `--add-prometheus-remote` and `--add-loki-remote` flags use the format `name=<name>,url=<url>,username=<username>`:
+- **name**: Unique identifier for the remote (e.g., `primary`, `backup`, `grafana-cloud`)
+- **url**: The remote write endpoint URL
+- **username**: Authentication username (password is fetched from Vault)
+
+**Vault Secret Paths** (for multiple remotes):
+- Prometheus: `grafana/alloy/{clusterName}/prometheus/{remoteName}` → property: `password`
+- Loki: `grafana/alloy/{clusterName}/loki/{remoteName}` → property: `password`
+
+Example for `mainnet-block-01` cluster with `primary` and `backup` remotes:
+```
+grafana/alloy/mainnet-block-01/prometheus/primary
+grafana/alloy/mainnet-block-01/prometheus/backup
+grafana/alloy/mainnet-block-01/loki/primary
+grafana/alloy/mainnet-block-01/loki/backup
+```
+
+#### Managing Remote Endpoints
+
+The `alloy cluster install` command is **declarative** - it replaces the entire remote configuration with what you specify. To manage endpoints:
+
+**Add a new remote:** Include all existing remotes plus the new one:
+```bash
+# If you had 'primary', and want to add 'backup':
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=mainnet-block-01 \
+  --add-prometheus-remote=name=primary,url=https://prom1.example.com/api/v1/write,username=user1 \
+  --add-prometheus-remote=name=backup,url=https://prom2.example.com/api/v1/write,username=user2 \
+  --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1
+```
+
+**Remove a remote:** Simply omit it from the command:
+```bash
+# Remove 'backup', keep only 'primary':
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=mainnet-block-01 \
+  --add-prometheus-remote=name=primary,url=https://prom1.example.com/api/v1/write,username=user1 \
+  --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1
+```
+
+**Modify a remote URL:** Specify the same name with the new URL:
+```bash
+# Change 'primary' Prometheus URL:
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=mainnet-block-01 \
+  --add-prometheus-remote=name=primary,url=https://new-prom.example.com/api/v1/write,username=user1 \
+  --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1
+```
+
+**Remove all remotes (local-only mode):**
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=mainnet-block-01
+```
+
+> **Important:** Each run replaces the previous remote configuration. Always specify all the remotes you want to keep.
+
 
 #### Uninstall Alloy Stack
 

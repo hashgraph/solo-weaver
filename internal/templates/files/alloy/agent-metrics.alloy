@@ -1,0 +1,41 @@
+// ALLOY AGENT METRICS CONFIG
+// This file contains Alloy self-monitoring configuration.
+
+prometheus.exporter.self "alloy" { }
+
+discovery.relabel "alloy" {
+  targets = prometheus.exporter.self.alloy.targets
+
+  rule {
+    target_label = "latitude_cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+
+  rule {
+    action = "replace"
+    source_labels = ["job"]
+    target_label = "job"
+    replacement = "alloy"
+  }
+}
+
+prometheus.scrape "alloy" {
+  targets = discovery.relabel.alloy.output
+  forward_to = [prometheus.relabel.alloy.receiver]
+
+  scrape_interval = "10s"
+
+  clustering {
+    enabled = false
+  }
+}
+
+prometheus.relabel "alloy" {
+  forward_to = [{{.PrometheusForwardTo}}]
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+

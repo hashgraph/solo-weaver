@@ -382,3 +382,114 @@ func TestWaitOptions_String(t *testing.T) {
 		})
 	}
 }
+
+func TestGetResourceNestedString(t *testing.T) {
+	tests := []struct {
+		name      string
+		obj       map[string]interface{}
+		fields    []string
+		wantValue string
+		wantFound bool
+		wantErr   bool
+	}{
+		{
+			name: "simple nested string",
+			obj: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"provider": map[string]interface{}{
+						"vault": map[string]interface{}{
+							"server": "https://vault.example.com:8200",
+						},
+					},
+				},
+			},
+			fields:    []string{"spec", "provider", "vault", "server"},
+			wantValue: "https://vault.example.com:8200",
+			wantFound: true,
+		},
+		{
+			name: "top level field",
+			obj: map[string]interface{}{
+				"name": "test-resource",
+			},
+			fields:    []string{"name"},
+			wantValue: "test-resource",
+			wantFound: true,
+		},
+		{
+			name: "missing field returns empty",
+			obj: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"provider": map[string]interface{}{},
+				},
+			},
+			fields:    []string{"spec", "provider", "vault", "server"},
+			wantValue: "",
+			wantFound: false,
+		},
+		{
+			name: "missing intermediate path returns empty",
+			obj: map[string]interface{}{
+				"spec": map[string]interface{}{},
+			},
+			fields:    []string{"spec", "provider", "vault", "server"},
+			wantValue: "",
+			wantFound: false,
+		},
+		{
+			name:      "empty object returns empty",
+			obj:       map[string]interface{}{},
+			fields:    []string{"spec", "provider"},
+			wantValue: "",
+			wantFound: false,
+		},
+		{
+			name: "non-string value returns error",
+			obj: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"count": 42,
+				},
+			},
+			fields:  []string{"spec", "count"},
+			wantErr: true,
+		},
+		{
+			name: "deeply nested value",
+			obj: map[string]interface{}{
+				"a": map[string]interface{}{
+					"b": map[string]interface{}{
+						"c": map[string]interface{}{
+							"d": map[string]interface{}{
+								"e": "deep-value",
+							},
+						},
+					},
+				},
+			},
+			fields:    []string{"a", "b", "c", "d", "e"},
+			wantValue: "deep-value",
+			wantFound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, found, err := unstructured.NestedString(tt.obj, tt.fields...)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if found != tt.wantFound {
+				t.Errorf("found = %v, want %v", found, tt.wantFound)
+			}
+			if value != tt.wantValue {
+				t.Errorf("value = %q, want %q", value, tt.wantValue)
+			}
+		})
+	}
+}

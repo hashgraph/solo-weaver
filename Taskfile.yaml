@@ -236,17 +236,42 @@ tasks:
     desc: "Run integration tests with verbose console output. Use TEST_NAME to run a specific test, e.g., task test:integration:verbose TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'"
     cmds:
       - |
-        set +e  # Don't exit on error
+        set -e  # Fail fast - stop on first error
         start=$(date +%s)
         
-        # run tests
         {{if .TEST_NAME}}
+        # Run specific test
         echo "Running integration test '{{.TEST_NAME}}'..."
-        go test -p 1 -v -tags='integration' -run {{.TEST_NAME}} ./internal/... ./pkg/... ./cmd/... -timeout 60m
+        go test -p 1 -v -tags='integration,cluster_setup,require_cluster' -run {{.TEST_NAME}} ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
         {{else}}
-        go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m
+        # Phase 1: Setup cluster
+        echo ""
+        echo "=============================================="
+        echo "Phase 1: Setting up cluster (cluster_setup)"
+        echo "=============================================="
+        go test -p 1 -v -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/... -timeout 60m -failfast
+        
+        # Phase 2: Run tests that require a cluster
+        echo ""
+        echo "=============================================="
+        echo "Phase 2: Running cluster-dependent tests (require_cluster)"
+        echo "=============================================="
+        go test -p 1 -v -tags='require_cluster' ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+        
+        # Phase 3: Run general integration tests
+        echo ""
+        echo "=============================================="
+        echo "Phase 3: Running general integration tests"
+        echo "=============================================="
+        go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+        
+        # Phase 4: Teardown cluster
+        echo ""
+        echo "=============================================="
+        echo "Phase 4: Tearing down cluster (cluster_setup)"
+        echo "=============================================="
+        go test -p 1 -v -tags='cluster_setup' ./internal/workflows/... -timeout 60m -failfast
         {{end}}
-        status=$?
         
         end=$(date +%s)
         elapsed=$(( end - start ))
@@ -256,15 +281,13 @@ tasks:
         secs=$(( elapsed % 60 ))
         
         {{if .TEST_NAME}}
-        printf "\n=== Integration test '{{.TEST_NAME}}' finished in %02d:%02d:%02d (status %d) ===\n" \
-          "$hrs" "$mins" "$secs" "$status"
+        printf "\n=== Integration test '{{.TEST_NAME}}' finished in %02d:%02d:%02d ===\n" \
+          "$hrs" "$mins" "$secs"
         {{else}}
-        printf "\n=== Integration tests finished in %02d:%02d:%02d (status %d) ===\n" \
-          "$hrs" "$mins" "$secs" "$status"
+        printf "\n=== Integration tests finished in %02d:%02d:%02d ===\n" \
+          "$hrs" "$mins" "$secs"
         {{end}}
-        
-        exit $status
-  
+
   test:coverage:
     desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
     vars:
@@ -1273,13 +1296,10 @@ tasks:
         if ! kubectl get crd clustersecretstores.external-secrets.io &>/dev/null; then
           echo "❌ Error: External Secrets Operator CRDs not found!"
           echo ""
-          echo "External Secrets Operator must be installed first."
+          echo "Install Alloy first (minimal mode installs ESO without requiring secrets):"
+          echo "  sudo solo-provisioner alloy cluster install --cluster-name=vm-cluster"
           echo ""
-          echo "To install ESO, run:"
-          echo "  weaver block node install --profile=local --config=/mnt/solo-weaver/test/config/config.yaml"
-          echo ""
-          echo "Or check if ESO pods are running:"
-          echo "  kubectl get pods -n external-secrets"
+          echo "Then run this task again to configure Vault connection."
           exit 1
         fi
         echo "✓ External Secrets Operator CRDs found"
@@ -1345,11 +1365,8 @@ tasks:
         echo "   Vault URL: http://$NODE_IP:8200"
         echo "   ESO User:  eso-user"
         echo ""
-        echo "📝 Next step: Install Alloy"
-        echo "   sudo weaver alloy cluster install \\"
-        echo "     --prometheus-url=http://$NODE_IP:9090/api/v1/write \\"
-        echo "     --loki-url=http://$NODE_IP:3100/loki/api/v1/push \\"
-        echo "     --cluster-name=vm-cluster"
+        echo "📝 Secrets should now sync automatically."
+        echo "   Check Alloy pods: kubectl get pods -n grafana-alloy"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   alloy:start:

@@ -1,0 +1,30 @@
+// NODE EXPORTER CONFIG
+// This file contains Prometheus ServiceMonitor configuration for Node Exporter.
+
+prometheus.operator.servicemonitors "node_exporter" {
+  namespaces = ["node-exporter"]
+  forward_to = [{{.PrometheusForwardTo}}]
+
+  clustering {
+    enabled = false
+  }
+
+  scrape {
+    default_scrape_interval = "15s"
+    default_scrape_timeout  = "5s"
+  }
+
+  selector {
+    match_expression {
+      key      = "app.kubernetes.io/name"
+      operator = "In"
+      values   = ["node-exporter"]
+    }
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement  = "{{.ClusterName}}"
+  }
+}
+

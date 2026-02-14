@@ -10,11 +10,18 @@ import (
 var (
 	// Alloy configuration flags
 	flagMonitorBlockNode   bool
+	flagClusterName        string
+	flagClusterSecretStore string
+
+	// Legacy single-remote flags (deprecated, use --add-prometheus-remote and --add-loki-remote instead)
 	flagPrometheusURL      string
 	flagPrometheusUsername string
 	flagLokiURL            string
 	flagLokiUsername       string
-	flagClusterName        string
+
+	// Multi-remote flags (repeatable)
+	flagPrometheusRemotes []string
+	flagLokiRemotes       []string
 
 	clusterCmd = &cobra.Command{
 		Use:   "cluster",
@@ -25,13 +32,22 @@ var (
 )
 
 func init() {
-	// Alloy observability configuration flags
-	clusterCmd.PersistentFlags().BoolVar(&flagMonitorBlockNode, "monitor-block-node", false, "Enable Block Node monitoring in Alloy")
-	clusterCmd.PersistentFlags().StringVar(&flagPrometheusURL, "prometheus-url", "", "Prometheus remote write URL")
-	clusterCmd.PersistentFlags().StringVar(&flagPrometheusUsername, "prometheus-username", "", "Prometheus username (passwords managed via Vault)")
-	clusterCmd.PersistentFlags().StringVar(&flagLokiURL, "loki-url", "", "Loki remote write URL")
-	clusterCmd.PersistentFlags().StringVar(&flagLokiUsername, "loki-username", "", "Loki username (passwords managed via Vault)")
+	// Core configuration flags
 	clusterCmd.PersistentFlags().StringVar(&flagClusterName, "cluster-name", "", "Cluster name for Alloy metrics/logs labels")
+	clusterCmd.PersistentFlags().BoolVar(&flagMonitorBlockNode, "monitor-block-node", false, "Enable Block Node monitoring in Alloy")
+	clusterCmd.PersistentFlags().StringVar(&flagClusterSecretStore, "cluster-secret-store", "vault-secret-store", "Name of the ClusterSecretStore resource for External Secrets Operator")
+
+	// Multi-remote flags (repeatable)
+	clusterCmd.PersistentFlags().StringArrayVar(&flagPrometheusRemotes, "add-prometheus-remote", nil,
+		"Add a Prometheus remote (format: name=<name>,url=<url>,username=<username>). Can be specified multiple times")
+	clusterCmd.PersistentFlags().StringArrayVar(&flagLokiRemotes, "add-loki-remote", nil,
+		"Add a Loki remote (format: name=<name>,url=<url>,username=<username>). Can be specified multiple times")
+
+	// Legacy single-remote flags (kept for backward compatibility)
+	clusterCmd.PersistentFlags().StringVar(&flagPrometheusURL, "prometheus-url", "", "Prometheus remote write URL (deprecated: use --add-prometheus-remote)")
+	clusterCmd.PersistentFlags().StringVar(&flagPrometheusUsername, "prometheus-username", "", "Prometheus username (deprecated: use --add-prometheus-remote)")
+	clusterCmd.PersistentFlags().StringVar(&flagLokiURL, "loki-url", "", "Loki remote write URL (deprecated: use --add-loki-remote)")
+	clusterCmd.PersistentFlags().StringVar(&flagLokiUsername, "loki-username", "", "Loki username (deprecated: use --add-loki-remote)")
 
 	clusterCmd.AddCommand(installCmd)
 	clusterCmd.AddCommand(uninstallCmd)

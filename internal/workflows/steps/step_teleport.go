@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -240,14 +241,14 @@ func CreateTeleportNamespace() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Create namespace manifest
+			// Create namespace manifest using template
 			namespaceManifestPath := path.Join(core.Paths().TempDir, "teleport-namespace.yaml")
-			namespaceManifest := `---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ` + TeleportNamespace + `
-`
+			namespaceManifest, err := templates.Render("files/teleport/namespace.yaml", map[string]string{
+				"Namespace": TeleportNamespace,
+			})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
 			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), 0644)
 			if err != nil {

@@ -7,6 +7,7 @@ package software
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
@@ -295,10 +296,7 @@ func Test_TeleportNodeAgentInstaller_StateManagement(t *testing.T) {
 
 // getTestArch returns the current architecture for test assertions
 func getTestArch() string {
-	arch := os.Getenv("GOARCH")
-	if arch == "" {
-		arch = "amd64" // Default for most CI environments
-	}
+	arch := runtime.GOARCH
 	// Map Go arch names to teleport archive naming convention
 	switch arch {
 	case "amd64":

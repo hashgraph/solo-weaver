@@ -56,13 +56,24 @@ vault_cmd secrets enable -version=2 -path=secret kv 2>/dev/null || echo "  KV en
 
 # Create Alloy secrets for local development
 echo "Creating Alloy secrets..."
+
+# Create secrets for named remotes (used with --add-prometheus-remote=local:... and --add-loki-remote=local:...)
+vault_cmd kv put secret/grafana/alloy/vm-cluster/prometheus/local \
+  password="local-dev" \
+  description="Prometheus credentials for 'local' remote"
+
+vault_cmd kv put secret/grafana/alloy/vm-cluster/loki/local \
+  password="local-dev" \
+  description="Loki credentials for 'local' remote"
+
+# Also create legacy single-remote secrets for backward compatibility
 vault_cmd kv put secret/grafana/alloy/vm-cluster/prometheus \
   password="local-dev" \
-  description="Prometheus credentials for local development"
+  description="Prometheus credentials for legacy single remote"
 
 vault_cmd kv put secret/grafana/alloy/vm-cluster/loki \
   password="local-dev" \
-  description="Loki credentials for local development"
+  description="Loki credentials for legacy single remote"
 
 # Enable userpass auth
 echo "Enabling userpass authentication..."
@@ -104,7 +115,9 @@ echo "ESO User:  eso-user"
 echo "ESO Pass:  eso-password"
 echo ""
 echo "Secrets created:"
-echo "  - secret/grafana/alloy/vm-cluster/prometheus (password: local-dev)"
-echo "  - secret/grafana/alloy/vm-cluster/loki (password: local-dev)"
+echo "  - secret/grafana/alloy/vm-cluster/prometheus/local (password: local-dev)"
+echo "  - secret/grafana/alloy/vm-cluster/loki/local (password: local-dev)"
+echo "  - secret/grafana/alloy/vm-cluster/prometheus (password: local-dev) [legacy]"
+echo "  - secret/grafana/alloy/vm-cluster/loki (password: local-dev) [legacy]"
 echo ""
 

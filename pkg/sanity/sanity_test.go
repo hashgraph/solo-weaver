@@ -1220,7 +1220,7 @@ func TestSanity_ValidateURL(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
-			err := ValidateURL(tc.url, AllowedDomains())
+			err := ValidateURL(tc.url, &ValidateURLOptions{AllowedDomains: AllowedDomains()})
 			if tc.shouldErr {
 				req.Error(err, "expected error for URL: %s", tc.url)
 				if tc.errMsg != "" {
