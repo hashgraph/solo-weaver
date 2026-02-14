@@ -9,8 +9,9 @@ import (
 
 var (
 	// Alloy configuration flags
-	flagMonitorBlockNode bool
-	flagClusterName      string
+	flagMonitorBlockNode   bool
+	flagClusterName        string
+	flagClusterSecretStore string
 
 	// Legacy single-remote flags (deprecated, use --add-prometheus-remote and --add-loki-remote instead)
 	flagPrometheusURL      string
@@ -34,6 +35,7 @@ func init() {
 	// Core configuration flags
 	clusterCmd.PersistentFlags().StringVar(&flagClusterName, "cluster-name", "", "Cluster name for Alloy metrics/logs labels")
 	clusterCmd.PersistentFlags().BoolVar(&flagMonitorBlockNode, "monitor-block-node", false, "Enable Block Node monitoring in Alloy")
+	clusterCmd.PersistentFlags().StringVar(&flagClusterSecretStore, "cluster-secret-store", "vault-secret-store", "Name of the ClusterSecretStore resource for External Secrets Operator")
 
 	// Multi-remote flags (repeatable)
 	clusterCmd.PersistentFlags().StringArrayVar(&flagPrometheusRemotes, "add-prometheus-remote", nil,

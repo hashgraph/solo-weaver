@@ -57,10 +57,11 @@ Examples:
 
 		// Apply Alloy configuration overrides
 		alloyOverrides := config.AlloyConfig{
-			MonitorBlockNode:  flagMonitorBlockNode,
-			ClusterName:       flagClusterName,
-			PrometheusRemotes: prometheusRemotes,
-			LokiRemotes:       lokiRemotes,
+			MonitorBlockNode:       flagMonitorBlockNode,
+			ClusterName:            flagClusterName,
+			ClusterSecretStoreName: flagClusterSecretStore,
+			PrometheusRemotes:      prometheusRemotes,
+			LokiRemotes:            lokiRemotes,
 			// Legacy single-remote flags (for backward compatibility)
 			PrometheusURL:      flagPrometheusURL,
 			PrometheusUsername: flagPrometheusUsername,

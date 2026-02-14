@@ -328,6 +328,21 @@ sudo solo-provisioner teleport cluster install \
 
 Manage Grafana Alloy observability stack for metrics and logs.
 
+#### Prerequisites
+
+When installing Alloy with remote endpoints (`--add-prometheus-remote` or `--add-loki-remote`), ensure the following prerequisites are met:
+
+| Prerequisite | Description |
+|--------------|-------------|
+| **Running Kubernetes Cluster** | A cluster must be set up via `solo-provisioner block node install` or `solo-provisioner kube cluster install` |
+| **ClusterSecretStore** | A `ClusterSecretStore` named `vault-secret-store` (or custom name via `--cluster-secret-store`) must exist and be configured to connect to Vault |
+| **Reachable Vault** | The Vault server referenced in the ClusterSecretStore must be reachable |
+| **Reachable Remote Endpoints** | Prometheus/Loki URLs must be reachable from the cluster |
+| **Vault Secrets** | Secrets must exist at `grafana/alloy/{clusterName}/{prometheus\|loki}/{remoteName}` with a `password` key |
+| **Block Node (optional)** | If using `--monitor-block-node`, the block node must be installed first |
+
+> **Note**: Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs in "local-only" mode and does not require Vault secrets or a ClusterSecretStore.
+
 #### Install Alloy Stack
 
 ```bash
@@ -355,6 +370,7 @@ sudo solo-provisioner alloy cluster install \
 |------|-------------|
 | `--cluster-name` | Cluster name for metrics/logs labels |
 | `--monitor-block-node` | Enable Block Node specific monitoring |
+| `--cluster-secret-store` | Name of the ClusterSecretStore for Vault access (default: `vault-secret-store`) |
 | `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
 | `--add-loki-remote` | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
 | `--prometheus-url` | Prometheus remote write URL *(deprecated: use `--add-prometheus-remote`)* |

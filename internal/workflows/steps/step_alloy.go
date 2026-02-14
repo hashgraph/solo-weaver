@@ -16,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -24,6 +25,7 @@ import (
 
 const (
 	SetupAlloyStepId           = "setup-alloy"
+	PreCheckAlloyStepId        = "precheck-alloy"
 	InstallAlloyStepId         = "install-alloy"
 	InstallNodeExporterStepId  = "install-node-exporter"
 	DeployAlloyConfigStepId    = "deploy-alloy-config"
@@ -37,6 +39,7 @@ const (
 // This includes Prometheus Operator CRDs and Grafana Alloy.
 func SetupAlloyStack() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-alloy-stack").Steps(
+		preCheckAlloy(),               // Verify prerequisites (ClusterSecretStore, remote endpoints)
 		SetupExternalSecrets(),        // External Secrets Operator (general-purpose secret management for the cluster)
 		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
 		SetupAlloy(),                  // Install Alloy with Node Exporter
@@ -70,6 +73,119 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Alloy observability stack torn down successfully")
+		})
+}
+
+// preCheckAlloy verifies that all prerequisites are in place before installing Alloy.
+// This includes checking for ClusterSecretStore existence and verifying
+// remote endpoint reachability.
+func preCheckAlloy() automa.Builder {
+	return automa.NewStepBuilder().WithId(PreCheckAlloyStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			cfg := config.Get().Alloy
+			l := logx.As()
+
+			meta := map[string]string{}
+
+			// Get the ClusterSecretStore name (from config or default)
+			clusterSecretStoreName := cfg.ClusterSecretStoreName
+			if clusterSecretStoreName == "" {
+				clusterSecretStoreName = alloy.ClusterSecretStoreName
+			}
+
+			// Check if any remotes are configured (require ClusterSecretStore only if remotes exist)
+			hasRemotes := len(cfg.PrometheusRemotes) > 0 || len(cfg.LokiRemotes) > 0 ||
+				cfg.PrometheusURL != "" || cfg.LokiURL != ""
+
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					fmt.Errorf("failed to create kubernetes client: %w", err)))
+			}
+
+			if hasRemotes {
+				// Verify ClusterSecretStore exists which is required to fetch credentials for remotes
+				exists, err := k.ResourceExists(ctx, "external-secrets.io/v1beta1", "ClusterSecretStore", "", clusterSecretStoreName)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						fmt.Errorf("failed to check ClusterSecretStore existence: %w", err)))
+				} else if !exists {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						fmt.Errorf("ClusterSecretStore %q not found; please create it first (e.g., run 'task vault:setup-secret-store') or specify a different name with --cluster-secret-store", clusterSecretStoreName)))
+				} else {
+					l.Info().Str("name", clusterSecretStoreName).Msg("ClusterSecretStore found")
+					meta["clusterSecretStore"] = clusterSecretStoreName
+
+					// Check if Vault URL from ClusterSecretStore is reachable
+					vaultURL, err := k.GetResourceNestedString(ctx, "external-secrets.io/v1beta1", "ClusterSecretStore", "", clusterSecretStoreName,
+						"spec", "provider", "vault", "server")
+					if err != nil {
+						l.Warn().Err(err).Msg("Failed to get Vault URL from ClusterSecretStore")
+					} else if vaultURL != "" {
+						if err := network.CheckEndpointReachable(ctx, vaultURL, 10*time.Second); err != nil {
+							return automa.StepFailureReport(stp.Id(), automa.WithError(
+								fmt.Errorf("Vault at %s is not reachable: %w", vaultURL, err)))
+						}
+						l.Info().Str("url", vaultURL).Msg("Vault endpoint is reachable")
+						meta["vaultURL"] = vaultURL
+					}
+				}
+
+				// Check Prometheus remote endpoints reachability
+				for _, remote := range cfg.PrometheusRemotes {
+					if err := network.CheckEndpointReachable(ctx, remote.URL, 10*time.Second); err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("Prometheus remote %q at %s is not reachable: %w", remote.Name, remote.URL, err)))
+					}
+					l.Info().Str("name", remote.Name).Str("url", remote.URL).Msg("Prometheus remote is reachable")
+				}
+				// Legacy single Prometheus remote
+				if cfg.PrometheusURL != "" {
+					if err := network.CheckEndpointReachable(ctx, cfg.PrometheusURL, 10*time.Second); err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("Prometheus remote at %s is not reachable: %w", cfg.PrometheusURL, err)))
+					}
+					l.Info().Str("url", cfg.PrometheusURL).Msg("Prometheus remote is reachable")
+				}
+
+				// Check Loki remote endpoints reachability
+				for _, remote := range cfg.LokiRemotes {
+					if err := network.CheckEndpointReachable(ctx, remote.URL, 10*time.Second); err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("Loki remote %q at %s is not reachable: %w", remote.Name, remote.URL, err)))
+					}
+					l.Info().Str("name", remote.Name).Str("url", remote.URL).Msg("Loki remote is reachable")
+				}
+				// Legacy single Loki remote
+				if cfg.LokiURL != "" {
+					if err := network.CheckEndpointReachable(ctx, cfg.LokiURL, 10*time.Second); err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("Loki remote at %s is not reachable: %w", cfg.LokiURL, err)))
+					}
+					l.Info().Str("url", cfg.LokiURL).Msg("Loki remote is reachable")
+				}
+			} else {
+				l.Info().Msg("No remotes configured; skipping ClusterSecretStore and endpoint checks")
+			}
+
+			// Log summary of what will be installed
+			l.Info().
+				Int("prometheusRemotes", len(cfg.PrometheusRemotes)).
+				Int("lokiRemotes", len(cfg.LokiRemotes)).
+				Bool("monitorBlockNode", cfg.MonitorBlockNode).
+				Msg("Alloy prerequisites verified")
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking Alloy prerequisites")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Alloy prerequisites check failed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy prerequisites verified")
 		})
 }
 

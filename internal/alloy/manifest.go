@@ -67,10 +67,16 @@ type ExternalSecretTemplateData struct {
 func ExternalSecretManifest(cfg config.AlloyConfig, clusterName string) (string, error) {
 	secretDataEntries := BuildExternalSecretDataEntries(cfg, clusterName)
 
+	// Use configurable ClusterSecretStoreName, fallback to default constant
+	clusterSecretStoreName := cfg.ClusterSecretStoreName
+	if clusterSecretStoreName == "" {
+		clusterSecretStoreName = ClusterSecretStoreName
+	}
+
 	data := ExternalSecretTemplateData{
 		ExternalSecretName:     ExternalSecretName,
 		Namespace:              Namespace,
-		ClusterSecretStoreName: ClusterSecretStoreName,
+		ClusterSecretStoreName: clusterSecretStoreName,
 		SecretsName:            SecretsName,
 		ClusterName:            clusterName,
 		SecretDataEntries:      secretDataEntries,

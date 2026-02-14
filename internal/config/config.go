@@ -135,10 +135,11 @@ type AlloyRemoteConfig struct {
 // AlloyConfig represents the `alloy` configuration block for observability.
 // Note: Passwords are managed via Vault and External Secrets Operator, not in config files.
 type AlloyConfig struct {
-	MonitorBlockNode  bool                `yaml:"monitorBlockNode" json:"monitorBlockNode"`
-	ClusterName       string              `yaml:"clusterName" json:"clusterName"`
-	PrometheusRemotes []AlloyRemoteConfig `yaml:"prometheusRemotes" json:"prometheusRemotes"`
-	LokiRemotes       []AlloyRemoteConfig `yaml:"lokiRemotes" json:"lokiRemotes"`
+	MonitorBlockNode       bool                `yaml:"monitorBlockNode" json:"monitorBlockNode"`
+	ClusterName            string              `yaml:"clusterName" json:"clusterName"`
+	ClusterSecretStoreName string              `yaml:"clusterSecretStoreName" json:"clusterSecretStoreName"` // Name of the ClusterSecretStore for ESO
+	PrometheusRemotes      []AlloyRemoteConfig `yaml:"prometheusRemotes" json:"prometheusRemotes"`
+	LokiRemotes            []AlloyRemoteConfig `yaml:"lokiRemotes" json:"lokiRemotes"`
 	// Deprecated: Use PrometheusRemotes instead. Kept for backward compatibility.
 	PrometheusURL      string `yaml:"prometheusUrl" json:"prometheusUrl"`
 	PrometheusUsername string `yaml:"prometheusUsername" json:"prometheusUsername"`
@@ -467,6 +468,9 @@ func OverrideAlloyConfig(overrides AlloyConfig) {
 	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
 	if overrides.ClusterName != "" {
 		globalConfig.Alloy.ClusterName = overrides.ClusterName
+	}
+	if overrides.ClusterSecretStoreName != "" {
+		globalConfig.Alloy.ClusterSecretStoreName = overrides.ClusterSecretStoreName
 	}
 
 	// Handle multi-remote configuration (declarative - always replace, even with empty slices)
