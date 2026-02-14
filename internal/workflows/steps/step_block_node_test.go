@@ -92,6 +92,10 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 }
 
 func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy cluster-creation test in short mode")
+	}
+
 	//
 	// Given
 	//

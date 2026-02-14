@@ -1,5 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
+// Integration tests for Helm manager that require a running cluster.
+//
+// Build Tags: helm_integration OR require_cluster
+//
+// These tests are NOT part of the standard `integration` test suite.
+// They run in Phase 2 of the Taskfile `test:integration:verbose` task,
+// after the cluster has been created in Phase 1:
+//
+//   Phase 1: go test -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/...
+//            → Creates the Kubernetes cluster
+//
+//   Phase 2: go test -tags='require_cluster' ./...
+//            → Runs these tests (matched via `require_cluster` tag)
+//
+//   Phase 3: go test -tags='integration' ./...
+//            → Runs general integration tests
+//
+//   Phase 4: go test -tags='cluster_setup' ./internal/workflows/...
+//            → Tears down the cluster
+//
+// Dependencies:
+//   - Requires a running Kubernetes cluster (created by Phase 1)
+//   - Requires valid kubeconfig
+//
+// To run these tests standalone (with an existing cluster):
+//   go test -v -tags='require_cluster' ./pkg/helm/...
+//   # or
+//   go test -v -tags='helm_integration' ./pkg/helm/...
+
 //go:build helm_integration || require_cluster
 
 package helm
