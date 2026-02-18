@@ -1,6 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build kubeclient || require_cluster
+// Integration tests for the Kubernetes client that require a running cluster.
+//
+// Build Tag: require_cluster
+//
+// These tests are NOT part of the standard `integration` test suite.
+// They run in Phase 2 of the Taskfile `test:integration:verbose` task,
+// after the cluster has been created in Phase 1:
+//
+//   Phase 1: go test -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/...
+//            → Creates the Kubernetes cluster
+//
+//   Phase 2: go test -tags='require_cluster' ./...
+//            → Runs these tests (and other cluster-dependent tests like helm tests)
+//
+//   Phase 3: go test -tags='integration' ./...
+//            → Runs general integration tests
+//
+//   Phase 4: go test -tags='cluster_setup' ./internal/workflows/...
+//            → Tears down the cluster
+//
+// Dependencies:
+//   - Requires a running Kubernetes cluster (created by Phase 1)
+//   - Requires valid kubeconfig (typically at /etc/kubernetes/admin.conf)
+//
+// To run these tests standalone (with an existing cluster):
+//   go test -v -tags='require_cluster' ./internal/kube/...
+
+//go:build require_cluster
 
 package kube
 
@@ -993,5 +1020,191 @@ func TestWaitForResourcesDeletion_AlreadyDeleted(t *testing.T) {
 	err := c.WaitForResourcesDeletion(ctx, KindPod, "default", 5*time.Second, opts)
 	if err != nil {
 		t.Fatalf("WaitForResourcesDeletion should succeed when no resources match: %v", err)
+	}
+}
+
+// TestResourceExists_NamespaceExists tests ResourceExists with an existing namespace
+func TestResourceExists_NamespaceExists(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// The "default" namespace should always exist
+	exists, err := c.ResourceExists(ctx, "v1", "Namespace", "", "default")
+	if err != nil {
+		t.Fatalf("ResourceExists failed: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected 'default' namespace to exist")
+	}
+}
+
+// TestResourceExists_NamespaceNotExists tests ResourceExists with a non-existent namespace
+func TestResourceExists_NamespaceNotExists(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// This namespace should not exist
+	exists, err := c.ResourceExists(ctx, "v1", "Namespace", "", "nonexistent-namespace-12345")
+	if err != nil {
+		t.Fatalf("ResourceExists failed: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected namespace to not exist")
+	}
+}
+
+// TestResourceExists_ConfigMap tests ResourceExists with a namespaced resource
+func TestResourceExists_ConfigMap(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	nsName := fmt.Sprintf("test-resourceexists-cm-%d", time.Now().UnixNano())
+
+	// Create test namespace
+	ns := createUnstructured("Namespace", "v1", "", nsName, nil)
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	_, err := c.Dyn.Resource(nsGVR).Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.Dyn.Resource(nsGVR).Delete(context.Background(), nsName, metav1.DeleteOptions{})
+	})
+
+	cmName := "test-configmap"
+	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+
+	// ConfigMap should not exist yet
+	exists, err := c.ResourceExists(ctx, "v1", "ConfigMap", nsName, cmName)
+	if err != nil {
+		t.Fatalf("ResourceExists failed: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected ConfigMap to not exist")
+	}
+
+	// Create ConfigMap
+	cm := createUnstructured("ConfigMap", "v1", nsName, cmName, map[string]interface{}{
+		"data": map[string]interface{}{
+			"key": "value",
+		},
+	})
+	_, err = c.Dyn.Resource(cmGVR).Namespace(nsName).Create(ctx, cm, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create ConfigMap: %v", err)
+	}
+
+	// ConfigMap should now exist
+	exists, err = c.ResourceExists(ctx, "v1", "ConfigMap", nsName, cmName)
+	if err != nil {
+		t.Fatalf("ResourceExists failed: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected ConfigMap to exist")
+	}
+}
+
+// TestGetResourceNestedString_ConfigMap tests GetResourceNestedString with a ConfigMap
+func TestGetResourceNestedString_ConfigMap(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	nsName := fmt.Sprintf("test-nestedstring-%d", time.Now().UnixNano())
+
+	// Create test namespace
+	ns := createUnstructured("Namespace", "v1", "", nsName, nil)
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	_, err := c.Dyn.Resource(nsGVR).Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.Dyn.Resource(nsGVR).Delete(context.Background(), nsName, metav1.DeleteOptions{})
+	})
+
+	cmName := "test-nested-configmap"
+	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+
+	// Create ConfigMap with nested data
+	cm := createUnstructured("ConfigMap", "v1", nsName, cmName, map[string]interface{}{
+		"data": map[string]interface{}{
+			"server": "https://example.com:8200",
+		},
+	})
+	_, err = c.Dyn.Resource(cmGVR).Namespace(nsName).Create(ctx, cm, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create ConfigMap: %v", err)
+	}
+
+	// Get nested string value
+	value, err := c.GetResourceNestedString(ctx, "v1", "ConfigMap", nsName, cmName, "data", "server")
+	if err != nil {
+		t.Fatalf("GetResourceNestedString failed: %v", err)
+	}
+	if value != "https://example.com:8200" {
+		t.Fatalf("expected value 'https://example.com:8200', got %q", value)
+	}
+}
+
+// TestGetResourceNestedString_NotFound tests GetResourceNestedString with non-existent resource
+func TestGetResourceNestedString_NotFound(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	// Try to get nested string from non-existent ConfigMap
+	value, err := c.GetResourceNestedString(ctx, "v1", "ConfigMap", "default", "nonexistent-cm-12345", "data", "key")
+	if err != nil {
+		t.Fatalf("GetResourceNestedString should return empty string for not found, got error: %v", err)
+	}
+	if value != "" {
+		t.Fatalf("expected empty string for not found resource, got %q", value)
+	}
+}
+
+// TestGetResourceNestedString_MissingField tests GetResourceNestedString with missing field
+func TestGetResourceNestedString_MissingField(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	nsName := fmt.Sprintf("test-missingfield-%d", time.Now().UnixNano())
+
+	// Create test namespace
+	ns := createUnstructured("Namespace", "v1", "", nsName, nil)
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	_, err := c.Dyn.Resource(nsGVR).Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.Dyn.Resource(nsGVR).Delete(context.Background(), nsName, metav1.DeleteOptions{})
+	})
+
+	cmName := "test-missing-field-cm"
+	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+
+	// Create ConfigMap without the field we're looking for
+	cm := createUnstructured("ConfigMap", "v1", nsName, cmName, map[string]interface{}{
+		"data": map[string]interface{}{
+			"other": "value",
+		},
+	})
+	_, err = c.Dyn.Resource(cmGVR).Namespace(nsName).Create(ctx, cm, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create ConfigMap: %v", err)
+	}
+
+	// Get nested string value for missing field
+	value, err := c.GetResourceNestedString(ctx, "v1", "ConfigMap", nsName, cmName, "data", "nonexistent")
+	if err != nil {
+		t.Fatalf("GetResourceNestedString failed: %v", err)
+	}
+	if value != "" {
+		t.Fatalf("expected empty string for missing field, got %q", value)
 	}
 }

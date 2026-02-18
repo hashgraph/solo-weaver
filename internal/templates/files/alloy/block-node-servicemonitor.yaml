@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: block-node-server
+  namespace: {{.Namespace}}
+  labels:
+    app.kubernetes.io/name: block-node-server
+    app.kubernetes.io/component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: block-node-server
+  namespaceSelector:
+    any: true
+  endpoints:
+    - port: metrics
+      interval: 15s
+      scrapeTimeout: 5s
+      path: /metrics
+

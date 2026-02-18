@@ -125,15 +125,27 @@ type BlockNodeConfig struct {
 	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
+// AlloyRemoteConfig represents a single remote endpoint for metrics or logs.
+type AlloyRemoteConfig struct {
+	Name     string `yaml:"name" json:"name"`         // Unique identifier for this remote
+	URL      string `yaml:"url" json:"url"`           // Remote write URL
+	Username string `yaml:"username" json:"username"` // Basic auth username
+}
+
 // AlloyConfig represents the `alloy` configuration block for observability.
 // Note: Passwords are managed via Vault and External Secrets Operator, not in config files.
 type AlloyConfig struct {
-	MonitorBlockNode   bool   `yaml:"monitorBlockNode" json:"monitorBlockNode"`
+	MonitorBlockNode       bool                `yaml:"monitorBlockNode" json:"monitorBlockNode"`
+	ClusterName            string              `yaml:"clusterName" json:"clusterName"`
+	ClusterSecretStoreName string              `yaml:"clusterSecretStoreName" json:"clusterSecretStoreName"` // Name of the ClusterSecretStore for ESO
+	PrometheusRemotes      []AlloyRemoteConfig `yaml:"prometheusRemotes" json:"prometheusRemotes"`
+	LokiRemotes            []AlloyRemoteConfig `yaml:"lokiRemotes" json:"lokiRemotes"`
+	// Deprecated: Use PrometheusRemotes instead. Kept for backward compatibility.
 	PrometheusURL      string `yaml:"prometheusUrl" json:"prometheusUrl"`
 	PrometheusUsername string `yaml:"prometheusUsername" json:"prometheusUsername"`
-	LokiURL            string `yaml:"lokiUrl" json:"lokiUrl"`
-	LokiUsername       string `yaml:"lokiUsername" json:"lokiUsername"`
-	ClusterName        string `yaml:"clusterName" json:"clusterName"`
+	// Deprecated: Use LokiRemotes instead. Kept for backward compatibility.
+	LokiURL      string `yaml:"lokiUrl" json:"lokiUrl"`
+	LokiUsername string `yaml:"lokiUsername" json:"lokiUsername"`
 }
 
 // Validate validates all block node configuration fields to ensure they are safe and secure.
@@ -183,6 +195,58 @@ func (c *AlloyConfig) Validate() error {
 	if c.ClusterName != "" {
 		if err := sanity.ValidateIdentifier(c.ClusterName); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid cluster name: %s", c.ClusterName)
+		}
+	}
+
+	// Validate Prometheus remotes
+	prometheusNames := make(map[string]bool)
+	for i, remote := range c.PrometheusRemotes {
+		if remote.Name == "" {
+			return errorx.IllegalArgument.New("prometheus remote[%d]: name is required", i)
+		}
+		if err := sanity.ValidateIdentifier(remote.Name); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "prometheus remote[%d]: invalid name: %s", i, remote.Name)
+		}
+		if prometheusNames[remote.Name] {
+			return errorx.IllegalArgument.New("prometheus remote[%d]: duplicate name: %s", i, remote.Name)
+		}
+		prometheusNames[remote.Name] = true
+		if remote.URL == "" {
+			return errorx.IllegalArgument.New("prometheus remote[%d] (%s): url is required", i, remote.Name)
+		}
+		if err := sanity.ValidateURL(remote.URL, &sanity.ValidateURLOptions{AllowHTTP: true}); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "prometheus remote[%d] (%s): invalid url", i, remote.Name)
+		}
+		if remote.Username != "" {
+			if err := sanity.ValidateIdentifier(remote.Username); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "prometheus remote[%d] (%s): invalid username", i, remote.Name)
+			}
+		}
+	}
+
+	// Validate Loki remotes
+	lokiNames := make(map[string]bool)
+	for i, remote := range c.LokiRemotes {
+		if remote.Name == "" {
+			return errorx.IllegalArgument.New("loki remote[%d]: name is required", i)
+		}
+		if err := sanity.ValidateIdentifier(remote.Name); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "loki remote[%d]: invalid name: %s", i, remote.Name)
+		}
+		if lokiNames[remote.Name] {
+			return errorx.IllegalArgument.New("loki remote[%d]: duplicate name: %s", i, remote.Name)
+		}
+		lokiNames[remote.Name] = true
+		if remote.URL == "" {
+			return errorx.IllegalArgument.New("loki remote[%d] (%s): url is required", i, remote.Name)
+		}
+		if err := sanity.ValidateURL(remote.URL, &sanity.ValidateURLOptions{AllowHTTP: true}); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "loki remote[%d] (%s): invalid url", i, remote.Name)
+		}
+		if remote.Username != "" {
+			if err := sanity.ValidateIdentifier(remote.Username); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "loki remote[%d] (%s): invalid username", i, remote.Name)
+			}
 		}
 	}
 
@@ -398,9 +462,22 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 
 // OverrideAlloyConfig updates the Alloy configuration with provided overrides.
 // Empty string values are ignored (not applied).
+// Remote arrays are always replaced (declarative semantics) - pass empty arrays to clear remotes.
 // Note: Passwords are managed via Vault and External Secrets Operator.
 func OverrideAlloyConfig(overrides AlloyConfig) {
 	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
+	if overrides.ClusterName != "" {
+		globalConfig.Alloy.ClusterName = overrides.ClusterName
+	}
+	if overrides.ClusterSecretStoreName != "" {
+		globalConfig.Alloy.ClusterSecretStoreName = overrides.ClusterSecretStoreName
+	}
+
+	// Handle multi-remote configuration (declarative - always replace, even with empty slices)
+	globalConfig.Alloy.PrometheusRemotes = overrides.PrometheusRemotes
+	globalConfig.Alloy.LokiRemotes = overrides.LokiRemotes
+
+	// Legacy single-remote flags (for backward compatibility)
 	if overrides.PrometheusURL != "" {
 		globalConfig.Alloy.PrometheusURL = overrides.PrometheusURL
 	}
@@ -412,9 +489,6 @@ func OverrideAlloyConfig(overrides AlloyConfig) {
 	}
 	if overrides.LokiUsername != "" {
 		globalConfig.Alloy.LokiUsername = overrides.LokiUsername
-	}
-	if overrides.ClusterName != "" {
-		globalConfig.Alloy.ClusterName = overrides.ClusterName
 	}
 }
 

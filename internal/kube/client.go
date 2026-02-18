@@ -395,6 +395,74 @@ func (c *Client) DeletePVC(ctx context.Context, namespace, name string) error {
 	return nil
 }
 
+// ResourceExists checks if a resource exists in the cluster.
+// For cluster-scoped resources, pass empty string for namespace.
+// The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1beta1").
+func (c *Client) ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error) {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return false, errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			namespace = "default"
+		}
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	_, err = dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, errorx.InternalError.Wrap(err, "failed to get %s/%s", kind, name)
+	}
+	return true, nil
+}
+
+// GetResourceNestedString retrieves a nested string value from a Kubernetes resource.
+// For cluster-scoped resources, pass empty string for namespace.
+// The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1beta1").
+// The fields parameter specifies the path to the nested string (e.g., "spec", "provider", "vault", "server").
+// Returns empty string if the resource doesn't exist or the field is not found.
+func (c *Client) GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error) {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return "", errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			namespace = "default"
+		}
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", errorx.InternalError.Wrap(err, "failed to get %s/%s", kind, name)
+	}
+
+	value, found, err := unstructured.NestedString(obj.Object, fields...)
+	if err != nil || !found {
+		return "", nil
+	}
+
+	return value, nil
+}
+
 // =====================
 // Generic WaitFor
 // =====================

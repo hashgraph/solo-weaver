@@ -19,19 +19,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("This test requires root privileges")
-	}
-
-	//
-	// Given
-	//
-	testBindMounts := []mount.BindMount{
+// clusterBindMounts returns the bind mounts used by the cluster
+func clusterBindMounts() []mount.BindMount {
+	return []mount.BindMount{
 		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
 		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
 		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
 	}
+}
+
+func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root privileges")
+	}
+	testutil.Reset(t)
+
+	//
+	// Given
+	//
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)
@@ -99,15 +105,12 @@ func Test_SetupBindMounts_AlreadySetup_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
 	//
-	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
-	}
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)
@@ -171,15 +174,12 @@ func Test_SetupBindMounts_PartiallySetup_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
 	//
-	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
-	}
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)
@@ -244,15 +244,12 @@ func Test_SetupBindMounts_Rollback_Fresh_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
 	//
-	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
-	}
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)
@@ -312,15 +309,12 @@ func Test_SetupBindMounts_Rollback_PreExisting_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
 	//
-	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
-	}
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)
@@ -392,15 +386,12 @@ func Test_SetupBindMounts_Rollback_Mixed_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
 	//
-	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
-	}
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)
@@ -468,6 +459,7 @@ func Test_SetupBindMounts_RollbackOnFailure_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
@@ -535,15 +527,12 @@ func Test_SetupBindMounts_RollbackIdempotent_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
 	}
+	testutil.Reset(t)
 
 	//
 	// Given
 	//
-	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
-	}
+	testBindMounts := clusterBindMounts()
 
 	// Cleanup before test
 	cleanupBindMounts(t, testBindMounts)

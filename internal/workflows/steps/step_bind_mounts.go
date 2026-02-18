@@ -5,7 +5,10 @@ package steps
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"path"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -135,6 +138,7 @@ func TeardownBindMounts() *automa.WorkflowBuilder {
 			teardownBindMount("kubernetes", "/etc/kubernetes"),
 			teardownBindMount("kubelet", "/var/lib/kubelet"),
 			teardownBindMount("cilium", "/var/run/cilium"),
+			teardownSandboxMounts(),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Removing bind mounts")
@@ -170,6 +174,61 @@ func teardownBindMount(name string, target string) automa.Builder {
 			if err != nil {
 				logx.As().Warn().Err(err).Msgf("Failed to remove bind mount %s, continuing with teardown", target)
 				// Don't fail if unmount fails - mount might not exist
+			}
+
+			return automa.SuccessReport(stp)
+		})
+}
+
+// teardownSandboxMounts unmounts all remaining mounts under the sandbox directory
+// This handles CRI-O namespace mounts (utsns, ipcns, netns), shm mounts, and overlay storage mounts
+func teardownSandboxMounts() automa.Builder {
+	return automa.NewStepBuilder().WithId("teardown-sandbox-mounts").
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Removing sandbox mounts")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove sandbox mounts")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Sandbox mounts removed successfully")
+		}).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			sandboxDir := core.Paths().SandboxDir
+
+			// Read /proc/mounts to find all mounts under sandbox directory
+			mountsData, err := os.ReadFile("/proc/mounts")
+			if err != nil {
+				logx.As().Warn().Err(err).Msg("Failed to read /proc/mounts, continuing with teardown")
+				return automa.SuccessReport(stp)
+			}
+
+			var mountsToUnmount []string
+			for _, line := range strings.Split(string(mountsData), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					mountPoint := fields[1]
+					if strings.HasPrefix(mountPoint, sandboxDir+"/") || mountPoint == sandboxDir {
+						mountsToUnmount = append(mountsToUnmount, mountPoint)
+					}
+				}
+			}
+
+			if len(mountsToUnmount) == 0 {
+				logx.As().Debug().Msg("No mounts found under sandbox directory")
+				return automa.SuccessReport(stp)
+			}
+
+			logx.As().Debug().Msgf("Found %d mounts under sandbox directory", len(mountsToUnmount))
+
+			// Unmount in reverse order (deepest paths first)
+			for i := len(mountsToUnmount) - 1; i >= 0; i-- {
+				mountPoint := mountsToUnmount[i]
+				logx.As().Debug().Msgf("Unmounting %s", mountPoint)
+				if err := exec.Command("umount", "-lf", mountPoint).Run(); err != nil {
+					logx.As().Warn().Err(err).Msgf("Failed to unmount %s", mountPoint)
+				}
 			}
 
 			return automa.SuccessReport(stp)

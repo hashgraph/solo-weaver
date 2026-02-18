@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/spf13/cobra"
@@ -89,23 +90,86 @@ func CleanUpTempDir(t *testing.T) {
 func Reset(t *testing.T) {
 	t.Helper()
 
+	t.Log("Reset: Starting cleanup of Kubernetes environment")
+
+	// Try to reset kubeadm - use sandbox kubeadm if available, otherwise use system kubeadm
+	sandboxKubeadm := "/opt/solo/weaver/sandbox/bin/kubeadm"
+	kubeadmBin := "kubeadm"
+	if _, err := os.Stat(sandboxKubeadm); err == nil {
+		kubeadmBin = sandboxKubeadm
+	}
+
 	// Reset kubeadm with custom CRI socket
-	_ = Sudo(exec.Command("kubeadm", "reset",
+	t.Logf("Reset: Running kubeadm reset using %s", kubeadmBin)
+	if out, err := Sudo(exec.Command(kubeadmBin, "reset",
 		"--cri-socket", "unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock",
-		"--force")).Run()
+		"--force")).CombinedOutput(); err != nil {
+		t.Logf("Reset: kubeadm reset failed (may be expected): %v, output: %s", err, string(out))
+	}
+
+	// Stop kubelet service
+	t.Log("Reset: Stopping kubelet service")
+	_ = Sudo(exec.Command("systemctl", "stop", "kubelet")).Run()
 
 	// Stop CRI-O service
+	t.Log("Reset: Stopping crio service")
 	_ = Sudo(exec.Command("systemctl", "stop", "crio")).Run()
 
-	// Unmount kubernetes directories
-	_ = Sudo(exec.Command("umount", "/etc/kubernetes")).Run()
-	_ = Sudo(exec.Command("umount", "/var/lib/kubelet")).Run()
-	_ = Sudo(exec.Command("umount", "-R", "/var/run/cilium")).Run()
+	// Kill kubernetes control plane processes directly
+	t.Log("Reset: Killing kubernetes control plane processes")
+	_ = Sudo(exec.Command("killall", "-9", "kube-apiserver")).Run()
+	_ = Sudo(exec.Command("killall", "-9", "kube-controller-manager")).Run()
+	_ = Sudo(exec.Command("killall", "-9", "kube-scheduler")).Run()
+	_ = Sudo(exec.Command("killall", "-9", "etcd")).Run()
+	_ = Sudo(exec.Command("killall", "-9", "kubelet")).Run()
+
+	// Kill any processes using kubernetes ports
+	t.Log("Reset: Killing processes on kubernetes ports")
+	_ = Sudo(exec.Command("bash", "-c", "fuser -k 6443/tcp 2>/dev/null || true")).Run()
+	_ = Sudo(exec.Command("bash", "-c", "fuser -k 10250/tcp 2>/dev/null || true")).Run()
+	_ = Sudo(exec.Command("bash", "-c", "fuser -k 10259/tcp 2>/dev/null || true")).Run()
+	_ = Sudo(exec.Command("bash", "-c", "fuser -k 10257/tcp 2>/dev/null || true")).Run()
+	_ = Sudo(exec.Command("bash", "-c", "fuser -k 2379/tcp 2>/dev/null || true")).Run()
+	_ = Sudo(exec.Command("bash", "-c", "fuser -k 2380/tcp 2>/dev/null || true")).Run()
+
+	// Small delay to allow ports to be released
+	t.Log("Reset: Waiting 2s for ports to be released")
+	time.Sleep(2 * time.Second)
+
+	// Check if ports are actually free
+	if out, _ := exec.Command("bash", "-c", "ss -tlnp | grep -E ':(6443|10250|2379|2380) ' || echo 'ports are free'").CombinedOutput(); len(out) > 0 {
+		t.Logf("Reset: Port status after cleanup: %s", strings.TrimSpace(string(out)))
+	}
+
+	// Unmount kubernetes directories (lazy unmount)
+	t.Log("Reset: Unmounting kubernetes directories")
+	_ = Sudo(exec.Command("umount", "-l", "/etc/kubernetes")).Run()
+	_ = Sudo(exec.Command("umount", "-l", "/var/lib/kubelet")).Run()
+	_ = Sudo(exec.Command("umount", "-lR", "/var/run/cilium")).Run()
+
+	// Clean up /etc/kubernetes directory (in case unmount failed or it's not a bind mount)
+	t.Log("Reset: Removing /etc/kubernetes")
+	_ = Sudo(exec.Command("rm", "-rf", "/etc/kubernetes")).Run()
+
+	// Clean up /var/lib/etcd (kubeadm stores etcd data here)
+	t.Log("Reset: Removing /var/lib/etcd")
+	_ = Sudo(exec.Command("rm", "-rf", "/var/lib/etcd")).Run()
+
+	// Clean up /var/lib/kubelet
+	t.Log("Reset: Removing /var/lib/kubelet")
+	_ = Sudo(exec.Command("rm", "-rf", "/var/lib/kubelet")).Run()
+
+	// Clean up CNI configuration
+	t.Log("Reset: Removing CNI configuration")
+	_ = Sudo(exec.Command("rm", "-rf", "/etc/cni/net.d")).Run()
+	_ = Sudo(exec.Command("rm", "-rf", "/var/lib/cni")).Run()
 
 	// Remove weaver directory but preserve downloads folder for caching
+	t.Log("Reset: Cleaning weaver directories (preserving downloads)")
 	CleanupWeaverPreservingDownloads()
 
 	// Remove /usr/lib/systemd/system
+	t.Log("Reset: Removing systemd unit files")
 	_ = Sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/crio.service")).Run()
 	_ = Sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/kubelet.service.d")).Run()
 	_ = Sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/kubelet.service")).Run()
@@ -117,11 +181,27 @@ func Reset(t *testing.T) {
 	_ = Sudo(exec.Command("rm", "-rf", "/etc/crio")).Run()
 
 	// Remove .kube/config
+	t.Log("Reset: Removing .kube directories")
 	_ = Sudo(exec.Command("rm", "-rf", "/root/.kube")).Run()
 	_ = Sudo(exec.Command("rm", "-rf", "/home/weaver/.kube")).Run()
 
+	// Reload systemd to pick up removed unit files
+	t.Log("Reset: Reloading systemd")
+	_ = Sudo(exec.Command("systemctl", "daemon-reload")).Run()
+
 	// Clean up temp directory (from existing tests)
+	t.Log("Reset: Cleaning up temp directory")
 	CleanUpTempDir(t)
+
+	// Final verification
+	if _, err := os.Stat("/etc/kubernetes"); err == nil {
+		t.Log("Reset: WARNING - /etc/kubernetes still exists after cleanup")
+	}
+	if _, err := os.Stat("/var/lib/etcd"); err == nil {
+		t.Log("Reset: WARNING - /var/lib/etcd still exists after cleanup")
+	}
+
+	t.Log("Reset: Cleanup complete")
 }
 
 func FileWithPrefixExists(t *testing.T, directory string, prefix string) bool {

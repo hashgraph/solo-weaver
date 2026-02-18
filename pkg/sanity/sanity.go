@@ -278,18 +278,32 @@ func SanitizePath(path string) (string, error) {
 	return filepath.Clean(absPath), nil
 }
 
-// ValidateURL validates a URL to ensure it's safe to use for downloads.
+// ValidateURLOptions provides options for URL validation.
+type ValidateURLOptions struct {
+	// AllowedDomains restricts URLs to specific domains. If nil or empty, any domain is allowed.
+	AllowedDomains []string
+	// AllowHTTP permits HTTP scheme in addition to HTTPS. Default is HTTPS only.
+	AllowHTTP bool
+}
+
+// ValidateURL validates a URL to ensure it's safe to use.
 //
-// This function provides SSRF (Server-Side Request Forgery) protection by checking that:
+// This function provides security protection by checking that:
 //  1. The URL is not empty and can be parsed
-//  2. The scheme is HTTPS only (HTTP is rejected for security)
+//  2. The scheme is HTTPS only (or HTTP if AllowHTTP is true)
 //  3. The host is not empty
-//  4. The host is in the allowed domain list for trusted registries
+//  4. The URL contains only ASCII characters (prevents homograph attacks)
+//  5. The host is in the allowed domain list (if AllowedDomains is provided)
 //
 // Returns an error if the URL is invalid or unsafe.
-func ValidateURL(rawURL string, allowedDomains []string) error {
+func ValidateURL(rawURL string, opts *ValidateURLOptions) error {
 	if rawURL == "" {
 		return errorx.IllegalArgument.New("URL cannot be empty")
+	}
+
+	// Check for ASCII-only characters to prevent homograph attacks
+	if !isASCII(rawURL) {
+		return errorx.IllegalArgument.New("URL must contain only ASCII characters")
 	}
 
 	parsedURL, err := url.Parse(rawURL)
@@ -297,9 +311,16 @@ func ValidateURL(rawURL string, allowedDomains []string) error {
 		return errorx.IllegalArgument.New("invalid URL: %s", err.Error())
 	}
 
-	// Only allow HTTPS scheme for security (reject HTTP)
-	if parsedURL.Scheme != "https" {
-		return errorx.IllegalArgument.New("URL scheme must be https for security, got: %s", parsedURL.Scheme)
+	// Check scheme
+	allowHTTP := opts != nil && opts.AllowHTTP
+	if allowHTTP {
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			return errorx.IllegalArgument.New("URL scheme must be http or https, got: %s", parsedURL.Scheme)
+		}
+	} else {
+		if parsedURL.Scheme != "https" {
+			return errorx.IllegalArgument.New("URL scheme must be https for security, got: %s", parsedURL.Scheme)
+		}
 	}
 
 	// Ensure host is not empty
@@ -313,9 +334,11 @@ func ValidateURL(rawURL string, allowedDomains []string) error {
 		return errorx.IllegalArgument.New("URL must have a valid hostname")
 	}
 
-	// Validate against allowed domains - this is our primary security control
-	if !isAllowedDomain(hostname, allowedDomains) {
-		return errorx.IllegalArgument.New("URL host %s is not in the allowed domain list", hostname)
+	// Validate against allowed domains if provided
+	if opts != nil && len(opts.AllowedDomains) > 0 {
+		if !isAllowedDomain(hostname, opts.AllowedDomains) {
+			return errorx.IllegalArgument.New("URL host %s is not in the allowed domain list", hostname)
+		}
 	}
 
 	return nil
