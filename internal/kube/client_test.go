@@ -5,31 +5,14 @@ package kube
 import (
 	"context"
 	"errors"
-	"os"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
-
-func writeTempManifest(t *testing.T, content string) (string, func()) {
-	t.Helper()
-	f, err := os.CreateTemp("", "parse-manifests-*.yaml")
-	if err != nil {
-		t.Fatalf("create temp file: %v", err)
-	}
-	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close()
-		t.Fatalf("write temp file: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close temp file: %v", err)
-	}
-	cleanup := func() { _ = os.Remove(f.Name()) }
-	return f.Name(), cleanup
-}
 
 func TestParseManifests(t *testing.T) {
 	tests := []struct {
@@ -122,7 +105,7 @@ metadata:
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			path, cleanup := writeTempManifest(t, tc.content)
+			path, cleanup := testutil.WriteTempManifest(t, tc.content)
 			defer cleanup()
 
 			objs, err := parseManifests(path)

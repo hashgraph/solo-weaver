@@ -800,3 +800,137 @@ func Test_sanitizeBindMount_IntegrationWithPublicFunctions(t *testing.T) {
 		})
 	}
 }
+
+func Test_GetMountsUnderPath(t *testing.T) {
+	// Save original procMountsFile and restore after test
+	originalProcMountsFile := procMountsFile
+	t.Cleanup(func() {
+		procMountsFile = originalProcMountsFile
+	})
+
+	tests := []struct {
+		name           string
+		procMounts     string
+		pathPrefix     string
+		expectedMounts []string
+	}{
+		{
+			name: "filters mounts under prefix",
+			procMounts: `rootfs / rootfs rw 0 0
+/dev/sda1 /boot ext4 rw 0 0
+overlay /var/weaver/sandbox/storage/overlay/abc/merged overlay rw 0 0
+tmpfs /var/weaver/sandbox/containers/xyz/shm tmpfs rw 0 0
+/dev/sda2 /home ext4 rw 0 0
+`,
+			pathPrefix: "/var/weaver/sandbox",
+			expectedMounts: []string{
+				"/var/weaver/sandbox/storage/overlay/abc/merged",
+				"/var/weaver/sandbox/containers/xyz/shm",
+			},
+		},
+		{
+			name: "includes exact prefix match",
+			procMounts: `rootfs / rootfs rw 0 0
+/dev/sda1 /var/weaver/sandbox ext4 rw 0 0
+overlay /var/weaver/sandbox/storage overlay rw 0 0
+`,
+			pathPrefix: "/var/weaver/sandbox",
+			expectedMounts: []string{
+				"/var/weaver/sandbox/storage",
+				"/var/weaver/sandbox",
+			},
+		},
+		{
+			name: "returns deepest paths first",
+			procMounts: `rootfs / rootfs rw 0 0
+overlay /sandbox/a overlay rw 0 0
+overlay /sandbox/a/b overlay rw 0 0
+overlay /sandbox/a/b/c overlay rw 0 0
+overlay /sandbox/x/y overlay rw 0 0
+`,
+			pathPrefix: "/sandbox",
+			expectedMounts: []string{
+				"/sandbox/a/b/c",
+				"/sandbox/x/y",
+				"/sandbox/a/b",
+				"/sandbox/a",
+			},
+		},
+		{
+			name: "excludes paths with similar prefix but no slash separator",
+			procMounts: `rootfs / rootfs rw 0 0
+/dev/sda1 /var/weaver/sandbox-other ext4 rw 0 0
+overlay /var/weaver/sandbox/storage overlay rw 0 0
+/dev/sda2 /var/weaver/sandboxes ext4 rw 0 0
+`,
+			pathPrefix: "/var/weaver/sandbox",
+			expectedMounts: []string{
+				"/var/weaver/sandbox/storage",
+			},
+		},
+		{
+			name: "returns empty slice when no matches",
+			procMounts: `rootfs / rootfs rw 0 0
+/dev/sda1 /boot ext4 rw 0 0
+/dev/sda2 /home ext4 rw 0 0
+`,
+			pathPrefix:     "/var/weaver/sandbox",
+			expectedMounts: nil,
+		},
+		{
+			name:           "handles empty proc mounts file",
+			procMounts:     "",
+			pathPrefix:     "/var/weaver/sandbox",
+			expectedMounts: nil,
+		},
+		{
+			name: "handles paths with same length lexicographically",
+			procMounts: `overlay /sandbox/zzz overlay rw 0 0
+overlay /sandbox/aaa overlay rw 0 0
+overlay /sandbox/mmm overlay rw 0 0
+`,
+			pathPrefix: "/sandbox",
+			expectedMounts: []string{
+				"/sandbox/zzz",
+				"/sandbox/mmm",
+				"/sandbox/aaa",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file with proc mounts content
+			tempDir := t.TempDir()
+			testProcMounts := filepath.Join(tempDir, "mounts")
+			err := os.WriteFile(testProcMounts, []byte(tt.procMounts), core.DefaultFilePerm)
+			require.NoError(t, err)
+
+			procMountsFile = testProcMounts
+
+			mounts, err := GetMountsUnderPath(tt.pathPrefix)
+			require.NoError(t, err)
+
+			if tt.expectedMounts == nil {
+				require.Empty(t, mounts)
+			} else {
+				require.Equal(t, tt.expectedMounts, mounts)
+			}
+		})
+	}
+}
+
+func Test_GetMountsUnderPath_FileNotFound(t *testing.T) {
+	// Save original procMountsFile and restore after test
+	originalProcMountsFile := procMountsFile
+	t.Cleanup(func() {
+		procMountsFile = originalProcMountsFile
+	})
+
+	procMountsFile = "/nonexistent/path/to/mounts"
+
+	mounts, err := GetMountsUnderPath("/var/weaver/sandbox")
+	require.Error(t, err)
+	require.Nil(t, mounts)
+	require.Contains(t, err.Error(), "failed to open")
+}

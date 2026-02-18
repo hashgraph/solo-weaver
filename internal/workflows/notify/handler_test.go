@@ -4,10 +4,11 @@ package notify
 
 import (
 	"context"
+	"testing"
+
 	"github.com/automa-saga/automa"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // mockStep implements automa.Step for testing

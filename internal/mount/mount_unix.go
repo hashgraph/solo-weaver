@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
@@ -18,12 +19,14 @@ import (
 )
 
 const (
-	DefaultFstabFile = "/etc/fstab"
+	DefaultFstabFile      = "/etc/fstab"
+	DefaultProcMountsFile = "/proc/mounts"
 )
 
 // use var to allow mocking in tests
 var (
-	fstabFile = DefaultFstabFile
+	fstabFile      = DefaultFstabFile
+	procMountsFile = DefaultProcMountsFile
 )
 
 type BindMount struct {
@@ -98,6 +101,54 @@ func RemoveBindMountsWithFstab(mount BindMount) error {
 // String returns the fstab entry as a formatted string
 func (e fstabEntry) String() string {
 	return fmt.Sprintf("%s %s %s %s %s %s", e.source, e.target, e.fsType, e.options, e.dump, e.pass)
+}
+
+// GetMountsUnderPath returns all mount points under the given path prefix
+// by reading /proc/mounts. Returns mounts sorted deepest-first (longest paths first),
+// which is the correct order for unmounting nested mounts.
+func GetMountsUnderPath(pathPrefix string) ([]string, error) {
+	file, err := os.Open(procMountsFile)
+	if err != nil {
+		return nil, errorx.ExternalError.Wrap(err, "failed to open %s", procMountsFile)
+	}
+	defer file.Close()
+
+	var mounts []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 {
+			mountPoint := fields[1]
+			if strings.HasPrefix(mountPoint, pathPrefix+"/") || mountPoint == pathPrefix {
+				mounts = append(mounts, mountPoint)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", procMountsFile)
+	}
+
+	// Sort deepest-first: longer paths come first, ties broken lexicographically (descending)
+	sort.Slice(mounts, func(i, j int) bool {
+		if len(mounts[i]) != len(mounts[j]) {
+			return len(mounts[i]) > len(mounts[j])
+		}
+		return mounts[i] > mounts[j]
+	})
+
+	return mounts, nil
+}
+
+// UnmountPath unmounts the given path using lazy detach flag.
+// This is a lower-level function that does not check if the path is mounted.
+// Use this when you already know the path is mounted (e.g., from reading /proc/mounts).
+func UnmountPath(target string) error {
+	err := unix.Unmount(target, unix.MNT_DETACH)
+	if err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to unmount %s", target)
+	}
+	return nil
 }
 
 // IsBindMountedWithFstab checks if the bind mount is currently mounted
@@ -194,12 +245,7 @@ func unmountBindMount(mount BindMount) error {
 	}
 
 	// Perform the unmount
-	err = unix.Unmount(mount.Target, unix.MNT_DETACH)
-	if err != nil {
-		return errorx.ExternalError.Wrap(err, "failed to unmount %s", mount.Target)
-	}
-
-	return nil
+	return UnmountPath(mount.Target)
 }
 
 // parseFstabEntry parses a line from /etc/fstab into an fstabEntry
