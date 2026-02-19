@@ -15,6 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Bind mount targets used in tests
+var bindMountTargets = []string{
+	"/var/run/cilium",
+	"/var/lib/kubelet",
+	"/etc/kubernetes",
+}
+
 // PrepareSubCmdForTest creates a root command with the given subcommand added.
 // Use this from tests in other packages to avoid duplicating the helper.
 func PrepareSubCmdForTest(sub *cobra.Command) *cobra.Command {
@@ -111,53 +118,46 @@ func Reset(t *testing.T) {
 	t.Log("Reset: Stopping kubelet service")
 	_ = Sudo(exec.Command("systemctl", "stop", "kubelet")).Run()
 
-	// Stop CRI-O service
-	t.Log("Reset: Stopping crio service")
-	_ = Sudo(exec.Command("systemctl", "stop", "crio")).Run()
+	// Stop CRI-O and docker services
+	t.Log("Reset: Stopping CRI-O and docker services")
+	for _, service := range []string{"crio", "docker"} {
+		_ = Sudo(exec.Command("systemctl", "stop", service)).Run()
+	}
 
-	// Kill kubernetes control plane processes directly
+	// Kill kubernetes control plane processes
 	t.Log("Reset: Killing kubernetes control plane processes")
-	_ = Sudo(exec.Command("killall", "-9", "kube-apiserver")).Run()
-	_ = Sudo(exec.Command("killall", "-9", "kube-controller-manager")).Run()
-	_ = Sudo(exec.Command("killall", "-9", "kube-scheduler")).Run()
-	_ = Sudo(exec.Command("killall", "-9", "etcd")).Run()
-	_ = Sudo(exec.Command("killall", "-9", "kubelet")).Run()
+	for _, proc := range []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd", "kubelet"} {
+		_ = Sudo(exec.Command("pkill", "-9", "-f", proc)).Run()
+	}
 
 	// Kill any processes using kubernetes ports
 	t.Log("Reset: Killing processes on kubernetes ports")
-	_ = Sudo(exec.Command("bash", "-c", "fuser -k 6443/tcp 2>/dev/null || true")).Run()
-	_ = Sudo(exec.Command("bash", "-c", "fuser -k 10250/tcp 2>/dev/null || true")).Run()
-	_ = Sudo(exec.Command("bash", "-c", "fuser -k 10259/tcp 2>/dev/null || true")).Run()
-	_ = Sudo(exec.Command("bash", "-c", "fuser -k 10257/tcp 2>/dev/null || true")).Run()
-	_ = Sudo(exec.Command("bash", "-c", "fuser -k 2379/tcp 2>/dev/null || true")).Run()
-	_ = Sudo(exec.Command("bash", "-c", "fuser -k 2380/tcp 2>/dev/null || true")).Run()
-
-	// Small delay to allow ports to be released
-	t.Log("Reset: Waiting 2s for ports to be released")
-	time.Sleep(2 * time.Second)
-
-	// Check if ports are actually free
-	if out, _ := exec.Command("bash", "-c", "ss -tlnp | grep -E ':(6443|10250|2379|2380) ' || echo 'ports are free'").CombinedOutput(); len(out) > 0 {
-		t.Logf("Reset: Port status after cleanup: %s", strings.TrimSpace(string(out)))
+	for _, port := range []string{"6443", "10250", "10259", "10257", "2379", "2380"} {
+		_ = Sudo(exec.Command("bash", "-c", "fuser -k -9 "+port+"/tcp 2>/dev/null || true")).Run()
 	}
 
-	// Unmount kubernetes directories (lazy unmount)
-	t.Log("Reset: Unmounting kubernetes directories")
-	_ = Sudo(exec.Command("umount", "-l", "/etc/kubernetes")).Run()
-	_ = Sudo(exec.Command("umount", "-l", "/var/lib/kubelet")).Run()
-	_ = Sudo(exec.Command("umount", "-lR", "/var/run/cilium")).Run()
+	// Wait for ports to be released
+	t.Log("Reset: Waiting for ports to be released")
+	waitForPortsToBeReleased(t)
 
-	// Clean up /etc/kubernetes directory (in case unmount failed or it's not a bind mount)
+	// Unmount and cleanup bind mounts
+	t.Log("Reset: Unmounting kubernetes directories")
+	cleanupBindMounts(t)
+
+	// Clean up directories
 	t.Log("Reset: Removing /etc/kubernetes")
 	_ = Sudo(exec.Command("rm", "-rf", "/etc/kubernetes")).Run()
 
-	// Clean up /var/lib/etcd (kubeadm stores etcd data here)
 	t.Log("Reset: Removing /var/lib/etcd")
 	_ = Sudo(exec.Command("rm", "-rf", "/var/lib/etcd")).Run()
 
-	// Clean up /var/lib/kubelet
 	t.Log("Reset: Removing /var/lib/kubelet")
 	_ = Sudo(exec.Command("rm", "-rf", "/var/lib/kubelet")).Run()
+
+	// Clean up /var/run/cilium and /run/cilium (symlink case)
+	t.Log("Reset: Removing /var/run/cilium")
+	_ = Sudo(exec.Command("rm", "-rf", "/var/run/cilium")).Run()
+	_ = Sudo(exec.Command("rm", "-rf", "/run/cilium")).Run()
 
 	// Clean up CNI configuration
 	t.Log("Reset: Removing CNI configuration")
@@ -168,16 +168,14 @@ func Reset(t *testing.T) {
 	t.Log("Reset: Cleaning weaver directories (preserving downloads)")
 	CleanupWeaverPreservingDownloads()
 
-	// Remove /usr/lib/systemd/system
+	// Remove systemd unit files
 	t.Log("Reset: Removing systemd unit files")
 	_ = Sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/crio.service")).Run()
 	_ = Sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/kubelet.service.d")).Run()
 	_ = Sudo(exec.Command("rm", "-rf", "/usr/lib/systemd/system/kubelet.service")).Run()
 
-	// Remove etc/containers directory
+	// Remove etc/containers and crio directories
 	_ = Sudo(exec.Command("rm", "-rf", "/etc/containers")).Run()
-
-	// Remove crio directory
 	_ = Sudo(exec.Command("rm", "-rf", "/etc/crio")).Run()
 
 	// Remove .kube/config
@@ -193,15 +191,93 @@ func Reset(t *testing.T) {
 	t.Log("Reset: Cleaning up temp directory")
 	CleanUpTempDir(t)
 
-	// Final verification
-	if _, err := os.Stat("/etc/kubernetes"); err == nil {
-		t.Log("Reset: WARNING - /etc/kubernetes still exists after cleanup")
+	t.Log("Reset: Cleanup complete")
+}
+
+// waitForPortsToBeReleased waits until kubernetes ports are free
+func waitForPortsToBeReleased(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		out, _ := exec.Command("bash", "-c", "ss -tlnp 2>/dev/null | grep -E ':(6443|10250|2379|2380) ' || echo 'free'").CombinedOutput()
+		if strings.TrimSpace(string(out)) == "free" {
+			t.Log("Reset: All kubernetes ports are free")
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	if _, err := os.Stat("/var/lib/etcd"); err == nil {
-		t.Log("Reset: WARNING - /var/lib/etcd still exists after cleanup")
+	if out, _ := exec.Command("bash", "-c", "ss -tlnp | grep -E ':(6443|10250|2379|2380) ' || echo 'ports are free'").CombinedOutput(); len(out) > 0 {
+		t.Logf("Reset: Port status after cleanup: %s", strings.TrimSpace(string(out)))
+	}
+}
+
+// cleanupBindMounts unmounts bind mounts and removes fstab entries
+func cleanupBindMounts(t *testing.T) {
+	t.Helper()
+
+	for _, target := range bindMountTargets {
+		// Unmount using lazy unmount (works even if busy)
+		if isMountPoint(target) {
+			t.Logf("Reset: Unmounting %s", target)
+			_ = Sudo(exec.Command("umount", "-l", target)).Run()
+		}
+
+		// Also try resolved path for symlinks (e.g., /var/run -> /run)
+		if resolved, err := filepath.EvalSymlinks(filepath.Dir(target)); err == nil {
+			resolvedTarget := filepath.Join(resolved, filepath.Base(target))
+			if resolvedTarget != target && isMountPoint(resolvedTarget) {
+				t.Logf("Reset: Unmounting %s (resolved)", resolvedTarget)
+				_ = Sudo(exec.Command("umount", "-l", resolvedTarget)).Run()
+			}
+		}
+
+		// Remove fstab entry
+		removeFstabEntry(t, target)
+	}
+}
+
+// isMountPoint checks if a path is currently a mount point
+func isMountPoint(path string) bool {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
 	}
 
-	t.Log("Reset: Cleanup complete")
+	cleanPath := filepath.Clean(path)
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == cleanPath {
+			return true
+		}
+	}
+	return false
+}
+
+// removeFstabEntry removes an fstab entry for the given target mount point
+func removeFstabEntry(t *testing.T, target string) {
+	t.Helper()
+
+	data, err := os.ReadFile("/etc/fstab")
+	if err != nil {
+		return
+	}
+
+	var newLines []string
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == target {
+			found = true
+			t.Logf("Reset: Removing fstab entry for %s", target)
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+
+	if found {
+		content := strings.TrimRight(strings.Join(newLines, "\n"), "\n") + "\n"
+		_ = os.WriteFile("/etc/fstab", []byte(content), 0644)
+	}
 }
 
 func FileWithPrefixExists(t *testing.T, directory string, prefix string) bool {
@@ -236,4 +312,24 @@ func AssertBashCommandFails(t *testing.T, command string) {
 	cmd := exec.Command("bash", "-c", command)
 	err := cmd.Run()
 	require.Error(t, err, "Expected command to fail but it succeeded: %s", command)
+}
+
+// WriteTempManifest creates a temporary file with the given content and returns
+// the file path and a cleanup function. This helper is shared across unit and
+// integration tests.
+func WriteTempManifest(t *testing.T, content string) (string, func()) {
+	t.Helper()
+	f, err := os.CreateTemp("", "parse-manifests-*.yaml")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		t.Fatalf("write temp file: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	return f.Name(), cleanup
 }

@@ -243,34 +243,39 @@ tasks:
         # Run specific test
         echo "Running integration test '{{.TEST_NAME}}'..."
         go test -p 1 -v -tags='integration,cluster_setup,require_cluster' -run {{.TEST_NAME}} ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+
         {{else}}
-        # Phase 1: Setup cluster
+
+        
+        # Phase 1: Run general integration tests
         echo ""
         echo "=============================================="
-        echo "Phase 1: Setting up cluster (cluster_setup)"
+        echo "Phase 1: Running general integration tests"
+        echo "=============================================="
+        go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+
+        # Phase 2: Setup cluster
+        echo ""
+        echo "=============================================="
+        echo "Phase 2: Setting up cluster (cluster_setup)"
         echo "=============================================="
         go test -p 1 -v -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/... -timeout 60m -failfast
         
-        # Phase 2: Run tests that require a cluster
+        # Phase 3: Run tests that require a cluster
+        # Tests are prefixed with TestWithCluster_ for easy filtering
         echo ""
         echo "=============================================="
-        echo "Phase 2: Running cluster-dependent tests (require_cluster)"
+        echo "Phase 3: Running cluster-dependent tests (require_cluster)"
         echo "=============================================="
-        go test -p 1 -v -tags='require_cluster' ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
-        
-        # Phase 3: Run general integration tests
-        echo ""
-        echo "=============================================="
-        echo "Phase 3: Running general integration tests"
-        echo "=============================================="
-        go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+        go test -p 1 -v -tags='require_cluster' -run '^TestWithCluster_' ./internal/... -timeout 60m -failfast
         
         # Phase 4: Teardown cluster
         echo ""
         echo "=============================================="
         echo "Phase 4: Tearing down cluster (cluster_setup)"
         echo "=============================================="
-        go test -p 1 -v -tags='cluster_setup' ./internal/workflows/... -timeout 60m -failfast
+        go test -p 1 -v -tags='cluster_setup' -run '^Test_ClusterTeardown$' ./internal/workflows/... -timeout 60m -failfast
+
         {{end}}
         
         end=$(date +%s)

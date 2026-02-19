@@ -3,29 +3,30 @@
 // Integration tests for the Kubernetes client that require a running cluster.
 //
 // Build Tag: require_cluster
+// Naming Convention: All tests are prefixed with TestWithCluster_
 //
 // These tests are NOT part of the standard `integration` test suite.
-// They run in Phase 2 of the Taskfile `test:integration:verbose` task,
-// after the cluster has been created in Phase 1:
+// They run in Phase 3 of the Taskfile `test:integration:verbose` task,
+// after the cluster has been created in Phase 2:
 //
-//   Phase 1: go test -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/...
+//   Phase 1: go test -tags='integration' ./internal/... ./pkg/... ./cmd/...
+//            → Runs general integration tests (before cluster setup)
+//
+//   Phase 2: go test -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/...
 //            → Creates the Kubernetes cluster
 //
-//   Phase 2: go test -tags='require_cluster' ./...
-//            → Runs these tests (and other cluster-dependent tests like helm tests)
+//   Phase 3: go test -tags='require_cluster' -run '^TestWithCluster_' ./internal/...
+//            → Runs these tests (and other cluster-dependent tests)
 //
-//   Phase 3: go test -tags='integration' ./...
-//            → Runs general integration tests
-//
-//   Phase 4: go test -tags='cluster_setup' ./internal/workflows/...
+//   Phase 4: go test -tags='cluster_setup' -run '^Test_ClusterTeardown$' ./internal/workflows/...
 //            → Tears down the cluster
 //
 // Dependencies:
-//   - Requires a running Kubernetes cluster (created by Phase 1)
+//   - Requires a running Kubernetes cluster (created by Phase 2)
 //   - Requires valid kubeconfig (typically at /etc/kubernetes/admin.conf)
 //
 // To run these tests standalone (with an existing cluster):
-//   go test -v -tags='require_cluster' ./internal/kube/...
+//   go test -v -tags='require_cluster' -run '^TestWithCluster_' ./internal/kube/...
 
 //go:build require_cluster
 
@@ -38,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -150,7 +152,7 @@ func deleteAndWait(t *testing.T, c *Client, gvr schema.GroupVersionResource, ns,
 	}
 }
 
-func TestApplyAndDeleteManifest_Integration(t *testing.T) {
+func TestWithCluster_ApplyAndDeleteManifest_Integration(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -180,7 +182,7 @@ metadata:
 data:
   hello: world
 `, nsName, cmName, nsName)
-	path, cleanup := writeTempManifest(t, manifest)
+	path, cleanup := testutil.WriteTempManifest(t, manifest)
 	defer cleanup()
 
 	// Apply manifest
@@ -205,7 +207,7 @@ data:
 }
 
 // TestWaitForResources tests Deployments, Jobs, Pods, and PVCs
-func TestWaitForResources(t *testing.T) {
+func TestWithCluster_WaitForResources(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -314,7 +316,7 @@ func TestWaitForResources(t *testing.T) {
 	defer deleteAndWait(t, c, pvcGVR, nsName, pvcName, 2*time.Minute)
 }
 
-func TestWaitForContainer_Succeeds(t *testing.T) {
+func TestWithCluster_WaitForContainer_Succeeds(t *testing.T) {
 	c := mustClient(t)
 	ctx := context.Background()
 
@@ -337,7 +339,7 @@ func TestWaitForContainer_Succeeds(t *testing.T) {
 	}
 }
 
-func TestWaitForContainer_TerminatedNonZero(t *testing.T) {
+func TestWithCluster_WaitForContainer_TerminatedNonZero(t *testing.T) {
 	c := mustClient(t)
 	ctx := context.Background()
 
@@ -361,7 +363,7 @@ func TestWaitForContainer_TerminatedNonZero(t *testing.T) {
 	}
 }
 
-func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
+func TestWithCluster_List_Namespace_Label_FieldSelectors(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 
@@ -435,7 +437,7 @@ func TestList_Namespace_Label_FieldSelectors(t *testing.T) {
 	}
 }
 
-func TestClusterNodes_Integration(t *testing.T) {
+func TestWithCluster_ClusterNodes_Integration(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -461,7 +463,7 @@ func TestClusterNodes_Integration(t *testing.T) {
 	t.Logf("Cluster nodes: %v", names)
 }
 
-func TestToGroupVersionResource_KnownAndFallback(t *testing.T) {
+func TestWithCluster_ToGroupVersionResource_KnownAndFallback(t *testing.T) {
 	t.Parallel()
 
 	// Known kind
@@ -486,7 +488,7 @@ func TestToGroupVersionResource_KnownAndFallback(t *testing.T) {
 	}
 }
 
-func TestCheckFuncWrappers_IsPhaseAndContainerFuncs(t *testing.T) {
+func TestWithCluster_CheckFuncWrappers_IsPhaseAndContainerFuncs(t *testing.T) {
 	t.Parallel()
 
 	// IsPhase
@@ -538,7 +540,7 @@ func TestCheckFuncWrappers_IsPhaseAndContainerFuncs(t *testing.T) {
 	}
 }
 
-func TestIsCRDReady(t *testing.T) {
+func TestWithCluster_IsCRDReady(t *testing.T) {
 	t.Parallel()
 
 	objEstablished := &unstructured.Unstructured{
@@ -622,7 +624,7 @@ func TestIsCRDReady(t *testing.T) {
 }
 
 // TestScaleDeployment_Integration tests scaling a deployment up and down
-func TestScaleDeployment_Integration(t *testing.T) {
+func TestWithCluster_ScaleDeployment_Integration(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -693,7 +695,7 @@ func TestScaleDeployment_Integration(t *testing.T) {
 }
 
 // TestScaleDeployment_NotFound tests scaling a non-existent deployment
-func TestScaleDeployment_NotFound(t *testing.T) {
+func TestWithCluster_ScaleDeployment_NotFound(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -705,7 +707,7 @@ func TestScaleDeployment_NotFound(t *testing.T) {
 }
 
 // TestAnnotateResource_Service_Integration tests annotating a service
-func TestAnnotateResource_Service_Integration(t *testing.T) {
+func TestWithCluster_AnnotateResource_Service_Integration(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -781,7 +783,7 @@ func TestAnnotateResource_Service_Integration(t *testing.T) {
 }
 
 // TestAnnotateResource_ConfigMap_Integration tests annotating a configmap
-func TestAnnotateResource_ConfigMap_Integration(t *testing.T) {
+func TestWithCluster_AnnotateResource_ConfigMap_Integration(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -828,7 +830,7 @@ func TestAnnotateResource_ConfigMap_Integration(t *testing.T) {
 }
 
 // TestAnnotateResource_NotFound tests annotating a non-existent resource
-func TestAnnotateResource_NotFound(t *testing.T) {
+func TestWithCluster_AnnotateResource_NotFound(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -840,7 +842,7 @@ func TestAnnotateResource_NotFound(t *testing.T) {
 }
 
 // TestScaleStatefulSet_Integration tests scaling a statefulset up and down
-func TestScaleStatefulSet_Integration(t *testing.T) {
+func TestWithCluster_ScaleStatefulSet_Integration(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -959,7 +961,7 @@ func TestScaleStatefulSet_Integration(t *testing.T) {
 }
 
 // TestScaleStatefulSet_NotFound tests scaling a non-existent statefulset
-func TestScaleStatefulSet_NotFound(t *testing.T) {
+func TestWithCluster_ScaleStatefulSet_NotFound(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -971,7 +973,7 @@ func TestScaleStatefulSet_NotFound(t *testing.T) {
 }
 
 // TestWaitForResourcesDeletion_Integration tests waiting for pods to be deleted
-func TestWaitForResourcesDeletion_Integration(t *testing.T) {
+func TestWithCluster_WaitForResourcesDeletion_Integration(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1010,7 +1012,7 @@ func TestWaitForResourcesDeletion_Integration(t *testing.T) {
 }
 
 // TestWaitForResourcesDeletion_AlreadyDeleted tests waiting when no matching resources exist
-func TestWaitForResourcesDeletion_AlreadyDeleted(t *testing.T) {
+func TestWithCluster_WaitForResourcesDeletion_AlreadyDeleted(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1024,7 +1026,7 @@ func TestWaitForResourcesDeletion_AlreadyDeleted(t *testing.T) {
 }
 
 // TestResourceExists_NamespaceExists tests ResourceExists with an existing namespace
-func TestResourceExists_NamespaceExists(t *testing.T) {
+func TestWithCluster_ResourceExists_NamespaceExists(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1040,7 +1042,7 @@ func TestResourceExists_NamespaceExists(t *testing.T) {
 }
 
 // TestResourceExists_NamespaceNotExists tests ResourceExists with a non-existent namespace
-func TestResourceExists_NamespaceNotExists(t *testing.T) {
+func TestWithCluster_ResourceExists_NamespaceNotExists(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1056,7 +1058,7 @@ func TestResourceExists_NamespaceNotExists(t *testing.T) {
 }
 
 // TestResourceExists_ConfigMap tests ResourceExists with a namespaced resource
-func TestResourceExists_ConfigMap(t *testing.T) {
+func TestWithCluster_ResourceExists_ConfigMap(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1108,7 +1110,7 @@ func TestResourceExists_ConfigMap(t *testing.T) {
 }
 
 // TestGetResourceNestedString_ConfigMap tests GetResourceNestedString with a ConfigMap
-func TestGetResourceNestedString_ConfigMap(t *testing.T) {
+func TestWithCluster_GetResourceNestedString_ConfigMap(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1151,7 +1153,7 @@ func TestGetResourceNestedString_ConfigMap(t *testing.T) {
 }
 
 // TestGetResourceNestedString_NotFound tests GetResourceNestedString with non-existent resource
-func TestGetResourceNestedString_NotFound(t *testing.T) {
+func TestWithCluster_GetResourceNestedString_NotFound(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()
@@ -1167,7 +1169,7 @@ func TestGetResourceNestedString_NotFound(t *testing.T) {
 }
 
 // TestGetResourceNestedString_MissingField tests GetResourceNestedString with missing field
-func TestGetResourceNestedString_MissingField(t *testing.T) {
+func TestWithCluster_GetResourceNestedString_MissingField(t *testing.T) {
 	t.Parallel()
 	c := mustClient(t)
 	ctx := context.Background()

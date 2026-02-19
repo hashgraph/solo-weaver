@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func Test_SetupBindMountsWithFstab_CompleteWorkflow_Integration(t *testing.T) {
@@ -715,4 +716,261 @@ func Test_IsBindMountedWithFstab_MultipleBindMounts_Integration(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, alreadyMounted3)
 	require.True(t, fstabEntryExists3)
+}
+
+func Test_UnmountPath_Success_Integration(t *testing.T) {
+	//
+	// Given
+	//
+
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root privileges")
+	}
+
+	tempDir := t.TempDir()
+
+	// Create source and target directories
+	sourceDir := filepath.Join(tempDir, "source")
+	targetDir := filepath.Join(tempDir, "target")
+
+	err := os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create a test file in the source
+	testFile := filepath.Join(sourceDir, "test_file.txt")
+	err = os.WriteFile(testFile, []byte("test content"), core.DefaultFilePerm)
+	require.NoError(t, err)
+
+	// Create a bind mount using unix.Mount directly
+	err = unix.Mount(sourceDir, targetDir, "", unix.MS_BIND, "")
+	require.NoError(t, err)
+
+	// Cleanup: ensure unmount if test fails
+	t.Cleanup(func() {
+		_ = exec.Command("umount", targetDir).Run()
+	})
+
+	// Verify the mount exists by checking if test file is visible through target
+	targetTestFile := filepath.Join(targetDir, "test_file.txt")
+	content, err := os.ReadFile(targetTestFile)
+	require.NoError(t, err)
+	require.Equal(t, "test content", string(content))
+
+	//
+	// When
+	//
+
+	err = UnmountPath(targetDir)
+
+	//
+	// Then
+	//
+
+	require.NoError(t, err)
+
+	// Verify the mount no longer exists - the test file should not be accessible
+	_, err = os.ReadFile(targetTestFile)
+	require.Error(t, err)
+}
+
+func Test_UnmountPath_NonExistent_Integration(t *testing.T) {
+	//
+	// Given
+	//
+
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root privileges")
+	}
+
+	tempDir := t.TempDir()
+	nonMountedDir := filepath.Join(tempDir, "not-a-mount")
+
+	err := os.MkdirAll(nonMountedDir, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	//
+	// When
+	//
+
+	err = UnmountPath(nonMountedDir)
+
+	//
+	// Then
+	//
+
+	// Should fail because the path is not mounted
+	require.Error(t, err)
+}
+
+func Test_UnmountPath_NestedMounts_Integration(t *testing.T) {
+	//
+	// Given
+	//
+
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root privileges")
+	}
+
+	tempDir := t.TempDir()
+
+	// Create source directories
+	source1 := filepath.Join(tempDir, "source1")
+	source2 := filepath.Join(tempDir, "source2")
+	err := os.MkdirAll(source1, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+	err = os.MkdirAll(source2, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create test files
+	err = os.WriteFile(filepath.Join(source1, "file1.txt"), []byte("content1"), core.DefaultFilePerm)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(source2, "file2.txt"), []byte("content2"), core.DefaultFilePerm)
+	require.NoError(t, err)
+
+	// Create target directories (nested structure)
+	target1 := filepath.Join(tempDir, "target")
+	target2 := filepath.Join(target1, "nested")
+	err = os.MkdirAll(target2, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	// Create bind mounts - parent first, then nested
+	err = unix.Mount(source1, target1, "", unix.MS_BIND, "")
+	require.NoError(t, err)
+
+	// Cleanup: ensure unmounts if test fails
+	t.Cleanup(func() {
+		_ = exec.Command("umount", target2).Run()
+		_ = exec.Command("umount", target1).Run()
+	})
+
+	// Create the nested target directory after parent mount
+	err = os.MkdirAll(target2, core.DefaultDirOrExecPerm)
+	require.NoError(t, err)
+
+	err = unix.Mount(source2, target2, "", unix.MS_BIND, "")
+	require.NoError(t, err)
+
+	//
+	// When
+	//
+
+	// Unmount nested mount first (correct order)
+	err = UnmountPath(target2)
+	require.NoError(t, err)
+
+	// Then unmount parent mount
+	err = UnmountPath(target1)
+
+	//
+	// Then
+	//
+
+	require.NoError(t, err)
+
+	// Verify neither mount exists
+	_, err = os.ReadFile(filepath.Join(target1, "file1.txt"))
+	require.Error(t, err)
+}
+
+func Test_UnmountPath_WithGetMountsUnderPath_Integration(t *testing.T) {
+	//
+	// Given
+	//
+
+	// This test verifies that GetMountsUnderPath and UnmountPath work together correctly
+	// to unmount all mounts under a path prefix in the correct order.
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root privileges")
+	}
+
+	tempDir := t.TempDir()
+
+	// Create a structure mimicking the sandbox directory layout
+	sandboxDir := filepath.Join(tempDir, "sandbox")
+	source1 := filepath.Join(tempDir, "source1")
+	source2 := filepath.Join(tempDir, "source2")
+	source3 := filepath.Join(tempDir, "source3")
+
+	target1 := filepath.Join(sandboxDir, "mount1")
+	target2 := filepath.Join(sandboxDir, "mount1", "nested")
+	target3 := filepath.Join(sandboxDir, "mount2")
+
+	// Create all directories
+	for _, dir := range []string{source1, source2, source3, target1, target2, target3} {
+		err := os.MkdirAll(dir, core.DefaultDirOrExecPerm)
+		require.NoError(t, err)
+	}
+
+	// Create test files
+	err := os.WriteFile(filepath.Join(source1, "f1.txt"), []byte("1"), core.DefaultFilePerm)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(source2, "f2.txt"), []byte("2"), core.DefaultFilePerm)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(source3, "f3.txt"), []byte("3"), core.DefaultFilePerm)
+	require.NoError(t, err)
+
+	// Create bind mounts
+	err = unix.Mount(source1, target1, "", unix.MS_BIND, "")
+	require.NoError(t, err)
+	err = os.MkdirAll(target2, core.DefaultDirOrExecPerm) // Recreate nested dir after parent mount
+	require.NoError(t, err)
+	err = unix.Mount(source2, target2, "", unix.MS_BIND, "")
+	require.NoError(t, err)
+	err = unix.Mount(source3, target3, "", unix.MS_BIND, "")
+	require.NoError(t, err)
+
+	// Cleanup: ensure unmounts if test fails
+	t.Cleanup(func() {
+		_ = exec.Command("umount", target2).Run()
+		_ = exec.Command("umount", target1).Run()
+		_ = exec.Command("umount", target3).Run()
+	})
+
+	// Verify all mounts exist
+	_, err = os.ReadFile(filepath.Join(target1, "f1.txt"))
+	require.NoError(t, err)
+	_, err = os.ReadFile(filepath.Join(target2, "f2.txt"))
+	require.NoError(t, err)
+	_, err = os.ReadFile(filepath.Join(target3, "f3.txt"))
+	require.NoError(t, err)
+
+	//
+	// When
+	//
+
+	// Get all mounts under sandbox directory
+	mounts, err := GetMountsUnderPath(sandboxDir)
+	require.NoError(t, err)
+	require.Len(t, mounts, 3)
+
+	// Verify they are sorted deepest-first (target2 should come before target1)
+	require.Equal(t, target2, mounts[0]) // nested mount first
+	// target1 and target3 have same depth, but target3 > target1 lexicographically
+	require.Equal(t, target3, mounts[1])
+	require.Equal(t, target1, mounts[2])
+
+	// Unmount in the order returned by GetMountsUnderPath
+	for _, mountPoint := range mounts {
+		err = UnmountPath(mountPoint)
+		require.NoError(t, err)
+	}
+
+	//
+	// Then
+	//
+
+	// Verify all mounts are gone
+	_, err = os.ReadFile(filepath.Join(target1, "f1.txt"))
+	require.Error(t, err)
+	_, err = os.ReadFile(filepath.Join(target2, "f2.txt"))
+	require.Error(t, err)
+	_, err = os.ReadFile(filepath.Join(target3, "f3.txt"))
+	require.Error(t, err)
+
+	// Verify GetMountsUnderPath returns empty now
+	mounts, err = GetMountsUnderPath(sandboxDir)
+	require.NoError(t, err)
+	require.Empty(t, mounts)
 }

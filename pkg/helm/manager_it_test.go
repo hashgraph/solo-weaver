@@ -5,23 +5,23 @@
 // Build Tags: helm_integration OR require_cluster
 //
 // These tests are NOT part of the standard `integration` test suite.
-// They run in Phase 2 of the Taskfile `test:integration:verbose` task,
-// after the cluster has been created in Phase 1:
+// They run in Phase 3 of the Taskfile `test:integration:verbose` task,
+// after the cluster has been created in Phase 2:
 //
-//   Phase 1: go test -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/...
+//   Phase 1: go test -tags='integration' ./internal/... ./pkg/... ./cmd/...
+//            → Runs general integration tests (before cluster setup)
+//
+//   Phase 2: go test -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/...
 //            → Creates the Kubernetes cluster
 //
-//   Phase 2: go test -tags='require_cluster' ./...
+//   Phase 3: go test -tags='require_cluster' -run '^TestWithCluster_' ./internal/...
 //            → Runs these tests (matched via `require_cluster` tag)
 //
-//   Phase 3: go test -tags='integration' ./...
-//            → Runs general integration tests
-//
-//   Phase 4: go test -tags='cluster_setup' ./internal/workflows/...
+//   Phase 4: go test -tags='cluster_setup' -run '^Test_ClusterTeardown$' ./internal/workflows/...
 //            → Tears down the cluster
 //
 // Dependencies:
-//   - Requires a running Kubernetes cluster (created by Phase 1)
+//   - Requires a running Kubernetes cluster (created by Phase 2)
 //   - Requires valid kubeconfig
 //
 // To run these tests standalone (with an existing cluster):

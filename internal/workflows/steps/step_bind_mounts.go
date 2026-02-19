@@ -5,10 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path"
-	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -197,22 +194,11 @@ func teardownSandboxMounts() automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			sandboxDir := core.Paths().SandboxDir
 
-			// Read /proc/mounts to find all mounts under sandbox directory
-			mountsData, err := os.ReadFile("/proc/mounts")
+			// Get all mounts under sandbox directory using mount module
+			mountsToUnmount, err := mount.GetMountsUnderPath(sandboxDir)
 			if err != nil {
-				logx.As().Warn().Err(err).Msg("Failed to read /proc/mounts, continuing with teardown")
+				logx.As().Warn().Err(err).Msg("Failed to get mounts under sandbox directory, continuing with teardown")
 				return automa.SuccessReport(stp)
-			}
-
-			var mountsToUnmount []string
-			for _, line := range strings.Split(string(mountsData), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					mountPoint := fields[1]
-					if strings.HasPrefix(mountPoint, sandboxDir+"/") || mountPoint == sandboxDir {
-						mountsToUnmount = append(mountsToUnmount, mountPoint)
-					}
-				}
 			}
 
 			if len(mountsToUnmount) == 0 {
@@ -222,11 +208,10 @@ func teardownSandboxMounts() automa.Builder {
 
 			logx.As().Debug().Msgf("Found %d mounts under sandbox directory", len(mountsToUnmount))
 
-			// Unmount in reverse order (deepest paths first)
-			for i := len(mountsToUnmount) - 1; i >= 0; i-- {
-				mountPoint := mountsToUnmount[i]
+			// Unmount in order (GetMountsUnderPath returns deepest paths first)
+			for _, mountPoint := range mountsToUnmount {
 				logx.As().Debug().Msgf("Unmounting %s", mountPoint)
-				if err := exec.Command("umount", "-lf", mountPoint).Run(); err != nil {
+				if err := mount.UnmountPath(mountPoint); err != nil {
 					logx.As().Warn().Err(err).Msgf("Failed to unmount %s", mountPoint)
 				}
 			}

@@ -126,6 +126,8 @@ func Test_KernelModuleStep_Overlay_Integration(t *testing.T) {
 		t.Skip("This test requires root privileges to load kernel modules")
 	}
 
+	testutil.Reset(t)
+
 	moduleName := "overlay"
 
 	// Cleanup before test
