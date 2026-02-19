@@ -124,9 +124,6 @@ func Reset(t *testing.T) {
 		_ = Sudo(exec.Command("systemctl", "stop", service)).Run()
 	}
 
-	t.Log("Reset: Stopping crio service")
-	_ = Sudo(exec.Command("systemctl", "stop", "crio")).Run()
-
 	// Kill kubernetes control plane processes
 	t.Log("Reset: Killing kubernetes control plane processes")
 	for _, proc := range []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd", "kubelet"} {
