@@ -36,6 +36,8 @@ type HostProfile interface {
 
 	// Storage information (in GB)
 	GetTotalStorageGB() uint64
+	GetSSDStorageGB() uint64 // NVMe/SSD storage
+	GetHDDStorageGB() uint64 // Traditional spinning disk storage
 
 	// Application status
 	IsNodeAlreadyRunning() bool
@@ -101,6 +103,42 @@ func (d *DefaultHostProfile) GetTotalStorageGB() uint64 {
 		return 0
 	}
 	return uint64(block.TotalPhysicalBytes / (1024 * 1024 * 1024))
+}
+
+// GetSSDStorageGB returns total SSD/NVMe storage in GB
+func (d *DefaultHostProfile) GetSSDStorageGB() uint64 {
+	block, err := ghw.Block()
+	if err != nil {
+		log.Printf("Error getting block info from ghw: %v", err)
+		return 0
+	}
+
+	var ssdBytes uint64
+	for _, disk := range block.Disks {
+		// ghw identifies SSDs via DriveType
+		if disk.DriveType == ghw.DriveTypeSSD {
+			ssdBytes += disk.SizeBytes
+		}
+	}
+	return ssdBytes / (1024 * 1024 * 1024)
+}
+
+// GetHDDStorageGB returns total HDD (spinning disk) storage in GB
+func (d *DefaultHostProfile) GetHDDStorageGB() uint64 {
+	block, err := ghw.Block()
+	if err != nil {
+		log.Printf("Error getting block info from ghw: %v", err)
+		return 0
+	}
+
+	var hddBytes uint64
+	for _, disk := range block.Disks {
+		// ghw identifies HDDs via DriveType
+		if disk.DriveType == ghw.DriveTypeHDD {
+			hddBytes += disk.SizeBytes
+		}
+	}
+	return hddBytes / (1024 * 1024 * 1024)
 }
 
 // GetAvailableMemoryGB returns available system memory in GB

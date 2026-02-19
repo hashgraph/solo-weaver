@@ -71,13 +71,60 @@ func (b *baseNode) ValidateMemory() error {
 	return nil
 }
 
-// ValidateStorage validates storage requirements using common logic
+// ValidateStorage validates storage requirements using common logic.
+// If MinSSDStorageGB or MinHDDStorageGB are set, validates those separately.
+// Otherwise, validates total storage against MinStorageGB.
 func (b *baseNode) ValidateStorage() error {
+	// Check if we need to validate SSD/HDD separately
+	if b.minimalRequirements.MinSSDStorageGB > 0 || b.minimalRequirements.MinHDDStorageGB > 0 {
+		return b.validateSplitStorage()
+	}
+
+	// Default: validate total storage
 	totalStorageGB := b.actualHostProfile.GetTotalStorageGB()
 	if int(totalStorageGB) < b.minimalRequirements.MinStorageGB {
-		return fmt.Errorf("storage does not meet %s requirements (minimum %d GB)", b.nodeType, b.minimalRequirements.MinStorageGB)
+		return fmt.Errorf("storage does not meet %s requirements (minimum %d GB, found %d GB)",
+			b.nodeType, b.minimalRequirements.MinStorageGB, totalStorageGB)
 	}
 	return nil
+}
+
+// validateSplitStorage validates SSD and HDD storage separately
+func (b *baseNode) validateSplitStorage() error {
+	var errors []string
+
+	if b.minimalRequirements.MinSSDStorageGB > 0 {
+		ssdStorageGB := b.actualHostProfile.GetSSDStorageGB()
+		if int(ssdStorageGB) < b.minimalRequirements.MinSSDStorageGB {
+			errors = append(errors, fmt.Sprintf("SSD/NVMe storage: minimum %d GB required, found %d GB",
+				b.minimalRequirements.MinSSDStorageGB, ssdStorageGB))
+		}
+	}
+
+	if b.minimalRequirements.MinHDDStorageGB > 0 {
+		hddStorageGB := b.actualHostProfile.GetHDDStorageGB()
+		if int(hddStorageGB) < b.minimalRequirements.MinHDDStorageGB {
+			errors = append(errors, fmt.Sprintf("HDD storage: minimum %d GB required, found %d GB",
+				b.minimalRequirements.MinHDDStorageGB, hddStorageGB))
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("storage does not meet %s requirements: %s", b.nodeType, joinErrors(errors))
+	}
+	return nil
+}
+
+// joinErrors joins multiple error messages with "; "
+func joinErrors(errors []string) string {
+	result := ""
+	for i, e := range errors {
+		if i > 0 {
+			result += "; "
+		}
+		result += e
+	}
+	return result
 }
 
 // GetBaselineRequirements returns the requirements
