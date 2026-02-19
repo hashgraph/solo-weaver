@@ -140,9 +140,14 @@ func GetMountsUnderPath(pathPrefix string) ([]string, error) {
 	return mounts, nil
 }
 
-// UnmountPath unmounts the given path using lazy detach flag.
+// UnmountPath unmounts the given path using lazy detach flag (MNT_DETACH).
 // This is a lower-level function that does not check if the path is mounted.
 // Use this when you already know the path is mounted (e.g., from reading /proc/mounts).
+//
+// Note: We use MNT_DETACH (lazy unmount) without MNT_FORCE. MNT_FORCE is primarily
+// useful for NFS mounts that have become unreachable. For local bind mounts (which is
+// the primary use case here - sandbox mounts, overlay storage, namespace mounts),
+// MNT_DETACH alone is sufficient and safer.
 func UnmountPath(target string) error {
 	err := unix.Unmount(target, unix.MNT_DETACH)
 	if err != nil {
