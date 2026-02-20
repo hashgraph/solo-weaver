@@ -72,8 +72,12 @@ var installCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Installing Hedera Block Node")
 
+		skipHardwareChecks, err := cmd.Flags().GetBool(common.FlagSkipHardwareChecks.Name)
+		if err != nil {
+			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
+		}
 		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile), opts)
+			workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile, skipHardwareChecks), opts)
 
 		common.RunWorkflow(cmd.Context(), wb)
 

@@ -53,7 +53,11 @@ var installCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Installing Kubernetes Cluster")
 
-		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile), opts)
+		skipHardwareChecks, err := cmd.Flags().GetBool(common.FlagSkipHardwareChecks.Name)
+		if err != nil {
+			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
+		}
+		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile, skipHardwareChecks), opts)
 		common.RunWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")

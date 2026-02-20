@@ -8,15 +8,15 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 )
 
-// NewBlockNodePreflightCheckWorkflow creates a safety check workflow for block node
+// NewBlockNodePreflightCheckWorkflow creates a safety check workflow for block node.
 func NewBlockNodePreflightCheckWorkflow(profile string) *automa.WorkflowBuilder {
-	return NewNodeSafetyCheckWorkflow(core.NodeTypeBlock, profile)
+	return NewNodeSafetyCheckWorkflow(core.NodeTypeBlock, profile, false)
 }
 
-// NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node
-func NewBlockNodeInstallWorkflow(profile string, valuesFile string) *automa.WorkflowBuilder {
+// NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node.
+func NewBlockNodeInstallWorkflow(profile string, valuesFile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-		InstallClusterWorkflow(core.NodeTypeBlock, profile),
+		InstallClusterWorkflow(core.NodeTypeBlock, profile, skipHardwareChecks),
 		steps.SetupBlockNode(profile, valuesFile),
 	)
 }

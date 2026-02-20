@@ -343,6 +343,7 @@ func CheckMemoryStep(nodeType string, profile string) automa.Builder {
 func CheckStorageStep(nodeType string, profile string) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-storage").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+
 			hostProfile := hardware.GetHostProfile()
 			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
 			if err != nil {
@@ -369,19 +370,29 @@ func CheckStorageStep(nodeType string, profile string) automa.Builder {
 		})
 }
 
-// NewNodeSafetyCheckWorkflow creates a safety check workflow for any node type
-func NewNodeSafetyCheckWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
-	return automa.NewWorkflowBuilder().
-		WithId(nodeType+"-node-preflight").Steps(
+// NewNodeSafetyCheckWorkflow creates a safety check workflow for any node type.
+// If skipHardwareChecks is true, hardware validation steps (OS, CPU, memory, storage) are excluded.
+func NewNodeSafetyCheckWorkflow(nodeType string, profile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
+	preflightSteps := []automa.Builder{
 		CheckPrivilegesStep(),
 		CheckWeaverUserStep(),
 		CheckHostProfileStep(nodeType, profile),
-		CheckOSStep(nodeType, profile),
-		CheckCPUStep(nodeType, profile),
-		CheckMemoryStep(nodeType, profile),
-		CheckStorageStep(nodeType, profile),
-		//CheckDockerStep(),
-	).
+	}
+
+	if skipHardwareChecks {
+		logx.As().Warn().Msg("Hardware validation steps (OS, CPU, memory, storage) will be skipped due to --skip-hardware-checks flag")
+	} else {
+		preflightSteps = append(preflightSteps,
+			CheckOSStep(nodeType, profile),
+			CheckCPUStep(nodeType, profile),
+			CheckMemoryStep(nodeType, profile),
+			CheckStorageStep(nodeType, profile),
+		)
+	}
+
+	return automa.NewWorkflowBuilder().
+		WithId(nodeType + "-node-preflight").
+		Steps(preflightSteps...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Starting node preflight checks")
 			return ctx, nil

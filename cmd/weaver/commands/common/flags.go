@@ -65,6 +65,22 @@ var (
 		Description: "Install Metrics Server",
 		Default:     true,
 	}
+
+	// FlagSkipHardwareChecks is a hidden persistent flag registered on the root command.
+	// When set, it skips CPU, memory, and storage validation in NewNodeSafetyCheckWorkflow
+	// (see internal/workflows/preflight.go). Privilege, user, and host profile checks
+	// still run. This flag is intentionally not supported by the "check" command since its
+	// purpose is to validate hardware requirements.
+	//
+	// Used by: block node install, kube cluster install.
+	// Registered in: cmd/weaver/commands/root.go (hidden).
+	// See docs/dev/hidden-flags.md for full documentation.
+	FlagSkipHardwareChecks = FlagDefinition[bool]{
+		Name:        "skip-hardware-checks",
+		ShortName:   "",
+		Description: "DANGEROUS: Skip hardware validation checks. May cause node instability or data loss.",
+		Default:     false,
+	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.

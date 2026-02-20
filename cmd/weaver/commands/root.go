@@ -30,9 +30,10 @@ import (
 // rootCmd represents the base command when called without any subcommands
 var (
 	// Used for flags.
-	flagConfig       string
-	flagVersion      bool
-	flagOutputFormat string
+	flagConfig             string
+	flagVersion            bool
+	flagOutputFormat       string
+	flagSkipHardwareChecks bool
 
 	rootCmd = &cobra.Command{
 		Use:   "solo-provisioner",
@@ -59,6 +60,11 @@ func init() {
 	// support '--version', '-v' to show version information
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Show version")
 	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format (yaml|json)")
+
+	// Hardware check override flag - hidden to discourage casual use
+	rootCmd.PersistentFlags().BoolVar(&flagSkipHardwareChecks, common.FlagSkipHardwareChecks.Name, false,
+		"DANGEROUS: Skip hardware validation checks. May cause node instability or data loss.")
+	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks.Name)
 
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false
