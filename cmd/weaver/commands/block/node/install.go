@@ -7,6 +7,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -25,6 +26,12 @@ var installCmd = &cobra.Command{
 
 		if flagProfile == "" {
 			return errorx.IllegalArgument.New("profile flag is required")
+		}
+
+		// Validate profile early for better error messages
+		if !hardware.IsValidProfile(flagProfile) {
+			return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
+				flagProfile, hardware.SupportedProfiles())
 		}
 
 		// Set the profile in the global config so other components can access it

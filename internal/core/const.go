@@ -27,16 +27,18 @@ const (
 	NodeTypeRelay     = "relay"
 
 	// Deployment profiles
-	ProfileLocal   = "local"
-	ProfilePerfnet = "perfnet"
-	ProfileTestnet = "testnet"
-	ProfileMainnet = "mainnet"
+	ProfileLocal      = "local"
+	ProfilePerfnet    = "perfnet"
+	ProfileTestnet    = "testnet"
+	ProfilePreviewnet = "previewnet"
+	ProfileMainnet    = "mainnet"
 )
 
 var allProfiles = []string{
 	ProfileLocal,
 	ProfilePerfnet,
 	ProfileTestnet,
+	ProfilePreviewnet,
 	ProfileMainnet,
 }
 

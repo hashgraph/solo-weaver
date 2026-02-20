@@ -55,13 +55,14 @@ Most installation commands support these execution control flags:
 
 ## Deployment Profiles
 
-Solo Provisioner supports four deployment profiles that configure behavior and defaults:
+Solo Provisioner supports five deployment profiles that configure behavior and defaults:
 
 | Profile | Description | Use Case |
 |---------|-------------|----------|
 | `local` | Local development and testing | Development, CI/CD |
 | `perfnet` | Performance testing network | Load testing |
 | `testnet` | Hedera Testnet | Integration testing |
+| `previewnet` | Hedera Previewnet | Preview/staging testing |
 | `mainnet` | Hedera Mainnet | Production deployment |
 
 > **Important**: Always use `--profile` to specify your target environment.

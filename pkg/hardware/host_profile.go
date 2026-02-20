@@ -36,6 +36,8 @@ type HostProfile interface {
 
 	// Storage information (in GB)
 	GetTotalStorageGB() uint64
+	GetSSDStorageGB() uint64 // NVMe/SSD storage
+	GetHDDStorageGB() uint64 // Traditional spinning disk storage
 
 	// Application status
 	IsNodeAlreadyRunning() bool
@@ -43,9 +45,18 @@ type HostProfile interface {
 	String() string
 }
 
+// cachedBlockInfo holds pre-computed storage values from a single ghw.Block() call
+type cachedBlockInfo struct {
+	totalGB uint64
+	ssdGB   uint64
+	hddGB   uint64
+}
+
 // DefaultHostProfile implements HostProfile using both sysinfo and ghw libraries
 type DefaultHostProfile struct {
-	sysInfo sysinfo.SysInfo
+	sysInfo   sysinfo.SysInfo
+	blockInfo *cachedBlockInfo
+	blockOnce sync.Once
 }
 
 // GetHostProfile creates a new DefaultHostProfile by gathering system information
@@ -61,6 +72,35 @@ func GetHostProfile() HostProfile {
 	}
 }
 
+// getBlockInfo returns cached block storage info, fetching it once if needed
+func (d *DefaultHostProfile) getBlockInfo() *cachedBlockInfo {
+	d.blockOnce.Do(func() {
+		block, err := ghw.Block()
+		if err != nil {
+			log.Printf("Error getting block info from ghw: %v", err)
+			d.blockInfo = &cachedBlockInfo{}
+			return
+		}
+
+		var ssdBytes, hddBytes uint64
+		for _, disk := range block.Disks {
+			switch disk.DriveType {
+			case ghw.DriveTypeSSD:
+				ssdBytes += disk.SizeBytes
+			case ghw.DriveTypeHDD:
+				hddBytes += disk.SizeBytes
+			}
+		}
+
+		d.blockInfo = &cachedBlockInfo{
+			totalGB: block.TotalPhysicalBytes / (1024 * 1024 * 1024),
+			ssdGB:   ssdBytes / (1024 * 1024 * 1024),
+			hddGB:   hddBytes / (1024 * 1024 * 1024),
+		}
+	})
+	return d.blockInfo
+}
+
 // GetOSVendor returns the OS vendor/distribution name
 func (d *DefaultHostProfile) GetOSVendor() string {
 	return d.sysInfo.OS.Vendor
@@ -73,7 +113,6 @@ func (d *DefaultHostProfile) GetOSVersion() string {
 
 // GetCPUCores returns the number of CPU cores
 func (d *DefaultHostProfile) GetCPUCores() uint {
-	// Use ghw for CPU information
 	cpu, err := ghw.CPU()
 	if err != nil {
 		log.Printf("Error getting CPU info from ghw: %v", err)
@@ -94,34 +133,33 @@ func (d *DefaultHostProfile) GetTotalMemoryGB() uint64 {
 
 // GetTotalStorageGB returns total storage space in GB
 func (d *DefaultHostProfile) GetTotalStorageGB() uint64 {
-	// Use ghw for storage information
-	block, err := ghw.Block()
-	if err != nil {
-		log.Printf("Error getting block info from ghw: %v", err)
-		return 0
-	}
-	return uint64(block.TotalPhysicalBytes / (1024 * 1024 * 1024))
+	return d.getBlockInfo().totalGB
+}
+
+// GetSSDStorageGB returns total SSD/NVMe storage in GB
+func (d *DefaultHostProfile) GetSSDStorageGB() uint64 {
+	return d.getBlockInfo().ssdGB
+}
+
+// GetHDDStorageGB returns total HDD (spinning disk) storage in GB
+func (d *DefaultHostProfile) GetHDDStorageGB() uint64 {
+	return d.getBlockInfo().hddGB
 }
 
 // GetAvailableMemoryGB returns available system memory in GB
 func (d *DefaultHostProfile) GetAvailableMemoryGB() uint64 {
-	// Use ghw for memory information
 	memory, err := ghw.Memory()
 	if err != nil {
 		log.Printf("Error getting memory info from ghw: %v", err)
 		return 0
 	}
-
-	// Return usable memory as available memory
 	return uint64(memory.TotalUsableBytes / (1024 * 1024 * 1024))
 }
 
 // IsNodeAlreadyRunning checks if the node is already running by looking for a lock file
 func (d *DefaultHostProfile) IsNodeAlreadyRunning() bool {
-	// Hardcoded lock file path - adjust this to match your application's lock file location
 	lockFilePath := "/var/run/solo-node.lock"
 
-	// Check if the lock file exists
 	if _, err := os.Stat(lockFilePath); os.IsNotExist(err) {
 		return false
 	}

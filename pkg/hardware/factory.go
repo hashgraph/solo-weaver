@@ -16,7 +16,7 @@ func SupportedNodeTypes() []string {
 
 // SupportedProfiles returns all supported deployment profiles
 func SupportedProfiles() []string {
-	return []string{core.ProfileLocal, core.ProfilePerfnet, core.ProfileTestnet, core.ProfileMainnet}
+	return []string{core.ProfileLocal, core.ProfilePerfnet, core.ProfileTestnet, core.ProfilePreviewnet, core.ProfileMainnet}
 }
 
 // IsValidNodeType checks if the given node type is supported
@@ -41,27 +41,29 @@ func IsValidProfile(profile string) bool {
 	return false
 }
 
-// CreateNodeSpec creates the appropriate node spec based on node type, profile and host profile
+// CreateNodeSpec creates the appropriate node spec based on node type, profile and host profile.
+// This function uses a requirements registry that maps (nodeType, profile) combinations
+// to their specific hardware requirements, properly separating the concerns of
+// node type (what kind of node) and profile (deployment environment).
 func CreateNodeSpec(nodeType string, profile string, hostProfile HostProfile) (Spec, error) {
-	normalized := strings.ToLower(nodeType)
+	normalizedNodeType := strings.ToLower(nodeType)
 	normalizedProfile := strings.ToLower(profile)
 
-	// For local profile, use local node specs regardless of node type
-	if normalizedProfile == core.ProfileLocal {
-		return NewLocalNodeSpec(hostProfile), nil
+	// Validate node type
+	if !IsValidNodeType(normalizedNodeType) {
+		return nil, errorx.IllegalArgument.New("unsupported node type: %q. Supported types: %v", nodeType, SupportedNodeTypes())
 	}
 
-	// For other profiles, use node-specific requirements
-	switch normalized {
-	case core.NodeTypeBlock:
-		return NewBlockNodeSpec(hostProfile), nil
-	case core.NodeTypeConsensus:
-		return NewConsensusNodeSpec(hostProfile), nil
-	default:
-		supportedTypes := make([]string, len(SupportedNodeTypes()))
-		for i, t := range SupportedNodeTypes() {
-			supportedTypes[i] = string(t)
-		}
-		return nil, errorx.IllegalArgument.New("unsupported node type: %s. Supported types: %v", nodeType, supportedTypes)
+	// Validate profile
+	if !IsValidProfile(normalizedProfile) {
+		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v", profile, SupportedProfiles())
 	}
+
+	// Use the new unified node spec that looks up requirements from the registry
+	spec, err := NewNodeSpec(normalizedNodeType, normalizedProfile, hostProfile)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create node spec")
+	}
+
+	return spec, nil
 }
