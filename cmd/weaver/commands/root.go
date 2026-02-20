@@ -34,6 +34,8 @@ var (
 	flagVersion            bool
 	flagOutputFormat       string
 	flagSkipHardwareChecks bool
+	flagForce              bool
+	flagProxy              bool
 
 	rootCmd = &cobra.Command{
 		Use:   "solo-provisioner",
@@ -55,6 +57,10 @@ var (
 
 // Register state migrations at startup
 func init() {
+	common.FlagForce.SetVarP(rootCmd, &flagForce, false)
+
+	common.FlagProxy.SetVarP(rootCmd, &flagProxy, false)
+
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
 
 	// support '--version', '-v' to show version information
