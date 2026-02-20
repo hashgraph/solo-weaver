@@ -51,12 +51,12 @@ func CreateNodeSpec(nodeType string, profile string, hostProfile HostProfile) (S
 
 	// Validate node type
 	if !IsValidNodeType(normalizedNodeType) {
-		return nil, errorx.IllegalArgument.New("unsupported node type: %s. Supported types: %v", nodeType, SupportedNodeTypes())
+		return nil, errorx.IllegalArgument.New("unsupported node type: %q. Supported types: %v", nodeType, SupportedNodeTypes())
 	}
 
 	// Validate profile
 	if !IsValidProfile(normalizedProfile) {
-		return nil, errorx.IllegalArgument.New("unsupported profile: %s. Supported profiles: %v", profile, SupportedProfiles())
+		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v", profile, SupportedProfiles())
 	}
 
 	// Use the new unified node spec that looks up requirements from the registry

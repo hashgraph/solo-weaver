@@ -46,7 +46,7 @@ func capitalize(s string) string {
 	}
 	// Simple ASCII uppercase for first char
 	if s[0] >= 'a' && s[0] <= 'z' {
-		return string(s[0]-32) + s[1:]
+		return string(s[0]-('a'-'A')) + s[1:]
 	}
 	return s
 }

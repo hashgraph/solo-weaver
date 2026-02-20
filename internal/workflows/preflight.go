@@ -36,7 +36,7 @@ func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 			if !hardware.IsValidNodeType(nodeType) {
 				return automa.FailureReport(stp,
 					automa.WithError(
-						errorx.IllegalArgument.New("unsupported node type: %s. Supported types: %v",
+						errorx.IllegalArgument.New("unsupported node type: %q. Supported types: %v",
 							nodeType, hardware.SupportedNodeTypes())))
 			}
 

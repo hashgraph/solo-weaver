@@ -7,6 +7,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -30,8 +31,13 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}
 
-		// Set the profile in the global config if provided
+		// Validate profile early if provided
 		if flagProfile != "" {
+			if !hardware.IsValidProfile(flagProfile) {
+				return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
+					flagProfile, hardware.SupportedProfiles())
+			}
+			// Set the profile in the global config
 			config.SetProfile(flagProfile)
 		}
 

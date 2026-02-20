@@ -37,11 +37,10 @@ var requirementsRegistry = map[string]map[string]BaselineRequirements{
 			MinSupportedOS: supportedOS,
 		},
 		core.ProfileTestnet: {
-			MinCpuCores:     48,
-			MinMemoryGB:     256,
-			MinSSDStorageGB: 8000,  // 8TB NVMe/SSD
-			MinHDDStorageGB: 24000, // 24TB HDD
-			MinSupportedOS:  supportedOS,
+			MinCpuCores:    8,
+			MinMemoryGB:    16,
+			MinStorageGB:   5000,
+			MinSupportedOS: supportedOS,
 		},
 		core.ProfilePreviewnet: {
 			MinCpuCores:     48,
@@ -51,11 +50,10 @@ var requirementsRegistry = map[string]map[string]BaselineRequirements{
 			MinSupportedOS:  supportedOS,
 		},
 		core.ProfileMainnet: {
-			MinCpuCores:     48,
-			MinMemoryGB:     256,
-			MinSSDStorageGB: 8000,  // 8TB NVMe/SSD
-			MinHDDStorageGB: 24000, // 24TB HDD
-			MinSupportedOS:  supportedOS,
+			MinCpuCores:    8,
+			MinMemoryGB:    16,
+			MinStorageGB:   5000,
+			MinSupportedOS: supportedOS,
 		},
 	},
 

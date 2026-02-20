@@ -113,6 +113,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 		name             string
 		nodeType         string
 		profile          string
+		hostProfile      HostProfile
 		nodeRunning      bool
 		expectValidation bool
 		description      string
@@ -121,6 +122,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			name:             "Block node local validation when node is not running",
 			nodeType:         core.NodeTypeBlock,
 			profile:          core.ProfileLocal,
+			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 4, 4, 10, false),
 			nodeRunning:      false,
 			expectValidation: true,
 			description:      "Should validate successfully when no node is running",
@@ -129,6 +131,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			name:             "Block node local validation when node is already running",
 			nodeType:         core.NodeTypeBlock,
 			profile:          core.ProfileLocal,
+			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 4, 4, 10, true),
 			nodeRunning:      true,
 			expectValidation: true,
 			description:      "Should still validate hardware requirements even if node is running",
@@ -137,6 +140,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			name:             "Block node mainnet validation when node is not running",
 			nodeType:         core.NodeTypeBlock,
 			profile:          core.ProfileMainnet,
+			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 8, 22, 6000, false), // 8 cores, 16GB+ available, 5TB+
 			nodeRunning:      false,
 			expectValidation: true,
 			description:      "Should validate successfully when no node is running",
@@ -145,6 +149,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			name:             "Consensus node mainnet validation when node is already running",
 			nodeType:         core.NodeTypeConsensus,
 			profile:          core.ProfileMainnet,
+			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 48, 322, 9000, true), // 48 cores, 256GB+ available, 8TB+
 			nodeRunning:      true,
 			expectValidation: true,
 			description:      "Should still validate hardware requirements even if node is running",
@@ -153,17 +158,15 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock with sufficient resources for all node types
-			mock := NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 16, 42, 6000, tt.nodeRunning)
-			spec, err := NewNodeSpec(tt.nodeType, tt.profile, mock)
+			spec, err := NewNodeSpec(tt.nodeType, tt.profile, tt.hostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
 
 			// Test that IsNodeAlreadyRunning returns the expected value
-			if mock.IsNodeAlreadyRunning() != tt.nodeRunning {
+			if tt.hostProfile.IsNodeAlreadyRunning() != tt.nodeRunning {
 				t.Errorf("Expected IsNodeAlreadyRunning() to return %v, got %v",
-					tt.nodeRunning, mock.IsNodeAlreadyRunning())
+					tt.nodeRunning, tt.hostProfile.IsNodeAlreadyRunning())
 			}
 
 			// Test that hardware validation still works regardless of node running status
@@ -276,7 +279,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 			name:              "Consensus node mainnet with sufficient resources",
 			nodeType:          core.NodeTypeConsensus,
 			profile:           core.ProfileMainnet,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 16, 42, 1200),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 48, 322, 9000), // 48 cores, 256GB+ available (322*0.8=257), 8TB+
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
@@ -286,7 +289,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 			name:              "Consensus node mainnet with insufficient storage",
 			nodeType:          core.NodeTypeConsensus,
 			profile:           core.ProfileMainnet,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 16, 42, 500),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 48, 322, 5000), // sufficient CPU/mem, insufficient storage (need 8TB)
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
