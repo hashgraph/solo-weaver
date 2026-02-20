@@ -14,6 +14,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -211,7 +212,7 @@ func TestHelmLifecycle_InstallAndUpgradeWithValueReuse(t *testing.T) {
 	testutil.Reset(t)
 
 	// Sets up registry proxy for CRI-O
-	err := testutil.InstallCrioRegistriesConf()
+	err := network.InstallCrioRegistriesConf()
 	require.NoError(t, err)
 
 	// Create a test config file

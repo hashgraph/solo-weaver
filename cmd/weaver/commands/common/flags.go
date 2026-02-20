@@ -88,6 +88,13 @@ var (
 		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
 		Default:     false,
 	}
+
+	FlagProxy = FlagDefinition[bool]{
+		Name:        "proxy",
+		ShortName:   "",
+		Description: fmt.Sprintf("User proxy for network requests where applicable"),
+		Default:     false,
+	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.

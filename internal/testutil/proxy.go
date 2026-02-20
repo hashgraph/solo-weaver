@@ -14,40 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/internal/templates"
-	"github.com/joomcode/errorx"
 )
-
-// InstallCrioRegistriesConf installs the custom registries.conf with registry mirror configuration
-// This enables CRI-O to use a local registry mirror for caching Kubernetes images
-// This is typically called during integration test setup when cache proxy is available
-func InstallCrioRegistriesConf() error {
-	// Read the custom registries.conf template
-	content, err := templates.Read("files/crio/registries.conf")
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to read registries.conf template")
-	}
-
-	// Build the registries.conf path inline to avoid import cycle
-	// This is equivalent to software.GetRegistriesConfPath()
-	registriesConfPath := filepath.Join(core.Paths().SandboxDir, "etc", "containers", "registries.conf.d", "registries.conf")
-
-	// if the directory does not exist, create it
-	err = os.MkdirAll(filepath.Dir(registriesConfPath), core.DefaultDirOrExecPerm)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create registries.conf.d directory")
-	}
-
-	// Write to the sandbox registries.conf.d directory
-	err = os.WriteFile(registriesConfPath, []byte(content), core.DefaultFilePerm)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to write custom registries.conf")
-	}
-
-	return nil
-}
 
 // RequireChattrSupport checks if chattr immutable attribute is supported
 // Skips the test if chattr is not available or doesn't work (e.g., in containers)

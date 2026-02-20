@@ -8,8 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/joomcode/errorx"
 )
 
@@ -91,5 +95,34 @@ func CheckEndpointReachable(ctx context.Context, urlStr string, timeout time.Dur
 
 	// Any response (even 4xx/5xx) means the endpoint is reachable
 	// We're not checking auth here, just network connectivity
+	return nil
+}
+
+// InstallCrioRegistriesConf installs the custom registries.conf with registry mirror configuration
+// This enables CRI-O to use a local registry mirror for caching Kubernetes images
+// This is typically called during integration test setup when cache proxy is available
+func InstallCrioRegistriesConf() error {
+	// Read the custom registries.conf template
+	content, err := templates.Read("files/crio/registries.conf")
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to read registries.conf template")
+	}
+
+	// Build the registries.conf path inline to avoid import cycle
+	// This is equivalent to software.GetRegistriesConfPath()
+	registriesConfPath := filepath.Join(core.Paths().SandboxDir, "etc", "containers", "registries.conf.d", "registries.conf")
+
+	// if the directory does not exist, create it
+	err = os.MkdirAll(filepath.Dir(registriesConfPath), core.DefaultDirOrExecPerm)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create registries.conf.d directory")
+	}
+
+	// Write to the sandbox registries.conf.d directory
+	err = os.WriteFile(registriesConfPath, []byte(content), core.DefaultFilePerm)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to write custom registries.conf")
+	}
+
 	return nil
 }
