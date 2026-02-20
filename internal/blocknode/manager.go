@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -47,11 +46,11 @@ type Manager struct {
 	helmManager helm.Manager
 	kubeClient  *kube.Client
 	logger      *zerolog.Logger
-	blockConfig *config.BlockNodeConfig
+	blockConfig core.BlocknodeInputs
 }
 
 // NewManager creates a new block node manager
-func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
+func NewManager(blockConfig core.BlocknodeInputs) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
@@ -77,7 +76,7 @@ func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
 		helmManager: helmManager,
 		kubeClient:  kubeClient,
 		logger:      l,
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}, nil
 }
 

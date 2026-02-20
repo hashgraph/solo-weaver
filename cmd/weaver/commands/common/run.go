@@ -27,6 +27,10 @@ func RunWorkflow(ctx context.Context, b automa.Builder) {
 	}
 
 	report := wb.Execute(ctx)
+	CheckWorkflowReport(ctx, report)
+}
+
+func CheckWorkflowReport(ctx context.Context, report *automa.Report) {
 	if report.Error != nil {
 		doctor.CheckReportErr(ctx, report)
 	}
@@ -57,7 +61,17 @@ func RunGlobalChecks(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	RunWorkflow(cmd.Context(), workflows.CheckWeaverInstallationWorkflow())
+	wf, err := workflows.CheckWeaverInstallationWorkflow().Build()
+	if err != nil {
+		return err
+	}
+
+	ctx := cmd.Context()
+	report := wf.Execute(ctx)
+	if report.Error != nil {
+		doctor.CheckReportErr(ctx, report)
+	}
+
 	return nil
 }
 

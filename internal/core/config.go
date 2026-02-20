@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package config
+package core
 
 import (
 	"strings"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
-	"github.com/spf13/viper"
 )
 
 // Config holds the global configuration for the application.
@@ -33,6 +30,17 @@ type BlockNodeStorage struct {
 	ArchiveSize      string `yaml:"archiveSize" json:"archiveSize"`
 	LogSize          string `yaml:"logSize" json:"logSize"`
 	VerificationSize string `yaml:"verificationSize" json:"verificationSize"`
+}
+
+// IsEmpty returns true when all BlockNodeStorage fields are empty (after trimming).
+func (s *BlockNodeStorage) IsEmpty() bool {
+	return strings.TrimSpace(s.BasePath) == "" &&
+		strings.TrimSpace(s.ArchivePath) == "" &&
+		strings.TrimSpace(s.LivePath) == "" &&
+		strings.TrimSpace(s.LogPath) == "" &&
+		strings.TrimSpace(s.LiveSize) == "" &&
+		strings.TrimSpace(s.ArchiveSize) == "" &&
+		strings.TrimSpace(s.LogSize) == ""
 }
 
 // Validate validates all storage paths to ensure they are safe and secure.
@@ -118,11 +126,13 @@ func (c Config) Validate() error {
 
 // BlockNodeConfig represents the `blockNode` configuration block.
 type BlockNodeConfig struct {
-	Namespace string           `yaml:"namespace" json:"namespace"`
-	Release   string           `yaml:"release" json:"release"`
-	Chart     string           `yaml:"chart" json:"chart"`
-	Version   string           `yaml:"version" json:"version"`
-	Storage   BlockNodeStorage `yaml:"storage" json:"storage"`
+	Namespace    string           `yaml:"namespace" json:"namespace"`
+	Release      string           `yaml:"release" json:"release"`
+	Chart        string           `yaml:"chart" json:"chart"`
+	ChartName    string           `yaml:"chartName" json:"chartName"`
+	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
+	Version      string           `yaml:"version" json:"version"`
+	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
 // AlloyRemoteConfig represents a single remote endpoint for metrics or logs.
@@ -330,184 +340,7 @@ func (c TeleportConfig) ValidateNodeAgent() error {
 	return nil
 }
 
-var globalConfig = Config{
-	Log: logx.LoggingConfig{
-		Level:          "Debug",
-		ConsoleLogging: true,
-		FileLogging:    false,
-	},
-	BlockNode: BlockNodeConfig{
-		Namespace: deps.BLOCK_NODE_NAMESPACE,
-		Release:   deps.BLOCK_NODE_RELEASE,
-		Chart:     deps.BLOCK_NODE_CHART,
-		Version:   deps.BLOCK_NODE_VERSION,
-		Storage: BlockNodeStorage{
-			BasePath:    deps.BLOCK_NODE_STORAGE_BASE_PATH,
-			ArchivePath: "",
-			LivePath:    "",
-			LogPath:     "",
-			LiveSize:    "",
-			ArchiveSize: "",
-			LogSize:     "",
-		},
-	},
-	Alloy: AlloyConfig{
-		MonitorBlockNode:   false,
-		PrometheusURL:      "",
-		PrometheusUsername: "",
-		LokiURL:            "",
-		LokiUsername:       "",
-		ClusterName:        "",
-	},
-	Teleport: TeleportConfig{
-		Version:    deps.TELEPORT_VERSION,
-		ValuesFile: "",
-	},
-}
-
-// Initialize loads the configuration from the specified file.
-//
-// Parameters:
-//   - path: The path to the configuration file.
-//
-// Returns:
-//   - An error if the configuration cannot be loaded.
-func Initialize(path string) error {
-	if path != "" {
-		globalConfig = Config{}
-		viper.Reset()
-		viper.SetConfigFile(path)
-		viper.SetEnvPrefix("SOLO_PROVISIONER")
-		viper.AutomaticEnv()
-		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-		err := viper.ReadInConfig()
-		if err != nil {
-			return NotFoundError.Wrap(err, "failed to read config file: %s", path).
-				WithProperty(errorx.PropertyPayload(), path)
-		}
-
-		if err := viper.Unmarshal(&globalConfig); err != nil {
-			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
-				WithProperty(errorx.PropertyPayload(), path)
-		}
-	}
-
-	return nil
-}
-
-// Get returns the loaded configuration.
-//
-// Returns:
-//   - The global configuration.
-func Get() Config {
-	return globalConfig
-}
-
-func Set(c *Config) error {
-	globalConfig = *c
-	return nil
-}
-
-// SetProfile sets the deployment profile in the global configuration.
-func SetProfile(profile string) {
-	globalConfig.Profile = profile
-}
-
 // IsLocalProfile returns true if the current profile is the local development profile.
 func (c Config) IsLocalProfile() bool {
-	return c.Profile == core.ProfileLocal
-}
-
-// OverrideBlockNodeConfig updates the block node configuration with provided overrides.
-// Empty string values are ignored (not applied).
-func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
-	if overrides.Namespace != "" {
-		globalConfig.BlockNode.Namespace = overrides.Namespace
-	}
-	if overrides.Release != "" {
-		globalConfig.BlockNode.Release = overrides.Release
-	}
-	if overrides.Chart != "" {
-		globalConfig.BlockNode.Chart = overrides.Chart
-	}
-	if overrides.Version != "" {
-		globalConfig.BlockNode.Version = overrides.Version
-	}
-	if overrides.Storage.BasePath != "" {
-		globalConfig.BlockNode.Storage.BasePath = overrides.Storage.BasePath
-	}
-	if overrides.Storage.ArchivePath != "" {
-		globalConfig.BlockNode.Storage.ArchivePath = overrides.Storage.ArchivePath
-	}
-	if overrides.Storage.LivePath != "" {
-		globalConfig.BlockNode.Storage.LivePath = overrides.Storage.LivePath
-	}
-	if overrides.Storage.LogPath != "" {
-		globalConfig.BlockNode.Storage.LogPath = overrides.Storage.LogPath
-	}
-	if overrides.Storage.VerificationPath != "" {
-		globalConfig.BlockNode.Storage.VerificationPath = overrides.Storage.VerificationPath
-	}
-	if overrides.Storage.LiveSize != "" {
-		globalConfig.BlockNode.Storage.LiveSize = overrides.Storage.LiveSize
-	}
-	if overrides.Storage.ArchiveSize != "" {
-		globalConfig.BlockNode.Storage.ArchiveSize = overrides.Storage.ArchiveSize
-	}
-	if overrides.Storage.LogSize != "" {
-		globalConfig.BlockNode.Storage.LogSize = overrides.Storage.LogSize
-	}
-	if overrides.Storage.VerificationSize != "" {
-		globalConfig.BlockNode.Storage.VerificationSize = overrides.Storage.VerificationSize
-	}
-}
-
-// OverrideAlloyConfig updates the Alloy configuration with provided overrides.
-// Empty string values are ignored (not applied).
-// Remote arrays are always replaced (declarative semantics) - pass empty arrays to clear remotes.
-// Note: Passwords are managed via Vault and External Secrets Operator.
-func OverrideAlloyConfig(overrides AlloyConfig) {
-	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
-	if overrides.ClusterName != "" {
-		globalConfig.Alloy.ClusterName = overrides.ClusterName
-	}
-	if overrides.ClusterSecretStoreName != "" {
-		globalConfig.Alloy.ClusterSecretStoreName = overrides.ClusterSecretStoreName
-	}
-
-	// Handle multi-remote configuration (declarative - always replace, even with empty slices)
-	globalConfig.Alloy.PrometheusRemotes = overrides.PrometheusRemotes
-	globalConfig.Alloy.LokiRemotes = overrides.LokiRemotes
-
-	// Legacy single-remote flags (for backward compatibility)
-	if overrides.PrometheusURL != "" {
-		globalConfig.Alloy.PrometheusURL = overrides.PrometheusURL
-	}
-	if overrides.PrometheusUsername != "" {
-		globalConfig.Alloy.PrometheusUsername = overrides.PrometheusUsername
-	}
-	if overrides.LokiURL != "" {
-		globalConfig.Alloy.LokiURL = overrides.LokiURL
-	}
-	if overrides.LokiUsername != "" {
-		globalConfig.Alloy.LokiUsername = overrides.LokiUsername
-	}
-}
-
-// OverrideTeleportConfig updates the Teleport configuration with provided overrides.
-// Empty string values are ignored (not applied).
-func OverrideTeleportConfig(overrides TeleportConfig) {
-	if overrides.Version != "" {
-		globalConfig.Teleport.Version = overrides.Version
-	}
-	if overrides.ValuesFile != "" {
-		globalConfig.Teleport.ValuesFile = overrides.ValuesFile
-	}
-	if overrides.NodeAgentToken != "" {
-		globalConfig.Teleport.NodeAgentToken = overrides.NodeAgentToken
-	}
-	if overrides.NodeAgentProxyAddr != "" {
-		globalConfig.Teleport.NodeAgentProxyAddr = overrides.NodeAgentProxyAddr
-	}
+	return c.Profile == ProfileLocal
 }

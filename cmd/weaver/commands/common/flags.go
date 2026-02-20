@@ -81,6 +81,13 @@ var (
 		Description: "DANGEROUS: Skip hardware validation checks. May cause node instability or data loss.",
 		Default:     false,
 	}
+
+	FlagForce = FlagDefinition[bool]{
+		Name:        "force",
+		ShortName:   "y",
+		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
+		Default:     false,
+	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.
