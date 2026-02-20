@@ -2,7 +2,12 @@
 
 package hardware
 
-import "fmt"
+import (
+	"fmt"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+)
 
 // nodeSpec implements Spec by combining requirements from the registry
 // with the actual host profile for validation.
@@ -36,19 +41,8 @@ func NewNodeSpec(nodeType, profile string, hostProfile HostProfile) (Spec, error
 
 // formatDisplayName creates a human-readable display name
 func formatDisplayName(nodeType, profile string) string {
-	return fmt.Sprintf("%s Node (%s)", capitalize(nodeType), capitalize(profile))
-}
-
-// capitalize capitalizes the first letter of a string
-func capitalize(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	// Simple ASCII uppercase for first char
-	if s[0] >= 'a' && s[0] <= 'z' {
-		return string(s[0]-('a'-'A')) + s[1:]
-	}
-	return s
+	caser := cases.Title(language.Und)
+	return fmt.Sprintf("%s Node (%s)", caser.String(nodeType), caser.String(profile))
 }
 
 // GetProfile returns the deployment profile
