@@ -22,8 +22,8 @@ github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3dyBCFEj5IhUbnKptjxatkF07cF2ak3yi77so=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
-github.com/automa-saga/automa v0.7.2 h1:DkN9GHFNshPAZ5+VRt29R/uyERdOaoWhg7hI3DPn+aM=
-github.com/automa-saga/automa v0.7.2/go.mod h1:PB3qOTyU6kCFkqDddVDdX6ZXjb+NxurOegaHiO3YRWY=
+github.com/automa-saga/automa v0.8.4 h1:qYViZirRdTpP3xmn8RO24dYB/T3i8KMkCtdkp3jcJ3o=
+github.com/automa-saga/automa v0.8.4/go.mod h1:AVzNGE+ci5sAJ7ao3ZkmC+CMe4kpwJhE6AloBJv3Udc=
 github.com/automa-saga/logx v0.1.0 h1:BP6CMErwX/YPDlqjNtre1zVhI53wHe8I2CuiNc+cDLQ=
 github.com/automa-saga/logx v0.1.0/go.mod h1:inlus7bMGEUD5wIEgtoKcGO5Ulhl93CHkzUBlqJJK6I=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
