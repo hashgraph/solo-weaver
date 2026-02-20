@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/internal/network"
+	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/require"
 )
@@ -151,7 +151,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	require.NoError(t, report.Error, "Failed to setup CRI-O")
 
 	// Sets up registry proxy for CRI-O
-	err = network.InstallCrioRegistriesConf()
+	err = testutil.InstallCrioRegistriesConf()
 	require.NoError(t, err)
 
 	// Setup CRI-O systemd service

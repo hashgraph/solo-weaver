@@ -59,8 +59,6 @@ var (
 func init() {
 	common.FlagForce.SetVarP(rootCmd, &flagForce, false)
 
-	common.FlagProxy.SetVarP(rootCmd, &flagProxy, false)
-
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
 
 	// support '--version', '-v' to show version information
