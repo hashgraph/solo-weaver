@@ -82,7 +82,7 @@ func findResolution(err error) []string {
 		return []string{fmt.Sprintf("Ensure all required arguments are provided with valid values.")}
 	case errorx.IsOfType(err, errorx.IllegalFormat):
 		return []string{"Ensure provided data is in correct format."}
-	case errorx.IsOfType(err, config.NotFoundError):
+	case errorx.IsOfType(err, core.NotFoundError):
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
 			return []string{fmt.Sprintf("Ensure configuration file %q exists, is correctly formatted and accessible", arg.(string))}
 		}

@@ -84,7 +84,7 @@ func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
 type teleportInstallerProvider func(opts ...software.InstallerOption) (software.Software, error)
 
 // newTeleportInstallerProvider creates a provider function that includes the teleport configuration
-func newTeleportInstallerProvider(cfg config.TeleportConfig) teleportInstallerProvider {
+func newTeleportInstallerProvider(cfg core.TeleportConfig) teleportInstallerProvider {
 	return func(opts ...software.InstallerOption) (software.Software, error) {
 		configOpts := &software.TeleportNodeAgentConfigureOptions{
 			ProxyAddr: cfg.NodeAgentProxyAddr,

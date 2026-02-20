@@ -5,7 +5,7 @@ package cluster
 import (
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +14,7 @@ func TestParseRemoteFlags(t *testing.T) {
 	tests := []struct {
 		name        string
 		flags       []string
-		expected    []config.AlloyRemoteConfig
+		expected    []core.AlloyRemoteConfig
 		expectError bool
 		errorMsg    string
 	}{
@@ -31,7 +31,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name:  "single remote with http URL and port",
 			flags: []string{"name=local,url=http://192.168.1.100:9090/api/v1/write,username=admin"},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "local",
 					URL:      "http://192.168.1.100:9090/api/v1/write",
@@ -42,7 +42,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name:  "single remote with https URL",
 			flags: []string{"name=primary,url=https://prom1.example.com/api/v1/write,username=user1"},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "primary",
 					URL:      "https://prom1.example.com/api/v1/write",
@@ -56,7 +56,7 @@ func TestParseRemoteFlags(t *testing.T) {
 				"name=primary,url=https://prom1.example.com/api/v1/write,username=user1",
 				"name=backup,url=https://prom2.example.com/api/v1/write,username=user2",
 			},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "primary",
 					URL:      "https://prom1.example.com/api/v1/write",
@@ -72,7 +72,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name:  "URL with explicit port",
 			flags: []string{"name=grafana-cloud,url=https://logs.grafana.net:443/loki/api/v1/push,username=12345"},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "grafana-cloud",
 					URL:      "https://logs.grafana.net:443/loki/api/v1/push",
@@ -83,7 +83,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name:  "without username (optional)",
 			flags: []string{"name=local,url=http://localhost:9090/api/v1/write"},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "local",
 					URL:      "http://localhost:9090/api/v1/write",
@@ -94,7 +94,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name:  "keys in different order",
 			flags: []string{"url=http://localhost:9090/api/v1/write,username=admin,name=local"},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "local",
 					URL:      "http://localhost:9090/api/v1/write",
@@ -105,7 +105,7 @@ func TestParseRemoteFlags(t *testing.T) {
 		{
 			name:  "URL with commas in query parameters",
 			flags: []string{"name=complex,url=http://example.com/api?labels=a,b,c&other=value,username=admin"},
-			expected: []config.AlloyRemoteConfig{
+			expected: []core.AlloyRemoteConfig{
 				{
 					Name:     "complex",
 					URL:      "http://example.com/api?labels=a,b,c&other=value",

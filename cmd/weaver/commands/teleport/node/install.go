@@ -6,6 +6,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -22,7 +23,7 @@ var installCmd = &cobra.Command{
 		}
 
 		// Apply Teleport configuration overrides
-		teleportOverrides := config.TeleportConfig{
+		teleportOverrides := core.TeleportConfig{
 			NodeAgentToken:     flagNodeAgentToken,
 			NodeAgentProxyAddr: flagNodeAgentProxyAddr,
 		}
