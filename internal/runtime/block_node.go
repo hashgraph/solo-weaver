@@ -372,7 +372,7 @@ func (br *BlockNodeRuntime) initChartRepoRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartRepo, current.ReleaseInfo.Status, true)
+				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartRef, current.ReleaseInfo.Status, true)
 			},
 		),
 	)

@@ -342,7 +342,7 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 	}
 
 	// chartRepo from user inputs since it is not available in the helm release info in the cluster
-	current.ReleaseInfo.ChartRepo = effectiveInputs.Custom.Chart
+	current.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
 
 	// load full state from disk and persist update block node state
 	fullState := b.sm.State()
