@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,12 +59,12 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			tempDir := t.TempDir()
 			basePath := filepath.Join(tempDir, "storage")
 
-			blockConfig := config.BlockNodeConfig{
+			blockConfig := core.BlocknodeInputs{
 				Namespace: "test-namespace",
 				Release:   "test-release",
 				Chart:     "test-chart",
 				Version:   "0.1.0",
-				Storage: config.BlockNodeStorage{
+				Storage: core.BlockNodeStorage{
 					BasePath:         basePath,
 					LiveSize:         tt.liveSize,
 					ArchiveSize:      tt.archiveSize,
@@ -74,7 +74,7 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			}
 
 			manager := &Manager{
-				blockConfig: &blockConfig,
+				blockConfig: blockConfig,
 			}
 
 			// Get the computed storage paths
@@ -166,12 +166,12 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "storage")
 
-	blockConfig := config.BlockNodeConfig{
+	blockConfig := core.BlocknodeInputs{
 		Namespace: "block-node",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: config.BlockNodeStorage{
+		Storage: core.BlockNodeStorage{
 			BasePath:         basePath,
 			LiveSize:         "10Gi",
 			ArchiveSize:      "20Gi",
@@ -181,7 +181,7 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockConfig: blockConfig,
 	}
 
 	// Get the computed storage paths
