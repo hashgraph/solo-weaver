@@ -74,8 +74,8 @@ type HelmReleaseInfo struct {
 	Name         string `yaml:"name" json:"name"`
 	Version      string `yaml:"version" json:"version"` // App version
 	Namespace    string `yaml:"namespace" json:"namespace"`
-	ChartRepo    string `yaml:"chartRepo" json:"chartRepo"` // e.g. "oci://ghcr.io/hedera/solo-weaver-block-node" needs to match deployed chart
-	ChartName    string `yaml:"chartname" json:"chartname"`
+	ChartRef     string `yaml:"chartRef" json:"chartRef"` // e.g. "oci://ghcr.io/hedera/solo-weaver-block-node" needs to match deployed chart
+	ChartName    string `yaml:"chartName" json:"chartName"`
 	ChartVersion string `yaml:"chartVersion" json:"chartVersion"` // ChartName version
 	// Status is the current state of the release
 	Status release.Status `json:"status,omitempty"`

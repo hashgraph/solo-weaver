@@ -77,7 +77,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
-			ChartRepo:     r.current.BlockNode.ReleaseInfo.ChartRepo, // repo info not available from release, so use current state
+			ChartRef:      r.current.BlockNode.ReleaseInfo.ChartRef, // repo info not available from release, so use current state
 			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
