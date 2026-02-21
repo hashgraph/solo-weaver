@@ -1375,19 +1375,35 @@ tasks:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   alloy:start:
-    desc: "Start Alloy stack (used by VM, CI/CD, and Kind/k3d)"
+    desc: "Start Alloy stack (Prometheus, Loki, Grafana) for local development"
     dir: test/alloy
-    deps: [vault:start]
     cmds:
       - docker compose up -d prometheus loki grafana
       - |
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ Alloy stack started!"
         echo ""
-        echo "📦 This task is used by:"
-        echo "   • VM development (via task vm:alloy:start)"
-        echo "   • CI/CD workflows (GitHub Actions, GitLab CI)"
-        echo "   • Local Kind/k3d clusters"
+        echo "🌐 Services:"
+        echo "   • Prometheus: http://localhost:9090"
+        echo "   • Loki:       http://localhost:3100"
+        echo "   • Grafana:    http://localhost:3000"
+        echo ""
+        echo "📝 Next step: Create K8s secret for Alloy passwords"
+        echo "   task alloy:create-secret"
+        echo ""
+        echo "💡 Optionally start Vault for ESO-based secret sync:"
+        echo "   task vault:start"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  alloy:start-with-vault:
+    desc: "Start full Alloy stack with Vault (Prometheus, Loki, Grafana, Vault)"
+    dir: test/alloy
+    deps: [vault:start]
+    cmds:
+      - docker compose up -d prometheus loki grafana
+      - |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Alloy stack started with Vault!"
         echo ""
         echo "🌐 Services:"
         echo "   • Vault:      http://localhost:8200 (token: devtoken)"
@@ -1397,8 +1413,8 @@ tasks:
         echo ""
         echo "🔐 Vault has been initialized with development secrets"
         echo ""
-        echo "📝 Next step: Apply ClusterSecretStore to connect ESO to Vault"
-        echo "   kubectl apply -f test/alloy/cluster-secret-store-local.yaml"
+        echo "📝 Next step: Configure ESO ClusterSecretStore"
+        echo "   task vault:setup-secret-store"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   alloy:stop:
@@ -1440,6 +1456,51 @@ tasks:
           echo ""
           echo "💡 For VM-based development, use: task vm:alloy:start"
         fi
+
+  alloy:create-secret:
+    desc: "Create K8s secret 'grafana-alloy-secrets' with dev passwords for local testing"
+    vars:
+      CLUSTER_NAME: '{{.CLUSTER_NAME | default "vm-cluster"}}'
+    cmds:
+      - |
+        echo "🔐 Creating K8s secret for Alloy (local dev)..."
+        
+        # Create the namespace if it doesn't exist
+        kubectl create namespace grafana-alloy --dry-run=client -o yaml | kubectl apply -f -
+
+        # Create/update the secret with dev passwords
+        # Key naming convention: PROMETHEUS_PASSWORD_<REMOTE_NAME>, LOKI_PASSWORD_<REMOTE_NAME>
+        # The remote name must match the name= value in --add-prometheus-remote / --add-loki-remote
+        kubectl create secret generic grafana-alloy-secrets \
+          --namespace=grafana-alloy \
+          --from-literal=PROMETHEUS_PASSWORD_LOCAL=dev-password \
+          --from-literal=LOKI_PASSWORD_LOCAL=dev-password \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Secret 'grafana-alloy-secrets' created in namespace 'grafana-alloy'"
+        echo ""
+        echo "📦 Keys (convention: {PROMETHEUS|LOKI}_PASSWORD_{REMOTE_NAME}):"
+        echo "   • PROMETHEUS_PASSWORD_LOCAL"
+        echo "   • LOKI_PASSWORD_LOCAL"
+        echo ""
+        echo "📋 Next step: install Alloy with remotes:"
+        echo "   NODE_IP=\$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type==\"InternalIP\")].address}')"
+        echo "   sudo solo-provisioner alloy cluster install \\"
+        echo "     --cluster-name={{.CLUSTER_NAME}} \\"
+        echo "     --add-prometheus-remote=name=local,url=http://\$NODE_IP:9090/api/v1/write,username=admin \\"
+        echo "     --add-loki-remote=name=local,url=http://\$NODE_IP:3100/loki/api/v1/push,username=admin \\"
+        echo "     --monitor-block-node"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  alloy:delete-secret:
+    desc: "Delete K8s secret 'grafana-alloy-secrets'"
+    cmds:
+      - |
+        echo "🧹 Deleting K8s secret..."
+        kubectl delete secret grafana-alloy-secrets -n grafana-alloy --ignore-not-found
+        echo "✅ Secret deleted"
 
   # ===========================
   # VM Docker & Alloy Setup
@@ -1535,12 +1596,10 @@ tasks:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ Alloy stack setup complete!"
         echo ""
-        echo "🔐 Vault has been initialized with development secrets"
-        echo ""
         echo "📋 Next steps:"
         echo "   1. SSH into VM: task vm:ssh"
-        echo "   2. Apply ClusterSecretStore: task vault:setup-secret-store"
-        echo "   3. Deploy with Alloy: sudo weaver kube cluster install --alloy-enabled ..."
+        echo "   2. Create K8s secret: task alloy:create-secret"
+        echo "   3. Install Alloy with remotes (see test/alloy/README.md)"
         echo ""
         echo "💡 To access from your Mac, use SSH port forwarding:"
         echo "   task vm:alloy-forward"

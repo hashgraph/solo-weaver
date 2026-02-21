@@ -24,23 +24,24 @@ import (
 )
 
 const (
-	SetupAlloyStepId           = "setup-alloy"
-	PreCheckAlloyStepId        = "precheck-alloy"
-	InstallAlloyStepId         = "install-alloy"
-	InstallNodeExporterStepId  = "install-node-exporter"
-	DeployAlloyConfigStepId    = "deploy-alloy-config"
-	CreateAlloyNamespaceStepId = "create-alloy-namespace"
-	CreateAlloySecretsStepId   = "create-alloy-secrets"
-	IsAlloyReadyStepId         = "is-alloy-ready"
-	IsNodeExporterReadyStepId  = "is-node-exporter-ready"
+	SetupAlloyStepId                = "setup-alloy"
+	PreCheckAlloyStepId             = "precheck-alloy"
+	InstallAlloyStepId              = "install-alloy"
+	InstallNodeExporterStepId       = "install-node-exporter"
+	DeployAlloyConfigStepId         = "deploy-alloy-config"
+	DeployBlockNodeMonitoringStepId = "deploy-block-node-monitoring"
+	CreateAlloyNamespaceStepId      = "create-alloy-namespace"
+	IsAlloyReadyStepId              = "is-alloy-ready"
+	IsNodeExporterReadyStepId       = "is-node-exporter-ready"
 )
 
 // SetupAlloyStack returns a workflow builder that sets up the complete Alloy observability stack.
 // This includes Prometheus Operator CRDs and Grafana Alloy.
+// K8s secrets containing passwords for remote endpoints must be pre-created before running this.
+// Secrets can be created manually, via ESO/Vault, Terraform, or any other mechanism.
 func SetupAlloyStack() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-alloy-stack").Steps(
-		preCheckAlloy(),               // Verify prerequisites (ClusterSecretStore, remote endpoints)
-		SetupExternalSecrets(),        // External Secrets Operator (general-purpose secret management for the cluster)
+		preCheckAlloy(),               // Verify prerequisites (K8s secrets, remote endpoints)
 		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
 		SetupAlloy(),                  // Install Alloy with Node Exporter
 	).
@@ -77,8 +78,7 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 }
 
 // preCheckAlloy verifies that all prerequisites are in place before installing Alloy.
-// This includes checking for ClusterSecretStore existence and verifying
-// remote endpoint reachability.
+// This includes verifying that required K8s secrets exist and that remote endpoints are reachable.
 func preCheckAlloy() automa.Builder {
 	return automa.NewStepBuilder().WithId(PreCheckAlloyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -87,48 +87,57 @@ func preCheckAlloy() automa.Builder {
 
 			meta := map[string]string{}
 
-			// Get the ClusterSecretStore name (from config or default)
-			clusterSecretStoreName := cfg.ClusterSecretStoreName
-			if clusterSecretStoreName == "" {
-				clusterSecretStoreName = alloy.ClusterSecretStoreName
-			}
-
-			// Check if any remotes are configured (require ClusterSecretStore only if remotes exist)
+			// Check if any remotes are configured
 			hasRemotes := len(cfg.PrometheusRemotes) > 0 || len(cfg.LokiRemotes) > 0 ||
 				cfg.PrometheusURL != "" || cfg.LokiURL != ""
 
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					fmt.Errorf("failed to create kubernetes client: %w", err)))
-			}
-
 			if hasRemotes {
-				// Verify ClusterSecretStore exists which is required to fetch credentials for remotes
-				exists, err := k.ResourceExists(ctx, "external-secrets.io/v1beta1", "ClusterSecretStore", "", clusterSecretStoreName)
+				k, err := kube.NewClient()
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						fmt.Errorf("failed to check ClusterSecretStore existence: %w", err)))
-				} else if !exists {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						fmt.Errorf("ClusterSecretStore %q not found; please create it first (e.g., run 'task vault:setup-secret-store') or specify a different name with --cluster-secret-store", clusterSecretStoreName)))
-				} else {
-					l.Info().Str("name", clusterSecretStoreName).Msg("ClusterSecretStore found")
-					meta["clusterSecretStore"] = clusterSecretStoreName
+						fmt.Errorf("failed to create kubernetes client: %w", err)))
+				}
 
-					// Check if Vault URL from ClusterSecretStore is reachable
-					vaultURL, err := k.GetResourceNestedString(ctx, "external-secrets.io/v1beta1", "ClusterSecretStore", "", clusterSecretStoreName,
-						"spec", "provider", "vault", "server")
+				// Build config to determine required secrets
+				cb, err := alloy.NewConfigBuilder(cfg)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+
+				// Verify that required K8s secrets exist with expected keys
+				requiredSecrets := cb.RequiredSecrets()
+				for secretName, expectedKeys := range requiredSecrets {
+					actualKeys, err := k.GetSecretKeys(ctx, alloy.Namespace, secretName)
 					if err != nil {
-						l.Warn().Err(err).Msg("Failed to get Vault URL from ClusterSecretStore")
-					} else if vaultURL != "" {
-						if err := network.CheckEndpointReachable(ctx, vaultURL, 10*time.Second); err != nil {
-							return automa.StepFailureReport(stp.Id(), automa.WithError(
-								fmt.Errorf("Vault at %s is not reachable: %w", vaultURL, err)))
-						}
-						l.Info().Str("url", vaultURL).Msg("Vault endpoint is reachable")
-						meta["vaultURL"] = vaultURL
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("failed to read K8s Secret %q in namespace %q: %w", secretName, alloy.Namespace, err)))
 					}
+					if actualKeys == nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("K8s Secret %q not found in namespace %q; expected keys: %v. "+
+								"Create the secret before installing Alloy, e.g.: "+
+								"kubectl create secret generic %s --namespace=%s --from-literal=<KEY>=<password>",
+								secretName, alloy.Namespace, expectedKeys, secretName, alloy.Namespace)))
+					}
+
+					// Check that all expected keys are present in the secret
+					actualKeySet := make(map[string]struct{}, len(actualKeys))
+					for _, k := range actualKeys {
+						actualKeySet[k] = struct{}{}
+					}
+					var missingKeys []string
+					for _, key := range expectedKeys {
+						if _, ok := actualKeySet[key]; !ok {
+							missingKeys = append(missingKeys, key)
+						}
+					}
+					if len(missingKeys) > 0 {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("K8s Secret %q in namespace %q is missing required keys: %v; found keys: %v",
+								secretName, alloy.Namespace, missingKeys, actualKeys)))
+					}
+
+					l.Info().Str("name", secretName).Str("namespace", alloy.Namespace).Strs("expectedKeys", expectedKeys).Msg("Required K8s Secret found")
 				}
 
 				// Check Prometheus remote endpoints reachability
@@ -165,7 +174,7 @@ func preCheckAlloy() automa.Builder {
 					l.Info().Str("url", cfg.LokiURL).Msg("Loki remote is reachable")
 				}
 			} else {
-				l.Info().Msg("No remotes configured; skipping ClusterSecretStore and endpoint checks")
+				l.Info().Msg("No remotes configured; skipping secret and endpoint checks")
 			}
 
 			// Log summary of what will be installed
@@ -195,9 +204,9 @@ func SetupAlloy() *automa.WorkflowBuilder {
 		createAlloyNamespace(),
 		installNodeExporter(),
 		isNodeExporterPodsReady(),
-		createAlloyExternalSecret(),
 		deployAlloyConfig(),
 		installAlloy(),
+		deployBlockNodeMonitoring(),
 		isAlloyPodsReady(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -373,97 +382,6 @@ func createAlloyNamespace() automa.Builder {
 		})
 }
 
-func createAlloyExternalSecret() automa.Builder {
-	return automa.NewStepBuilder().WithId(CreateAlloySecretsStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			cfg := config.Get().Alloy
-
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			// Check if remotes are configured
-			hasRemotes := len(cfg.PrometheusRemotes) > 0 || len(cfg.LokiRemotes) > 0 ||
-				cfg.PrometheusURL != "" || cfg.LokiURL != ""
-
-			meta := map[string]string{}
-			var manifestPath string
-			var manifest string
-
-			if hasRemotes {
-				// Create ExternalSecret to fetch passwords from Vault
-				manifestPath = path.Join(core.Paths().TempDir, "alloy-external-secret.yaml")
-
-				// Build config to get cluster name
-				cb, err := alloy.NewConfigBuilder(cfg)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-				clusterName := cb.ClusterName()
-
-				// Generate the ExternalSecret manifest using the alloy package
-				manifest, err = alloy.ExternalSecretManifest(cfg, clusterName)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-			} else {
-				// Create an empty secret so the pod doesn't fail looking for it
-				manifestPath = path.Join(core.Paths().TempDir, "alloy-empty-secret.yaml")
-				manifest, err = alloy.EmptySecretManifest()
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-			}
-
-			err = os.WriteFile(manifestPath, []byte(manifest), 0600)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			err = k.ApplyManifest(ctx, manifestPath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
-			stp.State().Set("secretManifestPath", manifestPath)
-
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-		}).
-		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
-				return automa.StepSkippedReport(stp.Id())
-			}
-
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			manifestPath := stp.State().String("secretManifestPath")
-			if manifestPath != "" {
-				err = k.DeleteManifest(ctx, manifestPath)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-			}
-
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating Alloy secrets")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to create Alloy secrets")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Alloy secrets created successfully")
-		})
-}
-
 func installAlloy() automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallAlloyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -631,54 +549,6 @@ func deployAlloyConfig() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// If monitoring block-node, deploy the ServiceMonitor and PodLogs for discovery
-			if cb.MonitorBlockNode() {
-				// Discover block node namespace from Helm
-				blockNodeNamespace, err := state.GetBlockNodeNamespace()
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(fmt.Errorf("failed to discover block node namespace: %w", err)))
-				}
-				if blockNodeNamespace == "" {
-					l.Warn().Msg("Block node monitoring enabled but block node not found; skipping ServiceMonitor and PodLogs deployment")
-				} else {
-					// Deploy ServiceMonitor for metrics discovery
-					serviceMonitorManifest, err := alloy.BlockNodeServiceMonitorManifest(blockNodeNamespace)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-					}
-					serviceMonitorPath := path.Join(core.Paths().TempDir, "block-node-servicemonitor.yaml")
-					err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), core.DefaultFilePerm)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-					}
-
-					err = k.ApplyManifest(ctx, serviceMonitorPath)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-					}
-					stp.State().Set("serviceMonitorPath", serviceMonitorPath)
-
-					// Deploy PodLogs for logs discovery
-					podLogsManifest, err := alloy.BlockNodePodLogsManifest(blockNodeNamespace)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-					}
-					podLogsPath := path.Join(core.Paths().TempDir, "block-node-podlogs.yaml")
-					err = os.WriteFile(podLogsPath, []byte(podLogsManifest), core.DefaultFilePerm)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-					}
-
-					err = k.ApplyManifest(ctx, podLogsPath)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-					}
-					stp.State().Set("podLogsPath", podLogsPath)
-
-					l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor and PodLogs deployed for metrics/logs discovery")
-				}
-			}
-
 			meta[InstalledByThisStep] = "true"
 			meta["modules"] = strings.Join(moduleNames, ",")
 			stp.State().Set(InstalledByThisStep, true)
@@ -704,6 +574,106 @@ func deployAlloyConfig() automa.Builder {
 				}
 			}
 
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Deploying Alloy configuration")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy Alloy configuration")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Alloy configuration deployed successfully")
+		})
+}
+
+// deployBlockNodeMonitoring deploys the ServiceMonitor and PodLogs resources for block-node monitoring.
+// This step must run AFTER installAlloy() because the PodLogs CRD (monitoring.grafana.com/v1alpha2)
+// is registered by the Alloy Helm chart. If it ran before, the PodLogs resource would fail to apply
+// because the CRD would not exist yet.
+func deployBlockNodeMonitoring() automa.Builder {
+	return automa.NewStepBuilder().WithId(DeployBlockNodeMonitoringStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			cfg := config.Get().Alloy
+			l := logx.As()
+			meta := map[string]string{}
+
+			cb, err := alloy.NewConfigBuilder(cfg)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if !cb.MonitorBlockNode() {
+				l.Info().Msg("Block node monitoring not enabled; skipping ServiceMonitor and PodLogs deployment")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			// Discover block node namespace from Helm
+			blockNodeNamespace, err := state.GetBlockNodeNamespace()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(fmt.Errorf("failed to discover block node namespace: %w", err)))
+			}
+			if blockNodeNamespace == "" {
+				l.Warn().Msg("Block node monitoring enabled but block node not found; skipping ServiceMonitor and PodLogs deployment")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			// Deploy ServiceMonitor for metrics discovery
+			serviceMonitorManifest, err := alloy.BlockNodeServiceMonitorManifest(blockNodeNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			serviceMonitorPath := path.Join(core.Paths().TempDir, "block-node-servicemonitor.yaml")
+			err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), core.DefaultFilePerm)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = k.ApplyManifest(ctx, serviceMonitorPath)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			stp.State().Set("serviceMonitorPath", serviceMonitorPath)
+
+			// Deploy PodLogs for logs discovery
+			podLogsManifest, err := alloy.BlockNodePodLogsManifest(blockNodeNamespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			podLogsPath := path.Join(core.Paths().TempDir, "block-node-podlogs.yaml")
+			err = os.WriteFile(podLogsPath, []byte(podLogsManifest), core.DefaultFilePerm)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = k.ApplyManifest(ctx, podLogsPath)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			stp.State().Set("podLogsPath", podLogsPath)
+
+			l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor and PodLogs deployed for metrics/logs discovery")
+
+			meta[InstalledByThisStep] = "true"
+			stp.State().Set(InstalledByThisStep, true)
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if stp.State().Bool(InstalledByThisStep) == false {
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
 			// Clean up ServiceMonitor if it was deployed
 			serviceMonitorPath := stp.State().String("serviceMonitorPath")
 			if serviceMonitorPath != "" {
@@ -719,14 +689,14 @@ func deployAlloyConfig() automa.Builder {
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Deploying Alloy configuration")
+			notify.As().StepStart(ctx, stp, "Deploying Block Node monitoring resources")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy Alloy configuration")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy Block Node monitoring resources")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Alloy configuration deployed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node monitoring resources deployed successfully")
 		})
 }
 

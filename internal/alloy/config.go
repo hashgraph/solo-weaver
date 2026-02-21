@@ -14,15 +14,13 @@ import (
 
 const (
 	// Kubernetes resource names
-	Namespace              = "grafana-alloy"
-	Release                = "grafana-alloy"
-	Chart                  = "grafana/alloy"
-	Version                = "1.4.0"
-	Repo                   = "https://grafana.github.io/helm-charts"
-	ConfigMapName          = "grafana-alloy-cm"
-	SecretsName            = "grafana-alloy-secrets"
-	ExternalSecretName     = "grafana-alloy-external-secret"
-	ClusterSecretStoreName = "vault-secret-store"
+	Namespace     = "grafana-alloy"
+	Release       = "grafana-alloy"
+	Chart         = "grafana/alloy"
+	Version       = "1.4.0"
+	Repo          = "https://grafana.github.io/helm-charts"
+	ConfigMapName = "grafana-alloy-cm"
+	SecretsName   = "grafana-alloy-secrets"
 
 	// Node exporter settings
 	NodeExporterNamespace = "node-exporter"
@@ -40,9 +38,6 @@ const (
 	BlockNodeTemplatePath       = "files/alloy/block-node.alloy"
 	BlockNodeServiceMonitorPath = "files/alloy/block-node-servicemonitor.yaml"
 	BlockNodePodLogsPath        = "files/alloy/block-node-podlogs.yaml"
-
-	// Vault path prefix for secrets
-	VaultPathPrefix = "grafana/alloy/"
 )
 
 // Remote represents a single remote endpoint for Prometheus or Loki.
@@ -227,4 +222,22 @@ func toEnvVarName(name string) string {
 // isLocalhostURL checks if the URL points to localhost.
 func isLocalhostURL(url string) bool {
 	return strings.Contains(url, "localhost") || strings.Contains(url, "127.0.0.1")
+}
+
+// RequiredSecrets returns the K8s secret name and expected keys that must exist
+// for the configured remotes. All passwords are expected in the conventional
+// secret "grafana-alloy-secrets" under keys derived from remote names.
+// Returns nil if no remotes are configured.
+func (cb *ConfigBuilder) RequiredSecrets() map[string][]string {
+	var keys []string
+	for _, r := range cb.prometheusRemotes {
+		keys = append(keys, r.PasswordEnvVar)
+	}
+	for _, r := range cb.lokiRemotes {
+		keys = append(keys, r.PasswordEnvVar)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return map[string][]string{SecretsName: keys}
 }
