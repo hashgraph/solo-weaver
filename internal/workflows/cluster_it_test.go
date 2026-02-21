@@ -46,7 +46,7 @@ import (
 func Test_ClusterSetup(t *testing.T) {
 	testutil.Reset(t)
 
-	installWf, err := InstallClusterWorkflow(core.NodeTypeBlock, core.ProfileLocal).
+	installWf, err := InstallClusterWorkflow(core.NodeTypeBlock, core.ProfileLocal, false).
 		WithExecutionMode(automa.StopOnError).
 		Build()
 	require.NoError(t, err)

@@ -22,11 +22,11 @@ func DefaultWorkflowExecutionOptions() *WorkflowExecutionOptions {
 	}
 }
 
-// InstallClusterWorkflow creates a workflow to set up a kubernetes cluster
-func InstallClusterWorkflow(nodeType string, profile string) *automa.WorkflowBuilder {
+// InstallClusterWorkflow creates a workflow to set up a kubernetes cluster.
+func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
-		NodeSetupWorkflow(nodeType, profile),
+		NodeSetupWorkflow(nodeType, profile, skipHardwareChecks),
 
 		// setup env for k8s
 		steps.DisableSwap(),
