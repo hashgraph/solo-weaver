@@ -217,15 +217,101 @@ func TestNamespaceManifest(t *testing.T) {
 	assert.Contains(t, manifest, "name: "+Namespace)
 }
 
-func TestEmptySecretManifest(t *testing.T) {
-	manifest, err := EmptySecretManifest()
+func TestBuildHelmEnvVars_DefaultSecret(t *testing.T) {
+	cfg := config.AlloyConfig{
+		PrometheusRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1"},
+		},
+		LokiRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1"},
+		},
+	}
+
+	envVars := BuildHelmEnvVars(cfg)
+
+	// All env vars should reference the convention-based grafana-alloy-secrets
+	assert.Contains(t, envVars, "alloy.extraEnv[0].name=PROMETHEUS_PASSWORD_PRIMARY")
+	assert.Contains(t, envVars, "alloy.extraEnv[0].valueFrom.secretKeyRef.name="+SecretsName)
+	assert.Contains(t, envVars, "alloy.extraEnv[0].valueFrom.secretKeyRef.key=PROMETHEUS_PASSWORD_PRIMARY")
+	assert.Contains(t, envVars, "alloy.extraEnv[1].name=LOKI_PASSWORD_PRIMARY")
+	assert.Contains(t, envVars, "alloy.extraEnv[1].valueFrom.secretKeyRef.name="+SecretsName)
+	assert.Contains(t, envVars, "alloy.extraEnv[1].valueFrom.secretKeyRef.key=LOKI_PASSWORD_PRIMARY")
+}
+
+func TestBuildHelmEnvVars_MultipleRemotes(t *testing.T) {
+	cfg := config.AlloyConfig{
+		PrometheusRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
+			{Name: "backup", URL: "http://prom2:9090/api/v1/write", Username: "user2"},
+		},
+	}
+
+	envVars := BuildHelmEnvVars(cfg)
+
+	// Both remotes reference the same conventional secret with derived keys
+	assert.Contains(t, envVars, "alloy.extraEnv[0].name=PROMETHEUS_PASSWORD_PRIMARY")
+	assert.Contains(t, envVars, "alloy.extraEnv[0].valueFrom.secretKeyRef.name="+SecretsName)
+	assert.Contains(t, envVars, "alloy.extraEnv[0].valueFrom.secretKeyRef.key=PROMETHEUS_PASSWORD_PRIMARY")
+	assert.Contains(t, envVars, "alloy.extraEnv[1].name=PROMETHEUS_PASSWORD_BACKUP")
+	assert.Contains(t, envVars, "alloy.extraEnv[1].valueFrom.secretKeyRef.name="+SecretsName)
+	assert.Contains(t, envVars, "alloy.extraEnv[1].valueFrom.secretKeyRef.key=PROMETHEUS_PASSWORD_BACKUP")
+}
+
+func TestRequiredSecrets(t *testing.T) {
+	cfg := config.AlloyConfig{
+		ClusterName: "test-cluster",
+		PrometheusRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1"},
+		},
+		LokiRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1"},
+		},
+	}
+
+	cb, err := NewConfigBuilder(cfg)
 	require.NoError(t, err)
 
-	// Verify it's a valid secret manifest
-	assert.Contains(t, manifest, "apiVersion: v1")
-	assert.Contains(t, manifest, "kind: Secret")
-	assert.Contains(t, manifest, "name: "+SecretsName)
-	assert.Contains(t, manifest, "namespace: "+Namespace)
-	assert.Contains(t, manifest, "type: Opaque")
-	assert.Contains(t, manifest, "data: {}")
+	secrets := cb.RequiredSecrets()
+
+	// All keys should be under the single conventional secret
+	require.Contains(t, secrets, SecretsName)
+	assert.Contains(t, secrets[SecretsName], "PROMETHEUS_PASSWORD_PRIMARY")
+	assert.Contains(t, secrets[SecretsName], "LOKI_PASSWORD_PRIMARY")
+	assert.Len(t, secrets, 1, "should only reference one secret")
+}
+
+func TestRequiredSecrets_NoRemotes(t *testing.T) {
+	cfg := config.AlloyConfig{
+		ClusterName: "test-cluster",
+	}
+
+	cb, err := NewConfigBuilder(cfg)
+	require.NoError(t, err)
+
+	secrets := cb.RequiredSecrets()
+	assert.Nil(t, secrets, "should return nil when no remotes configured")
+}
+
+func TestRequiredSecrets_MultipleRemotes(t *testing.T) {
+	cfg := config.AlloyConfig{
+		ClusterName: "test-cluster",
+		PrometheusRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
+			{Name: "backup", URL: "http://prom2:9090/api/v1/write", Username: "user2"},
+		},
+		LokiRemotes: []config.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1"},
+		},
+	}
+
+	cb, err := NewConfigBuilder(cfg)
+	require.NoError(t, err)
+
+	secrets := cb.RequiredSecrets()
+
+	require.Contains(t, secrets, SecretsName)
+	assert.Len(t, secrets[SecretsName], 3)
+	assert.Contains(t, secrets[SecretsName], "PROMETHEUS_PASSWORD_PRIMARY")
+	assert.Contains(t, secrets[SecretsName], "PROMETHEUS_PASSWORD_BACKUP")
+	assert.Contains(t, secrets[SecretsName], "LOKI_PASSWORD_PRIMARY")
 }

@@ -30,17 +30,17 @@ const (
 	InstallNodeExporterStepId  = "install-node-exporter"
 	DeployAlloyConfigStepId    = "deploy-alloy-config"
 	CreateAlloyNamespaceStepId = "create-alloy-namespace"
-	CreateAlloySecretsStepId   = "create-alloy-secrets"
 	IsAlloyReadyStepId         = "is-alloy-ready"
 	IsNodeExporterReadyStepId  = "is-node-exporter-ready"
 )
 
 // SetupAlloyStack returns a workflow builder that sets up the complete Alloy observability stack.
 // This includes Prometheus Operator CRDs and Grafana Alloy.
+// K8s secrets containing passwords for remote endpoints must be pre-created before running this.
+// Secrets can be created manually, via ESO/Vault, Terraform, or any other mechanism.
 func SetupAlloyStack() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-alloy-stack").Steps(
-		preCheckAlloy(),               // Verify prerequisites (ClusterSecretStore, remote endpoints)
-		SetupExternalSecrets(),        // External Secrets Operator (general-purpose secret management for the cluster)
+		preCheckAlloy(),               // Verify prerequisites (K8s secrets, remote endpoints)
 		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
 		SetupAlloy(),                  // Install Alloy with Node Exporter
 	).
@@ -77,8 +77,7 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 }
 
 // preCheckAlloy verifies that all prerequisites are in place before installing Alloy.
-// This includes checking for ClusterSecretStore existence and verifying
-// remote endpoint reachability.
+// This includes verifying that required K8s secrets exist and that remote endpoints are reachable.
 func preCheckAlloy() automa.Builder {
 	return automa.NewStepBuilder().WithId(PreCheckAlloyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -87,48 +86,39 @@ func preCheckAlloy() automa.Builder {
 
 			meta := map[string]string{}
 
-			// Get the ClusterSecretStore name (from config or default)
-			clusterSecretStoreName := cfg.ClusterSecretStoreName
-			if clusterSecretStoreName == "" {
-				clusterSecretStoreName = alloy.ClusterSecretStoreName
-			}
-
-			// Check if any remotes are configured (require ClusterSecretStore only if remotes exist)
+			// Check if any remotes are configured
 			hasRemotes := len(cfg.PrometheusRemotes) > 0 || len(cfg.LokiRemotes) > 0 ||
 				cfg.PrometheusURL != "" || cfg.LokiURL != ""
 
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					fmt.Errorf("failed to create kubernetes client: %w", err)))
-			}
-
 			if hasRemotes {
-				// Verify ClusterSecretStore exists which is required to fetch credentials for remotes
-				exists, err := k.ResourceExists(ctx, "external-secrets.io/v1beta1", "ClusterSecretStore", "", clusterSecretStoreName)
+				k, err := kube.NewClient()
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						fmt.Errorf("failed to check ClusterSecretStore existence: %w", err)))
-				} else if !exists {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						fmt.Errorf("ClusterSecretStore %q not found; please create it first (e.g., run 'task vault:setup-secret-store') or specify a different name with --cluster-secret-store", clusterSecretStoreName)))
-				} else {
-					l.Info().Str("name", clusterSecretStoreName).Msg("ClusterSecretStore found")
-					meta["clusterSecretStore"] = clusterSecretStoreName
+						fmt.Errorf("failed to create kubernetes client: %w", err)))
+				}
 
-					// Check if Vault URL from ClusterSecretStore is reachable
-					vaultURL, err := k.GetResourceNestedString(ctx, "external-secrets.io/v1beta1", "ClusterSecretStore", "", clusterSecretStoreName,
-						"spec", "provider", "vault", "server")
+				// Build config to determine required secrets
+				cb, err := alloy.NewConfigBuilder(cfg)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+
+				// Verify that required K8s secrets exist
+				requiredSecrets := cb.RequiredSecrets()
+				for secretName, keys := range requiredSecrets {
+					exists, err := k.ResourceExists(ctx, "v1", "Secret", alloy.Namespace, secretName)
 					if err != nil {
-						l.Warn().Err(err).Msg("Failed to get Vault URL from ClusterSecretStore")
-					} else if vaultURL != "" {
-						if err := network.CheckEndpointReachable(ctx, vaultURL, 10*time.Second); err != nil {
-							return automa.StepFailureReport(stp.Id(), automa.WithError(
-								fmt.Errorf("Vault at %s is not reachable: %w", vaultURL, err)))
-						}
-						l.Info().Str("url", vaultURL).Msg("Vault endpoint is reachable")
-						meta["vaultURL"] = vaultURL
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("failed to check K8s Secret %q in namespace %q: %w", secretName, alloy.Namespace, err)))
 					}
+					if !exists {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(
+							fmt.Errorf("K8s Secret %q not found in namespace %q; expected keys: %v. "+
+								"Create the secret before installing Alloy, e.g.: "+
+								"solo-provisioner eso secret create --store=<store> --name=%s --namespace=%s --set <KEY>=<path>",
+								secretName, alloy.Namespace, keys, secretName, alloy.Namespace)))
+					}
+					l.Info().Str("name", secretName).Str("namespace", alloy.Namespace).Strs("expectedKeys", keys).Msg("Required K8s Secret found")
 				}
 
 				// Check Prometheus remote endpoints reachability
@@ -165,7 +155,7 @@ func preCheckAlloy() automa.Builder {
 					l.Info().Str("url", cfg.LokiURL).Msg("Loki remote is reachable")
 				}
 			} else {
-				l.Info().Msg("No remotes configured; skipping ClusterSecretStore and endpoint checks")
+				l.Info().Msg("No remotes configured; skipping secret and endpoint checks")
 			}
 
 			// Log summary of what will be installed
@@ -195,7 +185,6 @@ func SetupAlloy() *automa.WorkflowBuilder {
 		createAlloyNamespace(),
 		installNodeExporter(),
 		isNodeExporterPodsReady(),
-		createAlloyExternalSecret(),
 		deployAlloyConfig(),
 		installAlloy(),
 		isAlloyPodsReady(),
@@ -370,97 +359,6 @@ func createAlloyNamespace() automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Alloy namespace created successfully")
-		})
-}
-
-func createAlloyExternalSecret() automa.Builder {
-	return automa.NewStepBuilder().WithId(CreateAlloySecretsStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			cfg := config.Get().Alloy
-
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			// Check if remotes are configured
-			hasRemotes := len(cfg.PrometheusRemotes) > 0 || len(cfg.LokiRemotes) > 0 ||
-				cfg.PrometheusURL != "" || cfg.LokiURL != ""
-
-			meta := map[string]string{}
-			var manifestPath string
-			var manifest string
-
-			if hasRemotes {
-				// Create ExternalSecret to fetch passwords from Vault
-				manifestPath = path.Join(core.Paths().TempDir, "alloy-external-secret.yaml")
-
-				// Build config to get cluster name
-				cb, err := alloy.NewConfigBuilder(cfg)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-				clusterName := cb.ClusterName()
-
-				// Generate the ExternalSecret manifest using the alloy package
-				manifest, err = alloy.ExternalSecretManifest(cfg, clusterName)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-			} else {
-				// Create an empty secret so the pod doesn't fail looking for it
-				manifestPath = path.Join(core.Paths().TempDir, "alloy-empty-secret.yaml")
-				manifest, err = alloy.EmptySecretManifest()
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-			}
-
-			err = os.WriteFile(manifestPath, []byte(manifest), 0600)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			err = k.ApplyManifest(ctx, manifestPath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
-			stp.State().Set("secretManifestPath", manifestPath)
-
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-		}).
-		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
-				return automa.StepSkippedReport(stp.Id())
-			}
-
-			k, err := kube.NewClient()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			manifestPath := stp.State().String("secretManifestPath")
-			if manifestPath != "" {
-				err = k.DeleteManifest(ctx, manifestPath)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-			}
-
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating Alloy secrets")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to create Alloy secrets")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Alloy secrets created successfully")
 		})
 }
 
