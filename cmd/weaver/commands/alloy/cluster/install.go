@@ -19,8 +19,21 @@ var installCmd = &cobra.Command{
 	Long: `Install the Grafana Alloy observability stack including Prometheus CRDs, 
 Node Exporter, and Alloy for metrics and logs collection.
 
+Passwords for remote endpoints must exist in K8s Secret "grafana-alloy-secrets" 
+in the "grafana-alloy" namespace before running this command. Use 
+"solo-provisioner eso secret create" to create the secret from an external store,
+or create it manually.
+
 Examples:
-  # Multiple remotes (recommended)
+  # Step 1: Create the K8s secret with passwords (via ESO)
+  solo-provisioner eso secret create \
+    --store=vault-store \
+    --name=grafana-alloy-secrets \
+    --namespace=grafana-alloy \
+    --set PROMETHEUS_PASSWORD_PRIMARY=secret/data/grafana/alloy/prod/prometheus/primary#password \
+    --set LOKI_PASSWORD_PRIMARY=secret/data/grafana/alloy/prod/loki/primary#password
+
+  # Step 2: Install Alloy with remotes
   solo-provisioner alloy cluster install \
     --cluster-name=my-cluster \
     --add-prometheus-remote=name=primary,url=https://prom1.example.com/api/v1/write,username=user1 \
@@ -28,13 +41,9 @@ Examples:
     --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1 \
     --monitor-block-node
 
-  # Single remote (legacy mode - deprecated)
+  # Local-only mode (no remotes, no secret needed)
   solo-provisioner alloy cluster install \
-    --cluster-name=my-cluster \
-    --prometheus-url=https://prometheus.example.com/api/v1/write \
-    --prometheus-username=user \
-    --loki-url=https://loki.example.com/loki/api/v1/push \
-    --loki-username=user`,
+    --cluster-name=my-cluster`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Parse multi-remote flags
 		prometheusRemotes, err := parseRemoteFlags(flagPrometheusRemotes)

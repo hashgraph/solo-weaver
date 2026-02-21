@@ -1,29 +1,37 @@
-# Alloy Stack - Grafana Alloy with Vault
+# Alloy Stack - Grafana Alloy Observability
 
-Complete Alloy observability stack for Solo Provisioner with Vault-managed secrets.
+Complete Alloy observability stack for Solo Provisioner.
 
 **Components:**
 - Grafana Alloy - Metrics and log collection
-- HashiCorp Vault - Secret management
-- External Secrets Operator - Secret synchronization
 - Prometheus - Metrics storage
 - Loki - Log aggregation
 - Grafana - Visualization
 
+**Optional (for production secret management):**
+- HashiCorp Vault - Secret management
+- External Secrets Operator - Secret synchronization from Vault/AWS/GCP
+
 ## 🎯 Architecture Overview
 
-**All secrets are managed by Vault via External Secrets Operator** - no plain Kubernetes secrets!
+Alloy expects passwords in a K8s Secret named `grafana-alloy-secrets` in the `grafana-alloy` namespace.
+How that secret gets created is up to you — manually, via ESO/Vault, Terraform, or any other mechanism.
 
 ```
-Local Dev:                          Production:
-Docker Vault (dev mode)             Enterprise Vault cluster
+Manual (local dev):                 ESO + Vault (production):
+kubectl create secret               Vault/AWS/GCP
      ↓                                   ↓
-External Secrets Operator  ←→  External Secrets Operator
-     ↓                                   ↓
-K8s Secret (auto-synced)       K8s Secret (auto-synced)
-     ↓                                   ↓
-Alloy Pod (metrics/logs)       Alloy Pod (metrics/logs)
+K8s Secret                     External Secrets Operator
+  "grafana-alloy-secrets"              ↓
+     ↓                         K8s Secret (auto-synced)
+Alloy Pod (metrics/logs)          "grafana-alloy-secrets"
+                                       ↓
+                                Alloy Pod (metrics/logs)
 ```
+
+**Key naming convention:**
+- `PROMETHEUS_PASSWORD_<REMOTE_NAME>` — password for each `--add-prometheus-remote name=<remote_name>`
+- `LOKI_PASSWORD_<REMOTE_NAME>` — password for each `--add-loki-remote name=<remote_name>`
 
 ---
 
@@ -36,14 +44,14 @@ From your Mac, ensure you have the latest build:
 task build
 ```
 
-### Step 1: Start Alloy Stack
+### Step 1: Start Observability Stack
 
 Start and SSH into a fresh VM:
 ```bash
 task vm:ssh
 ```
 
-Then, from within the VM, start the Alloy stack:
+Then, from within the VM, start the observability stack (Prometheus, Loki, Grafana):
 ```bash
 task alloy:start
 ```
@@ -64,32 +72,35 @@ sudo solo-provisioner block node install \
   --config=/mnt/solo-weaver/test/config/config.yaml
 ```
 
-### Step 3: Install Alloy (Minimal)
+### Step 3: Create K8s Secret
 
-Install Alloy without remote endpoints. This installs External Secrets Operator and the basic Alloy stack without requiring secrets from Vault:
+Create the K8s secret containing passwords for the remote endpoints.
 
+**Option A: Using the task (recommended for local dev):**
 ```bash
-sudo solo-provisioner alloy cluster install \
-  --cluster-name=vm-cluster
+task alloy:create-secret
 ```
 
-> **Note:** Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs in "local-only" mode. No secrets are required.
+This creates secret `grafana-alloy-secrets` in namespace `grafana-alloy` with keys
+`PROMETHEUS_PASSWORD_LOCAL` and `LOKI_PASSWORD_LOCAL` set to `dev-password`.
 
-### Step 4: Configure Vault Connection
-
-Now that ESO is installed, configure the ClusterSecretStore to connect to Vault:
-
+**Option B: Using kubectl directly:**
 ```bash
-task vault:setup-secret-store
+kubectl create namespace grafana-alloy --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic grafana-alloy-secrets \
+  --namespace=grafana-alloy \
+  --from-literal=PROMETHEUS_PASSWORD_LOCAL=dev-password \
+  --from-literal=LOKI_PASSWORD_LOCAL=dev-password \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-This will auto-detect the node IP and configure the ClusterSecretStore.
+> **Convention:** The key names follow the pattern `{PROMETHEUS|LOKI}_PASSWORD_{REMOTE_NAME}`,
+> where `REMOTE_NAME` matches the `name=` value in the `--add-*-remote` flags (uppercased, dashes replaced with underscores).
 
-### Step 5: Upgrade Alloy with Remotes
+### Step 4: Install Alloy with Remotes
 
-Now that secrets can sync, upgrade Alloy with remote endpoints:
 ```bash
-# Get the node IP for remote endpoints
 NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 echo "Node IP: $NODE_IP"
 
@@ -100,7 +111,7 @@ sudo solo-provisioner alloy cluster install \
   --monitor-block-node
 ```
 
-> **Note:** The `--add-*-remote` flags use the format `name=<name>,url=<url>,username=<username>`. The password is fetched from Vault at path `grafana/alloy/{clusterName}/{prometheus|loki}/{remoteName}`.
+> **Note:** The remote name `local` maps to secret keys `PROMETHEUS_PASSWORD_LOCAL` and `LOKI_PASSWORD_LOCAL`.
 
 Wait for pods to be ready:
 ```bash
@@ -108,7 +119,12 @@ kubectl get pods -n grafana-alloy
 # Should show Running
 ```
 
-### Step 6: Access Grafana and Vault UI
+> **Tip:** To install Alloy without remote endpoints (local-only mode, no secrets needed):
+> ```bash
+> sudo solo-provisioner alloy cluster install --cluster-name=vm-cluster
+> ```
+
+### Step 5: Access Grafana
 
 From your Mac, forward the ports:
 ```bash
@@ -117,9 +133,10 @@ task vm:alloy-forward
 
 This forwards:
 - **Grafana:** http://localhost:3000 (anonymous auth enabled - no login required)
-- **Vault UI:** http://localhost:8200 (token: `devtoken`)
+- **Prometheus:** http://localhost:9090
+- **Loki:** http://localhost:3100
 
-### Step 7: Verify in Grafana
+### Step 6: Verify in Grafana
 
 Navigate to **Explore** and test these queries organized by module:
 
@@ -282,9 +299,25 @@ sudo solo-provisioner alloy cluster install \
   --monitor-block-node
 ```
 
-Each remote requires a corresponding Vault secret at:
-- `grafana/alloy/{clusterName}/prometheus/{remoteName}` → property: `password`
-- `grafana/alloy/{clusterName}/loki/{remoteName}` → property: `password`
+Each remote requires a corresponding key in K8s Secret `grafana-alloy-secrets`:
+
+| Remote flag | Expected secret key |
+|---|---|
+| `--add-prometheus-remote=name=primary,...` | `PROMETHEUS_PASSWORD_PRIMARY` |
+| `--add-prometheus-remote=name=backup,...` | `PROMETHEUS_PASSWORD_BACKUP` |
+| `--add-loki-remote=name=primary,...` | `LOKI_PASSWORD_PRIMARY` |
+| `--add-loki-remote=name=grafana-cloud,...` | `LOKI_PASSWORD_GRAFANA_CLOUD` |
+
+Create the secret with all required keys:
+```bash
+kubectl create secret generic grafana-alloy-secrets \
+  --namespace=grafana-alloy \
+  --from-literal=PROMETHEUS_PASSWORD_PRIMARY=pass1 \
+  --from-literal=PROMETHEUS_PASSWORD_BACKUP=pass2 \
+  --from-literal=LOKI_PASSWORD_PRIMARY=pass3 \
+  --from-literal=LOKI_PASSWORD_GRAFANA_CLOUD=pass4 \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
 ### Managing Remote Endpoints
 
@@ -343,7 +376,7 @@ internal/templates/files/alloy/
 ├── block-node-servicemonitor.yaml  # ServiceMonitor for Block Node metrics
 ├── block-node-podlogs.yaml      # PodLogs for Block Node logs
 ├── configmap.yaml               # ConfigMap manifest template
-└── external-secret.yaml         # ExternalSecret manifest template
+└── namespace.yaml               # Namespace manifest template
 
 grafana-alloy-cm ConfigMap:
 └── config.alloy         # Concatenated modules (used by Alloy)
@@ -366,8 +399,19 @@ To view the current ConfigMap contents:
 kubectl get configmap grafana-alloy-cm -n grafana-alloy -o yaml
 ```
 
-### Manage Vault Separately
+### Vault + ESO (Optional)
 
+For production or when you want secrets synced automatically from Vault:
+
+```bash
+# Start the full stack including Vault
+task alloy:start-with-vault
+
+# Configure ClusterSecretStore (from within the VM)
+task vault:setup-secret-store
+```
+
+Manage Vault separately:
 ```bash
 task vault:start   # Start Vault only
 task vault:stop    # Stop Vault
@@ -403,28 +447,21 @@ You can also access the Vault UI at http://localhost:8200 (token: `devtoken`) af
 
 ### Production Setup
 
-For production, configure ClusterSecretStore to point to your enterprise Vault:
+In production, the K8s Secret `grafana-alloy-secrets` can be created by any mechanism:
 
-```yaml
-apiVersion: external-secrets.io/v1
-kind: ClusterSecretStore
-metadata:
-  name: vault-secret-store
-spec:
-  provider:
-    vault:
-      server: "https://vault.example.com"
-      path: "secret"
-      version: v2
-      auth:
-        userPass:
-          path: userpass
-          username: "production-eso-user"
-          secretRef:
-            name: vault-credentials
-            namespace: kube-system
-            key: password
-```
+**Option 1: ESO + Vault** — Use `solo-provisioner eso` commands to install ESO and create
+ExternalSecret resources that sync passwords from Vault into the K8s Secret automatically.
+
+**Option 2: ESO + Cloud Provider** — Use ESO with AWS Secrets Manager, GCP Secret Manager,
+or Azure Key Vault as the backend.
+
+**Option 3: Terraform / CI pipeline** — Create the K8s Secret as part of your infrastructure
+provisioning.
+
+**Option 4: Manual** — Create the secret with `kubectl` as shown in the Quick Start.
+
+The only requirement is that the K8s Secret named `grafana-alloy-secrets` exists in namespace
+`grafana-alloy` with the expected keys before running `alloy cluster install`.
 
 ---
 
@@ -432,10 +469,27 @@ spec:
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Container definitions |
-| `init-vault.sh` | Initialize Vault with dev secrets |
-| `cluster-secret-store-local.yaml` | ESO → Vault connection template |
-| `config_with_alloy.yaml` | Solo Provisioner config with Alloy enabled |
+| `docker-compose.yml` | Container definitions (Prometheus, Loki, Grafana, Vault) |
+| `init-vault.sh` | Initialize Vault with dev secrets (used by `task vault:start`) |
+| `cluster-secret-store-local.yaml` | ESO → Vault connection template (advanced, optional) |
 | `prometheus.yml` | Prometheus configuration |
 | `loki-config.yml` | Loki configuration |
 | `grafana-datasources.yml` | Grafana datasources |
+
+## 🛠️ Task Reference
+
+| Task | Description |
+|------|-------------|
+| `task alloy:start` | Start Prometheus, Loki, Grafana |
+| `task alloy:start-with-vault` | Start full stack including Vault |
+| `task alloy:stop` | Stop all containers |
+| `task alloy:clean` | Stop and remove all data |
+| `task alloy:create-secret` | Create `grafana-alloy-secrets` K8s Secret with dev passwords |
+| `task alloy:delete-secret` | Delete the K8s Secret |
+| `task alloy:status` | Show container status |
+| `task alloy:logs` | Tail container logs |
+| `task vault:start` | Start Vault only |
+| `task vault:stop` | Stop Vault |
+| `task vault:clean` | Remove Vault data |
+| `task vault:setup-secret-store` | Configure ESO ClusterSecretStore → Vault |
+
