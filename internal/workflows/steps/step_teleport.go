@@ -153,7 +153,7 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local()Bool(InstalledByThisStep)
+			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("teleport was not installed by this step, skipping rollback"))
 			}
@@ -214,7 +214,7 @@ func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Build
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Local()Bool(ConfiguredByThisStep)
+			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("teleport was not configured by this step, skipping rollback"))
 			}
@@ -338,7 +338,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local()Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

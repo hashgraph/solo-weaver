@@ -162,7 +162,7 @@ func reloadSysctlSettings() automa.Builder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			backupFile := stp.State().Local()String(KeyBackupFile)
+			backupFile := stp.State().Local().String(KeyBackupFile)
 			if backupFile == "" {
 				return automa.SkippedReport(stp, automa.WithDetail("no backup file found in step state, cannot rollback"))
 			}
