@@ -234,7 +234,7 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local()Bool(InstalledByThisStep)
+			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CNI was not installed by this step, skipping rollback"))
 			}

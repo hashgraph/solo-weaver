@@ -17,7 +17,7 @@ func TestSetupHomeDirectoryStructure_Integration(t *testing.T) {
 	tmpHome := t.TempDir()
 	pp := core.NewWeaverPaths(tmpHome)
 
-	step, err := SetupHomeDirectoryStructure(pp).Build()
+	step, err := SetupHomeDirectoryStructure(*pp).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())

@@ -102,7 +102,7 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local()Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

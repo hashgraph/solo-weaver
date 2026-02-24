@@ -81,7 +81,7 @@ func installKubelet(provider func(opts ...software.InstallerOption) (software.So
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local()Bool(InstalledByThisStep)
+			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubelet was not installed by this step, skipping rollback"))
 			}
@@ -143,7 +143,7 @@ func configureKubelet(provider func(opts ...software.InstallerOption) (software.
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Local()Bool(ConfiguredByThisStep)
+			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubelet was not configured by this step, skipping rollback"))
 			}
