@@ -58,7 +58,7 @@ func setupBindMount(name string, target string) automa.Builder {
 				Source: path.Join(core.Paths().SandboxDir, target),
 				Target: target,
 			}
-			stp.State().Set(KeyBindMount, bindMount)
+			stp.State().Local().Set(KeyBindMount, bindMount)
 
 			modifiedByThisStep := false
 
@@ -68,8 +68,8 @@ func setupBindMount(name string, target string) automa.Builder {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
-			stp.State().Set(KeyAlreadyMounted, alreadyMounted)
-			stp.State().Set(KeyAlreadyInFstab, alreadyInFstab)
+			stp.State().Local().Set(KeyAlreadyMounted, alreadyMounted)
+			stp.State().Local().Set(KeyAlreadyInFstab, alreadyInFstab)
 
 			// Prepare metadata for reporting
 			meta := map[string]string{
@@ -91,21 +91,21 @@ func setupBindMount(name string, target string) automa.Builder {
 			}
 
 			modifiedByThisStep = true
-			stp.State().Set(KeyModifiedByThisStep, modifiedByThisStep)
+			stp.State().Local().Set(KeyModifiedByThisStep, modifiedByThisStep)
 			meta[KeyModifiedByThisStep] = fmt.Sprintf("%t", modifiedByThisStep)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			alreadyMounted := stp.State().Bool(KeyAlreadyMounted)
-			alreadyInFstab := stp.State().Bool(KeyAlreadyInFstab)
+			alreadyMounted := stp.State().Local().Bool(KeyAlreadyMounted)
+			alreadyInFstab := stp.State().Local().Bool(KeyAlreadyInFstab)
 
 			if alreadyMounted && alreadyInFstab {
 				return automa.SkippedReport(stp, automa.WithDetail("bind mount was not modified by this step, skipping rollback"))
 			}
 
 			var bindMount mount.BindMount
-			if val, ok := stp.State().Get(KeyBindMount); ok {
+			if val, ok := stp.State().Local().Get(KeyBindMount); ok {
 				bindMount = val.(mount.BindMount)
 			}
 

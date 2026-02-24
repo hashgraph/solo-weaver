@@ -69,7 +69,7 @@ func setupBlockNodeStorage(getManager func() (*blocknode.Manager, error)) automa
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -102,12 +102,12 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if !stp.State().Bool(ConfiguredByThisStep) {
+			if !stp.State().Local().Bool(ConfiguredByThisStep) {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -150,12 +150,12 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(ConfiguredByThisStep) == false {
+			if stp.State().Local().Bool(ConfiguredByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -207,13 +207,13 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 				meta[AlreadyInstalled] = "true"
 			} else {
 				meta[InstalledByThisStep] = "true"
-				stp.State().Set(InstalledByThisStep, true)
+				stp.State().Local().Set(InstalledByThisStep, true)
 			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -256,7 +256,7 @@ func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) aut
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -466,13 +466,13 @@ func scaleDownBlockNode(getManager func() (*blocknode.Manager, error)) automa.Bu
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// On rollback, scale back up
-			if !stp.State().Bool(ConfiguredByThisStep) {
+			if !stp.State().Local().Bool(ConfiguredByThisStep) {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -575,13 +575,13 @@ func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// On rollback, scale back down (though this is an unusual case)
-			if !stp.State().Bool(ConfiguredByThisStep) {
+			if !stp.State().Local().Bool(ConfiguredByThisStep) {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
