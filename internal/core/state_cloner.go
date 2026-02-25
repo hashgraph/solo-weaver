@@ -31,12 +31,9 @@ func (s *StorageState) Clone() StorageState {
 }
 
 // Clone creates a deep copy of BlockNodeState
-func (b *BlockNodeState) Clone() *BlockNodeState {
-	if b == nil {
-		return nil
-	}
+func (b *BlockNodeState) Clone() BlockNodeState {
 	clone := *b
-	return &clone
+	return clone
 }
 
 // Clone creates a deep copy of ClusterNodeState
@@ -67,21 +64,14 @@ func (n *ClusterNodeState) Clone() ClusterNodeState {
 }
 
 // Clone creates a deep copy of HelmReleaseInfo
-func (h *HelmReleaseInfo) Clone() *HelmReleaseInfo {
-	if h == nil {
-		return nil
-	}
-
+func (h *HelmReleaseInfo) Clone() HelmReleaseInfo {
 	c := *h
-	return &c
+	return c
 }
 
 // Clone creates a deep copy of MachineState
-func (m *MachineState) Clone() *MachineState {
-	if m == nil {
-		return nil
-	}
-	clone := &MachineState{
+func (m *MachineState) Clone() MachineState {
+	clone := MachineState{
 		Initialized:   m.Initialized,
 		InitializedAt: m.InitializedAt,
 		LastSync:      m.LastSync,
@@ -106,11 +96,8 @@ func (m *MachineState) Clone() *MachineState {
 }
 
 // Clone creates a deep copy of ClusterState
-func (c *ClusterState) Clone() *ClusterState {
-	if c == nil {
-		return nil
-	}
-	clone := &ClusterState{
+func (c *ClusterState) Clone() ClusterState {
+	clone := ClusterState{
 		ID:               c.ID,
 		Name:             c.Name,
 		Provider:         c.Provider,
@@ -146,7 +133,7 @@ func (c *ClusterState) Clone() *ClusterState {
 		clone.HelmReleases = make(map[string]HelmReleaseInfo, len(c.HelmReleases))
 		for k, v := range c.HelmReleases {
 			vv := v.Clone()
-			clone.HelmReleases[k] = *vv
+			clone.HelmReleases[k] = vv
 		}
 	} else {
 		clone.HelmReleases = make(map[string]HelmReleaseInfo)
@@ -173,14 +160,11 @@ func (c *ClusterState) Clone() *ClusterState {
 }
 
 // Clone creates a deep copy of State
-func (s *State) Clone() *State {
-	if s == nil {
-		return nil
-	}
-	c := &State{
+func (s *State) Clone() State {
+	c := State{
 		Version:  s.Version,
 		Commit:   s.Commit,
-		File:     s.File,
+		FilePath: s.FilePath,
 		LastSync: s.LastSync,
 	}
 
@@ -188,16 +172,13 @@ func (s *State) Clone() *State {
 	c.Paths = s.Paths
 
 	// Machine
-	m := s.Machine.Clone()
-	c.Machine = *m
+	c.Machine = s.Machine.Clone()
 
 	// Cluster
-	cc := s.Cluster.Clone()
-	c.Cluster = *cc
+	c.Cluster = s.Cluster.Clone()
 
 	// BlockNode
-	bc := s.BlockNode.Clone()
-	c.BlockNode = *bc
+	c.BlockNode = s.BlockNode.Clone()
 
 	return c
 }

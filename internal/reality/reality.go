@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/core"
@@ -27,52 +28,58 @@ import (
 // This separation allows for clearer distinction between current and actual states as well as intent execution.
 // This is supposed to be resource heavy and may involve network calls, so it should be used judiciously.
 type Checker interface {
-	RefreshState(ctx context.Context, st *core.State) error
+	RefreshState(ctx context.Context, st core.State) error
 
-	ClusterState(ctx context.Context) (*core.ClusterState, error)
+	ClusterState(ctx context.Context) (core.ClusterState, error)
 
-	MachineState(ctx context.Context) (*core.MachineState, error)
+	MachineState(ctx context.Context) (core.MachineState, error)
 
-	BlockNodeState(ctx context.Context) (*core.BlockNodeState, error)
+	BlockNodeState(ctx context.Context) (core.BlockNodeState, error)
 }
 
 type realityChecker struct {
-	current *core.State
+	current core.State
 }
 
-func (r *realityChecker) RefreshState(ctx context.Context, st *core.State) error {
+func (r *realityChecker) RefreshState(ctx context.Context, st core.State) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (r *realityChecker) ClusterState(ctx context.Context) (*core.ClusterState, error) {
+func (r *realityChecker) ClusterState(ctx context.Context) (core.ClusterState, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (r *realityChecker) MachineState(ctx context.Context) (*core.MachineState, error) {
+func (r *realityChecker) MachineState(ctx context.Context) (core.MachineState, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeState, error) {
+func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeState, error) {
+	now := htime.Now()
+	bn := core.BlockNodeState{} // default state
+
 	if exists, err := kube.ClusterExists(); !exists {
 		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNode state check")
-		return nil, nil // cluster does not exist, so nothing to check
+		return bn, nil // the cluster does not exist, so nothing to check
 	}
 
 	logx.As().Info().Msg("Refreshing BlockNode state from Kubernetes cluster")
 	re, err := r.findBlockNodeHelmRelease()
 	if err != nil {
-		return nil, err
+		return bn, err
 	}
 
 	if re == nil {
-		return nil, nil // no BlockNode release found
+		return bn, nil // no BlockNode release found
 	}
 
-	now := htime.Now()
-	bn := core.BlockNodeState{
+	deleted, err := htime.Parse(time.RFC3339, re.Info.Deleted.Format(time.RFC3339))
+	if err != nil {
+		return bn, err
+	}
+	bn = core.BlockNodeState{
 		ReleaseInfo: core.HelmReleaseInfo{
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
@@ -82,7 +89,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
 			LastDeployed:  re.Info.LastDeployed,
-			Deleted:       re.Info.Deleted,
+			Deleted:       deleted,
 			Status:        re.Info.Status,
 		},
 		Storage: core.BlockNodeStorage{
@@ -100,13 +107,13 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 	// get storage info from from PVs and PVCs associated with the BlockNode release
 	k8s, err := kube.NewClient()
 	if err != nil {
-		return nil, err
+		return bn, err
 	}
 
 	// PersistentVolumes are cluster-scoped -> pass empty namespace
 	pvs, err := k8s.List(ctx, kube.KindPV, "", kube.WaitOptions{})
 	if err != nil {
-		return nil, err
+		return bn, err
 	}
 
 	// loop through pvs, find those associated with the BlockNode release
@@ -129,12 +136,12 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 		if claimNamespace == re.Namespace {
 			size, found, err := unstructured.NestedString(pv.Object, "spec", "capacity", "storage")
 			if err != nil || !found {
-				return nil, errorx.IllegalState.New("PV %s does not have a storage size", pv.GetName())
+				return bn, errorx.IllegalState.New("PV %s does not have a storage size", pv.GetName())
 			}
 
 			hostpath, found, err := unstructured.NestedString(pv.Object, "spec", "hostPath", "path")
 			if err != nil || !found {
-				return nil, errorx.IllegalState.New("PV %s does not have a hostPath", pv.GetName())
+				return bn, errorx.IllegalState.New("PV %s does not have a hostPath", pv.GetName())
 			}
 
 			logx.As().Debug().
@@ -161,7 +168,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeSta
 	r.current.BlockNode = bn
 	logx.As().Debug().Any("state", bn).Msg("Refreshed block node state")
 
-	return &bn, nil
+	return bn, nil
 }
 
 func (r *realityChecker) findBlockNodeHelmRelease() (*release.Release, error) {
@@ -226,17 +233,6 @@ func UnmarshalManifest(manifest string) ([]*unstructured.Unstructured, error) {
 	return out, nil
 }
 
-func NewChecker(current *core.State) (Checker, error) {
-	if current == nil {
-		return nil, errorx.IllegalArgument.New("current state cannot be nil")
-	}
-
-	st := current.Clone()
-	if st == nil {
-		return nil, errorx.IllegalArgument.New("failed to clone current state")
-	}
-
-	logx.As().Debug().Msg("Initialized reality checker with current state")
-
-	return &realityChecker{current: st}, nil
+func NewChecker(current core.State) (Checker, error) {
+	return &realityChecker{current: current}, nil
 }

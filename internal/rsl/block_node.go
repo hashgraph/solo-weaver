@@ -428,9 +428,10 @@ func InitBlockNodeRuntime(cfg core.Config, state core.BlockNodeState, realityChe
 		// fetch function
 		realityChecker.BlockNodeState,
 		// lastSync extractor
-		func(s *core.BlockNodeState) htime.Time { return s.LastSync },
+		func(s core.BlockNodeState) htime.Time { return s.LastSync },
 		// clone helper
-		func(s *core.BlockNodeState) *core.BlockNodeState { return s.Clone() },
+		func(s core.BlockNodeState) core.BlockNodeState { return s.Clone() },
+		func() core.BlockNodeState { return core.BlockNodeState{} }, // default state
 		"cluster reality checker",
 	)
 

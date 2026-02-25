@@ -346,24 +346,29 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 		return nil, errorx.IllegalState.New("failed to refresh block node state after workflow execution: %v", err)
 	}
 
-	// get current block node state
+	// get current blocknode state
 	current, err := rsl.BlockNode().CurrentState()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node state after workflow execution: %v", err)
 	}
 
 	// chartRepo from user inputs since it is not available in the helm release info in the cluster
-	current.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
+	if effectiveInputs.Custom.Chart != "" {
+		current.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
+	}
 
 	// load full state from disk and persist update block node state
 	fullState := b.sm.State()
-	fullState.BlockNode = *current
-	err = b.sm.Flush()
+	fullState.BlockNode = current
+	err = b.sm.Set(fullState).Flush()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to persist block node state after workflow execution: %v", err)
 	}
 
-	logx.As().Info().Any("full-state", fullState).Msg("Persisted state after workflow execution")
+	logx.As().Info().
+		Str("state_file", fullState.FilePath).
+		Any("full-state", fullState).
+		Msg("Persisted state after workflow execution")
 	return report, nil
 }
 
@@ -389,12 +394,6 @@ func (b BlockNodeIntentHandler) HandleIntent(
 		Any("effectiveInputs", effectiveInputs).
 		Msgf("Running Block Node workflow for intent %q", intent.Action)
 	report := wf.Execute(context.Background())
-	logx.As().Info().
-		Any("intent", intent).
-		Any("inputs", inputs).
-		Any("effectiveInputs", effectiveInputs).
-		Msg("Completed Block Node workflow execution for intent")
-
 	return b.flushState(report, effectiveInputs)
 }
 

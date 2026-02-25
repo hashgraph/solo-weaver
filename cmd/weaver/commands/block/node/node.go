@@ -62,7 +62,7 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagVerificationSize, "verification-size", "", "Size for verification storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagPluginsSize, "plugins-size", "", "Size for plugins storage PV/PVC (e.g., 5Gi, 10Gi)")
 
-	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd)
+	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd, uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

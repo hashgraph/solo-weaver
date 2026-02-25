@@ -30,7 +30,7 @@ func TestFlushWritesFile(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(tmp) })
 
 	s := NewState()
-	s.File = tmp
+	s.FilePath = tmp
 	s.Version = "v1-test-flush"
 
 	m, err := NewStateManager(WithState(s))
@@ -65,7 +65,7 @@ func TestRefreshLoadsFile(t *testing.T) {
 
 	// create a state on disk
 	onDisk := NewState()
-	onDisk.File = tmp
+	onDisk.FilePath = tmp
 	onDisk.Version = "v2-test-refresh"
 
 	b, err := yaml.Marshal(onDisk)
@@ -78,7 +78,7 @@ func TestRefreshLoadsFile(t *testing.T) {
 
 	// Create a manager with a different in-memory state, pointing to same file
 	mem := NewState()
-	mem.File = tmp
+	mem.FilePath = tmp
 	mem.Version = "before-refresh"
 
 	m, err := NewStateManager(WithState(mem))
@@ -106,7 +106,7 @@ func TestHasPersistedState(t *testing.T) {
 	}
 
 	s := NewState()
-	s.File = tmp
+	s.FilePath = tmp
 
 	m, err := NewStateManager(WithState(s))
 	if err != nil {

@@ -16,7 +16,8 @@ import (
 // It is just a thin wrapper around State with added thread-safe disk persistence & refresh operations.
 // However, the State itself is not thread-safe for mutations since State is a data model.
 type StateManager interface {
-	State() *State
+	State() State
+	Set(s State) StateManager
 	FileManager() fsx.Manager
 	Flush() error
 	Refresh() error
@@ -26,7 +27,7 @@ type StateManager interface {
 // StateManager encapsulates a State and all IO operations (flush/refresh).
 type stateManager struct {
 	mu    sync.Mutex
-	state *State
+	state State
 	fm    fsx.Manager
 }
 
@@ -42,19 +43,19 @@ func WithFileManager(fm fsx.Manager) StateManagerOption {
 	}
 }
 
-func WithState(s *State) StateManagerOption {
+func WithState(s State) StateManagerOption {
 	return func(m *stateManager) error {
-		if s == nil {
-			return errorx.IllegalArgument.New("state cannot be nil")
-		}
 		m.state = s
 		return nil
 	}
 }
 
 // NewStateManager creates a StateManager with the provided options.
+// Caller must call Refresh() to load the persisted state from disk before accessing the state.
 func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
-	m := &stateManager{}
+	m := &stateManager{
+		state: NewState(),
+	}
 
 	for _, opt := range opts {
 		if err := opt(m); err != nil {
@@ -71,12 +72,11 @@ func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
 	}
 
 	// if state is not provided, create a new one and try to refresh from disk
-	if m.state == nil {
-		m.state = NewState()
+	if m.state.LastSync.IsZero() {
 		err := m.Refresh()
 		if err != nil {
 			if errorx.IsOfType(err, NotFoundError) {
-				logx.As().Debug().Any("state_file", m.state.File).
+				logx.As().Debug().Any("state_file", m.state.FilePath).
 					Msg("No existing state file found, starting with a default state")
 				return m, nil
 			}
@@ -90,13 +90,14 @@ func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
 }
 
 // State returns the current state (thread-safe for read operations)
-// It returns a pointer to the state, allowing callers to be able to mutat it directly and invoke Flush to persist changes.
-// This is because cloning the state for every read would be inefficient.
-// Callers should ensure proper synchronization when mutating the state.
-// For read-only operations, callers can use the returned pointer without additional locking.
-// The disk persistence & refresh operations (Flush/Refresh) are thread-safe, however mutations to the state itself are not synchronized.
-func (m *stateManager) State() *State {
+func (m *stateManager) State() State {
 	return m.state
+}
+
+// Set sets the current state (thread-safe for write operations)
+func (m *stateManager) Set(s State) StateManager {
+	m.state = s
+	return m
 }
 
 // FileManager returns the file manager used by the state manager
@@ -116,9 +117,9 @@ func (m *stateManager) Flush() error {
 		return errorx.InternalError.Wrap(err, "failed to marshal state to YAML")
 	}
 
-	err = m.fm.WriteFile(m.state.File, b)
+	err = m.fm.WriteFile(m.state.FilePath, b)
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to write state file to %s", m.state.File)
+		return errorx.InternalError.Wrap(err, "failed to write state file to %s", m.state.FilePath)
 	}
 
 	return nil
@@ -129,34 +130,26 @@ func (m *stateManager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	b, err := m.fm.ReadFile(m.state.File, -1)
+	b, err := m.fm.ReadFile(m.state.FilePath, -1)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return NotFoundError.Wrap(err, "state file does not exist at %s", m.state.File)
+			return NotFoundError.Wrap(err, "state file does not exist at %s", m.state.FilePath)
 		}
 
-		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.File)
+		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.FilePath)
 	}
 
-	newState := NewState()
-	if err = yaml.Unmarshal(b, newState); err != nil {
+	newState := NewState() // create an instance of State to unmarshal into without changing the original
+	if err = yaml.Unmarshal(b, &newState); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to unmarshal state from YAML")
 	}
 
-	// copy fields while preserving the mutex
-	m.state.Version = newState.Version
-	m.state.Commit = newState.Commit
-	m.state.File = newState.File
-	m.state.Paths = newState.Paths
-	m.state.Machine = newState.Machine
-	m.state.Cluster = newState.Cluster
-	m.state.BlockNode = newState.BlockNode
-	m.state.LastSync = newState.LastSync
+	m.state = newState
 
 	return nil
 }
 
 // HasPersistedState checks if the state file exists on disk
 func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
-	return m.fm.PathExists(m.state.File)
+	return m.fm.PathExists(m.state.FilePath)
 }

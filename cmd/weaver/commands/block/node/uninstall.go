@@ -43,7 +43,7 @@ var uninstallCmd = &cobra.Command{
 
 		common.CheckWorkflowReport(cmd.Context(), report)
 
-		logx.As().Info().Msg("Successfully installed Hedera Block Node")
+		logx.As().Info().Msg("Successfully uninstalled Hedera Block Node")
 
 		return nil
 	},
@@ -51,5 +51,5 @@ var uninstallCmd = &cobra.Command{
 
 func init() {
 	initializeExecutionFlags(uninstallCmd)
-	common.FlagWithStorageReset.SetVarP(upgradeCmd, &flagWithReset, false)
+	common.FlagWithStorageReset.SetVarP(uninstallCmd, &flagWithReset, false)
 }
