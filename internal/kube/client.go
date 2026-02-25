@@ -463,6 +463,31 @@ func (c *Client) GetResourceNestedString(ctx context.Context, apiVersion, kind, 
 	return value, nil
 }
 
+// GetSecretKeys returns the keys present in a Kubernetes Secret's data field.
+// Returns nil and no error if the secret does not exist.
+func (c *Client) GetSecretKeys(ctx context.Context, namespace, name string) ([]string, error) {
+	dr := c.Dyn.Resource(schema.GroupVersionResource{
+		Group:    "",
+		Version:  "v1",
+		Resource: "secrets",
+	}).Namespace(namespace)
+
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, errorx.InternalError.Wrap(err, "failed to get Secret %s/%s", namespace, name)
+	}
+
+	data, _, _ := unstructured.NestedMap(obj.Object, "data")
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	return keys, nil
+}
+
 // =====================
 // Generic WaitFor
 // =====================

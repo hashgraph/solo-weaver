@@ -145,47 +145,9 @@ func GetModuleNames(modules []ModuleConfig) []string {
 	return names
 }
 
-// BuildExternalSecretDataEntries builds the data entries for the ExternalSecret manifest.
-func BuildExternalSecretDataEntries(cfg config.AlloyConfig, clusterName string) string {
-	var entries []string
-
-	// Handle Prometheus remotes
-	if len(cfg.PrometheusRemotes) > 0 {
-		for _, r := range cfg.PrometheusRemotes {
-			envVarName := "PROMETHEUS_PASSWORD_" + toEnvVarName(r.Name)
-			vaultKey := VaultPathPrefix + clusterName + "/prometheus/" + r.Name
-			entries = append(entries, buildSecretDataEntry(envVarName, vaultKey, "password"))
-		}
-	} else if cfg.PrometheusURL != "" {
-		// Backward compatibility: legacy single remote
-		entries = append(entries, buildSecretDataEntry("PROMETHEUS_PASSWORD", VaultPathPrefix+clusterName+"/prometheus", "password"))
-	}
-
-	// Handle Loki remotes
-	if len(cfg.LokiRemotes) > 0 {
-		for _, r := range cfg.LokiRemotes {
-			envVarName := "LOKI_PASSWORD_" + toEnvVarName(r.Name)
-			vaultKey := VaultPathPrefix + clusterName + "/loki/" + r.Name
-			entries = append(entries, buildSecretDataEntry(envVarName, vaultKey, "password"))
-		}
-	} else if cfg.LokiURL != "" {
-		// Backward compatibility: legacy single remote
-		entries = append(entries, buildSecretDataEntry("LOKI_PASSWORD", VaultPathPrefix+clusterName+"/loki", "password"))
-	}
-
-	return strings.Join(entries, "")
-}
-
-// buildSecretDataEntry builds a single ExternalSecret data entry.
-func buildSecretDataEntry(secretKey, vaultKey, property string) string {
-	return `    - secretKey: ` + secretKey + `
-      remoteRef:
-        key: "` + vaultKey + `"
-        property: ` + property + `
-`
-}
-
 // BuildHelmEnvVars builds the Helm values for environment variables from secrets.
+// All passwords are sourced from the conventional K8s Secret "grafana-alloy-secrets"
+// using keys derived from remote names (e.g., PROMETHEUS_PASSWORD_PRIMARY).
 func BuildHelmEnvVars(cfg config.AlloyConfig) []string {
 	var envVars []string
 	idx := 0
@@ -219,7 +181,8 @@ func BuildHelmEnvVars(cfg config.AlloyConfig) []string {
 	return envVars
 }
 
-// buildEnvVarHelmValues builds the Helm value entries for a single environment variable.
+// buildEnvVarHelmValues builds the Helm value entries for a single environment variable
+// referencing the conventional K8s Secret "grafana-alloy-secrets".
 func buildEnvVarHelmValues(idx int, envVarName string) []string {
 	idxStr := strconv.Itoa(idx)
 	return []string{

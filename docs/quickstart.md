@@ -230,7 +230,6 @@ Sets up a complete single-node Kubernetes environment with all required componen
 - **Helm**: Kubernetes package manager
 - **kubectl**: Kubernetes CLI
 - **k9s**: Terminal-based Kubernetes UI
-- **External Secrets Operator**: Secret management integration
 - **Metrics Server**: Resource metrics for pods and nodes
 
 ```bash
@@ -336,33 +335,32 @@ When installing Alloy with remote endpoints (`--add-prometheus-remote` or `--add
 | Prerequisite | Description |
 |--------------|-------------|
 | **Running Kubernetes Cluster** | A cluster must be set up via `solo-provisioner block node install` or `solo-provisioner kube cluster install` |
-| **ClusterSecretStore** | A `ClusterSecretStore` named `vault-secret-store` (or custom name via `--cluster-secret-store`) must exist and be configured to connect to Vault |
-| **Reachable Vault** | The Vault server referenced in the ClusterSecretStore must be reachable |
+| **K8s Secret** | A Kubernetes Secret named `grafana-alloy-secrets` must exist in the `grafana-alloy` namespace with password keys for each configured remote (e.g., `PROMETHEUS_PASSWORD_PRIMARY`, `LOKI_PASSWORD_PRIMARY`) |
 | **Reachable Remote Endpoints** | Prometheus/Loki URLs must be reachable from the cluster |
-| **Vault Secrets** | Secrets must exist at `grafana/alloy/{clusterName}/{prometheus\|loki}/{remoteName}` with a `password` key |
 | **Block Node (optional)** | If using `--monitor-block-node`, the block node must be installed first |
 
-> **Note**: Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs in "local-only" mode and does not require Vault secrets or a ClusterSecretStore.
+> **Note**: Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs without remotes and does not require the K8s secret.
 
 #### Install Alloy Stack
 
 ```bash
-# Basic installation with single remote (legacy mode)
-sudo solo-provisioner alloy cluster install \
-  --cluster-name=mainnet-block-01 \
-  --prometheus-url=https://prometheus.example.com/api/v1/write \
-  --prometheus-username=metrics-user \
-  --loki-url=https://loki.example.com/loki/api/v1/push \
-  --loki-username=logs-user
+# Step 1: Create the K8s secret with passwords for remote endpoints
+kubectl create namespace grafana-alloy
+kubectl create secret generic grafana-alloy-secrets \
+  --namespace=grafana-alloy \
+  --from-literal=PROMETHEUS_PASSWORD_PRIMARY=<password> \
+  --from-literal=LOKI_PASSWORD_PRIMARY=<password>
 
-# Multiple remotes using repeatable flags (recommended)
+# Step 2: Install Alloy with remotes
 sudo solo-provisioner alloy cluster install \
   --cluster-name=mainnet-block-01 \
   --add-prometheus-remote=name=primary,url=https://prom1.example.com/api/v1/write,username=user1 \
-  --add-prometheus-remote=name=backup,url=https://prom2.example.com/api/v1/write,username=user2 \
   --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1 \
-  --add-loki-remote=name=backup,url=https://loki2.example.com/loki/api/v1/push,username=user2 \
   --monitor-block-node
+
+# Install Alloy without remotes (no secret needed)
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=mainnet-block-01
 ```
 
 **Available Flags**:
@@ -371,7 +369,6 @@ sudo solo-provisioner alloy cluster install \
 |------|-------------|
 | `--cluster-name` | Cluster name for metrics/logs labels |
 | `--monitor-block-node` | Enable Block Node specific monitoring |
-| `--cluster-secret-store` | Name of the ClusterSecretStore for Vault access (default: `vault-secret-store`) |
 | `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
 | `--add-loki-remote` | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
 | `--prometheus-url` | Prometheus remote write URL *(deprecated: use `--add-prometheus-remote`)* |
@@ -379,25 +376,30 @@ sudo solo-provisioner alloy cluster install \
 | `--loki-url` | Loki remote write URL *(deprecated: use `--add-loki-remote`)* |
 | `--loki-username` | Loki authentication username *(deprecated)* |
 
-> **Note**: Passwords are managed via Vault and External Secrets Operator, not via CLI flags.
+> **Note**: Passwords must be pre-created in a K8s Secret named `grafana-alloy-secrets` in the `grafana-alloy` namespace. The secret can be created manually, via ESO, Terraform, or any other mechanism.
 
 #### Multiple Remote Endpoints
 
 The `--add-prometheus-remote` and `--add-loki-remote` flags use the format `name=<name>,url=<url>,username=<username>`:
 - **name**: Unique identifier for the remote (e.g., `primary`, `backup`, `grafana-cloud`)
 - **url**: The remote write endpoint URL
-- **username**: Authentication username (password is fetched from Vault)
+- **username**: Authentication username (password is read from the K8s Secret)
 
-**Vault Secret Paths** (for multiple remotes):
-- Prometheus: `grafana/alloy/{clusterName}/prometheus/{remoteName}` → property: `password`
-- Loki: `grafana/alloy/{clusterName}/loki/{remoteName}` → property: `password`
+**K8s Secret Keys** (for multiple remotes):
 
-Example for `mainnet-block-01` cluster with `primary` and `backup` remotes:
-```
-grafana/alloy/mainnet-block-01/prometheus/primary
-grafana/alloy/mainnet-block-01/prometheus/backup
-grafana/alloy/mainnet-block-01/loki/primary
-grafana/alloy/mainnet-block-01/loki/backup
+Each remote requires a corresponding password key in the `grafana-alloy-secrets` K8s Secret. The key name is derived from the remote type and name:
+- Prometheus: `PROMETHEUS_PASSWORD_<REMOTE_NAME>`
+- Loki: `LOKI_PASSWORD_<REMOTE_NAME>`
+
+Example for a cluster with `primary` and `backup` remotes, create the secret with:
+```bash
+kubectl create namespace grafana-alloy
+kubectl create secret generic grafana-alloy-secrets \
+  --namespace=grafana-alloy \
+  --from-literal=PROMETHEUS_PASSWORD_PRIMARY=<password> \
+  --from-literal=PROMETHEUS_PASSWORD_BACKUP=<password> \
+  --from-literal=LOKI_PASSWORD_PRIMARY=<password> \
+  --from-literal=LOKI_PASSWORD_BACKUP=<password>
 ```
 
 #### Managing Remote Endpoints
@@ -432,7 +434,7 @@ sudo solo-provisioner alloy cluster install \
   --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1
 ```
 
-**Remove all remotes (local-only mode):**
+**Remove all remotes (install without remotes):**
 ```bash
 sudo solo-provisioner alloy cluster install \
   --cluster-name=mainnet-block-01
@@ -496,10 +498,14 @@ blockNode:
 alloy:
   monitorBlockNode: true
   clusterName: "mainnet-block-01"
-  prometheusUrl: "https://prometheus.example.com/api/v1/write"
-  prometheusUsername: "metrics"
-  lokiUrl: "https://loki.example.com/loki/api/v1/push"
-  lokiUsername: "logs"
+  prometheusRemotes:
+    - name: "primary"
+      url: "https://prometheus.example.com/api/v1/write"
+      username: "metrics"
+  lokiRemotes:
+    - name: "primary"
+      url: "https://loki.example.com/loki/api/v1/push"
+      username: "logs"
 
 teleport:
   version: "16.0.0"
@@ -560,8 +566,8 @@ sudo solo-provisioner teleport cluster install \
 sudo solo-provisioner alloy cluster install \
   --monitor-block-node \
   --cluster-name=mainnet-block-01 \
-  --prometheus-url=https://metrics.hedera.internal/write \
-  --prometheus-username=block-metrics
+  --add-prometheus-remote=name=primary,url=https://metrics.hedera.internal/write,username=block-metrics \
+  --add-loki-remote=name=primary,url=https://loki.hedera.internal/loki/api/v1/push,username=block-logs
 ```
 
 ### Development Environment Setup

@@ -126,6 +126,9 @@ type BlockNodeConfig struct {
 }
 
 // AlloyRemoteConfig represents a single remote endpoint for metrics or logs.
+// Passwords are expected in K8s Secret "grafana-alloy-secrets" under conventional keys:
+//   - Prometheus: PROMETHEUS_PASSWORD_<NAME>
+//   - Loki: LOKI_PASSWORD_<NAME>
 type AlloyRemoteConfig struct {
 	Name     string `yaml:"name" json:"name"`         // Unique identifier for this remote
 	URL      string `yaml:"url" json:"url"`           // Remote write URL

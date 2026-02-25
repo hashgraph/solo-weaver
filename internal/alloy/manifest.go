@@ -5,7 +5,6 @@ package alloy
 import (
 	"sort"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 )
 
@@ -50,39 +49,6 @@ func ConfigMapManifest(modules []ModuleConfig) (string, error) {
 	}
 
 	return templates.Render("files/alloy/configmap.yaml", data)
-}
-
-// ExternalSecretTemplateData holds data for the ExternalSecret template.
-type ExternalSecretTemplateData struct {
-	ExternalSecretName     string
-	Namespace              string
-	ClusterSecretStoreName string
-	SecretsName            string
-	ClusterName            string
-	SecretDataEntries      string
-}
-
-// ExternalSecretManifest generates the Alloy ExternalSecret manifest.
-// Uses the external-secret.yaml template file.
-func ExternalSecretManifest(cfg config.AlloyConfig, clusterName string) (string, error) {
-	secretDataEntries := BuildExternalSecretDataEntries(cfg, clusterName)
-
-	// Use configurable ClusterSecretStoreName, fallback to default constant
-	clusterSecretStoreName := cfg.ClusterSecretStoreName
-	if clusterSecretStoreName == "" {
-		clusterSecretStoreName = ClusterSecretStoreName
-	}
-
-	data := ExternalSecretTemplateData{
-		ExternalSecretName:     ExternalSecretName,
-		Namespace:              Namespace,
-		ClusterSecretStoreName: clusterSecretStoreName,
-		SecretsName:            SecretsName,
-		ClusterName:            clusterName,
-		SecretDataEntries:      secretDataEntries,
-	}
-
-	return templates.Render("files/alloy/external-secret.yaml", data)
 }
 
 // BaseHelmValues returns the base Helm values for Alloy installation.
@@ -160,21 +126,4 @@ func NamespaceManifest() (string, error) {
 	}
 
 	return templates.Render("files/alloy/namespace.yaml", data)
-}
-
-// EmptySecretTemplateData holds data for the empty secret template.
-type EmptySecretTemplateData struct {
-	SecretsName string
-	Namespace   string
-}
-
-// EmptySecretManifest generates an empty secret manifest.
-// Used when no remotes are configured so the pod doesn't fail looking for the secret.
-func EmptySecretManifest() (string, error) {
-	data := EmptySecretTemplateData{
-		SecretsName: SecretsName,
-		Namespace:   Namespace,
-	}
-
-	return templates.Render("files/alloy/empty-secret.yaml", data)
 }

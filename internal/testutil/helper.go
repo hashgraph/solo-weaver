@@ -23,9 +23,12 @@ var bindMountTargets = []string{
 }
 
 // PrepareSubCmdForTest creates a root command with the given subcommand added.
+// It registers persistent flags that the real root command provides (e.g. skip-hardware-checks)
+// so that subcommands can read them during tests.
 // Use this from tests in other packages to avoid duplicating the helper.
 func PrepareSubCmdForTest(sub *cobra.Command) *cobra.Command {
 	root := &cobra.Command{Use: "root"}
+	root.PersistentFlags().Bool("skip-hardware-checks", false, "Skip hardware validation checks")
 	root.AddCommand(sub)
 	return root
 }

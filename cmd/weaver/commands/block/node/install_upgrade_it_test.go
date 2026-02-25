@@ -472,6 +472,8 @@ func resetFlags(cmd *cobra.Command) {
 		cmd.ResetFlags()
 		// Add the profile flag since it's required by the parent block command
 		cmd.PersistentFlags().String(common.FlagProfile.Name, "", "profile to use for block commands")
+		// Re-add skip-hardware-checks since it's registered on the root command
+		cmd.PersistentFlags().Bool(common.FlagSkipHardwareChecks.Name, false, "Skip hardware validation checks")
 	}
 }
 
