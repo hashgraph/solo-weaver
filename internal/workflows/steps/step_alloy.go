@@ -277,12 +277,12 @@ func installNodeExporter() automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -461,7 +461,7 @@ func installAlloy() automa.Builder {
 			// This prevents rollback from uninstalling a pre-existing release
 			if isFreshInstall {
 				meta[InstalledByThisStep] = "true"
-				stp.State().Set(InstalledByThisStep, true)
+				stp.State().Local().Set(InstalledByThisStep, true)
 			} else {
 				meta["upgraded"] = "true"
 			}
@@ -469,7 +469,7 @@ func installAlloy() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -551,13 +551,13 @@ func deployAlloyConfig() automa.Builder {
 
 			meta[InstalledByThisStep] = "true"
 			meta["modules"] = strings.Join(moduleNames, ",")
-			stp.State().Set(InstalledByThisStep, true)
-			stp.State().Set("configMapManifestPath", configMapManifestPath)
+			stp.State().Local().Set(InstalledByThisStep, true)
+			stp.State().Local().Set("configMapManifestPath", configMapManifestPath)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -566,7 +566,7 @@ func deployAlloyConfig() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			configMapManifestPath := stp.State().String("configMapManifestPath")
+			configMapManifestPath := stp.State().Local().String("configMapManifestPath")
 			if configMapManifestPath != "" {
 				err = k.DeleteManifest(ctx, configMapManifestPath)
 				if err != nil {
@@ -639,7 +639,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			stp.State().Set("serviceMonitorPath", serviceMonitorPath)
+			stp.State().Local().Set("serviceMonitorPath", serviceMonitorPath)
 
 			// Deploy PodLogs for logs discovery
 			podLogsManifest, err := alloy.BlockNodePodLogsManifest(blockNodeNamespace)
@@ -656,16 +656,16 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			stp.State().Set("podLogsPath", podLogsPath)
+			stp.State().Local().Set("podLogsPath", podLogsPath)
 
 			l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor and PodLogs deployed for metrics/logs discovery")
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -675,13 +675,13 @@ func deployBlockNodeMonitoring() automa.Builder {
 			}
 
 			// Clean up ServiceMonitor if it was deployed
-			serviceMonitorPath := stp.State().String("serviceMonitorPath")
+			serviceMonitorPath := stp.State().Local().String("serviceMonitorPath")
 			if serviceMonitorPath != "" {
 				_ = k.DeleteManifest(ctx, serviceMonitorPath) // Ignore error - may not exist
 			}
 
 			// Clean up PodLogs if it was deployed
-			podLogsPath := stp.State().String("podLogsPath")
+			podLogsPath := stp.State().Local().String("podLogsPath")
 			if podLogsPath != "" {
 				_ = k.DeleteManifest(ctx, podLogsPath) // Ignore error - may not exist
 			}

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"sync"
 
@@ -74,7 +75,13 @@ func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
 		m.state = NewState()
 		err := m.Refresh()
 		if err != nil {
-			logx.As().Debug().Err(err).Any("state", m.state).
+			if errorx.IsOfType(err, NotFoundError) {
+				logx.As().Debug().Any("state_file", m.state.File).
+					Msg("No existing state file found, starting with a default state")
+				return m, nil
+			}
+
+			logx.As().Warn().Err(err).Any("state", m.state).
 				Msg("Failed to refresh state from disk, starting with a default state")
 		}
 	}
@@ -124,6 +131,10 @@ func (m *stateManager) Refresh() error {
 
 	b, err := m.fm.ReadFile(m.state.File, -1)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return NotFoundError.Wrap(err, "state file does not exist at %s", m.state.File)
+		}
+
 		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.File)
 	}
 
