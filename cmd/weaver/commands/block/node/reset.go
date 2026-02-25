@@ -29,7 +29,7 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			return err
 		}
 
-		inputs, err := prepareUserInputs(cmd, args)
+		inputs, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,5 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 }
 
 func init() {
-	common.FlagStopOnError.SetVarP(resetCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(resetCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(resetCmd, &flagContinueOnError, false)
+	initializeExecutionFlags(resetCmd)
 }

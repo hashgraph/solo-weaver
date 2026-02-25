@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/core"
@@ -24,9 +25,8 @@ type BlockNodeIntentHandler struct {
 	sm   core.StateManager
 }
 
-// prepareRuntime performs validation and prepare runtime with the user inputs
-// This function ensures that the intent is valid and the runtime Blocknode is set up with the provided user inputs
-func (b BlockNodeIntentHandler) prepareRuntime(
+// prepareRuntimeState validates the intent, user inputs, and refreshes the block node state before processing further.
+func (b BlockNodeIntentHandler) prepareRuntimeState(
 	intent core.Intent,
 	inputs core.UserInputs[core.BlocknodeInputs]) (*core.Intent, *core.UserInputs[core.BlocknodeInputs], error) {
 	// Basic validation of intent
@@ -52,7 +52,7 @@ func (b BlockNodeIntentHandler) prepareRuntime(
 		return nil, nil, errorx.IllegalState.New("failed to refresh block node state: %v", err)
 	}
 
-	// Set user inputs into runtime Blocknode so that we can determine effective values
+	// Set user inputs into the Blocknode runtime state so that we can determine effective values
 	err = rsl.BlockNode().SetVersion(inputs.Custom.Version)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node version as user input: %v", err)
@@ -208,126 +208,113 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	return &effectiveUserInputs, nil
 }
 
-func (b BlockNodeIntentHandler) installHandler(
-	inputs *core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, *core.UserInputs[core.BlocknodeInputs], error) {
-	// intent: block node install --profile <profile> --blocknode-version v0.3 --storage-path /data/blocknode
-	// inputs: version: v0.3, storage-path: /data/blocknode
-	// current: version: v0.1 (on disk), storage-path: /mnt/fast-storage
-	// reality: version: v0.1, storage-path: /mnt/fast-storage
-	// allowed: NO
+// prepareWorkflow returns a workflow builder based on the given intent and user inputs.
+// It is the caller's responsibility to build and execute the workflow and persist any state changes.
+// Returns the workflow builder and any error encountered.
+// It is better to use HandleIntent() which also refreshes the block node state after execution.
+func (b BlockNodeIntentHandler) prepareWorkflow(
+	intent core.Intent,
+	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, *core.UserInputs[core.BlocknodeInputs], error) {
+	validatedIntent, validatedInputs, err := b.prepareRuntimeState(intent, inputs)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	blockNodeState, err := rsl.BlockNode().CurrentState()
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to get current block node state: %v", err)
 	}
 
-	if blockNodeState.ReleaseInfo.Status == release.StatusDeployed && inputs.Common.Force != true {
-		return nil, nil, errorx.IllegalState.New("block node is already installed; cannot install again").
-			WithProperty(doctor.ErrPropertyResolution, "use 'weaver block-node upgrade' to upgrade the block node or use --force to attempt to continue")
-	}
-
-	effectiveUserInputs, err := b.prepareEffectiveUserInputsForInstall(inputs)
+	effectiveUserInputs, err := b.prepareEffectiveUserInputsForInstall(validatedInputs)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	var wb *automa.WorkflowBuilder
 
 	clusterState, err := rsl.Cluster().CurrentState()
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to get current cluster state: %v", err)
 	}
 
-	blockNodeInputs := effectiveUserInputs.Custom
-
-	// if cluster is already created, we can skip cluster installation workflow and just run block node setup workflow;
-	// otherwise we need to run the full cluster installation workflow which includes block node installation
-	if clusterState.Created {
-		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-			steps.SetupBlockNode(blockNodeInputs),
-		)
-	} else {
-		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-			workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile, blockNodeInputs.SkipHardwareChecks),
-			steps.SetupBlockNode(blockNodeInputs),
-		)
-	}
-
-	return workflows.WithWorkflowExecutionMode(wb, &inputs.Common.ExecutionOptions), effectiveUserInputs, nil
-}
-
-func (b BlockNodeIntentHandler) uninstallHandler(inputs *core.BlocknodeInputs) (*automa.WorkflowBuilder, error) {
-	return nil, nil
-}
-
-func (b BlockNodeIntentHandler) upgradeHandler(inputs *core.BlocknodeInputs) (*automa.WorkflowBuilder, error) {
-	return nil, nil
-}
-
-// Workflow returns a workflow builder based on the given intent and user inputs.
-// It is the caller's responsibility to build and execute the workflow, and persist any state changes.
-// Returns the workflow builder and any error encountered.
-// It is better to use HandleIntent() which also refreshes the block node state after execution.
-func (b BlockNodeIntentHandler) Workflow(
-	intent core.Intent,
-	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, *core.UserInputs[core.BlocknodeInputs], error) {
-	validatedIntent, validatedInputs, err := b.prepareRuntime(intent, inputs)
-	if err != nil {
-		return nil, nil, err
-	}
-
+	// prepare a workflow builder based on the action
+	var wb *automa.WorkflowBuilder
+	blockNodeInputs := effectiveUserInputs.Custom // make a copy for readability
 	switch validatedIntent.Action {
 	case core.ActionInstall:
-		wfBuilder, effectiveUserInputs, err := b.installHandler(validatedInputs)
-		if err != nil {
-			return nil, nil, err
+		if blockNodeState.ReleaseInfo.Status == release.StatusDeployed && inputs.Common.Force != true {
+			return nil, nil, errorx.IllegalState.New("block node is already installed; cannot install again").
+				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node reset' or 'weaver block-node upgrade' to reset or upgrade respectively or use --force to attempt to continue")
 		}
-		return wfBuilder, effectiveUserInputs, nil
 
+		// if the cluster is already created, we can skip the cluster installation workflow and just run block node setup workflow;
+		// otherwise we need to run the full cluster installation workflow which includes block node installation
+		if clusterState.Created {
+			wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
+				steps.SetupBlockNode(blockNodeInputs),
+			)
+		} else {
+			wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
+				workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile, blockNodeInputs.SkipHardwareChecks),
+				steps.SetupBlockNode(blockNodeInputs),
+			)
+		}
+		return wb, effectiveUserInputs, nil
+	case core.ActionReset:
+		if blockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			return nil, nil, errorx.IllegalState.New("block node is not installed; cannot reset").
+				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node install' to install the block node")
+		}
+
+		wb = automa.NewWorkflowBuilder().WithId("block-node-reset").Steps(
+			steps.ResetBlockNode(blockNodeInputs),
+		)
+		return wb, effectiveUserInputs, nil
+	case core.ActionUpgrade:
+		if blockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			return nil, nil, errorx.IllegalState.New("block node is not installed; cannot upgrade").
+				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node install' to install the block node")
+		}
+
+		if blockNodeState.ReleaseInfo.ChartRef != effectiveUserInputs.Custom.Chart {
+			return nil, nil, errorx.IllegalState.New("block node chart is already set to '%s'; cannot override", blockNodeState.ReleaseInfo.ChartRef).
+				WithProperty(doctor.ErrPropertyResolution, "use `solo-provisioner block-node upgrade` to upgrade the block node deployment")
+		}
+
+		currentVersion, err := semver.NewVersion(blockNodeState.ReleaseInfo.Version)
+		if err != nil {
+			return nil, nil, errorx.IllegalState.New("failed to parse block node version '%s': %v", blockNodeState.ReleaseInfo.Version, err)
+		}
+		desiredVersion, err := semver.NewVersion(effectiveUserInputs.Custom.Version)
+		if err != nil {
+			return nil, nil, errorx.IllegalState.New("failed to parse block node version '%s': %v", effectiveUserInputs.Custom.Version, err)
+		}
+		if desiredVersion.LessThan(currentVersion) {
+			return nil, nil, errorx.IllegalArgument.New("block node version cannot be downgraded; current version is '%s'", blockNodeState.ReleaseInfo.Version)
+		}
+
+		if blockNodeInputs.ResetStorage {
+			wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").Steps(
+				steps.PurgeBlockNodeStorage(blockNodeInputs),
+				steps.UpgradeBlockNode(blockNodeInputs),
+			)
+		} else {
+			wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade").Steps(
+				steps.UpgradeBlockNode(blockNodeInputs),
+			)
+		}
+		return wb, effectiveUserInputs, nil
 	default:
 		return nil, nil, errorx.IllegalArgument.New("unsupported action '%s' for block node", validatedIntent.Action)
 	}
 }
 
-// HandleIntent executes the workflow for the given intent and user inputs.
-// It also refreshes the block node state after successful execution.
-// Returns the workflow report and any error encountered.
-func (b BlockNodeIntentHandler) HandleIntent(
-	intent core.Intent,
-	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
-	wb, effectiveInputs, err := b.Workflow(intent, inputs)
-	if err != nil {
-		return nil, err
-	}
-
-	wf, err := wb.Build()
-	if err != nil {
-		return nil, errorx.IllegalState.New("failed to build workflow: %v", err)
-	}
-
-	logx.As().Info().
-		Any("intent", intent).
-		Any("inputs", inputs).
-		Any("effectiveInputs", effectiveInputs).
-		Msgf("Running Block Node workflow for intent %q", intent.Action)
-	report := wf.Execute(context.Background())
-	logx.As().Info().
-		Any("intent", intent).
-		Any("inputs", inputs).
-		Any("effectiveInputs", effectiveInputs).
-		Msg("Completed Block Node workflow execution for intent")
-
-	return b.flushState(report, effectiveInputs)
-}
-
-// flushState persists the current block node state
+// flushState flush current block node state into disk and refresh the state from disk.
 func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInputs *core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
 
 	if report.IsFailed() && effectiveInputs.Common.ExecutionOptions.ExecutionMode != automa.StopOnError {
-		logx.As().Warn().Msg("Workflow execution failed; skipping block node state persistence")
+		logx.As().Warn().Msg("prepareWorkflow execution failed; skipping block node state persistence")
 		return report, nil
 	}
 
@@ -359,6 +346,39 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 	return report, nil
 }
 
+// HandleIntent executes the workflow for the given intent and user inputs.
+// It also refreshes the block node state after successful execution.
+// Returns the workflow report and any error encountered.
+func (b BlockNodeIntentHandler) HandleIntent(
+	intent core.Intent,
+	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
+	wb, effectiveInputs, err := b.prepareWorkflow(intent, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	wf, err := wb.Build()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to build workflow: %v", err)
+	}
+
+	logx.As().Info().
+		Any("intent", intent).
+		Any("inputs", inputs).
+		Any("effectiveInputs", effectiveInputs).
+		Msgf("Running Block Node workflow for intent %q", intent.Action)
+	report := wf.Execute(context.Background())
+	logx.As().Info().
+		Any("intent", intent).
+		Any("inputs", inputs).
+		Any("effectiveInputs", effectiveInputs).
+		Msg("Completed Block Node workflow execution for intent")
+
+	return b.flushState(report, effectiveInputs)
+}
+
+// NewBlockNodeIntentHandler initializes a BlockNodeIntentHandler with the provided configuration, state manager, and options.
+// Returns the created BlockNodeIntentHandler or an error if any validation or initialization fails during setup.
 func NewBlockNodeIntentHandler(
 	conf core.BlockNodeConfig,
 	sm core.StateManager,
@@ -374,6 +394,10 @@ func NewBlockNodeIntentHandler(
 	return bn, nil
 }
 
+// InitBlockNodeIntentHandler initializes and returns a singleton BlockNodeIntentHandler instance with given configuration.
+// If already initialized, it returns the existing singleton instance.
+// Accepts block node configuration, state manager, and optional configuration options.
+// Returns the initialized BlockNodeIntentHandler instance or an error if initialization fails.
 func InitBlockNodeIntentHandler(
 	conf core.BlockNodeConfig,
 	sm core.StateManager,

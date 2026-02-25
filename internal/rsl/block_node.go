@@ -12,9 +12,9 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-var blockNodeRuntimeSingleton *BlockNodeRuntime
+var blockNodeRuntimeSingleton *BlockNodeRuntimeState
 
-type BlockNodeRuntime struct {
+type BlockNodeRuntimeState struct {
 	*Base[core.BlockNodeState]
 	releaseName  *automa.RuntimeValue[string]
 	reality      reality.Checker
@@ -26,36 +26,36 @@ type BlockNodeRuntime struct {
 	storage      *automa.RuntimeValue[core.BlockNodeStorage]
 }
 
-func (br *BlockNodeRuntime) Namespace() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeState) Namespace() (*automa.EffectiveValue[string], error) {
 	return br.namespace.Effective()
 }
 
-func (br *BlockNodeRuntime) Storage() (*automa.EffectiveValue[core.BlockNodeStorage], error) {
+func (br *BlockNodeRuntimeState) Storage() (*automa.EffectiveValue[core.BlockNodeStorage], error) {
 	return br.storage.Effective()
 }
 
-func (br *BlockNodeRuntime) Version() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeState) Version() (*automa.EffectiveValue[string], error) {
 	return br.version.Effective()
 }
 
-func (br *BlockNodeRuntime) ReleaseName() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeState) ReleaseName() (*automa.EffectiveValue[string], error) {
 	return br.releaseName.Effective()
 }
 
-func (br *BlockNodeRuntime) ChartName() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeState) ChartName() (*automa.EffectiveValue[string], error) {
 	return br.chartName.Effective()
 }
 
-func (br *BlockNodeRuntime) ChartRepo() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeState) ChartRepo() (*automa.EffectiveValue[string], error) {
 	return br.chartRepo.Effective()
 }
 
-func (br *BlockNodeRuntime) ChartVersion() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeState) ChartVersion() (*automa.EffectiveValue[string], error) {
 	return br.chartVersion.Effective()
 }
 
 // SetBlockNodeConfig sets the user input for the block-node runtime values.
-func (br *BlockNodeRuntime) SetBlockNodeConfig(cfg core.Config) error {
+func (br *BlockNodeRuntimeState) SetBlockNodeConfig(cfg core.Config) error {
 	if br.namespace == nil {
 		return errorx.IllegalArgument.New("namespace runtime is not initialized") // should not happen
 	}
@@ -89,7 +89,7 @@ func (br *BlockNodeRuntime) SetBlockNodeConfig(cfg core.Config) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetReleaseName(r string) error {
+func (br *BlockNodeRuntimeState) SetReleaseName(r string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -106,7 +106,7 @@ func (br *BlockNodeRuntime) SetReleaseName(r string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetNamespace(ns string) error {
+func (br *BlockNodeRuntimeState) SetNamespace(ns string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -123,7 +123,7 @@ func (br *BlockNodeRuntime) SetNamespace(ns string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetVersion(v string) error {
+func (br *BlockNodeRuntimeState) SetVersion(v string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -140,7 +140,7 @@ func (br *BlockNodeRuntime) SetVersion(v string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetChartName(c string) error {
+func (br *BlockNodeRuntimeState) SetChartName(c string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -157,7 +157,7 @@ func (br *BlockNodeRuntime) SetChartName(c string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetChartRef(c string) error {
+func (br *BlockNodeRuntimeState) SetChartRef(c string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -174,7 +174,7 @@ func (br *BlockNodeRuntime) SetChartRef(c string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetChartVersion(cv string) error {
+func (br *BlockNodeRuntimeState) SetChartVersion(cv string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -191,7 +191,7 @@ func (br *BlockNodeRuntime) SetChartVersion(cv string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) SetStorage(s core.BlockNodeStorage) error {
+func (br *BlockNodeRuntimeState) SetStorage(s core.BlockNodeStorage) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -208,7 +208,7 @@ func (br *BlockNodeRuntime) SetStorage(s core.BlockNodeStorage) error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initNamespaceRuntime() error {
+func (br *BlockNodeRuntimeState) initNamespaceRuntime() error {
 	var err error
 
 	br.namespace, err = automa.NewRuntime[string](
@@ -234,7 +234,7 @@ func (br *BlockNodeRuntime) initNamespaceRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initStorageRuntime() error {
+func (br *BlockNodeRuntimeState) initStorageRuntime() error {
 	var err error
 
 	br.storage, err = automa.NewRuntime[core.BlockNodeStorage](
@@ -278,7 +278,7 @@ func (br *BlockNodeRuntime) initStorageRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initVersionRuntime() error {
+func (br *BlockNodeRuntimeState) initVersionRuntime() error {
 	var err error
 
 	br.version, err = automa.NewRuntime[string](
@@ -304,7 +304,7 @@ func (br *BlockNodeRuntime) initVersionRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initReleaseNameRuntime() error {
+func (br *BlockNodeRuntimeState) initReleaseNameRuntime() error {
 	var err error
 
 	br.releaseName, err = automa.NewRuntime[string](
@@ -330,7 +330,7 @@ func (br *BlockNodeRuntime) initReleaseNameRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initChartNameRuntime() error {
+func (br *BlockNodeRuntimeState) initChartNameRuntime() error {
 	var err error
 
 	br.chartName, err = automa.NewRuntime[string](
@@ -356,7 +356,7 @@ func (br *BlockNodeRuntime) initChartNameRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initChartRepoRuntime() error {
+func (br *BlockNodeRuntimeState) initChartRepoRuntime() error {
 	var err error
 
 	br.chartRepo, err = automa.NewRuntime[string](
@@ -382,7 +382,7 @@ func (br *BlockNodeRuntime) initChartRepoRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) initChartVersionRuntime() error {
+func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
 	var err error
 
 	br.chartVersion, err = automa.NewRuntime[string](
@@ -408,11 +408,11 @@ func (br *BlockNodeRuntime) initChartVersionRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntime) RefreshInterval() time.Duration {
+func (br *BlockNodeRuntimeState) RefreshInterval() time.Duration {
 	return br.refreshInterval
 }
 
-func (br *BlockNodeRuntime) SetRefreshInterval(d time.Duration) {
+func (br *BlockNodeRuntimeState) SetRefreshInterval(d time.Duration) {
 	br.refreshInterval = d
 }
 
@@ -434,7 +434,7 @@ func InitBlockNodeRuntime(cfg core.Config, state core.BlockNodeState, realityChe
 		"cluster reality checker",
 	)
 
-	br := &BlockNodeRuntime{
+	br := &BlockNodeRuntimeState{
 		Base:    rb,
 		reality: realityChecker,
 	}
@@ -472,6 +472,6 @@ func InitBlockNodeRuntime(cfg core.Config, state core.BlockNodeState, realityChe
 	return nil
 }
 
-func BlockNode() *BlockNodeRuntime {
+func BlockNode() *BlockNodeRuntimeState {
 	return blockNodeRuntimeSingleton
 }

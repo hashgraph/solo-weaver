@@ -22,7 +22,7 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		inputs, err := prepareUserInputs(cmd, args)
+		inputs, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
 			return err
 		}
@@ -51,10 +51,8 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
+	initializeExecutionFlags(installCmd)
 	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
-	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
 }
 
 // applyConfigOverrides applies flag values to override the configuration.

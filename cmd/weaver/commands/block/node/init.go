@@ -5,6 +5,7 @@ package node
 import (
 	"context"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/config"
@@ -12,7 +13,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -31,6 +31,8 @@ func initializeDependencies(ctx context.Context) error {
 	}
 
 	currentState := sm.State()
+	logx.As().Info().Str("state_file", currentState.File).Msg("Loaded current state")
+
 	realityChecker, err := reality.NewChecker(currentState)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
@@ -57,40 +59,24 @@ func initializeDependencies(ctx context.Context) error {
 	return nil
 }
 
-// prepareUserInputs prepares and validates user inputs from command flags.
-func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core.BlocknodeInputs], error) {
+func initializeExecutionFlags(resetCmd *cobra.Command) {
+	common.FlagStopOnError.SetVarP(resetCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError.SetVarP(resetCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError.SetVarP(resetCmd, &flagContinueOnError, false)
+}
+
+// prepareBlocknodeInputs prepares and validates user inputs from command flags.
+func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core.BlocknodeInputs], error) {
 	var err error
 
-	flagProfile, err = common.FlagProfile.Value(cmd, args)
+	// extract shared flags set in the parent commands
+	var parentFlags common.ParentCmdFlags
+	err = common.ExtractBlockNodeParentFlags(cmd, args, &parentFlags)
 	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+		return nil, err
 	}
 
-	if flagProfile == "" {
-		return nil, errorx.IllegalArgument.New("profile flag is required")
-	}
-
-	// Validate profile early for better error messages
-	if !hardware.IsValidProfile(flagProfile) {
-		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-			flagProfile, hardware.SupportedProfiles())
-	}
-
-	if flagProfile == "" {
-		return nil, errorx.IllegalArgument.New("profile flag is required")
-	}
-
-	flagForce, err = common.FlagForce.Value(cmd, args)
-	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
-	}
-
-	skipHardwareChecks, err := cmd.Flags().GetBool(common.FlagSkipHardwareChecks.Name)
-	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
-	}
-
-	// Validate the values file path if provided
+	// Validate the value file path if provided
 	// This is the primary security validation point for user-supplied file paths.
 	var validatedValuesFile string
 	if flagValuesFile != "" {
@@ -110,7 +96,7 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 
 	inputs := &core.UserInputs[core.BlocknodeInputs]{
 		Common: core.CommonInputs{
-			Force:            flagForce,
+			Force:            parentFlags.Force,
 			NodeType:         core.NodeTypeBlock,
 			ExecutionOptions: *execOpts,
 		},
@@ -128,10 +114,11 @@ func prepareUserInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core
 				LogPath:     flagLogPath,
 				LogSize:     flagLogSize,
 			},
-			Profile:            flagProfile,
+			Profile:            parentFlags.Profile,
 			ValuesFile:         validatedValuesFile,
 			ReuseValues:        !flagNoReuseValues,
-			SkipHardwareChecks: skipHardwareChecks,
+			ResetStorage:       flagWithReset,
+			SkipHardwareChecks: parentFlags.SkipHardwareChecks,
 		},
 	}
 
