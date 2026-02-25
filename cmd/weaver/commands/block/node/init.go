@@ -30,8 +30,13 @@ func initializeDependencies(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
 	}
 
+	err = sm.Refresh()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to refresh state")
+	}
+
 	currentState := sm.State()
-	logx.As().Info().Str("state_file", currentState.File).Msg("Loaded current state")
+	logx.As().Info().Str("state_file", currentState.FilePath).Any("currentState", currentState).Msg("Loaded current state")
 
 	realityChecker, err := reality.NewChecker(currentState)
 	if err != nil {

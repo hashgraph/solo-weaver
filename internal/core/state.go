@@ -11,7 +11,7 @@ import (
 type State struct {
 	Version   string         `yaml:"version" json:"version"`
 	Commit    string         `yaml:"commit" json:"commit"`
-	File      string         `yaml:"file" json:"file"` // path to state file
+	FilePath  string         `yaml:"filepath" json:"filepath"` // path to state file
 	NodeType  string         `yaml:"nodeType" json:"nodeType"`
 	Paths     WeaverPaths    `yaml:"paths" json:"paths"`
 	Machine   MachineState   `yaml:"machine" json:"machine"`
@@ -115,13 +115,13 @@ type ClusterState struct {
 
 // NewState creates a new State instance with default values
 // It does not load any persisted state from disk.
-func NewState() *State {
+func NewState() State {
 	p := Paths().Clone()
-	return &State{
+	return State{
 		Version: version.Number(),
 		Commit:  version.Commit(),
 
-		File: path.Join(p.StateDir, "state.yaml"),
+		FilePath: path.Join(p.StateDir, "state.yaml"),
 
 		// Version and Commit remain zero-values and can be set elsewhere (build flags).
 		Paths: *p,

@@ -14,9 +14,7 @@ const DefaultRefreshInterval = 10 * time.Minute
 const DefaultRefreshTimeout = 60 * time.Second
 
 // Base centralizes refresh / current-state behavior for any state type T.
-// - fetch: function that returns the latest *T from the external reality/checker.
-// - lastSync: optional function that returns the *time.Time last sync contained in T (used to skip frequent refreshes).
-// - clone: optional function to clone *T safely for callers.
+// T must not be a pointer type.
 type Base[T any] struct {
 	mu              sync.Mutex
 	cfg             core.Config
@@ -24,12 +22,13 @@ type Base[T any] struct {
 	refreshInterval time.Duration
 
 	// fetch obtains the latest state; required.
-	fetch     func(context.Context) (*T, error)
+	fetch     func(context.Context) (T, error)
 	fetchName string
 
 	// optional helpers
-	lastSync func(*T) htime.Time
-	clone    func(*T) *T
+	lastSync     func(T) htime.Time
+	clone        func(T) T
+	defaultState func() T
 }
 
 // NewRuntimeBase constructs a runtimeBase for a given initial value and helpers.
@@ -37,9 +36,10 @@ func NewRuntimeBase[T any](
 	cfg core.Config,
 	initial T,
 	refreshInterval time.Duration,
-	fetch func(context.Context) (*T, error),
-	lastSync func(*T) htime.Time,
-	clone func(*T) *T,
+	fetch func(context.Context) (T, error),
+	lastSync func(T) htime.Time,
+	clone func(T) T,
+	defaultState func() T,
 	fetchName string,
 ) *Base[T] {
 	return &Base[T]{
@@ -49,6 +49,7 @@ func NewRuntimeBase[T any](
 		fetch:           fetch,
 		lastSync:        lastSync,
 		clone:           clone,
+		defaultState:    defaultState,
 		fetchName:       fetchName,
 	}
 }
@@ -64,7 +65,7 @@ func (rb *Base[T]) RefreshState(ctx context.Context, force bool) error {
 	// check last sync freshness if helper provided
 	if !force && rb.lastSync != nil {
 		rb.mu.Lock()
-		ls := rb.lastSync(&rb.current)
+		ls := rb.lastSync(rb.current)
 		rb.mu.Unlock()
 		if now.Sub(ls) < rb.refreshInterval {
 			return nil
@@ -84,22 +85,19 @@ func (rb *Base[T]) RefreshState(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
-	if st == nil {
-		return nil
-	}
 
-	rb.current = *st
+	rb.current = st
 	return nil
 }
 
 // CurrentState returns a copy/clone of the current state.
-func (rb *Base[T]) CurrentState() (*T, error) {
+func (rb *Base[T]) CurrentState() (T, error) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
 	if rb.clone != nil {
-		return rb.clone(&rb.current), nil
+		return rb.clone(rb.current), nil
 	}
 
-	return nil, errorx.IllegalState.New("clone function is not defined for current state")
+	return rb.defaultState(), errorx.IllegalState.New("clone function is not defined for current state")
 }

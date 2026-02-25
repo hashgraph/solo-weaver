@@ -30,9 +30,10 @@ func InitClusterRuntime(cfg core.Config, state core.ClusterState, realityChecker
 		// fetch function
 		realityChecker.ClusterState,
 		// lastSync extractor
-		func(s *core.ClusterState) htime.Time { return s.LastSync },
+		func(s core.ClusterState) htime.Time { return s.LastSync },
 		// clone helper
-		func(s *core.ClusterState) *core.ClusterState { return s.Clone() },
+		func(s core.ClusterState) core.ClusterState { return s.Clone() },
+		func() core.ClusterState { return core.ClusterState{} },
 		"cluster reality checker",
 	)
 
