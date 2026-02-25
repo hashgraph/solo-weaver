@@ -239,13 +239,16 @@ func (b BlockNodeIntentHandler) installHandler(
 	}
 
 	blockNodeInputs := effectiveUserInputs.Custom
+
+	// if cluster is already created, we can skip cluster installation workflow and just run block node setup workflow;
+	// otherwise we need to run the full cluster installation workflow which includes block node installation
 	if clusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 			steps.SetupBlockNode(blockNodeInputs),
 		)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-			workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile),
+			workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile, blockNodeInputs.SkipHardwareChecks),
 			steps.SetupBlockNode(blockNodeInputs),
 		)
 	}
