@@ -1,4 +1,4 @@
-package runtime
+package rsl
 
 import (
 	"context"
@@ -56,14 +56,13 @@ func (br *BlockNodeRuntime) ChartVersion() (*automa.EffectiveValue[string], erro
 
 // SetBlockNodeConfig sets the user input for the block-node runtime values.
 func (br *BlockNodeRuntime) SetBlockNodeConfig(cfg core.Config) error {
-	br.mu.Lock()
-	defer br.mu.Unlock()
-
-	br.cfg = cfg
-
 	if br.namespace == nil {
 		return errorx.IllegalArgument.New("namespace runtime is not initialized") // should not happen
 	}
+
+	br.mu.Lock()
+	br.cfg = cfg
+	br.mu.Unlock()
 
 	if err := br.SetReleaseName(cfg.BlockNode.Release); err != nil {
 		return err
