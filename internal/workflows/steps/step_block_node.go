@@ -134,7 +134,7 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 		})
 }
 
-// createBlockNodePVs creates the PersistentVolumes and PersistentVolumeClaims for block node
+// createBlockNodePVs creates the PersistentVolumes and PersistentVolumeClaims for blocknode
 func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodePVsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -179,6 +179,43 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node PVs and PVCs created successfully")
+		})
+}
+
+func UninstallBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
+	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
+	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
+		uninstallBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
+	)
+}
+
+// uninstallBlockNode uninstalls the block node helm chart
+func uninstallBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = manager.UninstallChart(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Block Node")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Block Node")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node uninstalled successfully")
 		})
 }
 

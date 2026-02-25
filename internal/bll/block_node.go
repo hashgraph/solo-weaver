@@ -290,6 +290,9 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 		if desiredVersion.LessThan(currentVersion) {
 			return nil, nil, errorx.IllegalArgument.New("block node version cannot be downgraded; current version is '%s'", blockNodeState.ReleaseInfo.Version)
 		}
+		if desiredVersion.LessThan(currentVersion) && !effectiveUserInputs.Common.Force {
+			return nil, nil, errorx.IllegalArgument.New("block node version is already at the desired version '%s', use --force to attempt to continue", blockNodeState.ReleaseInfo.Version)
+		}
 
 		if blockNodeInputs.ResetStorage {
 			wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").Steps(
@@ -302,6 +305,24 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 			)
 		}
 		return wb, effectiveUserInputs, nil
+	case core.ActionUninstall:
+		if blockNodeState.ReleaseInfo.Status != release.StatusDeployed && inputs.Common.Force != true {
+			return nil, nil, errorx.IllegalState.New("block node is not installed; cannot uninstall").
+				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node install' to install the block node or use --force to attempt to continue")
+		}
+
+		if blockNodeInputs.ResetStorage {
+			wb = automa.NewWorkflowBuilder().WithId("block-node-uninstall-with-reset").Steps(
+				steps.PurgeBlockNodeStorage(blockNodeInputs),
+				steps.UninstallBlockNode(blockNodeInputs),
+			)
+		} else {
+			wb = automa.NewWorkflowBuilder().WithId("block-node-uninstall").Steps(
+				steps.UninstallBlockNode(blockNodeInputs),
+			)
+		}
+		return wb, effectiveUserInputs, nil
+
 	default:
 		return nil, nil, errorx.IllegalArgument.New("unsupported action '%s' for block node", validatedIntent.Action)
 	}
