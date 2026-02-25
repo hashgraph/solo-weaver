@@ -75,7 +75,7 @@ func TestInitBlockNodeRuntime(t *testing.T) {
 }
 
 func TestBlockNodeRuntime_SetBlockNodeConfig(t *testing.T) {
-	setupRuntime := func() (*BlockNodeRuntime, *MockRealityChecker) {
+	setupRuntime := func() (*BlockNodeRuntimeState, *MockRealityChecker) {
 		cfg := core.Config{
 			BlockNode: core.BlockNodeConfig{
 				Release:      "initial-release",

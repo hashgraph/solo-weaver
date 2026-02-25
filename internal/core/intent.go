@@ -72,7 +72,7 @@ const (
 // allowedOperations maps each action to the valid target types it can be performed on.
 var allowedOperations = map[ActionType][]TargetType{
 	ActionSetup:     {TargetMachine, TargetSystem, TargetCluster},
-	ActionReset:     {TargetMachine, TargetSystem, TargetCluster, TargetApplication},
+	ActionReset:     {TargetBlocknode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
 	ActionInstall:   {TargetApplication, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionUninstall: {TargetApplication, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionUpgrade:   {TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},

@@ -36,6 +36,7 @@ type BlocknodeInputs struct {
 	Storage            BlockNodeStorage
 	ValuesFile         string
 	ReuseValues        bool
+	ResetStorage       bool
 	SkipHardwareChecks bool
 }
 

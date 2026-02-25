@@ -3,12 +3,12 @@
 package node
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
+	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
@@ -26,10 +26,28 @@ var (
 				return err
 			}
 
-			inputs, err := prepareUserInputs(cmd, args)
+			inputs, err := prepareBlocknodeInputs(cmd, args)
 			if err != nil {
 				return err
 			}
+
+			// Validate the value file path if provided
+			// This is the primary security validation point for user-supplied file paths.
+			var validatedValuesFile string
+			if flagValuesFile != "" {
+				validatedValuesFile, err = sanity.ValidateInputFile(flagValuesFile)
+				if err != nil {
+					return err
+				}
+			}
+
+			flagWithReset, err = common.FlagWithStorageReset.Value(cmd, args)
+			if err != nil {
+				return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagWithStorageReset.Name)
+			}
+
+			inputs.Custom.ValuesFile = validatedValuesFile
+			inputs.Custom.ResetStorage = flagWithReset
 
 			intent := core.Intent{
 				Action: core.ActionUpgrade,
@@ -54,14 +72,8 @@ var (
 )
 
 func init() {
-	upgradeCmd.Flags().StringVarP(
-		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
-	upgradeCmd.Flags().BoolVar(
-		&flagNoReuseValues, "no-reuse-values", false, "Don't reuse the last release's values (resets to chart defaults)")
-	upgradeCmd.Flags().BoolVar(
-		&flagWithReset, "with-reset", false, "Reset block node storage before upgrading (clears all data)")
-
-	common.FlagStopOnError.SetVarP(upgradeCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(upgradeCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(upgradeCmd, &flagContinueOnError, false)
+	initializeExecutionFlags(upgradeCmd)
+	common.FlagWithStorageReset.SetVarP(upgradeCmd, &flagWithReset, false)
+	common.FlagValuesFile.SetVarP(upgradeCmd, &flagValuesFile, false)
+	common.FlagNoReuseValues.SetVarP(upgradeCmd, &flagNoReuseValues, false)
 }

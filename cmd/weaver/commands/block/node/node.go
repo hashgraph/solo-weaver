@@ -11,9 +11,6 @@ import (
 var (
 	nodeType = core.NodeTypeBlock
 
-	flagProfile string // inherited from parent
-	flagForce   bool   // inherited from parent
-
 	flagStopOnError     bool
 	flagRollbackOnError bool
 	flagContinueOnError bool
