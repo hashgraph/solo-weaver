@@ -10,7 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
-	"github.com/hashgraph/solo-weaver/internal/runtime"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -37,13 +37,13 @@ func initializeDependencies(ctx context.Context) error {
 	}
 
 	// initialize cluster runtime
-	err = runtime.InitClusterRuntime(conf, currentState.Cluster, realityChecker, runtime.DefaultRefreshInterval)
+	err = rsl.InitClusterRuntime(conf, currentState.Cluster, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
 		return err
 	}
 
 	// initialize block node runtime
-	err = runtime.InitBlockNodeRuntime(conf, currentState.BlockNode, realityChecker, runtime.DefaultRefreshInterval)
+	err = rsl.InitBlockNodeRuntime(conf, currentState.BlockNode, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
 		return err
 	}

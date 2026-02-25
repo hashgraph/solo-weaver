@@ -10,7 +10,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
-	"github.com/hashgraph/solo-weaver/internal/runtime"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/joomcode/errorx"
@@ -47,33 +47,33 @@ func (b BlockNodeIntentHandler) prepareRuntime(
 	// Refresh Blocknode state before proceeding
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	err := runtime.BlockNode().RefreshState(ctx, false) // no need to force refresh here
+	err := rsl.BlockNode().RefreshState(ctx, false) // no need to force refresh here
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to refresh block node state: %v", err)
 	}
 
 	// Set user inputs into runtime Blocknode so that we can determine effective values
-	err = runtime.BlockNode().SetVersion(inputs.Custom.Version)
+	err = rsl.BlockNode().SetVersion(inputs.Custom.Version)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node version as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetNamespace(inputs.Custom.Namespace)
+	err = rsl.BlockNode().SetNamespace(inputs.Custom.Namespace)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node namespace as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetReleaseName(inputs.Custom.Release)
+	err = rsl.BlockNode().SetReleaseName(inputs.Custom.Release)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node release name as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetChartRef(inputs.Custom.Chart)
+	err = rsl.BlockNode().SetChartRef(inputs.Custom.Chart)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node chart as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetChartVersion(inputs.Custom.ChartVersion)
+	err = rsl.BlockNode().SetChartVersion(inputs.Custom.ChartVersion)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node chart version as user input: %v", err)
 	}
-	err = runtime.BlockNode().SetStorage(inputs.Custom.Storage)
+	err = rsl.BlockNode().SetStorage(inputs.Custom.Storage)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node storage as user input: %v", err)
 	}
@@ -90,7 +90,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode release name
-	effReleaseName, err := runtime.BlockNode().ReleaseName()
+	effReleaseName, err := rsl.BlockNode().ReleaseName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node release: %v", err)
 	}
@@ -104,7 +104,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode version
-	effVersion, err := runtime.BlockNode().Version()
+	effVersion, err := rsl.BlockNode().Version()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get effective block node version: %v", err)
 	}
@@ -118,7 +118,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode namespace
-	effNamespace, err := runtime.BlockNode().Namespace()
+	effNamespace, err := rsl.BlockNode().Namespace()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node namespace: %v", err)
 	}
@@ -132,7 +132,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode chart repo
-	effChartName, err := runtime.BlockNode().ChartName()
+	effChartName, err := rsl.BlockNode().ChartName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart name: %v", err)
 	}
@@ -146,7 +146,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode chart repo
-	effChartRepo, err := runtime.BlockNode().ChartRepo()
+	effChartRepo, err := rsl.BlockNode().ChartRepo()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart repo: %v", err)
 	}
@@ -160,7 +160,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode chart version
-	effChartVersion, err := runtime.BlockNode().ChartVersion()
+	effChartVersion, err := rsl.BlockNode().ChartVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart version: %v", err)
 	}
@@ -174,7 +174,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode storage paths
-	effStorage, err := runtime.BlockNode().Storage()
+	effStorage, err := rsl.BlockNode().Storage()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node storage: %v", err)
 	}
@@ -216,7 +216,7 @@ func (b BlockNodeIntentHandler) installHandler(
 	// reality: version: v0.1, storage-path: /mnt/fast-storage
 	// allowed: NO
 
-	blockNodeState, err := runtime.BlockNode().CurrentState()
+	blockNodeState, err := rsl.BlockNode().CurrentState()
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to get current block node state: %v", err)
 	}
@@ -233,7 +233,7 @@ func (b BlockNodeIntentHandler) installHandler(
 
 	var wb *automa.WorkflowBuilder
 
-	clusterState, err := runtime.Cluster().CurrentState()
+	clusterState, err := rsl.Cluster().CurrentState()
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to get current cluster state: %v", err)
 	}
@@ -328,15 +328,15 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 		return report, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), runtime.DefaultRefreshTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
-	err := runtime.BlockNode().RefreshState(ctx, true)
+	err := rsl.BlockNode().RefreshState(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh block node state after workflow execution: %v", err)
 	}
 
 	// get current block node state
-	current, err := runtime.BlockNode().CurrentState()
+	current, err := rsl.BlockNode().CurrentState()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node state after workflow execution: %v", err)
 	}
