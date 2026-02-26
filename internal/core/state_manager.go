@@ -1,7 +1,6 @@
 package core
 
 import (
-	"errors"
 	"os"
 	"sync"
 
@@ -76,7 +75,7 @@ func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
 		err := m.Refresh()
 		if err != nil {
 			if errorx.IsOfType(err, NotFoundError) {
-				logx.As().Debug().Any("state_file", m.state.FilePath).
+				logx.As().Debug().Any("state_file", m.state.StateFile).
 					Msg("No existing state file found, starting with a default state")
 				return m, nil
 			}
@@ -117,9 +116,9 @@ func (m *stateManager) Flush() error {
 		return errorx.InternalError.Wrap(err, "failed to marshal state to YAML")
 	}
 
-	err = m.fm.WriteFile(m.state.FilePath, b)
+	err = m.fm.WriteFile(m.state.StateFile, b)
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to write state file to %s", m.state.FilePath)
+		return errorx.InternalError.Wrap(err, "failed to write state file to %s", m.state.StateFile)
 	}
 
 	return nil
@@ -130,13 +129,13 @@ func (m *stateManager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	b, err := m.fm.ReadFile(m.state.FilePath, -1)
+	b, err := m.fm.ReadFile(m.state.StateFile, -1)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return NotFoundError.Wrap(err, "state file does not exist at %s", m.state.FilePath)
+		if errorx.IsOfType(err, fsx.FileNotFound) {
+			return NotFoundError.Wrap(err, "state file does not exist at %s", m.state.StateFile)
 		}
 
-		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.FilePath)
+		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.StateFile)
 	}
 
 	newState := NewState() // create an instance of State to unmarshal into without changing the original
@@ -151,5 +150,5 @@ func (m *stateManager) Refresh() error {
 
 // HasPersistedState checks if the state file exists on disk
 func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
-	return m.fm.PathExists(m.state.FilePath)
+	return m.fm.PathExists(m.state.StateFile)
 }

@@ -31,12 +31,12 @@ func initializeDependencies(ctx context.Context) error {
 	}
 
 	err = sm.Refresh()
-	if err != nil {
+	if err != nil && !errorx.IsOfType(err, core.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")
 	}
 
 	currentState := sm.State()
-	logx.As().Info().Str("state_file", currentState.FilePath).Any("currentState", currentState).Msg("Loaded current state")
+	logx.As().Info().Str("state_file", currentState.StateFile).Any("currentState", currentState).Msg("Current state")
 
 	realityChecker, err := reality.NewChecker(currentState)
 	if err != nil {
@@ -44,13 +44,13 @@ func initializeDependencies(ctx context.Context) error {
 	}
 
 	// initialize cluster runtime
-	err = rsl.InitClusterRuntime(conf, currentState.Cluster, realityChecker, rsl.DefaultRefreshInterval)
+	err = rsl.InitClusterRuntime(conf, currentState.ClusterState, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
 		return err
 	}
 
 	// initialize block node runtime
-	err = rsl.InitBlockNodeRuntime(conf, currentState.BlockNode, realityChecker, rsl.DefaultRefreshInterval)
+	err = rsl.InitBlockNodeRuntime(conf, currentState.BlockNodeState, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
 		return err
 	}
@@ -111,13 +111,15 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*core.UserInputs
 			Chart:        flagChartRepo,
 			ChartVersion: flagChartVersion,
 			Storage: core.BlockNodeStorage{
-				BasePath:    flagBasePath,
-				ArchivePath: flagArchivePath,
-				ArchiveSize: flagArchiveSize,
-				LivePath:    flagLivePath,
-				LiveSize:    flagLogSize,
-				LogPath:     flagLogPath,
-				LogSize:     flagLogSize,
+				BasePath:         flagBasePath,
+				ArchivePath:      flagArchivePath,
+				ArchiveSize:      flagArchiveSize,
+				LivePath:         flagLivePath,
+				LiveSize:         flagLogSize,
+				LogPath:          flagLogPath,
+				LogSize:          flagLogSize,
+				VerificationPath: flagVerificationPath,
+				VerificationSize: flagVerificationSize,
 			},
 			Profile:            parentFlags.Profile,
 			ValuesFile:         validatedValuesFile,

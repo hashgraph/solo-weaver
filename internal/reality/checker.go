@@ -6,7 +6,6 @@ import (
 	"context"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/core"
@@ -25,11 +24,9 @@ import (
 // It is used by the BLL to make decisions based on the actual state of the system.
 // It is separate from the StateManager and BLL which manages the current state and executes intents.
 //
-// This separation allows for clearer distinction between current and actual states as well as intent execution.
-// This is supposed to be resource heavy and may involve network calls, so it should be used judiciously.
+// This separation allows for a clearer distinction between current and actual states as well as intent execution.
+// This is supposed to be resource-heavy and may involve network calls, so it should be used judiciously.
 type Checker interface {
-	RefreshState(ctx context.Context, st core.State) error
-
 	ClusterState(ctx context.Context) (core.ClusterState, error)
 
 	MachineState(ctx context.Context) (core.MachineState, error)
@@ -41,70 +38,66 @@ type realityChecker struct {
 	current core.State
 }
 
-func (r *realityChecker) RefreshState(ctx context.Context, st core.State) error {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (r *realityChecker) ClusterState(ctx context.Context) (core.ClusterState, error) {
-	//TODO implement me
-	panic("implement me")
+	now := htime.Now()
+	cs := core.NewClusterState()
+
+	if exists, err := kube.ClusterExists(); err != nil {
+		cs.Created = exists
+	}
+
+	// TODO try to gather cluster info
+
+	cs.LastSync = now
+	return cs, nil
 }
 
 func (r *realityChecker) MachineState(ctx context.Context) (core.MachineState, error) {
-	//TODO implement me
-	panic("implement me")
+	now := htime.Now()
+	cs := core.NewMachineState()
+
+	// TODO implement me
+
+	cs.LastSync = now
+	return cs, nil
 }
 
 func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeState, error) {
 	now := htime.Now()
-	bn := core.BlockNodeState{} // default state
+	bn := core.NewBlockNodeState()
 
 	if exists, err := kube.ClusterExists(); !exists {
-		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNode state check")
+		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNodeState state check")
 		return bn, nil // the cluster does not exist, so nothing to check
 	}
 
-	logx.As().Info().Msg("Refreshing BlockNode state from Kubernetes cluster")
+	logx.As().Info().Msg("Refreshing BlockNodeState state from Kubernetes cluster")
 	re, err := r.findBlockNodeHelmRelease()
 	if err != nil {
 		return bn, err
 	}
 
 	if re == nil {
-		return bn, nil // no BlockNode release found
+		return bn, nil // no BlockNodeState release found
 	}
 
-	deleted, err := htime.Parse(time.RFC3339, re.Info.Deleted.Format(time.RFC3339))
-	if err != nil {
-		return bn, err
-	}
 	bn = core.BlockNodeState{
 		ReleaseInfo: core.HelmReleaseInfo{
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
-			ChartRef:      r.current.BlockNode.ReleaseInfo.ChartRef, // repo info not available from release, so use current state
 			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
 			LastDeployed:  re.Info.LastDeployed,
-			Deleted:       deleted,
+			Deleted:       re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
-		Storage: core.BlockNodeStorage{
-			BasePath:    "",
-			ArchivePath: "",
-			LivePath:    "",
-			LogPath:     "",
-			LiveSize:    "",
-			ArchiveSize: "",
-			LogSize:     "",
-		},
+		Storage:  core.BlockNodeStorage{},
 		LastSync: now,
 	}
 
-	// get storage info from from PVs and PVCs associated with the BlockNode release
+	// get storage info from from PVs and PVCs associated with the BlockNodeState release
 	k8s, err := kube.NewClient()
 	if err != nil {
 		return bn, err
@@ -116,9 +109,9 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeStat
 		return bn, err
 	}
 
-	// loop through pvs, find those associated with the BlockNode release
+	// loop through pvs, find those associated with the BlockNodeState release
 	for _, pv := range pvs.Items {
-		logx.As().Debug().Any("pv", pv).Msg("Checking PV for BlockNode storage")
+		logx.As().Debug().Any("pv", pv).Msg("Checking PV for BlockNodeState storage")
 		claimRef, found, err := unstructured.NestedMap(pv.Object, "spec", "claimRef")
 		if err != nil || !found {
 			continue
@@ -132,7 +125,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeStat
 			continue
 		}
 
-		// check if this PVC belongs to the BlockNode release
+		// check if this PVC belongs to the BlockNodeState release
 		if claimNamespace == re.Namespace {
 			size, found, err := unstructured.NestedString(pv.Object, "spec", "capacity", "storage")
 			if err != nil || !found {
@@ -150,7 +143,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeStat
 				Str("namespace", claimNamespace).
 				Str("size", size).
 				Str("hostPath", hostpath).
-				Msg("Found BlockNode storage PV/PVC")
+				Msg("Found BlockNodeState storage PV/PVC")
 
 			if strings.Contains(claimName, "live") {
 				bn.Storage.LivePath = hostpath
@@ -161,11 +154,14 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeStat
 			} else if strings.Contains(claimName, "log") {
 				bn.Storage.LogPath = hostpath
 				bn.Storage.LogSize = size
+			} else if strings.Contains(claimName, "verification") {
+				bn.Storage.VerificationPath = hostpath
+				bn.Storage.VerificationSize = size
 			}
 		}
 	}
 
-	r.current.BlockNode = bn
+	r.current.BlockNodeState = bn
 	logx.As().Debug().Any("state", bn).Msg("Refreshed block node state")
 
 	return bn, nil
@@ -197,7 +193,7 @@ func (r *realityChecker) findBlockNodeHelmRelease() (*release.Release, error) {
 							Str("namespace", manifest.GetNamespace()).
 							Str("name", manifest.GetName()).
 							Any("labels", manifest.GetLabels()).
-							Msg("Found BlockNode StatefulSet in Helm release")
+							Msg("Found BlockNodeState StatefulSet in Helm release")
 						return re, nil
 					}
 				}
@@ -205,7 +201,7 @@ func (r *realityChecker) findBlockNodeHelmRelease() (*release.Release, error) {
 		}
 	}
 
-	return nil, nil // no BlockNode release found
+	return nil, nil // no BlockNodeState release found
 }
 
 // UnmarshalManifest parses a Helm release manifest (possibly multi-doc YAML)

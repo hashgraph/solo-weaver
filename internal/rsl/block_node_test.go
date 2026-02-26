@@ -112,7 +112,7 @@ func TestBlockNodeRuntime_SetBlockNodeConfig(t *testing.T) {
 			},
 		}
 
-		err := br.SetBlockNodeConfig(newCfg)
+		err := br.SetUserInputs(newCfg)
 		require.NoError(t, err)
 	})
 }

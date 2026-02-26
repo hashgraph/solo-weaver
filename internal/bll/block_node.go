@@ -39,43 +39,33 @@ func (b BlockNodeIntentHandler) prepareRuntimeState(
 	}
 
 	// Validate user inputs
-	// This is redundant if already validated at CLI parsing time, but double check here for safety
 	if err := inputs.Validate(); err != nil {
 		return nil, nil, errorx.IllegalArgument.New("invalid user inputs: %v", err)
 	}
 
-	// Refresh Blocknode state before proceeding
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	err := rsl.BlockNode().RefreshState(ctx, false) // no need to force refresh here
-	if err != nil {
-		return nil, nil, errorx.IllegalState.New("failed to refresh block node state: %v", err)
-	}
-
 	// Set user inputs into the Blocknode runtime state so that we can determine effective values
-	err = rsl.BlockNode().SetVersion(inputs.Custom.Version)
+	err := rsl.BlockNode().SetUserInputs(inputs.Custom)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node version as user input: %v", err)
 	}
-	err = rsl.BlockNode().SetNamespace(inputs.Custom.Namespace)
+
+	// Refresh cluster state before proceeding
+	// rsl will refresh if necessary, but we need to do it explicitly here to ensure we have the latest state
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	err = rsl.Cluster().RefreshState(ctx, false) // no need to force refresh here
 	if err != nil {
-		return nil, nil, errorx.IllegalState.New("failed to use block node namespace as user input: %v", err)
+		return nil, nil, errorx.IllegalState.New("failed to refresh cluster state: %v", err)
 	}
-	err = rsl.BlockNode().SetReleaseName(inputs.Custom.Release)
+
+	// Refresh Blocknode state before proceeding
+	// rsl will refresh if necessary, but we need to do it explicitly here to ensure we have the latest state
+	cancel() // cancel the previous context to reset the timer
+	ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	err = rsl.BlockNode().RefreshState(ctx, false) // no need to force refresh here
 	if err != nil {
-		return nil, nil, errorx.IllegalState.New("failed to use block node release name as user input: %v", err)
-	}
-	err = rsl.BlockNode().SetChartRef(inputs.Custom.Chart)
-	if err != nil {
-		return nil, nil, errorx.IllegalState.New("failed to use block node chart as user input: %v", err)
-	}
-	err = rsl.BlockNode().SetChartVersion(inputs.Custom.ChartVersion)
-	if err != nil {
-		return nil, nil, errorx.IllegalState.New("failed to use block node chart version as user input: %v", err)
-	}
-	err = rsl.BlockNode().SetStorage(inputs.Custom.Storage)
-	if err != nil {
-		return nil, nil, errorx.IllegalState.New("failed to use block node storage as user input: %v", err)
+		return nil, nil, errorx.IllegalState.New("failed to refresh block node state: %v", err)
 	}
 
 	return &intent, &inputs, nil
@@ -341,34 +331,53 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 
 	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
-	err := rsl.BlockNode().RefreshState(ctx, true)
+
+	// refresh cluster state
+	err := rsl.Cluster().RefreshState(ctx, true)
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to refresh cluster state after workflow execution: %v", err)
+	}
+
+	// refresh block node state
+	cancel()
+	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
+	defer cancel()
+	err = rsl.BlockNode().RefreshState(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh block node state after workflow execution: %v", err)
 	}
 
-	// get current blocknode state
-	current, err := rsl.BlockNode().CurrentState()
+	clusterState, err := rsl.Cluster().CurrentState()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node state after workflow execution: %v", err)
 	}
 
-	// chartRepo from user inputs since it is not available in the helm release info in the cluster
-	if effectiveInputs.Custom.Chart != "" {
-		current.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
+	blocknodeState, err := rsl.BlockNode().CurrentState()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to get blocknodeState block node state after workflow execution: %v", err)
 	}
 
-	// load full state from disk and persist update block node state
+	// chartRef is not available in the helm release info.
+	// so we need to set it here
+	if blocknodeState.ReleaseInfo.Status == release.StatusDeployed {
+		blocknodeState.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
+	}
+
+	// persist the full state to disk
 	fullState := b.sm.State()
-	fullState.BlockNode = current
+	fullState.ClusterState = clusterState
+	fullState.BlockNodeState = blocknodeState
+
 	err = b.sm.Set(fullState).Flush()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to persist block node state after workflow execution: %v", err)
 	}
 
 	logx.As().Info().
-		Str("state_file", fullState.FilePath).
+		Str("state_file", fullState.StateFile).
 		Any("full-state", fullState).
 		Msg("Persisted state after workflow execution")
+
 	return report, nil
 }
 
