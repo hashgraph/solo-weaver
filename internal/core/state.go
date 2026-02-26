@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"path"
 
 	"github.com/hashgraph/solo-weaver/internal/version"
@@ -8,48 +9,42 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
+const DataModelVersion = "v1" // State file version
+
 type State struct {
-	Version   string         `yaml:"version" json:"version"`
-	Commit    string         `yaml:"commit" json:"commit"`
-	FilePath  string         `yaml:"filepath" json:"filepath"` // path to state file
-	NodeType  string         `yaml:"nodeType" json:"nodeType"`
-	Paths     WeaverPaths    `yaml:"paths" json:"paths"`
-	Machine   MachineState   `yaml:"machine" json:"machine"`
-	Cluster   ClusterState   `yaml:"cluster" json:"cluster"`
-	BlockNode BlockNodeState `yaml:"blockNode" json:"blockNode"`
-	LastSync  htime.Time     `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	DataModelVersion   string         `yaml:"dataModelVersion" json:"dataModelVersion"`
+	ProvisionerVersion string         `yaml:"provisionerVersion" json:"provisionerVersion"`
+	StateFile          string         `yaml:"stateFile" json:"stateFile"` // path to the state file
+	MachineState       MachineState   `yaml:"machineState" json:"machineState"`
+	ClusterState       ClusterState   `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState     BlockNodeState `yaml:"blockNodeState" json:"blockNodeState"`
+	LastSync           htime.Time     `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was sy
 }
 
 type MachineState struct {
-	Software      map[string]SoftwareState `yaml:"software" json:"software"`
-	Hardware      map[string]HardwareState `yaml:"hardware" json:"hardware"` // e.g. CPU, RAM, Disk info
-	Storage       map[string]StorageState  `yaml:"storage" json:"storage"`
-	Initialized   bool                     `yaml:"initialized" json:"initialized"`
-	InitializedAt htime.Time               `yaml:"initializedAt,omitempty" json:"initializedAt,omitempty"`
-	LastSync      htime.Time               `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Software map[string]SoftwareState `yaml:"software" json:"software"`
+	Hardware map[string]HardwareState `yaml:"hardware" json:"hardware"`                     // e.g. CPU, RAM, Disk info
+	LastSync htime.Time               `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type SoftwareState struct {
-	Name        string     `yaml:"name" json:"name"`
-	Type        string     `yaml:"type" json:"type"` // e.g. "binary", "container", "script"
-	Version     string     `yaml:"version" json:"version"`
-	Source      string     `yaml:"source" json:"source"`
-	Installed   bool       `yaml:"installed" json:"installed"`
-	InstalledAt htime.Time `yaml:"installedAt,omitempty" json:"installedAt,omitempty"`
-	LastSync    htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Name        string            `yaml:"name" json:"name"`
+	Type        string            `yaml:"type" json:"type"` // e.g. "binary", "container", "script"
+	Version     string            `yaml:"version" json:"version"`
+	Source      string            `yaml:"source" json:"source"`
+	Installed   bool              `yaml:"installed" json:"installed"`
+	InstalledAt htime.Time        `yaml:"installedAt,omitempty" json:"installedAt,omitempty"`
+	Metadata    map[string]string `yaml:"meta,omitempty" json:"meta,omitempty"`
+	LastSync    htime.Time        `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type HardwareState struct {
-	Type  string `yaml:"type" json:"type"`                       // e.g. "CPU", "RAM", "Disk"
-	Info  string `yaml:"info" json:"info"`                       // e.g. "Intel i7", "16GB", "1TB SSD"
-	Count int    `yaml:"count,omitempty" json:"count,omitempty"` // e.g. number of CPUs
-	Size  string `yaml:"size,omitempty" json:"size,omitempty"`   // e.g. size for RAM or Disk
-}
-
-type StorageState struct {
-	Name      string     `yaml:"name" json:"name"`
-	Mounted   bool       `yaml:"mounted" json:"mounted"`
-	MountedAt htime.Time `yaml:"mountedAt,omitempty" json:"mountedAt,omitempty"`
+	Type     string            `yaml:"type" json:"type"`                       // e.g. "CPU", "RAM", "Disk"
+	Info     string            `yaml:"info" json:"info"`                       // e.g. "Intel i7", "16GB", "1TB SSD"
+	Count    int               `yaml:"count,omitempty" json:"count,omitempty"` // e.g. number of CPUs
+	Size     string            `yaml:"size,omitempty" json:"size,omitempty"`   // e.g. size for RAM or Disk
+	Metadata map[string]string `yaml:"meta,omitempty" json:"meta,omitempty"`
+	LastSync htime.Time        `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type BlockNodeState struct {
@@ -118,31 +113,34 @@ type ClusterState struct {
 func NewState() State {
 	p := Paths().Clone()
 	return State{
-		Version: version.Number(),
-		Commit:  version.Commit(),
+		DataModelVersion:   DataModelVersion,
+		ProvisionerVersion: fmt.Sprintf("%s-%s", version.Number(), version.Commit()),
+		StateFile:          path.Join(p.StateDir, "state.yaml"),
+		MachineState:       NewMachineState(),
+		ClusterState:       NewClusterState(),
+		BlockNodeState:     NewBlockNodeState(),
+		LastSync:           htime.Time{},
+	}
+}
 
-		FilePath: path.Join(p.StateDir, "state.yaml"),
+func NewMachineState() MachineState {
+	return MachineState{
+		Software: make(map[string]SoftwareState),
+		Hardware: make(map[string]HardwareState),
+	}
+}
 
-		// Version and Commit remain zero-values and can be set elsewhere (build flags).
-		Paths: *p,
+func NewClusterState() ClusterState {
+	return ClusterState{
+		Nodes:        make(map[string]ClusterNodeState),
+		HelmReleases: make(map[string]HelmReleaseInfo),
+	}
+}
 
-		Machine: MachineState{
-			Software:    make(map[string]SoftwareState),
-			Storage:     make(map[string]StorageState),
-			Initialized: false,
+func NewBlockNodeState() BlockNodeState {
+	return BlockNodeState{
+		ReleaseInfo: HelmReleaseInfo{
+			Status: release.StatusUnknown,
 		},
-
-		Cluster: ClusterState{
-			Nodes:        make(map[string]ClusterNodeState),
-			HelmReleases: make(map[string]HelmReleaseInfo),
-			Created:      false,
-		},
-
-		BlockNode: BlockNodeState{
-			ReleaseInfo: HelmReleaseInfo{
-				Status: release.StatusUnknown,
-			},
-		},
-		LastSync: htime.Time{},
 	}
 }

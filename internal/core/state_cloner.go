@@ -1,14 +1,5 @@
 package core
 
-import (
-	"time"
-)
-
-// helper to create *time.Time
-func timePtr(t time.Time) *time.Time {
-	return &t
-}
-
 // Clone creates a deep copy of SoftwareState
 func (s *SoftwareState) Clone() SoftwareState {
 	return SoftwareState{
@@ -18,15 +9,6 @@ func (s *SoftwareState) Clone() SoftwareState {
 		Installed:   s.Installed,
 		InstalledAt: s.InstalledAt,
 		LastSync:    s.LastSync,
-	}
-}
-
-// Clone creates a deep copy of StorageState
-func (s *StorageState) Clone() StorageState {
-	return StorageState{
-		Name:      s.Name,
-		Mounted:   s.Mounted,
-		MountedAt: s.MountedAt,
 	}
 }
 
@@ -72,9 +54,7 @@ func (h *HelmReleaseInfo) Clone() HelmReleaseInfo {
 // Clone creates a deep copy of MachineState
 func (m *MachineState) Clone() MachineState {
 	clone := MachineState{
-		Initialized:   m.Initialized,
-		InitializedAt: m.InitializedAt,
-		LastSync:      m.LastSync,
+		LastSync: m.LastSync,
 	}
 	if m.Software != nil {
 		clone.Software = make(map[string]SoftwareState, len(m.Software))
@@ -84,14 +64,7 @@ func (m *MachineState) Clone() MachineState {
 	} else {
 		clone.Software = make(map[string]SoftwareState)
 	}
-	if m.Storage != nil {
-		clone.Storage = make(map[string]StorageState, len(m.Storage))
-		for k, v := range m.Storage {
-			clone.Storage[k] = v.Clone()
-		}
-	} else {
-		clone.Storage = make(map[string]StorageState)
-	}
+
 	return clone
 }
 
@@ -162,23 +135,19 @@ func (c *ClusterState) Clone() ClusterState {
 // Clone creates a deep copy of State
 func (s *State) Clone() State {
 	c := State{
-		Version:  s.Version,
-		Commit:   s.Commit,
-		FilePath: s.FilePath,
-		LastSync: s.LastSync,
+		ProvisionerVersion: s.ProvisionerVersion,
+		StateFile:          s.StateFile,
+		LastSync:           s.LastSync,
 	}
 
-	// Paths
-	c.Paths = s.Paths
+	// MachineState
+	c.MachineState = s.MachineState.Clone()
 
-	// Machine
-	c.Machine = s.Machine.Clone()
+	// ClusterState
+	c.ClusterState = s.ClusterState.Clone()
 
-	// Cluster
-	c.Cluster = s.Cluster.Clone()
-
-	// BlockNode
-	c.BlockNode = s.BlockNode.Clone()
+	// BlockNodeState
+	c.BlockNodeState = s.BlockNodeState.Clone()
 
 	return c
 }

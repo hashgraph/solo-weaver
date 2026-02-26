@@ -30,8 +30,8 @@ func TestFlushWritesFile(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(tmp) })
 
 	s := NewState()
-	s.FilePath = tmp
-	s.Version = "v1-test-flush"
+	s.StateFile = tmp
+	s.DataModelVersion = "v1-test-flush"
 
 	m, err := NewStateManager(WithState(s))
 	if err != nil {
@@ -42,7 +42,7 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("Flush returned error: %v", err)
 	}
 
-	// Verify file exists and contains YAML with expected Version
+	// Verify file exists and contains YAML with expected DataModelVersion
 	data, err := os.ReadFile(tmp)
 	if err != nil {
 		t.Fatalf("failed to read persisted file: %v", err)
@@ -53,8 +53,8 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("failed to unmarshal persisted YAML: %v", err)
 	}
 
-	if loaded.Version != "v1-test-flush" {
-		t.Fatalf("unexpected Version in persisted state: got %q want %q", loaded.Version, "v1-test-flush")
+	if loaded.DataModelVersion != "v1-test-flush" {
+		t.Fatalf("unexpected DataModelVersion in persisted state: got %q want %q", loaded.DataModelVersion, "v1-test-flush")
 	}
 }
 
@@ -65,8 +65,8 @@ func TestRefreshLoadsFile(t *testing.T) {
 
 	// create a state on disk
 	onDisk := NewState()
-	onDisk.FilePath = tmp
-	onDisk.Version = "v2-test-refresh"
+	onDisk.StateFile = tmp
+	onDisk.DataModelVersion = "v2-test-refresh"
 
 	b, err := yaml.Marshal(onDisk)
 	if err != nil {
@@ -78,8 +78,8 @@ func TestRefreshLoadsFile(t *testing.T) {
 
 	// Create a manager with a different in-memory state, pointing to same file
 	mem := NewState()
-	mem.FilePath = tmp
-	mem.Version = "before-refresh"
+	mem.StateFile = tmp
+	mem.DataModelVersion = "before-refresh"
 
 	m, err := NewStateManager(WithState(mem))
 	if err != nil {
@@ -90,8 +90,8 @@ func TestRefreshLoadsFile(t *testing.T) {
 		t.Fatalf("Refresh returned error: %v", err)
 	}
 
-	if got := m.State().Version; got != "v2-test-refresh" {
-		t.Fatalf("Refresh did not update state Version: got %q want %q", got, "v2-test-refresh")
+	if got := m.State().DataModelVersion; got != "v2-test-refresh" {
+		t.Fatalf("Refresh did not update state DataModelVersion: got %q want %q", got, "v2-test-refresh")
 	}
 }
 
@@ -106,7 +106,7 @@ func TestHasPersistedState(t *testing.T) {
 	}
 
 	s := NewState()
-	s.FilePath = tmp
+	s.StateFile = tmp
 
 	m, err := NewStateManager(WithState(s))
 	if err != nil {

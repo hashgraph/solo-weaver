@@ -14,6 +14,8 @@ import (
 
 var blockNodeRuntimeSingleton *BlockNodeRuntimeState
 
+// BlockNodeRuntimeState is the runtime state of the block-node.
+// It is used to determine the effective values of the block-node based on the default (config), current runtime state and provided inputs.
 type BlockNodeRuntimeState struct {
 	*Base[core.BlockNodeState]
 	releaseName  *automa.RuntimeValue[string]
@@ -54,42 +56,38 @@ func (br *BlockNodeRuntimeState) ChartVersion() (*automa.EffectiveValue[string],
 	return br.chartVersion.Effective()
 }
 
-// SetBlockNodeConfig sets the user input for the block-node runtime values.
-func (br *BlockNodeRuntimeState) SetBlockNodeConfig(cfg core.Config) error {
+// SetUserInputs sets the user input for the block-node runtime values.
+func (br *BlockNodeRuntimeState) SetUserInputs(inputs core.BlocknodeInputs) error {
 	if br.namespace == nil {
 		return errorx.IllegalArgument.New("namespace runtime is not initialized") // should not happen
 	}
 
-	br.mu.Lock()
-	br.cfg = cfg
-	br.mu.Unlock()
-
-	if err := br.SetReleaseName(cfg.BlockNode.Release); err != nil {
+	if err := br.setReleaseNameInput(inputs.Release); err != nil {
 		return err
 	}
-	if err := br.SetVersion(cfg.BlockNode.Version); err != nil {
+	if err := br.setVersionInput(inputs.Version); err != nil {
 		return err
 	}
-	if err := br.SetNamespace(cfg.BlockNode.Namespace); err != nil {
+	if err := br.setNamespaceInput(inputs.Namespace); err != nil {
 		return err
 	}
-	if err := br.SetStorage(cfg.BlockNode.Storage); err != nil {
+	if err := br.setStorageInput(inputs.Storage); err != nil {
 		return err
 	}
-	if err := br.SetChartName(cfg.BlockNode.ChartName); err != nil {
+	if err := br.setChartNameInput(inputs.ChartName); err != nil {
 		return err
 	}
-	if err := br.SetChartRef(cfg.BlockNode.Chart); err != nil {
+	if err := br.setChartRefInput(inputs.Chart); err != nil {
 		return err
 	}
-	if err := br.SetChartVersion(cfg.BlockNode.ChartVersion); err != nil {
+	if err := br.setChartVersionInput(inputs.ChartVersion); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetReleaseName(r string) error {
+func (br *BlockNodeRuntimeState) setReleaseNameInput(r string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -106,7 +104,7 @@ func (br *BlockNodeRuntimeState) SetReleaseName(r string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetNamespace(ns string) error {
+func (br *BlockNodeRuntimeState) setNamespaceInput(ns string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -123,7 +121,7 @@ func (br *BlockNodeRuntimeState) SetNamespace(ns string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetVersion(v string) error {
+func (br *BlockNodeRuntimeState) setVersionInput(v string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -140,7 +138,7 @@ func (br *BlockNodeRuntimeState) SetVersion(v string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetChartName(c string) error {
+func (br *BlockNodeRuntimeState) setChartNameInput(c string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -157,7 +155,7 @@ func (br *BlockNodeRuntimeState) SetChartName(c string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetChartRef(c string) error {
+func (br *BlockNodeRuntimeState) setChartRefInput(c string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -174,7 +172,7 @@ func (br *BlockNodeRuntimeState) SetChartRef(c string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetChartVersion(cv string) error {
+func (br *BlockNodeRuntimeState) setChartVersionInput(cv string) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -191,7 +189,7 @@ func (br *BlockNodeRuntimeState) SetChartVersion(cv string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) SetStorage(s core.BlockNodeStorage) error {
+func (br *BlockNodeRuntimeState) setStorageInput(s core.BlockNodeStorage) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -408,14 +406,10 @@ func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) RefreshInterval() time.Duration {
-	return br.refreshInterval
-}
-
-func (br *BlockNodeRuntimeState) SetRefreshInterval(d time.Duration) {
-	br.refreshInterval = d
-}
-
+// InitBlockNodeRuntime initializes the block-node runtime.
+// Caller needs to pass the current state, default config and reality checker.
+// Caller also needs to set user inputs.
+// The effective values of the block-node are determined based on the current state, default config and user inputs.
 func InitBlockNodeRuntime(cfg core.Config, state core.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) error {
 	if realityChecker == nil {
 		return errorx.IllegalArgument.New("reality checker cannot be nil")
