@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,14 +14,14 @@ import (
 func TestRenderModularConfigs(t *testing.T) {
 	tests := []struct {
 		name                string
-		cfg                 core.AlloyConfig
+		cfg                 models.AlloyConfig
 		expectedModules     []string
 		unexpectedModules   []string
 		expectedModuleCount int
 	}{
 		{
 			name: "no remotes, no block node",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName: "test-cluster",
 			},
 			expectedModules:     []string{"core"},
@@ -30,7 +30,7 @@ func TestRenderModularConfigs(t *testing.T) {
 		},
 		{
 			name: "block node monitoring without remotes - still skipped",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName:      "test-cluster",
 				MonitorBlockNode: true,
 			},
@@ -40,9 +40,9 @@ func TestRenderModularConfigs(t *testing.T) {
 		},
 		{
 			name: "with prometheus remote only",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName: "test-cluster",
-				PrometheusRemotes: []core.AlloyRemoteConfig{
+				PrometheusRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
 				},
 			},
@@ -52,10 +52,10 @@ func TestRenderModularConfigs(t *testing.T) {
 		},
 		{
 			name: "with prometheus remote only and block node monitoring - block-node skipped without loki",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName:      "test-cluster",
 				MonitorBlockNode: true,
-				PrometheusRemotes: []core.AlloyRemoteConfig{
+				PrometheusRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
 				},
 			},
@@ -65,9 +65,9 @@ func TestRenderModularConfigs(t *testing.T) {
 		},
 		{
 			name: "with loki remote only",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName: "test-cluster",
-				LokiRemotes: []core.AlloyRemoteConfig{
+				LokiRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
 				},
 			},
@@ -77,10 +77,10 @@ func TestRenderModularConfigs(t *testing.T) {
 		},
 		{
 			name: "with loki remote only and block node monitoring - block-node skipped without prometheus",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName:      "test-cluster",
 				MonitorBlockNode: true,
-				LokiRemotes: []core.AlloyRemoteConfig{
+				LokiRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
 				},
 			},
@@ -90,13 +90,13 @@ func TestRenderModularConfigs(t *testing.T) {
 		},
 		{
 			name: "full config - all modules",
-			cfg: core.AlloyConfig{
+			cfg: models.AlloyConfig{
 				ClusterName:      "test-cluster",
 				MonitorBlockNode: true,
-				PrometheusRemotes: []core.AlloyRemoteConfig{
+				PrometheusRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
 				},
-				LokiRemotes: []core.AlloyRemoteConfig{
+				LokiRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
 				},
 			},
@@ -139,7 +139,7 @@ func TestRenderModularConfigs(t *testing.T) {
 
 func TestConfigMapManifest(t *testing.T) {
 	modules := []ModuleConfig{
-		{Name: "core", Filename: "core.alloy", Content: "// core config"},
+		{Name: "core", Filename: "models.alloy", Content: "// core config"},
 		{Name: "remotes", Filename: "remotes.alloy", Content: "// remotes config"},
 		{Name: "block-node", Filename: "block-node.alloy", Content: "// block node config"},
 	}
@@ -192,7 +192,7 @@ func TestConfigMapManifest_Sorted(t *testing.T) {
 
 func TestGetModuleNames(t *testing.T) {
 	modules := []ModuleConfig{
-		{Name: "core", Filename: "core.alloy", Content: "content"},
+		{Name: "core", Filename: "models.alloy", Content: "content"},
 		{Name: "remotes", Filename: "remotes.alloy", Content: "content"},
 	}
 
@@ -218,11 +218,11 @@ func TestNamespaceManifest(t *testing.T) {
 }
 
 func TestBuildHelmEnvVars_DefaultSecret(t *testing.T) {
-	cfg := core.AlloyConfig{
-		PrometheusRemotes: []core.AlloyRemoteConfig{
+	cfg := models.AlloyConfig{
+		PrometheusRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1"},
 		},
-		LokiRemotes: []core.AlloyRemoteConfig{
+		LokiRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1"},
 		},
 	}
@@ -239,8 +239,8 @@ func TestBuildHelmEnvVars_DefaultSecret(t *testing.T) {
 }
 
 func TestBuildHelmEnvVars_MultipleRemotes(t *testing.T) {
-	cfg := core.AlloyConfig{
-		PrometheusRemotes: []core.AlloyRemoteConfig{
+	cfg := models.AlloyConfig{
+		PrometheusRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
 			{Name: "backup", URL: "http://prom2:9090/api/v1/write", Username: "user2"},
 		},
@@ -258,12 +258,12 @@ func TestBuildHelmEnvVars_MultipleRemotes(t *testing.T) {
 }
 
 func TestRequiredSecrets(t *testing.T) {
-	cfg := core.AlloyConfig{
+	cfg := models.AlloyConfig{
 		ClusterName: "test-cluster",
-		PrometheusRemotes: []core.AlloyRemoteConfig{
+		PrometheusRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1"},
 		},
-		LokiRemotes: []core.AlloyRemoteConfig{
+		LokiRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1"},
 		},
 	}
@@ -281,7 +281,7 @@ func TestRequiredSecrets(t *testing.T) {
 }
 
 func TestRequiredSecrets_NoRemotes(t *testing.T) {
-	cfg := core.AlloyConfig{
+	cfg := models.AlloyConfig{
 		ClusterName: "test-cluster",
 	}
 
@@ -293,13 +293,13 @@ func TestRequiredSecrets_NoRemotes(t *testing.T) {
 }
 
 func TestRequiredSecrets_MultipleRemotes(t *testing.T) {
-	cfg := core.AlloyConfig{
+	cfg := models.AlloyConfig{
 		ClusterName: "test-cluster",
-		PrometheusRemotes: []core.AlloyRemoteConfig{
+		PrometheusRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://prom1:9090/api/v1/write", Username: "user1"},
 			{Name: "backup", URL: "http://prom2:9090/api/v1/write", Username: "user2"},
 		},
-		LokiRemotes: []core.AlloyRemoteConfig{
+		LokiRemotes: []models.AlloyRemoteConfig{
 			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1"},
 		},
 	}

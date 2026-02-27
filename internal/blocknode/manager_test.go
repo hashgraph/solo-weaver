@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
+
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,12 +20,12 @@ func testLogger() *zerolog.Logger {
 
 // TestGetStoragePaths_AllIndividualPathsProvided tests that individual paths are used when all are provided
 func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "/mnt/custom-archive",
 			LivePath:         "/mnt/custom-live",
@@ -50,12 +50,12 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 
 // TestGetStoragePaths_OldVersionNoVerificationRequired tests that verification storage is not required for versions < 0.26.2
 func TestGetStoragePaths_OldVersionNoVerificationRequired(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.25.0", // Version < 0.26.2 does not require verification storage
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "", // Empty basePath
 			ArchivePath:      "/mnt/custom-archive",
 			LivePath:         "/mnt/custom-live",
@@ -81,12 +81,12 @@ func TestGetStoragePaths_OldVersionNoVerificationRequired(t *testing.T) {
 
 // TestGetStoragePaths_NewVersionRequiresVerification tests that verification storage is required for versions >= 0.26.2
 func TestGetStoragePaths_NewVersionRequiresVerification(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.26.2", // Version >= 0.26.2 requires verification storage
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "", // Empty basePath
 			ArchivePath:      "/mnt/custom-archive",
 			LivePath:         "/mnt/custom-live",
@@ -106,12 +106,12 @@ func TestGetStoragePaths_NewVersionRequiresVerification(t *testing.T) {
 
 // TestGetStoragePaths_OnlyBasePathProvided tests that paths are derived from basePath when individual paths are empty
 func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
-	blockInputs := core.BlocknodeInputs{
+	blockInputs := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.26.2", // Version >= 0.26.2 requires verification storage
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "",
 			LivePath:         "",
@@ -136,12 +136,12 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 
 // TestGetStoragePaths_MixedPaths tests that individual paths override basePath-derived paths
 func TestGetStoragePaths_MixedPaths(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.26.2", // Version >= 0.26.2 requires verification storage
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "/mnt/custom-archive",
 			LivePath:         "", // Should derive from basePath
@@ -167,12 +167,12 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 
 // TestGetStoragePaths_InvalidArchivePath tests that invalid archive path returns an error
 func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "../relative/path", // Invalid: contains ".." segments (potential path traversal)
 			LivePath:         "/mnt/live",
@@ -192,12 +192,12 @@ func TestGetStoragePaths_InvalidArchivePath(t *testing.T) {
 
 // TestGetStoragePaths_InvalidLivePath tests that invalid live path returns an error
 func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "/mnt/archive",
 			LivePath:         "../../../etc/passwd", // Invalid: contains path traversal
@@ -217,12 +217,12 @@ func TestGetStoragePaths_InvalidLivePath(t *testing.T) {
 
 // TestGetStoragePaths_InvalidLogPath tests that invalid log path returns an error
 func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "/mnt/archive",
 			LivePath:         "/mnt/live",
@@ -242,12 +242,12 @@ func TestGetStoragePaths_InvalidLogPath(t *testing.T) {
 
 // TestGetStoragePaths_InvalidVerificationPath tests that invalid verification path returns an error
 func TestGetStoragePaths_InvalidVerificationPath(t *testing.T) {
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.26.2", // Version >= 0.26.2 requires verification storage
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "/mnt/archive",
 			LivePath:         "/mnt/live",
@@ -269,12 +269,12 @@ func TestGetStoragePaths_InvalidVerificationPath(t *testing.T) {
 func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 	// This is more of a documentation test showing the expected behavior
 	// In practice, this would need filesystem mocking to fully test
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "test-ns",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         "/mnt/base",
 			ArchivePath:      "/mnt/custom-archive",
 			LivePath:         "/mnt/custom-live",
@@ -305,20 +305,20 @@ func TestSetupStorage_AllIndividualPaths(t *testing.T) {
 func TestSetupStorage_PathValidation(t *testing.T) {
 	tests := []struct {
 		name        string
-		storage     core.BlockNodeStorage
+		storage     models.BlockNodeStorage
 		expectError bool
 		errorMsg    string
 	}{
 		{
 			name: "valid base path only",
-			storage: core.BlockNodeStorage{
+			storage: models.BlockNodeStorage{
 				BasePath: "/mnt/valid-path",
 			},
 			expectError: false,
 		},
 		{
 			name: "valid individual paths",
-			storage: core.BlockNodeStorage{
+			storage: models.BlockNodeStorage{
 				BasePath:    "/mnt/base",
 				ArchivePath: "/mnt/archive",
 				LivePath:    "/mnt/live",
@@ -328,7 +328,7 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 		},
 		{
 			name: "invalid live path - path traversal",
-			storage: core.BlockNodeStorage{
+			storage: models.BlockNodeStorage{
 				BasePath: "/mnt/base",
 				LivePath: "/mnt/../../../etc/passwd",
 			},
@@ -337,7 +337,7 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 		},
 		{
 			name: "invalid log path - shell metacharacters",
-			storage: core.BlockNodeStorage{
+			storage: models.BlockNodeStorage{
 				BasePath: "/mnt/base",
 				LogPath:  "/mnt/log;echo pwned",
 			},
@@ -348,7 +348,7 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := core.BlocknodeInputs{
+			blockConfig := models.BlocknodeInputs{
 				Namespace: "test-ns",
 				Release:   "test-release",
 				Chart:     "test-chart",
@@ -383,9 +383,9 @@ func TestStoragePathPrecedence(t *testing.T) {
 	// 2. BasePath-derived paths (basePath + "/archive", etc.) - LOWER PRIORITY
 
 	t.Run("individual path takes precedence", func(t *testing.T) {
-		blockConfig := core.BlocknodeInputs{
+		blockConfig := models.BlocknodeInputs{
 			Version: "0.26.2", // Version >= 0.26.2 requires verification storage
-			Storage: core.BlockNodeStorage{
+			Storage: models.BlockNodeStorage{
 				BasePath:    "/mnt/base",
 				ArchivePath: "/mnt/override-archive",
 			},
@@ -408,8 +408,8 @@ func TestStoragePathPrecedence(t *testing.T) {
 	})
 
 	t.Run("all individual paths override base path", func(t *testing.T) {
-		blockConfig := core.BlocknodeInputs{
-			Storage: core.BlockNodeStorage{
+		blockConfig := models.BlocknodeInputs{
+			Storage: models.BlockNodeStorage{
 				BasePath:         "/mnt/base",
 				ArchivePath:      "/var/archive",
 				LivePath:         "/var/live",
@@ -440,25 +440,25 @@ func TestConfigOverridePrecedence(t *testing.T) {
 
 	t.Run("empty override values should not change config", func(t *testing.T) {
 		// Initial config
-		initialConfig := core.BlockNodeConfig{
+		initialConfig := models.BlockNodeConfig{
 			Namespace: "original-ns",
 			Release:   "original-release",
 			Version:   "0.20.0",
-			Storage: core.BlockNodeStorage{
+			Storage: models.BlockNodeStorage{
 				BasePath: "/mnt/original",
 			},
 		}
 
 		// Set global config
-		cfg := core.Config{
+		cfg := models.Config{
 			BlockNode: initialConfig,
 		}
 		err := config.Set(&cfg)
 		require.NoError(t, err)
 
 		// Apply empty overrides (simulating no flags provided)
-		config.OverrideBlockNodeConfig(core.BlockNodeConfig{
-			Storage: core.BlockNodeStorage{},
+		config.OverrideBlockNodeConfig(models.BlockNodeConfig{
+			Storage: models.BlockNodeStorage{},
 		})
 
 		// Config should remain unchanged
@@ -471,26 +471,26 @@ func TestConfigOverridePrecedence(t *testing.T) {
 
 	t.Run("non-empty override values should change config", func(t *testing.T) {
 		// Initial config
-		initialConfig := core.BlockNodeConfig{
+		initialConfig := models.BlockNodeConfig{
 			Namespace: "original-ns",
 			Release:   "original-release",
 			Version:   "0.20.0",
-			Storage: core.BlockNodeStorage{
+			Storage: models.BlockNodeStorage{
 				BasePath: "/mnt/original",
 			},
 		}
 
-		cfg := core.Config{
+		cfg := models.Config{
 			BlockNode: initialConfig,
 		}
 		err := config.Set(&cfg)
 		require.NoError(t, err)
 
 		// Apply overrides with some values
-		config.OverrideBlockNodeConfig(core.BlockNodeConfig{
+		config.OverrideBlockNodeConfig(models.BlockNodeConfig{
 			Namespace: "new-ns",
 			Version:   "0.30.0",
-			Storage: core.BlockNodeStorage{
+			Storage: models.BlockNodeStorage{
 				ArchivePath: "/mnt/new-archive",
 			},
 		})
@@ -567,7 +567,7 @@ func TestRequiresVerificationStorage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := core.BlocknodeInputs{
+			blockConfig := models.BlocknodeInputs{
 				Version: tt.targetVersion,
 			}
 
@@ -625,7 +625,7 @@ func TestComputeValuesFile_VersionAwareSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := core.BlocknodeInputs{
+			blockConfig := models.BlocknodeInputs{
 				Version: tt.targetVersion,
 			}
 
@@ -645,7 +645,7 @@ func TestComputeValuesFile_VersionAwareSelection(t *testing.T) {
 func TestVersionBoundaryScenarios(t *testing.T) {
 	t.Run("upgrade within pre-0.26.2 versions", func(t *testing.T) {
 		// Upgrading from 0.25.0 to 0.26.1 should not require verification storage
-		blockConfig := core.BlocknodeInputs{
+		blockConfig := models.BlocknodeInputs{
 			Version: "0.26.1",
 		}
 		manager := &Manager{
@@ -657,7 +657,7 @@ func TestVersionBoundaryScenarios(t *testing.T) {
 
 	t.Run("upgrade across breaking change boundary", func(t *testing.T) {
 		// Target version 0.26.2 requires verification storage
-		blockConfig := core.BlocknodeInputs{
+		blockConfig := models.BlocknodeInputs{
 			Version: "0.26.2",
 		}
 		manager := &Manager{
@@ -669,7 +669,7 @@ func TestVersionBoundaryScenarios(t *testing.T) {
 
 	t.Run("upgrade within post-0.26.2 versions", func(t *testing.T) {
 		// Upgrading from 0.26.2 to 0.27.0 should still require verification storage
-		blockConfig := core.BlocknodeInputs{
+		blockConfig := models.BlocknodeInputs{
 			Version: "0.27.0",
 		}
 		manager := &Manager{
@@ -681,7 +681,7 @@ func TestVersionBoundaryScenarios(t *testing.T) {
 
 	t.Run("fresh install at 0.26.2", func(t *testing.T) {
 		// Fresh install at 0.26.2 should require verification storage
-		blockConfig := core.BlocknodeInputs{
+		blockConfig := models.BlocknodeInputs{
 			Version: "0.26.2",
 		}
 		manager := &Manager{
@@ -693,7 +693,7 @@ func TestVersionBoundaryScenarios(t *testing.T) {
 
 	t.Run("fresh install at older version", func(t *testing.T) {
 		// Fresh install at 0.26.0 should not require verification storage
-		blockConfig := core.BlocknodeInputs{
+		blockConfig := models.BlocknodeInputs{
 			Version: "0.26.0",
 		}
 		manager := &Manager{
@@ -719,7 +719,7 @@ func TestInvalidVersionHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := core.BlocknodeInputs{
+			blockConfig := models.BlocknodeInputs{
 				Version: tt.version,
 			}
 			manager := &Manager{

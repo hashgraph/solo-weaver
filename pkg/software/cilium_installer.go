@@ -5,10 +5,10 @@ package software
 import (
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -81,7 +81,7 @@ func (ci *ciliumInstaller) getCiliumConfigPath() string {
 
 // getConfigurationDir returns the path to the weaver configuration directory
 func (ci *ciliumInstaller) getConfigurationDir() string {
-	return path.Join(core.Paths().SandboxDir, "etc", "weaver")
+	return path.Join(models.Paths().SandboxDir, "etc", "weaver")
 }
 
 // createCiliumConfigFile creates the cilium configuration file from template
@@ -95,7 +95,7 @@ func (ci *ciliumInstaller) createCiliumConfigFile() error {
 		SandboxDir string
 		MachineIP  string
 	}{
-		SandboxDir: core.Paths().SandboxDir,
+		SandboxDir: models.Paths().SandboxDir,
 		MachineIP:  machineIp,
 	}
 

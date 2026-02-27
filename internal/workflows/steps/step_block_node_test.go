@@ -9,7 +9,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/stretchr/testify/assert"
@@ -30,8 +31,8 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
-	inputs := core.BlocknodeInputs{
-		Profile: core.ProfileMainnet,
+	inputs := models.BlocknodeInputs{
+		Profile: models.ProfileMainnet,
 	}
 
 	wb := SetupBlockNode(inputs)
@@ -106,8 +107,8 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	inputs := core.BlocknodeInputs{
-		Profile: core.ProfileLocal,
+	inputs := models.BlocknodeInputs{
+		Profile: models.ProfileLocal,
 	}
 
 	wb := SetupBlockNode(inputs)
@@ -175,8 +176,8 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	// Given - already installed from fresh install test
 	//
 
-	inputs := core.BlocknodeInputs{
-		Profile: core.ProfileLocal,
+	inputs := models.BlocknodeInputs{
+		Profile: models.ProfileLocal,
 	}
 
 	wb := SetupBlockNode(inputs)
@@ -230,8 +231,8 @@ func TestResetBlockNode_Success(t *testing.T) {
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	// Install block node first
-	inputs := core.BlocknodeInputs{
-		Profile: core.ProfileLocal,
+	inputs := models.BlocknodeInputs{
+		Profile: models.ProfileLocal,
 	}
 
 	installWb := SetupBlockNode(inputs)

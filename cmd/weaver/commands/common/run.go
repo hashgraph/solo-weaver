@@ -10,10 +10,10 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +45,7 @@ func CheckWorkflowReport(ctx context.Context, report *automa.Report) {
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
-	reportPath := path.Join(core.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))
+	reportPath := path.Join(models.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))
 	steps.PrintWorkflowReport(report, reportPath)
 	logx.As().Info().Str("report_path", reportPath).Msg("Workflow report is saved")
 }

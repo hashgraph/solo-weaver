@@ -4,12 +4,12 @@ package node
 
 import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
 var (
-	nodeType = core.NodeTypeBlock
+	nodeType = models.NodeTypeBlock
 
 	flagStopOnError     bool
 	flagRollbackOnError bool

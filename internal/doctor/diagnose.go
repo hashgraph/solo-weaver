@@ -16,8 +16,9 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/internal/version"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 )
 
@@ -82,7 +83,7 @@ func findResolution(err error) []string {
 		return []string{fmt.Sprintf("Ensure all required arguments are provided with valid values.")}
 	case errorx.IsOfType(err, errorx.IllegalFormat):
 		return []string{"Ensure provided data is in correct format."}
-	case errorx.IsOfType(err, core.NotFoundError):
+	case errorx.IsOfType(err, NotFoundError):
 		if arg, ok := errorx.ExtractProperty(err, errorx.PropertyPayload()); ok {
 			return []string{fmt.Sprintf("Ensure configuration file %q exists, is correctly formatted and accessible", arg.(string))}
 		}
@@ -97,8 +98,8 @@ func findResolution(err error) []string {
 func takeProfilingSnapshots(ex error) map[string]string {
 	timestamp := time.Now().Format("20060102-150405")
 
-	snapshotDir := path.Join(core.Paths().DiagnosticsDir, timestamp)
-	if err := os.MkdirAll(snapshotDir, core.DefaultDirOrExecPerm); err != nil {
+	snapshotDir := path.Join(models.Paths().DiagnosticsDir, timestamp)
+	if err := os.MkdirAll(snapshotDir, models.DefaultDirOrExecPerm); err != nil {
 		log.Printf("failed to create logs directory: %v", err)
 		return nil
 	}

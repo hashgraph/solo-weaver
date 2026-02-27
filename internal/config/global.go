@@ -6,25 +6,25 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/viper"
 )
 
-var globalConfig = core.Config{
-	Profile: core.ProfileLocal,
+var globalConfig = models.Config{
+	Profile: models.ProfileLocal,
 	Log: logx.LoggingConfig{
 		Level:          "Debug",
 		ConsoleLogging: true,
 		FileLogging:    false,
 	},
-	BlockNode: core.BlockNodeConfig{
+	BlockNode: models.BlockNodeConfig{
 		Namespace: deps.BLOCK_NODE_NAMESPACE,
 		Release:   deps.BLOCK_NODE_RELEASE,
 		Chart:     deps.BLOCK_NODE_CHART,
 		Version:   deps.BLOCK_NODE_VERSION,
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:    deps.BLOCK_NODE_STORAGE_BASE_PATH,
 			ArchivePath: "",
 			LivePath:    "",
@@ -34,7 +34,7 @@ var globalConfig = core.Config{
 			LogSize:     "",
 		},
 	},
-	Alloy: core.AlloyConfig{
+	Alloy: models.AlloyConfig{
 		MonitorBlockNode:   false,
 		PrometheusURL:      "",
 		PrometheusUsername: "",
@@ -42,7 +42,7 @@ var globalConfig = core.Config{
 		LokiUsername:       "",
 		ClusterName:        "",
 	},
-	Teleport: core.TeleportConfig{
+	Teleport: models.TeleportConfig{
 		Version:    deps.TELEPORT_VERSION,
 		ValuesFile: "",
 	},
@@ -57,7 +57,7 @@ var globalConfig = core.Config{
 //   - An error if the configuration cannot be loaded.
 func Initialize(path string) error {
 	if path != "" {
-		globalConfig = core.Config{}
+		globalConfig = models.Config{}
 		viper.Reset()
 		viper.SetConfigFile(path)
 		viper.SetEnvPrefix("SOLO_PROVISIONER")
@@ -66,7 +66,7 @@ func Initialize(path string) error {
 
 		err := viper.ReadInConfig()
 		if err != nil {
-			return core.NotFoundError.Wrap(err, "failed to read config file: %s", path).
+			return NotFoundError.Wrap(err, "failed to read config file: %s", path).
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 
@@ -83,11 +83,11 @@ func Initialize(path string) error {
 //
 // Returns:
 //   - The global configuration.
-func Get() core.Config {
+func Get() models.Config {
 	return globalConfig
 }
 
-func Set(c *core.Config) error {
+func Set(c *models.Config) error {
 	globalConfig = *c
 	return nil
 }
@@ -99,7 +99,7 @@ func SetProfile(profile string) {
 
 // OverrideBlockNodeConfig updates the block node configuration with provided overrides.
 // Empty string values are ignored (not applied).
-func OverrideBlockNodeConfig(overrides core.BlockNodeConfig) {
+func OverrideBlockNodeConfig(overrides models.BlockNodeConfig) {
 	if overrides.Namespace != "" {
 		globalConfig.BlockNode.Namespace = overrides.Namespace
 	}
@@ -145,7 +145,7 @@ func OverrideBlockNodeConfig(overrides core.BlockNodeConfig) {
 // Empty string values are ignored (not applied).
 // Remote arrays are always replaced (declarative semantics) - pass empty arrays to clear remotes.
 // Note: Passwords are managed via Vault and External Secrets Operator.
-func OverrideAlloyConfig(overrides core.AlloyConfig) {
+func OverrideAlloyConfig(overrides models.AlloyConfig) {
 	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
 	if overrides.ClusterName != "" {
 		globalConfig.Alloy.ClusterName = overrides.ClusterName
@@ -175,7 +175,7 @@ func OverrideAlloyConfig(overrides core.AlloyConfig) {
 
 // OverrideTeleportConfig updates the Teleport configuration with provided overrides.
 // Empty string values are ignored (not applied).
-func OverrideTeleportConfig(overrides core.TeleportConfig) {
+func OverrideTeleportConfig(overrides models.TeleportConfig) {
 	if overrides.Version != "" {
 		globalConfig.Teleport.Version = overrides.Version
 	}

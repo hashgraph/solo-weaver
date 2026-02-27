@@ -9,7 +9,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	osutil "github.com/hashgraph/solo-weaver/pkg/os"
@@ -129,9 +130,9 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 				entryPath := filepath.Join(weaverHome, entry.Name())
 
 				// Skip the downloads, bin, and logs folders
-				if entryPath == core.Paths().DownloadsDir ||
-					entryPath == core.Paths().BinDir ||
-					entryPath == core.Paths().LogsDir {
+				if entryPath == models.Paths().DownloadsDir ||
+					entryPath == models.Paths().BinDir ||
+					entryPath == models.Paths().LogsDir {
 					continue
 				}
 

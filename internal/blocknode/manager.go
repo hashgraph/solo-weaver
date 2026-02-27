@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
@@ -46,11 +47,11 @@ type Manager struct {
 	helmManager helm.Manager
 	kubeClient  *kube.Client
 	logger      *zerolog.Logger
-	blockConfig core.BlocknodeInputs
+	blockConfig models.BlocknodeInputs
 }
 
 // NewManager creates a new block node manager
-func NewManager(blockConfig core.BlocknodeInputs) (*Manager, error) {
+func NewManager(blockConfig models.BlocknodeInputs) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
@@ -115,7 +116,7 @@ func (m *Manager) SetupStorage(ctx context.Context) error {
 			return errorx.IllegalState.Wrap(err, "failed to create directory: %s", dirPath)
 		}
 
-		if err := m.fsManager.WritePermissions(dirPath, core.DefaultDirOrExecPerm, true); err != nil {
+		if err := m.fsManager.WritePermissions(dirPath, models.DefaultDirOrExecPerm, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to set permissions on: %s", dirPath)
 		}
 	}
@@ -140,7 +141,7 @@ func (m *Manager) CreateNamespace(ctx context.Context, tempDir string) error {
 
 	// Write to temp file
 	manifestFilePath := path.Join(tempDir, "block-node-namespace.yaml")
-	if err := os.WriteFile(manifestFilePath, []byte(namespaceContent), core.DefaultFilePerm); err != nil {
+	if err := os.WriteFile(manifestFilePath, []byte(namespaceContent), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write namespace manifest to temp file")
 	}
 
@@ -212,7 +213,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	// Write to temp file
 	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
 	m.logger.Debug().Str("configFile", configFilePath).Msg("Writing storage config to temp file")
-	if err := os.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
+	if err := os.WriteFile(configFilePath, []byte(storageConfig), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write storage config to temp file")
 	}
 
@@ -282,7 +283,7 @@ func (m *Manager) CreateVerificationStorage(ctx context.Context, tempDir string)
 
 	// Write to temp file
 	configFilePath := path.Join(tempDir, "block-node-verification-storage.yaml")
-	if err := os.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
+	if err := os.WriteFile(configFilePath, []byte(storageConfig), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write verification storage config")
 	}
 
@@ -536,7 +537,7 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 
 		// Use embedded template based on profile and version
 		valuesTemplatePath := ValuesPath
-		if profile == core.ProfileLocal {
+		if profile == models.ProfileLocal {
 			if needsVerificationStorage {
 				valuesTemplatePath = NanoValuesPathV0262
 				logx.As().Info().Msg("Using nano values configuration with verification storage for local profile")
@@ -572,8 +573,8 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	}
 
 	// Write temporary copy to weaver's temp directory
-	valuesFilePath := path.Join(core.Paths().TempDir, "block-node-values.yaml")
-	if err = os.WriteFile(valuesFilePath, valuesContent, core.DefaultFilePerm); err != nil {
+	valuesFilePath := path.Join(models.Paths().TempDir, "block-node-values.yaml")
+	if err = os.WriteFile(valuesFilePath, valuesContent, models.DefaultFilePerm); err != nil {
 		return "", errorx.InternalError.Wrap(err, "failed to write block node values file")
 	}
 

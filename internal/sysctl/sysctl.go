@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/lorenzosaino/go-sysctl"
 )
@@ -54,12 +54,12 @@ func BackupSettings(backupFile string) (string, error) {
 		}
 	}
 
-	err = os.MkdirAll(path.Dir(backupFile), core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(path.Dir(backupFile), models.DefaultDirOrExecPerm)
 	if err != nil {
 		return "", err
 	}
 
-	err = os.WriteFile(backupFile, []byte(strings.Join(lines, "\n")), core.DefaultFilePerm)
+	err = os.WriteFile(backupFile, []byte(strings.Join(lines, "\n")), models.DefaultFilePerm)
 	if err != nil {
 		return "", err
 	}
@@ -91,8 +91,8 @@ func LoadAllConfiguration() ([]string, error) {
 // It returns a map of the desired settings and an error if any.
 func DesiredCandidateSettings() (map[string]string, error) {
 	// now load the settings from the template files and only keep a backup of those settings
-	tempDir := path.Join(core.Paths().TempDir, "templates", "sysctl")
-	err := os.MkdirAll(tempDir, core.DefaultDirOrExecPerm)
+	tempDir := path.Join(models.Paths().TempDir, "templates", "sysctl")
+	err := os.MkdirAll(tempDir, models.DefaultDirOrExecPerm)
 	if err != nil {
 		return nil, err
 	}

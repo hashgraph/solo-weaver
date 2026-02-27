@@ -3,8 +3,9 @@ package rsl
 import (
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -12,28 +13,28 @@ import (
 var clusterRuntimeSingleton *ClusterRuntime
 
 type ClusterRuntime struct {
-	*Base[core.ClusterState]
+	*Base[state.ClusterState]
 
 	// keep reality if other cluster-specific methods need it
 	reality reality.Checker
 }
 
-func InitClusterRuntime(cfg core.Config, state core.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) error {
+func InitClusterRuntime(cfg models.Config, clusterState state.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) error {
 	if realityChecker == nil {
 		return errorx.IllegalArgument.New("cluster reality checker is not initialized")
 	}
 
-	rb := NewRuntimeBase[core.ClusterState](
+	rb := NewRuntimeBase[state.ClusterState](
 		cfg,
-		state,
+		clusterState,
 		refreshInterval,
 		// fetch function
 		realityChecker.ClusterState,
 		// lastSync extractor
-		func(s core.ClusterState) htime.Time { return s.LastSync },
+		func(s state.ClusterState) htime.Time { return s.LastSync },
 		// clone helper
-		func(s core.ClusterState) core.ClusterState { return s.Clone() },
-		func() core.ClusterState { return core.ClusterState{} },
+		func(s state.ClusterState) state.ClusterState { return s.Clone() },
+		func() state.ClusterState { return state.ClusterState{} },
 		"cluster reality checker",
 	)
 

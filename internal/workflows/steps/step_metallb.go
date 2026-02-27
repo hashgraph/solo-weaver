@@ -11,7 +11,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -37,7 +38,7 @@ const (
 
 var (
 	// we create a temp file for metallb configuration
-	metalLBConfigFilePath = path.Join(core.Paths().TempDir, "metallb-config.yaml")
+	metalLBConfigFilePath = path.Join(models.Paths().TempDir, "metallb-config.yaml")
 )
 
 func SetupMetalLB() *automa.WorkflowBuilder {

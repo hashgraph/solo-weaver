@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -35,7 +35,7 @@ func NewManager(fileManager fsx.Manager) *Manager {
 
 // getStatePath returns the path to the state file for a given software and state type
 func (m *Manager) getStatePath(softwareName string, stateType Type) string {
-	return path.Join(core.Paths().StateDir, fmt.Sprintf("%s.%s", softwareName, stateType))
+	return path.Join(models.Paths().StateDir, fmt.Sprintf("%s.%s", softwareName, stateType))
 }
 
 // Exists checks if the state file exists for the given software and state type
@@ -51,7 +51,7 @@ func (m *Manager) Exists(softwareName string, stateType Type) (bool, error) {
 // RecordState creates a state file for the given software and state type
 func (m *Manager) RecordState(softwareName string, stateType Type, version string) error {
 	// Ensure state directory exists
-	stateDir := core.Paths().StateDir
+	stateDir := models.Paths().StateDir
 	if err := m.fileManager.CreateDirectory(stateDir, true); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state directory")
 	}

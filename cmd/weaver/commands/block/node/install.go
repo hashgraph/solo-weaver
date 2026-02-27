@@ -7,7 +7,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +27,9 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		intent := core.Intent{
-			Action: core.ActionInstall,
-			Target: core.TargetBlocknode,
+		intent := models.Intent{
+			Action: models.ActionInstall,
+			Target: models.TargetBlocknode,
 		}
 
 		logx.As().Info().
@@ -58,12 +58,12 @@ func init() {
 // applyConfigOverrides applies flag values to override the configuration.
 // This allows flags to take precedence over config file values.
 func applyConfigOverrides() {
-	overrides := core.BlockNodeConfig{
+	overrides := models.BlockNodeConfig{
 		Namespace: flagNamespace,
 		Release:   flagReleaseName,
 		Chart:     flagChartRepo,
 		Version:   flagChartVersion,
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         flagBasePath,
 			ArchivePath:      flagArchivePath,
 			LivePath:         flagLivePath,

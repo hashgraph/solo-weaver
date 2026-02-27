@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -17,7 +18,7 @@ var blockNodeRuntimeSingleton *BlockNodeRuntimeState
 // BlockNodeRuntimeState is the runtime state of the block-node.
 // It is used to determine the effective values of the block-node based on the default (config), current runtime state and provided inputs.
 type BlockNodeRuntimeState struct {
-	*Base[core.BlockNodeState]
+	*Base[state.BlockNodeState]
 	releaseName  *automa.RuntimeValue[string]
 	reality      reality.Checker
 	version      *automa.RuntimeValue[string]
@@ -25,14 +26,14 @@ type BlockNodeRuntimeState struct {
 	chartName    *automa.RuntimeValue[string]
 	chartRepo    *automa.RuntimeValue[string]
 	chartVersion *automa.RuntimeValue[string]
-	storage      *automa.RuntimeValue[core.BlockNodeStorage]
+	storage      *automa.RuntimeValue[models.BlockNodeStorage]
 }
 
 func (br *BlockNodeRuntimeState) Namespace() (*automa.EffectiveValue[string], error) {
 	return br.namespace.Effective()
 }
 
-func (br *BlockNodeRuntimeState) Storage() (*automa.EffectiveValue[core.BlockNodeStorage], error) {
+func (br *BlockNodeRuntimeState) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
 	return br.storage.Effective()
 }
 
@@ -57,7 +58,7 @@ func (br *BlockNodeRuntimeState) ChartVersion() (*automa.EffectiveValue[string],
 }
 
 // SetUserInputs sets the user input for the block-node runtime values.
-func (br *BlockNodeRuntimeState) SetUserInputs(inputs core.BlocknodeInputs) error {
+func (br *BlockNodeRuntimeState) SetUserInputs(inputs models.BlocknodeInputs) error {
 	if br.namespace == nil {
 		return errorx.IllegalArgument.New("namespace runtime is not initialized") // should not happen
 	}
@@ -189,7 +190,7 @@ func (br *BlockNodeRuntimeState) setChartVersionInput(cv string) error {
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) setStorageInput(s core.BlockNodeStorage) error {
+func (br *BlockNodeRuntimeState) setStorageInput(s models.BlockNodeStorage) error {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
@@ -235,20 +236,20 @@ func (br *BlockNodeRuntimeState) initNamespaceRuntime() error {
 func (br *BlockNodeRuntimeState) initStorageRuntime() error {
 	var err error
 
-	br.storage, err = automa.NewRuntime[core.BlockNodeStorage](
+	br.storage, err = automa.NewRuntime[models.BlockNodeStorage](
 		br.cfg.BlockNode.Storage,
 		automa.WithEffectiveFunc(
 			func(
 				ctx context.Context,
-				defaultVal automa.Value[core.BlockNodeStorage],
-				userInput automa.Value[core.BlockNodeStorage],
-			) (*automa.EffectiveValue[core.BlockNodeStorage], bool, error) {
+				defaultVal automa.Value[models.BlockNodeStorage],
+				userInput automa.Value[models.BlockNodeStorage],
+			) (*automa.EffectiveValue[models.BlockNodeStorage], bool, error) {
 				// snapshot current under lock to avoid data races
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
 
-				eff, err2 := resolveEffectiveWithFunc[core.BlockNodeStorage](
+				eff, err2 := resolveEffectiveWithFunc[models.BlockNodeStorage](
 					defaultVal,
 					userInput,
 					current.Storage,
@@ -256,7 +257,7 @@ func (br *BlockNodeRuntimeState) initStorageRuntime() error {
 						return current.ReleaseInfo.Status == release.StatusDeployed
 					},
 					nil,
-					func(v core.BlockNodeStorage) bool {
+					func(v models.BlockNodeStorage) bool {
 						return v.IsEmpty()
 					},
 				)
@@ -410,22 +411,22 @@ func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
 // Caller needs to pass the current state, default config and reality checker.
 // Caller also needs to set user inputs.
 // The effective values of the block-node are determined based on the current state, default config and user inputs.
-func InitBlockNodeRuntime(cfg core.Config, state core.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) error {
+func InitBlockNodeRuntime(cfg models.Config, blockNodeState state.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) error {
 	if realityChecker == nil {
 		return errorx.IllegalArgument.New("reality checker cannot be nil")
 	}
 
-	rb := NewRuntimeBase[core.BlockNodeState](
+	rb := NewRuntimeBase[state.BlockNodeState](
 		cfg,
-		state,
+		blockNodeState,
 		refreshInterval,
 		// fetch function
 		realityChecker.BlockNodeState,
 		// lastSync extractor
-		func(s core.BlockNodeState) htime.Time { return s.LastSync },
+		func(s state.BlockNodeState) htime.Time { return s.LastSync },
 		// clone helper
-		func(s core.BlockNodeState) core.BlockNodeState { return s.Clone() },
-		func() core.BlockNodeState { return core.BlockNodeState{} }, // default state
+		func(s state.BlockNodeState) state.BlockNodeState { return s.Clone() },
+		func() state.BlockNodeState { return state.BlockNodeState{} }, // default state
 		"cluster reality checker",
 	)
 

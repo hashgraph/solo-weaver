@@ -10,7 +10,8 @@ import (
 	"strings"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/sysctl"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
@@ -114,7 +115,7 @@ func reloadSysctlSettings() automa.Builder {
 			// that are not modified by our process.
 			// Therefore, we only backup the settings that are going to be modified by the configuration files. This
 			// will be the way to rollback to previous state in case of failure.
-			backupFile, err := sysctl.BackupSettings(path.Join(core.Paths().BackupDir, SysCtlBackupFilename))
+			backupFile, err := sysctl.BackupSettings(path.Join(models.Paths().BackupDir, SysCtlBackupFilename))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(

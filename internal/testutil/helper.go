@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -52,7 +52,7 @@ func Sudo(cmd *exec.Cmd) *exec.Cmd {
 // This preserves downloaded files with valid checksums to speed up subsequent test runs
 func CleanupWeaverPreservingDownloads() {
 	weaverHome := "/opt/solo/weaver"
-	downloadsFolder := core.Paths().DownloadsDir
+	downloadsFolder := models.Paths().DownloadsDir
 
 	// Read the weaver home directory
 	entries, err := os.ReadDir(weaverHome)
@@ -79,13 +79,13 @@ func CleanupWeaverPreservingDownloads() {
 func CleanUpTempDir(t *testing.T) {
 	t.Helper()
 
-	_ = exec.Command("chattr", "-Ri", core.Paths().HomeDir).Run()
+	_ = exec.Command("chattr", "-Ri", models.Paths().HomeDir).Run()
 
-	_ = os.RemoveAll(core.Paths().TempDir)
+	_ = os.RemoveAll(models.Paths().TempDir)
 
-	_ = os.RemoveAll(core.Paths().StateDir)
+	_ = os.RemoveAll(models.Paths().StateDir)
 
-	_ = os.RemoveAll(core.Paths().SandboxDir)
+	_ = os.RemoveAll(models.Paths().SandboxDir)
 
 	// List files in /usr/local/bin and remove them
 	files, err := os.ReadDir("/usr/local/bin")

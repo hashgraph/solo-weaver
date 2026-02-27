@@ -2,7 +2,7 @@
 
 package hardware
 
-import "github.com/hashgraph/solo-weaver/internal/core"
+import "github.com/hashgraph/solo-weaver/pkg/models"
 
 // Supported OS constants
 const (
@@ -23,33 +23,33 @@ var (
 // The requirements are looked up as: registry[nodeType][profile] -> BaselineRequirements
 var requirementsRegistry = map[string]map[string]BaselineRequirements{
 	// Block Node requirements per environment
-	core.NodeTypeBlock: {
-		core.ProfileLocal: {
+	models.NodeTypeBlock: {
+		models.ProfileLocal: {
 			MinCpuCores:    3,
 			MinMemoryGB:    1,
 			MinStorageGB:   1,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfilePerfnet: {
+		models.ProfilePerfnet: {
 			MinCpuCores:    8,
 			MinMemoryGB:    16,
 			MinStorageGB:   5000,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfileTestnet: {
+		models.ProfileTestnet: {
 			MinCpuCores:    8,
 			MinMemoryGB:    16,
 			MinStorageGB:   5000,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfilePreviewnet: {
+		models.ProfilePreviewnet: {
 			MinCpuCores:     48,
 			MinMemoryGB:     256,
 			MinSSDStorageGB: 8000,  // 8TB NVMe/SSD
 			MinHDDStorageGB: 24000, // 24TB HDD
 			MinSupportedOS:  supportedOS,
 		},
-		core.ProfileMainnet: {
+		models.ProfileMainnet: {
 			MinCpuCores:    8,
 			MinMemoryGB:    16,
 			MinStorageGB:   5000,
@@ -58,32 +58,32 @@ var requirementsRegistry = map[string]map[string]BaselineRequirements{
 	},
 
 	// Consensus Node requirements per environment
-	core.NodeTypeConsensus: {
-		core.ProfileLocal: {
+	models.NodeTypeConsensus: {
+		models.ProfileLocal: {
 			MinCpuCores:    3,
 			MinMemoryGB:    1,
 			MinStorageGB:   1,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfilePerfnet: {
+		models.ProfilePerfnet: {
 			MinCpuCores:    16,
 			MinMemoryGB:    32,
 			MinStorageGB:   1000,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfileTestnet: {
+		models.ProfileTestnet: {
 			MinCpuCores:    16,
 			MinMemoryGB:    32,
 			MinStorageGB:   1000,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfilePreviewnet: {
+		models.ProfilePreviewnet: {
 			MinCpuCores:    48,
 			MinMemoryGB:    256,
 			MinStorageGB:   8000,
 			MinSupportedOS: supportedOS,
 		},
-		core.ProfileMainnet: {
+		models.ProfileMainnet: {
 			MinCpuCores:    48,
 			MinMemoryGB:    256,
 			MinStorageGB:   8000,

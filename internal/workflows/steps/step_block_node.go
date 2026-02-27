@@ -8,7 +8,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
 
@@ -30,7 +31,7 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
+func SetupBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
@@ -96,7 +97,7 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = manager.CreateNamespace(ctx, core.Paths().TempDir)
+			err = manager.CreateNamespace(ctx, models.Paths().TempDir)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -116,7 +117,7 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.DeleteNamespace(ctx, core.Paths().TempDir); err != nil {
+			if err := manager.DeleteNamespace(ctx, models.Paths().TempDir); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -145,7 +146,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.CreatePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
+			if err := manager.CreatePersistentVolumes(ctx, models.Paths().TempDir); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -164,7 +165,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.DeletePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
+			if err := manager.DeletePersistentVolumes(ctx, models.Paths().TempDir); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -182,7 +183,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 		})
 }
 
-func UninstallBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
+func UninstallBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
 		uninstallBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
@@ -340,7 +341,7 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 }
 
 // UpgradeBlockNode upgrades the block node on the cluster
-func UpgradeBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
+func UpgradeBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
@@ -360,7 +361,7 @@ func UpgradeBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
 }
 
 // upgradeBlockNode upgrades the block node helm chart
-func upgradeBlockNode(inputs core.BlocknodeInputs, getManager func() (*blocknode.Manager, error)) automa.Builder {
+func upgradeBlockNode(inputs models.BlocknodeInputs, getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(UpgradeBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
@@ -422,7 +423,7 @@ func upgradeBlockNode(inputs core.BlocknodeInputs, getManager func() (*blocknode
 
 // newBlockNodeManagerProvider creates a lazy-initialized block node manager provider
 // This ensures that the manager is only created once and shared across steps, while also allowing for proper error handling during initialization.
-func newBlockNodeManagerProvider(inputs core.BlocknodeInputs) func() (*blocknode.Manager, error) {
+func newBlockNodeManagerProvider(inputs models.BlocknodeInputs) func() (*blocknode.Manager, error) {
 	var blockNodeManager *blocknode.Manager
 	return func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {
@@ -446,7 +447,7 @@ func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, erro
 }
 
 // ResetBlockNode resets the block node by clearing all storage and restarting the pod
-func ResetBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
+func ResetBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
 	managerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(ResetBlockNodeStepId).Steps(
@@ -469,7 +470,7 @@ func ResetBlockNode(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
 
 // PurgeBlockNodeStorage scales down the block node and clears all storage.
 // This does NOT scale back up - use ResetBlockNode if you need to restart the pod after clearing.
-func PurgeBlockNodeStorage(inputs core.BlocknodeInputs) *automa.WorkflowBuilder {
+func PurgeBlockNodeStorage(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
 	managerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(PurgeBlockNodeStorageStepId).Steps(

@@ -9,10 +9,11 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -25,13 +26,13 @@ func initializeDependencies(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "invalid configuration")
 	}
 
-	sm, err := core.NewStateManager()
+	sm, err := state.NewStateManager()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
 	}
 
 	err = sm.Refresh()
-	if err != nil && !errorx.IsOfType(err, core.NotFoundError) {
+	if err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")
 	}
 
@@ -71,7 +72,7 @@ func initializeExecutionFlags(resetCmd *cobra.Command) {
 }
 
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
-func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*core.UserInputs[core.BlocknodeInputs], error) {
+func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlocknodeInputs], error) {
 	var err error
 
 	// extract shared flags set in the parent commands
@@ -99,18 +100,18 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*core.UserInputs
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
 
-	inputs := &core.UserInputs[core.BlocknodeInputs]{
-		Common: core.CommonInputs{
+	inputs := &models.UserInputs[models.BlocknodeInputs]{
+		Common: models.CommonInputs{
 			Force:            parentFlags.Force,
-			NodeType:         core.NodeTypeBlock,
+			NodeType:         models.NodeTypeBlock,
 			ExecutionOptions: *execOpts,
 		},
-		Custom: core.BlocknodeInputs{
+		Custom: models.BlocknodeInputs{
 			Namespace:    flagNamespace,
 			Release:      flagReleaseName,
 			Chart:        flagChartRepo,
 			ChartVersion: flagChartVersion,
-			Storage: core.BlockNodeStorage{
+			Storage: models.BlockNodeStorage{
 				BasePath:         flagBasePath,
 				ArchivePath:      flagArchivePath,
 				ArchiveSize:      flagArchiveSize,

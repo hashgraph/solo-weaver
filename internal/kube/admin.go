@@ -6,7 +6,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
@@ -75,7 +75,7 @@ func (m *KubeConfigManager) Configure() error {
 // with proper ownership settings.
 func (m *KubeConfigManager) configureWeaverKubeConfig() error {
 	// Get the weaver service account
-	svcAcc := core.ServiceAccount()
+	svcAcc := config.ServiceAccount()
 
 	// Lookup weaver user and group
 	usr, err := m.principalManager.LookupUserByName(svcAcc.UserName)

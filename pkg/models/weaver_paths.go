@@ -1,76 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+package models
 
 import (
 	"path"
-
-	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/pkg/security"
 )
-
-const (
-	// File and directory permissions
-	DefaultDirOrExecPerm = 0755 // for directories and executable files
-	DefaultFilePerm      = 0644 // for regular data/config files
-
-	// Weaver paths
-	DefaultWeaverHome       = "/opt/solo/weaver"
-	DefaultUnpackFolderName = "unpack"
-	SystemBinDir            = "/usr/local/bin"
-	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
-
-	// Node types
-	NodeTypeLocal     = "local"
-	NodeTypeBlock     = "block"
-	NodeTypeConsensus = "consensus"
-	NodeTypeMirror    = "mirror"
-	NodeTypeRelay     = "relay"
-
-	// Deployment profiles
-	ProfileLocal      = "local"
-	ProfilePerfnet    = "perfnet"
-	ProfileTestnet    = "testnet"
-	ProfilePreviewnet = "previewnet"
-	ProfileMainnet    = "mainnet"
-)
-
-func AllProfiles() []string {
-	return []string{
-		ProfileLocal,
-		ProfilePerfnet,
-		ProfileTestnet,
-		ProfileMainnet,
-	}
-}
-
-func AllNodeTypes() []string {
-	return []string{
-		NodeTypeLocal,
-		NodeTypeBlock,
-		NodeTypeConsensus,
-		NodeTypeMirror,
-		NodeTypeRelay,
-	}
-}
-
-func AllExecutionModes() []automa.TypeMode {
-	return []automa.TypeMode{automa.RollbackOnError, automa.StopOnError, automa.ContinueOnError}
-}
-
-var (
-	pp     = NewWeaverPaths(DefaultWeaverHome)
-	svcAcc = security.ServiceAccount{
-		UserName:  "weaver",
-		UserId:    "2500",
-		GroupName: "weaver",
-		GroupId:   "2500",
-	}
-)
-
-func init() {
-	security.SetServiceAccount(svcAcc)
-}
 
 type WeaverPaths struct {
 	HomeDir        string
@@ -179,12 +113,4 @@ func (w WeaverPaths) Clone() *WeaverPaths {
 		copy(cp.SandboxDirectories, w.SandboxDirectories)
 	}
 	return &cp
-}
-
-func Paths() WeaverPaths {
-	return *pp
-}
-
-func ServiceAccount() security.ServiceAccount {
-	return svcAcc
 }

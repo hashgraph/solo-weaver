@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +17,7 @@ func TestRealityChecker_BlockNodeState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	current := core.NewState()
+	current := state.NewState()
 	reality, err := NewChecker(current)
 	require.NoError(t, err)
 	require.NotNil(t, reality)
@@ -47,4 +47,18 @@ func TestRealityChecker_BlockNodeState(t *testing.T) {
 	require.Empty(t, st.Storage.BasePath) // since specific paths will be set
 
 	require.NotEmpty(t, st.LastSync)
+}
+
+func TestRealityChecker_ClusterState(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	current := state.NewState()
+	reality, err := NewChecker(current)
+	require.NoError(t, err)
+	require.NotNil(t, reality)
+
+	st, err := reality.ClusterState(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, st)
 }

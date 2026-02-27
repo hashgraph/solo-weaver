@@ -1,24 +1,35 @@
-package core
+// SPDX-License-Identifier: Apache-2.0
+
+package state
 
 import (
-	"fmt"
+	"os"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/version"
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-const DataModelVersion = "v1" // State file version
+const ModelVersion = "v1" // State model version, increment this if there are breaking changes to the state structure that would require migration
 
 type State struct {
-	DataModelVersion   string         `yaml:"dataModelVersion" json:"dataModelVersion"`
-	ProvisionerVersion string         `yaml:"provisionerVersion" json:"provisionerVersion"`
-	StateFile          string         `yaml:"stateFile" json:"stateFile"` // path to the state file
-	MachineState       MachineState   `yaml:"machineState" json:"machineState"`
-	ClusterState       ClusterState   `yaml:"clusterState" json:"clusterState"`
-	BlockNodeState     BlockNodeState `yaml:"blockNodeState" json:"blockNodeState"`
-	LastSync           htime.Time     `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was sy
+	Version          string          `yaml:"version" json:"version"`
+	StateFile        string          `yaml:"stateFile" json:"stateFile"` // path to the state file
+	ProvisionerState ProvisionerInfo `yaml:"provisioner" json:"provisioner"`
+	MachineState     MachineState    `yaml:"machineState" json:"machineState"`
+	ClusterState     ClusterState    `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState   BlockNodeState  `yaml:"blockNodeState" json:"blockNodeState"`
+	LastSync         htime.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was sy
+}
+
+type ProvisionerInfo struct {
+	Version    string `yaml:"version" json:"version"`
+	Commit     string `yaml:"commit" json:"commit"`
+	GoVersion  string `yaml:"goversion" json:"goversion"`
+	Executable string `yaml:"executable" json:"executable"` // location of the executable
 }
 
 type MachineState struct {
@@ -48,9 +59,9 @@ type HardwareState struct {
 }
 
 type BlockNodeState struct {
-	ReleaseInfo HelmReleaseInfo  `yaml:",inline" json:",inline"`
-	Storage     BlockNodeStorage `yaml:"storage" json:"storage"`
-	LastSync    htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	ReleaseInfo HelmReleaseInfo         `yaml:",inline" json:",inline"`
+	Storage     models.BlockNodeStorage `yaml:"storage" json:"storage"`
+	LastSync    htime.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.
@@ -84,42 +95,45 @@ type HelmReleaseInfo struct {
 
 // ClusterState represents the persisted state of a Kubernetes cluster.
 type ClusterState struct {
-	ID               string                      `yaml:"id,omitempty" json:"id,omitempty"` // unique identifier for the cluster
-	Name             string                      `yaml:"name" json:"name"`
-	Provider         string                      `yaml:"provider,omitempty" json:"provider,omitempty"`   // e.g. kind, minikube, gke, eks, aks
-	APIServer        string                      `yaml:"apiServer,omitempty" json:"apiServer,omitempty"` // API server endpoint
-	KubeVersion      string                      `yaml:"kubeVersion,omitempty" json:"kubeVersion,omitempty"`
-	KubeconfigPath   string                      `yaml:"kubeconfigPath,omitempty" json:"kubeconfigPath,omitempty"`
-	Context          string                      `yaml:"context,omitempty" json:"context,omitempty"`
-	DefaultNamespace string                      `yaml:"defaultNamespace,omitempty" json:"defaultNamespace,omitempty"`
-	NodeCount        int                         `yaml:"nodeCount,omitempty" json:"nodeCount,omitempty"`
-	Nodes            map[string]ClusterNodeState `yaml:"nodes,omitempty" json:"nodes,omitempty"` // keyed by node name
-	NetworkPlugin    string                      `yaml:"networkPlugin,omitempty" json:"networkPlugin,omitempty"`
-	PodCIDR          string                      `yaml:"podCIDR,omitempty" json:"podCIDR,omitempty"`
-	ServiceCIDR      string                      `yaml:"serviceCIDR,omitempty" json:"serviceCIDR,omitempty"`
-	StorageClasses   []string                    `yaml:"storageClasses,omitempty" json:"storageClasses,omitempty"`
-	IngressEnabled   bool                        `yaml:"ingressEnabled,omitempty" json:"ingressEnabled,omitempty"`
-	HelmReleases     map[string]HelmReleaseInfo  `yaml:"helmReleases,omitempty" json:"helmReleases,omitempty"` // keyed by release name (namespace/name)
-	Labels           map[string]string           `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Annotations      map[string]string           `yaml:"annotations,omitempty" json:"annotations,omitempty"`
-	Health           string                      `yaml:"health,omitempty" json:"health,omitempty"` // e.g. "Healthy", "Degraded", "Unknown"
-	Created          bool                        `yaml:"created" json:"created"`
-	CreatedAt        htime.Time                  `yaml:"createdAt,omitempty" json:"createdAt,omitempty"`
-	LastSync         htime.Time                  `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	models.ClusterInfo
+	Created  bool       `yaml:"created" json:"created"`                       // whether the cluster was created by the provisioner
+	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+}
+
+func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {
+	if clusterInfo == nil {
+		return
+	}
+	cs.ClusterInfo = *clusterInfo
+	cs.Created = true
+	cs.LastSync = htime.Now()
 }
 
 // NewState creates a new State instance with default values
 // It does not load any persisted state from disk.
 func NewState() State {
-	p := Paths().Clone()
+	p := models.Paths().Clone()
+
+	// set provisioner state based on current version and executable path, this is informational only and does not impact any functionality
+	exePath, err := os.Executable()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to get executable path for provisioner state, using empty string")
+	}
+
+	versionInfo := version.Get()
 	return State{
-		DataModelVersion:   DataModelVersion,
-		ProvisionerVersion: fmt.Sprintf("%s-%s", version.Number(), version.Commit()),
-		StateFile:          path.Join(p.StateDir, "state.yaml"),
-		MachineState:       NewMachineState(),
-		ClusterState:       NewClusterState(),
-		BlockNodeState:     NewBlockNodeState(),
-		LastSync:           htime.Time{},
+		Version: ModelVersion,
+		ProvisionerState: ProvisionerInfo{
+			Version:    versionInfo.Number,
+			Commit:     versionInfo.Commit,
+			GoVersion:  versionInfo.GoVersion,
+			Executable: exePath,
+		},
+		StateFile:      path.Join(p.StateDir, "state.yaml"),
+		MachineState:   NewMachineState(),
+		ClusterState:   NewClusterState(),
+		BlockNodeState: NewBlockNodeState(),
+		LastSync:       htime.Time{},
 	}
 }
 
@@ -132,8 +146,8 @@ func NewMachineState() MachineState {
 
 func NewClusterState() ClusterState {
 	return ClusterState{
-		Nodes:        make(map[string]ClusterNodeState),
-		HelmReleases: make(map[string]HelmReleaseInfo),
+		Created:  false,
+		LastSync: htime.Time{},
 	}
 }
 

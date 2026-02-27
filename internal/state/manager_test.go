@@ -7,8 +7,8 @@ import (
 	"path"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +22,7 @@ func TestManager_RecordAndCheckInstallState(t *testing.T) {
 	version := "1.0.0"
 
 	// Ensure clean state
-	stateDir := core.Paths().StateDir
+	stateDir := models.Paths().StateDir
 	_ = os.MkdirAll(stateDir, 0755)
 	statePath := path.Join(stateDir, softwareName+".installed")
 	_ = os.Remove(statePath)
@@ -64,7 +64,7 @@ func TestManager_RecordAndCheckConfigureState(t *testing.T) {
 	version := "2.0.0"
 
 	// Ensure clean state
-	stateDir := core.Paths().StateDir
+	stateDir := models.Paths().StateDir
 	_ = os.MkdirAll(stateDir, 0755)
 	statePath := path.Join(stateDir, softwareName+".configured")
 	_ = os.Remove(statePath)

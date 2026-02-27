@@ -13,7 +13,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
@@ -49,7 +50,7 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify downloaded file exists
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "cri-o")
 	require.True(t, found, "expected a file prefixed with cilium in the downloads directory")
 
 	// Verify temporary folder for kubelet is cleaned up
@@ -139,7 +140,7 @@ func Test_StepCrio_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still there
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "cri-o")
 	require.True(t, found, "expected a file prefixed with cilium in the downloads directory")
 
 	// Verify temporary folder for crio is removed
@@ -214,25 +215,25 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Remove any existing cri-o files from downloads folder to ensure download will be attempted
-	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	files, err := os.ReadDir(models.Paths().DownloadsDir)
 	if err == nil {
 		for _, file := range files {
 			if strings.HasPrefix(file.Name(), "cri-o") {
-				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+				_ = os.Remove(path.Join(models.Paths().DownloadsDir, file.Name()))
 			}
 		}
 	}
 
 	// Make the downloads directory read-only
-	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(models.Paths().DownloadsDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create downloads directory")
-	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
+	cmd := exec.Command("chattr", "+i", models.Paths().DownloadsDir)
 	err = cmd.Run()
 	require.NoError(t, err, "Failed to make downloads directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.Paths().DownloadsDir).Run()
+		_ = exec.Command("chattr", "-i", models.Paths().DownloadsDir).Run()
 	})
 
 	//
@@ -265,7 +266,7 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify downloaded file is not there
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "cri-o")
 	require.False(t, found, "did not expect a file prefixed with cri-o in the downloads directory")
 
 	// Confirm binary files were not created
@@ -280,9 +281,9 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Make the unpack directory read-only
-	unpackDir := path.Join(core.Paths().TempDir, "cri-o", core.DefaultUnpackFolderName)
+	unpackDir := path.Join(models.Paths().TempDir, "cri-o", models.DefaultUnpackFolderName)
 
-	err := os.MkdirAll(unpackDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(unpackDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create unpack directory")
 	cmd := exec.Command("chattr", "+i", unpackDir)
 	err = cmd.Run()
@@ -318,11 +319,11 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "cri-o")
 	require.True(t, found, "expected a file prefixed with cri-o in the downloads directory")
 
 	// Check there are downloaded files in the crio directory
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "cri-o"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "cri-o"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the crio directory")
 
@@ -338,9 +339,9 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Make subfolder in sandbox directory read-only
-	sandboxSubFolder := path.Join(core.Paths().SandboxDir, "opt")
+	sandboxSubFolder := path.Join(models.Paths().SandboxDir, "opt")
 
-	err := os.MkdirAll(sandboxSubFolder, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sandboxSubFolder, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create sandbox bin directory")
 	cmd := exec.Command("chattr", "+i", sandboxSubFolder)
 	err = cmd.Run()
@@ -381,11 +382,11 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "cri-o")
 	require.True(t, found, "expected a file prefixed with cri-o in the downloads directory")
 
 	// Check there are downloaded files in the crio directory
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "cri-o"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "cri-o"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the crio directory")
 
@@ -401,9 +402,9 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Create an unremovable directory under download folder
-	unremovableDir := path.Join(core.Paths().TempDir, "cri-o", "unremovable")
+	unremovableDir := path.Join(models.Paths().TempDir, "cri-o", "unremovable")
 
-	err := os.MkdirAll(unremovableDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(unremovableDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create unremovable directory")
 	cmd := exec.Command("chattr", "+i", unremovableDir)
 	err = cmd.Run()
@@ -444,7 +445,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "cri-o")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "cri-o")
 	require.True(t, found, "expected a file prefixed with cri-o in the downloads directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
@@ -452,7 +453,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, err)
 
 	// Check there are unpacked files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "cri-o"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "cri-o"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
@@ -469,7 +470,7 @@ func Test_StepCrio_Rollback_ConfigurationFailed(t *testing.T) {
 
 	// Make the /etc/containers directory read-only to prevent configuration
 	etcCrioDir := "/etc/containers"
-	err := os.MkdirAll(etcCrioDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(etcCrioDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create /etc/containers directory")
 	cmd := exec.Command("chattr", "+i", etcCrioDir)
 	err = cmd.Run()

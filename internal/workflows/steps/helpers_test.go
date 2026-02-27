@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +40,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	t.Helper()
 
 	// preflight & basic setup
-	step, err := SetupHomeDirectoryStructure(core.Paths()).Build()
+	step, err := SetupHomeDirectoryStructure(models.Paths()).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup home directory structure")

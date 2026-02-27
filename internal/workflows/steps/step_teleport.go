@@ -11,7 +11,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
@@ -84,7 +85,7 @@ func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
 type teleportInstallerProvider func(opts ...software.InstallerOption) (software.Software, error)
 
 // newTeleportInstallerProvider creates a provider function that includes the teleport configuration
-func newTeleportInstallerProvider(cfg core.TeleportConfig) teleportInstallerProvider {
+func newTeleportInstallerProvider(cfg models.TeleportConfig) teleportInstallerProvider {
 	return func(opts ...software.InstallerOption) (software.Software, error) {
 		configOpts := &software.TeleportNodeAgentConfigureOptions{
 			ProxyAddr: cfg.NodeAgentProxyAddr,
@@ -242,7 +243,7 @@ func CreateTeleportNamespace() automa.Builder {
 			}
 
 			// Create namespace manifest using template
-			namespaceManifestPath := path.Join(core.Paths().TempDir, "teleport-namespace.yaml")
+			namespaceManifestPath := path.Join(models.Paths().TempDir, "teleport-namespace.yaml")
 			namespaceManifest, err := templates.Render("files/teleport/namespace.yaml", map[string]string{
 				"Namespace": TeleportNamespace,
 			})

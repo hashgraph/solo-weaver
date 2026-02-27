@@ -374,3 +374,5 @@ integration-test-report.md
 integration-test.json
 
 .aiassistant
+pkg/version/COMMIT
+pkg/version/VERSION

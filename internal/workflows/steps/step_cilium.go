@@ -8,7 +8,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -209,7 +210,7 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 
 			// Check if Cilium CNI is already installed/running using cilium status
 			statusCheck := []string{
-				fmt.Sprintf("%s/cilium status", core.Paths().SandboxBinDir),
+				fmt.Sprintf("%s/cilium status", models.Paths().SandboxBinDir),
 			}
 			output, err := automa_steps.RunBashScript(statusCheck, "")
 			if err == nil && output != "" {
@@ -221,7 +222,7 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 			// Install Cilium CNI
 			installScript := []string{
 				fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --values %s/etc/weaver/cilium-config.yaml",
-					core.Paths().SandboxBinDir, version, core.Paths().SandboxDir),
+					models.Paths().SandboxBinDir, version, models.Paths().SandboxDir),
 			}
 			_, err = automa_steps.RunBashScript(installScript, "")
 			if err != nil {
@@ -241,7 +242,7 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 
 			// Uninstall Cilium CNI
 			scripts := []string{
-				fmt.Sprintf("/usr/bin/sudo %s/cilium uninstall", core.Paths().SandboxBinDir),
+				fmt.Sprintf("/usr/bin/sudo %s/cilium uninstall", models.Paths().SandboxBinDir),
 			}
 			_, err := automa_steps.RunBashScript(scripts, "")
 			if err != nil {

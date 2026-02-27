@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -19,34 +19,34 @@ type MockRealityChecker struct {
 	mock.Mock
 }
 
-func (m *MockRealityChecker) RefreshState(ctx context.Context, st *core.State) error {
+func (m *MockRealityChecker) RefreshState(ctx context.Context, st *models.State) error {
 	return nil
 }
 
-func (m *MockRealityChecker) MachineState(ctx context.Context) (*core.MachineState, error) {
+func (m *MockRealityChecker) MachineState(ctx context.Context) (*models.MachineState, error) {
 	return nil, nil
 }
 
-func (m *MockRealityChecker) BlockNodeState(ctx context.Context) (*core.BlockNodeState, error) {
+func (m *MockRealityChecker) BlockNodeState(ctx context.Context) (*models.BlockNodeState, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*core.BlockNodeState), args.Error(1)
+	return args.Get(0).(*models.BlockNodeState), args.Error(1)
 }
 
-func (m *MockRealityChecker) ClusterState(ctx context.Context) (*core.ClusterState, error) {
+func (m *MockRealityChecker) ClusterState(ctx context.Context) (*models.ClusterState, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*core.ClusterState), args.Error(1)
+	return args.Get(0).(*models.ClusterState), args.Error(1)
 }
 
 func TestInitBlockNodeRuntime(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
-		cfg := core.Config{
-			BlockNode: core.BlockNodeConfig{
+		cfg := models.Config{
+			BlockNode: models.BlockNodeConfig{
 				Release:      "test-release",
 				Namespace:    "test-namespace",
 				Version:      "v1.0.0",
@@ -55,7 +55,7 @@ func TestInitBlockNodeRuntime(t *testing.T) {
 				ChartVersion: "1.0.0",
 			},
 		}
-		state := core.BlockNodeState{}
+		state := models.BlockNodeState{}
 		mockChecker := new(MockRealityChecker)
 		refreshInterval := 5 * time.Second
 
@@ -65,8 +65,8 @@ func TestInitBlockNodeRuntime(t *testing.T) {
 	})
 
 	t.Run("NilRealityChecker", func(t *testing.T) {
-		cfg := core.Config{}
-		state := core.BlockNodeState{}
+		cfg := models.Config{}
+		state := models.BlockNodeState{}
 
 		err := InitBlockNodeRuntime(cfg, state, nil, 5*time.Second)
 		require.Error(t, err)
@@ -76,8 +76,8 @@ func TestInitBlockNodeRuntime(t *testing.T) {
 
 func TestBlockNodeRuntime_SetBlockNodeConfig(t *testing.T) {
 	setupRuntime := func() (*BlockNodeRuntimeState, *MockRealityChecker) {
-		cfg := core.Config{
-			BlockNode: core.BlockNodeConfig{
+		cfg := models.Config{
+			BlockNode: models.BlockNodeConfig{
 				Release:      "initial-release",
 				Namespace:    "initial-namespace",
 				Version:      "v1.0.0",
@@ -86,7 +86,7 @@ func TestBlockNodeRuntime_SetBlockNodeConfig(t *testing.T) {
 				ChartVersion: "1.0.0",
 			},
 		}
-		state := core.BlockNodeState{}
+		state := models.BlockNodeState{}
 		mockChecker := new(MockRealityChecker)
 
 		err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -98,17 +98,15 @@ func TestBlockNodeRuntime_SetBlockNodeConfig(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		br, _ := setupRuntime()
 
-		newCfg := core.Config{
-			BlockNode: core.BlockNodeConfig{
-				Release:      "new-release",
-				Namespace:    "new-namespace",
-				Version:      "v2.0.0",
-				ChartName:    "new-chart",
-				Chart:        "new-repo/chart",
-				ChartVersion: "2.0.0",
-				Storage: core.BlockNodeStorage{
-					LiveSize: "10Gi",
-				},
+		newCfg := models.BlocknodeInputs{
+			Release:      "new-release",
+			Namespace:    "new-namespace",
+			Version:      "v2.0.0",
+			ChartName:    "new-chart",
+			Chart:        "new-repo/chart",
+			ChartVersion: "2.0.0",
+			Storage: models.BlockNodeStorage{
+				LiveSize: "10Gi",
 			},
 		}
 
@@ -118,12 +116,12 @@ func TestBlockNodeRuntime_SetBlockNodeConfig(t *testing.T) {
 }
 
 func TestBlockNodeRuntime_SetReleaseName(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			Release: "test-release",
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -131,23 +129,23 @@ func TestBlockNodeRuntime_SetReleaseName(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		err := br.SetReleaseName("new-release")
+		err := br.setReleaseNameInput("new-release")
 		require.NoError(t, err)
 	})
 
 	t.Run("EmptyString", func(t *testing.T) {
-		err := br.SetReleaseName("")
+		err := br.setReleaseNameInput("")
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_SetNamespace(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			Namespace: "default",
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -155,18 +153,18 @@ func TestBlockNodeRuntime_SetNamespace(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		err := br.SetNamespace("production")
+		err := br.setNamespaceInput("production")
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_SetVersion(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			Version: "v1.0.0",
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -174,18 +172,18 @@ func TestBlockNodeRuntime_SetVersion(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		err := br.SetVersion("v2.0.0")
+		err := br.setVersionInput("v2.0.0")
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_SetChartName(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			ChartName: "block-node",
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -193,18 +191,18 @@ func TestBlockNodeRuntime_SetChartName(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		err := br.SetChartName("new-chart")
+		err := br.setChartNameInput("new-chart")
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_SetChartRef(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			Chart: "repo/chart",
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -212,18 +210,18 @@ func TestBlockNodeRuntime_SetChartRef(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		err := br.SetChartRef("new-repo/new-chart")
+		err := br.setChartRefInput("new-repo/new-chart")
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_SetChartVersion(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			ChartVersion: "1.0.0",
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -231,20 +229,20 @@ func TestBlockNodeRuntime_SetChartVersion(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		err := br.SetChartVersion("2.0.0")
+		err := br.setChartVersionInput("2.0.0")
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_SetStorage(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
-			Storage: core.BlockNodeStorage{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
+			Storage: models.BlockNodeStorage{
 				LiveSize: "5Gi",
 			},
 		},
 	}
-	state := core.BlockNodeState{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)
@@ -252,30 +250,30 @@ func TestBlockNodeRuntime_SetStorage(t *testing.T) {
 	br := BlockNode()
 
 	t.Run("Success", func(t *testing.T) {
-		newStorage := core.BlockNodeStorage{
+		newStorage := models.BlockNodeStorage{
 			LiveSize: "10Gi",
 		}
-		err := br.SetStorage(newStorage)
+		err := br.setStorageInput(newStorage)
 		require.NoError(t, err)
 	})
 }
 
 func TestBlockNodeRuntime_Getters(t *testing.T) {
-	cfg := core.Config{
-		BlockNode: core.BlockNodeConfig{
+	cfg := models.Config{
+		BlockNode: models.BlockNodeConfig{
 			Release:      "test-release",
 			Namespace:    "test-namespace",
 			Version:      "v1.0.0",
 			ChartName:    "block-node",
 			Chart:        "repo/chart",
 			ChartVersion: "1.0.0",
-			Storage: core.BlockNodeStorage{
+			Storage: models.BlockNodeStorage{
 				LiveSize: "5Gi",
 			},
 		},
 	}
-	state := core.BlockNodeState{
-		ReleaseInfo: core.HelmReleaseInfo{
+	state := models.BlockNodeState{
+		ReleaseInfo: models.HelmReleaseInfo{
 			Name:         "test-release",
 			Namespace:    "test-namespace",
 			Version:      "v1.0.0",
@@ -334,31 +332,9 @@ func TestBlockNodeRuntime_Getters(t *testing.T) {
 	})
 }
 
-func TestBlockNodeRuntime_RefreshInterval(t *testing.T) {
-	cfg := core.Config{}
-	state := core.BlockNodeState{}
-	mockChecker := new(MockRealityChecker)
-	refreshInterval := 10 * time.Second
-
-	err := InitBlockNodeRuntime(cfg, state, mockChecker, refreshInterval)
-	require.NoError(t, err)
-	br := BlockNode()
-
-	t.Run("GetRefreshInterval", func(t *testing.T) {
-		interval := br.RefreshInterval()
-		assert.Equal(t, refreshInterval, interval)
-	})
-
-	t.Run("SetRefreshInterval", func(t *testing.T) {
-		newInterval := 20 * time.Second
-		br.SetRefreshInterval(newInterval)
-		assert.Equal(t, newInterval, br.RefreshInterval())
-	})
-}
-
 func TestBlockNodeRuntime_Singleton(t *testing.T) {
-	cfg := core.Config{}
-	state := core.BlockNodeState{}
+	cfg := models.Config{}
+	state := models.BlockNodeState{}
 	mockChecker := new(MockRealityChecker)
 
 	err := InitBlockNodeRuntime(cfg, state, mockChecker, 5*time.Second)

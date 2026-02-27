@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +39,7 @@ func Test_TeleportNodeAgentInstaller_DownloadExtractInstall(t *testing.T) {
 
 	// Verify downloaded archive exists
 	archiveName := "teleport-ent-v" + installer.Version() + "-linux-" + getTestArch() + "-bin.tar.gz"
-	downloadPath := filepath.Join(core.Paths().DownloadsDir, archiveName)
+	downloadPath := filepath.Join(models.Paths().DownloadsDir, archiveName)
 	_, exists, err := fileManager.PathExists(downloadPath)
 	require.NoError(t, err)
 	require.True(t, exists, "teleport archive should exist in download folder at %s", downloadPath)
@@ -51,7 +51,7 @@ func Test_TeleportNodeAgentInstaller_DownloadExtractInstall(t *testing.T) {
 	require.NoError(t, err, "Failed to extract teleport archive")
 
 	// Verify extracted binaries exist
-	extractFolder := filepath.Join(core.Paths().TempDir, "teleport", "unpack", "teleport-ent")
+	extractFolder := filepath.Join(models.Paths().TempDir, "teleport", "unpack", "teleport-ent")
 	_, exists, err = fileManager.PathExists(filepath.Join(extractFolder, "teleport"))
 	require.NoError(t, err)
 	require.True(t, exists, "teleport binary should exist in extract folder")
@@ -71,28 +71,28 @@ func Test_TeleportNodeAgentInstaller_DownloadExtractInstall(t *testing.T) {
 	require.NoError(t, err, "Failed to install teleport")
 
 	// Verify binaries exist in sandbox
-	_, exists, err = fileManager.PathExists(filepath.Join(core.Paths().SandboxBinDir, "teleport"))
+	_, exists, err = fileManager.PathExists(filepath.Join(models.Paths().SandboxBinDir, "teleport"))
 	require.NoError(t, err)
 	require.True(t, exists, "teleport binary should exist in sandbox bin directory")
 
-	_, exists, err = fileManager.PathExists(filepath.Join(core.Paths().SandboxBinDir, "tctl"))
+	_, exists, err = fileManager.PathExists(filepath.Join(models.Paths().SandboxBinDir, "tctl"))
 	require.NoError(t, err)
 	require.True(t, exists, "tctl binary should exist in sandbox bin directory")
 
-	_, exists, err = fileManager.PathExists(filepath.Join(core.Paths().SandboxBinDir, "tsh"))
+	_, exists, err = fileManager.PathExists(filepath.Join(models.Paths().SandboxBinDir, "tsh"))
 	require.NoError(t, err)
 	require.True(t, exists, "tsh binary should exist in sandbox bin directory")
 
 	// Verify teleport.service exists in sandbox systemd directory
-	sandboxServicePath := filepath.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, "teleport.service")
+	sandboxServicePath := filepath.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir, "teleport.service")
 	_, exists, err = fileManager.PathExists(sandboxServicePath)
 	require.NoError(t, err)
 	require.True(t, exists, "teleport.service should exist in sandbox systemd directory at %s", sandboxServicePath)
 
 	// Verify binary permissions (should be executable)
-	info, err := os.Stat(filepath.Join(core.Paths().SandboxBinDir, "teleport"))
+	info, err := os.Stat(filepath.Join(models.Paths().SandboxBinDir, "teleport"))
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "teleport binary should have 0755 permissions")
+	require.Equal(t, os.FileMode(models.DefaultDirOrExecPerm), info.Mode().Perm(), "teleport binary should have 0755 permissions")
 
 	// Verify IsInstalled returns true
 	isInstalled, err := installer.IsInstalled()
@@ -106,7 +106,7 @@ func Test_TeleportNodeAgentInstaller_DownloadExtractInstall(t *testing.T) {
 	require.NoError(t, err, "Failed to cleanup teleport installation")
 
 	// Check extract folder is cleaned up (temp folder)
-	_, exists, err = fileManager.PathExists(filepath.Join(core.Paths().TempDir, "teleport"))
+	_, exists, err = fileManager.PathExists(filepath.Join(models.Paths().TempDir, "teleport"))
 	require.NoError(t, err)
 	require.False(t, exists, "teleport temp folder should be cleaned up after installation")
 }
@@ -146,15 +146,15 @@ func Test_TeleportNodeAgentInstaller_Uninstall(t *testing.T) {
 	require.NoError(t, err, "Failed to uninstall teleport")
 
 	// Verify binaries are removed from sandbox
-	_, exists, err := fileManager.PathExists(filepath.Join(core.Paths().SandboxBinDir, "teleport"))
+	_, exists, err := fileManager.PathExists(filepath.Join(models.Paths().SandboxBinDir, "teleport"))
 	require.NoError(t, err)
 	require.False(t, exists, "teleport binary should be removed from sandbox")
 
-	_, exists, err = fileManager.PathExists(filepath.Join(core.Paths().SandboxBinDir, "tctl"))
+	_, exists, err = fileManager.PathExists(filepath.Join(models.Paths().SandboxBinDir, "tctl"))
 	require.NoError(t, err)
 	require.False(t, exists, "tctl binary should be removed from sandbox")
 
-	_, exists, err = fileManager.PathExists(filepath.Join(core.Paths().SandboxBinDir, "tsh"))
+	_, exists, err = fileManager.PathExists(filepath.Join(models.Paths().SandboxBinDir, "tsh"))
 	require.NoError(t, err)
 	require.False(t, exists, "tsh binary should be removed from sandbox")
 
@@ -186,7 +186,7 @@ func Test_TeleportNodeAgentInstaller_ServiceFilePatching(t *testing.T) {
 	//
 	// When - Read the installed service file
 	//
-	sandboxServicePath := filepath.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, "teleport.service")
+	sandboxServicePath := filepath.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir, "teleport.service")
 	content, err := os.ReadFile(sandboxServicePath)
 	require.NoError(t, err)
 
