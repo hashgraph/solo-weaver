@@ -32,78 +32,92 @@ type BlockNodeStorage struct {
 	VerificationSize string `yaml:"verificationSize" json:"verificationSize"`
 }
 
+func (b *BlockNodeStorage) ToMap() map[string]string {
+	return map[string]string{
+		"basePath":         b.BasePath,
+		"archivePath":      b.ArchivePath,
+		"livePath":         b.LivePath,
+		"logPath":          b.LogPath,
+		"verificationPath": b.VerificationPath,
+		"liveSize":         b.LiveSize,
+		"archiveSize":      b.ArchiveSize,
+		"logSize":          b.LogSize,
+		"verificationSize": b.VerificationSize,
+	}
+}
+
 // IsEmpty returns true when all BlockNodeStorage fields are empty (after trimming).
-func (s *BlockNodeStorage) IsEmpty() bool {
-	return strings.TrimSpace(s.BasePath) == "" &&
-		strings.TrimSpace(s.ArchivePath) == "" &&
-		strings.TrimSpace(s.LivePath) == "" &&
-		strings.TrimSpace(s.LogPath) == "" &&
-		strings.TrimSpace(s.LiveSize) == "" &&
-		strings.TrimSpace(s.ArchiveSize) == "" &&
-		strings.TrimSpace(s.LogSize) == ""
+func (b *BlockNodeStorage) IsEmpty() bool {
+	return strings.TrimSpace(b.BasePath) == "" &&
+		strings.TrimSpace(b.ArchivePath) == "" &&
+		strings.TrimSpace(b.LivePath) == "" &&
+		strings.TrimSpace(b.LogPath) == "" &&
+		strings.TrimSpace(b.LiveSize) == "" &&
+		strings.TrimSpace(b.ArchiveSize) == "" &&
+		strings.TrimSpace(b.LogSize) == ""
 }
 
 // Validate validates all storage paths to ensure they are safe and secure.
 // This performs early validation of user-provided paths to catch security issues
 // before workflow execution begins.
-func (s *BlockNodeStorage) Validate() error {
+func (b *BlockNodeStorage) Validate() error {
 	// Validate BasePath if provided
-	if s.BasePath != "" {
-		if _, err := sanity.SanitizePath(s.BasePath); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid base path: %s", s.BasePath)
+	if b.BasePath != "" {
+		if _, err := sanity.SanitizePath(b.BasePath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid base path: %s", b.BasePath)
 		}
 	}
 
 	// Validate ArchivePath if provided
-	if s.ArchivePath != "" {
-		if _, err := sanity.SanitizePath(s.ArchivePath); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid archive path: %s", s.ArchivePath)
+	if b.ArchivePath != "" {
+		if _, err := sanity.SanitizePath(b.ArchivePath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid archive path: %s", b.ArchivePath)
 		}
 	}
 
 	// Validate LivePath if provided
-	if s.LivePath != "" {
-		if _, err := sanity.SanitizePath(s.LivePath); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid live path: %s", s.LivePath)
+	if b.LivePath != "" {
+		if _, err := sanity.SanitizePath(b.LivePath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid live path: %s", b.LivePath)
 		}
 	}
 
 	// Validate LogPath if provided
-	if s.LogPath != "" {
-		if _, err := sanity.SanitizePath(s.LogPath); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid log path: %s", s.LogPath)
+	if b.LogPath != "" {
+		if _, err := sanity.SanitizePath(b.LogPath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid log path: %s", b.LogPath)
 		}
 	}
 
 	// Validate VerificationPath if provided
-	if s.VerificationPath != "" {
-		if _, err := sanity.SanitizePath(s.VerificationPath); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid verification path: %s", s.VerificationPath)
+	if b.VerificationPath != "" {
+		if _, err := sanity.SanitizePath(b.VerificationPath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid verification path: %s", b.VerificationPath)
 		}
 	}
 
 	// Validate storage sizes if provided
-	if s.LiveSize != "" {
-		if err := sanity.ValidateStorageSize(s.LiveSize); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid live storage size: %s", s.LiveSize)
+	if b.LiveSize != "" {
+		if err := sanity.ValidateStorageSize(b.LiveSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid live storage size: %s", b.LiveSize)
 		}
 	}
 
-	if s.ArchiveSize != "" {
-		if err := sanity.ValidateStorageSize(s.ArchiveSize); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid archive storage size: %s", s.ArchiveSize)
+	if b.ArchiveSize != "" {
+		if err := sanity.ValidateStorageSize(b.ArchiveSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid archive storage size: %s", b.ArchiveSize)
 		}
 	}
 
-	if s.LogSize != "" {
-		if err := sanity.ValidateStorageSize(s.LogSize); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid log storage size: %s", s.LogSize)
+	if b.LogSize != "" {
+		if err := sanity.ValidateStorageSize(b.LogSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid log storage size: %s", b.LogSize)
 		}
 	}
 
-	if s.VerificationSize != "" {
-		if err := sanity.ValidateStorageSize(s.VerificationSize); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid verification storage size: %s", s.VerificationSize)
+	if b.VerificationSize != "" {
+		if err := sanity.ValidateStorageSize(b.VerificationSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid verification storage size: %s", b.VerificationSize)
 		}
 	}
 

@@ -320,7 +320,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 }
 
 // flushState flush current block node state into disk and refresh the state from disk.
-func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInputs *models.UserInputs[models.BlocknodeInputs]) (*automa.Report, error) {
+func (b BlockNodeIntentHandler) flushState(report *automa.Report, intent models.Intent, effectiveInputs *models.UserInputs[models.BlocknodeInputs]) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
@@ -329,6 +329,15 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 		logx.As().Warn().Msg("prepareWorkflow execution failed; skipping block node state persistence")
 		return report, nil
 	}
+
+	// add intent history to state
+	var blockNodeInputs models.BlocknodeInputs
+	blockNodeInputs = effectiveInputs.Custom // make a copy for readability
+	inputsMap := map[string]any{
+		"common":          effectiveInputs.Common.ToMap(),
+		"blockNodeInputs": blockNodeInputs.ToMap(),
+	}
+	b.sm.AddIntent(intent, inputsMap)
 
 	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
@@ -404,7 +413,8 @@ func (b BlockNodeIntentHandler) HandleIntent(
 		Any("effectiveInputs", effectiveInputs).
 		Msgf("Running Block Node workflow for intent %q", intent.Action)
 	report := wf.Execute(context.Background())
-	return b.flushState(report, effectiveInputs)
+
+	return b.flushState(report, intent, effectiveInputs)
 }
 
 // NewBlockNodeIntentHandler initializes a BlockNodeIntentHandler with the provided configuration, state manager, and options.
