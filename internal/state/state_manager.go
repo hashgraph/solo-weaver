@@ -8,6 +8,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -23,6 +24,7 @@ type DefaultStateManager interface {
 	Flush() error
 	Refresh() error
 	HasPersistedState() (os.FileInfo, bool, error)
+	AddIntent(intent models.Intent, inputs map[string]any) DefaultStateManager
 }
 
 // DefaultStateManager encapsulates a State and all IO operations (flush/refresh).
@@ -153,4 +155,14 @@ func (m *stateManager) Refresh() error {
 // HasPersistedState checks if the state file exists on disk
 func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
 	return m.fm.PathExists(m.state.StateFile)
+}
+
+func (m *stateManager) AddIntent(intent models.Intent, inputs map[string]any) DefaultStateManager {
+	entry := IntentHistory{
+		Intent:    intent,
+		Inputs:    inputs,
+		Timestamp: htime.Now(),
+	}
+	m.state.IntentHistory = append(m.state.IntentHistory, entry)
+	return m
 }
