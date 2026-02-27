@@ -12,7 +12,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	osx "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ func TestDisableSwap_Integration(t *testing.T) {
 	backupFstab, err := os.ReadFile(osx.FSTAB_LOCATION)
 	require.NoError(t, err)
 	defer func() {
-		err = os.WriteFile(osx.FSTAB_LOCATION, backupFstab, core.DefaultFilePerm)
+		err = os.WriteFile(osx.FSTAB_LOCATION, backupFstab, models.DefaultFilePerm)
 		require.NoError(t, err)
 		err = testutil.Sudo(exec.Command("/usr/sbin/swapon", "-a")).Run()
 		require.NoError(t, err)

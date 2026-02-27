@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -273,25 +273,25 @@ func (ti *teleportNodeAgentInstaller) createSystemdSymlink() error {
 
 // getTeleportServicePath returns the path to the teleport.service file in the sandbox
 func (ti *teleportNodeAgentInstaller) getTeleportServicePath() string {
-	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, teleportServiceFileName)
+	return path.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir, teleportServiceFileName)
 }
 
 // getSystemdUnitPath returns the path to the teleport.service file in the systemd directory
 func (ti *teleportNodeAgentInstaller) getSystemdUnitPath() string {
-	return path.Join(core.SystemdUnitFilesDir, teleportServiceFileName)
+	return path.Join(models.SystemdUnitFilesDir, teleportServiceFileName)
 }
 
 // getSandboxTeleportBinPath returns the path to the teleport binary in the sandbox
 func (ti *teleportNodeAgentInstaller) getSandboxTeleportBinPath() string {
-	return path.Join(core.Paths().SandboxBinDir, "teleport")
+	return path.Join(models.Paths().SandboxBinDir, "teleport")
 }
 
 // validateCriticalPaths performs basic validation on critical paths used by the installer
 func (ti *teleportNodeAgentInstaller) validateCriticalPaths() error {
 	paths := []string{
-		core.Paths().SandboxDir,
-		core.Paths().SandboxBinDir,
-		core.SystemdUnitFilesDir,
+		models.Paths().SandboxDir,
+		models.Paths().SandboxBinDir,
+		models.SystemdUnitFilesDir,
 	}
 
 	for _, p := range paths {

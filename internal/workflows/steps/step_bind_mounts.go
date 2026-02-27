@@ -9,7 +9,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/mount"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
@@ -55,7 +56,7 @@ func setupBindMount(name string, target string) automa.Builder {
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			bindMount := mount.BindMount{
-				Source: path.Join(core.Paths().SandboxDir, target),
+				Source: path.Join(models.Paths().SandboxDir, target),
 				Target: target,
 			}
 			stp.State().Local().Set(KeyBindMount, bindMount)
@@ -163,7 +164,7 @@ func teardownBindMount(name string, target string) automa.Builder {
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			bindMount := mount.BindMount{
-				Source: path.Join(core.Paths().SandboxDir, target),
+				Source: path.Join(models.Paths().SandboxDir, target),
 				Target: target,
 			}
 
@@ -192,7 +193,7 @@ func teardownSandboxMounts() automa.Builder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Sandbox mounts removed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			sandboxDir := core.Paths().SandboxDir
+			sandboxDir := models.Paths().SandboxDir
 
 			// Get all mounts under sandbox directory using mount module
 			mountsToUnmount, err := mount.GetMountsUnderPath(sandboxDir)

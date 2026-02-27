@@ -9,10 +9,10 @@ import (
 	"os"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -48,7 +48,7 @@ func (ki *kubeadmInstaller) Install() error {
 	}
 
 	// Install the kubeadm configuration files
-	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, kubeletServiceDirRelPath)
+	sandboxKubeletServiceDir := path.Join(models.Paths().SandboxDir, kubeletServiceDirRelPath)
 	err = ki.installConfig(sandboxKubeletServiceDir)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (ki *kubeadmInstaller) Uninstall() error {
 	}
 
 	// Remove the kubeadm configuration files
-	sandboxKubeletServiceDir := path.Join(core.Paths().SandboxDir, kubeletServiceDirRelPath)
+	sandboxKubeletServiceDir := path.Join(models.Paths().SandboxDir, kubeletServiceDirRelPath)
 	err = ki.baseInstaller.uninstallConfig(sandboxKubeletServiceDir)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubeadm configuration files from %s", sandboxKubeletServiceDir)
@@ -162,7 +162,7 @@ func (ki *kubeadmInstaller) configureKubeadmInit(kubernetesVersion string) error
 
 	tmplData := templates.KubeadmInitData{
 		KubeBootstrapToken: kubeadmToken,
-		SandboxDir:         core.Paths().SandboxDir,
+		SandboxDir:         models.Paths().SandboxDir,
 		MachineIP:          machineIp,
 		Hostname:           hostname,
 		KubernetesVersion:  kubernetesVersion,
@@ -173,7 +173,7 @@ func (ki *kubeadmInstaller) configureKubeadmInit(kubernetesVersion string) error
 		return errorx.IllegalState.Wrap(err, "failed to render kubeadm init configuration template")
 	}
 
-	sandboxEtcWeaverDir := path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath)
+	sandboxEtcWeaverDir := path.Join(models.Paths().SandboxDir, etcWeaverDirRelPath)
 
 	err = ki.fileManager.CreateDirectory(sandboxEtcWeaverDir, true)
 	if err != nil {
@@ -216,12 +216,12 @@ var GenerateKubeadmToken = func() (string, error) {
 
 // getKubeadmConfPath returns the path to the 10-kubeadm.conf file in the sandbox
 func (ki *kubeadmInstaller) getKubeadmConfPath() string {
-	return path.Join(core.Paths().SandboxDir, kubeletServiceDirRelPath, kubeadmConfFileName)
+	return path.Join(models.Paths().SandboxDir, kubeletServiceDirRelPath, kubeadmConfFileName)
 }
 
 // getKubeadmInitConfigPath returns the path to the kubeadm-init.yaml configuration file
 func (ki *kubeadmInstaller) getKubeadmInitConfigPath() string {
-	return path.Join(core.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
+	return path.Join(models.Paths().SandboxDir, etcWeaverDirRelPath, kubeadmInitConfigFileName)
 }
 
 // patchKubeadmConf patches 10-kubeadm.conf with updated paths in place
@@ -229,7 +229,7 @@ func (ki *kubeadmInstaller) patchKubeadmConf() error {
 	confPath := ki.getKubeadmConfPath()
 
 	// Replace the kubelet binary path with sandbox path
-	sandboxKubeletPath := path.Join(core.Paths().SandboxBinDir, "kubelet")
+	sandboxKubeletPath := path.Join(models.Paths().SandboxBinDir, "kubelet")
 	err := ki.replaceAllInFile(confPath, "/usr/bin/kubelet", sandboxKubeletPath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to replace kubelet path in 10-kubeadm.conf file")

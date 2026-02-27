@@ -11,12 +11,12 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
-	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -46,8 +46,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
-				version.PrintVersion(cmd, flagOutputFormat)
-				return nil
+				return version.Print(cmd, flagOutputFormat)
 			}
 
 			return cmd.Help()
@@ -81,7 +80,7 @@ func init() {
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
-	rootCmd.AddCommand(version.GetCmd())
+	rootCmd.AddCommand(version.Cmd())
 
 	// Register all migrations at startup
 	blocknode.InitMigrations()

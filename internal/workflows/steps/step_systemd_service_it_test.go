@@ -12,7 +12,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	osx "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/stretchr/testify/require"
 )
@@ -84,13 +85,13 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 `
-	err := os.WriteFile(unitFile, []byte(unitContent), core.DefaultFilePerm)
+	err := os.WriteFile(unitFile, []byte(unitContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Copy to systemd directory
 	systemdDir := "/etc/systemd/system"
 	systemdUnitFile := filepath.Join(systemdDir, unitName)
-	err = os.WriteFile(systemdUnitFile, []byte(unitContent), core.DefaultFilePerm)
+	err = os.WriteFile(systemdUnitFile, []byte(unitContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 }
 

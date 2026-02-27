@@ -7,9 +7,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -83,7 +83,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 // Download handles the common download logic with checksum verification
 // It downloads all archives, binaries (with URLs), and config files if available.
 func (b *baseInstaller) Download() error {
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 
 	// Create download folder if it doesn't exist
 	err := b.fileManager.CreateDirectory(downloadFolder, true)
@@ -149,7 +149,7 @@ func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, archiveName)
+	destinationFile := path.Join(models.Paths().DownloadsDir, archiveName)
 
 	// Get expected checksum for this archive
 	osInfo, exists := archive.PlatformChecksum[platform.os]
@@ -233,7 +233,7 @@ func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, binaryName)
+	destinationFile := path.Join(models.Paths().DownloadsDir, binaryName)
 
 	// Get expected checksum for this binary
 	osInfo, exists := binary.PlatformChecksum[platform.os]
@@ -287,7 +287,7 @@ func (b *baseInstaller) downloadConfigs() error {
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(core.Paths().DownloadsDir, config.Name)
+		configFile := path.Join(models.Paths().DownloadsDir, config.Name)
 
 		// Check if file already exists and verify checksum
 		_, exists, err := b.fileManager.PathExists(configFile)
@@ -392,7 +392,7 @@ func (b *baseInstaller) extractArchive(archive ArchiveDetail, extractFolder stri
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	compressedFile := path.Join(core.Paths().DownloadsDir, archiveName)
+	compressedFile := path.Join(models.Paths().DownloadsDir, archiveName)
 
 	// Verify that the compressed file exists
 	_, exists, err := b.fileManager.PathExists(compressedFile)
@@ -544,7 +544,7 @@ func (b *baseInstaller) performInstall() error {
 	}
 
 	// Get sandbox bin directory from core paths
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Create sandbox bin directory if it doesn't exist
 	err := b.fileManager.CreateDirectory(sandboxBinDir, true)
@@ -552,7 +552,7 @@ func (b *baseInstaller) performInstall() error {
 		return NewInstallationError(err, "", sandboxBinDir)
 	}
 
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 	extractFolder := b.extractFolder()
 
 	// Install all binaries
@@ -584,7 +584,7 @@ func (b *baseInstaller) performInstall() error {
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
 
 		// Copy binary to sandbox
-		err = b.installFile(sourcePath, sandboxBinary, core.DefaultDirOrExecPerm)
+		err = b.installFile(sourcePath, sandboxBinary, models.DefaultDirOrExecPerm)
 		if err != nil {
 			return NewInstallationError(err, sourcePath, sandboxBinDir)
 		}
@@ -616,7 +616,7 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
 	}
 
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 	extractFolder := b.extractFolder()
 
 	// Install each config file into the sandbox
@@ -713,7 +713,7 @@ func (b *baseInstaller) performConfiguration() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Create symbolic links for all binaries
 	for _, binary := range versionInfo.Binaries {
@@ -726,7 +726,7 @@ func (b *baseInstaller) performConfiguration() error {
 		// Get the base name for the destination (just the filename without path)
 		binaryBasename := path.Base(binaryName)
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
 		// Create symlink to /usr/local/bin for system-wide access
 		err = b.fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
@@ -765,7 +765,7 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 	}
 
 	// rw-r--r-- permissions that are typical for config and data files
-	err = fileManager.WritePermissions(sourceFile, core.DefaultFilePerm, false)
+	err = fileManager.WritePermissions(sourceFile, models.DefaultFilePerm, false)
 	if err != nil {
 		return err
 	}
@@ -775,7 +775,7 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 
 // extractFolder returns the software-specific extraction folder path
 func (b *baseInstaller) extractFolder() string {
-	return path.Join(core.Paths().TempDir, b.software.Name, core.DefaultUnpackFolderName)
+	return path.Join(models.Paths().TempDir, b.software.Name, models.DefaultUnpackFolderName)
 }
 
 // Version returns the version being installed
@@ -855,7 +855,7 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Remove each binary from the sandbox bin directory
 	for _, binary := range versionInfo.Binaries {
@@ -891,7 +891,7 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 // Cleanup performs any necessary cleanup after installation
 // It only removes the extraction folder, keeping downloaded files for reuse
 func (b *baseInstaller) Cleanup() error {
-	extractFolder := path.Join(core.Paths().TempDir, b.software.Name)
+	extractFolder := path.Join(models.Paths().TempDir, b.software.Name)
 
 	// Clean up only the software-specific extraction folder
 	// The shared downloads folder is preserved to enable checksum-based caching
@@ -917,7 +917,7 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Check each binary and remove its symlink if it exists
 	for _, binary := range versionInfo.Binaries {
@@ -930,7 +930,7 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		// Get the base name for the destination (just the filename without path)
 		binaryBasename := path.Base(binaryName)
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
 		// Check if symlink exists in system bin directory
 		_, exists, err := b.fileManager.PathExists(systemBinary)

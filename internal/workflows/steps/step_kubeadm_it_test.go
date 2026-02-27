@@ -13,7 +13,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
@@ -49,7 +50,7 @@ func Test_StepKubeadm_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify downloaded file is there
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubeadm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "kubeadm")
 	require.True(t, found, "expected a file prefixed with kubeadm in the downloads directory")
 
 	// Verify temporary folder for kubeadm is cleaned up
@@ -133,7 +134,7 @@ func Test_StepKubeadm_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still there
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubeadm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "kubeadm")
 	require.True(t, found, "expected a file prefixed with kubeadm in the downloads directory")
 
 	// Verify temporary folder for kubeadm is removed
@@ -152,25 +153,25 @@ func Test_StepKubeadm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Remove any existing kubeadm files from downloads folder to ensure download will be attempted
-	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	files, err := os.ReadDir(models.Paths().DownloadsDir)
 	if err == nil {
 		for _, file := range files {
 			if strings.HasPrefix(file.Name(), "kubeadm") {
-				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+				_ = os.Remove(path.Join(models.Paths().DownloadsDir, file.Name()))
 			}
 		}
 	}
 
 	// Make the downloads directory read-only
-	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(models.Paths().DownloadsDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create downloads directory")
-	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
+	cmd := exec.Command("chattr", "+i", models.Paths().DownloadsDir)
 	err = cmd.Run()
 	require.NoError(t, err, "Failed to make downloads directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.Paths().DownloadsDir).Run()
+		_ = exec.Command("chattr", "-i", models.Paths().DownloadsDir).Run()
 	})
 
 	//
@@ -202,7 +203,7 @@ func Test_StepKubeadm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify downloaded file is not there
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubeadm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "kubeadm")
 	require.False(t, found, "did not expect a file prefixed with kubeadm in the downloads directory")
 
 	// Confirm binary files were not created
@@ -217,9 +218,9 @@ func Test_StepKubeadm_Rollback_Setup_InstallFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Make the sandbox directory read-only
-	sandboxDir := path.Join(core.Paths().SandboxDir, "bin")
+	sandboxDir := path.Join(models.Paths().SandboxDir, "bin")
 
-	err := os.MkdirAll(sandboxDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sandboxDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create sandbox bin directory")
 	cmd := exec.Command("chattr", "+i", sandboxDir)
 	err = cmd.Run()
@@ -259,7 +260,7 @@ func Test_StepKubeadm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubeadm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "kubeadm")
 	require.True(t, found, "expected a file prefixed with kubeadm in the downloads directory")
 
 	// Verify binary files were not installed
@@ -274,9 +275,9 @@ func Test_StepKubeadm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	testutil.Reset(t)
 
 	// Create an unremovable directory under download folder
-	unremovableDir := path.Join(core.Paths().TempDir, "kubeadm", "unremovable")
+	unremovableDir := path.Join(models.Paths().TempDir, "kubeadm", "unremovable")
 
-	err := os.MkdirAll(unremovableDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(unremovableDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create unremovable directory")
 	cmd := exec.Command("chattr", "+i", unremovableDir)
 	err = cmd.Run()
@@ -316,11 +317,11 @@ func Test_StepKubeadm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubeadm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "kubeadm")
 	require.True(t, found, "expected a file prefixed with kubeadm in the downloads directory")
 
 	// Check there are files in the tmp/kubeadm directory
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "kubeadm"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "kubeadm"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the tmp/kubeadm directory")
 
@@ -337,7 +338,7 @@ func Test_StepKubeadm_Rollback_ConfigurationFailed(t *testing.T) {
 
 	// Make the /usr/local/bin directory read-only to prevent configuration
 	usrLocalBinDir := "/usr/local/bin"
-	err := os.MkdirAll(usrLocalBinDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(usrLocalBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create /usr/local/bin directory")
 	cmd := exec.Command("chattr", "+i", usrLocalBinDir)
 	err = cmd.Run()
@@ -387,7 +388,7 @@ func Test_StepKubeadm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, configRollbackReport.Status)
 
 	// Verify download folder is still around when there is a configuration error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "kubeadm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "kubeadm")
 	require.True(t, found, "expected a file prefixed with kubeadm in the downloads directory")
 
 	// Verify installation was rolled back
@@ -425,7 +426,7 @@ func Test_StepKubeadm_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
 	// Verify download file exists
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "10-kubeadm.conf")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "10-kubeadm.conf")
 	require.True(t, found, "expected a file prefixed with 10-kubeadm.conf in the downloads directory")
 
 	// Verify kubelet service directory configuration was installed in sandbox
@@ -485,7 +486,7 @@ func Test_StepKubeadm_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	require.Empty(t, report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify download file exists
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "10-kubeadm.conf")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "10-kubeadm.conf")
 	require.True(t, found, "expected a file prefixed with 10-kubeadm.conf in the downloads directory")
 
 	// Verify service configuration still exists and is valid

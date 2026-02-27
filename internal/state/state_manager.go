@@ -1,4 +1,6 @@
-package core
+// SPDX-License-Identifier: Apache-2.0
+
+package state
 
 import (
 	"os"
@@ -11,28 +13,28 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-// StateManager defines the interface for managing the application state with IO operations.
+// DefaultStateManager defines the interface for managing the application state with IO operations.
 // It is just a thin wrapper around State with added thread-safe disk persistence & refresh operations.
 // However, the State itself is not thread-safe for mutations since State is a data model.
-type StateManager interface {
+type DefaultStateManager interface {
 	State() State
-	Set(s State) StateManager
+	Set(s State) DefaultStateManager
 	FileManager() fsx.Manager
 	Flush() error
 	Refresh() error
 	HasPersistedState() (os.FileInfo, bool, error)
 }
 
-// StateManager encapsulates a State and all IO operations (flush/refresh).
+// DefaultStateManager encapsulates a State and all IO operations (flush/refresh).
 type stateManager struct {
 	mu    sync.Mutex
 	state State
 	fm    fsx.Manager
 }
 
-type StateManagerOption func(*stateManager) error
+type ManagerOption func(*stateManager) error
 
-func WithFileManager(fm fsx.Manager) StateManagerOption {
+func WithFileManager(fm fsx.Manager) ManagerOption {
 	return func(m *stateManager) error {
 		if fm == nil {
 			return errorx.IllegalArgument.New("file manager cannot be nil")
@@ -42,16 +44,16 @@ func WithFileManager(fm fsx.Manager) StateManagerOption {
 	}
 }
 
-func WithState(s State) StateManagerOption {
+func WithState(s State) ManagerOption {
 	return func(m *stateManager) error {
 		m.state = s
 		return nil
 	}
 }
 
-// NewStateManager creates a StateManager with the provided options.
+// NewStateManager creates a DefaultStateManager with the provided options.
 // Caller must call Refresh() to load the persisted state from disk before accessing the state.
-func NewStateManager(opts ...StateManagerOption) (StateManager, error) {
+func NewStateManager(opts ...ManagerOption) (DefaultStateManager, error) {
 	m := &stateManager{
 		state: NewState(),
 	}
@@ -94,7 +96,7 @@ func (m *stateManager) State() State {
 }
 
 // Set sets the current state (thread-safe for write operations)
-func (m *stateManager) Set(s State) StateManager {
+func (m *stateManager) Set(s State) DefaultStateManager {
 	m.state = s
 	return m
 }

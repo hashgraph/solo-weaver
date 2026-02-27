@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,12 +63,12 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			tempDir := t.TempDir()
 			basePath := filepath.Join(tempDir, "storage")
 
-			blockConfig := core.BlocknodeInputs{
+			blockConfig := models.BlocknodeInputs{
 				Namespace: "test-namespace",
 				Release:   "test-release",
 				Chart:     "test-chart",
 				Version:   "0.1.0",
-				Storage: core.BlockNodeStorage{
+				Storage: models.BlockNodeStorage{
 					BasePath:         basePath,
 					LiveSize:         tt.liveSize,
 					ArchiveSize:      tt.archiveSize,
@@ -198,12 +197,12 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "storage")
 
-	blockConfig := core.BlocknodeInputs{
+	blockConfig := models.BlocknodeInputs{
 		Namespace: "block-node",
 		Release:   "test-release",
 		Chart:     "test-chart",
 		Version:   "0.1.0",
-		Storage: core.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         basePath,
 			LiveSize:         "10Gi",
 			ArchiveSize:      "20Gi",

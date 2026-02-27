@@ -4,6 +4,7 @@ package version
 
 import (
 	"encoding/json"
+	"fmt"
 	"runtime"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 type Info struct {
 	Number    string `json:"version" yaml:"version"`
 	Commit    string `json:"commit" yaml:"commit"`
-	GoVersion string `json:"go" yaml:"go"`
+	GoVersion string `json:"goversion" yaml:"goversion"`
 }
 
 const (
@@ -41,6 +42,10 @@ func (v Info) Format(format string) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+func (v Info) Text() string {
+	return fmt.Sprintf("Version: %s\nCommit: %s\nGo Version: %s", v.Number, v.Commit, v.GoVersion)
 }
 
 var (

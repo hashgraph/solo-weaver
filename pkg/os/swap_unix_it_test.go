@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
-	"github.com/hashgraph/solo-weaver/internal/core"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -211,8 +211,8 @@ func Test_Swap_ResolveSpec_Integration(t *testing.T) {
 
 	byUUIDDir := tmpDir + "/by-uuid"
 	byLabelDir := tmpDir + "/by-label"
-	require.NoError(t, os.Mkdir(byUUIDDir, core.DefaultDirOrExecPerm))
-	require.NoError(t, os.Mkdir(byLabelDir, core.DefaultDirOrExecPerm))
+	require.NoError(t, os.Mkdir(byUUIDDir, models.DefaultDirOrExecPerm))
+	require.NoError(t, os.Mkdir(byLabelDir, models.DefaultDirOrExecPerm))
 
 	uuid := "test-uuid-123"
 	label := "test-label-abc"

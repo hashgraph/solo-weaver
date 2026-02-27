@@ -4,8 +4,6 @@ package hardware
 
 import (
 	"testing"
-
-	"github.com/hashgraph/solo-weaver/internal/core"
 )
 
 // MockHostProfile is a testable implementation of HostProfile
@@ -120,8 +118,8 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 	}{
 		{
 			name:             "Block node local validation when node is not running",
-			nodeType:         core.NodeTypeBlock,
-			profile:          core.ProfileLocal,
+			nodeType:         models.NodeTypeBlock,
+			profile:          models.ProfileLocal,
 			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 4, 4, 10, false),
 			nodeRunning:      false,
 			expectValidation: true,
@@ -129,8 +127,8 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 		},
 		{
 			name:             "Block node local validation when node is already running",
-			nodeType:         core.NodeTypeBlock,
-			profile:          core.ProfileLocal,
+			nodeType:         models.NodeTypeBlock,
+			profile:          models.ProfileLocal,
 			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 4, 4, 10, true),
 			nodeRunning:      true,
 			expectValidation: true,
@@ -138,8 +136,8 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 		},
 		{
 			name:             "Block node mainnet validation when node is not running",
-			nodeType:         core.NodeTypeBlock,
-			profile:          core.ProfileMainnet,
+			nodeType:         models.NodeTypeBlock,
+			profile:          models.ProfileMainnet,
 			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 8, 22, 6000, false), // 8 cores, 16GB+ available, 5TB+
 			nodeRunning:      false,
 			expectValidation: true,
@@ -147,8 +145,8 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 		},
 		{
 			name:             "Consensus node mainnet validation when node is already running",
-			nodeType:         core.NodeTypeConsensus,
-			profile:          core.ProfileMainnet,
+			nodeType:         models.NodeTypeConsensus,
+			profile:          models.ProfileMainnet,
 			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 48, 322, 9000, true), // 48 cores, 256GB+ available, 8TB+
 			nodeRunning:      true,
 			expectValidation: true,
@@ -237,8 +235,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 	}{
 		{
 			name:              "Block node local with sufficient resources",
-			nodeType:          core.NodeTypeBlock,
-			profile:           core.ProfileLocal,
+			nodeType:          models.NodeTypeBlock,
+			profile:           models.ProfileLocal,
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 4, 4, 600),
 			expectedOS:        true,
 			expectedCPU:       true,
@@ -247,8 +245,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		},
 		{
 			name:              "Block node local with insufficient CPU",
-			nodeType:          core.NodeTypeBlock,
-			profile:           core.ProfileLocal,
+			nodeType:          models.NodeTypeBlock,
+			profile:           models.ProfileLocal,
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 0, 4, 600),
 			expectedOS:        true,
 			expectedCPU:       false,
@@ -257,8 +255,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		},
 		{
 			name:              "Block node mainnet with sufficient resources",
-			nodeType:          core.NodeTypeBlock,
-			profile:           core.ProfileMainnet,
+			nodeType:          models.NodeTypeBlock,
+			profile:           models.ProfileMainnet,
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 22, 6000),
 			expectedOS:        true,
 			expectedCPU:       true,
@@ -267,8 +265,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		},
 		{
 			name:              "Block node mainnet with insufficient memory",
-			nodeType:          core.NodeTypeBlock,
-			profile:           core.ProfileMainnet,
+			nodeType:          models.NodeTypeBlock,
+			profile:           models.ProfileMainnet,
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 8, 6000),
 			expectedOS:        true,
 			expectedCPU:       true,
@@ -277,8 +275,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		},
 		{
 			name:              "Consensus node mainnet with sufficient resources",
-			nodeType:          core.NodeTypeConsensus,
-			profile:           core.ProfileMainnet,
+			nodeType:          models.NodeTypeConsensus,
+			profile:           models.ProfileMainnet,
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 48, 322, 9000), // 48 cores, 256GB+ available (322*0.8=257), 8TB+
 			expectedOS:        true,
 			expectedCPU:       true,
@@ -287,8 +285,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		},
 		{
 			name:              "Consensus node mainnet with insufficient storage",
-			nodeType:          core.NodeTypeConsensus,
-			profile:           core.ProfileMainnet,
+			nodeType:          models.NodeTypeConsensus,
+			profile:           models.ProfileMainnet,
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 48, 322, 5000), // sufficient CPU/mem, insufficient storage (need 8TB)
 			expectedOS:        true,
 			expectedCPU:       true,
@@ -297,8 +295,8 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		},
 		{
 			name:              "Block node local with unsupported OS",
-			nodeType:          core.NodeTypeBlock,
-			profile:           core.ProfileLocal,
+			nodeType:          models.NodeTypeBlock,
+			profile:           models.ProfileLocal,
 			actualHostProfile: NewMockHostProfile("windows", "10", 4, 4, 600),
 			expectedOS:        false,
 			expectedCPU:       true,
@@ -403,12 +401,12 @@ func TestNodeTypeAndProfileCombinations(t *testing.T) {
 		profile      string
 		expectedName string
 	}{
-		{core.NodeTypeBlock, core.ProfileLocal, "Block Node (Local)"},
-		{core.NodeTypeBlock, core.ProfileMainnet, "Block Node (Mainnet)"},
-		{core.NodeTypeBlock, core.ProfilePreviewnet, "Block Node (Previewnet)"},
-		{core.NodeTypeConsensus, core.ProfileLocal, "Consensus Node (Local)"},
-		{core.NodeTypeConsensus, core.ProfileMainnet, "Consensus Node (Mainnet)"},
-		{core.NodeTypeConsensus, core.ProfilePreviewnet, "Consensus Node (Previewnet)"},
+		{models.NodeTypeBlock, models.ProfileLocal, "Block Node (Local)"},
+		{models.NodeTypeBlock, models.ProfileMainnet, "Block Node (Mainnet)"},
+		{models.NodeTypeBlock, models.ProfilePreviewnet, "Block Node (Previewnet)"},
+		{models.NodeTypeConsensus, models.ProfileLocal, "Consensus Node (Local)"},
+		{models.NodeTypeConsensus, models.ProfileMainnet, "Consensus Node (Mainnet)"},
+		{models.NodeTypeConsensus, models.ProfilePreviewnet, "Consensus Node (Previewnet)"},
 	}
 
 	for _, tt := range tests {
@@ -477,7 +475,7 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := NewNodeSpec(core.NodeTypeBlock, core.ProfilePreviewnet, tt.actualHostProfile)
+			spec, err := NewNodeSpec(models.NodeTypeBlock, models.ProfilePreviewnet, tt.actualHostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
@@ -507,7 +505,7 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 
 func TestPreviewnetNodeRequirements(t *testing.T) {
 	mockHostProfile := NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 322, 9000, 25000)
-	spec, err := NewNodeSpec(core.NodeTypeBlock, core.ProfilePreviewnet, mockHostProfile)
+	spec, err := NewNodeSpec(models.NodeTypeBlock, models.ProfilePreviewnet, mockHostProfile)
 	if err != nil {
 		t.Fatalf("Failed to create spec: %v", err)
 	}

@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	helm2 "github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/joomcode/errorx"
@@ -27,34 +29,34 @@ import (
 // This separation allows for a clearer distinction between current and actual states as well as intent execution.
 // This is supposed to be resource-heavy and may involve network calls, so it should be used judiciously.
 type Checker interface {
-	ClusterState(ctx context.Context) (core.ClusterState, error)
+	ClusterState(ctx context.Context) (state.ClusterState, error)
 
-	MachineState(ctx context.Context) (core.MachineState, error)
+	MachineState(ctx context.Context) (state.MachineState, error)
 
-	BlockNodeState(ctx context.Context) (core.BlockNodeState, error)
+	BlockNodeState(ctx context.Context) (state.BlockNodeState, error)
 }
 
 type realityChecker struct {
-	current core.State
+	current state.State
 }
 
-func (r *realityChecker) ClusterState(ctx context.Context) (core.ClusterState, error) {
-	now := htime.Now()
-	cs := core.NewClusterState()
+func (r *realityChecker) ClusterState(ctx context.Context) (state.ClusterState, error) {
+	cs := state.NewClusterState()
 
-	if exists, err := kube.ClusterExists(); err != nil {
-		cs.Created = exists
+	clusterInfo, err := kube.RetrieveClusterInfo()
+	if err != nil {
+		logx.As().Error().Err(err).Msg("Failed to retrieve cluster info, returning empty ClusterState")
+		return cs, nil // return empty state if we fail to get cluster info, since the cluster might not exist
 	}
 
-	// TODO try to gather cluster info
+	cs.Initialize(clusterInfo)
 
-	cs.LastSync = now
 	return cs, nil
 }
 
-func (r *realityChecker) MachineState(ctx context.Context) (core.MachineState, error) {
+func (r *realityChecker) MachineState(ctx context.Context) (state.MachineState, error) {
 	now := htime.Now()
-	cs := core.NewMachineState()
+	cs := state.NewMachineState()
 
 	// TODO implement me
 
@@ -62,9 +64,9 @@ func (r *realityChecker) MachineState(ctx context.Context) (core.MachineState, e
 	return cs, nil
 }
 
-func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeState, error) {
+func (r *realityChecker) BlockNodeState(ctx context.Context) (state.BlockNodeState, error) {
 	now := htime.Now()
-	bn := core.NewBlockNodeState()
+	bn := state.NewBlockNodeState()
 
 	if exists, err := kube.ClusterExists(); !exists {
 		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNodeState state check")
@@ -81,8 +83,8 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeStat
 		return bn, nil // no BlockNodeState release found
 	}
 
-	bn = core.BlockNodeState{
-		ReleaseInfo: core.HelmReleaseInfo{
+	bn = state.BlockNodeState{
+		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
@@ -93,7 +95,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (core.BlockNodeStat
 			Deleted:       re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
-		Storage:  core.BlockNodeStorage{},
+		Storage:  models.BlockNodeStorage{},
 		LastSync: now,
 	}
 
@@ -229,6 +231,6 @@ func UnmarshalManifest(manifest string) ([]*unstructured.Unstructured, error) {
 	return out, nil
 }
 
-func NewChecker(current core.State) (Checker, error) {
+func NewChecker(current state.State) (Checker, error) {
 	return &realityChecker{current: current}, nil
 }

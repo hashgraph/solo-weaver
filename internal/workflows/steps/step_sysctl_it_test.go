@@ -12,7 +12,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/sysctl"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/assert"
@@ -71,7 +72,7 @@ func Test_ApplySysctlConfiguration_Integration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedTotalSettings, len(oldSettings))
 
-	backupFile := path.Join(core.Paths().TempDir, "sysctl.conf")
+	backupFile := path.Join(models.Paths().TempDir, "sysctl.conf")
 	backupFile, err = sysctl.BackupSettings(backupFile)
 	require.NoError(t, err)
 	require.NotEmpty(t, backupFile)

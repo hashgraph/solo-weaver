@@ -6,7 +6,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -26,9 +26,9 @@ var uninstallCmd = &cobra.Command{
 			return err
 		}
 
-		intent := core.Intent{
-			Action: core.ActionUninstall,
-			Target: core.TargetBlocknode,
+		intent := models.Intent{
+			Action: models.ActionUninstall,
+			Target: models.TargetBlocknode,
 		}
 
 		logx.As().Info().

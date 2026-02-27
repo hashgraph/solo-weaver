@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 // ModuleConfig represents a single Alloy configuration module.
@@ -148,7 +148,7 @@ func GetModuleNames(modules []ModuleConfig) []string {
 // BuildHelmEnvVars builds the Helm values for environment variables from secrets.
 // All passwords are sourced from the conventional K8s Secret "grafana-alloy-secrets"
 // using keys derived from remote names (e.g., PROMETHEUS_PASSWORD_PRIMARY).
-func BuildHelmEnvVars(cfg core.AlloyConfig) []string {
+func BuildHelmEnvVars(cfg models.AlloyConfig) []string {
 	var envVars []string
 	idx := 0
 

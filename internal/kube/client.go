@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -20,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -1179,22 +1182,82 @@ func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namesp
 // configuration resolved by loadKubeConfig. It returns an error when the check
 // fails due to an unexpected/internal error (wraps the underlying error).
 func ClusterExists() (bool, error) {
+	clusterInfo, err := RetrieveClusterInfo()
+	if err != nil {
+		return false, err
+	}
+
+	return clusterInfo != nil, nil
+}
+
+func RetrieveClusterInfo() (*models.ClusterInfo, error) {
 	cfg, err := loadKubeConfig()
 	if err != nil {
 		// Couldn't construct config (no kubeconfig / in-cluster config failure)
-		return false, err
+		return nil, err
 	}
 
 	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
-		return false, errorx.InternalError.Wrap(err, "failed to create discovery client")
+		if kerrors.IsUnauthorized(err) || kerrors.IsForbidden(err) {
+			// API server is reachable but credentials are invalid or insufficient
+			return nil, errorx.ExternalError.Wrap(err, "API server is reachable but credentials are invalid or insufficient")
+		}
+		if kerrors.IsNotFound(err) {
+			// API server is reachable but the requested resource is not found (e.g., /version)
+			return nil, errorx.ExternalError.Wrap(err, "API server is reachable but the requested resource is not found")
+		}
+		// Any other error likely indicates the cluster is not reachable or misconfigured
+		return nil, errorx.ExternalError.Wrap(err, "failed to retrieve cluster info")
 	}
 
 	// ServerVersion performs a simple call to the API server; if it succeeds
 	// the cluster is reachable and responding.
-	if _, err := disco.ServerVersion(); err != nil {
-		return false, errorx.InternalError.Wrap(err, "failed to contact API server")
+	server, err := disco.ServerVersion()
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to contact API server")
 	}
 
-	return true, nil
+	cls := &models.ClusterInfo{
+		Host:           cfg.Host,
+		ServerVersion:  *server,
+		KubeconfigEnv:  os.Getenv("KUBECONFIG"),
+		KubeconfigPath: filepath.Join(os.Getenv("HOME"), ".kube", "config"),
+	}
+
+	if _, err := os.Stat(cls.KubeconfigPath); err != nil {
+		logx.As().Warn().Str("defaultKubeconfigPath", cls.KubeconfigPath).Msg("Default kubeconfig not found, skipping kubeconfig parsing")
+		cls.KubeconfigPath = ""
+	} else {
+		logx.As().Warn().Str("kubeconfigPath", cls.KubeconfigPath).Msg("Using kubeconfig to retrieve cluster contexts and namespace")
+		conf := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			&clientcmd.ClientConfigLoadingRules{ExplicitPath: cls.KubeconfigPath},
+			&clientcmd.ConfigOverrides{CurrentContext: ""},
+		)
+
+		rawCfg, err := conf.RawConfig()
+		if err != nil {
+			return nil, errorx.InternalError.Wrap(err, "failed to get raw kubeconfig")
+		}
+
+		cls.Contexts = rawCfg.Contexts
+		for _, c := range cls.Contexts {
+			c.Extensions = map[string]runtime.Object{} // Don't include extensions data
+		}
+
+		cls.Clusters = rawCfg.Clusters
+		for _, c := range cls.Clusters {
+			c.CertificateAuthorityData = []byte{} // Don't include cert data
+		}
+
+		cls.CurrentContext = rawCfg.CurrentContext
+
+		ns, _, err := conf.Namespace()
+		if err != nil {
+			return nil, errorx.InternalError.Wrap(err, "failed to get namespace from kubeconfig")
+		}
+		cls.Namespace = ns
+	}
+
+	return cls, nil
 }

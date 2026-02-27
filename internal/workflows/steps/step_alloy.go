@@ -14,7 +14,8 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -350,13 +351,13 @@ func createAlloyNamespace() automa.Builder {
 			}
 
 			// Create namespace manifest using template
-			namespaceManifestPath := path.Join(core.Paths().TempDir, "alloy-namespace.yaml")
+			namespaceManifestPath := path.Join(models.Paths().TempDir, "alloy-namespace.yaml")
 			namespaceManifest, err := alloy.NamespaceManifest()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), core.DefaultFilePerm)
+			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -537,8 +538,8 @@ func deployAlloyConfig() automa.Builder {
 			}
 
 			// Write manifest to temp file for kubectl apply
-			configMapManifestPath := path.Join(core.Paths().TempDir, "alloy-configmap.yaml")
-			err = os.WriteFile(configMapManifestPath, []byte(configMapManifest), core.DefaultFilePerm)
+			configMapManifestPath := path.Join(models.Paths().TempDir, "alloy-configmap.yaml")
+			err = os.WriteFile(configMapManifestPath, []byte(configMapManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -629,8 +630,8 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			serviceMonitorPath := path.Join(core.Paths().TempDir, "block-node-servicemonitor.yaml")
-			err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), core.DefaultFilePerm)
+			serviceMonitorPath := path.Join(models.Paths().TempDir, "block-node-servicemonitor.yaml")
+			err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -646,8 +647,8 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			podLogsPath := path.Join(core.Paths().TempDir, "block-node-podlogs.yaml")
-			err = os.WriteFile(podLogsPath, []byte(podLogsManifest), core.DefaultFilePerm)
+			podLogsPath := path.Join(models.Paths().TempDir, "block-node-podlogs.yaml")
+			err = os.WriteFile(podLogsPath, []byte(podLogsManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

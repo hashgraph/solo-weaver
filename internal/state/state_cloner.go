@@ -1,4 +1,6 @@
-package core
+// SPDX-License-Identifier: Apache-2.0
+
+package state
 
 // Clone creates a deep copy of SoftwareState
 func (s *SoftwareState) Clone() SoftwareState {
@@ -69,75 +71,17 @@ func (m *MachineState) Clone() MachineState {
 }
 
 // Clone creates a deep copy of ClusterState
-func (c *ClusterState) Clone() ClusterState {
-	clone := ClusterState{
-		ID:               c.ID,
-		Name:             c.Name,
-		Provider:         c.Provider,
-		APIServer:        c.APIServer,
-		KubeVersion:      c.KubeVersion,
-		KubeconfigPath:   c.KubeconfigPath,
-		Context:          c.Context,
-		DefaultNamespace: c.DefaultNamespace,
-		NodeCount:        c.NodeCount,
-		NetworkPlugin:    c.NetworkPlugin,
-		PodCIDR:          c.PodCIDR,
-		ServiceCIDR:      c.ServiceCIDR,
-		StorageClasses:   nil,
-		IngressEnabled:   c.IngressEnabled,
-		Labels:           nil,
-		Annotations:      nil,
-		Health:           c.Health,
-		Created:          c.Created,
-		CreatedAt:        c.CreatedAt,
-		LastSync:         c.LastSync,
-	}
-	// Nodes
-	if c.Nodes != nil {
-		clone.Nodes = make(map[string]ClusterNodeState, len(c.Nodes))
-		for k, v := range c.Nodes {
-			clone.Nodes[k] = v.Clone()
-		}
-	} else {
-		clone.Nodes = make(map[string]ClusterNodeState)
-	}
-	// HelmReleases
-	if c.HelmReleases != nil {
-		clone.HelmReleases = make(map[string]HelmReleaseInfo, len(c.HelmReleases))
-		for k, v := range c.HelmReleases {
-			vv := v.Clone()
-			clone.HelmReleases[k] = vv
-		}
-	} else {
-		clone.HelmReleases = make(map[string]HelmReleaseInfo)
-	}
-	// StorageClasses slice
-	if c.StorageClasses != nil {
-		clone.StorageClasses = make([]string, len(c.StorageClasses))
-		copy(clone.StorageClasses, c.StorageClasses)
-	}
-	// Labels & Annotations
-	if c.Labels != nil {
-		clone.Labels = make(map[string]string, len(c.Labels))
-		for k, v := range c.Labels {
-			clone.Labels[k] = v
-		}
-	}
-	if c.Annotations != nil {
-		clone.Annotations = make(map[string]string, len(c.Annotations))
-		for k, v := range c.Annotations {
-			clone.Annotations[k] = v
-		}
-	}
+func (cs *ClusterState) Clone() ClusterState {
+	clone := *cs
 	return clone
 }
 
 // Clone creates a deep copy of State
 func (s *State) Clone() State {
 	c := State{
-		ProvisionerVersion: s.ProvisionerVersion,
-		StateFile:          s.StateFile,
-		LastSync:           s.LastSync,
+		ProvisionerState: s.ProvisionerState,
+		StateFile:        s.StateFile,
+		LastSync:         s.LastSync,
 	}
 
 	// MachineState

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -42,8 +42,8 @@ var (
 	FlagNodeType = FlagDefinition[string]{
 		Name:        "node-type",
 		ShortName:   "n",
-		Description: fmt.Sprintf("Type of node to deploy %s", []string{core.NodeTypeBlock, core.NodeTypeMirror, core.NodeTypeConsensus}),
-		Default:     core.NodeTypeBlock,
+		Description: fmt.Sprintf("Type of node to deploy %s", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
+		Default:     models.NodeTypeBlock,
 	}
 
 	FlagStopOnError = FlagDefinition[bool]{
@@ -70,7 +70,7 @@ var (
 	FlagProfile = FlagDefinition[string]{
 		Name:        "profile",
 		ShortName:   "p",
-		Description: fmt.Sprintf("Deployment profiles %s", core.AllProfiles()),
+		Description: fmt.Sprintf("Deployment profiles %s", models.AllProfiles()),
 		Default:     "",
 	}
 

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/stretchr/testify/require"
@@ -71,7 +70,7 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	// Check binary permissions
 	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/kubelet")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "kubelet binary should have executable permissions")
+	require.Equal(t, os.FileMode(models.DefaultDirOrExecPerm), info.Mode().Perm(), "kubelet binary should have executable permissions")
 
 	//
 	// When - Configure
@@ -221,7 +220,7 @@ func Test_KubeletInstaller_IsInstalled_False_WhenBinaryMissing(t *testing.T) {
 
 	// Install config files only by accessing the kubeletInstaller directly
 	ki := installer.(*kubeletInstaller)
-	err = ki.installConfig(filepath.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir))
+	err = ki.installConfig(filepath.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir))
 	require.NoError(t, err, "Failed to install kubelet configs")
 
 	//

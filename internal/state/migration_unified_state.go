@@ -18,8 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
 )
@@ -63,7 +63,7 @@ func (m *UnifiedStateMigration) Description() string { return m.description }
 // This checks for the existence of legacy state files (*.installed, *.configured)
 // that haven't been consolidated into state.yaml yet.
 func (m *UnifiedStateMigration) Applies(mctx *migration.Context) (bool, error) {
-	stateDir := core.Paths().StateDir
+	stateDir := models.Paths().StateDir
 
 	// Check if state directory exists
 	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
@@ -101,7 +101,7 @@ func findLegacyStateFiles(stateDir string) ([]string, error) {
 }
 
 func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-	stateDir := core.Paths().StateDir
+	stateDir := models.Paths().StateDir
 
 	// Check if state directory exists
 	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
@@ -178,7 +178,7 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 		return errorx.IllegalState.Wrap(err, "failed to marshal unified state")
 	}
 
-	if err := os.WriteFile(unifiedPath, data, core.DefaultFilePerm); err != nil {
+	if err := os.WriteFile(unifiedPath, data, models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write unified state file")
 	}
 
@@ -196,7 +196,7 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 }
 
 func (m *UnifiedStateMigration) Rollback(ctx context.Context, mctx *migration.Context) error {
-	stateDir := core.Paths().StateDir
+	stateDir := models.Paths().StateDir
 	unifiedPath := filepath.Join(stateDir, "state.yaml")
 
 	// Read unified state
@@ -218,14 +218,14 @@ func (m *UnifiedStateMigration) Rollback(ctx context.Context, mctx *migration.Co
 		if state.Installed != nil {
 			content := formatStateContent("installed", state.Installed.Version)
 			filePath := filepath.Join(stateDir, componentName+".installed")
-			if err := os.WriteFile(filePath, []byte(content), core.DefaultFilePerm); err != nil {
+			if err := os.WriteFile(filePath, []byte(content), models.DefaultFilePerm); err != nil {
 				return errorx.IllegalState.Wrap(err, "failed to restore %s.installed", componentName)
 			}
 		}
 		if state.Configured != nil {
 			content := formatStateContent("configured", state.Configured.Version)
 			filePath := filepath.Join(stateDir, componentName+".configured")
-			if err := os.WriteFile(filePath, []byte(content), core.DefaultFilePerm); err != nil {
+			if err := os.WriteFile(filePath, []byte(content), models.DefaultFilePerm); err != nil {
 				return errorx.IllegalState.Wrap(err, "failed to restore %s.configured", componentName)
 			}
 		}

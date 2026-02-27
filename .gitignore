@@ -376,3 +376,5 @@ integration-test.json
 pkg/version/VERSION
 pkg/version/COMMIT
 .aiassistant
+pkg/version/COMMIT
+pkg/version/VERSION

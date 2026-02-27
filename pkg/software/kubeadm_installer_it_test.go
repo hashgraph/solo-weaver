@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +57,7 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	// Check binary permissions (should be executable)
 	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/kubeadm")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "kubeadm binary should have 0755 permissions")
+	require.Equal(t, os.FileMode(models.DefaultDirOrExecPerm), info.Mode().Perm(), "kubeadm binary should have 0755 permissions")
 
 	// Verify config file is copied to sandbox kubelet service directory
 	_, exists, err = fileManager.PathExists("/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
@@ -104,12 +104,12 @@ func Test_KubeadmInstaller_FullWorkflow_Success(t *testing.T) {
 	// Verify kubelet path replacement in config file
 	configContent, err := os.ReadFile("/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
-	expectedKubeletPath := filepath.Join(core.Paths().SandboxBinDir, "kubelet")
+	expectedKubeletPath := filepath.Join(models.Paths().SandboxBinDir, "kubelet")
 	require.Contains(t, string(configContent), expectedKubeletPath, "config file should contain updated kubelet path")
 	require.NotContains(t, string(configContent), "/usr/bin/kubelet", "config file should not contain old kubelet path")
 
 	// Verify config file permissions
 	info, err = os.Stat("/opt/solo/weaver/sandbox/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultFilePerm), info.Mode().Perm(), "config file should have 0644 permissions")
+	require.Equal(t, os.FileMode(models.DefaultFilePerm), info.Mode().Perm(), "config file should have 0644 permissions")
 }

@@ -9,7 +9,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -201,7 +202,7 @@ func InitializeCluster() *automa.StepBuilder {
 			// Step 1: Pull kubeadm images
 			logx.As().Info().Msg("Pulling kubeadm images, this may take a while...")
 			pullImageCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/weaver/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(pullImageCmd, "")
@@ -212,7 +213,7 @@ func InitializeCluster() *automa.StepBuilder {
 
 			// Step 2: Initialize cluster with kubeadm
 			initCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(initCmd, "")
@@ -234,7 +235,7 @@ func InitializeCluster() *automa.StepBuilder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")
@@ -261,7 +262,7 @@ func ResetCluster() *automa.StepBuilder {
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")

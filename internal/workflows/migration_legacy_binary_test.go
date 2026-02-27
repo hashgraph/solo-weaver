@@ -41,14 +41,14 @@ func TestLegacyBinaryMigration_Applies(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Note: This test is limited because it uses the actual core.Paths().BinDir
+			// Note: This test is limited because it uses the actual models.Paths().BinDir
 			// A more complete test would mock the paths
 			mctx := &migration.Context{
 				Component: MigrationComponent,
 				Data:      &automa.SyncStateBag{},
 			}
 
-			// The actual Applies check uses core.Paths().BinDir which we can't easily mock here
+			// The actual Applies check uses models.Paths().BinDir which we can't easily mock here
 			// So we just verify the function returns without error
 			_, err := m.Applies(mctx)
 			assert.NoError(t, err)
@@ -71,7 +71,7 @@ func TestLegacyBinaryMigration_Execute(t *testing.T) {
 	_, err = os.Stat(legacyPath)
 	require.NoError(t, err)
 
-	// Note: We can't fully test Execute without mocking core.Paths()
+	// Note: We can't fully test Execute without mocking models.Paths()
 	// This is a placeholder for when proper mocking is implemented
 	m := NewLegacyBinaryMigration()
 	assert.Equal(t, "remove-legacy-weaver-binary", m.ID())

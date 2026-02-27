@@ -1,37 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+package state
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"gopkg.in/yaml.v3"
 )
-
-// TestNewStateManager_Default ensures a manager can be created with defaults.
-func TestNewStateManager_Default(t *testing.T) {
-	m, err := NewStateManager()
-	if err != nil {
-		t.Fatalf("NewStateManager returned error: %v", err)
-	}
-	if m == nil {
-		t.Fatal("expected non-nil StateManager")
-	}
-	if m.State() == nil {
-		t.Fatal("expected State() to return non-nil state")
-	}
-}
 
 // TestFlushWritesFile checks that Flush writes the YAML representation to disk.
 func TestFlushWritesFile(t *testing.T) {
 	tmp := filepath.Join(os.TempDir(), "sw_state_flush_test.yaml")
 	t.Cleanup(func() { _ = os.Remove(tmp) })
 
-	s := NewState()
+	s := models.NewState()
 	s.StateFile = tmp
-	s.DataModelVersion = "v1-test-flush"
+	s.Version = "v1-test-flush"
 
 	m, err := NewStateManager(WithState(s))
 	if err != nil {
@@ -42,19 +29,18 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("Flush returned error: %v", err)
 	}
 
-	// Verify file exists and contains YAML with expected DataModelVersion
 	data, err := os.ReadFile(tmp)
 	if err != nil {
 		t.Fatalf("failed to read persisted file: %v", err)
 	}
 
-	var loaded State
+	var loaded models.State
 	if err := yaml.Unmarshal(data, &loaded); err != nil {
 		t.Fatalf("failed to unmarshal persisted YAML: %v", err)
 	}
 
-	if loaded.DataModelVersion != "v1-test-flush" {
-		t.Fatalf("unexpected DataModelVersion in persisted state: got %q want %q", loaded.DataModelVersion, "v1-test-flush")
+	if loaded.Version != "v1-test-flush" {
+		t.Fatalf("unexpected Version in persisted state: got %q want %q", loaded.Version, "v1-test-flush")
 	}
 }
 
@@ -64,9 +50,9 @@ func TestRefreshLoadsFile(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(tmp) })
 
 	// create a state on disk
-	onDisk := NewState()
+	onDisk := models.NewState()
 	onDisk.StateFile = tmp
-	onDisk.DataModelVersion = "v2-test-refresh"
+	onDisk.Version = "v2-test-refresh"
 
 	b, err := yaml.Marshal(onDisk)
 	if err != nil {
@@ -77,9 +63,9 @@ func TestRefreshLoadsFile(t *testing.T) {
 	}
 
 	// Create a manager with a different in-memory state, pointing to same file
-	mem := NewState()
+	mem := models.NewState()
 	mem.StateFile = tmp
-	mem.DataModelVersion = "before-refresh"
+	mem.Version = "before-refresh"
 
 	m, err := NewStateManager(WithState(mem))
 	if err != nil {
@@ -90,8 +76,8 @@ func TestRefreshLoadsFile(t *testing.T) {
 		t.Fatalf("Refresh returned error: %v", err)
 	}
 
-	if got := m.State().DataModelVersion; got != "v2-test-refresh" {
-		t.Fatalf("Refresh did not update state DataModelVersion: got %q want %q", got, "v2-test-refresh")
+	if got := m.State().Version; got != "v2-test-refresh" {
+		t.Fatalf("Refresh did not update state Version: got %q want %q", got, "v2-test-refresh")
 	}
 }
 
@@ -105,7 +91,7 @@ func TestHasPersistedState(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	s := NewState()
+	s := models.NewState()
 	s.StateFile = tmp
 
 	m, err := NewStateManager(WithState(s))

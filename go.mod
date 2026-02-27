@@ -4,6 +4,7 @@ go 1.25.2
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/automa-saga/automa v0.9.0
 	github.com/automa-saga/logx v0.1.0
 	github.com/bluet/syspkg v0.1.6
@@ -30,7 +31,6 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect

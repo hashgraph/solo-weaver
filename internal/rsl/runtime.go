@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -17,7 +17,7 @@ const DefaultRefreshTimeout = 60 * time.Second
 // T must not be a pointer type.
 type Base[T any] struct {
 	mu              sync.Mutex
-	cfg             core.Config
+	cfg             models.Config
 	current         T
 	refreshInterval time.Duration
 
@@ -33,7 +33,7 @@ type Base[T any] struct {
 
 // NewRuntimeBase constructs a runtimeBase for a given initial value and helpers.
 func NewRuntimeBase[T any](
-	cfg core.Config,
+	cfg models.Config,
 	initial T,
 	refreshInterval time.Duration,
 	fetch func(context.Context) (T, error),

@@ -9,11 +9,12 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
 )
@@ -21,20 +22,20 @@ import (
 var blockNodeIntentHandlerSingleton *BlockNodeIntentHandler
 
 type BlockNodeIntentHandler struct {
-	conf core.BlockNodeConfig
-	sm   core.StateManager
+	conf models.BlockNodeConfig
+	sm   state.DefaultStateManager
 }
 
 // prepareRuntimeState validates the intent, user inputs, and refreshes the block node state before processing further.
 func (b BlockNodeIntentHandler) prepareRuntimeState(
-	intent core.Intent,
-	inputs core.UserInputs[core.BlocknodeInputs]) (*core.Intent, *core.UserInputs[core.BlocknodeInputs], error) {
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs]) (*models.Intent, *models.UserInputs[models.BlocknodeInputs], error) {
 	// Basic validation of intent
 	if !intent.IsValid() {
 		return nil, nil, errorx.IllegalArgument.New("invalid intent: %v", intent)
 	}
 
-	if intent.Target != core.TargetBlocknode {
+	if intent.Target != models.TargetBlocknode {
 		return nil, nil, errorx.IllegalArgument.New("invalid intent target: %s", intent.Target)
 	}
 
@@ -73,7 +74,7 @@ func (b BlockNodeIntentHandler) prepareRuntimeState(
 
 // prepareEffectiveUserInputsForInstall determines the effective user inputs based on current runtime state and provided inputs.
 func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
-	inputs *core.UserInputs[core.BlocknodeInputs]) (*core.UserInputs[core.BlocknodeInputs], error) {
+	inputs *models.UserInputs[models.BlocknodeInputs]) (*models.UserInputs[models.BlocknodeInputs], error) {
 
 	if inputs == nil {
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
@@ -177,9 +178,9 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 			WithProperty(doctor.ErrPropertyResolution, "use `weaver block-node upgrade` to upgrade the block node deployment")
 	}
 
-	effectiveUserInputs := core.UserInputs[core.BlocknodeInputs]{
+	effectiveUserInputs := models.UserInputs[models.BlocknodeInputs]{
 		Common: inputs.Common,
-		Custom: core.BlocknodeInputs{
+		Custom: models.BlocknodeInputs{
 			Profile:      inputs.Custom.Profile,
 			Release:      effReleaseName.Get().Val(),
 			Version:      effVersion.Get().Val(),
@@ -203,8 +204,8 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 // Returns the workflow builder and any error encountered.
 // It is better to use HandleIntent() which also refreshes the block node state after execution.
 func (b BlockNodeIntentHandler) prepareWorkflow(
-	intent core.Intent,
-	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.WorkflowBuilder, *core.UserInputs[core.BlocknodeInputs], error) {
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs]) (*automa.WorkflowBuilder, *models.UserInputs[models.BlocknodeInputs], error) {
 	validatedIntent, validatedInputs, err := b.prepareRuntimeState(intent, inputs)
 	if err != nil {
 		return nil, nil, err
@@ -229,7 +230,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 	var wb *automa.WorkflowBuilder
 	blockNodeInputs := effectiveUserInputs.Custom // make a copy for readability
 	switch validatedIntent.Action {
-	case core.ActionInstall:
+	case models.ActionInstall:
 		if blockNodeState.ReleaseInfo.Status == release.StatusDeployed && inputs.Common.Force != true {
 			return nil, nil, errorx.IllegalState.New("block node is already installed; cannot install again").
 				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node reset' or 'weaver block-node upgrade' to reset or upgrade respectively or use --force to attempt to continue")
@@ -243,12 +244,12 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 			)
 		} else {
 			wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-				workflows.InstallClusterWorkflow(core.NodeTypeBlock, blockNodeInputs.Profile, blockNodeInputs.SkipHardwareChecks),
+				workflows.InstallClusterWorkflow(models.NodeTypeBlock, blockNodeInputs.Profile, blockNodeInputs.SkipHardwareChecks),
 				steps.SetupBlockNode(blockNodeInputs),
 			)
 		}
 		return wb, effectiveUserInputs, nil
-	case core.ActionReset:
+	case models.ActionReset:
 		if blockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil, nil, errorx.IllegalState.New("block node is not installed; cannot reset").
 				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node install' to install the block node")
@@ -258,7 +259,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 			steps.ResetBlockNode(blockNodeInputs),
 		)
 		return wb, effectiveUserInputs, nil
-	case core.ActionUpgrade:
+	case models.ActionUpgrade:
 		if blockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil, nil, errorx.IllegalState.New("block node is not installed; cannot upgrade").
 				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node install' to install the block node")
@@ -295,7 +296,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 			)
 		}
 		return wb, effectiveUserInputs, nil
-	case core.ActionUninstall:
+	case models.ActionUninstall:
 		if blockNodeState.ReleaseInfo.Status != release.StatusDeployed && inputs.Common.Force != true {
 			return nil, nil, errorx.IllegalState.New("block node is not installed; cannot uninstall").
 				WithProperty(doctor.ErrPropertyResolution, "use 'solo-provisioner block-node install' to install the block node or use --force to attempt to continue")
@@ -319,7 +320,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 }
 
 // flushState flush current block node state into disk and refresh the state from disk.
-func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInputs *core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
+func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInputs *models.UserInputs[models.BlocknodeInputs]) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
@@ -385,8 +386,8 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, effectiveInput
 // It also refreshes the block node state after successful execution.
 // Returns the workflow report and any error encountered.
 func (b BlockNodeIntentHandler) HandleIntent(
-	intent core.Intent,
-	inputs core.UserInputs[core.BlocknodeInputs]) (*automa.Report, error) {
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs]) (*automa.Report, error) {
 	wb, effectiveInputs, err := b.prepareWorkflow(intent, inputs)
 	if err != nil {
 		return nil, err
@@ -409,8 +410,8 @@ func (b BlockNodeIntentHandler) HandleIntent(
 // NewBlockNodeIntentHandler initializes a BlockNodeIntentHandler with the provided configuration, state manager, and options.
 // Returns the created BlockNodeIntentHandler or an error if any validation or initialization fails during setup.
 func NewBlockNodeIntentHandler(
-	conf core.BlockNodeConfig,
-	sm core.StateManager,
+	conf models.BlockNodeConfig,
+	sm state.DefaultStateManager,
 	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
 	bn := &BlockNodeIntentHandler{conf: conf, sm: sm}
 
@@ -428,8 +429,8 @@ func NewBlockNodeIntentHandler(
 // Accepts block node configuration, state manager, and optional configuration options.
 // Returns the initialized BlockNodeIntentHandler instance or an error if initialization fails.
 func InitBlockNodeIntentHandler(
-	conf core.BlockNodeConfig,
-	sm core.StateManager,
+	conf models.BlockNodeConfig,
+	sm state.DefaultStateManager,
 	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
 	if blockNodeIntentHandlerSingleton != nil {
 		return blockNodeIntentHandlerSingleton, nil

@@ -1,4 +1,6 @@
-package core
+// SPDX-License-Identifier: Apache-2.0
+
+package models
 
 type ActionType string
 
