@@ -330,14 +330,12 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, intent models.
 		return report, nil
 	}
 
-	// add intent history to state
-	var blockNodeInputs models.BlocknodeInputs
-	blockNodeInputs = effectiveInputs.Custom // make a copy for readability
-	inputsMap := map[string]any{
-		"common":          effectiveInputs.Common.ToMap(),
-		"blockNodeInputs": blockNodeInputs.ToMap(),
-	}
-	b.sm.AddIntent(intent, inputsMap)
+	// add action history item to state manager; pass effectiveInputs directly so the
+	// YAML encoder uses the struct's own field tags instead of a hand-rolled map.
+	b.sm.AddActionHistory(state.ActionHistory{
+		Intent: intent,
+		Inputs: effectiveInputs,
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()

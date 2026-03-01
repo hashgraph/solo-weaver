@@ -25,17 +25,6 @@ type CommonInputs struct {
 	ExecutionOptions WorkflowExecutionOptions
 }
 
-func (c *CommonInputs) ToMap() map[string]any {
-	return map[string]any{
-		"force":    c.Force,
-		"nodeType": c.NodeType,
-		"executionOptions": map[string]any{
-			"executionMode": c.ExecutionOptions.ExecutionMode,
-			"rollbackMode":  c.ExecutionOptions.RollbackMode,
-		},
-	}
-}
-
 type BlocknodeInputs struct {
 	Profile            string
 	Version            string
@@ -49,23 +38,6 @@ type BlocknodeInputs struct {
 	ReuseValues        bool
 	ResetStorage       bool
 	SkipHardwareChecks bool
-}
-
-func (b *BlocknodeInputs) ToMap() map[string]any {
-	return map[string]any{
-		"profile":            b.Profile,
-		"version":            b.Version,
-		"namespace":          b.Namespace,
-		"release":            b.Release,
-		"chart":              b.Chart,
-		"chartName":          b.ChartName,
-		"chartVersion":       b.ChartVersion,
-		"storage":            b.Storage.ToMap(),
-		"valuesFile":         b.ValuesFile,
-		"reuseValues":        boolToString(b.ReuseValues),
-		"resetStorage":       boolToString(b.ResetStorage),
-		"skipHardwareChecks": boolToString(b.SkipHardwareChecks),
-	}
 }
 
 func boolToString(b bool) string {

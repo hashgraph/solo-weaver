@@ -9,7 +9,6 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
-	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -71,7 +70,7 @@ var (
 		Name:        "profile",
 		ShortName:   "p",
 		Description: fmt.Sprintf("Deployment profiles %s", models.AllProfiles()),
-		Default:     "",
+		Default:     models.ProfileLocal,
 	}
 
 	FlagValuesFile = FlagDefinition[string]{
@@ -408,30 +407,6 @@ func ExtractRootFlags(cmd *cobra.Command, args []string, parentFlags *ParentCmdF
 	parentFlags.SkipHardwareChecks, err = FlagSkipHardwareChecks.Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get skip-hardware-checks flag")
-	}
-
-	return nil
-}
-
-func ExtractBlockNodeParentFlags(cmd *cobra.Command, args []string, parentFlags *ParentCmdFlags) error {
-	var err error
-
-	// extract common flags set in the root command
-	err = ExtractRootFlags(cmd, args, parentFlags)
-	if err != nil {
-		return err
-	}
-
-	// extract the profile flag set in the block node command
-	parentFlags.Profile, err = FlagProfile.Value(cmd, args)
-	if err != nil {
-		return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
-	}
-
-	// Validate profile early for better error messages
-	if parentFlags.Profile != "" && !hardware.IsValidProfile(parentFlags.Profile) {
-		return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-			parentFlags.Profile, hardware.SupportedProfiles())
 	}
 
 	return nil

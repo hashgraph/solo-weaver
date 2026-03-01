@@ -22,14 +22,14 @@ type State struct {
 	MachineState     MachineState    `yaml:"machineState" json:"machineState"`
 	ClusterState     ClusterState    `yaml:"clusterState" json:"clusterState"`
 	BlockNodeState   BlockNodeState  `yaml:"blockNodeState" json:"blockNodeState"`
-	IntentHistory    []IntentHistory `yaml:"intentHistory,omitempty" json:"intentHistory,omitempty"` // history of executed intents, this is informational only and does not impact any functionality
-	LastSync         htime.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`           // last time state was sy
+	LastAction       ActionHistory   `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
+	LastSync         htime.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`     // last time state was sy
 }
 
-type IntentHistory struct {
-	Intent    models.Intent  `yaml:"intent" json:"intent"` // e.g. "weaver block node init"
-	Inputs    map[string]any `yaml:"inputs" json:"inputs"` // inputs used for this intent
-	Timestamp htime.Time     `yaml:"timestamp" json:"timestamp"`
+type ActionHistory struct {
+	Intent    models.Intent `yaml:"intent" json:"intent"` // e.g. "weaver block node init"
+	Inputs    any           `yaml:"inputs" json:"inputs"` // inputs used for this intent; any marshallable value is accepted (e.g. models.UserInputs[T])
+	Timestamp htime.Time    `yaml:"timestamp" json:"timestamp"`
 }
 
 type ProvisionerInfo struct {
