@@ -85,6 +85,9 @@ type Manager interface {
 	// Caller should ensure payload is not too big such that ReadFile cannot read it because of the file size limit.
 	WriteFile(path string, payload []byte) error
 
+	// AppendToFile appends payload to a file. If the file does not exist, it will be created.
+	AppendToFile(path string, payload []byte) error
+
 	// RemoveAll removes the path and its contents
 	// It is a wrapper of os.RemoveAll. This interface exists to help us mock the functionality during tests.
 	RemoveAll(path string) error

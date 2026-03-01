@@ -35,20 +35,6 @@ type BlockNodeStorage struct {
 	PluginsSize      string `yaml:"pluginsSize" json:"pluginsSize"`
 }
 
-func (b *BlockNodeStorage) ToMap() map[string]string {
-	return map[string]string{
-		"basePath":         b.BasePath,
-		"archivePath":      b.ArchivePath,
-		"livePath":         b.LivePath,
-		"logPath":          b.LogPath,
-		"verificationPath": b.VerificationPath,
-		"liveSize":         b.LiveSize,
-		"archiveSize":      b.ArchiveSize,
-		"logSize":          b.LogSize,
-		"verificationSize": b.VerificationSize,
-	}
-}
-
 // IsEmpty returns true when all BlockNodeStorage fields are empty (after trimming).
 func (b *BlockNodeStorage) IsEmpty() bool {
 	return strings.TrimSpace(b.BasePath) == "" &&

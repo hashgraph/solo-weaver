@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -71,13 +72,41 @@ func initializeExecutionFlags(resetCmd *cobra.Command) {
 	common.FlagContinueOnError.SetVarP(resetCmd, &flagContinueOnError, false)
 }
 
+func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, parentFlags *common.ParentCmdFlags) error {
+	var err error
+
+	// extract common flags set in the root command
+	err = common.ExtractRootFlags(cmd, args, parentFlags)
+	if err != nil {
+		return err
+	}
+
+	// extract the profile flag set in the block node command
+	parentFlags.Profile, err = common.FlagProfile.Value(cmd, args)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+	}
+
+	if parentFlags.Profile == "" {
+		return errorx.IllegalArgument.New("profile flag is required")
+	}
+
+	// Validate profile early for better error messages
+	if parentFlags.Profile != "" && !hardware.IsValidProfile(parentFlags.Profile) {
+		return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
+			parentFlags.Profile, hardware.SupportedProfiles())
+	}
+
+	return nil
+}
+
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
 func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlocknodeInputs], error) {
 	var err error
 
 	// extract shared flags set in the parent commands
 	var parentFlags common.ParentCmdFlags
-	err = common.ExtractBlockNodeParentFlags(cmd, args, &parentFlags)
+	err = extractBlockNodeParentFlags(cmd, args, &parentFlags)
 	if err != nil {
 		return nil, err
 	}
