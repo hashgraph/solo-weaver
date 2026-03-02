@@ -23,7 +23,7 @@ This command will:
 
 WARNING: This operation is destructive and cannot be undone. All block data will be lost.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := initializeDependencies(cmd.Context())
+		err := initializeDependencies()
 		if err != nil {
 			return err
 		}
@@ -43,7 +43,7 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			Any("inputs", inputs).
 			Msg("Resetting Hedera Block Node")
 
-		report, err := blockNodeHandler.HandleIntent(intent, *inputs)
+		report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
 		if err != nil {
 			return err
 		}

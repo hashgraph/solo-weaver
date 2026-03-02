@@ -3,11 +3,9 @@
 package node
 
 import (
-	"context"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
@@ -20,11 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// blockNodeHandler is the per-command instance of BlockNodeIntentHandler, wired in
+// blockNodeHandler is the per-command instance of blocknode.Handler, wired in
 // initializeDependencies. It replaces the old package-level bll singleton.
-var blockNodeHandler *bll.BlockNodeIntentHandler
+var blockNodeHandler *blocknode.Handler
 
-func initializeDependencies(ctx context.Context) error {
+func initializeDependencies() error {
 	conf := config.Get()
 	if err := conf.Validate(); err != nil {
 		return errorx.IllegalState.Wrap(err, "invalid configuration")
@@ -55,7 +53,7 @@ func initializeDependencies(ctx context.Context) error {
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.
 	// sm satisfies both state.Reader and state.Writer — pass it for both roles.
-	blockNodeHandler, err = bll.NewBlockNodeIntentHandler(conf.BlockNode, sm, sm, registry)
+	blockNodeHandler, err = blocknode.NewHandler(sm, sm, registry)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise block-node intent handler")
 	}

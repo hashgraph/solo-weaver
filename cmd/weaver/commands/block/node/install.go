@@ -16,7 +16,7 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := initializeDependencies(cmd.Context())
+		err := initializeDependencies()
 		if err != nil {
 			return err
 		}
@@ -36,7 +36,7 @@ var installCmd = &cobra.Command{
 			Any("inputs", inputs).
 			Msg("Installing Hedera Block Node")
 
-		report, err := blockNodeHandler.HandleIntent(intent, *inputs)
+		report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
 		if err != nil {
 			return err
 		}

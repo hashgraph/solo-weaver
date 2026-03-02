@@ -337,3 +337,81 @@ func TestField_SelectionError_PropagatesBeforeValidation(t *testing.T) {
 	assert.Contains(t, err.Error(), "selection failed")
 	assert.False(t, called, "validator must not run when selection errors")
 }
+
+// ── RequiresExplicitOverride ──────────────────────────────────────────────────
+
+func TestRequiresExplicitOverride_NoInput_NeverFires(t *testing.T) {
+	// User did not supply a value — guard must not fire regardless of force.
+	def := mustVal(t, "v1.0.0")
+	ev, err := resolver.WithFunc[string](def, nil, "v1.0.0",
+		func() bool { return true }, nil, nil)
+	require.NoError(t, err)
+
+	validate := resolver.RequiresExplicitOverride[string]("version", false, true, "use upgrade")
+	assert.NoError(t, validate(ev))
+}
+
+func TestRequiresExplicitOverride_HasInput_StrategyUserInput_NeverFires(t *testing.T) {
+	// User input won the selection — this is the intended override path, must pass.
+	def := mustVal(t, "v1.0.0")
+	user := mustVal(t, "v2.0.0")
+	ev, err := resolver.WithFunc[string](def, user, "",
+		func() bool { return false }, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, automa.StrategyUserInput, ev.Strategy())
+
+	validate := resolver.RequiresExplicitOverride[string]("version", true, true, "use upgrade")
+	assert.NoError(t, validate(ev))
+}
+
+func TestRequiresExplicitOverride_HasInput_CurrentWon_Force_Fires(t *testing.T) {
+	// Current state won (deployed), user also provided input, force=true → reject.
+	def := mustVal(t, "v1.0.0")
+	user := mustVal(t, "v2.0.0")
+	ev, err := resolver.WithFunc[string](def, user, "v0.9.0",
+		func() bool { return true }, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, automa.StrategyCurrent, ev.Strategy())
+
+	validate := resolver.RequiresExplicitOverride[string]("version", true, true, "use upgrade")
+	err = validate(ev)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "version")
+	assert.Contains(t, err.Error(), "cannot override")
+}
+
+func TestRequiresExplicitOverride_HasInput_CurrentWon_NoForce_NeverFires(t *testing.T) {
+	// Current state won but force=false — guard must stay silent.
+	def := mustVal(t, "v1.0.0")
+	user := mustVal(t, "v2.0.0")
+	ev, err := resolver.WithFunc[string](def, user, "v0.9.0",
+		func() bool { return true }, nil, nil)
+	require.NoError(t, err)
+
+	validate := resolver.RequiresExplicitOverride[string]("version", true, false, "use upgrade")
+	assert.NoError(t, validate(ev))
+}
+
+// ── OverrideHint ──────────────────────────────────────────────────────────────
+
+func TestOverrideHint_Present(t *testing.T) {
+	def := mustVal(t, "v1.0.0")
+	user := mustVal(t, "v2.0.0")
+	ev, err := resolver.WithFunc[string](def, user, "v0.9.0",
+		func() bool { return true }, nil, nil)
+	require.NoError(t, err)
+
+	validate := resolver.RequiresExplicitOverride[string]("version", true, true, "use upgrade")
+	verr := validate(ev)
+	require.Error(t, verr)
+
+	hint, ok := resolver.OverrideHint(verr)
+	assert.True(t, ok)
+	assert.Equal(t, "use upgrade", hint)
+}
+
+func TestOverrideHint_Absent(t *testing.T) {
+	plain := errorx.IllegalArgument.New("no hint attached")
+	_, ok := resolver.OverrideHint(plain)
+	assert.False(t, ok)
+}
