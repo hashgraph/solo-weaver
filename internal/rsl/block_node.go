@@ -6,6 +6,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/reality"
+	"github.com/hashgraph/solo-weaver/internal/resolver"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -220,7 +221,7 @@ func (br *BlockNodeRuntimeState) initNamespaceRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.Namespace, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.Namespace, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -247,7 +248,7 @@ func (br *BlockNodeRuntimeState) initStorageRuntime() error {
 				current := br.current
 				br.mu.Unlock()
 
-				eff, err2 := resolveEffectiveWithFunc[models.BlockNodeStorage](
+				eff, err2 := resolver.WithFunc[models.BlockNodeStorage](
 					defaultVal,
 					userInput,
 					current.Storage,
@@ -290,7 +291,7 @@ func (br *BlockNodeRuntimeState) initVersionRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.Version, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.Version, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -316,7 +317,7 @@ func (br *BlockNodeRuntimeState) initReleaseNameRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.Name, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.Name, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -342,7 +343,7 @@ func (br *BlockNodeRuntimeState) initChartNameRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartName, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.ChartName, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -368,7 +369,7 @@ func (br *BlockNodeRuntimeState) initChartRepoRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartRef, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.ChartRef, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
@@ -394,7 +395,7 @@ func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolveEffective[string](defaultVal, userInput, current.ReleaseInfo.ChartVersion, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.ChartVersion, current.ReleaseInfo.Status, true)
 			},
 		),
 	)
