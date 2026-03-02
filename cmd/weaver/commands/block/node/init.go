@@ -6,11 +6,11 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -53,7 +53,7 @@ func initializeDependencies() error {
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.
 	// sm satisfies both state.Reader and state.Writer — pass it for both roles.
-	blockNodeHandler, err = blocknode.NewHandler(sm, registry)
+	blockNodeHandler, err = blocknode.NewHandler(sm, registry, realityChecker)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise block-node intent handler")
 	}

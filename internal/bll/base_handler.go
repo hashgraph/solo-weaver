@@ -14,6 +14,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -23,8 +24,8 @@ import (
 
 // ── ActionHandler ─────────────────────────────────────────────────────────────
 
-// ActionHandler[I] is the contract every per-action, per-node-type handler must
-// satisfy.  I is the node-specific inputs struct (e.g. models.BlocknodeInputs).
+// ActionHandler is the contract every per-action, per-node-type handler must
+// satisfy.  [I any] is the node-specific inputs struct (e.g. models.BlocknodeInputs).
 //
 // Splitting at this boundary means:
 //   - Each handler is independently unit-testable with zero routing boilerplate.
@@ -49,7 +50,8 @@ type ActionHandler[I any] interface {
 // ── NodeHandlerBase ───────────────────────────────────────────────────────────
 
 // NodeHandlerBase holds the three dependencies that every node-type handler
-// needs: a StateManager for reading and writing state, and the rsl Registry.
+// needs: a StateManager for reading and writing state, the rsl Registry, and
+// the reality Checker for live machine-state queries.
 //
 // Embed this struct in any concrete handler to inherit RefreshRuntimeState and
 // FlushNodeState without re-implementing them.
@@ -64,18 +66,22 @@ type ActionHandler[I any] interface {
 type NodeHandlerBase struct {
 	StateManager state.Manager
 	RSL          *rsl.Registry
+	Checker      reality.Checker // Reality checker is required for live refreshes during FlushNodeState
 }
 
-// NewNodeHandlerBase validates the two required dependencies and returns a
-// populated NodeHandlerBase.  Both fields are required; any nil returns an error.
-func NewNodeHandlerBase(sm state.Manager, reg *rsl.Registry) (NodeHandlerBase, error) {
+// NewNodeHandlerBase validates the required dependencies and returns a
+// populated NodeHandlerBase.  All fields are required; any nil returns an error.
+func NewNodeHandlerBase(sm state.Manager, reg *rsl.Registry, checker reality.Checker) (NodeHandlerBase, error) {
 	if sm == nil {
 		return NodeHandlerBase{}, errorx.IllegalArgument.New("state.Manager cannot be nil")
 	}
 	if reg == nil {
 		return NodeHandlerBase{}, errorx.IllegalArgument.New("rsl.Registry cannot be nil")
 	}
-	return NodeHandlerBase{StateManager: sm, RSL: reg}, nil
+	if checker == nil {
+		return NodeHandlerBase{}, errorx.IllegalArgument.New("reality.Checker cannot be nil")
+	}
+	return NodeHandlerBase{StateManager: sm, RSL: reg, Checker: checker}, nil
 }
 
 // RefreshRuntimeState pushes user inputs into rsl then force-refreshes cluster
@@ -110,6 +116,13 @@ func (b NodeHandlerBase) RefreshRuntimeState(
 }
 
 // FlushNodeState is the exported generic flush used by all node handlers.
+// It performs three live refreshes before persisting:
+//  1. ClusterState  — via RSL.Cluster.RefreshState  (Helm / k8s queries)
+//  2. Target node state — via RSL.BlockNode.RefreshState (Helm release info)
+//  3. MachineState  — via Checker.MachineState (binary presence + sidecar files)
+//
+// All three are written into the full State before the single Flush() call,
+// so state.yaml always reflects reality after every workflow execution.
 func FlushNodeState[I any](
 	base NodeHandlerBase,
 	report *automa.Report,
@@ -138,6 +151,7 @@ func FlushNodeState[I any](
 		Inputs: effectiveInputs,
 	})
 
+	// ── 1. Refresh ClusterState ───────────────────────────────────────────────
 	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
 	if base.RSL.Cluster == nil {
@@ -147,6 +161,7 @@ func FlushNodeState[I any](
 		return nil, errorx.IllegalState.New("failed to refresh cluster state after workflow: %v", err)
 	}
 
+	// ── 2. Refresh target node state ─────────────────────────────────────────
 	cancel()
 	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
@@ -163,6 +178,21 @@ func FlushNodeState[I any](
 		return nil, errorx.IllegalArgument.New("unsupported target type for post-workflow refresh: %s", intent.Target)
 	}
 
+	// ── 3. Refresh MachineState (software + hardware) ─────────────────────────
+	// This must run after the node-state refresh so that any binary placements
+	// made by the workflow steps are visible to the filesystem stat check inside
+	// refreshSoftwareState.  We do NOT treat a MachineState refresh error as
+	// fatal — a stale MachineState is preferable to losing the whole flush.
+	cancel()
+	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
+	defer cancel()
+
+	machineState, machineErr := base.Checker.MachineState(ctx)
+	if machineErr != nil {
+		logx.As().Warn().Err(machineErr).Msg("failed to refresh MachineState before flush; persisting stale machine state")
+	}
+
+	// ── Assemble full state ───────────────────────────────────────────────────
 	clusterState, err := base.RSL.Cluster.CurrentState()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to read cluster state after workflow: %v", err)
@@ -170,6 +200,9 @@ func FlushNodeState[I any](
 
 	fullState := base.StateManager.State()
 	fullState.ClusterState = clusterState
+	if machineErr == nil {
+		fullState.MachineState = machineState
+	}
 
 	if patchState != nil {
 		if err = patchState(&fullState); err != nil {

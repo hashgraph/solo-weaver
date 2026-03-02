@@ -2,17 +2,13 @@
 
 package bll
 
-// base_handler_test.go tests the shared FlushNodeState infrastructure.
-//
-// stubStateManager satisfies state.StateManager without any I/O, giving tests
-// full read+write access through a single stub — matching the production design
-// where one StateManager instance is passed throughout the bll layer.
-
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
@@ -52,6 +48,22 @@ func (s *stubStateManager) AddActionHistory(entry state.ActionHistory) state.Wri
 func (s *stubStateManager) Refresh() error           { return nil }
 func (s *stubStateManager) FileManager() fsx.Manager { return nil }
 
+// ── stub reality checker ──────────────────────────────────────────────────────
+
+type stubChecker struct{}
+
+var _ reality.Checker = (*stubChecker)(nil)
+
+func (s *stubChecker) ClusterState(_ context.Context) (state.ClusterState, error) {
+	return state.NewClusterState(), nil
+}
+func (s *stubChecker) MachineState(_ context.Context) (state.MachineState, error) {
+	return state.NewMachineState(), nil
+}
+func (s *stubChecker) BlockNodeState(_ context.Context) (state.BlockNodeState, error) {
+	return state.NewBlockNodeState(), nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func newStubSM() *stubStateManager { return newStubStateManager() }
@@ -60,6 +72,7 @@ func newBaseWithStubs(sm *stubStateManager) NodeHandlerBase {
 	return NodeHandlerBase{
 		StateManager: sm,
 		RSL:          &rsl.Registry{}, // nil sub-fields trigger a controlled error on refresh
+		Checker:      &stubChecker{},
 	}
 }
 
@@ -206,7 +219,7 @@ func TestFlushNodeState_SuccessReport_UpdatesLastActionInState(t *testing.T) {
 // TestNewNodeHandlerBase_NilDependencies verifies that nil dependencies are
 // rejected at construction time rather than causing a nil-pointer panic later.
 func TestNewNodeHandlerBase_NilStateManager(t *testing.T) {
-	_, err := NewNodeHandlerBase(nil, &rsl.Registry{})
+	_, err := NewNodeHandlerBase(nil, &rsl.Registry{}, &stubChecker{})
 	if err == nil {
 		t.Fatal("expected error for nil state.Manager")
 	}
@@ -214,19 +227,27 @@ func TestNewNodeHandlerBase_NilStateManager(t *testing.T) {
 
 func TestNewNodeHandlerBase_NilRegistry(t *testing.T) {
 	sm := newStubSM()
-	_, err := NewNodeHandlerBase(sm, nil)
+	_, err := NewNodeHandlerBase(sm, nil, &stubChecker{})
 	if err == nil {
 		t.Fatal("expected error for nil registry")
 	}
 }
 
+func TestNewNodeHandlerBase_NilChecker(t *testing.T) {
+	sm := newStubSM()
+	_, err := NewNodeHandlerBase(sm, &rsl.Registry{}, nil)
+	if err == nil {
+		t.Fatal("expected error for nil reality.Checker")
+	}
+}
+
 func TestNewNodeHandlerBase_AllValid(t *testing.T) {
 	sm := newStubSM()
-	base, err := NewNodeHandlerBase(sm, &rsl.Registry{})
+	base, err := NewNodeHandlerBase(sm, &rsl.Registry{}, &stubChecker{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if base.StateManager == nil || base.RSL == nil {
+	if base.StateManager == nil || base.RSL == nil || base.Checker == nil {
 		t.Fatal("expected all fields to be set")
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -38,9 +39,10 @@ type Handler struct {
 func NewHandler(
 	sm state.Manager,
 	registry *rsl.Registry,
+	checker reality.Checker,
 	opts ...bll.Option[Handler],
 ) (*Handler, error) {
-	base, err := bll.NewNodeHandlerBase(sm, registry)
+	base, err := bll.NewNodeHandlerBase(sm, registry, checker)
 	if err != nil {
 		return nil, err
 	}

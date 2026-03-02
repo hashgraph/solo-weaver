@@ -89,6 +89,7 @@ func RunStateMigrations(ctx context.Context) error {
 		return err
 	}
 	if migrationWf == nil {
+		logx.As().Debug().Msg("No state migrations needed")
 		return nil // nothing to migrate
 	}
 
