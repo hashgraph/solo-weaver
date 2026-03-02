@@ -54,7 +54,8 @@ func initializeDependencies(ctx context.Context) error {
 	}
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.
-	blockNodeHandler, err = bll.NewBlockNodeIntentHandler(conf.BlockNode, sm, registry)
+	// sm satisfies both state.Reader and state.Writer — pass it for both roles.
+	blockNodeHandler, err = bll.NewBlockNodeIntentHandler(conf.BlockNode, sm, sm, registry)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise block-node intent handler")
 	}
