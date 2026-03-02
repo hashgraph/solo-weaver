@@ -206,30 +206,95 @@ func (br *BlockNodeRuntimeState) setStorageInput(s models.BlockNodeStorage) erro
 	return nil
 }
 
-func (br *BlockNodeRuntimeState) initNamespaceRuntime() error {
-	var err error
-
-	br.namespace, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.Namespace,
+// initStringField is a shared factory for any string-typed RuntimeValue whose
+// resolution follows the standard ForStatus priority rule.
+//
+//   - defaultVal  – config value (e.g. cfg.BlockNode.Namespace).
+//   - currentFn   – extracts the current deployed value from the snapshot.
+//
+// The resulting RuntimeValue selects: StrategyCurrent when deployed,
+// StrategyUserInput when the user supplied a non-empty string, StrategyConfig
+// otherwise.  All per-field validation (immutability, force-override guards)
+// is applied at the BLL layer via resolver.Field after the value is read.
+func (br *BlockNodeRuntimeState) initStringField(
+	defaultVal string,
+	currentFn func(s state.BlockNodeState) string,
+) (*automa.RuntimeValue[string], error) {
+	return automa.NewRuntime[string](
+		defaultVal,
 		automa.WithEffectiveFunc(
 			func(
-				ctx context.Context,
-				defaultVal automa.Value[string],
-				userInput automa.Value[string],
+				_ context.Context,
+				def automa.Value[string],
+				user automa.Value[string],
 			) (*automa.EffectiveValue[string], bool, error) {
-				// snapshot current under lock to avoid data races
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
-				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.Namespace, current.ReleaseInfo.Status, true)
+				return resolver.ForStatus[string](def, user, currentFn(current), current.ReleaseInfo.Status, true)
 			},
 		),
 	)
+}
 
-	if err != nil {
-		return err
-	}
-	return nil
+func (br *BlockNodeRuntimeState) initNamespaceRuntime() error {
+	var err error
+
+	br.namespace, err = br.initStringField(
+		br.cfg.BlockNode.Namespace,
+		func(s state.BlockNodeState) string { return s.ReleaseInfo.Namespace },
+	)
+	return err
+}
+
+func (br *BlockNodeRuntimeState) initVersionRuntime() error {
+	var err error
+
+	br.version, err = br.initStringField(
+		br.cfg.BlockNode.Version,
+		func(s state.BlockNodeState) string { return s.ReleaseInfo.Version },
+	)
+	return err
+}
+
+func (br *BlockNodeRuntimeState) initReleaseNameRuntime() error {
+	var err error
+
+	br.releaseName, err = br.initStringField(
+		br.cfg.BlockNode.Release,
+		func(s state.BlockNodeState) string { return s.ReleaseInfo.Name },
+	)
+	return err
+}
+
+func (br *BlockNodeRuntimeState) initChartNameRuntime() error {
+	var err error
+
+	br.chartName, err = br.initStringField(
+		br.cfg.BlockNode.ChartName,
+		func(s state.BlockNodeState) string { return s.ReleaseInfo.ChartName },
+	)
+	return err
+}
+
+func (br *BlockNodeRuntimeState) initChartRepoRuntime() error {
+	var err error
+
+	br.chartRepo, err = br.initStringField(
+		br.cfg.BlockNode.Chart,
+		func(s state.BlockNodeState) string { return s.ReleaseInfo.ChartRef },
+	)
+	return err
+}
+
+func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
+	var err error
+
+	br.chartVersion, err = br.initStringField(
+		br.cfg.BlockNode.ChartVersion,
+		func(s state.BlockNodeState) string { return s.ReleaseInfo.ChartVersion },
+	)
+	return err
 }
 
 func (br *BlockNodeRuntimeState) initStorageRuntime() error {
@@ -239,11 +304,10 @@ func (br *BlockNodeRuntimeState) initStorageRuntime() error {
 		br.cfg.BlockNode.Storage,
 		automa.WithEffectiveFunc(
 			func(
-				ctx context.Context,
+				_ context.Context,
 				defaultVal automa.Value[models.BlockNodeStorage],
 				userInput automa.Value[models.BlockNodeStorage],
 			) (*automa.EffectiveValue[models.BlockNodeStorage], bool, error) {
-				// snapshot current under lock to avoid data races
 				br.mu.Lock()
 				current := br.current
 				br.mu.Unlock()
@@ -252,158 +316,18 @@ func (br *BlockNodeRuntimeState) initStorageRuntime() error {
 					defaultVal,
 					userInput,
 					current.Storage,
-					func() bool {
-						return current.ReleaseInfo.Status == release.StatusDeployed
-					},
+					func() bool { return current.ReleaseInfo.Status == release.StatusDeployed },
 					nil,
-					func(v models.BlockNodeStorage) bool {
-						return v.IsEmpty()
-					},
+					func(v models.BlockNodeStorage) bool { return v.IsEmpty() },
 				)
-
 				if err2 != nil {
 					return nil, false, err2
 				}
-
 				return eff, true, nil
 			},
 		),
 	)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (br *BlockNodeRuntimeState) initVersionRuntime() error {
-	var err error
-
-	br.version, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.Version,
-		automa.WithEffectiveFunc(
-			func(
-				ctx context.Context,
-				defaultVal automa.Value[string],
-				userInput automa.Value[string],
-			) (*automa.EffectiveValue[string], bool, error) {
-				// snapshot current under lock to avoid data races
-				br.mu.Lock()
-				current := br.current
-				br.mu.Unlock()
-				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.Version, current.ReleaseInfo.Status, true)
-			},
-		),
-	)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (br *BlockNodeRuntimeState) initReleaseNameRuntime() error {
-	var err error
-
-	br.releaseName, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.Release,
-		automa.WithEffectiveFunc(
-			func(
-				ctx context.Context,
-				defaultVal automa.Value[string],
-				userInput automa.Value[string],
-			) (*automa.EffectiveValue[string], bool, error) {
-				// snapshot current under lock to avoid data races
-				br.mu.Lock()
-				current := br.current
-				br.mu.Unlock()
-				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.Name, current.ReleaseInfo.Status, true)
-			},
-		),
-	)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (br *BlockNodeRuntimeState) initChartNameRuntime() error {
-	var err error
-
-	br.chartName, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.ChartName,
-		automa.WithEffectiveFunc(
-			func(
-				ctx context.Context,
-				defaultVal automa.Value[string],
-				userInput automa.Value[string],
-			) (*automa.EffectiveValue[string], bool, error) {
-				// snapshot current under lock to avoid data races
-				br.mu.Lock()
-				current := br.current
-				br.mu.Unlock()
-				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.ChartName, current.ReleaseInfo.Status, true)
-			},
-		),
-	)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (br *BlockNodeRuntimeState) initChartRepoRuntime() error {
-	var err error
-
-	br.chartRepo, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.Chart,
-		automa.WithEffectiveFunc(
-			func(
-				ctx context.Context,
-				defaultVal automa.Value[string],
-				userInput automa.Value[string],
-			) (*automa.EffectiveValue[string], bool, error) {
-				// snapshot current under lock to avoid data races
-				br.mu.Lock()
-				current := br.current
-				br.mu.Unlock()
-				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.ChartRef, current.ReleaseInfo.Status, true)
-			},
-		),
-	)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
-	var err error
-
-	br.chartVersion, err = automa.NewRuntime[string](
-		br.cfg.BlockNode.ChartVersion,
-		automa.WithEffectiveFunc(
-			func(
-				ctx context.Context,
-				defaultVal automa.Value[string],
-				userInput automa.Value[string],
-			) (*automa.EffectiveValue[string], bool, error) {
-				// snapshot current under lock to avoid data races
-				br.mu.Lock()
-				current := br.current
-				br.mu.Unlock()
-				return resolver.ForStatus[string](defaultVal, userInput, current.ReleaseInfo.ChartVersion, current.ReleaseInfo.Status, true)
-			},
-		),
-	)
-
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // NewBlockNodeRuntime creates and returns a fully initialised BlockNodeRuntimeState.

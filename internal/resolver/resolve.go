@@ -134,6 +134,57 @@ func ImmutableOnDeploy[T any](fieldName string) Validator[T] {
 	}
 }
 
+// RequiresExplicitOverride returns a Validator that rejects a force-override
+// attempt when the value was resolved from the current deployed state.
+//
+// Use this for fields that CAN be changed (e.g. via an upgrade command) but
+// must not be silently overridden during a plain install.  The caller supplies:
+//
+//   - fieldName  – human-readable name used in error messages.
+//   - hasInput   – true when the user actually provided a value for this field.
+//   - force      – whether the --force flag was set.
+//   - hint       – the remediation hint shown to the operator.
+//
+// The validator fires only when all three conditions hold:
+//  1. The user provided a value (hasInput).
+//  2. The winning strategy is NOT StrategyUserInput (i.e. current state won).
+//  3. The --force flag is set.
+//
+// This mirrors the repetitive guard pattern that previously lived in
+// prepareEffectiveUserInputsForInstall, co-locating the constraint with the
+// resolution step rather than scattering it across the BLL.
+func RequiresExplicitOverride[T any](fieldName string, hasInput bool, force bool, hint string) Validator[T] {
+	return func(ev *automa.EffectiveValue[T]) error {
+		if hasInput && ev.Strategy() != automa.StrategyUserInput && force {
+			err := errorx.IllegalState.New(
+				"field %q is already set to an existing value; cannot override with --force during install",
+				fieldName,
+			)
+			if hint != "" {
+				err = err.WithProperty(overrideHintProperty, hint)
+			}
+			return err
+		}
+		return nil
+	}
+}
+
+// overrideHintProperty is the errorx property key used to attach remediation
+// hints to RequiresExplicitOverride errors.  Callers can retrieve it with
+// errorx.Property.
+var overrideHintProperty = errorx.RegisterProperty("resolver.override_hint")
+
+// OverrideHint extracts the remediation hint from an error returned by
+// RequiresExplicitOverride, if present.
+func OverrideHint(err error) (string, bool) {
+	v, ok := errorx.ExtractProperty(err, overrideHintProperty)
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok
+}
+
 // ── Field — selection + validation composed ───────────────────────────────────
 
 // Field combines a selection function with zero or more Validators into a

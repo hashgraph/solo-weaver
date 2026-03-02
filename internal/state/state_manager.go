@@ -26,12 +26,17 @@ type Reader interface {
 // Writer is the mutation-only view of managed application state.
 // Consumers that record side-effects (e.g. the BLL after a workflow run) should
 // depend on this narrow interface so that their dependencies are explicit.
+//
+// Set and AddActionHistory return Writer (not DefaultStateManager) so that
+// callers depending only on Writer can chain calls without importing the full
+// DefaultStateManager type.
 type Writer interface {
-	// Set replaces the entire in-memory state and returns the manager for chaining.
-	Set(s State) DefaultStateManager
+	// Set replaces the entire in-memory state and returns the Writer for chaining.
+	Set(s State) Writer
 	// AddActionHistory appends an entry to the pending action log and updates
 	// State.LastAction. Entries are flushed to disk on the next Flush() call.
-	AddActionHistory(entry ActionHistory) DefaultStateManager
+	// Returns the Writer for chaining.
+	AddActionHistory(entry ActionHistory) Writer
 	// Flush persists the current state and any pending action history to disk.
 	Flush() error
 }
@@ -107,13 +112,20 @@ func NewStateManager(opts ...ManagerOption) (DefaultStateManager, error) {
 	return m, nil
 }
 
-// State returns the current state (thread-safe for read operations)
+// State returns a copy of the current in-memory state (thread-safe).
+// Returns a value copy so callers cannot mutate the manager's internals
+// through the returned value.
 func (m *stateManager) State() State {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.state
 }
 
-// Set sets the current state (thread-safe for write operations)
-func (m *stateManager) Set(s State) DefaultStateManager {
+// Set replaces the entire in-memory state (thread-safe) and returns the Writer
+// for chaining.
+func (m *stateManager) Set(s State) Writer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.state = s
 	return m
 }
@@ -123,29 +135,36 @@ func (m *stateManager) FileManager() fsx.Manager {
 	return m.fm
 }
 
-// Flush persists the current state to disk with write lock
+// Flush persists the current state to disk.
+// It captures the in-memory state and pending actions under the lock, then
+// performs all I/O outside the lock so that State() and Set() are not blocked
+// during the (potentially slow) disk write.
 func (m *stateManager) Flush() error {
+	// Capture state and pending actions under lock, then release before I/O.
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.state.LastSync = htime.Now()
+	snapshot := m.state
+	pendingActions := make([]ActionHistory, len(m.actions))
+	copy(pendingActions, m.actions)
+	m.actions = []ActionHistory{} // clear in-memory buffer while still holding the lock
+	m.mu.Unlock()
 
-	b, err := yaml.Marshal(m.state)
+	b, err := yaml.Marshal(snapshot)
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to marshal state to YAML")
 	}
 
-	err = m.fm.WriteFile(m.state.StateFile, b)
+	err = m.fm.WriteFile(snapshot.StateFile, b)
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to write state file to %s", m.state.StateFile)
+		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
 	}
 
 	// Append each pending action history entry as its own YAML document so that we
 	// never need to load the full history file into memory.  Each entry is prefixed
 	// with the standard YAML document-start marker ("---") which makes the file a
 	// valid stream of independent YAML documents that can be decoded incrementally.
-	actionHistoryFile := filepath.Join(filepath.Dir(m.state.StateFile), "action_history.yaml")
-	for _, entry := range m.actions {
+	actionHistoryFile := filepath.Join(filepath.Dir(snapshot.StateFile), "action_history.yaml")
+	for _, entry := range pendingActions {
 		entryBytes, marshalErr := yaml.Marshal(entry)
 		if marshalErr != nil {
 			return errorx.InternalError.Wrap(marshalErr, "failed to marshal action history entry to YAML")
@@ -158,7 +177,6 @@ func (m *stateManager) Flush() error {
 		}
 	}
 
-	m.actions = []ActionHistory{} // clear in-memory intents after flushing to disk
 	return nil
 }
 
@@ -188,15 +206,20 @@ func (m *stateManager) Refresh() error {
 
 // HasPersistedState checks if the state file exists on disk
 func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
-	return m.fm.PathExists(m.state.StateFile)
+	m.mu.Lock()
+	stateFile := m.state.StateFile
+	m.mu.Unlock()
+	return m.fm.PathExists(stateFile)
 }
 
 // AddActionHistory adds an entry to the in-memory action history and updates the last action in the state.
 // The action history is flushed to disk as part of the Flush() operation, and is stored in a separate history file to
 // avoid unbounded growth of the main state file.
 // The timestamp of the entry is set to the current time when adding to history to ensure consistency.
-func (m *stateManager) AddActionHistory(entry ActionHistory) DefaultStateManager {
+func (m *stateManager) AddActionHistory(entry ActionHistory) Writer {
 	entry.Timestamp = htime.Now() // force the timestamp to be set to the current time when adding to history to ensure consistency
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.actions = append(m.actions, entry)
 	m.state.LastAction = entry
 	return m

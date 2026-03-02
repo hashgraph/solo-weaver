@@ -20,7 +20,7 @@ var (
 		Short: "Upgrade a Hedera Block Node",
 		Long:  "Upgrade an existing Hedera Block Node deployment with new configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := initializeDependencies(cmd.Context())
+			err := initializeDependencies()
 			if err != nil {
 				return err
 			}
@@ -58,7 +58,7 @@ var (
 				Any("inputs", inputs).
 				Msg("Uninstalling Hedera Block Node")
 
-			report, err := blockNodeHandler.HandleIntent(intent, *inputs)
+			report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
 			if err != nil {
 				return err
 			}
