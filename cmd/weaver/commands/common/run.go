@@ -11,6 +11,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -72,6 +73,36 @@ func RunGlobalChecks(cmd *cobra.Command, args []string) error {
 		doctor.CheckReportErr(ctx, report)
 	}
 
+	// Run any pending state migrations before any command executes.
+	if err := RunStateMigrations(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RunStateMigrations runs any applicable state migrations.
+// It is a no-op when no legacy state files exist.
+func RunStateMigrations(ctx context.Context) error {
+	migrationWf, err := state.BuildMigrationWorkflow()
+	if err != nil {
+		return err
+	}
+	if migrationWf == nil {
+		return nil // nothing to migrate
+	}
+
+	wf, err := migrationWf.Build()
+	if err != nil {
+		return err
+	}
+
+	logx.As().Info().Msg("Running state migrations...")
+	report := wf.Execute(ctx)
+	if report.Error != nil {
+		return report.Error
+	}
+	logx.As().Info().Msg("State migrations completed successfully")
 	return nil
 }
 
