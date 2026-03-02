@@ -16,6 +16,7 @@ func AllProfiles() []string {
 		ProfileLocal,
 		ProfilePerfnet,
 		ProfileTestnet,
+		ProfilePreviewnet,
 		ProfileMainnet,
 	}
 }

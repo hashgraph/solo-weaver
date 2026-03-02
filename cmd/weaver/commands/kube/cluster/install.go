@@ -5,7 +5,8 @@ package cluster
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/joomcode/errorx"
@@ -57,7 +58,17 @@ var installCmd = &cobra.Command{
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
 		}
-		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile, skipHardwareChecks), opts)
+
+		sm, err := state.NewStateManager()
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to initialise state manager")
+		}
+
+		if err = sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+			return errorx.IllegalState.Wrap(err, "failed to refresh state from disk")
+		}
+
+		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile, skipHardwareChecks, sm), opts)
 		common.RunWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")

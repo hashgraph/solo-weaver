@@ -50,11 +50,11 @@ type Persister interface {
 	FileManager() fsx.Manager
 }
 
-// DefaultStateManager defines the interface for managing the application state with IO operations.
+// Manager defines the interface for managing the application state with IO operations.
 // It is just a thin wrapper around State with added thread-safe disk persistence & refresh operations.
 // However, the State itself is not thread-safe for mutations since State is a data model.
 // It composes Reader, Writer and Persister so existing callers need no changes.
-type DefaultStateManager interface {
+type Manager interface {
 	Reader
 	Writer
 	Persister
@@ -87,9 +87,9 @@ func WithState(s State) ManagerOption {
 	}
 }
 
-// NewStateManager creates a DefaultStateManager with the provided options.
+// NewStateManager creates a Manager with the provided options.
 // Caller must call Refresh() to load the persisted state from disk before accessing the state.
-func NewStateManager(opts ...ManagerOption) (DefaultStateManager, error) {
+func NewStateManager(opts ...ManagerOption) (Manager, error) {
 	m := &stateManager{
 		state:   NewState(),
 		actions: []ActionHistory{},

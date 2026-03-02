@@ -6,7 +6,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"

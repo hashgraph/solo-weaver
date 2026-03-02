@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -81,7 +80,7 @@ func (ti *teleportNodeAgentInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ti.GetStateManager().RecordState(ti.GetSoftwareName(), state.TypeInstalled, ti.Version())
+	_ = ti.recordInstalled()
 
 	return nil
 }
@@ -95,7 +94,7 @@ func (ti *teleportNodeAgentInstaller) Uninstall() error {
 	}
 
 	// Remove recorded installed state
-	_ = ti.GetStateManager().RemoveState(ti.GetSoftwareName(), state.TypeInstalled)
+	_ = ti.clearInstalled()
 
 	return nil
 }
@@ -148,7 +147,7 @@ func (ti *teleportNodeAgentInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ti.GetStateManager().RecordState(ti.GetSoftwareName(), state.TypeConfigured, ti.Version())
+	_ = ti.recordConfigured()
 
 	return nil
 }
@@ -174,7 +173,7 @@ func (ti *teleportNodeAgentInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove recorded configured state
-	_ = ti.GetStateManager().RemoveState(ti.GetSoftwareName(), state.TypeConfigured)
+	_ = ti.clearConfigured()
 
 	return nil
 }

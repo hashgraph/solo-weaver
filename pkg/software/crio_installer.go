@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/tomlx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -237,7 +236,7 @@ func (ci *crioInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeInstalled, ci.Version())
+	_ = ci.recordInstalled()
 
 	return nil
 }
@@ -341,7 +340,7 @@ func (ci *crioInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeConfigured, ci.Version())
+	_ = ci.recordConfigured()
 
 	return nil
 }
@@ -540,7 +539,7 @@ func (ci *crioInstaller) Uninstall() error {
 	}
 
 	// Remove installed state
-	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeInstalled)
+	_ = ci.clearInstalled()
 
 	return nil
 }
@@ -570,7 +569,7 @@ func (ci *crioInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove configured state
-	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeConfigured)
+	_ = ci.clearConfigured()
 
 	return nil
 }

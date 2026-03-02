@@ -34,14 +34,13 @@ type Handler struct {
 }
 
 // NewHandler constructs a Handler with all four action handlers wired up.
-// All three of stateReader, stateWriter, and registry are required.
+// sm is required and must be pre-loaded via Refresh() by the caller.
 func NewHandler(
-	stateReader state.Reader,
-	stateWriter state.Writer,
+	sm state.Manager,
 	registry *rsl.Registry,
 	opts ...bll.Option[Handler],
 ) (*Handler, error) {
-	base, err := bll.NewNodeHandlerBase(stateReader, stateWriter, registry)
+	base, err := bll.NewNodeHandlerBase(sm, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +48,7 @@ func NewHandler(
 	acc := registryAccessor{bn: registry.BlockNode}
 	h := &Handler{
 		NodeHandlerBase: base,
-		install:         newInstallHandler(acc),
+		install:         newInstallHandler(acc, sm),
 		upgrade:         newUpgradeHandler(acc),
 		reset:           newResetHandler(acc),
 		uninstall:       newUninstallHandler(acc),

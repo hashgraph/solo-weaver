@@ -13,7 +13,7 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-const ModelVersion = "v1" // State model version, increment this if there are breaking changes to the state structure that would require migration
+const ModelVersion = "v1" // State model version — increment on breaking changes requiring migration
 
 type State struct {
 	Version          string          `yaml:"version" json:"version"`
@@ -46,14 +46,12 @@ type MachineState struct {
 }
 
 type SoftwareState struct {
-	Name        string            `yaml:"name" json:"name"`
-	Type        string            `yaml:"type" json:"type"` // e.g. "binary", "container", "script"
-	Version     string            `yaml:"version" json:"version"`
-	Source      string            `yaml:"source" json:"source"`
-	Installed   bool              `yaml:"installed" json:"installed"`
-	InstalledAt htime.Time        `yaml:"installedAt,omitempty" json:"installedAt,omitempty"`
-	Metadata    map[string]string `yaml:"meta,omitempty" json:"meta,omitempty"`
-	LastSync    htime.Time        `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Name       string            `yaml:"name" json:"name"`
+	Version    string            `yaml:"version" json:"version"`
+	Installed  bool              `yaml:"installed" json:"installed"`
+	Configured bool              `yaml:"configured" json:"configured"`
+	Metadata   map[string]string `yaml:"meta,omitempty" json:"meta,omitempty"`
+	LastSync   htime.Time        `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type HardwareState struct {

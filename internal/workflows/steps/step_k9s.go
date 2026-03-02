@@ -6,16 +6,17 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupK9s() *automa.WorkflowBuilder {
+func SetupK9s(sm state.Manager) *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("setup-k9s").
 		Steps(
-			installK9s(software.NewK9sInstaller),
-			configureK9s(software.NewK9sInstaller),
+			installK9s(software.NewK9sInstaller, sm),
+			configureK9s(software.NewK9sInstaller, sm),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up K9s")
@@ -29,7 +30,7 @@ func SetupK9s() *automa.WorkflowBuilder {
 		})
 }
 
-func installK9s(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installK9s(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-k9s").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Installing K9s")
@@ -42,7 +43,7 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 			notify.As().StepCompletion(ctx, stp, rpt, "K9s installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -93,7 +94,7 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 				return automa.SkippedReport(stp, automa.WithDetail("K9s was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -109,7 +110,7 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 		})
 }
 
-func configureK9s(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureK9s(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-k9s").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Configuring K9s")
@@ -122,7 +123,7 @@ func configureK9s(provider func(opts ...software.InstallerOption) (software.Soft
 			notify.As().StepCompletion(ctx, stp, rpt, "K9s configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -156,7 +157,7 @@ func configureK9s(provider func(opts ...software.InstallerOption) (software.Soft
 				return automa.SkippedReport(stp, automa.WithDetail("K9s was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

@@ -4,13 +4,20 @@ package state
 
 // Clone creates a deep copy of SoftwareState
 func (s *SoftwareState) Clone() SoftwareState {
+	var meta map[string]string
+	if s.Metadata != nil {
+		meta = make(map[string]string, len(s.Metadata))
+		for k, v := range s.Metadata {
+			meta[k] = v
+		}
+	}
 	return SoftwareState{
-		Name:        s.Name,
-		Version:     s.Version,
-		Source:      s.Source,
-		Installed:   s.Installed,
-		InstalledAt: s.InstalledAt,
-		LastSync:    s.LastSync,
+		Name:       s.Name,
+		Version:    s.Version,
+		Installed:  s.Installed,
+		Configured: s.Configured,
+		Metadata:   meta,
+		LastSync:   s.LastSync,
 	}
 }
 

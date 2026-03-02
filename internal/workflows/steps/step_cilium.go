@@ -10,14 +10,15 @@ import (
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupCilium() *automa.WorkflowBuilder {
+func SetupCilium(sm state.Manager) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-cilium-cli").Steps(
-		installCilium(software.NewCiliumInstaller),
-		configureCilium(software.NewCiliumInstaller),
+		installCilium(software.NewCiliumInstaller, sm),
+		configureCilium(software.NewCiliumInstaller, sm),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up Cilium")
@@ -31,7 +32,7 @@ func SetupCilium() *automa.WorkflowBuilder {
 		})
 }
 
-func installCilium(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installCilium(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-cilium-cli").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Installing Cilium CLI")
@@ -44,7 +45,7 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -95,7 +96,7 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CLI was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -111,7 +112,7 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 		})
 }
 
-func configureCilium(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureCilium(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-cilium-cli").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Configuring Cilium CLI")
@@ -124,7 +125,7 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -158,7 +159,7 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CLI was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

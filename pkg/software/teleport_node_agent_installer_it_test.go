@@ -257,9 +257,7 @@ func Test_TeleportNodeAgentInstaller_StateManagement(t *testing.T) {
 	//
 	installer, err := NewTeleportNodeAgentInstaller()
 	require.NoError(t, err)
-
-	stateManager := installer.GetStateManager()
-	require.NotNil(t, stateManager)
+	require.NotNil(t, installer)
 
 	//
 	// When - Install

@@ -18,10 +18,11 @@ import (
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
 	base rslAccessor
+	sm   state.Manager
 }
 
-func newInstallHandler(base rslAccessor) *InstallHandler {
-	return &InstallHandler{base: base}
+func newInstallHandler(base rslAccessor, sm state.Manager) *InstallHandler {
+	return &InstallHandler{base: base, sm: sm}
 }
 
 // PrepareEffectiveInputs resolves the winning value for every block-node field.
@@ -169,7 +170,7 @@ func (h *InstallHandler) BuildWorkflow(
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(
-				installClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks),
+				installClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks, h.sm),
 				setupBlockNode(ins),
 			)
 	}

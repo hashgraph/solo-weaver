@@ -5,7 +5,6 @@ package software
 import (
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -49,7 +48,7 @@ func (ki *kubeletInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeInstalled, ki.Version())
+	_ = ki.recordInstalled()
 
 	return nil
 }
@@ -70,7 +69,7 @@ func (ki *kubeletInstaller) Uninstall() error {
 	}
 
 	// Remove recorded installed state
-	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeInstalled)
+	_ = ki.clearInstalled()
 
 	return nil
 }
@@ -98,7 +97,7 @@ func (ki *kubeletInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeConfigured, ki.Version())
+	_ = ki.recordConfigured()
 
 	return nil
 }
@@ -119,7 +118,7 @@ func (ki *kubeletInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove recorded configured state
-	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeConfigured)
+	_ = ki.clearConfigured()
 
 	return nil
 }

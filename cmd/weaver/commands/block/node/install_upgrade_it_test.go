@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"

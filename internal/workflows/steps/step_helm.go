@@ -6,16 +6,17 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupHelm() *automa.WorkflowBuilder {
+func SetupHelm(sm state.Manager) *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("setup-helm").
 		Steps(
-			installHelm(software.NewHelmInstaller),
-			configureHelm(software.NewHelmInstaller),
+			installHelm(software.NewHelmInstaller, sm),
+			configureHelm(software.NewHelmInstaller, sm),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up Helm")
@@ -29,7 +30,7 @@ func SetupHelm() *automa.WorkflowBuilder {
 		})
 }
 
-func installHelm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installHelm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-helm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Installing Helm")
@@ -42,7 +43,7 @@ func installHelm(provider func(opts ...software.InstallerOption) (software.Softw
 			notify.As().StepCompletion(ctx, stp, rpt, "Helm installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -93,7 +94,7 @@ func installHelm(provider func(opts ...software.InstallerOption) (software.Softw
 				return automa.SkippedReport(stp, automa.WithDetail("Helm was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -109,7 +110,7 @@ func installHelm(provider func(opts ...software.InstallerOption) (software.Softw
 		})
 }
 
-func configureHelm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureHelm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-helm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Configuring Helm")
@@ -122,7 +123,7 @@ func configureHelm(provider func(opts ...software.InstallerOption) (software.Sof
 			notify.As().StepCompletion(ctx, stp, rpt, "Helm configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -156,7 +157,7 @@ func configureHelm(provider func(opts ...software.InstallerOption) (software.Sof
 				return automa.SkippedReport(stp, automa.WithDetail("Helm was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

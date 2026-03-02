@@ -49,10 +49,10 @@ type ActionHandler[I any] interface {
 // ── NodeHandlerBase ───────────────────────────────────────────────────────────
 
 // NodeHandlerBase holds the three dependencies that every node-type handler
-// needs: read access to state, write access to state, and the rsl Registry.
+// needs: a StateManager for reading and writing state, and the rsl Registry.
 //
-// Embed this struct in any concrete handler to inherit refreshRuntimeState and
-// flushNodeState without re-implementing them.
+// Embed this struct in any concrete handler to inherit RefreshRuntimeState and
+// FlushNodeState without re-implementing them.
 //
 //	type BlockNodeHandler struct {
 //	    NodeHandlerBase
@@ -62,25 +62,20 @@ type ActionHandler[I any] interface {
 //	    uninstall *BlockNodeUninstallHandler
 //	}
 type NodeHandlerBase struct {
-	StateReader state.Reader
-	StateWriter state.Writer
-	RSL         *rsl.Registry
+	StateManager state.Manager
+	RSL          *rsl.Registry
 }
 
-// NewNodeHandlerBase validates the three required dependencies and returns a
-// populated NodeHandlerBase.  All three fields are required; any nil returns
-// an error.
-func NewNodeHandlerBase(r state.Reader, w state.Writer, reg *rsl.Registry) (NodeHandlerBase, error) {
-	if r == nil {
-		return NodeHandlerBase{}, errorx.IllegalArgument.New("state.Reader cannot be nil")
-	}
-	if w == nil {
-		return NodeHandlerBase{}, errorx.IllegalArgument.New("state.Writer cannot be nil")
+// NewNodeHandlerBase validates the two required dependencies and returns a
+// populated NodeHandlerBase.  Both fields are required; any nil returns an error.
+func NewNodeHandlerBase(sm state.Manager, reg *rsl.Registry) (NodeHandlerBase, error) {
+	if sm == nil {
+		return NodeHandlerBase{}, errorx.IllegalArgument.New("state.Manager cannot be nil")
 	}
 	if reg == nil {
 		return NodeHandlerBase{}, errorx.IllegalArgument.New("rsl.Registry cannot be nil")
 	}
-	return NodeHandlerBase{StateReader: r, StateWriter: w, RSL: reg}, nil
+	return NodeHandlerBase{StateManager: sm, RSL: reg}, nil
 }
 
 // RefreshRuntimeState pushes user inputs into rsl then force-refreshes cluster
@@ -138,13 +133,16 @@ func FlushNodeState[I any](
 		return report, nil
 	}
 
-	base.StateWriter.AddActionHistory(state.ActionHistory{
+	base.StateManager.AddActionHistory(state.ActionHistory{
 		Intent: intent,
 		Inputs: effectiveInputs,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
+	if base.RSL.Cluster == nil {
+		return nil, errorx.IllegalState.New("rsl cluster runtime is not initialized")
+	}
 	if err := base.RSL.Cluster.RefreshState(ctx, true); err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh cluster state after workflow: %v", err)
 	}
@@ -155,6 +153,9 @@ func FlushNodeState[I any](
 
 	switch intent.Target {
 	case models.TargetBlocknode:
+		if base.RSL.BlockNode == nil {
+			return nil, errorx.IllegalState.New("rsl block node runtime is not initialized")
+		}
 		if err := base.RSL.BlockNode.RefreshState(ctx, true); err != nil {
 			return nil, errorx.IllegalState.New("failed to refresh block node state after workflow: %v", err)
 		}
@@ -167,7 +168,7 @@ func FlushNodeState[I any](
 		return nil, errorx.IllegalState.New("failed to read cluster state after workflow: %v", err)
 	}
 
-	fullState := base.StateReader.State()
+	fullState := base.StateManager.State()
 	fullState.ClusterState = clusterState
 
 	if patchState != nil {
@@ -176,7 +177,7 @@ func FlushNodeState[I any](
 		}
 	}
 
-	if err = base.StateWriter.Set(fullState).Flush(); err != nil {
+	if err = base.StateManager.Set(fullState).Flush(); err != nil {
 		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
 	}
 

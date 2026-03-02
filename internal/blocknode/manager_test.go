@@ -5,7 +5,8 @@ package blocknode
 import (
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"

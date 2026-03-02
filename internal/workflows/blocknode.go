@@ -4,6 +4,7 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
@@ -14,9 +15,9 @@ func NewBlockNodePreflightCheckWorkflow(profile string) *automa.WorkflowBuilder 
 }
 
 // NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node
-func NewBlockNodeInstallWorkflow(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+func NewBlockNodeInstallWorkflow(inputs models.BlocknodeInputs, sm state.Manager) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-		InstallClusterWorkflow(models.NodeTypeBlock, inputs.Profile, inputs.SkipHardwareChecks),
+		InstallClusterWorkflow(models.NodeTypeBlock, inputs.Profile, inputs.SkipHardwareChecks, sm),
 		steps.SetupBlockNode(inputs),
 	)
 }

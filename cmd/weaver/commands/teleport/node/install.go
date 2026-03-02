@@ -5,7 +5,8 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -49,8 +50,17 @@ var installCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Installing Teleport node agent")
 
+		sm, err := state.NewStateManager()
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to initialise state manager")
+		}
+
+		if err = sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+			return errorx.IllegalState.Wrap(err, "failed to refresh state from disk")
+		}
+
 		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewTeleportNodeAgentInstallWorkflow(), opts)
+			workflows.NewTeleportNodeAgentInstallWorkflow(sm), opts)
 
 		common.RunWorkflow(cmd.Context(), wb)
 

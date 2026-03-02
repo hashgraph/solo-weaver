@@ -10,7 +10,6 @@ import (
 	"path"
 
 	"github.com/hashgraph/solo-weaver/internal/network"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -55,7 +54,7 @@ func (ki *kubeadmInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeInstalled, ki.Version())
+	_ = ki.recordInstalled()
 
 	return nil
 }
@@ -87,7 +86,7 @@ func (ki *kubeadmInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeConfigured, ki.Version())
+	_ = ki.recordConfigured()
 
 	return nil
 }
@@ -108,7 +107,7 @@ func (ki *kubeadmInstaller) Uninstall() error {
 	}
 
 	// Remove installed state
-	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeInstalled)
+	_ = ki.clearInstalled()
 
 	return nil
 }
@@ -136,7 +135,7 @@ func (ki *kubeadmInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove configured state
-	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeConfigured)
+	_ = ki.clearConfigured()
 
 	return nil
 }

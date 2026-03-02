@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/hashgraph/solo-weaver/pkg/version"

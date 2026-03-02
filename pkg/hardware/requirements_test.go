@@ -4,6 +4,8 @@ package hardware
 
 import (
 	"testing"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 func TestRequirementsRegistry(t *testing.T) {
