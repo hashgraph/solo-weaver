@@ -111,7 +111,7 @@ func TestHandlerFor_ReturnsCorrectHandlerType(t *testing.T) {
 // ── InstallHandler.BuildWorkflow ──────────────────────────────────────────────
 
 func TestInstallHandler_BuildWorkflow_AlreadyDeployed_WithoutForce_Errors(t *testing.T) {
-	h := newInstallHandler(nil) // rslAccessor not called by BuildWorkflow
+	h := newInstallHandler(nil, nil) // rslAccessor not called by BuildWorkflow
 	inputs := defaultUserInputs()
 
 	_, err := h.BuildWorkflow(deployedNodeState(), emptyClusterState(), inputs)
@@ -121,7 +121,7 @@ func TestInstallHandler_BuildWorkflow_AlreadyDeployed_WithoutForce_Errors(t *tes
 }
 
 func TestInstallHandler_BuildWorkflow_AlreadyDeployed_WithForce_Succeeds(t *testing.T) {
-	h := newInstallHandler(nil)
+	h := newInstallHandler(nil, nil)
 	inputs := defaultUserInputs()
 	inputs.Common.Force = true
 
@@ -135,7 +135,7 @@ func TestInstallHandler_BuildWorkflow_AlreadyDeployed_WithForce_Succeeds(t *test
 }
 
 func TestInstallHandler_BuildWorkflow_NotDeployed_ClusterExists_Succeeds(t *testing.T) {
-	h := newInstallHandler(nil)
+	h := newInstallHandler(nil, nil)
 	wb, err := h.BuildWorkflow(notDeployedNodeState(), createdClusterState(), defaultUserInputs())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -146,7 +146,7 @@ func TestInstallHandler_BuildWorkflow_NotDeployed_ClusterExists_Succeeds(t *test
 }
 
 func TestInstallHandler_BuildWorkflow_NotDeployed_ClusterNotExists_Succeeds(t *testing.T) {
-	h := newInstallHandler(nil)
+	h := newInstallHandler(nil, nil)
 	wb, err := h.BuildWorkflow(notDeployedNodeState(), emptyClusterState(), defaultUserInputs())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -339,7 +339,7 @@ func TestUninstallHandler_PrepareEffectiveInputs_PassesThrough(t *testing.T) {
 // ── nil-input guards ──────────────────────────────────────────────────────────
 
 func TestInstallHandler_PrepareEffectiveInputs_NilInputs_Errors(t *testing.T) {
-	h := newInstallHandler(nil)
+	h := newInstallHandler(nil, nil)
 	_, err := h.PrepareEffectiveInputs(nil)
 	if err == nil {
 		t.Fatal("expected error for nil inputs")

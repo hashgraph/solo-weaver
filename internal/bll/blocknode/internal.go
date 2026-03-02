@@ -15,6 +15,7 @@ package blocknode
 import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -96,6 +97,6 @@ func purgeBlockNodeStorage(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
 	return steps.PurgeBlockNodeStorage(ins)
 }
 
-func installClusterWorkflow(nodeType string, profile string, skipHW bool) *automa.WorkflowBuilder {
-	return workflows.InstallClusterWorkflow(nodeType, profile, skipHW)
+func installClusterWorkflow(nodeType string, profile string, skipHW bool, sm state.Manager) *automa.WorkflowBuilder {
+	return workflows.InstallClusterWorkflow(nodeType, profile, skipHW, sm)
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )

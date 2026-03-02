@@ -15,9 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -180,7 +182,7 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 }
 
@@ -189,6 +191,14 @@ func calculateSHA256(data []byte) string {
 	hash := sha256.New()
 	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// prepareStateManager creates a state.Manager for use in unit tests.
+func prepareStateManager(t *testing.T) state.Manager {
+	t.Helper()
+	sm, err := state.NewStateManager()
+	require.NoError(t, err, "failed to create state manager for test")
+	return sm
 }
 
 // Test scenarios using table-driven tests
@@ -582,7 +592,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 }
 
@@ -788,38 +798,31 @@ func Test_BaseInstaller_replaceAllInFile(t *testing.T) {
 	//
 	// Given
 	//
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockFsx := fsx.NewMockManager(ctrl)
+
+	origContent := "ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
+	expectedContent := "ExecStart=/custom/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
+	filePath := "/tmp/test-10-kubeadm.conf"
+
+	mockFsx.EXPECT().ReadFile(filePath, int64(-1)).Return([]byte(origContent), nil)
+	mockFsx.EXPECT().WriteFile(filePath, []byte(expectedContent)).Return(nil)
+	mockFsx.EXPECT().WritePermissions(filePath, gomock.Any(), false).Return(nil)
 
 	ki := kubeadmInstaller{
 		baseInstaller: &baseInstaller{
-			fileManager: fsxManager,
+			fileManager: mockFsx,
 		},
 	}
-
-	// Create a temp dir and file
-	tmpDir := t.TempDir()
-	origPath := filepath.Join(tmpDir, "10-kubeadm.conf")
-	origContent := "ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
-	err = os.WriteFile(origPath, []byte(origContent), models.DefaultFilePerm)
-	require.NoError(t, err, "failed to write temp file")
 
 	//
 	// When
 	//
 	newKubeletPath := "/custom/bin/kubelet"
-	err = ki.replaceAllInFile(origPath, "/usr/bin/kubelet", newKubeletPath)
+	err := ki.replaceAllInFile(filePath, "/usr/bin/kubelet", newKubeletPath)
 	require.NoError(t, err, "failed to replace kubelet path in file")
-
-	//
-	// Then
-	//
-	// Read back and check
-	updated, err := os.ReadFile(origPath)
-	require.NoError(t, err, "failed to read updated file")
-
-	require.Contains(t, string(updated), newKubeletPath, "updated file should contain new kubelet path")
-	require.NotContains(t, string(updated), "/usr/bin/kubelet", "old kubelet path should not be present in file")
 }
 
 func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
@@ -848,7 +851,7 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -985,7 +988,7 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox bin directory with a binary
@@ -1094,7 +1097,7 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1190,7 +1193,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1265,7 +1268,7 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1336,7 +1339,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1418,7 +1421,7 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1508,7 +1511,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1576,7 +1579,7 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "2.0.0", // Version not in metadata
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	//
@@ -1619,7 +1622,7 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure but no symlinks

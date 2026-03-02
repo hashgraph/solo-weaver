@@ -13,6 +13,16 @@ import (
 	"github.com/joomcode/errorx"
 )
 
+// WithStateManager injects a state.Manager into the installer so that
+// IsInstalled/IsConfigured reads and Install/Configure/Uninstall/RemoveConfiguration
+// writes flow through the shared DefaultStateManager instead of the legacy
+// file-per-component Manager.
+func WithStateManager(sm state.Manager) InstallerOption {
+	return func(bi *baseInstaller) {
+		bi.stateManager = sm
+	}
+}
+
 type InstallerOption func(*baseInstaller)
 
 // WithVersion sets the specific version to install for the software.
@@ -32,7 +42,7 @@ type baseInstaller struct {
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
-	stateManager         *state.Manager
+	stateManager         state.Manager
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -60,14 +70,23 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 	}
 
 	bi := &baseInstaller{
-		downloader:   NewDownloader(),
-		software:     item,
-		fileManager:  fsxManager,
-		stateManager: state.NewManager(fsxManager),
+		downloader:  NewDownloader(),
+		software:    item,
+		fileManager: fsxManager,
 	}
 
 	for _, opt := range opts {
 		opt(bi)
+	}
+
+	// stateManager MUST be injected via WithStateManager — callers own the lifecycle.
+	if bi.stateManager == nil {
+		return nil, NewFileSystemError(
+			errorx.IllegalArgument.New(
+				"no state manager provided for installer %q: use software.WithStateManager(sm)",
+				softwareName,
+			),
+		)
 	}
 
 	if bi.versionToBeInstalled == "" {
@@ -516,16 +535,13 @@ func (b *baseInstaller) verifyExtractedConfigs() error {
 }
 
 // Install provides a basic install implementation for simple binary installations.
-// It also records the installation state.
+// It also records the installation state via the injected state.Writer.
 func (b *baseInstaller) Install() error {
 	err := b.performInstall()
 	if err != nil {
 		return err
 	}
-
-	// Record installation state
-	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeInstalled, b.Version())
-
+	_ = b.recordInstalled()
 	return nil
 }
 
@@ -687,15 +703,13 @@ func (b *baseInstaller) uninstallConfig(destinationDir string) error {
 }
 
 // Configure provides a basic configuration implementation.
-// It also records the configuration state.
+// It also records the configuration state via the injected state.Writer.
 func (b *baseInstaller) Configure() error {
 	err := b.performConfiguration()
 	if err != nil {
 		return err
 	}
-
-	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeConfigured, b.Version())
-
+	_ = b.recordConfigured()
 	return nil
 }
 
@@ -738,14 +752,22 @@ func (b *baseInstaller) performConfiguration() error {
 	return nil
 }
 
-// IsInstalled provides a basic installation check
+// IsInstalled checks whether the software has been recorded as installed in the state.
+// It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsInstalled() (bool, error) {
-	return b.stateManager.Exists(b.software.Name, state.TypeInstalled)
+	if err := b.stateManager.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return false, errorx.IllegalState.Wrap(err, "failed to refresh state before IsInstalled check")
+	}
+	return state.GetSoftwareState(b.stateManager.State(), b.software.Name).Installed, nil
 }
 
-// IsConfigured provides a basic configuration check
+// IsConfigured checks whether the software has been recorded as configured in the state.
+// It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsConfigured() (bool, error) {
-	return b.stateManager.Exists(b.software.Name, state.TypeConfigured)
+	if err := b.stateManager.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return false, errorx.IllegalState.Wrap(err, "failed to refresh state before IsConfigured check")
+	}
+	return state.GetSoftwareState(b.stateManager.State(), b.software.Name).Configured, nil
 }
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
@@ -783,27 +805,19 @@ func (b *baseInstaller) Version() string {
 	return b.versionToBeInstalled
 }
 
-// GetStateManager returns the state manager for external state management
-func (b *baseInstaller) GetStateManager() *state.Manager {
-	return b.stateManager
-}
-
 // GetSoftwareName returns the software name
 func (b *baseInstaller) GetSoftwareName() string {
 	return b.software.Name
 }
 
 // Uninstall removes the software from the sandbox and cleans up related files.
-// It also removes the installation state.
+// It also clears the installation state.
 func (b *baseInstaller) Uninstall() error {
 	err := b.performUninstall()
 	if err != nil {
 		return err
 	}
-
-	// Remove installation state
-	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeInstalled)
-
+	_ = b.clearInstalled()
 	return nil
 }
 
@@ -819,15 +833,13 @@ func (b *baseInstaller) performUninstall() error {
 }
 
 // RemoveConfiguration restores the configuration of the software after an uninstall.
-// It also removes the configuration state.
+// It also clears the configuration state.
 func (b *baseInstaller) RemoveConfiguration() error {
 	err := b.performConfigurationRemoval()
 	if err != nil {
 		return err
 	}
-
-	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeConfigured)
-
+	_ = b.clearConfigured()
 	return nil
 }
 
@@ -957,6 +969,36 @@ func (b *baseInstaller) cleanupSymlinks() error {
 	}
 
 	return nil
+}
+
+// ── state helpers ─────────────────────────────────────────────────────────────
+// These four methods centralise all state mutations so every concrete installer
+// can share them without duplicating GetSoftwareState/SetSoftwareState logic.
+
+func (b *baseInstaller) recordInstalled() error {
+	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	cur.Installed = true
+	cur.Version = b.versionToBeInstalled
+	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+}
+
+func (b *baseInstaller) recordConfigured() error {
+	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	cur.Configured = true
+	cur.Version = b.versionToBeInstalled
+	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+}
+
+func (b *baseInstaller) clearInstalled() error {
+	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	cur.Installed = false
+	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+}
+
+func (b *baseInstaller) clearConfigured() error {
+	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	cur.Configured = false
+	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
 }
 
 // installFile copies a file with permissions using the fileManager

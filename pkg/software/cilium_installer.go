@@ -6,7 +6,6 @@ import (
 	"path"
 
 	"github.com/hashgraph/solo-weaver/internal/network"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -48,7 +47,7 @@ func (ci *ciliumInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeConfigured, ci.Version())
+	_ = ci.recordConfigured()
 
 	return nil
 }
@@ -69,7 +68,7 @@ func (ci *ciliumInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove configured state
-	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeConfigured)
+	_ = ci.clearConfigured()
 
 	return nil
 }

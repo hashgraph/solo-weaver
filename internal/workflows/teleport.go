@@ -4,13 +4,14 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 )
 
 // NewTeleportNodeAgentInstallWorkflow creates a workflow to install the Teleport node agent.
-// This installs the host-level SSH agent for secure SSH access via Teleport.
-func NewTeleportNodeAgentInstallWorkflow() *automa.WorkflowBuilder {
-	return steps.SetupTeleportNodeAgent()
+// sm is the shared Manager used to record installation progress.
+func NewTeleportNodeAgentInstallWorkflow(sm state.Manager) *automa.WorkflowBuilder {
+	return steps.SetupTeleportNodeAgent(sm)
 }
 
 // NewTeleportClusterAgentInstallWorkflow creates a workflow to install the Teleport Kubernetes cluster agent.

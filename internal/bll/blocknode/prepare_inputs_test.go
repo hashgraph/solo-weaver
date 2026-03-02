@@ -146,7 +146,7 @@ func baseInputs() *models.UserInputs[models.BlocknodeInputs] {
 // ── InstallHandler.PrepareEffectiveInputs ─────────────────────────────────────
 
 func TestInstallPrepare_NilInputs_Error(t *testing.T) {
-	h := newInstallHandler(defaultStub())
+	h := newInstallHandler(defaultStub(), nil)
 	_, err := h.PrepareEffectiveInputs(nil)
 	if err == nil {
 		t.Fatal("expected error for nil inputs")
@@ -154,7 +154,7 @@ func TestInstallPrepare_NilInputs_Error(t *testing.T) {
 }
 
 func TestInstallPrepare_ConfigStrategy_FlowsThrough(t *testing.T) {
-	h := newInstallHandler(defaultStub())
+	h := newInstallHandler(defaultStub(), nil)
 	out, err := h.PrepareEffectiveInputs(baseInputs())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -180,7 +180,7 @@ func TestInstallPrepare_ConfigStrategy_FlowsThrough(t *testing.T) {
 // MUST fire: the field is owned by the current deployment and the user is
 // trying to force-override it during an install (not an upgrade).
 func TestInstallPrepare_CurrentStrategy_WithUserInput_Force_Error(t *testing.T) {
-	h := newInstallHandler(currentStub())
+	h := newInstallHandler(currentStub(), nil)
 
 	inputs := baseInputs()
 	inputs.Common.Force = true
@@ -195,7 +195,7 @@ func TestInstallPrepare_CurrentStrategy_WithUserInput_Force_Error(t *testing.T) 
 // StrategyCurrent + user input provided + no --force → guard does NOT fire,
 // because without --force there is no force-override attempt.
 func TestInstallPrepare_CurrentStrategy_WithUserInput_NoForce_Succeeds(t *testing.T) {
-	h := newInstallHandler(currentStub())
+	h := newInstallHandler(currentStub(), nil)
 
 	inputs := baseInputs()
 	inputs.Common.Force = false
@@ -212,7 +212,7 @@ func TestInstallPrepare_CurrentStrategy_WithUserInput_NoForce_Succeeds(t *testin
 
 // StrategyCurrent + NO user input → no override attempted, must succeed.
 func TestInstallPrepare_CurrentStrategy_NoUserInput_Succeeds(t *testing.T) {
-	h := newInstallHandler(currentStub())
+	h := newInstallHandler(currentStub(), nil)
 	out, err := h.PrepareEffectiveInputs(baseInputs())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -225,7 +225,7 @@ func TestInstallPrepare_CurrentStrategy_NoUserInput_Succeeds(t *testing.T) {
 // Multiple StrategyCurrent fields with user inputs AND --force — the first
 // field that violates the guard must return an error.
 func TestInstallPrepare_CurrentStrategy_MultipleOverrides_WithForce_Error(t *testing.T) {
-	h := newInstallHandler(currentStub())
+	h := newInstallHandler(currentStub(), nil)
 
 	inputs := baseInputs()
 	inputs.Common.Force = true // force-override attempted
@@ -240,7 +240,7 @@ func TestInstallPrepare_CurrentStrategy_MultipleOverrides_WithForce_Error(t *tes
 
 // Pass-through fields are copied verbatim regardless of strategy.
 func TestInstallPrepare_PassThroughFields(t *testing.T) {
-	h := newInstallHandler(defaultStub())
+	h := newInstallHandler(defaultStub(), nil)
 
 	inputs := baseInputs()
 	inputs.Custom.ValuesFile = "/etc/weaver/values.yaml"
@@ -271,7 +271,7 @@ func TestInstallPrepare_AccessorError_Propagates(t *testing.T) {
 	stub := defaultStub()
 	stub.releaseName = effStrErr(errors.New("rsl unavailable"))
 
-	h := newInstallHandler(stub)
+	h := newInstallHandler(stub, nil)
 	_, err := h.PrepareEffectiveInputs(baseInputs())
 	if err == nil {
 		t.Fatal("expected error from accessor, got nil")
@@ -280,7 +280,7 @@ func TestInstallPrepare_AccessorError_Propagates(t *testing.T) {
 
 // Profile is always copied from user input (not resolved via rsl).
 func TestInstallPrepare_ProfilePassedThrough(t *testing.T) {
-	h := newInstallHandler(defaultStub())
+	h := newInstallHandler(defaultStub(), nil)
 
 	inputs := baseInputs()
 	inputs.Custom.Profile = "perfnet"

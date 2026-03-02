@@ -10,8 +10,7 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"github.com/hashgraph/solo-weaver/pkg/models"
-
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 )
@@ -28,7 +27,8 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "success - configures kubeconfig successfully",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -63,7 +63,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - lookup user fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(nil, errors.New("user not found"))
 			},
 			expectError:   true,
@@ -73,7 +73,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - lookup group fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
@@ -86,7 +86,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - create directory fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -106,7 +106,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - copy file fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -129,7 +129,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - write owner fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -154,7 +154,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "success - with custom kubeDir",
 			customKubeDir: "/custom/kube/path",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockGroup := principal.NewMockGroup(ctrl)
@@ -188,7 +188,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - create root directory fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -216,7 +216,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - copy to root directory fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -245,7 +245,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - root user lookup fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -277,7 +277,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - root group lookup fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
@@ -311,7 +311,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			name:          "error - root WriteOwner fails",
 			customKubeDir: "",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := models.ServiceAccount()
+				svcAcc := config.ServiceAccount()
 
 				mockUser := principal.NewMockUser(ctrl)
 				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
