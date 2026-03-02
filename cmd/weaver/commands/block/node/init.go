@@ -20,10 +20,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// blockNodeHandler is the per-command instance of BlockNodeIntentHandler, wired in
+// initializeDependencies. It replaces the old package-level bll singleton.
+var blockNodeHandler *bll.BlockNodeIntentHandler
+
 func initializeDependencies(ctx context.Context) error {
 	conf := config.Get()
-	err := conf.Validate()
-	if err != nil {
+	if err := conf.Validate(); err != nil {
 		return errorx.IllegalState.Wrap(err, "invalid configuration")
 	}
 
@@ -32,8 +35,7 @@ func initializeDependencies(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
 	}
 
-	err = sm.Refresh()
-	if err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+	if err = sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")
 	}
 
@@ -45,22 +47,16 @@ func initializeDependencies(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
 	}
 
-	// initialize cluster runtime
-	err = rsl.InitClusterRuntime(conf, currentState.ClusterState, realityChecker, rsl.DefaultRefreshInterval)
+	// Build the rsl.Registry — single call that constructs cluster + block-node runtimes.
+	registry, err := rsl.NewRegistry(conf, currentState, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
-		return err
+		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
 	}
 
-	// initialize block node runtime
-	err = rsl.InitBlockNodeRuntime(conf, currentState.BlockNodeState, realityChecker, rsl.DefaultRefreshInterval)
+	// Build the BLL handler, injecting the registry instead of relying on singletons.
+	blockNodeHandler, err = bll.NewBlockNodeIntentHandler(conf.BlockNode, sm, registry)
 	if err != nil {
-		return err
-	}
-
-	// initialize BLL
-	_, err = bll.InitBlockNodeIntentHandler(conf.BlockNode, sm)
-	if err != nil {
-		return err
+		return errorx.IllegalState.Wrap(err, "failed to initialise block-node intent handler")
 	}
 
 	return nil

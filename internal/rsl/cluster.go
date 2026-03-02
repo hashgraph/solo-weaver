@@ -10,8 +10,6 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-var clusterRuntimeSingleton *ClusterRuntime
-
 type ClusterRuntime struct {
 	*Base[state.ClusterState]
 
@@ -19,33 +17,27 @@ type ClusterRuntime struct {
 	reality reality.Checker
 }
 
-func InitClusterRuntime(cfg models.Config, clusterState state.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) error {
+// NewClusterRuntime creates a ClusterRuntime with the provided configuration, initial state,
+// reality checker, and refresh interval. The caller is responsible for retaining and injecting
+// the returned instance — no package-level singleton is used.
+func NewClusterRuntime(cfg models.Config, clusterState state.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) (*ClusterRuntime, error) {
 	if realityChecker == nil {
-		return errorx.IllegalArgument.New("cluster reality checker is not initialized")
+		return nil, errorx.IllegalArgument.New("cluster reality checker is not initialized")
 	}
 
 	rb := NewRuntimeBase[state.ClusterState](
 		cfg,
 		clusterState,
 		refreshInterval,
-		// fetch function
 		realityChecker.ClusterState,
-		// lastSync extractor
 		func(s state.ClusterState) htime.Time { return s.LastSync },
-		// clone helper
 		func(s state.ClusterState) state.ClusterState { return s.Clone() },
 		func() state.ClusterState { return state.ClusterState{} },
 		"cluster reality checker",
 	)
 
-	clusterRuntimeSingleton = &ClusterRuntime{
+	return &ClusterRuntime{
 		Base:    rb,
 		reality: realityChecker,
-	}
-
-	return nil
-}
-
-func Cluster() *ClusterRuntime {
-	return clusterRuntimeSingleton
+	}, nil
 }
