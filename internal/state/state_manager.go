@@ -13,17 +13,46 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
+// Reader is the read-only view of managed application state.
+// Consumers that only need to inspect state (e.g. resolvers, reality checkers)
+// should depend on this narrow interface rather than the full DefaultStateManager.
+type Reader interface {
+	// State returns a snapshot of the current in-memory state.
+	State() State
+	// HasPersistedState reports whether a state file already exists on disk.
+	HasPersistedState() (os.FileInfo, bool, error)
+}
+
+// Writer is the mutation-only view of managed application state.
+// Consumers that record side-effects (e.g. the BLL after a workflow run) should
+// depend on this narrow interface so that their dependencies are explicit.
+type Writer interface {
+	// Set replaces the entire in-memory state and returns the manager for chaining.
+	Set(s State) DefaultStateManager
+	// AddActionHistory appends an entry to the pending action log and updates
+	// State.LastAction. Entries are flushed to disk on the next Flush() call.
+	AddActionHistory(entry ActionHistory) DefaultStateManager
+	// Flush persists the current state and any pending action history to disk.
+	Flush() error
+}
+
+// Persister groups lifecycle operations (load + save) that are needed at the
+// composition root (cmd layer) but not inside domain logic.
+type Persister interface {
+	// Refresh reloads the persisted state from disk, overwriting in-memory state.
+	Refresh() error
+	// FileManager returns the underlying file-system abstraction.
+	FileManager() fsx.Manager
+}
+
 // DefaultStateManager defines the interface for managing the application state with IO operations.
 // It is just a thin wrapper around State with added thread-safe disk persistence & refresh operations.
 // However, the State itself is not thread-safe for mutations since State is a data model.
+// It composes Reader, Writer and Persister so existing callers need no changes.
 type DefaultStateManager interface {
-	State() State
-	Set(s State) DefaultStateManager
-	FileManager() fsx.Manager
-	Flush() error
-	Refresh() error
-	HasPersistedState() (os.FileInfo, bool, error)
-	AddActionHistory(entry ActionHistory) DefaultStateManager
+	Reader
+	Writer
+	Persister
 }
 
 // DefaultStateManager encapsulates a State and all IO operations (flush/refresh).

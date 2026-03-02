@@ -20,9 +20,10 @@ import (
 )
 
 type BlockNodeIntentHandler struct {
-	conf models.BlockNodeConfig
-	sm   state.DefaultStateManager
-	rsl  *rsl.Registry
+	conf        models.BlockNodeConfig
+	stateReader state.Reader
+	stateWriter state.Writer
+	rsl         *rsl.Registry
 }
 
 // prepareRuntimeState validates the intent, user inputs, and refreshes the block node state before processing further.
@@ -330,7 +331,7 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, intent models.
 
 	// add action history item to state manager; pass effectiveInputs directly so the
 	// YAML encoder uses the struct's own field tags instead of a hand-rolled map.
-	b.sm.AddActionHistory(state.ActionHistory{
+	b.stateWriter.AddActionHistory(state.ActionHistory{
 		Intent: intent,
 		Inputs: effectiveInputs,
 	})
@@ -370,11 +371,11 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, intent models.
 	}
 
 	// persist the full state to disk
-	fullState := b.sm.State()
+	fullState := b.stateReader.State()
 	fullState.ClusterState = clusterState
 	fullState.BlockNodeState = blocknodeState
 
-	err = b.sm.Set(fullState).Flush()
+	err = b.stateWriter.Set(fullState).Flush()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to persist block node state after workflow execution: %v", err)
 	}
@@ -414,17 +415,36 @@ func (b BlockNodeIntentHandler) HandleIntent(
 }
 
 // NewBlockNodeIntentHandler creates a BlockNodeIntentHandler with the provided configuration,
-// state manager, and rsl.Registry. The caller is responsible for constructing and injecting
+// state reader/writer, and rsl.Registry. The caller is responsible for constructing and injecting
 // the Registry — no package-level singleton is used.
+//
+// Accepting state.Reader and state.Writer separately makes each dependency explicit:
+//   - stateReader is used to inspect current state before executing an intent
+//   - stateWriter is used to persist outcomes after a workflow completes
+//
+// In production both are satisfied by the same *stateManager; in tests they can be
+// stubbed independently.
 func NewBlockNodeIntentHandler(
 	conf models.BlockNodeConfig,
-	sm state.DefaultStateManager,
+	stateReader state.Reader,
+	stateWriter state.Writer,
 	registry *rsl.Registry,
 	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
+	if stateReader == nil {
+		return nil, errorx.IllegalArgument.New("state.Reader cannot be nil")
+	}
+	if stateWriter == nil {
+		return nil, errorx.IllegalArgument.New("state.Writer cannot be nil")
+	}
 	if registry == nil {
 		return nil, errorx.IllegalArgument.New("rsl.Registry cannot be nil")
 	}
-	bn := &BlockNodeIntentHandler{conf: conf, sm: sm, rsl: registry}
+	bn := &BlockNodeIntentHandler{
+		conf:        conf,
+		stateReader: stateReader,
+		stateWriter: stateWriter,
+		rsl:         registry,
+	}
 	for _, opt := range opts {
 		if err := opt(bn); err != nil {
 			return nil, err

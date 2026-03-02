@@ -9,40 +9,45 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
-// ---- stub state manager --------------------------------------------------------
+// ---- stub state reader ---------------------------------------------------------
 
-// stubStateManager is a hand-written test double for state.DefaultStateManager.
-// It records every AddActionHistory call so tests can assert on the captured values
-// without touching the filesystem or the hedera service account.
-type stubStateManager struct {
+// stubStateReader satisfies state.Reader for tests that only need read access.
+type stubStateReader struct {
+	currentState state.State
+}
+
+var _ state.Reader = (*stubStateReader)(nil)
+
+func newStubStateReader() *stubStateReader {
+	return &stubStateReader{currentState: state.NewState()}
+}
+
+func (r *stubStateReader) State() state.State                            { return r.currentState }
+func (r *stubStateReader) HasPersistedState() (os.FileInfo, bool, error) { return nil, false, nil }
+
+// ---- stub state writer ---------------------------------------------------------
+
+// stubStateWriter satisfies state.Writer for tests.
+// It records every AddActionHistory call so tests can assert on captured values.
+type stubStateWriter struct {
 	capturedActions []state.ActionHistory
-	currentState    state.State
+	reader          *stubStateReader // shared so Set() is visible to reader.State()
 }
 
-// compile-time check: stubStateManager must satisfy state.DefaultStateManager.
-var _ state.DefaultStateManager = (*stubStateManager)(nil)
+var _ state.Writer = (*stubStateWriter)(nil)
 
-func newStubStateManager() *stubStateManager {
-	return &stubStateManager{currentState: state.NewState()}
+func (w *stubStateWriter) Set(st state.State) state.DefaultStateManager {
+	w.reader.currentState = st
+	return nil // chaining not needed in tests
 }
-
-func (s *stubStateManager) State() state.State { return s.currentState }
-func (s *stubStateManager) Set(st state.State) state.DefaultStateManager {
-	s.currentState = st
-	return s
-}
-func (s *stubStateManager) FileManager() fsx.Manager                      { return nil }
-func (s *stubStateManager) Flush() error                                  { return nil }
-func (s *stubStateManager) Refresh() error                                { return nil }
-func (s *stubStateManager) HasPersistedState() (os.FileInfo, bool, error) { return nil, false, nil }
-func (s *stubStateManager) AddActionHistory(entry state.ActionHistory) state.DefaultStateManager {
-	s.capturedActions = append(s.capturedActions, entry)
-	s.currentState.LastAction = entry
-	return s
+func (w *stubStateWriter) Flush() error { return nil }
+func (w *stubStateWriter) AddActionHistory(entry state.ActionHistory) state.DefaultStateManager {
+	w.capturedActions = append(w.capturedActions, entry)
+	w.reader.currentState.LastAction = entry
+	return nil // chaining not needed in tests
 }
 
 // ---- helpers -------------------------------------------------------------------
@@ -73,11 +78,28 @@ func defaultInputs() *models.UserInputs[models.BlocknodeInputs] {
 	}
 }
 
-func newHandlerWithStub(sm *stubStateManager) BlockNodeIntentHandler {
-	// Use a non-nil Registry with nil sub-fields; the tests that reach rsl calls
-	// (StopOnError path) will fail at rsl.Cluster.RefreshState — that is intentional
-	// and what the tests assert.
-	return BlockNodeIntentHandler{sm: sm, rsl: &rsl.Registry{}}
+// newHandlerWithStubs builds a BlockNodeIntentHandler with the supplied reader/writer pair.
+// A non-nil rsl.Registry with nil sub-fields is used so tests that reach rsl calls
+// (StopOnError path) receive a controlled error rather than a nil-pointer panic.
+func newHandlerWithStubs(reader *stubStateReader, writer *stubStateWriter) BlockNodeIntentHandler {
+	return BlockNodeIntentHandler{
+		stateReader: reader,
+		stateWriter: writer,
+		rsl:         &rsl.Registry{},
+	}
+}
+
+// newHandlerWithStub is kept for convenience when a test doesn't need to inspect
+// writer state separately.
+func newHandlerWithStub(writer *stubStateWriter) BlockNodeIntentHandler {
+	return newHandlerWithStubs(writer.reader, writer)
+}
+
+// newTestPair creates a linked reader/writer pair.
+func newTestPair() (*stubStateReader, *stubStateWriter) {
+	r := newStubStateReader()
+	w := &stubStateWriter{reader: r}
+	return r, w
 }
 
 // ---- tests ---------------------------------------------------------------------
@@ -85,16 +107,16 @@ func newHandlerWithStub(sm *stubStateManager) BlockNodeIntentHandler {
 // TestFlushState_NilReport verifies that a nil report returns an error immediately
 // and that AddActionHistory is never called.
 func TestFlushState_NilReport(t *testing.T) {
-	sm := newStubStateManager()
-	h := newHandlerWithStub(sm)
+	_, w := newTestPair()
+	h := newHandlerWithStub(w)
 
 	_, err := h.flushState(nil, models.Intent{}, defaultInputs())
 	if err == nil {
 		t.Fatal("expected error for nil report, got nil")
 	}
 
-	if len(sm.capturedActions) != 0 {
-		t.Errorf("expected no AddActionHistory calls for nil report, got %d", len(sm.capturedActions))
+	if len(w.capturedActions) != 0 {
+		t.Errorf("expected no AddActionHistory calls for nil report, got %d", len(w.capturedActions))
 	}
 }
 
@@ -102,8 +124,8 @@ func TestFlushState_NilReport(t *testing.T) {
 // ContinueOnError execution mode causes flushState to skip state persistence entirely,
 // returning the original report unchanged without calling AddActionHistory.
 func TestFlushState_FailedReport_SkipsWhenNotStopOnError(t *testing.T) {
-	sm := newStubStateManager()
-	h := newHandlerWithStub(sm)
+	_, w := newTestPair()
+	h := newHandlerWithStub(w)
 
 	inputs := defaultInputs()
 	inputs.Common.ExecutionOptions.ExecutionMode = automa.ContinueOnError
@@ -117,9 +139,8 @@ func TestFlushState_FailedReport_SkipsWhenNotStopOnError(t *testing.T) {
 		t.Error("expected the original failed report to be returned unchanged")
 	}
 
-	// AddActionHistory must NOT have been called — no state should be recorded for a skipped flush.
-	if len(sm.capturedActions) != 0 {
-		t.Errorf("expected no AddActionHistory calls when skip path taken, got %d", len(sm.capturedActions))
+	if len(w.capturedActions) != 0 {
+		t.Errorf("expected no AddActionHistory calls when skip path taken, got %d", len(w.capturedActions))
 	}
 }
 
@@ -128,22 +149,22 @@ func TestFlushState_FailedReport_SkipsWhenNotStopOnError(t *testing.T) {
 // The rsl singletons are nil so the function returns an error from the refresh call,
 // but AddActionHistory must already have been recorded before that point.
 func TestFlushState_FailedReport_ProceedsWhenStopOnError(t *testing.T) {
-	sm := newStubStateManager()
-	h := newHandlerWithStub(sm)
+	_, w := newTestPair()
+	h := newHandlerWithStub(w)
 
 	inputs := defaultInputs() // ExecutionMode == StopOnError
 	intent := models.Intent{Action: models.ActionInstall, Target: models.TargetBlocknode}
 
 	_, err := h.flushState(failedReport(), intent, inputs)
 
-	// rsl singleton is nil — an error from the refresh call is expected.
+	// rsl registry has nil sub-fields — an error from the refresh call is expected.
 	if err == nil {
-		t.Fatal("expected an error from nil rsl singleton, got nil")
+		t.Fatal("expected an error from nil rsl sub-field, got nil")
 	}
 
 	// AddActionHistory must have been called before the rsl error.
-	if len(sm.capturedActions) != 1 {
-		t.Fatalf("expected 1 AddActionHistory call before rsl error, got %d", len(sm.capturedActions))
+	if len(w.capturedActions) != 1 {
+		t.Fatalf("expected 1 AddActionHistory call before rsl error, got %d", len(w.capturedActions))
 	}
 }
 
@@ -151,20 +172,20 @@ func TestFlushState_FailedReport_ProceedsWhenStopOnError(t *testing.T) {
 // report causes AddActionHistory to be called with the exact intent and typed
 // *models.UserInputs[models.BlocknodeInputs] — no manual map conversion.
 func TestFlushState_SuccessReport_RecordsCorrectActionHistory(t *testing.T) {
-	sm := newStubStateManager()
-	h := newHandlerWithStub(sm)
+	_, w := newTestPair()
+	h := newHandlerWithStub(w)
 
 	inputs := defaultInputs()
 	intent := models.Intent{Action: models.ActionInstall, Target: models.TargetBlocknode}
 
-	// rsl singletons are nil so an error is expected after AddActionHistory runs.
+	// rsl sub-fields are nil so an error is expected after AddActionHistory runs.
 	_, _ = h.flushState(successReport(), intent, inputs)
 
-	if len(sm.capturedActions) != 1 {
-		t.Fatalf("expected 1 captured action, got %d", len(sm.capturedActions))
+	if len(w.capturedActions) != 1 {
+		t.Fatalf("expected 1 captured action, got %d", len(w.capturedActions))
 	}
 
-	captured := sm.capturedActions[0]
+	captured := w.capturedActions[0]
 
 	if captured.Intent.Action != models.ActionInstall {
 		t.Errorf("Intent.Action: got %q, want %q", captured.Intent.Action, models.ActionInstall)
@@ -173,7 +194,6 @@ func TestFlushState_SuccessReport_RecordsCorrectActionHistory(t *testing.T) {
 		t.Errorf("Intent.Target: got %q, want %q", captured.Intent.Target, models.TargetBlocknode)
 	}
 
-	// Inputs must be the exact typed pointer — not a hand-rolled map.
 	capturedInputs, ok := captured.Inputs.(*models.UserInputs[models.BlocknodeInputs])
 	if !ok {
 		t.Fatalf("Inputs type: got %T, want *models.UserInputs[models.BlocknodeInputs]", captured.Inputs)
@@ -193,14 +213,14 @@ func TestFlushState_SuccessReport_RecordsCorrectActionHistory(t *testing.T) {
 // TestFlushState_SuccessReport_UpdatesLastActionInState verifies that AddActionHistory
 // updates state.LastAction so it is included in the next Flush to state.yaml.
 func TestFlushState_SuccessReport_UpdatesLastActionInState(t *testing.T) {
-	sm := newStubStateManager()
-	h := newHandlerWithStub(sm)
+	r, w := newTestPair()
+	h := newHandlerWithStubs(r, w)
 
 	intent := models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlocknode}
 	_, _ = h.flushState(successReport(), intent, defaultInputs())
 
-	if sm.currentState.LastAction.Intent.Action != models.ActionUpgrade {
+	if r.currentState.LastAction.Intent.Action != models.ActionUpgrade {
 		t.Errorf("LastAction.Intent.Action: got %q, want %q",
-			sm.currentState.LastAction.Intent.Action, models.ActionUpgrade)
+			r.currentState.LastAction.Intent.Action, models.ActionUpgrade)
 	}
 }
