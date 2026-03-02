@@ -13,10 +13,8 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-var blockNodeRuntimeSingleton *BlockNodeRuntimeState
-
-// BlockNodeRuntimeState is the runtime state of the block-node.
-// It is used to determine the effective values of the block-node based on the default (config), current runtime state and provided inputs.
+// BlockNodeRuntimeState  is used to determine the effective values of the block-node based on the default (config),
+// current runtime state and provided inputs.
 type BlockNodeRuntimeState struct {
 	*Base[state.BlockNodeState]
 	releaseName  *automa.RuntimeValue[string]
@@ -407,13 +405,12 @@ func (br *BlockNodeRuntimeState) initChartVersionRuntime() error {
 	return nil
 }
 
-// InitBlockNodeRuntime initializes the block-node runtime.
-// Caller needs to pass the current state, default config and reality checker.
-// Caller also needs to set user inputs.
-// The effective values of the block-node are determined based on the current state, default config and user inputs.
-func InitBlockNodeRuntime(cfg models.Config, blockNodeState state.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) error {
+// NewBlockNodeRuntime creates and returns a fully initialised BlockNodeRuntimeState.
+// The caller is responsible for retaining and injecting the returned instance —
+// no package-level singleton is used.
+func NewBlockNodeRuntime(cfg models.Config, blockNodeState state.BlockNodeState, realityChecker reality.Checker, refreshInterval time.Duration) (*BlockNodeRuntimeState, error) {
 	if realityChecker == nil {
-		return errorx.IllegalArgument.New("reality checker cannot be nil")
+		return nil, errorx.IllegalArgument.New("reality checker cannot be nil")
 	}
 
 	rb := NewRuntimeBase[state.BlockNodeState](
@@ -436,38 +433,26 @@ func InitBlockNodeRuntime(cfg models.Config, blockNodeState state.BlockNodeState
 	}
 
 	if err := br.initChartNameRuntime(); err != nil {
-		return err
+		return nil, err
 	}
-
 	if err := br.initReleaseNameRuntime(); err != nil {
-		return err
+		return nil, err
 	}
-
 	if err := br.initNamespaceRuntime(); err != nil {
-		return err
+		return nil, err
 	}
-
 	if err := br.initVersionRuntime(); err != nil {
-		return err
+		return nil, err
 	}
-
 	if err := br.initChartRepoRuntime(); err != nil {
-		return err
+		return nil, err
 	}
-
 	if err := br.initChartVersionRuntime(); err != nil {
-		return err
+		return nil, err
 	}
-
 	if err := br.initStorageRuntime(); err != nil {
-		return err
+		return nil, err
 	}
 
-	blockNodeRuntimeSingleton = br
-
-	return nil
-}
-
-func BlockNode() *BlockNodeRuntimeState {
-	return blockNodeRuntimeSingleton
+	return br, nil
 }

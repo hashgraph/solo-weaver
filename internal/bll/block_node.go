@@ -19,11 +19,10 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-var blockNodeIntentHandlerSingleton *BlockNodeIntentHandler
-
 type BlockNodeIntentHandler struct {
 	conf models.BlockNodeConfig
 	sm   state.DefaultStateManager
+	rsl  *rsl.Registry
 }
 
 // prepareRuntimeState validates the intent, user inputs, and refreshes the block node state before processing further.
@@ -44,8 +43,7 @@ func (b BlockNodeIntentHandler) prepareRuntimeState(
 		return nil, nil, errorx.IllegalArgument.New("invalid user inputs: %v", err)
 	}
 
-	// Set user inputs into the Blocknode runtime state so that we can determine effective values
-	err := rsl.BlockNode().SetUserInputs(inputs.Custom)
+	err := b.rsl.BlockNode.SetUserInputs(inputs.Custom)
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to use block node version as user input: %v", err)
 	}
@@ -54,7 +52,7 @@ func (b BlockNodeIntentHandler) prepareRuntimeState(
 	// rsl will refresh if necessary, but we need to do it explicitly here to ensure we have the latest state
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	err = rsl.Cluster().RefreshState(ctx, false) // no need to force refresh here
+	err = b.rsl.Cluster.RefreshState(ctx, false) // no need to force refresh here
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to refresh cluster state: %v", err)
 	}
@@ -64,7 +62,7 @@ func (b BlockNodeIntentHandler) prepareRuntimeState(
 	cancel() // cancel the previous context to reset the timer
 	ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	err = rsl.BlockNode().RefreshState(ctx, false) // no need to force refresh here
+	err = b.rsl.BlockNode.RefreshState(ctx, false) // no need to force refresh here
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to refresh block node state: %v", err)
 	}
@@ -81,7 +79,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode release name
-	effReleaseName, err := rsl.BlockNode().ReleaseName()
+	effReleaseName, err := b.rsl.BlockNode.ReleaseName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node release: %v", err)
 	}
@@ -95,7 +93,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode version
-	effVersion, err := rsl.BlockNode().Version()
+	effVersion, err := b.rsl.BlockNode.Version()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get effective block node version: %v", err)
 	}
@@ -109,7 +107,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode namespace
-	effNamespace, err := rsl.BlockNode().Namespace()
+	effNamespace, err := b.rsl.BlockNode.Namespace()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node namespace: %v", err)
 	}
@@ -123,7 +121,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode chart repo
-	effChartName, err := rsl.BlockNode().ChartName()
+	effChartName, err := b.rsl.BlockNode.ChartName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart name: %v", err)
 	}
@@ -137,7 +135,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode chart repo
-	effChartRepo, err := rsl.BlockNode().ChartRepo()
+	effChartRepo, err := b.rsl.BlockNode.ChartRepo()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart repo: %v", err)
 	}
@@ -151,7 +149,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode chart version
-	effChartVersion, err := rsl.BlockNode().ChartVersion()
+	effChartVersion, err := b.rsl.BlockNode.ChartVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node chart version: %v", err)
 	}
@@ -165,7 +163,7 @@ func (b BlockNodeIntentHandler) prepareEffectiveUserInputsForInstall(
 	}
 
 	// Determine Blocknode storage paths
-	effStorage, err := rsl.BlockNode().Storage()
+	effStorage, err := b.rsl.BlockNode.Storage()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node storage: %v", err)
 	}
@@ -211,7 +209,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 		return nil, nil, err
 	}
 
-	blockNodeState, err := rsl.BlockNode().CurrentState()
+	blockNodeState, err := b.rsl.BlockNode.CurrentState()
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to get current block node state: %v", err)
 	}
@@ -221,7 +219,7 @@ func (b BlockNodeIntentHandler) prepareWorkflow(
 		return nil, nil, err
 	}
 
-	clusterState, err := rsl.Cluster().CurrentState()
+	clusterState, err := b.rsl.Cluster.CurrentState()
 	if err != nil {
 		return nil, nil, errorx.IllegalState.New("failed to get current cluster state: %v", err)
 	}
@@ -341,7 +339,7 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, intent models.
 	defer cancel()
 
 	// refresh cluster state
-	err := rsl.Cluster().RefreshState(ctx, true)
+	err := b.rsl.Cluster.RefreshState(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh cluster state after workflow execution: %v", err)
 	}
@@ -350,17 +348,17 @@ func (b BlockNodeIntentHandler) flushState(report *automa.Report, intent models.
 	cancel()
 	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
 	defer cancel()
-	err = rsl.BlockNode().RefreshState(ctx, true)
+	err = b.rsl.BlockNode.RefreshState(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh block node state after workflow execution: %v", err)
 	}
 
-	clusterState, err := rsl.Cluster().CurrentState()
+	clusterState, err := b.rsl.Cluster.CurrentState()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get current block node state after workflow execution: %v", err)
 	}
 
-	blocknodeState, err := rsl.BlockNode().CurrentState()
+	blocknodeState, err := b.rsl.BlockNode.CurrentState()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to get blocknodeState block node state after workflow execution: %v", err)
 	}
@@ -415,44 +413,22 @@ func (b BlockNodeIntentHandler) HandleIntent(
 	return b.flushState(report, intent, effectiveInputs)
 }
 
-// NewBlockNodeIntentHandler initializes a BlockNodeIntentHandler with the provided configuration, state manager, and options.
-// Returns the created BlockNodeIntentHandler or an error if any validation or initialization fails during setup.
+// NewBlockNodeIntentHandler creates a BlockNodeIntentHandler with the provided configuration,
+// state manager, and rsl.Registry. The caller is responsible for constructing and injecting
+// the Registry — no package-level singleton is used.
 func NewBlockNodeIntentHandler(
 	conf models.BlockNodeConfig,
 	sm state.DefaultStateManager,
+	registry *rsl.Registry,
 	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
-	bn := &BlockNodeIntentHandler{conf: conf, sm: sm}
-
+	if registry == nil {
+		return nil, errorx.IllegalArgument.New("rsl.Registry cannot be nil")
+	}
+	bn := &BlockNodeIntentHandler{conf: conf, sm: sm, rsl: registry}
 	for _, opt := range opts {
 		if err := opt(bn); err != nil {
 			return nil, err
 		}
 	}
-
 	return bn, nil
-}
-
-// InitBlockNodeIntentHandler initializes and returns a singleton BlockNodeIntentHandler instance with given configuration.
-// If already initialized, it returns the existing singleton instance.
-// Accepts block node configuration, state manager, and optional configuration options.
-// Returns the initialized BlockNodeIntentHandler instance or an error if initialization fails.
-func InitBlockNodeIntentHandler(
-	conf models.BlockNodeConfig,
-	sm state.DefaultStateManager,
-	opts ...Option[BlockNodeIntentHandler]) (*BlockNodeIntentHandler, error) {
-	if blockNodeIntentHandlerSingleton != nil {
-		return blockNodeIntentHandlerSingleton, nil
-	}
-
-	bn, err := NewBlockNodeIntentHandler(conf, sm, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	blockNodeIntentHandlerSingleton = bn
-	return blockNodeIntentHandlerSingleton, nil
-}
-
-func BlockNode() *BlockNodeIntentHandler {
-	return blockNodeIntentHandlerSingleton
 }

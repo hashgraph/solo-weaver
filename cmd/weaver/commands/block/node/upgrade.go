@@ -5,7 +5,6 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -59,7 +58,7 @@ var (
 				Any("inputs", inputs).
 				Msg("Uninstalling Hedera Block Node")
 
-			report, err := bll.BlockNode().HandleIntent(intent, *inputs)
+			report, err := blockNodeHandler.HandleIntent(intent, *inputs)
 			if err != nil {
 				return err
 			}
