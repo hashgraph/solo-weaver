@@ -4,12 +4,17 @@ package reality
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	helm2 "github.com/hashgraph/solo-weaver/pkg/helm"
@@ -37,11 +42,23 @@ type Checker interface {
 }
 
 type realityChecker struct {
-	current state.State
+	current       state.State
+	sandboxBinDir string // overrideable for tests; defaults to models.Paths().SandboxBinDir
+	stateDir      string // overrideable for tests; defaults to models.Paths().StateDir
 }
 
 func (r *realityChecker) ClusterState(ctx context.Context) (state.ClusterState, error) {
 	cs := state.NewClusterState()
+
+	// Fast pre-check: verify the cluster is reachable before making a
+	// full API call.  ClusterExists() uses a short local check (kubeconfig
+	// presence + a cheap /version ping with a tight deadline) so we don't
+	// block for 32 s when there is no cluster.
+	exists, err := kube.ClusterExists()
+	if !exists {
+		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist or is unreachable, returning empty ClusterState")
+		return cs, nil
+	}
 
 	clusterInfo, err := kube.RetrieveClusterInfo()
 	if err != nil {
@@ -56,12 +73,141 @@ func (r *realityChecker) ClusterState(ctx context.Context) (state.ClusterState, 
 
 func (r *realityChecker) MachineState(ctx context.Context) (state.MachineState, error) {
 	now := htime.Now()
-	cs := state.NewMachineState()
+	ms := state.NewMachineState()
 
-	// TODO implement me
+	ms.Software = r.refreshSoftwareState()
+	ms.Hardware = r.refreshHardwareState()
 
-	cs.LastSync = now
-	return cs, nil
+	ms.LastSync = now
+	return ms, nil
+}
+
+// refreshSoftwareState probes each known binary on the filesystem and merges
+// with persisted version/configured metadata from current state.
+//
+// Source-of-truth priority (highest → lowest):
+//  1. New state.yaml MachineState.Software map  (set by new DefaultStateManager)
+//  2. Legacy sidecar files  <StateDir>/<name>.installed / .configured
+//     (set by the legacy state.Manager used by all installers today)
+//  3. Binary presence on disk  (live filesystem stat)
+func (r *realityChecker) refreshSoftwareState() map[string]state.SoftwareState {
+	result := make(map[string]state.SoftwareState)
+
+	sandboxBinDir := r.sandboxBinDir
+	if sandboxBinDir == "" {
+		sandboxBinDir = models.Paths().SandboxBinDir
+	}
+	stateDir := r.stateDir
+	if stateDir == "" {
+		stateDir = models.Paths().StateDir
+	}
+
+	for _, name := range software.KnownSoftwareNames() {
+		sw := state.SoftwareState{Name: name}
+
+		// --- Priority 1: carry from new MachineState.Software map ---
+		if persisted, ok := r.current.MachineState.Software[name]; ok && persisted.Name != "" {
+			sw = persisted
+		} else {
+			// --- Priority 2: read legacy sidecar files ---
+			sw.Installed, sw.Version = readLegacySidecarState(stateDir, name, "installed")
+			if configured, _ := readLegacySidecarState(stateDir, name, "configured"); configured {
+				sw.Configured = true
+			}
+		}
+
+		// --- Priority 3: live binary check always overrides Installed ---
+		// If binary is absent on disk, force Installed=false regardless of what
+		// the state files say (handles manual deletions).
+		binPath := filepath.Join(sandboxBinDir, name)
+		if _, err := os.Stat(binPath); err == nil {
+			sw.Installed = true
+		} else {
+			sw.Installed = false
+			logx.As().Debug().
+				Str("binary", binPath).
+				Msg("Binary not found on filesystem — marking as not installed")
+		}
+
+		sw.LastSync = htime.Now()
+		result[name] = sw
+	}
+
+	return result
+}
+
+// readLegacySidecarState reads a legacy <name>.<stateType> sidecar file from stateDir.
+// It returns (true, version) when the file exists, (false, "") otherwise.
+// The file content is expected to be in the format written by state.Manager.RecordState:
+//
+//	"installed at version 1.30.0\n"
+//	"configured at version 1.30.0\n"
+func readLegacySidecarState(stateDir, name, stateType string) (exists bool, version string) {
+	filePath := filepath.Join(stateDir, name+"."+stateType)
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return false, ""
+	}
+
+	// Parse "installed at version 1.30.0"
+	line := strings.TrimSpace(string(data))
+	const marker = " at version "
+	if idx := strings.Index(line, marker); idx != -1 {
+		version = strings.TrimSpace(line[idx+len(marker):])
+	}
+
+	return true, version
+}
+
+// refreshHardwareState collects current host hardware metrics.
+func (r *realityChecker) refreshHardwareState() map[string]state.HardwareState {
+	result := make(map[string]state.HardwareState)
+	now := htime.Now()
+
+	hp := hardware.GetHostProfile()
+
+	result["os"] = state.HardwareState{
+		Type:     "os",
+		Info:     fmt.Sprintf("%s %s", hp.GetOSVendor(), hp.GetOSVersion()),
+		LastSync: now,
+	}
+
+	result["cpu"] = state.HardwareState{
+		Type:     "cpu",
+		Count:    int(hp.GetCPUCores()),
+		LastSync: now,
+	}
+
+	result["memory"] = state.HardwareState{
+		Type:     "memory",
+		Size:     fmt.Sprintf("%d GB", hp.GetTotalMemoryGB()),
+		Info:     fmt.Sprintf("%d GB available", hp.GetAvailableMemoryGB()),
+		LastSync: now,
+	}
+
+	result["storage"] = state.HardwareState{
+		Type:     "storage",
+		Size:     fmt.Sprintf("%d GB", hp.GetTotalStorageGB()),
+		LastSync: now,
+	}
+
+	if ssd := hp.GetSSDStorageGB(); ssd > 0 {
+		result["storage-ssd"] = state.HardwareState{
+			Type:     "storage-ssd",
+			Size:     fmt.Sprintf("%d GB", ssd),
+			LastSync: now,
+		}
+	}
+
+	if hdd := hp.GetHDDStorageGB(); hdd > 0 {
+		result["storage-hdd"] = state.HardwareState{
+			Type:     "storage-hdd",
+			Size:     fmt.Sprintf("%d GB", hdd),
+			LastSync: now,
+		}
+	}
+
+	return result
 }
 
 func (r *realityChecker) BlockNodeState(ctx context.Context) (state.BlockNodeState, error) {
