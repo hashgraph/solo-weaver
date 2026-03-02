@@ -258,6 +258,25 @@ func (sc *ArtifactCollection) GetArtifactByName(name string) (*ArtifactMetadata,
 	return nil, NewSoftwareNotFoundError(name)
 }
 
+// Names returns the names of all managed software artifacts.
+func (sc *ArtifactCollection) Names() []string {
+	names := make([]string, 0, len(sc.Artifact))
+	for _, item := range sc.Artifact {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+// KnownSoftwareNames returns the names of all software artifacts defined in artifact.yaml.
+// It returns an empty slice on any error so callers can always range over the result safely.
+func KnownSoftwareNames() []string {
+	cfg, err := LoadArtifactConfig()
+	if err != nil {
+		return []string{}
+	}
+	return cfg.Names()
+}
+
 // executeTemplate executes a template string with the given data
 func executeTemplate(templateStr string, data TemplateData) (string, error) {
 	tmpl, err := template.New("software").Parse(templateStr)

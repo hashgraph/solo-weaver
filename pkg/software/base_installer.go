@@ -974,31 +974,46 @@ func (b *baseInstaller) cleanupSymlinks() error {
 // ── state helpers ─────────────────────────────────────────────────────────────
 // These four methods centralise all state mutations so every concrete installer
 // can share them without duplicating GetSoftwareState/SetSoftwareState logic.
+//
+// Each helper follows the same safe pattern:
+//  1. Fetch the current in-memory snapshot once.
+//  2. Read the existing SoftwareState for this component (zero-value with Name
+//     pre-set when absent — first-time initialisation case).
+//  3. Mutate only the relevant fields; all other fields are preserved.
+//  4. Write back using the *same* snapshot to avoid stomping concurrent changes.
 
 func (b *baseInstaller) recordInstalled() error {
-	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Installed = true
 	cur.Version = b.versionToBeInstalled
-	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
 }
 
 func (b *baseInstaller) recordConfigured() error {
-	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Configured = true
 	cur.Version = b.versionToBeInstalled
-	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
 }
 
 func (b *baseInstaller) clearInstalled() error {
-	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Installed = false
-	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
 }
 
 func (b *baseInstaller) clearConfigured() error {
-	cur := state.GetSoftwareState(b.stateManager.State(), b.software.Name)
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Configured = false
-	return b.stateManager.Set(state.SetSoftwareState(b.stateManager.State(), b.software.Name, cur)).Flush()
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
 }
 
 // installFile copies a file with permissions using the fileManager
