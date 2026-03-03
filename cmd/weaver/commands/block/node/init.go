@@ -40,7 +40,7 @@ func initializeDependencies() error {
 	currentState := sm.State()
 	logx.As().Info().Str("state_file", currentState.StateFile).Any("currentState", currentState).Msg("Current state")
 
-	realityChecker, err := reality.NewChecker(currentState)
+	realityChecker, err := reality.NewChecker(sm)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
 	}

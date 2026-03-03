@@ -25,9 +25,9 @@ import (
 
 // Handler is the public entry point for all block-node intents.
 // It owns no action-specific logic; it only routes to the right per-action
-// handler and calls the shared infrastructure on NodeHandlerBase.
+// handler and calls the shared infrastructure on BaseHandler.
 type Handler struct {
-	bll.NodeHandlerBase
+	bll.BaseHandler
 	install   *InstallHandler
 	upgrade   *UpgradeHandler
 	reset     *ResetHandler
@@ -42,18 +42,18 @@ func NewHandler(
 	checker reality.Checker,
 	opts ...bll.Option[Handler],
 ) (*Handler, error) {
-	base, err := bll.NewNodeHandlerBase(sm, registry, checker)
+	base, err := bll.NewBaseHandler(sm, registry, checker)
 	if err != nil {
 		return nil, err
 	}
 
 	acc := registryAccessor{bn: registry.BlockNode}
 	h := &Handler{
-		NodeHandlerBase: base,
-		install:         newInstallHandler(acc, sm),
-		upgrade:         newUpgradeHandler(acc),
-		reset:           newResetHandler(acc),
-		uninstall:       newUninstallHandler(acc),
+		BaseHandler: base,
+		install:     newInstallHandler(acc, sm),
+		upgrade:     newUpgradeHandler(acc),
+		reset:       newResetHandler(acc),
+		uninstall:   newUninstallHandler(acc),
 	}
 
 	for _, opt := range opts {
@@ -88,7 +88,8 @@ func (h *Handler) HandleIntent(
 	}
 
 	// ── 2. Refresh rsl state ───────────────────────────────────────────────
-	if err := h.NodeHandlerBase.RefreshRuntimeState(
+	if err := h.BaseHandler.RefreshRuntimeState(
+		ctx,
 		models.TargetBlocknode,
 		func() error { return h.RSL.BlockNode.SetUserInputs(inputs.Custom) },
 	); err != nil {
@@ -136,11 +137,12 @@ func (h *Handler) HandleIntent(
 
 	// ── 5. Flush state ─────────────────────────────────────────────────────
 	return bll.FlushNodeState(
-		h.NodeHandlerBase,
+		ctx,
+		h.BaseHandler,
 		report,
 		intent,
 		effectiveInputs,
-		bll.BlockNodePatchState(h.NodeHandlerBase, effectiveInputs.Custom.Chart),
+		injectChartRef(h.BaseHandler, effectiveInputs.Custom.Chart),
 	)
 }
 

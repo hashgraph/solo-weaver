@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -981,14 +982,23 @@ func (b *baseInstaller) cleanupSymlinks() error {
 //     pre-set when absent — first-time initialisation case).
 //  3. Mutate only the relevant fields; all other fields are preserved.
 //  4. Write back using the *same* snapshot to avoid stomping concurrent changes.
-
 func (b *baseInstaller) recordInstalled() error {
 	snap := b.stateManager.State()
 	cur := state.GetSoftwareState(snap, b.software.Name)
 	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Installed = true
 	cur.Version = b.versionToBeInstalled
-	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
+
+	logx.As().Debug().
+		Str("software", b.software.Name).
+		Str("version", b.versionToBeInstalled).
+		Any("currentState", cur).
+		Msg("Recording software as installed in state")
+
+	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush(); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to flush state after recording installed")
+	}
+	return nil
 }
 
 func (b *baseInstaller) recordConfigured() error {
@@ -997,7 +1007,17 @@ func (b *baseInstaller) recordConfigured() error {
 	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Configured = true
 	cur.Version = b.versionToBeInstalled
-	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
+
+	logx.As().Debug().
+		Str("software", b.software.Name).
+		Str("version", b.versionToBeInstalled).
+		Any("currentState", cur).
+		Msg("Recording software as configured in state")
+
+	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush(); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to flush state after recording configured")
+	}
+	return nil
 }
 
 func (b *baseInstaller) clearInstalled() error {

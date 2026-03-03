@@ -42,7 +42,7 @@ type Checker interface {
 }
 
 type realityChecker struct {
-	current       state.State
+	sm            state.Manager
 	sandboxBinDir string // overrideable for tests; defaults to models.Paths().SandboxBinDir
 	stateDir      string // overrideable for tests; defaults to models.Paths().StateDir
 }
@@ -75,7 +75,8 @@ func (r *realityChecker) MachineState(ctx context.Context) (state.MachineState, 
 	now := htime.Now()
 	ms := state.NewMachineState()
 
-	ms.Software = r.refreshSoftwareState()
+	current := r.sm.State()
+	ms.Software = r.refreshSoftwareState(current)
 	ms.Hardware = r.refreshHardwareState()
 
 	ms.LastSync = now
@@ -90,7 +91,7 @@ func (r *realityChecker) MachineState(ctx context.Context) (state.MachineState, 
 //  2. Legacy sidecar files  <StateDir>/<name>.installed / .configured
 //     (set by the legacy state.Manager used by all installers today)
 //  3. Binary presence on disk  (live filesystem stat)
-func (r *realityChecker) refreshSoftwareState() map[string]state.SoftwareState {
+func (r *realityChecker) refreshSoftwareState(current state.State) map[string]state.SoftwareState {
 	result := make(map[string]state.SoftwareState)
 
 	sandboxBinDir := r.sandboxBinDir
@@ -106,12 +107,12 @@ func (r *realityChecker) refreshSoftwareState() map[string]state.SoftwareState {
 		sw := state.SoftwareState{Name: name}
 
 		// --- Priority 1: carry from new MachineState.Software map ---
-		if persisted, ok := r.current.MachineState.Software[name]; ok && persisted.Name != "" {
+		if persisted, ok := current.MachineState.Software[name]; ok && persisted.Name != "" {
 			sw = persisted
 		} else {
 			// --- Priority 2: read legacy sidecar files ---
-			sw.Installed, sw.Version = readLegacySidecarState(stateDir, name, "installed")
-			if configured, _ := readLegacySidecarState(stateDir, name, "configured"); configured {
+			sw.Installed, sw.Version = readLegacyStateFiles(stateDir, name, "installed")
+			if configured, _ := readLegacyStateFiles(stateDir, name, "configured"); configured {
 				sw.Configured = true
 			}
 		}
@@ -136,13 +137,13 @@ func (r *realityChecker) refreshSoftwareState() map[string]state.SoftwareState {
 	return result
 }
 
-// readLegacySidecarState reads a legacy <name>.<stateType> sidecar file from stateDir.
+// readLegacyStateFiles reads a legacy <name>.<stateType> state files from stateDir.
 // It returns (true, version) when the file exists, (false, "") otherwise.
 // The file content is expected to be in the format written by state.Manager.RecordState:
 //
 //	"installed at version 1.30.0\n"
 //	"configured at version 1.30.0\n"
-func readLegacySidecarState(stateDir, name, stateType string) (exists bool, version string) {
+func readLegacyStateFiles(stateDir, name, stateType string) (exists bool, version string) {
 	filePath := filepath.Join(stateDir, name+"."+stateType)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -234,6 +235,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (state.BlockNodeSta
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
+			ChartRef:      "", // release.Release doesn't have a direct ChartRef field. See BlockNodePatchState() where we patch it
 			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
@@ -245,7 +247,7 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (state.BlockNodeSta
 		LastSync: now,
 	}
 
-	// get storage info from from PVs and PVCs associated with the BlockNodeState release
+	// get storage info from PVs and PVCs associated with the BlockNodeState release
 	k8s, err := kube.NewClient()
 	if err != nil {
 		return bn, err
@@ -309,7 +311,6 @@ func (r *realityChecker) BlockNodeState(ctx context.Context) (state.BlockNodeSta
 		}
 	}
 
-	r.current.BlockNodeState = bn
 	logx.As().Debug().Any("state", bn).Msg("Refreshed block node state")
 
 	return bn, nil
@@ -377,6 +378,6 @@ func UnmarshalManifest(manifest string) ([]*unstructured.Unstructured, error) {
 	return out, nil
 }
 
-func NewChecker(current state.State) (Checker, error) {
-	return &realityChecker{current: current}, nil
+func NewChecker(sm state.Manager) (Checker, error) {
+	return &realityChecker{sm: sm}, nil
 }

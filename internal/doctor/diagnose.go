@@ -22,8 +22,6 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-var ErrPropertyResolution = errorx.RegisterProperty("resolution")
-
 type ErrorDiagnosis struct {
 	Error              error             `yaml:"error" json:"error"`
 	Message            string            `yaml:"message" json:"message"`

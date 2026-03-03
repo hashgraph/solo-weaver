@@ -1273,10 +1273,10 @@ func RetrieveClusterInfo() (*models.ClusterInfo, error) {
 	}
 
 	if _, err := os.Stat(cls.KubeconfigPath); err != nil {
-		logx.As().Warn().Str("defaultKubeconfigPath", cls.KubeconfigPath).Msg("Default kubeconfig not found, skipping kubeconfig parsing")
+		logx.As().Debug().Str("defaultKubeconfigPath", cls.KubeconfigPath).Msg("Default kubeconfig not found, skipping kubeconfig parsing")
 		cls.KubeconfigPath = ""
 	} else {
-		logx.As().Warn().Str("kubeconfigPath", cls.KubeconfigPath).Msg("Using kubeconfig to retrieve cluster contexts and namespace")
+		logx.As().Debug().Str("kubeconfigPath", cls.KubeconfigPath).Msg("Using kubeconfig to retrieve cluster contexts and namespace")
 		conf := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 			&clientcmd.ClientConfigLoadingRules{ExplicitPath: cls.KubeconfigPath},
 			&clientcmd.ConfigOverrides{CurrentContext: ""},

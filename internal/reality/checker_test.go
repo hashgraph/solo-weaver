@@ -199,7 +199,7 @@ func TestReadLegacySidecarState_ParsesVersion(t *testing.T) {
 		sidecarPath := filepath.Join(dir, name+".installed")
 		require.NoError(t, os.WriteFile(sidecarPath, []byte(tc.content), 0o644))
 
-		exists, version := readLegacySidecarState(dir, name, "installed")
+		exists, version := readLegacyStateFiles(dir, name, "installed")
 		assert.True(t, exists, "file exists")
 		assert.Equal(t, tc.wantVersion, version, "content: %q", tc.content)
 
@@ -207,7 +207,7 @@ func TestReadLegacySidecarState_ParsesVersion(t *testing.T) {
 	}
 
 	// Non-existent file.
-	exists, version := readLegacySidecarState(dir, "missing", "installed")
+	exists, version := readLegacyStateFiles(dir, "missing", "installed")
 	assert.False(t, exists)
 	assert.Empty(t, version)
 }

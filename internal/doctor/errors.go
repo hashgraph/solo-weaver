@@ -8,6 +8,7 @@ func init() {
 }
 
 var (
-	ErrNamespace  = errorx.NewNamespace("doctor")
-	NotFoundError = ErrNamespace.NewType("not_found", errorx.NotFound())
+	ErrPropertyResolution = errorx.RegisterProperty("resolution")
+	ErrNamespace          = errorx.NewNamespace("doctor")
+	NotFoundError         = ErrNamespace.NewType("not_found", errorx.NotFound())
 )
