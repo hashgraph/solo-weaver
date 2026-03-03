@@ -4,6 +4,7 @@ package blocknode
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -15,11 +16,11 @@ import (
 // node to already be deployed.  Effective-input resolution is a no-op (the
 // effective values from the current state are used as-is).
 type ResetHandler struct {
-	base rslAccessor
+	runtimeState rslAccessor
 }
 
-func newResetHandler(base rslAccessor) *ResetHandler {
-	return &ResetHandler{base: base}
+func newResetHandler(runtimeState rslAccessor) *ResetHandler {
+	return &ResetHandler{runtimeState: runtimeState}
 }
 
 // PrepareEffectiveInputs for reset simply passes inputs through unchanged.
@@ -27,10 +28,8 @@ func newResetHandler(base rslAccessor) *ResetHandler {
 func (h *ResetHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	if inputs == nil {
-		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
-	}
-	return inputs, nil
+	// reset has no special validation; pass nil validator
+	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed and returns the
@@ -40,10 +39,10 @@ func (h *ResetHandler) BuildWorkflow(
 	_ state.ClusterState,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if nodeState.ReleaseInfo.Status != release.StatusDeployed {
+	if nodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot reset").
-			WithProperty(errPropertyResolution, "use 'weaver block node install' to install the block node")
+			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
 	}
 
 	wb := automa.NewWorkflowBuilder().WithId("block-node-reset").

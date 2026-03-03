@@ -4,6 +4,7 @@ package blocknode
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -13,11 +14,11 @@ import (
 // UninstallHandler handles the ActionUninstall intent for a block node.
 // It optionally purges persistent storage before removing the Helm release.
 type UninstallHandler struct {
-	base rslAccessor
+	runtimeState rslAccessor
 }
 
-func newUninstallHandler(base rslAccessor) *UninstallHandler {
-	return &UninstallHandler{base: base}
+func newUninstallHandler(runtimeState rslAccessor) *UninstallHandler {
+	return &UninstallHandler{runtimeState: runtimeState}
 }
 
 // PrepareEffectiveInputs for uninstall passes inputs through — no field
@@ -25,10 +26,7 @@ func newUninstallHandler(base rslAccessor) *UninstallHandler {
 func (h *UninstallHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	if inputs == nil {
-		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
-	}
-	return inputs, nil
+	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed (unless --force) and
@@ -41,7 +39,7 @@ func (h *UninstallHandler) BuildWorkflow(
 	if nodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot uninstall").
-			WithProperty(errPropertyResolution,
+			WithProperty(bll.ErrPropertyResolution,
 				"use 'weaver block node install' to install the block node, or pass --force to continue")
 	}
 

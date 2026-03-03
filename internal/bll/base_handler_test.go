@@ -68,8 +68,8 @@ func (s *stubChecker) BlockNodeState(_ context.Context) (state.BlockNodeState, e
 
 func newStubSM() *stubStateManager { return newStubStateManager() }
 
-func newBaseWithStubs(sm *stubStateManager) NodeHandlerBase {
-	return NodeHandlerBase{
+func newBaseWithStubs(sm *stubStateManager) BaseHandler {
+	return BaseHandler{
 		StateManager: sm,
 		RSL:          &rsl.Registry{}, // nil sub-fields trigger a controlled error on refresh
 		Checker:      &stubChecker{},
@@ -219,7 +219,7 @@ func TestFlushNodeState_SuccessReport_UpdatesLastActionInState(t *testing.T) {
 // TestNewNodeHandlerBase_NilDependencies verifies that nil dependencies are
 // rejected at construction time rather than causing a nil-pointer panic later.
 func TestNewNodeHandlerBase_NilStateManager(t *testing.T) {
-	_, err := NewNodeHandlerBase(nil, &rsl.Registry{}, &stubChecker{})
+	_, err := NewBaseHandler(nil, &rsl.Registry{}, &stubChecker{})
 	if err == nil {
 		t.Fatal("expected error for nil state.Manager")
 	}
@@ -227,7 +227,7 @@ func TestNewNodeHandlerBase_NilStateManager(t *testing.T) {
 
 func TestNewNodeHandlerBase_NilRegistry(t *testing.T) {
 	sm := newStubSM()
-	_, err := NewNodeHandlerBase(sm, nil, &stubChecker{})
+	_, err := NewBaseHandler(sm, nil, &stubChecker{})
 	if err == nil {
 		t.Fatal("expected error for nil registry")
 	}
@@ -235,7 +235,7 @@ func TestNewNodeHandlerBase_NilRegistry(t *testing.T) {
 
 func TestNewNodeHandlerBase_NilChecker(t *testing.T) {
 	sm := newStubSM()
-	_, err := NewNodeHandlerBase(sm, &rsl.Registry{}, nil)
+	_, err := NewBaseHandler(sm, &rsl.Registry{}, nil)
 	if err == nil {
 		t.Fatal("expected error for nil reality.Checker")
 	}
@@ -243,7 +243,7 @@ func TestNewNodeHandlerBase_NilChecker(t *testing.T) {
 
 func TestNewNodeHandlerBase_AllValid(t *testing.T) {
 	sm := newStubSM()
-	base, err := NewNodeHandlerBase(sm, &rsl.Registry{}, &stubChecker{})
+	base, err := NewBaseHandler(sm, &rsl.Registry{}, &stubChecker{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

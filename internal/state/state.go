@@ -14,8 +14,12 @@ import (
 )
 
 const ModelVersion = "v1" // State model version — increment on breaking changes requiring migration
+const StateFileName = "state.yaml"
 
 type State struct {
+	Hash     string `yaml:"hash,omitempty" json:"hash,omitempty"`         // digest of the serialized state
+	HashAlgo string `yaml:"hashAlgo,omitempty" json:"hashAlgo,omitempty"` // algorithm used for Hash (e.g. "sha256")
+
 	Version          string          `yaml:"version" json:"version"`
 	StateFile        string          `yaml:"stateFile" json:"stateFile"` // path to the state file
 	ProvisionerState ProvisionerInfo `yaml:"provisioner" json:"provisioner"`
@@ -134,7 +138,7 @@ func NewState() State {
 			GoVersion:  versionInfo.GoVersion,
 			Executable: exePath,
 		},
-		StateFile:      path.Join(p.StateDir, "state.yaml"),
+		StateFile:      path.Join(p.StateDir, StateFileName),
 		MachineState:   NewMachineState(),
 		ClusterState:   NewClusterState(),
 		BlockNodeState: NewBlockNodeState(),

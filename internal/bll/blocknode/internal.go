@@ -19,13 +19,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
 )
-
-// errPropertyResolution is the errorx property key used to attach remediation
-// hints to precondition errors — mirrors doctor.ErrPropertyResolution without
-// creating a circular import.
-var errPropertyResolution = errorx.RegisterProperty("bll.resolution_hint")
 
 // ── rslAccessor ───────────────────────────────────────────────────────────────
 
@@ -75,7 +69,9 @@ func (r registryAccessor) Storage() (*automa.EffectiveValue[models.BlockNodeStor
 
 // ── Step adapters ─────────────────────────────────────────────────────────────
 // These thin wrappers allow handler files to call a local function rather than
-// reaching directly into two separate sub-packages.
+// reaching directly into two separate sub-packages. This helps keep imports tidy and maintain the abstraction barrier
+// between handlers and workflows, which also helps with unit testing since handlers can be tested without importing real
+// step implementations.
 
 func setupBlockNode(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
 	return steps.SetupBlockNode(ins)

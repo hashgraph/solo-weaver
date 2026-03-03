@@ -6,7 +6,7 @@ package bll
 // resolution, and workflow orchestration.  It sits between the CLI commands
 // (cmd layer) and the workflow / step layer.
 //
-// Shared infrastructure lives in NodeHandlerBase so that every per-node-type
+// Shared infrastructure lives in BaseHandler so that every per-node-type
 // handler (BlockNode, MirrorNode, RelayNode, …) inherits it without duplication.
 
 import (
@@ -19,37 +19,11 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 )
 
-// ── ActionHandler ─────────────────────────────────────────────────────────────
+// ── BaseHandler ───────────────────────────────────────────────────────────
 
-// ActionHandler is the contract every per-action, per-node-type handler must
-// satisfy.  [I any] is the node-specific inputs struct (e.g. models.BlocknodeInputs).
-//
-// Splitting at this boundary means:
-//   - Each handler is independently unit-testable with zero routing boilerplate.
-//   - Adding a new action (e.g. ActionMigrate) is a new file, not a new switch arm.
-//   - Adding a new node type (MirrorNode) is a new package, not a new God struct.
-type ActionHandler[I any] interface {
-	// PrepareEffectiveInputs resolves the winning value for each field from the
-	// three sources (config default, current deployed state, user input) and
-	// applies all field-level validators (immutability, override guards, etc.).
-	// The returned inputs are fully resolved and safe to pass to BuildWorkflow.
-	PrepareEffectiveInputs(inputs *models.UserInputs[I]) (*models.UserInputs[I], error)
-
-	// BuildWorkflow validates action-level preconditions (e.g. "must be deployed
-	// before upgrade") and returns the ready-to-execute WorkflowBuilder.
-	BuildWorkflow(
-		nodeState state.BlockNodeState,
-		clusterState state.ClusterState,
-		inputs *models.UserInputs[I],
-	) (*automa.WorkflowBuilder, error)
-}
-
-// ── NodeHandlerBase ───────────────────────────────────────────────────────────
-
-// NodeHandlerBase holds the three dependencies that every node-type handler
+// BaseHandler holds the three dependencies that every node-type handler
 // needs: a StateManager for reading and writing state, the rsl Registry, and
 // the reality Checker for live machine-state queries.
 //
@@ -57,36 +31,37 @@ type ActionHandler[I any] interface {
 // FlushNodeState without re-implementing them.
 //
 //	type BlockNodeHandler struct {
-//	    NodeHandlerBase
+//	    BaseHandler
 //	    install   *BlockNodeInstallHandler
 //	    upgrade   *BlockNodeUpgradeHandler
 //	    reset     *BlockNodeResetHandler
 //	    uninstall *BlockNodeUninstallHandler
 //	}
-type NodeHandlerBase struct {
+type BaseHandler struct {
 	StateManager state.Manager
 	RSL          *rsl.Registry
 	Checker      reality.Checker // Reality checker is required for live refreshes during FlushNodeState
 }
 
-// NewNodeHandlerBase validates the required dependencies and returns a
-// populated NodeHandlerBase.  All fields are required; any nil returns an error.
-func NewNodeHandlerBase(sm state.Manager, reg *rsl.Registry, checker reality.Checker) (NodeHandlerBase, error) {
+// NewBaseHandler validates the required dependencies and returns a
+// populated BaseHandler.  All fields are required; any nil returns an error.
+func NewBaseHandler(sm state.Manager, reg *rsl.Registry, checker reality.Checker) (BaseHandler, error) {
 	if sm == nil {
-		return NodeHandlerBase{}, errorx.IllegalArgument.New("state.Manager cannot be nil")
+		return BaseHandler{}, errorx.IllegalArgument.New("state.Manager cannot be nil")
 	}
 	if reg == nil {
-		return NodeHandlerBase{}, errorx.IllegalArgument.New("rsl.Registry cannot be nil")
+		return BaseHandler{}, errorx.IllegalArgument.New("rsl.Registry cannot be nil")
 	}
 	if checker == nil {
-		return NodeHandlerBase{}, errorx.IllegalArgument.New("reality.Checker cannot be nil")
+		return BaseHandler{}, errorx.IllegalArgument.New("reality.Checker cannot be nil")
 	}
-	return NodeHandlerBase{StateManager: sm, RSL: reg, Checker: checker}, nil
+	return BaseHandler{StateManager: sm, RSL: reg, Checker: checker}, nil
 }
 
 // RefreshRuntimeState pushes user inputs into rsl then force-refreshes cluster
 // and the target node state.
-func (b NodeHandlerBase) RefreshRuntimeState(
+func (b BaseHandler) RefreshRuntimeState(
+	ctx context.Context,
 	target models.TargetType,
 	setUserInputsFn func() error,
 ) error {
@@ -94,24 +69,24 @@ func (b NodeHandlerBase) RefreshRuntimeState(
 		return errorx.IllegalState.New("failed to push user inputs into rsl: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
-	defer cancel()
-	if err := b.RSL.Cluster.RefreshState(ctx, false); err != nil {
+	ctx1, cancel1 := context.WithTimeout(ctx, rsl.DefaultRefreshTimeout)
+	defer cancel1()
+	if err := b.RSL.Cluster.RefreshState(ctx1, false); err != nil {
 		return errorx.IllegalState.New("failed to refresh cluster state: %v", err)
 	}
 
-	cancel()
-	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
-	defer cancel()
-
+	// We refresh the target node state with force=false here because we let the reality refresh only if it is stale.
+	ctx2, cancel2 := context.WithTimeout(ctx, rsl.DefaultRefreshTimeout)
+	defer cancel2()
 	switch target {
 	case models.TargetBlocknode:
-		if err := b.RSL.BlockNode.RefreshState(ctx, false); err != nil {
+		if err := b.RSL.BlockNode.RefreshState(ctx2, false); err != nil {
 			return errorx.IllegalState.New("failed to refresh block node state: %v", err)
 		}
 	default:
 		return errorx.IllegalArgument.New("unsupported target type for runtime refresh: %s", target)
 	}
+
 	return nil
 }
 
@@ -124,7 +99,8 @@ func (b NodeHandlerBase) RefreshRuntimeState(
 // All three are written into the full State before the single Flush() call,
 // so state.yaml always reflects reality after every workflow execution.
 func FlushNodeState[I any](
-	base NodeHandlerBase,
+	ctx context.Context,
+	base BaseHandler,
 	report *automa.Report,
 	intent models.Intent,
 	effectiveInputs *models.UserInputs[I],
@@ -146,32 +122,38 @@ func FlushNodeState[I any](
 		return report, nil
 	}
 
-	base.StateManager.AddActionHistory(state.ActionHistory{
-		Intent: intent,
-		Inputs: effectiveInputs,
-	})
+	// refresh state
+	err := base.StateManager.Refresh()
+	if err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return nil, errorx.IllegalState.New("failed to refresh state manager before flush: %v", err)
+	}
+	fullState := base.StateManager.State()
 
 	// ── 1. Refresh ClusterState ───────────────────────────────────────────────
-	ctx, cancel := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
-	defer cancel()
 	if base.RSL.Cluster == nil {
 		return nil, errorx.IllegalState.New("rsl cluster runtime is not initialized")
 	}
-	if err := base.RSL.Cluster.RefreshState(ctx, true); err != nil {
+
+	ctx1, cancel1 := context.WithTimeout(ctx, rsl.DefaultRefreshTimeout)
+	defer cancel1()
+	if err := base.RSL.Cluster.RefreshState(ctx1, true); err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh cluster state after workflow: %v", err)
 	}
 
-	// ── 2. Refresh target node state ─────────────────────────────────────────
-	cancel()
-	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
-	defer cancel()
+	clusterState, err := base.RSL.Cluster.CurrentState()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to read cluster state after workflow: %v", err)
+	}
 
+	// ── 2. Refresh target node state ─────────────────────────────────────────
+	ctx2, cancel2 := context.WithTimeout(ctx, rsl.DefaultRefreshTimeout)
+	defer cancel2()
 	switch intent.Target {
 	case models.TargetBlocknode:
 		if base.RSL.BlockNode == nil {
 			return nil, errorx.IllegalState.New("rsl block node runtime is not initialized")
 		}
-		if err := base.RSL.BlockNode.RefreshState(ctx, true); err != nil {
+		if err := base.RSL.BlockNode.RefreshState(ctx2, true); err != nil {
 			return nil, errorx.IllegalState.New("failed to refresh block node state after workflow: %v", err)
 		}
 	default:
@@ -179,36 +161,32 @@ func FlushNodeState[I any](
 	}
 
 	// ── 3. Refresh MachineState (software + hardware) ─────────────────────────
+	ctx3, cancel3 := context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
+	defer cancel3()
+
 	// This must run after the node-state refresh so that any binary placements
 	// made by the workflow steps are visible to the filesystem stat check inside
 	// refreshSoftwareState.  We do NOT treat a MachineState refresh error as
 	// fatal — a stale MachineState is preferable to losing the whole flush.
-	cancel()
-	ctx, cancel = context.WithTimeout(context.Background(), rsl.DefaultRefreshTimeout)
-	defer cancel()
-
-	machineState, machineErr := base.Checker.MachineState(ctx)
+	machineState, machineErr := base.Checker.MachineState(ctx3)
 	if machineErr != nil {
 		logx.As().Warn().Err(machineErr).Msg("failed to refresh MachineState before flush; persisting stale machine state")
+		machineState = base.StateManager.State().MachineState // preserve existing
 	}
 
 	// ── Assemble full state ───────────────────────────────────────────────────
-	clusterState, err := base.RSL.Cluster.CurrentState()
-	if err != nil {
-		return nil, errorx.IllegalState.New("failed to read cluster state after workflow: %v", err)
-	}
-
-	fullState := base.StateManager.State()
 	fullState.ClusterState = clusterState
-	if machineErr == nil {
-		fullState.MachineState = machineState
-	}
-
+	fullState.MachineState = machineState
 	if patchState != nil {
 		if err = patchState(&fullState); err != nil {
 			return nil, err
 		}
 	}
+
+	base.StateManager.AddActionHistory(state.ActionHistory{
+		Intent: intent,
+		Inputs: effectiveInputs,
+	})
 
 	if err = base.StateManager.Set(fullState).Flush(); err != nil {
 		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
@@ -220,19 +198,4 @@ func FlushNodeState[I any](
 		Msg("Persisted state after workflow execution")
 
 	return report, nil
-}
-
-// BlockNodePatchState returns the patchState function for block-node flushes.
-func BlockNodePatchState(base NodeHandlerBase, chartRef string) func(*state.State) error {
-	return func(full *state.State) error {
-		bnState, err := base.RSL.BlockNode.CurrentState()
-		if err != nil {
-			return errorx.IllegalState.New("failed to read block node state after workflow: %v", err)
-		}
-		if bnState.ReleaseInfo.Status == release.StatusDeployed {
-			bnState.ReleaseInfo.ChartRef = chartRef
-		}
-		full.BlockNodeState = bnState
-		return nil
-	}
 }

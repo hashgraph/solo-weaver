@@ -125,18 +125,22 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 				return automa.SuccessReport(stp)
 			}
 
-			// Remove each top-level directory/file except downloads
+			// Remove each top-level directory/file except the below ones
+			skipDirs := map[string]bool{
+				models.Paths().DownloadsDir: true,
+				models.Paths().BinDir:       true,
+				models.Paths().LogsDir:      true,
+			}
 			for _, entry := range entries {
 				entryPath := filepath.Join(weaverHome, entry.Name())
 
 				// Skip the downloads, bin, and logs folders
-				if entryPath == models.Paths().DownloadsDir ||
-					entryPath == models.Paths().BinDir ||
-					entryPath == models.Paths().LogsDir {
+				if skipDirs[entryPath] {
+					logx.As().Debug().Str("path", entryPath).Msg("Preserving directory during cleanup")
 					continue
 				}
 
-				// Remove all other directories/files
+				// Remove directories/files
 				if err := fsManager.RemoveAll(entryPath); err != nil {
 					logx.As().Warn().Err(err).Msgf("Failed to remove %s, continuing with teardown", entryPath)
 				}
