@@ -31,14 +31,24 @@ func injectChartRef(base bll.BaseHandler, chartRef string) func(*state.State) er
 }
 
 // prepareBlocknodeEffectiveInputs resolves common fields for blocknode commands.
-// validator may be nil; if provided it runs additional validations on the effective inputs.
+// fieldGuards contains per-field guard functions (e.g. RequiresExplicitOverride
+// closures) that are evaluated after all fields are resolved; any error from a
+// guard is returned immediately.  validator, if non-nil, runs additional
+// validations on the fully-assembled effective inputs struct.
 func prepareBlocknodeEffectiveInputs(
 	runtimeState rslAccessor,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 	validator func(*models.UserInputs[models.BlocknodeInputs]) error,
+	fieldGuards ...func() error,
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
 	if inputs == nil {
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
+	}
+
+	// If runtime state is unavailable, we cannot resolve any fields, so return early with user inputs as-is.  This allows
+	// workflows that don't require any resolved fields to proceed even if the block node runtime state is not yet available (e.g. uninstall).
+	if runtimeState == nil {
+		return inputs, nil
 	}
 
 	effReleaseName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ReleaseName() })
@@ -92,6 +102,14 @@ func prepareBlocknodeEffectiveInputs(
 	effStorage, err := resolver.Field(func() (*automa.EffectiveValue[models.BlockNodeStorage], error) { return runtimeState.Storage() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node storage: %v", err)
+	}
+
+	// Run per-field guards (e.g. RequiresExplicitOverride) now that all
+	// effective values and their strategies are available.
+	for _, guard := range fieldGuards {
+		if err := guard(); err != nil {
+			return nil, err
+		}
 	}
 
 	effective := models.UserInputs[models.BlocknodeInputs]{

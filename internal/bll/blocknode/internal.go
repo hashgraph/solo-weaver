@@ -15,9 +15,6 @@ package blocknode
 import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
-	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
@@ -67,32 +64,60 @@ func (r registryAccessor) Storage() (*automa.EffectiveValue[models.BlockNodeStor
 	return r.bn.Storage()
 }
 
-// ── Step adapters ─────────────────────────────────────────────────────────────
-// These thin wrappers allow handler files to call a local function rather than
-// reaching directly into two separate sub-packages. This helps keep imports tidy and maintain the abstraction barrier
-// between handlers and workflows, which also helps with unit testing since handlers can be tested without importing real
-// step implementations.
+// ── capturingAccessor ─────────────────────────────────────────────────────────
 
-func setupBlockNode(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
-	return steps.SetupBlockNode(ins)
+// capturingAccessor wraps an rslAccessor and intercepts per-field calls so
+// that the caller (e.g. InstallHandler) can capture each *automa.EffectiveValue
+// for post-resolution guard checks, without exposing the internal effective
+// values through the public API.
+type capturingAccessor struct {
+	inner          rslAccessor
+	releaseNameFn  func() (*automa.EffectiveValue[string], error)
+	versionFn      func() (*automa.EffectiveValue[string], error)
+	namespaceFn    func() (*automa.EffectiveValue[string], error)
+	chartNameFn    func() (*automa.EffectiveValue[string], error)
+	chartRepoFn    func() (*automa.EffectiveValue[string], error)
+	chartVersionFn func() (*automa.EffectiveValue[string], error)
 }
 
-func upgradeBlockNode(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
-	return steps.UpgradeBlockNode(ins)
-}
+var _ rslAccessor = (*capturingAccessor)(nil)
 
-func resetBlockNode(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
-	return steps.ResetBlockNode(ins)
+func (c *capturingAccessor) ReleaseName() (*automa.EffectiveValue[string], error) {
+	if c.releaseNameFn != nil {
+		return c.releaseNameFn()
+	}
+	return c.inner.ReleaseName()
 }
-
-func uninstallBlockNode(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
-	return steps.UninstallBlockNode(ins)
+func (c *capturingAccessor) Version() (*automa.EffectiveValue[string], error) {
+	if c.versionFn != nil {
+		return c.versionFn()
+	}
+	return c.inner.Version()
 }
-
-func purgeBlockNodeStorage(ins models.BlocknodeInputs) *automa.WorkflowBuilder {
-	return steps.PurgeBlockNodeStorage(ins)
+func (c *capturingAccessor) Namespace() (*automa.EffectiveValue[string], error) {
+	if c.namespaceFn != nil {
+		return c.namespaceFn()
+	}
+	return c.inner.Namespace()
 }
-
-func installClusterWorkflow(nodeType string, profile string, skipHW bool, sm state.Manager) *automa.WorkflowBuilder {
-	return workflows.InstallClusterWorkflow(nodeType, profile, skipHW, sm)
+func (c *capturingAccessor) ChartName() (*automa.EffectiveValue[string], error) {
+	if c.chartNameFn != nil {
+		return c.chartNameFn()
+	}
+	return c.inner.ChartName()
+}
+func (c *capturingAccessor) ChartRepo() (*automa.EffectiveValue[string], error) {
+	if c.chartRepoFn != nil {
+		return c.chartRepoFn()
+	}
+	return c.inner.ChartRepo()
+}
+func (c *capturingAccessor) ChartVersion() (*automa.EffectiveValue[string], error) {
+	if c.chartVersionFn != nil {
+		return c.chartVersionFn()
+	}
+	return c.inner.ChartVersion()
+}
+func (c *capturingAccessor) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
+	return c.inner.Storage()
 }
