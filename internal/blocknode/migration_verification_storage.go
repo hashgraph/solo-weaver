@@ -16,8 +16,8 @@ package blocknode
 import (
 	"context"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/joomcode/errorx"
 )
@@ -101,14 +101,14 @@ func (m *VerificationStorageMigration) Execute(ctx context.Context, mctx *migrat
 		if err := manager.fsManager.CreateDirectory(verificationPath, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create verification storage directory")
 		}
-		if err := manager.fsManager.WritePermissions(verificationPath, core.DefaultDirOrExecPerm, true); err != nil {
+		if err := manager.fsManager.WritePermissions(verificationPath, models.DefaultDirOrExecPerm, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to set permissions on verification storage")
 		}
 	}
 
 	// Step 2: Create only the verification PV/PVC (existing PVs are kept)
 	logger.Info().Msg("Creating verification storage PV/PVC")
-	if err := manager.CreateVerificationStorage(ctx, core.Paths().TempDir); err != nil {
+	if err := manager.CreateVerificationStorage(ctx, models.Paths().TempDir); err != nil {
 		logger.Error().Err(err).Msg("Failed to create verification storage")
 		return errorx.IllegalState.Wrap(err, "failed to create verification storage")
 	}

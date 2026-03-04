@@ -7,9 +7,10 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -65,7 +66,7 @@ Examples:
 		}
 
 		// Apply Alloy configuration overrides
-		alloyOverrides := config.AlloyConfig{
+		alloyOverrides := models.AlloyConfig{
 			MonitorBlockNode:       flagMonitorBlockNode,
 			ClusterName:            flagClusterName,
 			ClusterSecretStoreName: flagClusterSecretStore,

@@ -3,12 +3,9 @@
 package node
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -23,22 +20,17 @@ var (
 		Short: "Upgrade a Hedera Block Node",
 		Long:  "Upgrade an existing Hedera Block Node deployment with new configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			flagProfile, err := cmd.Flags().GetString("profile")
+			err := initializeDependencies()
 			if err != nil {
-				return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
-			}
-
-			// Apply configuration overrides from flags
-			applyConfigOverrides()
-
-			// Validate the configuration after applying overrides
-			// This catches invalid storage paths and other configuration issues early,
-			// before the workflow starts
-			if err := config.Get().Validate(); err != nil {
 				return err
 			}
 
-			// Validate the values file path if provided
+			inputs, err := prepareBlocknodeInputs(cmd, args)
+			if err != nil {
+				return err
+			}
+
+			// Validate the value file path if provided
 			// This is the primary security validation point for user-supplied file paths.
 			var validatedValuesFile string
 			if flagValuesFile != "" {
@@ -48,27 +40,35 @@ var (
 				}
 			}
 
-			execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+			flagWithReset, err = common.FlagWithStorageReset.Value(cmd, args)
 			if err != nil {
-				return errorx.Decorate(err, "failed to determine execution mode")
+				return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagWithStorageReset.Name)
 			}
-			opts := workflows.DefaultWorkflowExecutionOptions()
-			opts.ExecutionMode = execMode
+
+			inputs.Custom.ValuesFile = validatedValuesFile
+			inputs.Custom.ResetStorage = flagWithReset
+
+			intent := models.Intent{
+				Action: models.ActionUpgrade,
+				Target: models.TargetBlockNode,
+			}
 
 			logx.As().Debug().
-				Strs("args", args).
-				Str("nodeType", nodeType).
-				Str("profile", flagProfile).
-				Str("valuesFile", validatedValuesFile).
-				Bool("noReuseValues", flagNoReuseValues).
-				Bool("withReset", flagWithReset).
-				Any("opts", opts).
-				Msg("Upgrading Hedera Block Node")
+				Any("intent", intent).
+				Any("inputs", inputs).
+				Msg("Uninstalling Hedera Block Node")
 
-			wb := workflows.WithWorkflowExecutionMode(
-				workflows.NewBlockNodeUpgradeWorkflow(flagProfile, validatedValuesFile, !flagNoReuseValues, flagWithReset), opts)
+			handler, err := blockNodeHandler.ForAction(intent.Action)
+			if err != nil {
+				return err
+			}
 
-			common.RunWorkflow(cmd.Context(), wb)
+			report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
+			if err != nil {
+				return err
+			}
+
+			common.CheckWorkflowReport(cmd.Context(), report)
 
 			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")
 			return nil
@@ -77,14 +77,8 @@ var (
 )
 
 func init() {
-	upgradeCmd.Flags().StringVarP(
-		&flagValuesFile, "values", "f", "", fmt.Sprintf("Values file"))
-	upgradeCmd.Flags().BoolVar(
-		&flagNoReuseValues, "no-reuse-values", false, "Don't reuse the last release's values (resets to chart defaults)")
-	upgradeCmd.Flags().BoolVar(
-		&flagWithReset, "with-reset", false, "Reset block node storage before upgrading (clears all data)")
-
-	common.FlagStopOnError.SetVarP(upgradeCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(upgradeCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(upgradeCmd, &flagContinueOnError, false)
+	initializeExecutionFlags(upgradeCmd)
+	common.FlagWithStorageReset.SetVarP(upgradeCmd, &flagWithReset, false)
+	common.FlagValuesFile.SetVarP(upgradeCmd, &flagValuesFile, false)
+	common.FlagNoReuseValues.SetVarP(upgradeCmd, &flagNoReuseValues, false)
 }

@@ -9,19 +9,21 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 const kubectlGetNodesCmd = "/usr/local/bin/kubectl get nodes"
 
-func SetupKubeadm() *automa.WorkflowBuilder {
+func SetupKubeadm(sm state.Manager) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").
 		Steps(
-			installKubeadm(software.NewKubeadmInstaller),
-			configureKubeadm(software.NewKubeadmInstaller),
+			installKubeadm(software.NewKubeadmInstaller, sm),
+			configureKubeadm(software.NewKubeadmInstaller, sm),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubeadm")
@@ -35,7 +37,7 @@ func SetupKubeadm() *automa.WorkflowBuilder {
 		})
 }
 
-func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Installing kubeadm")
@@ -48,7 +50,7 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -77,7 +79,7 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			err = installer.Cleanup()
 			if err != nil {
@@ -88,12 +90,12 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubeadm was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -109,7 +111,7 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 		})
 }
 
-func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Configuring kubeadm")
@@ -122,7 +124,7 @@ func configureKubeadm(provider func(opts ...software.InstallerOption) (software.
 			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -146,17 +148,17 @@ func configureKubeadm(provider func(opts ...software.InstallerOption) (software.
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubeadm was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -201,7 +203,7 @@ func InitializeCluster() *automa.StepBuilder {
 			// Step 1: Pull kubeadm images
 			logx.As().Info().Msg("Pulling kubeadm images, this may take a while...")
 			pullImageCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/weaver/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(pullImageCmd, "")
@@ -212,7 +214,7 @@ func InitializeCluster() *automa.StepBuilder {
 
 			// Step 2: Initialize cluster with kubeadm
 			initCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml", core.Paths().SandboxBinDir, core.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(initCmd, "")
@@ -234,7 +236,7 @@ func InitializeCluster() *automa.StepBuilder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")
@@ -261,7 +263,7 @@ func ResetCluster() *automa.StepBuilder {
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", core.Paths().SandboxBinDir),
+				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
 			}
 
 			_, err := automa_steps.RunBashScript(scripts, "")

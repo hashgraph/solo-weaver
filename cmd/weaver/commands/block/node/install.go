@@ -5,11 +5,8 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/pkg/hardware"
-	"github.com/hashgraph/solo-weaver/pkg/sanity"
-	"github.com/joomcode/errorx"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -19,89 +16,58 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := common.FlagProfile.Value(cmd, args)
+		err := initializeDependencies()
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
-		}
-
-		if flagProfile == "" {
-			return errorx.IllegalArgument.New("profile flag is required")
-		}
-
-		// Validate profile early for better error messages
-		if !hardware.IsValidProfile(flagProfile) {
-			return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-				flagProfile, hardware.SupportedProfiles())
-		}
-
-		// Set the profile in the global config so other components can access it
-		config.SetProfile(flagProfile)
-
-		// Apply configuration overrides from flags
-		applyConfigOverrides()
-
-		// Validate the configuration after applying overrides
-		// This catches invalid storage paths and other configuration issues early,
-		// before the workflow starts and cluster creation begins
-		if err := config.Get().Validate(); err != nil {
 			return err
 		}
 
-		// Validate the values file path if provided
-		// This is the primary security validation point for user-supplied file paths.
-		var validatedValuesFile string
-		if flagValuesFile != "" {
-			validatedValuesFile, err = sanity.ValidateInputFile(flagValuesFile)
-			if err != nil {
-				return err
-			}
-		}
-
-		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		inputs, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
-			return errorx.Decorate(err, "failed to determine execution mode")
+			return err
 		}
-		opts := workflows.DefaultWorkflowExecutionOptions()
-		opts.ExecutionMode = execMode
 
-		logx.As().Debug().
-			Strs("args", args).
-			Str("nodeType", nodeType).
-			Str("profile", flagProfile).
-			Str("valuesFile", validatedValuesFile).
-			Any("opts", opts).
+		intent := models.Intent{
+			Action: models.ActionInstall,
+			Target: models.TargetBlockNode,
+		}
+
+		logx.As().Info().
+			Any("intent", intent).
+			Any("inputs", inputs).
 			Msg("Installing Hedera Block Node")
 
-		skipHardwareChecks, err := cmd.Flags().GetBool(common.FlagSkipHardwareChecks.Name)
+		handler, err := blockNodeHandler.ForAction(intent.Action)
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
+			return err
 		}
-		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewBlockNodeInstallWorkflow(flagProfile, validatedValuesFile, skipHardwareChecks), opts)
 
-		common.RunWorkflow(cmd.Context(), wb)
+		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
+		if err != nil {
+			return err
+		}
+
+		common.CheckWorkflowReport(cmd.Context(), report)
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
+
 		return nil
 	},
 }
 
 func init() {
+	initializeExecutionFlags(installCmd)
 	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
-	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
 }
 
 // applyConfigOverrides applies flag values to override the configuration.
 // This allows flags to take precedence over config file values.
 func applyConfigOverrides() {
-	overrides := config.BlockNodeConfig{
+	overrides := models.BlockNodeConfig{
 		Namespace: flagNamespace,
 		Release:   flagReleaseName,
 		Chart:     flagChartRepo,
 		Version:   flagChartVersion,
-		Storage: config.BlockNodeStorage{
+		Storage: models.BlockNodeStorage{
 			BasePath:         flagBasePath,
 			ArchivePath:      flagArchivePath,
 			LivePath:         flagLivePath,

@@ -10,10 +10,11 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,10 @@ func RunWorkflow(ctx context.Context, b automa.Builder) {
 	}
 
 	report := wb.Execute(ctx)
+	CheckWorkflowReport(ctx, report)
+}
+
+func CheckWorkflowReport(ctx context.Context, report *automa.Report) {
 	if report.Error != nil {
 		doctor.CheckReportErr(ctx, report)
 	}
@@ -41,7 +46,7 @@ func RunWorkflow(ctx context.Context, b automa.Builder) {
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
-	reportPath := path.Join(core.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))
+	reportPath := path.Join(models.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))
 	steps.PrintWorkflowReport(report, reportPath)
 	logx.As().Info().Str("report_path", reportPath).Msg("Workflow report is saved")
 }
@@ -57,7 +62,48 @@ func RunGlobalChecks(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	RunWorkflow(cmd.Context(), workflows.CheckWeaverInstallationWorkflow())
+	wf, err := workflows.CheckWeaverInstallationWorkflow().Build()
+	if err != nil {
+		return err
+	}
+
+	ctx := cmd.Context()
+	report := wf.Execute(ctx)
+	if report.Error != nil {
+		doctor.CheckReportErr(ctx, report)
+	}
+
+	// Run any pending state migrations before any command executes.
+	if err := RunStateMigrations(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RunStateMigrations runs any applicable state migrations.
+// It is a no-op when no legacy state files exist.
+func RunStateMigrations(ctx context.Context) error {
+	migrationWf, err := state.BuildMigrationWorkflow()
+	if err != nil {
+		return err
+	}
+	if migrationWf == nil {
+		logx.As().Debug().Msg("No state migrations needed")
+		return nil // nothing to migrate
+	}
+
+	wf, err := migrationWf.Build()
+	if err != nil {
+		return err
+	}
+
+	logx.As().Info().Msg("Running state migrations...")
+	report := wf.Execute(ctx)
+	if report.Error != nil {
+		return report.Error
+	}
+	logx.As().Info().Msg("State migrations completed successfully")
 	return nil
 }
 

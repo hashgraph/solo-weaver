@@ -5,8 +5,7 @@ package software
 import (
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -42,14 +41,14 @@ func (ki *kubeletInstaller) Install() error {
 	}
 
 	// Install the kubelet configuration files
-	configDir := path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir)
+	configDir := path.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir)
 	err = ki.installConfig(configDir)
 	if err != nil {
 		return err
 	}
 
 	// Record installed state
-	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeInstalled, ki.Version())
+	_ = ki.recordInstalled()
 
 	return nil
 }
@@ -63,14 +62,14 @@ func (ki *kubeletInstaller) Uninstall() error {
 	}
 
 	// Remove the kubelet configuration file
-	configDir := path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir)
+	configDir := path.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir)
 	err = ki.baseInstaller.uninstallConfig(configDir)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to uninstall kubelet configuration files from %s", configDir)
 	}
 
 	// Remove recorded installed state
-	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeInstalled)
+	_ = ki.clearInstalled()
 
 	return nil
 }
@@ -98,7 +97,7 @@ func (ki *kubeletInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ki.GetStateManager().RecordState(ki.GetSoftwareName(), state.TypeConfigured, ki.Version())
+	_ = ki.recordConfigured()
 
 	return nil
 }
@@ -119,32 +118,32 @@ func (ki *kubeletInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove recorded configured state
-	_ = ki.GetStateManager().RemoveState(ki.GetSoftwareName(), state.TypeConfigured)
+	_ = ki.clearConfigured()
 
 	return nil
 }
 
 // getKubeletServicePath returns the path to the kubelet.service file in the sandbox
 func (ki *kubeletInstaller) getKubeletServicePath() string {
-	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, kubeletServiceFileName)
+	return path.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir, kubeletServiceFileName)
 }
 
 // getSystemdUnitPath returns the path to the kubelet.service file in the systemd directory
 func (ki *kubeletInstaller) getSystemdUnitPath() string {
-	return path.Join(core.SystemdUnitFilesDir, kubeletServiceFileName)
+	return path.Join(models.SystemdUnitFilesDir, kubeletServiceFileName)
 }
 
 // getSandboxKubeletBinPath returns the path to the kubelet binary in the sandbox
 func (ki *kubeletInstaller) getSandboxKubeletBinPath() string {
-	return path.Join(core.Paths().SandboxBinDir, "kubelet")
+	return path.Join(models.Paths().SandboxBinDir, "kubelet")
 }
 
 // validateCriticalPaths performs basic validation on critical paths used by the installer
 func (ki *kubeletInstaller) validateCriticalPaths() error {
 	paths := []string{
-		core.Paths().SandboxDir,
-		core.Paths().SandboxBinDir,
-		core.SystemdUnitFilesDir,
+		models.Paths().SandboxDir,
+		models.Paths().SandboxBinDir,
+		models.SystemdUnitFilesDir,
 	}
 
 	for _, p := range paths {

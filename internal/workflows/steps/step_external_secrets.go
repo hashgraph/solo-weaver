@@ -95,12 +95,12 @@ func installExternalSecrets() automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

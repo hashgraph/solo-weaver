@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/golang/mock/gomock"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -181,7 +182,7 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 }
 
@@ -190,6 +191,14 @@ func calculateSHA256(data []byte) string {
 	hash := sha256.New()
 	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// prepareStateManager creates a state.Manager for use in unit tests.
+func prepareStateManager(t *testing.T) state.Manager {
+	t.Helper()
+	sm, err := state.NewStateManager()
+	require.NoError(t, err, "failed to create state manager for test")
+	return sm
 }
 
 // Test scenarios using table-driven tests
@@ -334,7 +343,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 				require.NoError(t, err, "Download should succeed for scenario: %s", scenario.Description)
 
 				// Verify downloaded files exist
-				downloadFolder := core.Paths().DownloadsDir
+				downloadFolder := models.Paths().DownloadsDir
 
 				// Check archives
 				for _, archive := range scenario.Archives {
@@ -424,7 +433,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					require.NoError(t, err, "Install should succeed for scenario: %s", scenario.Description)
 
 					// Verify installed binaries exist in sandbox
-					sandboxBinDir := core.Paths().SandboxBinDir
+					sandboxBinDir := models.Paths().SandboxBinDir
 					for _, binary := range scenario.Binaries {
 						binaryBasename := path.Base(binary.Name)
 						sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
@@ -459,7 +468,7 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					// Verify symbolic links exist
 					for _, binary := range scenario.Binaries {
 						binaryBasename := path.Base(binary.Name)
-						systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+						systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 						_, err := os.Lstat(systemBinary)
 						require.NoError(t, err, "Symbolic link %s should exist", systemBinary)
 					}
@@ -490,12 +499,12 @@ func Test_BaseInstaller_Scenarios(t *testing.T) {
 					require.NoError(t, err, "Cleanup should succeed for scenario: %s", scenario.Description)
 
 					// Verify software-specific extraction folder was removed
-					softwareFolder := path.Join(core.Paths().TempDir, installer.software.Name)
+					softwareFolder := path.Join(models.Paths().TempDir, installer.software.Name)
 					_, err = os.Stat(softwareFolder)
 					require.True(t, os.IsNotExist(err), "Software-specific folder should be removed after cleanup")
 
 					// Verify shared downloads folder still exists (not removed)
-					downloadFolder := core.Paths().DownloadsDir
+					downloadFolder := models.Paths().DownloadsDir
 					_, err = os.Stat(downloadFolder)
 					require.NoError(t, err, "Shared downloads folder should be preserved after cleanup")
 				})
@@ -583,7 +592,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 }
 
@@ -700,12 +709,12 @@ func Test_BaseInstaller_Download_Idempotency_ExistingFile_WrongChecksum(t *testi
 	installer := newTestInstaller(t)
 
 	// create empty file to emulate first download with wrong checksum
-	err := os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(models.Paths().DownloadsDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create download folder")
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, "test-artifact.tar.gz")
+	destinationFile := path.Join(models.Paths().DownloadsDir, "test-artifact.tar.gz")
 
-	err = os.WriteFile(destinationFile, []byte(""), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(destinationFile, []byte(""), models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create empty file")
 
 	//
@@ -758,9 +767,9 @@ func Test_BaseInstaller_Extract_Error(t *testing.T) {
 
 	// Create a regular file where the directory should be created
 	conflictingFile := tmpFolder + "/test-artifact/unpack"
-	err := os.MkdirAll(tmpFolder+"/test-artifact", core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(tmpFolder+"/test-artifact", models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create cri-o directory")
-	err = os.WriteFile(conflictingFile, []byte("blocking file"), core.DefaultFilePerm)
+	err = os.WriteFile(conflictingFile, []byte("blocking file"), models.DefaultFilePerm)
 	require.NoError(t, err, "Failed to create blocking file")
 
 	// Override cleanup to remove the file we created
@@ -789,38 +798,31 @@ func Test_BaseInstaller_replaceAllInFile(t *testing.T) {
 	//
 	// Given
 	//
-	fsxManager, err := fsx.NewManager()
-	require.NoError(t, err)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockFsx := fsx.NewMockManager(ctrl)
+
+	origContent := "ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
+	expectedContent := "ExecStart=/custom/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
+	filePath := "/tmp/test-10-kubeadm.conf"
+
+	mockFsx.EXPECT().ReadFile(filePath, int64(-1)).Return([]byte(origContent), nil)
+	mockFsx.EXPECT().WriteFile(filePath, []byte(expectedContent)).Return(nil)
+	mockFsx.EXPECT().WritePermissions(filePath, gomock.Any(), false).Return(nil)
 
 	ki := kubeadmInstaller{
 		baseInstaller: &baseInstaller{
-			fileManager: fsxManager,
+			fileManager: mockFsx,
 		},
 	}
-
-	// Create a temp dir and file
-	tmpDir := t.TempDir()
-	origPath := filepath.Join(tmpDir, "10-kubeadm.conf")
-	origContent := "ExecStart=/usr/bin/kubelet $KUBELET_KUBEADM_ARGS\n"
-	err = os.WriteFile(origPath, []byte(origContent), core.DefaultFilePerm)
-	require.NoError(t, err, "failed to write temp file")
 
 	//
 	// When
 	//
 	newKubeletPath := "/custom/bin/kubelet"
-	err = ki.replaceAllInFile(origPath, "/usr/bin/kubelet", newKubeletPath)
+	err := ki.replaceAllInFile(filePath, "/usr/bin/kubelet", newKubeletPath)
 	require.NoError(t, err, "failed to replace kubelet path in file")
-
-	//
-	// Then
-	//
-	// Read back and check
-	updated, err := os.ReadFile(origPath)
-	require.NoError(t, err, "failed to read updated file")
-
-	require.Contains(t, string(updated), newKubeletPath, "updated file should contain new kubelet path")
-	require.NotContains(t, string(updated), "/usr/bin/kubelet", "old kubelet path should not be present in file")
 }
 
 func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
@@ -849,20 +851,20 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink in system bin directory
-	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	systemBinary := path.Join(models.SystemBinDir, "test-binary")
 	err = os.Symlink(sandboxBinary, systemBinary)
 	require.NoError(t, err)
 
@@ -926,12 +928,12 @@ func Test_BaseInstaller_Uninstall_PermissionError(t *testing.T) {
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Make the sandbox bin directory read-only
@@ -986,16 +988,16 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox bin directory with a binary
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Don't create download folder - it shouldn't exist
@@ -1004,7 +1006,7 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 	_, err = os.Stat(sandboxBinary)
 	require.NoError(t, err, "Sandbox binary should exist")
 
-	downloadFolder := path.Join(core.Paths().TempDir, "test-software")
+	downloadFolder := path.Join(models.Paths().TempDir, "test-software")
 	_, err = os.Stat(downloadFolder)
 	require.True(t, os.IsNotExist(err), "Download folder should not exist")
 
@@ -1095,37 +1097,37 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create binaries in sandbox
 	sandboxBinary1 := path.Join(sandboxBinDir, "binary1")
-	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary2 := path.Join(sandboxBinDir, "binary2")
-	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary3 := path.Join(sandboxBinDir, "binary3")
-	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlinks for all binaries
-	systemBinary1 := path.Join(core.SystemBinDir, "binary1")
+	systemBinary1 := path.Join(models.SystemBinDir, "binary1")
 	err = os.Symlink(sandboxBinary1, systemBinary1)
 	require.NoError(t, err)
 
-	systemBinary2 := path.Join(core.SystemBinDir, "binary2")
+	systemBinary2 := path.Join(models.SystemBinDir, "binary2")
 	err = os.Symlink(sandboxBinary2, systemBinary2)
 	require.NoError(t, err)
 
-	systemBinary3 := path.Join(core.SystemBinDir, "binary3")
+	systemBinary3 := path.Join(models.SystemBinDir, "binary3")
 	err = os.Symlink(sandboxBinary3, systemBinary3)
 	require.NoError(t, err)
 
@@ -1191,20 +1193,20 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink that points to our sandbox binary
-	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	systemBinary := path.Join(models.SystemBinDir, "test-binary")
 	err = os.Symlink(sandboxBinary, systemBinary)
 	require.NoError(t, err)
 
@@ -1266,20 +1268,20 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink in system bin directory that points to our sandbox binary
-	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	systemBinary := path.Join(models.SystemBinDir, "test-binary")
 	err = os.Symlink(sandboxBinary, systemBinary)
 	require.NoError(t, err)
 
@@ -1337,25 +1339,25 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create a different binary (not in our sandbox)
 	otherBinary := path.Join(t.TempDir(), "other-binary")
-	err = os.WriteFile(otherBinary, []byte("#!/bin/bash\necho 'other'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(otherBinary, []byte("#!/bin/bash\necho 'other'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink that points to a different binary (not ours)
-	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	systemBinary := path.Join(models.SystemBinDir, "test-binary")
 	err = os.Symlink(otherBinary, systemBinary)
 	require.NoError(t, err)
 
@@ -1419,37 +1421,37 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create binaries in sandbox
 	sandboxBinary1 := path.Join(sandboxBinDir, "binary1")
-	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary1, []byte("#!/bin/bash\necho 'binary1'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary2 := path.Join(sandboxBinDir, "binary2")
-	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary2, []byte("#!/bin/bash\necho 'binary2'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary3 := path.Join(sandboxBinDir, "binary3")
-	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary3, []byte("#!/bin/bash\necho 'binary3'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlinks for all binaries that point to our sandbox binaries
-	systemBinary1 := path.Join(core.SystemBinDir, "binary1")
+	systemBinary1 := path.Join(models.SystemBinDir, "binary1")
 	err = os.Symlink(sandboxBinary1, systemBinary1)
 	require.NoError(t, err)
 
-	systemBinary2 := path.Join(core.SystemBinDir, "binary2")
+	systemBinary2 := path.Join(models.SystemBinDir, "binary2")
 	err = os.Symlink(sandboxBinary2, systemBinary2)
 	require.NoError(t, err)
 
-	systemBinary3 := path.Join(core.SystemBinDir, "binary3")
+	systemBinary3 := path.Join(models.SystemBinDir, "binary3")
 	err = os.Symlink(sandboxBinary3, systemBinary3)
 	require.NoError(t, err)
 
@@ -1509,31 +1511,31 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create symlink in system bin directory
-	systemBinary := path.Join(core.SystemBinDir, "test-binary")
+	systemBinary := path.Join(models.SystemBinDir, "test-binary")
 	err = os.Symlink(sandboxBinary, systemBinary)
 	require.NoError(t, err)
 
 	// Remove write permissions from system bin directory
-	cmd := exec.Command("chattr", "+i", core.SystemBinDir)
+	cmd := exec.Command("chattr", "+i", models.SystemBinDir)
 	err = cmd.Run()
 	require.NoError(t, err, "Failed to make system bin directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.SystemBinDir).Run()
+		_ = exec.Command("chattr", "-i", models.SystemBinDir).Run()
 		_ = os.Remove(systemBinary)
 	})
 
@@ -1577,7 +1579,7 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "2.0.0", // Version not in metadata
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	//
@@ -1620,16 +1622,16 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         state.NewManager(fsxManager),
+		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure but no symlinks
-	sandboxBinDir := core.Paths().SandboxBinDir
-	err = os.MkdirAll(sandboxBinDir, core.DefaultDirOrExecPerm)
+	sandboxBinDir := models.Paths().SandboxBinDir
+	err = os.MkdirAll(sandboxBinDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	sandboxBinary := path.Join(sandboxBinDir, "test-binary")
-	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), core.DefaultDirOrExecPerm)
+	err = os.WriteFile(sandboxBinary, []byte("#!/bin/bash\necho 'test'\n"), models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	//

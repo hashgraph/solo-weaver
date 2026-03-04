@@ -6,16 +6,17 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupCrio() *automa.WorkflowBuilder {
+func SetupCrio(sm state.Manager) *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId("setup-crio").
 		Steps(
-			installCrio(software.NewCrioInstaller),
-			configureCrio(software.NewCrioInstaller),
+			installCrio(software.NewCrioInstaller, sm),
+			configureCrio(software.NewCrioInstaller, sm),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up cri-o")
@@ -29,7 +30,7 @@ func SetupCrio() *automa.WorkflowBuilder {
 		})
 }
 
-func installCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installCrio(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-crio").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Installing cri-o")
@@ -42,7 +43,7 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 			notify.As().StepCompletion(ctx, stp, rpt, "Cri-o installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -77,7 +78,7 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			err = installer.Cleanup()
 			if err != nil {
@@ -88,12 +89,12 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("cri-o was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -109,7 +110,7 @@ func installCrio(provider func(opts ...software.InstallerOption) (software.Softw
 		})
 }
 
-func configureCrio(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureCrio(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-crio").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Configuring cri-o")
@@ -122,7 +123,7 @@ func configureCrio(provider func(opts ...software.InstallerOption) (software.Sof
 			notify.As().StepCompletion(ctx, stp, rpt, "Cri-o configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -146,17 +147,17 @@ func configureCrio(provider func(opts ...software.InstallerOption) (software.Sof
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("cri-o was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

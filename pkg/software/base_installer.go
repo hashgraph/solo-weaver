@@ -7,11 +7,22 @@ import (
 	"path"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
+
+// WithStateManager injects a state.Manager into the installer so that
+// IsInstalled/IsConfigured reads and Install/Configure/Uninstall/RemoveConfiguration
+// writes flow through the shared DefaultStateManager instead of the legacy
+// file-per-component Manager.
+func WithStateManager(sm state.Manager) InstallerOption {
+	return func(bi *baseInstaller) {
+		bi.stateManager = sm
+	}
+}
 
 type InstallerOption func(*baseInstaller)
 
@@ -32,7 +43,7 @@ type baseInstaller struct {
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
-	stateManager         *state.Manager
+	stateManager         state.Manager
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -60,14 +71,23 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 	}
 
 	bi := &baseInstaller{
-		downloader:   NewDownloader(),
-		software:     item,
-		fileManager:  fsxManager,
-		stateManager: state.NewManager(fsxManager),
+		downloader:  NewDownloader(),
+		software:    item,
+		fileManager: fsxManager,
 	}
 
 	for _, opt := range opts {
 		opt(bi)
+	}
+
+	// stateManager MUST be injected via WithStateManager — callers own the lifecycle.
+	if bi.stateManager == nil {
+		return nil, NewFileSystemError(
+			errorx.IllegalArgument.New(
+				"no state manager provided for installer %q: use software.WithStateManager(sm)",
+				softwareName,
+			),
+		)
 	}
 
 	if bi.versionToBeInstalled == "" {
@@ -83,7 +103,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 // Download handles the common download logic with checksum verification
 // It downloads all archives, binaries (with URLs), and config files if available.
 func (b *baseInstaller) Download() error {
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 
 	// Create download folder if it doesn't exist
 	err := b.fileManager.CreateDirectory(downloadFolder, true)
@@ -149,7 +169,7 @@ func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, archiveName)
+	destinationFile := path.Join(models.Paths().DownloadsDir, archiveName)
 
 	// Get expected checksum for this archive
 	osInfo, exists := archive.PlatformChecksum[platform.os]
@@ -233,7 +253,7 @@ func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, binaryName)
+	destinationFile := path.Join(models.Paths().DownloadsDir, binaryName)
 
 	// Get expected checksum for this binary
 	osInfo, exists := binary.PlatformChecksum[platform.os]
@@ -287,7 +307,7 @@ func (b *baseInstaller) downloadConfigs() error {
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(core.Paths().DownloadsDir, config.Name)
+		configFile := path.Join(models.Paths().DownloadsDir, config.Name)
 
 		// Check if file already exists and verify checksum
 		_, exists, err := b.fileManager.PathExists(configFile)
@@ -392,7 +412,7 @@ func (b *baseInstaller) extractArchive(archive ArchiveDetail, extractFolder stri
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	compressedFile := path.Join(core.Paths().DownloadsDir, archiveName)
+	compressedFile := path.Join(models.Paths().DownloadsDir, archiveName)
 
 	// Verify that the compressed file exists
 	_, exists, err := b.fileManager.PathExists(compressedFile)
@@ -516,16 +536,13 @@ func (b *baseInstaller) verifyExtractedConfigs() error {
 }
 
 // Install provides a basic install implementation for simple binary installations.
-// It also records the installation state.
+// It also records the installation state via the injected state.Writer.
 func (b *baseInstaller) Install() error {
 	err := b.performInstall()
 	if err != nil {
 		return err
 	}
-
-	// Record installation state
-	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeInstalled, b.Version())
-
+	_ = b.recordInstalled()
 	return nil
 }
 
@@ -544,7 +561,7 @@ func (b *baseInstaller) performInstall() error {
 	}
 
 	// Get sandbox bin directory from core paths
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Create sandbox bin directory if it doesn't exist
 	err := b.fileManager.CreateDirectory(sandboxBinDir, true)
@@ -552,7 +569,7 @@ func (b *baseInstaller) performInstall() error {
 		return NewInstallationError(err, "", sandboxBinDir)
 	}
 
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 	extractFolder := b.extractFolder()
 
 	// Install all binaries
@@ -584,7 +601,7 @@ func (b *baseInstaller) performInstall() error {
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
 
 		// Copy binary to sandbox
-		err = b.installFile(sourcePath, sandboxBinary, core.DefaultDirOrExecPerm)
+		err = b.installFile(sourcePath, sandboxBinary, models.DefaultDirOrExecPerm)
 		if err != nil {
 			return NewInstallationError(err, sourcePath, sandboxBinDir)
 		}
@@ -616,7 +633,7 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
 	}
 
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 	extractFolder := b.extractFolder()
 
 	// Install each config file into the sandbox
@@ -687,15 +704,13 @@ func (b *baseInstaller) uninstallConfig(destinationDir string) error {
 }
 
 // Configure provides a basic configuration implementation.
-// It also records the configuration state.
+// It also records the configuration state via the injected state.Writer.
 func (b *baseInstaller) Configure() error {
 	err := b.performConfiguration()
 	if err != nil {
 		return err
 	}
-
-	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeConfigured, b.Version())
-
+	_ = b.recordConfigured()
 	return nil
 }
 
@@ -713,7 +728,7 @@ func (b *baseInstaller) performConfiguration() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Create symbolic links for all binaries
 	for _, binary := range versionInfo.Binaries {
@@ -726,7 +741,7 @@ func (b *baseInstaller) performConfiguration() error {
 		// Get the base name for the destination (just the filename without path)
 		binaryBasename := path.Base(binaryName)
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
 		// Create symlink to /usr/local/bin for system-wide access
 		err = b.fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
@@ -738,14 +753,22 @@ func (b *baseInstaller) performConfiguration() error {
 	return nil
 }
 
-// IsInstalled provides a basic installation check
+// IsInstalled checks whether the software has been recorded as installed in the state.
+// It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsInstalled() (bool, error) {
-	return b.stateManager.Exists(b.software.Name, state.TypeInstalled)
+	if err := b.stateManager.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return false, errorx.IllegalState.Wrap(err, "failed to refresh state before IsInstalled check")
+	}
+	return state.GetSoftwareState(b.stateManager.State(), b.software.Name).Installed, nil
 }
 
-// IsConfigured provides a basic configuration check
+// IsConfigured checks whether the software has been recorded as configured in the state.
+// It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsConfigured() (bool, error) {
-	return b.stateManager.Exists(b.software.Name, state.TypeConfigured)
+	if err := b.stateManager.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return false, errorx.IllegalState.Wrap(err, "failed to refresh state before IsConfigured check")
+	}
+	return state.GetSoftwareState(b.stateManager.State(), b.software.Name).Configured, nil
 }
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
@@ -765,7 +788,7 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 	}
 
 	// rw-r--r-- permissions that are typical for config and data files
-	err = fileManager.WritePermissions(sourceFile, core.DefaultFilePerm, false)
+	err = fileManager.WritePermissions(sourceFile, models.DefaultFilePerm, false)
 	if err != nil {
 		return err
 	}
@@ -775,17 +798,12 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 
 // extractFolder returns the software-specific extraction folder path
 func (b *baseInstaller) extractFolder() string {
-	return path.Join(core.Paths().TempDir, b.software.Name, core.DefaultUnpackFolderName)
+	return path.Join(models.Paths().TempDir, b.software.Name, models.DefaultUnpackFolderName)
 }
 
 // Version returns the version being installed
 func (b *baseInstaller) Version() string {
 	return b.versionToBeInstalled
-}
-
-// GetStateManager returns the state manager for external state management
-func (b *baseInstaller) GetStateManager() *state.Manager {
-	return b.stateManager
 }
 
 // GetSoftwareName returns the software name
@@ -794,16 +812,13 @@ func (b *baseInstaller) GetSoftwareName() string {
 }
 
 // Uninstall removes the software from the sandbox and cleans up related files.
-// It also removes the installation state.
+// It also clears the installation state.
 func (b *baseInstaller) Uninstall() error {
 	err := b.performUninstall()
 	if err != nil {
 		return err
 	}
-
-	// Remove installation state
-	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeInstalled)
-
+	_ = b.clearInstalled()
 	return nil
 }
 
@@ -819,15 +834,13 @@ func (b *baseInstaller) performUninstall() error {
 }
 
 // RemoveConfiguration restores the configuration of the software after an uninstall.
-// It also removes the configuration state.
+// It also clears the configuration state.
 func (b *baseInstaller) RemoveConfiguration() error {
 	err := b.performConfigurationRemoval()
 	if err != nil {
 		return err
 	}
-
-	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeConfigured)
-
+	_ = b.clearConfigured()
 	return nil
 }
 
@@ -855,7 +868,7 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Remove each binary from the sandbox bin directory
 	for _, binary := range versionInfo.Binaries {
@@ -891,7 +904,7 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 // Cleanup performs any necessary cleanup after installation
 // It only removes the extraction folder, keeping downloaded files for reuse
 func (b *baseInstaller) Cleanup() error {
-	extractFolder := path.Join(core.Paths().TempDir, b.software.Name)
+	extractFolder := path.Join(models.Paths().TempDir, b.software.Name)
 
 	// Clean up only the software-specific extraction folder
 	// The shared downloads folder is preserved to enable checksum-based caching
@@ -917,7 +930,7 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Check each binary and remove its symlink if it exists
 	for _, binary := range versionInfo.Binaries {
@@ -930,7 +943,7 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		// Get the base name for the destination (just the filename without path)
 		binaryBasename := path.Base(binaryName)
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
 		// Check if symlink exists in system bin directory
 		_, exists, err := b.fileManager.PathExists(systemBinary)
@@ -957,6 +970,70 @@ func (b *baseInstaller) cleanupSymlinks() error {
 	}
 
 	return nil
+}
+
+// ── state helpers ─────────────────────────────────────────────────────────────
+// These four methods centralise all state mutations so every concrete installer
+// can share them without duplicating GetSoftwareState/SetSoftwareState logic.
+//
+// Each helper follows the same safe pattern:
+//  1. Fetch the current in-memory snapshot once.
+//  2. Read the existing SoftwareState for this component (zero-value with Name
+//     pre-set when absent — first-time initialisation case).
+//  3. Mutate only the relevant fields; all other fields are preserved.
+//  4. Write back using the *same* snapshot to avoid stomping concurrent changes.
+func (b *baseInstaller) recordInstalled() error {
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
+	cur.Installed = true
+	cur.Version = b.versionToBeInstalled
+
+	logx.As().Debug().
+		Str("software", b.software.Name).
+		Str("version", b.versionToBeInstalled).
+		Any("currentState", cur).
+		Msg("Recording software as installed in state")
+
+	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush(); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to flush state after recording installed")
+	}
+	return nil
+}
+
+func (b *baseInstaller) recordConfigured() error {
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
+	cur.Configured = true
+	cur.Version = b.versionToBeInstalled
+
+	logx.As().Debug().
+		Str("software", b.software.Name).
+		Str("version", b.versionToBeInstalled).
+		Any("currentState", cur).
+		Msg("Recording software as configured in state")
+
+	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush(); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to flush state after recording configured")
+	}
+	return nil
+}
+
+func (b *baseInstaller) clearInstalled() error {
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
+	cur.Installed = false
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
+}
+
+func (b *baseInstaller) clearConfigured() error {
+	snap := b.stateManager.State()
+	cur := state.GetSoftwareState(snap, b.software.Name)
+	cur.Name = b.software.Name // ensure Name is always populated
+	cur.Configured = false
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
 }
 
 // installFile copies a file with permissions using the fileManager

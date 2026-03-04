@@ -26,14 +26,14 @@ func DeployMetricsServer(valueOptions *values.Options) *automa.WorkflowBuilder {
 		installMetricsServer(valueOptions),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Deploying Metrics Server")
+			notify.As().StepStart(ctx, stp, "Deploying Metrics ServerInfo")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy Metrics Server")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy Metrics ServerInfo")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Metrics Server deployed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Metrics ServerInfo deployed successfully")
 		})
 }
 
@@ -97,12 +97,12 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

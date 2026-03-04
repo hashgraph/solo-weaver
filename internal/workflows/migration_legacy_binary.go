@@ -17,8 +17,8 @@ import (
 	"path/filepath"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -44,7 +44,7 @@ func (m *LegacyBinaryMigration) Description() string { return m.description }
 
 // Applies returns true if the legacy "weaver" binary exists and needs to be removed.
 func (m *LegacyBinaryMigration) Applies(mctx *migration.Context) (bool, error) {
-	binDir := core.Paths().BinDir
+	binDir := models.Paths().BinDir
 	legacyPath := filepath.Join(binDir, legacyBinaryName)
 
 	// Check if legacy binary exists
@@ -59,7 +59,7 @@ func (m *LegacyBinaryMigration) Applies(mctx *migration.Context) (bool, error) {
 
 // Execute removes the legacy "weaver" binary and its symlink.
 func (m *LegacyBinaryMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-	binDir := core.Paths().BinDir
+	binDir := models.Paths().BinDir
 	legacyPath := filepath.Join(binDir, legacyBinaryName)
 	legacySymlink := filepath.Join("/usr/local/bin", legacyBinaryName)
 

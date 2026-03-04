@@ -8,8 +8,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
 
@@ -31,27 +31,14 @@ const (
 )
 
 // SetupBlockNode sets up the block node on the cluster
-func SetupBlockNode(profile string, valuesFile string) *automa.WorkflowBuilder {
-	// Lazy initialization of block node manager
-	// This blocknodeManagerProvider pattern ensures that the manager is only created once
-	// and reused across all steps in the workflow steps
-	var blockNodeManager *blocknode.Manager
-	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
-		if blockNodeManager == nil {
-			var err error
-			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return blockNodeManager, nil
-	}
+func SetupBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
 		setupBlockNodeStorage(blockNodeManagerProvider),
 		createBlockNodeNamespace(blockNodeManagerProvider),
 		createBlockNodePVs(blockNodeManagerProvider),
-		installBlockNode(profile, valuesFile, blockNodeManagerProvider),
+		installBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
 		annotateBlockNodeService(blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
@@ -83,7 +70,7 @@ func setupBlockNodeStorage(getManager func() (*blocknode.Manager, error)) automa
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -110,18 +97,18 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = manager.CreateNamespace(ctx, core.Paths().TempDir)
+			err = manager.CreateNamespace(ctx, models.Paths().TempDir)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if !stp.State().Bool(ConfiguredByThisStep) {
+			if !stp.State().Local().Bool(ConfiguredByThisStep) {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -130,7 +117,7 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.DeleteNamespace(ctx, core.Paths().TempDir); err != nil {
+			if err := manager.DeleteNamespace(ctx, models.Paths().TempDir); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -148,7 +135,7 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 		})
 }
 
-// createBlockNodePVs creates the PersistentVolumes and PersistentVolumeClaims for block node
+// createBlockNodePVs creates the PersistentVolumes and PersistentVolumeClaims for blocknode
 func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodePVsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -159,26 +146,26 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.CreatePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
+			if err := manager.CreatePersistentVolumes(ctx, models.Paths().TempDir); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(ConfiguredByThisStep) == false {
+			if stp.State().Local().Bool(ConfiguredByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			manager, err := blocknode.NewManager(config.Get().BlockNode)
+			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.DeletePersistentVolumes(ctx, core.Paths().TempDir); err != nil {
+			if err := manager.DeletePersistentVolumes(ctx, models.Paths().TempDir); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -193,6 +180,43 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node PVs and PVCs created successfully")
+		})
+}
+
+func UninstallBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
+	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
+		uninstallBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
+	)
+}
+
+// uninstallBlockNode uninstalls the block node helm chart
+func uninstallBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			err = manager.UninstallChart(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Block Node")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Block Node")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node uninstalled successfully")
 		})
 }
 
@@ -221,13 +245,13 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 				meta[AlreadyInstalled] = "true"
 			} else {
 				meta[InstalledByThisStep] = "true"
-				stp.State().Set(InstalledByThisStep, true)
+				stp.State().Local().Set(InstalledByThisStep, true)
 			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if stp.State().Local().Bool(InstalledByThisStep) == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -270,7 +294,7 @@ func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) aut
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -317,22 +341,11 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 }
 
 // UpgradeBlockNode upgrades the block node on the cluster
-func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) *automa.WorkflowBuilder {
-	// Lazy initialization of block node manager
-	var blockNodeManager *blocknode.Manager
-	blockNodeManagerProvider := func() (*blocknode.Manager, error) {
-		if blockNodeManager == nil {
-			var err error
-			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return blockNodeManager, nil
-	}
+func UpgradeBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
-		upgradeBlockNode(profile, valuesFile, reuseValues, blockNodeManagerProvider),
+		upgradeBlockNode(inputs, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -348,7 +361,7 @@ func UpgradeBlockNode(profile string, valuesFile string, reuseValues bool) *auto
 }
 
 // upgradeBlockNode upgrades the block node helm chart
-func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getManager func() (*blocknode.Manager, error)) automa.Builder {
+func upgradeBlockNode(inputs models.BlocknodeInputs, getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(UpgradeBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
@@ -359,7 +372,7 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 			}
 
 			// Check if this upgrade requires migrations due to breaking chart changes
-			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, profile, valuesFile)
+			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, inputs.Profile, inputs.ValuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -383,12 +396,12 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 			}
 
 			// Normal upgrade path
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			valuesFilePath, err := manager.ComputeValuesFile(inputs.Profile, inputs.ValuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = manager.UpgradeChart(ctx, valuesFilePath, reuseValues)
+			err = manager.UpgradeChart(ctx, valuesFilePath, inputs.ReuseValues)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -409,12 +422,13 @@ func upgradeBlockNode(profile string, valuesFile string, reuseValues bool, getMa
 }
 
 // newBlockNodeManagerProvider creates a lazy-initialized block node manager provider
-func newBlockNodeManagerProvider() func() (*blocknode.Manager, error) {
+// This ensures that the manager is only created once and shared across steps, while also allowing for proper error handling during initialization.
+func newBlockNodeManagerProvider(inputs models.BlocknodeInputs) func() (*blocknode.Manager, error) {
 	var blockNodeManager *blocknode.Manager
 	return func() (*blocknode.Manager, error) {
 		if blockNodeManager == nil {
 			var err error
-			blockNodeManager, err = blocknode.NewManager(config.Get().BlockNode)
+			blockNodeManager, err = blocknode.NewManager(inputs)
 			if err != nil {
 				return nil, err
 			}
@@ -433,8 +447,8 @@ func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, erro
 }
 
 // ResetBlockNode resets the block node by clearing all storage and restarting the pod
-func ResetBlockNode() *automa.WorkflowBuilder {
-	managerProvider := newBlockNodeManagerProvider()
+func ResetBlockNode(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(ResetBlockNodeStepId).Steps(
 		append(purgeBlockNodeStorageSteps(managerProvider),
@@ -456,8 +470,8 @@ func ResetBlockNode() *automa.WorkflowBuilder {
 
 // PurgeBlockNodeStorage scales down the block node and clears all storage.
 // This does NOT scale back up - use ResetBlockNode if you need to restart the pod after clearing.
-func PurgeBlockNodeStorage() *automa.WorkflowBuilder {
-	managerProvider := newBlockNodeManagerProvider()
+func PurgeBlockNodeStorage(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(PurgeBlockNodeStorageStepId).Steps(
 		purgeBlockNodeStorageSteps(managerProvider)...,
@@ -490,13 +504,13 @@ func scaleDownBlockNode(getManager func() (*blocknode.Manager, error)) automa.Bu
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// On rollback, scale back up
-			if !stp.State().Bool(ConfiguredByThisStep) {
+			if !stp.State().Local().Bool(ConfiguredByThisStep) {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -599,13 +613,13 @@ func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 			}
 
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// On rollback, scale back down (though this is an unusual case)
-			if !stp.State().Bool(ConfiguredByThisStep) {
+			if !stp.State().Local().Bool(ConfiguredByThisStep) {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

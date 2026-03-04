@@ -13,7 +13,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
@@ -49,7 +50,7 @@ func Test_StepHelm_Fresh_Integration(t *testing.T) {
 	require.Equal(t, "true", report.StepReports[1].Metadata[ConfiguredByThisStep])
 
 	// Verify downloaded file exists
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify temporary folder for helm is cleaned up
@@ -135,7 +136,7 @@ func Test_StepHelm_Rollback_Fresh_Integration(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder exists
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify temporary folder for helm is removed
@@ -154,25 +155,25 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	testutil.CleanUpTempDir(t)
 
 	// Remove any existing helm files from downloads folder to ensure download will be attempted
-	files, err := os.ReadDir(core.Paths().DownloadsDir)
+	files, err := os.ReadDir(models.Paths().DownloadsDir)
 	if err == nil {
 		for _, file := range files {
 			if strings.HasPrefix(file.Name(), "helm") {
-				_ = os.Remove(path.Join(core.Paths().DownloadsDir, file.Name()))
+				_ = os.Remove(path.Join(models.Paths().DownloadsDir, file.Name()))
 			}
 		}
 	}
 
 	// Make the downloads directory read-only
-	err = os.MkdirAll(core.Paths().DownloadsDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(models.Paths().DownloadsDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create downloads directory")
-	cmd := exec.Command("chattr", "+i", core.Paths().DownloadsDir)
+	cmd := exec.Command("chattr", "+i", models.Paths().DownloadsDir)
 	err = cmd.Run()
 	require.NoError(t, err, "Failed to make downloads directory read-only")
 
 	// Restore permissions after test
 	t.Cleanup(func() {
-		_ = exec.Command("chattr", "-i", core.Paths().DownloadsDir).Run()
+		_ = exec.Command("chattr", "-i", models.Paths().DownloadsDir).Run()
 	})
 
 	//
@@ -205,7 +206,7 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify downloaded file is not there
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.False(t, found, "did not expect a file prefixed with helm in the downloads directory")
 
 	// Confirm binary files were not created
@@ -220,9 +221,9 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	testutil.CleanUpTempDir(t)
 
 	// Make the unpack directory read-only
-	unpackagedDir := path.Join(core.Paths().TempDir, "helm", core.DefaultUnpackFolderName)
+	unpackagedDir := path.Join(models.Paths().TempDir, "helm", models.DefaultUnpackFolderName)
 
-	err := os.MkdirAll(unpackagedDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(unpackagedDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create unpack directory")
 	cmd := exec.Command("chattr", "+i", unpackagedDir)
 	err = cmd.Run()
@@ -267,7 +268,7 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify download folder is still around when there is an extraction error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify binary files were not installed
@@ -282,9 +283,9 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	testutil.CleanUpTempDir(t)
 
 	// Make the sandbox directory read-only
-	sandboxDir := path.Join(core.Paths().SandboxDir, "bin")
+	sandboxDir := path.Join(models.Paths().SandboxDir, "bin")
 
-	err := os.MkdirAll(sandboxDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sandboxDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create sandbox bin directory")
 	cmd := exec.Command("chattr", "+i", sandboxDir)
 	err = cmd.Run()
@@ -325,7 +326,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
 
 	// Verify download folder is still around when there is an extraction error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify unpack folder is still around when there is an installation error
@@ -333,7 +334,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check there are unpacked files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm", "unpack"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "helm", "unpack"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected 1 file in the unpack directory")
 
@@ -349,9 +350,9 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	testutil.CleanUpTempDir(t)
 
 	// Create an unremovable directory under download folder
-	unremovableDir := path.Join(core.Paths().TempDir, "helm", "unremovable")
+	unremovableDir := path.Join(models.Paths().TempDir, "helm", "unremovable")
 
-	err := os.MkdirAll(unremovableDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(unremovableDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create unremovable directory")
 	cmd := exec.Command("chattr", "+i", unremovableDir)
 	err = cmd.Run()
@@ -392,7 +393,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a cleanup error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
@@ -400,7 +401,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	require.Error(t, err)
 
 	// Check there are unpacked files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "helm"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 
@@ -416,9 +417,9 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	testutil.CleanUpTempDir(t)
 
 	// Create an unremovable directory under download folder
-	unremovableDir := path.Join(core.Paths().TempDir, "helm", "unremovable")
+	unremovableDir := path.Join(models.Paths().TempDir, "helm", "unremovable")
 
-	err := os.MkdirAll(unremovableDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(unremovableDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create unremovable directory")
 	cmd := exec.Command("chattr", "+i", unremovableDir)
 	err = cmd.Run()
@@ -460,7 +461,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
 	// Verify download folder is still around when there is a configuration error
-	found := testutil.FileWithPrefixExists(t, core.Paths().DownloadsDir, "helm")
+	found := testutil.FileWithPrefixExists(t, models.Paths().DownloadsDir, "helm")
 	require.True(t, found, "expected a file prefixed with helm in the downloads directory")
 
 	// Verify unpack folder is not around because the cleanup tried to remove it
@@ -468,7 +469,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	require.Error(t, err)
 
 	// Check there are unpacked files
-	files, err := os.ReadDir(path.Join(core.Paths().TempDir, "helm"))
+	files, err := os.ReadDir(path.Join(models.Paths().TempDir, "helm"))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(files), 1, "Expected at least 1 file in the unpack directory")
 

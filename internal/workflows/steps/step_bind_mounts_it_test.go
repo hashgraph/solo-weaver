@@ -12,7 +12,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/mount"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -22,9 +23,9 @@ import (
 // clusterBindMounts returns the bind mounts used by the cluster
 func clusterBindMounts() []mount.BindMount {
 	return []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
+		{Source: filepath.Join(models.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
+		{Source: filepath.Join(models.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
+		{Source: filepath.Join(models.Paths().SandboxDir, "/var/run/cilium"), Target: "/var/run/cilium"},
 	}
 }
 
@@ -53,7 +54,7 @@ func Test_SetupBindMounts_Fresh_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err, "Failed to create source directory %s", bm.Source)
 	}
 
@@ -126,7 +127,7 @@ func Test_SetupBindMounts_AlreadySetup_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -195,7 +196,7 @@ func Test_SetupBindMounts_PartiallySetup_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -265,7 +266,7 @@ func Test_SetupBindMounts_Rollback_Fresh_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -330,7 +331,7 @@ func Test_SetupBindMounts_Rollback_PreExisting_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -407,7 +408,7 @@ func Test_SetupBindMounts_Rollback_Mixed_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -465,8 +466,8 @@ func Test_SetupBindMounts_RollbackOnFailure_Integration(t *testing.T) {
 	// Given
 	//
 	testBindMounts := []mount.BindMount{
-		{Source: filepath.Join(core.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
-		{Source: filepath.Join(core.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
+		{Source: filepath.Join(models.Paths().SandboxDir, "/etc/kubernetes"), Target: "/etc/kubernetes"},
+		{Source: filepath.Join(models.Paths().SandboxDir, "/var/lib/kubelet"), Target: "/var/lib/kubelet"},
 	}
 
 	// Cleanup before test
@@ -483,7 +484,7 @@ func Test_SetupBindMounts_RollbackOnFailure_Integration(t *testing.T) {
 
 	// Ensure source directories exist for valid mounts
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -548,7 +549,7 @@ func Test_SetupBindMounts_RollbackIdempotent_Integration(t *testing.T) {
 
 	// Ensure source directories exist
 	for _, bm := range testBindMounts {
-		err := os.MkdirAll(bm.Source, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(bm.Source, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 

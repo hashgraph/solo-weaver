@@ -6,8 +6,8 @@ import (
 	"os"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 func CopyTemplateFile(src string, dst string) error {
@@ -16,7 +16,7 @@ func CopyTemplateFile(src string, dst string) error {
 		return fsx.FileReadError.Wrap(err, "failed to read config file %s", src)
 	}
 
-	err = os.WriteFile(dst, content, core.DefaultDirOrExecPerm)
+	err = os.WriteFile(dst, content, models.DefaultDirOrExecPerm)
 	if err != nil {
 		return fsx.FileWriteError.Wrap(err, "failed to write config file %s", dst)
 	}

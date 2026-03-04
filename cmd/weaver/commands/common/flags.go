@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -17,11 +17,32 @@ import (
 
 // Examples of typed flag definitions
 var (
+	FlagConfig = FlagDefinition[string]{
+		Name:        "config",
+		ShortName:   "c",
+		Description: "Path to config file",
+		Default:     "",
+	}
+
+	FlagVersion = FlagDefinition[bool]{
+		Name:        "version",
+		ShortName:   "v",
+		Description: "Print version and exit",
+		Default:     false,
+	}
+
+	FlagOutputFormat = FlagDefinition[string]{
+		Name:        "output",
+		ShortName:   "o",
+		Description: "Output format (json, yaml)",
+		Default:     "json",
+	}
+
 	FlagNodeType = FlagDefinition[string]{
 		Name:        "node-type",
 		ShortName:   "n",
-		Description: fmt.Sprintf("Type of node to deploy %s", []string{core.NodeTypeBlock, core.NodeTypeMirror, core.NodeTypeConsensus}),
-		Default:     core.NodeTypeBlock,
+		Description: fmt.Sprintf("Type of node to deploy %s", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
+		Default:     models.NodeTypeBlock,
 	}
 
 	FlagStopOnError = FlagDefinition[bool]{
@@ -48,14 +69,14 @@ var (
 	FlagProfile = FlagDefinition[string]{
 		Name:        "profile",
 		ShortName:   "p",
-		Description: fmt.Sprintf("Deployment profiles %s", core.AllProfiles()),
-		Default:     "",
+		Description: fmt.Sprintf("Deployment profiles %s", models.AllProfiles()),
+		Default:     models.ProfileLocal,
 	}
 
 	FlagValuesFile = FlagDefinition[string]{
 		Name:        "values",
 		ShortName:   "f",
-		Description: "Path to custom values file for installation",
+		Description: "Path to custom values file for chart",
 		Default:     "",
 	}
 
@@ -64,6 +85,19 @@ var (
 		ShortName:   "m",
 		Description: "Install Metrics Server",
 		Default:     true,
+	}
+
+	FlagWithStorageReset = FlagDefinition[bool]{
+		Name:        "with-reset",
+		ShortName:   "",
+		Description: "Reset storage before upgrading (clears all data)",
+		Default:     false,
+	}
+
+	FlagNoReuseValues = FlagDefinition[bool]{
+		Name:        "no-reuse-values",
+		ShortName:   "",
+		Description: "Do not reuse values from previous installations (resets to chart defaults)",
 	}
 
 	// FlagSkipHardwareChecks is a hidden persistent flag registered on the root command.
@@ -79,6 +113,13 @@ var (
 		Name:        "skip-hardware-checks",
 		ShortName:   "",
 		Description: "DANGEROUS: Skip hardware validation checks. May cause node instability or data loss.",
+		Default:     false,
+	}
+
+	FlagForce = FlagDefinition[bool]{
+		Name:        "force",
+		ShortName:   "y",
+		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
 		Default:     false,
 	}
 )
@@ -164,23 +205,6 @@ func (fp *FlagDefinition[T]) Value(cmd *cobra.Command, args []string) (T, error)
 	}
 
 	return fp.valueFrom(cmd.Flags())
-}
-
-// ValueP extracts the persistent flag value from the provided cobra command.
-// It won't look into persistent flags from parent commands. So use Value() instead.
-func (fp *FlagDefinition[T]) ValueP(cmd *cobra.Command, args []string) (T, error) {
-	if args == nil {
-		args = []string{}
-	}
-
-	// Parse the flags to ensure they are up to date such that it also retrieves from parent commands.
-	err := cmd.ParseFlags(args)
-	if err != nil {
-		var zero T
-		return zero, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
-	}
-
-	return fp.valueFrom(cmd.PersistentFlags())
 }
 
 // SetVarP sets up the persistent flag and exits on error.
@@ -353,4 +377,37 @@ func GetExecutionMode(continueOnErr bool, stopOnErr bool, rollbackOnErr bool) (a
 	} else {
 		return automa.StopOnError, nil
 	}
+}
+
+// ParentCmdFlags contains the common flags set in the parent commands.
+type ParentCmdFlags struct {
+	// root cmd flags
+	Config             string
+	Force              bool
+	SkipHardwareChecks bool
+
+	// block node cmd flags
+	Profile string
+}
+
+// ExtractRootFlags extracts the common flags set in the root command.
+func ExtractRootFlags(cmd *cobra.Command, args []string, parentFlags *ParentCmdFlags) error {
+	var err error
+
+	parentFlags.Config, err = FlagConfig.Value(cmd, args)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "failed to get config flag")
+	}
+
+	parentFlags.Force, err = FlagForce.Value(cmd, args)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "failed to get force flag")
+	}
+
+	parentFlags.SkipHardwareChecks, err = FlagSkipHardwareChecks.Value(cmd, args)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "failed to get skip-hardware-checks flag")
+	}
+
+	return nil
 }

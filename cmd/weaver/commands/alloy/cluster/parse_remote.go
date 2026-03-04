@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 // keyPattern matches a comma followed by a valid key name and equals sign.
@@ -18,15 +18,15 @@ var keyPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9]*=`)
 // Format: "name=<name>,url=<url>,username=<username>"
 // Example: "name=primary,url=https://prom:9090/api/v1/write,username=user1"
 // The username field is optional.
-func parseRemoteFlags(flags []string) ([]config.AlloyRemoteConfig, error) {
+func parseRemoteFlags(flags []string) ([]models.AlloyRemoteConfig, error) {
 	if len(flags) == 0 {
 		return nil, nil
 	}
 
-	var remotes []config.AlloyRemoteConfig
+	var remotes []models.AlloyRemoteConfig
 
 	for _, flag := range flags {
-		remote := config.AlloyRemoteConfig{}
+		remote := models.AlloyRemoteConfig{}
 
 		for _, pair := range splitKeyValuePairs(flag) {
 			eqIdx := strings.Index(pair, "=")
