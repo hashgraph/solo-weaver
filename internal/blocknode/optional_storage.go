@@ -75,7 +75,9 @@ var optionalStorages = []OptionalStorage{
 
 // GetOptionalStorages returns the full list of registered optional storages.
 func GetOptionalStorages() []OptionalStorage {
-	return optionalStorages
+	copied := make([]OptionalStorage, len(optionalStorages))
+	copy(copied, optionalStorages)
+	return copied
 }
 
 // RequiredByVersion returns true if the given target version requires this optional storage.
