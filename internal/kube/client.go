@@ -395,6 +395,23 @@ func (c *Client) DeletePVC(ctx context.Context, namespace, name string) error {
 	return nil
 }
 
+// DeleteStatefulSet deletes a StatefulSet by name and namespace using orphan cascading.
+// Orphan cascading removes the StatefulSet controller object but keeps the pods running.
+// This is required when upgrading a StatefulSet that needs volumeClaimTemplates changes,
+// since Kubernetes forbids in-place updates to those fields.
+// Returns nil if the StatefulSet doesn't exist.
+func (c *Client) DeleteStatefulSet(ctx context.Context, namespace, name string) error {
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
+	policy := metav1.DeletePropagationOrphan
+	err := c.Dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{
+		PropagationPolicy: &policy,
+	})
+	if err != nil && !kerrors.IsNotFound(err) {
+		return errorx.InternalError.Wrap(err, "failed to delete StatefulSet %s/%s", namespace, name)
+	}
+	return nil
+}
+
 // ResourceExists checks if a resource exists in the cluster.
 // For cluster-scoped resources, pass empty string for namespace.
 // The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1beta1").

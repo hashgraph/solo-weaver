@@ -25,10 +25,12 @@ var (
 	flagLivePath         string
 	flagLogPath          string
 	flagVerificationPath string
+	flagPluginsPath      string
 	flagLiveSize         string
 	flagArchiveSize      string
 	flagLogSize          string
 	flagVerificationSize string
+	flagPluginsSize      string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -51,12 +53,14 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagLivePath, "live-path", "", "Path for live storage")
 	nodeCmd.PersistentFlags().StringVar(&flagLogPath, "log-path", "", "Path for log storage")
 	nodeCmd.PersistentFlags().StringVar(&flagVerificationPath, "verification-path", "", "Path for verification storage")
+	nodeCmd.PersistentFlags().StringVar(&flagPluginsPath, "plugins-path", "", "Path for plugins storage")
 
 	// Storage size configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagLiveSize, "live-size", "", "Size for live storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagArchiveSize, "archive-size", "", "Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagLogSize, "log-size", "", "Size for log storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagVerificationSize, "verification-size", "", "Size for verification storage PV/PVC (e.g., 5Gi, 10Gi)")
+	nodeCmd.PersistentFlags().StringVar(&flagPluginsSize, "plugins-size", "", "Size for plugins storage PV/PVC (e.g., 5Gi, 10Gi)")
 
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd)
 }
