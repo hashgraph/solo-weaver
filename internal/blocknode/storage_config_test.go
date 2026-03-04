@@ -90,9 +90,19 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			manager.blockConfig.Version = "0.1.0"
 			require.NoError(t, err)
 
+			// Map optional paths by name using the registry order
 			verificationPath := ""
-			if len(optionalPaths) > 0 {
-				verificationPath = optionalPaths[0]
+			pluginsPath := ""
+			applicable := GetApplicableOptionalStorages("0.28.1")
+			for i, optStor := range applicable {
+				if i < len(optionalPaths) {
+					switch optStor.Name {
+					case "verification":
+						verificationPath = optionalPaths[i]
+					case "plugins":
+						pluginsPath = optionalPaths[i]
+					}
+				}
 			}
 
 			// Prepare template data
@@ -116,6 +126,7 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 				ArchivePath:         archivePath,
 				LogPath:             logPath,
 				VerificationPath:    verificationPath,
+				PluginsPath:         pluginsPath,
 				LiveSize:            manager.blockConfig.Storage.LiveSize,
 				ArchiveSize:         manager.blockConfig.Storage.ArchiveSize,
 				LogSize:             manager.blockConfig.Storage.LogSize,
@@ -213,9 +224,19 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	manager.blockConfig.Version = "0.1.0"
 	require.NoError(t, err)
 
+	// Map optional paths by name using the registry order
 	verificationPath := ""
-	if len(optionalPaths) > 0 {
-		verificationPath = optionalPaths[0]
+	pluginsPath := ""
+	applicable := GetApplicableOptionalStorages("0.28.1")
+	for i, optStor := range applicable {
+		if i < len(optionalPaths) {
+			switch optStor.Name {
+			case "verification":
+				verificationPath = optionalPaths[i]
+			case "plugins":
+				pluginsPath = optionalPaths[i]
+			}
+		}
 	}
 
 	// Prepare template data
@@ -239,6 +260,7 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 		ArchivePath:         archivePath,
 		LogPath:             logPath,
 		VerificationPath:    verificationPath,
+		PluginsPath:         pluginsPath,
 		LiveSize:            manager.blockConfig.Storage.LiveSize,
 		ArchiveSize:         manager.blockConfig.Storage.ArchiveSize,
 		LogSize:             manager.blockConfig.Storage.LogSize,

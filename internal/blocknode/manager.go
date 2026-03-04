@@ -363,6 +363,11 @@ func (m *Manager) resolveOptionalStoragePathAndSize(optStor OptionalStorage) (st
 			return "", "", errorx.IllegalArgument.Wrap(err, "invalid %s path", optStor.Name)
 		}
 		storagePath = sanitized
+	} else {
+		return "", "", errorx.IllegalArgument.New(
+			"%s storage path is empty: set storage.basePath or the specific %s path flag",
+			optStor.Name, optStor.Name,
+		)
 	}
 
 	return storagePath, storageSize, nil
@@ -478,8 +483,8 @@ func (m *Manager) DeleteStatefulSetForUpgrade(ctx context.Context) error {
 		Msg("Deleting StatefulSet (orphan cascade) to allow volumeClaimTemplates update")
 
 	if err := m.kubeClient.DeleteStatefulSet(ctx, m.blockConfig.Namespace, stsName); err != nil {
-		m.logger.Warn().Err(err).Str("statefulset", stsName).Msg("Failed to delete StatefulSet, continuing with upgrade attempt")
-		return nil
+		m.logger.Warn().Err(err).Str("statefulset", stsName).Msg("Failed to delete StatefulSet before upgrade")
+		return errorx.ExternalError.Wrap(err, "failed to delete StatefulSet before upgrade")
 	}
 
 	// Wait for the StatefulSet to be fully removed from the API server before upgrading.
