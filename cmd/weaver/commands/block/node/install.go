@@ -28,7 +28,7 @@ var installCmd = &cobra.Command{
 
 		intent := models.Intent{
 			Action: models.ActionInstall,
-			Target: models.TargetBlocknode,
+			Target: models.TargetBlockNode,
 		}
 
 		logx.As().Info().
@@ -36,7 +36,12 @@ var installCmd = &cobra.Command{
 			Any("inputs", inputs).
 			Msg("Installing Hedera Block Node")
 
-		report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
+		handler, err := blockNodeHandler.ForAction(intent.Action)
+		if err != nil {
+			return err
+		}
+
+		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
 		if err != nil {
 			return err
 		}

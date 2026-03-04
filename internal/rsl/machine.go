@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package rsl
 
 import (
@@ -10,33 +12,33 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-type ClusterRuntimeState struct {
-	*Base[state.ClusterState]
+type MachineRuntimeState struct {
+	*Base[state.MachineState]
 
 	// keep reality if other cluster-specific methods need it
 	reality reality.Checker
 }
 
-// NewClusterRuntime creates a ClusterRuntime with the provided configuration, initial state,
+// NewMachineRuntime creates a MachineRuntimeState with the provided configuration, initial state,
 // reality checker, and refresh interval. The caller is responsible for retaining and injecting
 // the returned instance — no package-level singleton is used.
-func NewClusterRuntime(cfg models.Config, clusterState state.ClusterState, realityChecker reality.Checker, refreshInterval time.Duration) (*ClusterRuntimeState, error) {
+func NewMachineRuntime(cfg models.Config, clusterState state.MachineState, realityChecker reality.Checker, refreshInterval time.Duration) (*MachineRuntimeState, error) {
 	if realityChecker == nil {
 		return nil, errorx.IllegalArgument.New("cluster reality checker is not initialized")
 	}
 
-	rb := NewRuntimeBase[state.ClusterState](
+	rb := NewRuntimeBase[state.MachineState](
 		cfg,
 		clusterState,
 		refreshInterval,
-		realityChecker.ClusterState,
-		func(s state.ClusterState) htime.Time { return s.LastSync },
-		func(s state.ClusterState) state.ClusterState { return s.Clone() },
-		func() state.ClusterState { return state.ClusterState{} },
+		realityChecker.MachineState,
+		func(s state.MachineState) htime.Time { return s.LastSync },
+		func(s state.MachineState) state.MachineState { return s.Clone() },
+		func() state.MachineState { return state.MachineState{} },
 		"cluster reality checker",
 	)
 
-	return &ClusterRuntimeState{
+	return &MachineRuntimeState{
 		Base:    rb,
 		reality: realityChecker,
 	}, nil

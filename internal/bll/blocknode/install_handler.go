@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"context"
+
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -16,12 +18,16 @@ import (
 // fields already set by a running deployment cannot be silently overridden),
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
-	runtimeState rslAccessor
-	sm           state.Manager
+	bll.BaseHandler[models.BlocknodeInputs]
+	effective EffectiveValueAccessor
+	sm        state.Manager
 }
 
-func newInstallHandler(runtimeState rslAccessor, sm state.Manager) *InstallHandler {
-	return &InstallHandler{runtimeState: runtimeState, sm: sm}
+func newInstallHandler(
+	base bll.BaseHandler[models.BlocknodeInputs],
+	runtimeState EffectiveValueAccessor,
+	sm state.Manager) *InstallHandler {
+	return &InstallHandler{BaseHandler: base, effective: runtimeState, sm: sm}
 }
 
 // PrepareEffectiveInputs resolves the winning value for every block-node field.
@@ -32,18 +38,17 @@ func newInstallHandler(runtimeState rslAccessor, sm state.Manager) *InstallHandl
 func (h *InstallHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return prepareBlocknodeEffectiveInputs(h.effective, inputs, nil)
 }
 
 // BuildWorkflow validates install preconditions and returns the workflow.
 // If the cluster has already been created only the block node setup step is
 // included; otherwise the full cluster bootstrap is prepended.
 func (h *InstallHandler) BuildWorkflow(
-	nodeState state.BlockNodeState,
-	clusterState state.ClusterState,
+	currentState state.State,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if nodeState.ReleaseInfo.Status == release.StatusDeployed && !inputs.Common.Force {
+	if currentState.BlockNodeState.ReleaseInfo.Status == release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is already installed; cannot install again").
 			WithProperty(bll.ErrPropertyResolution,
@@ -52,7 +57,7 @@ func (h *InstallHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 	var wb *automa.WorkflowBuilder
-	if clusterState.Created {
+	if currentState.ClusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(setupBlockNode(ins))
 	} else {
@@ -63,4 +68,14 @@ func (h *InstallHandler) BuildWorkflow(
 			)
 	}
 	return wb, nil
+}
+
+// HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.
+func (h *InstallHandler) HandleIntent(
+	ctx context.Context,
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs],
+) (*automa.Report, error) {
+	// Delegate to the shared handler which orchestrates all block-node intents.
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))
 }

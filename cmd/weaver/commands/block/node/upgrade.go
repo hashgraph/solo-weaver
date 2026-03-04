@@ -50,7 +50,7 @@ var (
 
 			intent := models.Intent{
 				Action: models.ActionUpgrade,
-				Target: models.TargetBlocknode,
+				Target: models.TargetBlockNode,
 			}
 
 			logx.As().Debug().
@@ -58,10 +58,16 @@ var (
 				Any("inputs", inputs).
 				Msg("Uninstalling Hedera Block Node")
 
-			report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
+			handler, err := blockNodeHandler.ForAction(intent.Action)
 			if err != nil {
 				return err
 			}
+
+			report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
+			if err != nil {
+				return err
+			}
+
 			common.CheckWorkflowReport(cmd.Context(), report)
 
 			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")

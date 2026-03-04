@@ -5,8 +5,8 @@ package blocknode
 import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/resolver"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -16,15 +16,21 @@ import (
 // injectChartRef returns the patchState function for block-node flushes.
 // It allows patching the BlockNodeState with workflow-specific values (e.g. ChartRef) that are not live-refreshed from
 // the cluster or machine.
-func injectChartRef(base bll.BaseHandler, chartRef string) func(*state.State) error {
+func injectChartRef(runtime *rsl.Runtime, chartRef string) func(*state.State) error {
 	return func(full *state.State) error {
-		bnState, err := base.RSL.BlockNode.CurrentState()
+		if runtime == nil || runtime.BlockNodeRuntime == nil {
+			return errorx.IllegalState.New("block node runtime is not available; cannot inject chart ref into state")
+		}
+
+		bnState, err := runtime.BlockNodeRuntime.CurrentState()
 		if err != nil {
 			return errorx.IllegalState.New("failed to read block node state after workflow: %v", err)
 		}
+
 		if bnState.ReleaseInfo.Status == release.StatusDeployed {
 			bnState.ReleaseInfo.ChartRef = chartRef
 		}
+
 		full.BlockNodeState = bnState
 		return nil
 	}
@@ -36,7 +42,7 @@ func injectChartRef(base bll.BaseHandler, chartRef string) func(*state.State) er
 // guard is returned immediately.  validator, if non-nil, runs additional
 // validations on the fully-assembled effective inputs struct.
 func prepareBlocknodeEffectiveInputs(
-	runtimeState rslAccessor,
+	effective EffectiveValueAccessor,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 	validator func(*models.UserInputs[models.BlocknodeInputs]) error,
 	fieldGuards ...func() error,
@@ -47,11 +53,11 @@ func prepareBlocknodeEffectiveInputs(
 
 	// If runtime state is unavailable, we cannot resolve any fields, so return early with user inputs as-is.  This allows
 	// workflows that don't require any resolved fields to proceed even if the block node runtime state is not yet available (e.g. uninstall).
-	if runtimeState == nil {
+	if effective == nil {
 		return inputs, nil
 	}
 
-	effReleaseName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ReleaseName() })
+	effReleaseName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return effective.ReleaseName() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node release name: %v", err)
 	}
@@ -59,7 +65,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effReleaseName.Strategy().String()).
 		Msg("Determined effective block node release name")
 
-	effVersion, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.Version() })
+	effVersion, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return effective.Version() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node version: %v", err)
 	}
@@ -67,7 +73,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effVersion.Strategy().String()).
 		Msg("Determined effective block node version")
 
-	effNamespace, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.Namespace() })
+	effNamespace, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return effective.Namespace() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node namespace: %v", err)
 	}
@@ -75,7 +81,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effNamespace.Strategy().String()).
 		Msg("Determined effective block node namespace")
 
-	effChartName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ChartName() })
+	effChartName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return effective.ChartName() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart name: %v", err)
 	}
@@ -83,7 +89,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effChartName.Strategy().String()).
 		Msg("Determined effective block node chart name")
 
-	effChartRepo, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ChartRepo() })
+	effChartRepo, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return effective.ChartRepo() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart repo: %v", err)
 	}
@@ -91,7 +97,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effChartRepo.Strategy().String()).
 		Msg("Determined effective block node chart repo")
 
-	effChartVersion, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ChartVersion() })
+	effChartVersion, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return effective.ChartVersion() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart version: %v", err)
 	}
@@ -99,7 +105,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effChartVersion.Strategy().String()).
 		Msg("Determined effective block node chart version")
 
-	effStorage, err := resolver.Field(func() (*automa.EffectiveValue[models.BlockNodeStorage], error) { return runtimeState.Storage() })
+	effStorage, err := resolver.Field(func() (*automa.EffectiveValue[models.BlockNodeStorage], error) { return effective.Storage() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node storage: %v", err)
 	}
@@ -112,7 +118,7 @@ func prepareBlocknodeEffectiveInputs(
 		}
 	}
 
-	effective := models.UserInputs[models.BlocknodeInputs]{
+	effectiveInputs := models.UserInputs[models.BlocknodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlocknodeInputs{
 			// Resolved via resolver
@@ -133,13 +139,13 @@ func prepareBlocknodeEffectiveInputs(
 	}
 
 	if validator != nil {
-		if err := validator(&effective); err != nil {
+		if err := validator(&effectiveInputs); err != nil {
 			return nil, err
 		}
 	}
 
-	logx.As().Debug().Any("effectiveUserInputs", effective).
+	logx.As().Debug().Any("effectiveUserInputs", effectiveInputs).
 		Msg("Determined effective user inputs for block node")
 
-	return &effective, nil
+	return &effectiveInputs, nil
 }

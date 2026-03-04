@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"context"
+
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -14,11 +16,12 @@ import (
 // UninstallHandler handles the ActionUninstall intent for a block node.
 // It optionally purges persistent storage before removing the Helm release.
 type UninstallHandler struct {
-	runtimeState rslAccessor
+	bll.BaseHandler[models.BlocknodeInputs]
+	effective EffectiveValueAccessor
 }
 
-func newUninstallHandler(runtimeState rslAccessor) *UninstallHandler {
-	return &UninstallHandler{runtimeState: runtimeState}
+func newUninstallHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState EffectiveValueAccessor) *UninstallHandler {
+	return &UninstallHandler{BaseHandler: base, effective: runtimeState}
 }
 
 // PrepareEffectiveInputs for uninstall passes inputs through — no field
@@ -26,17 +29,16 @@ func newUninstallHandler(runtimeState rslAccessor) *UninstallHandler {
 func (h *UninstallHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return prepareBlocknodeEffectiveInputs(h.effective, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed (unless --force) and
 // returns the uninstall workflow.
 func (h *UninstallHandler) BuildWorkflow(
-	nodeState state.BlockNodeState,
-	_ state.ClusterState,
+	currentState state.State,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if nodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
+	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot uninstall").
 			WithProperty(bll.ErrPropertyResolution,
@@ -53,4 +55,14 @@ func (h *UninstallHandler) BuildWorkflow(
 			Steps(uninstallBlockNode(ins))
 	}
 	return wb, nil
+}
+
+// HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.
+func (h *UninstallHandler) HandleIntent(
+	ctx context.Context,
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs],
+) (*automa.Report, error) {
+	// Delegate to the shared handler which orchestrates all block-node intents.
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))
 }

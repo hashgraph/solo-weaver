@@ -18,7 +18,7 @@ func TestPrepareBlocknodeEffectiveInputs_NilInputs(t *testing.T) {
 
 func TestPrepareBlocknodeEffectiveInputs_RuntimeStateNil_ReturnsSamePointer(t *testing.T) {
 	in := &models.UserInputs[models.BlocknodeInputs]{}
-	// runtimeState == nil should return inputs as-is (no resolution attempted)
+	// effective == nil should return inputs as-is (no resolution attempted)
 	out, err := prepareBlocknodeEffectiveInputs(nil, in, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

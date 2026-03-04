@@ -5,7 +5,7 @@ package blocknode
 // internal.go contains the private interface and step-adapter shims that
 // decouple the handler files from concrete rsl and step types.
 //
-// rslAccessor abstracts the rsl layer so handlers can be unit-tested by
+// EffectiveValueAccessor abstracts the rsl layer so handlers can be unit-tested by
 // injecting a stub without constructing a real registry.
 //
 // The step adapters (setupBlockNode, upgradeBlockNode, …) are thin wrappers
@@ -18,13 +18,13 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
-// ── rslAccessor ───────────────────────────────────────────────────────────────
+// ── EffectiveValueAccessor ───────────────────────────────────────────────────────────────
 
-// rslAccessor exposes only the field-resolution methods that block-node
+// EffectiveValueAccessor exposes only the field-resolution methods that block-node
 // handlers actually need.  Using per-field methods (rather than returning
 // *rsl.BlockNodeRuntimeState) keeps the interface narrow and makes it
 // trivially stubbable in unit tests.
-type rslAccessor interface {
+type EffectiveValueAccessor interface {
 	ReleaseName() (*automa.EffectiveValue[string], error)
 	Version() (*automa.EffectiveValue[string], error)
 	Namespace() (*automa.EffectiveValue[string], error)
@@ -34,44 +34,44 @@ type rslAccessor interface {
 	Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error)
 }
 
-// registryAccessor wraps *rsl.BlockNodeRuntimeState to satisfy rslAccessor.
-// It is constructed from the Registry in NewHandler and passed into each
+// runtimeValueAccessor wraps *rsl.BlockNodeRuntimeState to satisfy EffectiveValueAccessor.
+// It is constructed from the Runtime in NewHandler and passed into each
 // per-action handler.
-type registryAccessor struct{ bn *rsl.BlockNodeRuntimeState }
+type runtimeValueAccessor struct{ bn *rsl.BlockNodeRuntimeState }
 
-// compile-time proof that registryAccessor implements rslAccessor.
-var _ rslAccessor = registryAccessor{}
+// compile-time proof that runtimeValueAccessor implements EffectiveValueAccessor.
+var _ EffectiveValueAccessor = runtimeValueAccessor{}
 
-func (r registryAccessor) ReleaseName() (*automa.EffectiveValue[string], error) {
+func (r runtimeValueAccessor) ReleaseName() (*automa.EffectiveValue[string], error) {
 	return r.bn.ReleaseName()
 }
-func (r registryAccessor) Version() (*automa.EffectiveValue[string], error) {
+func (r runtimeValueAccessor) Version() (*automa.EffectiveValue[string], error) {
 	return r.bn.Version()
 }
-func (r registryAccessor) Namespace() (*automa.EffectiveValue[string], error) {
+func (r runtimeValueAccessor) Namespace() (*automa.EffectiveValue[string], error) {
 	return r.bn.Namespace()
 }
-func (r registryAccessor) ChartName() (*automa.EffectiveValue[string], error) {
+func (r runtimeValueAccessor) ChartName() (*automa.EffectiveValue[string], error) {
 	return r.bn.ChartName()
 }
-func (r registryAccessor) ChartRepo() (*automa.EffectiveValue[string], error) {
+func (r runtimeValueAccessor) ChartRepo() (*automa.EffectiveValue[string], error) {
 	return r.bn.ChartRepo()
 }
-func (r registryAccessor) ChartVersion() (*automa.EffectiveValue[string], error) {
+func (r runtimeValueAccessor) ChartVersion() (*automa.EffectiveValue[string], error) {
 	return r.bn.ChartVersion()
 }
-func (r registryAccessor) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
+func (r runtimeValueAccessor) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
 	return r.bn.Storage()
 }
 
 // ── capturingAccessor ─────────────────────────────────────────────────────────
 
-// capturingAccessor wraps an rslAccessor and intercepts per-field calls so
+// capturingAccessor wraps an EffectiveValueAccessor and intercepts per-field calls so
 // that the caller (e.g. InstallHandler) can capture each *automa.EffectiveValue
 // for post-resolution guard checks, without exposing the internal effective
 // values through the public API.
 type capturingAccessor struct {
-	inner          rslAccessor
+	inner          EffectiveValueAccessor
 	releaseNameFn  func() (*automa.EffectiveValue[string], error)
 	versionFn      func() (*automa.EffectiveValue[string], error)
 	namespaceFn    func() (*automa.EffectiveValue[string], error)
@@ -80,7 +80,7 @@ type capturingAccessor struct {
 	chartVersionFn func() (*automa.EffectiveValue[string], error)
 }
 
-var _ rslAccessor = (*capturingAccessor)(nil)
+var _ EffectiveValueAccessor = (*capturingAccessor)(nil)
 
 func (c *capturingAccessor) ReleaseName() (*automa.EffectiveValue[string], error) {
 	if c.releaseNameFn != nil {

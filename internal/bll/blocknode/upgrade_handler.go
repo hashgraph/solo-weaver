@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"context"
+
 	"github.com/Masterminds/semver/v3"
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
@@ -18,11 +20,12 @@ import (
 // enforces chart immutability (you cannot switch charts during an upgrade) and
 // prevents version downgrade.
 type UpgradeHandler struct {
-	runtimeState rslAccessor
+	bll.BaseHandler[models.BlocknodeInputs]
+	effective EffectiveValueAccessor
 }
 
-func newUpgradeHandler(runtimeState rslAccessor) *UpgradeHandler {
-	return &UpgradeHandler{runtimeState: runtimeState}
+func newUpgradeHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState EffectiveValueAccessor) *UpgradeHandler {
+	return &UpgradeHandler{BaseHandler: base, effective: runtimeState}
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
@@ -31,7 +34,7 @@ func newUpgradeHandler(runtimeState rslAccessor) *UpgradeHandler {
 func (h *UpgradeHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return prepareBlocknodeEffectiveInputs(h.effective, inputs, nil)
 }
 
 // BuildWorkflow validates upgrade preconditions and returns the workflow.
@@ -40,27 +43,26 @@ func (h *UpgradeHandler) PrepareEffectiveInputs(
 //   - Chart repository cannot be changed during an upgrade.
 //   - Version cannot be downgraded.
 func (h *UpgradeHandler) BuildWorkflow(
-	nodeState state.BlockNodeState,
-	_ state.ClusterState,
+	currentState state.State,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if nodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
+	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot upgrade").
 			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
 	}
 
-	if nodeState.ReleaseInfo.ChartRef != inputs.Custom.Chart {
+	if currentState.BlockNodeState.ReleaseInfo.ChartRef != inputs.Custom.Chart {
 		return nil, errorx.IllegalState.New(
 			"block node chart is already set to %q; chart cannot be changed during an upgrade",
-			nodeState.ReleaseInfo.ChartRef).
+			currentState.BlockNodeState.ReleaseInfo.ChartRef).
 			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node reset' then 'weaver block node install'")
 	}
 
-	currentVer, err := semver.NewVersion(nodeState.ReleaseInfo.Version)
+	currentVer, err := semver.NewVersion(currentState.BlockNodeState.ReleaseInfo.Version)
 	if err != nil {
 		return nil, errorx.IllegalState.New(
-			"failed to parse current block node version %q: %v", nodeState.ReleaseInfo.Version, err)
+			"failed to parse current block node version %q: %v", currentState.BlockNodeState.ReleaseInfo.Version, err)
 	}
 	desiredVer, err := semver.NewVersion(inputs.Custom.Version)
 	if err != nil {
@@ -87,4 +89,14 @@ func (h *UpgradeHandler) BuildWorkflow(
 			Steps(upgradeBlockNode(ins))
 	}
 	return wb, nil
+}
+
+// HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.
+func (h *UpgradeHandler) HandleIntent(
+	ctx context.Context,
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs],
+) (*automa.Report, error) {
+	// Delegate to the shared handler which orchestrates all block-node intents.
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))
 }

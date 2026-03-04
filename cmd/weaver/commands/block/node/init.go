@@ -20,7 +20,7 @@ import (
 
 // blockNodeHandler is the per-command instance of blocknode.Handler, wired in
 // initializeDependencies. It replaces the old package-level bll singleton.
-var blockNodeHandler *blocknode.Handler
+var blockNodeHandler *blocknode.HandlerFactory
 
 func initializeDependencies() error {
 	conf := config.Get()
@@ -45,15 +45,15 @@ func initializeDependencies() error {
 		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
 	}
 
-	// Build the rsl.Registry — single call that constructs cluster + block-node runtimes.
-	registry, err := rsl.NewRegistry(conf, currentState, realityChecker, rsl.DefaultRefreshInterval)
+	// Build the rsl.Runtime — single call that constructs cluster + block-node runtimes.
+	runtime, err := rsl.NewRuntime(conf, sm, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
 	}
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.
 	// sm satisfies both state.Reader and state.Writer — pass it for both roles.
-	blockNodeHandler, err = blocknode.NewHandler(sm, registry, realityChecker)
+	blockNodeHandler, err = blocknode.NewHandlerFactory(sm, runtime)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise block-node intent handler")
 	}
