@@ -55,8 +55,8 @@ const (
 	// TargetCluster represents a Kubernetes cluster runnig on the machine
 	TargetCluster TargetType = "cluster"
 
-	// TargetBlocknode represents a blocknode component of the Hedera network
-	TargetBlocknode TargetType = "blocknode"
+	// TargetBlockNode represents a blocknode component of the Hedera network
+	TargetBlockNode TargetType = "blocknode"
 
 	// TargetConsensusNode represents a consensus node component of the Hedera network
 	TargetConsensusNode TargetType = "consensus"
@@ -74,11 +74,11 @@ const (
 // allowedOperations maps each action to the valid target types it can be performed on.
 var allowedOperations = map[ActionType][]TargetType{
 	ActionSetup:     {TargetMachine, TargetSystem, TargetCluster},
-	ActionReset:     {TargetBlocknode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
-	ActionInstall:   {TargetApplication, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
-	ActionUninstall: {TargetApplication, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
-	ActionUpgrade:   {TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
-	ActionMigrate:   {TargetSystem, TargetCluster, TargetBlocknode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionReset:     {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
+	ActionInstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionUninstall: {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionUpgrade:   {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionMigrate:   {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 }
 
 // Intent defines the desired action to be performed given certain parameters and configuration.

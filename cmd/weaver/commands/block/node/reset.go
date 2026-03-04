@@ -35,7 +35,7 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 
 		intent := models.Intent{
 			Action: models.ActionReset,
-			Target: models.TargetBlocknode,
+			Target: models.TargetBlockNode,
 		}
 
 		logx.As().Debug().
@@ -43,7 +43,16 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			Any("inputs", inputs).
 			Msg("Resetting Hedera Block Node")
 
-		report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
+		handler, err := blockNodeHandler.ForAction(intent.Action)
+		if err != nil {
+			return err
+		}
+
+		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
+		if err != nil {
+			return err
+		}
+
 		if err != nil {
 			return err
 		}

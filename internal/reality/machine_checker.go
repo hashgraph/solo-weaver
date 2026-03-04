@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
+	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
@@ -43,13 +44,21 @@ func newMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) Machine
 // MachineState collects current host software and hardware state.
 // Software state merges: persisted new state > legacy sidecar files > live binary stat.
 func (m *machineChecker) MachineState(_ context.Context) (state.MachineState, error) {
-	now := htime.Now()
-	ms := state.NewMachineState()
+	// must refresh to get the latest persisted state before merging with live checks;
+	// if refresh fails due to missing state (e.g. first run), log and continue with empty state
+	if err := m.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return state.MachineState{}, errorx.IllegalState.Wrap(err, "failed to refresh state")
+	}
 
 	current := m.sm.State()
+	logx.As().Debug().Any("currentMachineState", current.MachineState).Msg("Loaded current state")
+
+	ms := current.MachineState
 	ms.Software = m.refreshSoftwareState(current)
 	ms.Hardware = m.refreshHardwareState()
-	ms.LastSync = now
+	ms.LastSync = htime.Now()
+
+	logx.As().Debug().Any("refreshedMachineState", ms).Msg("Refreshed machine state")
 
 	return ms, nil
 }
@@ -131,6 +140,7 @@ func readLegacyStateFiles(stateDir, name, stateType string) (exists bool, versio
 
 // refreshHardwareState collects current host hardware metrics.
 func (m *machineChecker) refreshHardwareState() map[string]state.HardwareState {
+	logx.As().Debug().Msg("Probing hardware state using hardware.GetHostProfile()")
 	result := make(map[string]state.HardwareState)
 	now := htime.Now()
 
@@ -177,5 +187,6 @@ func (m *machineChecker) refreshHardwareState() map[string]state.HardwareState {
 		}
 	}
 
+	logx.As().Debug().Any("result", result).Msg("Refreshed hardware state")
 	return result
 }

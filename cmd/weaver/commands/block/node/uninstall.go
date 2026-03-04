@@ -27,7 +27,7 @@ var uninstallCmd = &cobra.Command{
 
 		intent := models.Intent{
 			Action: models.ActionUninstall,
-			Target: models.TargetBlocknode,
+			Target: models.TargetBlockNode,
 		}
 
 		logx.As().Info().
@@ -35,7 +35,12 @@ var uninstallCmd = &cobra.Command{
 			Any("inputs", inputs).
 			Msg("Uninstalling Hedera Block Node")
 
-		report, err := blockNodeHandler.HandleIntent(cmd.Context(), intent, *inputs)
+		handler, err := blockNodeHandler.ForAction(intent.Action)
+		if err != nil {
+			return err
+		}
+
+		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
 		if err != nil {
 			return err
 		}

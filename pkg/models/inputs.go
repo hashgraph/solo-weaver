@@ -40,6 +40,11 @@ type BlocknodeInputs struct {
 	SkipHardwareChecks bool
 }
 
+type ClusterInputs struct {
+	Profile            string
+	SkipHardwareChecks bool
+}
+
 func boolToString(b bool) string {
 	if b {
 		return "true"
@@ -163,6 +168,21 @@ func (c *BlocknodeInputs) Validate() error {
 
 	if err := c.Storage.Validate(); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (c *ClusterInputs) Validate() error {
+	if c.Profile != "" {
+		if err := sanity.ValidateIdentifier(c.Profile); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)
+		}
+
+		// check profile must be one of AllProfiles()
+		if sanity.Contains[string](c.Profile, AllProfiles()) == false {
+			return errorx.IllegalArgument.New("invalid profile: %s", c.Profile)
+		}
 	}
 
 	return nil

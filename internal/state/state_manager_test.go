@@ -224,11 +224,11 @@ func TestActionHistory_SingleFlush(t *testing.T) {
 	}
 
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlocknode},
+		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"profile": "local", "version": "0.1.0"},
 	})
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlocknode},
+		Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"profile": "local"},
 	})
 
@@ -280,7 +280,7 @@ func TestActionHistory_FlushClearsInMemoryBuffer(t *testing.T) {
 	}
 
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlocknode},
+		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"step": "first"},
 	})
 
@@ -328,11 +328,11 @@ func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 
 	// Second flush — 2 more entries
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlocknode},
+		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"round": "2a"},
 	})
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlocknode},
+		Intent: models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"round": "2b"},
 	})
 	if err := m.Flush(); err != nil {
@@ -376,7 +376,7 @@ func TestActionHistory_LastActionUpdatedInState(t *testing.T) {
 	}
 
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlocknode},
+		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"key": "value"},
 	})
 
