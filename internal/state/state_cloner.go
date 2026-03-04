@@ -21,6 +21,24 @@ func (s *SoftwareState) Clone() SoftwareState {
 	}
 }
 
+func (s *HardwareState) Clone() HardwareState {
+	var meta map[string]string
+	if s.Metadata != nil {
+		meta = make(map[string]string, len(s.Metadata))
+		for k, v := range s.Metadata {
+			meta[k] = v
+		}
+	}
+	return HardwareState{
+		Type:     s.Type,
+		Info:     s.Info,
+		Count:    s.Count,
+		Size:     s.Size,
+		Metadata: meta,
+		LastSync: s.LastSync,
+	}
+}
+
 // Clone creates a deep copy of BlockNodeState
 func (b *BlockNodeState) Clone() BlockNodeState {
 	clone := *b
@@ -72,6 +90,15 @@ func (m *MachineState) Clone() MachineState {
 		}
 	} else {
 		clone.Software = make(map[string]SoftwareState)
+	}
+
+	if m.Hardware != nil {
+		clone.Hardware = make(map[string]HardwareState, len(m.Hardware))
+		for k, v := range m.Hardware {
+			clone.Hardware[k] = v.Clone()
+		}
+	} else {
+		clone.Hardware = make(map[string]HardwareState)
 	}
 
 	return clone

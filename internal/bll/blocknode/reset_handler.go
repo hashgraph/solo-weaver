@@ -3,9 +3,13 @@
 package blocknode
 
 import (
+	"context"
+
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
@@ -16,11 +20,12 @@ import (
 // node to already be deployed.  Effective-input resolution is a no-op (the
 // effective values from the current state are used as-is).
 type ResetHandler struct {
-	runtimeState rslAccessor
+	bll.BaseHandler[models.BlocknodeInputs]
+	runtimeState *rsl.BlockNodeRuntimeState
 }
 
-func newResetHandler(runtimeState rslAccessor) *ResetHandler {
-	return &ResetHandler{runtimeState: runtimeState}
+func NewResetHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeState) *ResetHandler {
+	return &ResetHandler{BaseHandler: base, runtimeState: runtimeState}
 }
 
 // PrepareEffectiveInputs for reset simply passes inputs through unchanged.
@@ -35,17 +40,26 @@ func (h *ResetHandler) PrepareEffectiveInputs(
 // BuildWorkflow validates that the block node is deployed and returns the
 // reset workflow.
 func (h *ResetHandler) BuildWorkflow(
-	nodeState state.BlockNodeState,
-	_ state.ClusterState,
+	currentState state.State,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if nodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
+	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot reset").
 			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
 	}
 
 	wb := automa.NewWorkflowBuilder().WithId("block-node-reset").
-		Steps(resetBlockNode(inputs.Custom))
+		Steps(steps.ResetBlockNode(inputs.Custom))
 	return wb, nil
+}
+
+// HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.
+func (h *ResetHandler) HandleIntent(
+	ctx context.Context,
+	intent models.Intent,
+	inputs models.UserInputs[models.BlocknodeInputs],
+) (*automa.Report, error) {
+	// Delegate to the shared handler which orchestrates all block-node intents.
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))
 }

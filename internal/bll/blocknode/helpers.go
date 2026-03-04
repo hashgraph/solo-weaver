@@ -5,8 +5,8 @@ package blocknode
 import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/resolver"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -16,15 +16,21 @@ import (
 // injectChartRef returns the patchState function for block-node flushes.
 // It allows patching the BlockNodeState with workflow-specific values (e.g. ChartRef) that are not live-refreshed from
 // the cluster or machine.
-func injectChartRef(base bll.BaseHandler, chartRef string) func(*state.State) error {
+func injectChartRef(runtime *rsl.Runtime, chartRef string) func(*state.State) error {
 	return func(full *state.State) error {
-		bnState, err := base.RSL.BlockNode.CurrentState()
+		if runtime == nil || runtime.BlockNodeRuntime == nil {
+			return errorx.IllegalState.New("block node runtime is not available; cannot inject chart ref into state")
+		}
+
+		bnState, err := runtime.BlockNodeRuntime.CurrentState()
 		if err != nil {
 			return errorx.IllegalState.New("failed to read block node state after workflow: %v", err)
 		}
+
 		if bnState.ReleaseInfo.Status == release.StatusDeployed {
 			bnState.ReleaseInfo.ChartRef = chartRef
 		}
+
 		full.BlockNodeState = bnState
 		return nil
 	}
@@ -36,7 +42,7 @@ func injectChartRef(base bll.BaseHandler, chartRef string) func(*state.State) er
 // guard is returned immediately.  validator, if non-nil, runs additional
 // validations on the fully-assembled effective inputs struct.
 func prepareBlocknodeEffectiveInputs(
-	runtimeState rslAccessor,
+	runtimeState *rsl.BlockNodeRuntimeState,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 	validator func(*models.UserInputs[models.BlocknodeInputs]) error,
 	fieldGuards ...func() error,
@@ -45,12 +51,9 @@ func prepareBlocknodeEffectiveInputs(
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
 	}
 
-	// If runtime state is unavailable, we cannot resolve any fields, so return early with user inputs as-is.  This allows
-	// workflows that don't require any resolved fields to proceed even if the block node runtime state is not yet available (e.g. uninstall).
 	if runtimeState == nil {
-		return inputs, nil
+		return nil, errorx.IllegalArgument.New("block node runtime state cannot be nil")
 	}
-
 	effReleaseName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ReleaseName() })
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node release name: %v", err)
@@ -112,7 +115,7 @@ func prepareBlocknodeEffectiveInputs(
 		}
 	}
 
-	effective := models.UserInputs[models.BlocknodeInputs]{
+	effectiveInputs := models.UserInputs[models.BlocknodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlocknodeInputs{
 			// Resolved via resolver
@@ -133,13 +136,13 @@ func prepareBlocknodeEffectiveInputs(
 	}
 
 	if validator != nil {
-		if err := validator(&effective); err != nil {
+		if err := validator(&effectiveInputs); err != nil {
 			return nil, err
 		}
 	}
 
-	logx.As().Debug().Any("effectiveUserInputs", effective).
+	logx.As().Debug().Any("effectiveUserInputs", effectiveInputs).
 		Msg("Determined effective user inputs for block node")
 
-	return &effective, nil
+	return &effectiveInputs, nil
 }

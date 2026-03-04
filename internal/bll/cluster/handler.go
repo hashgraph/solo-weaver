@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package blocknode implements the business logic layer for block-node intents.
-//
-// The routing Handler receives a models.Intent, delegates preparation of
-// effective inputs and workflow construction to the appropriate per-action
-// handler, executes the workflow, and flushes state to disk.
-//
-// Extending with a new action: implement IntentHandler[models.BlocknodeInputs]
-// in a new file and add a case to Handler.HandleIntent.  No other file changes.
-package blocknode
+package cluster
 
 import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
@@ -18,12 +10,8 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// HandlerFactory is the private struct that holds all per-action handlers for block-node intents.
 type HandlerFactory struct {
-	install   *InstallHandler
-	upgrade   *UpgradeHandler
-	reset     *ResetHandler
-	uninstall *UninstallHandler
+	install *InstallHandler
 }
 
 // NewHandlerFactory validates dependencies and returns a HandlerFactory with all handlers initialized.
@@ -32,7 +20,7 @@ func NewHandlerFactory(
 	sm state.Manager,
 	runtime *rsl.Runtime,
 ) (*HandlerFactory, error) {
-	base, err := bll.NewBaseHandler[models.BlocknodeInputs](runtime)
+	base, err := bll.NewBaseHandler[models.ClusterInputs](runtime)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}
@@ -45,10 +33,9 @@ func NewHandlerFactory(
 	}
 
 	h := &HandlerFactory{
-		install:   NewInstallHandler(base, runtime.BlockNodeRuntime, sm),
-		upgrade:   NewUpgradeHandler(base, runtime.BlockNodeRuntime),
-		reset:     NewResetHandler(base, runtime.BlockNodeRuntime),
-		uninstall: NewUninstallHandler(base, runtime.BlockNodeRuntime),
+		install: NewInstallHandler(base, runtime.ClusterRuntime, sm),
+		//upgrade:   newUpgradeHandler(base, runtime.BlockNodeRuntime),
+		//uninstall: newUninstallHandler(base, runtime.BlockNodeRuntime),
 	}
 
 	return h, nil
@@ -57,16 +44,14 @@ func NewHandlerFactory(
 // ForAction returns the appropriate IntentHandler for the given action, or an error if the action is unsupported.
 func (h *HandlerFactory) ForAction(
 	action models.ActionType,
-) (bll.IntentHandler[models.BlocknodeInputs], error) {
+) (bll.IntentHandler[models.ClusterInputs], error) {
 	switch action {
 	case models.ActionInstall:
 		return h.install, nil
-	case models.ActionUpgrade:
-		return h.upgrade, nil
-	case models.ActionReset:
-		return h.reset, nil
-	case models.ActionUninstall:
-		return h.uninstall, nil
+	//case models.ActionUpgrade:
+	//	return h.upgrade, nil
+	//case models.ActionUninstall:
+	//	return h.uninstall, nil
 	default:
 		return nil, errorx.IllegalArgument.New("unsupported action %q for block node", action)
 	}
