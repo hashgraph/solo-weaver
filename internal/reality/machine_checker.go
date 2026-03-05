@@ -44,7 +44,7 @@ func (m *machineChecker) FlushState(st state.MachineState) error {
 	}
 	fullState := m.sm.State()
 	fullState.MachineState = st
-	if err := m.sm.Set(fullState).Flush(); err != nil {
+	if err := m.sm.Set(fullState).FlushState(); err != nil {
 		return ErrFlushError.Wrap(err, "failed to persist state with refreshed MachineState")
 	}
 

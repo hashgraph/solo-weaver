@@ -995,7 +995,7 @@ func (b *baseInstaller) recordInstalled() error {
 		Any("currentState", cur).
 		Msg("Recording software as installed in state")
 
-	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush(); err != nil {
+	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState(); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to flush state after recording installed")
 	}
 	return nil
@@ -1014,7 +1014,7 @@ func (b *baseInstaller) recordConfigured() error {
 		Any("currentState", cur).
 		Msg("Recording software as configured in state")
 
-	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush(); err != nil {
+	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState(); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to flush state after recording configured")
 	}
 	return nil
@@ -1025,7 +1025,7 @@ func (b *baseInstaller) clearInstalled() error {
 	cur := state.GetSoftwareState(snap, b.software.Name)
 	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Installed = false
-	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState()
 }
 
 func (b *baseInstaller) clearConfigured() error {
@@ -1033,7 +1033,7 @@ func (b *baseInstaller) clearConfigured() error {
 	cur := state.GetSoftwareState(snap, b.software.Name)
 	cur.Name = b.software.Name // ensure Name is always populated
 	cur.Configured = false
-	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).Flush()
+	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState()
 }
 
 // installFile copies a file with permissions using the fileManager

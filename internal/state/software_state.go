@@ -18,7 +18,7 @@ func GetSoftwareState(s State, component string) SoftwareState {
 }
 
 // SetSoftwareState returns a copy of s with the given SoftwareState recorded under
-// component. Callers must follow up with StateWriter.Set(updated).Flush() to persist.
+// component. Callers must follow up with StateWriter.Set(updated).FlushState() to persist.
 func SetSoftwareState(s State, component string, sw SoftwareState) State {
 	if s.MachineState.Software == nil {
 		s.MachineState.Software = make(map[string]SoftwareState)

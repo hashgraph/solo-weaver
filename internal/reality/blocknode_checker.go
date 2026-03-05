@@ -51,7 +51,7 @@ func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
 	}
 	fullState := b.sm.State()
 	fullState.BlockNodeState = st
-	if err := b.sm.Set(fullState).Flush(); err != nil {
+	if err := b.sm.Set(fullState).FlushState(); err != nil {
 		return ErrFlushError.Wrap(err, "failed to persist state with refreshed BlockNodeState")
 	}
 

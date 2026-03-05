@@ -58,7 +58,7 @@ func newTestFileManager(t *testing.T) fsx.Manager {
 	return fm
 }
 
-// TestFlushWritesFile checks that Flush writes the YAML representation to disk.
+// TestFlushWritesFile checks that FlushState writes the YAML representation to disk.
 func TestFlushWritesFile(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "state.yaml")
 
@@ -70,8 +70,8 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("NewStateManager returned error: %v", err)
 	}
 
-	if err := m.Flush(); err != nil {
-		t.Fatalf("Flush returned error: %v", err)
+	if err := m.FlushState(); err != nil {
+		t.Fatalf("FlushState returned error: %v", err)
 	}
 
 	data, err := os.ReadFile(tmp)
@@ -210,7 +210,7 @@ func decodeHistoryFile(t *testing.T, path string) []ActionHistory {
 	return entries
 }
 
-// TestActionHistory_SingleFlush verifies that a single Flush call writes all pending
+// TestActionHistory_SingleFlush verifies that a single FlushState call writes all pending
 // entries to the history file as individual YAML documents and clears the in-memory buffer.
 func TestActionHistory_SingleFlush(t *testing.T) {
 	dir := t.TempDir()
@@ -232,8 +232,8 @@ func TestActionHistory_SingleFlush(t *testing.T) {
 		Inputs: map[string]any{"profile": "local"},
 	})
 
-	if err := m.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
+	if err := m.FlushState(); err != nil {
+		t.Fatalf("FlushState: %v", err)
 	}
 
 	entries := decodeHistoryFile(t, historyFile)
@@ -266,8 +266,8 @@ func TestActionHistory_SingleFlush(t *testing.T) {
 	}
 }
 
-// TestActionHistory_FlushClearsInMemoryBuffer verifies that after a Flush the in-memory
-// action list is cleared so a second Flush with no new entries appends nothing.
+// TestActionHistory_FlushClearsInMemoryBuffer verifies that after a FlushState the in-memory
+// action list is cleared so a second FlushState with no new entries appends nothing.
 func TestActionHistory_FlushClearsInMemoryBuffer(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := filepath.Join(dir, "state.yaml")
@@ -284,13 +284,13 @@ func TestActionHistory_FlushClearsInMemoryBuffer(t *testing.T) {
 		Inputs: map[string]any{"step": "first"},
 	})
 
-	if err := m.Flush(); err != nil {
-		t.Fatalf("first Flush: %v", err)
+	if err := m.FlushState(); err != nil {
+		t.Fatalf("first FlushState: %v", err)
 	}
 
-	// Second Flush with nothing new — file should still have exactly 1 entry.
-	if err := m.Flush(); err != nil {
-		t.Fatalf("second Flush: %v", err)
+	// Second FlushState with nothing new — file should still have exactly 1 entry.
+	if err := m.FlushState(); err != nil {
+		t.Fatalf("second FlushState: %v", err)
 	}
 
 	entries := decodeHistoryFile(t, historyFile)
@@ -299,7 +299,7 @@ func TestActionHistory_FlushClearsInMemoryBuffer(t *testing.T) {
 	}
 }
 
-// TestActionHistory_MultipleFlushes_Accumulates verifies that successive Flush calls
+// TestActionHistory_MultipleFlushes_Accumulates verifies that successive FlushState calls
 // accumulate entries incrementally in the history file without re-writing earlier entries.
 func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 	dir := t.TempDir()
@@ -317,8 +317,8 @@ func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 		Intent: models.Intent{Action: models.ActionSetup, Target: models.TargetCluster},
 		Inputs: map[string]any{"round": "1"},
 	})
-	if err := m.Flush(); err != nil {
-		t.Fatalf("first Flush: %v", err)
+	if err := m.FlushState(); err != nil {
+		t.Fatalf("first FlushState: %v", err)
 	}
 
 	sizeAfterFirst, err := os.Stat(historyFile)
@@ -335,8 +335,8 @@ func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 		Intent: models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"round": "2b"},
 	})
-	if err := m.Flush(); err != nil {
-		t.Fatalf("second Flush: %v", err)
+	if err := m.FlushState(); err != nil {
+		t.Fatalf("second FlushState: %v", err)
 	}
 
 	sizeAfterSecond, err := os.Stat(historyFile)
