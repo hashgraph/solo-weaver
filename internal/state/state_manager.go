@@ -183,8 +183,6 @@ func (m *stateManager) Refresh() error {
 		m.lastStateHash = hex.EncodeToString(sum[:])
 	}
 
-	logx.As().Debug().Any("newState", newState).Msg("Refreshed state from disk")
-
 	m.state = newState
 	return nil
 }

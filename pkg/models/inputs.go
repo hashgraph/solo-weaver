@@ -45,6 +45,11 @@ type ClusterInputs struct {
 	SkipHardwareChecks bool
 }
 
+type MachineInputs struct {
+	Profile            string
+	SkipHardwareChecks bool
+}
+
 func boolToString(b bool) string {
 	if b {
 		return "true"

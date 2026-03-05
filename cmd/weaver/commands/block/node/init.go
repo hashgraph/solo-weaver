@@ -40,13 +40,13 @@ func initializeDependencies() error {
 	currentState := sm.State()
 	logx.As().Info().Str("state_file", currentState.StateFile).Any("currentState", currentState).Msg("Current state")
 
-	realityChecker, err := reality.NewChecker(sm)
+	realityChecker, err := reality.NewCheckers(sm)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
 	}
 
-	// Build the rsl.Runtime — single call that constructs cluster + block-node runtimes.
-	runtime, err := rsl.NewRuntime(conf, sm, realityChecker, rsl.DefaultRefreshInterval)
+	// Build the rsl.RuntimeResolver — single call that constructs cluster + block-node runtimes.
+	runtime, err := rsl.NewRuntimeResolver(conf, sm, realityChecker, rsl.DefaultRefreshInterval)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
 	}

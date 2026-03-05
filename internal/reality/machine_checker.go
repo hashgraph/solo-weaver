@@ -22,28 +22,38 @@ import (
 // It depends only on a state.Manager (to read the latest persisted software state)
 // and optional path overrides for sandbox bin / state directories.
 type machineChecker struct {
-	sm            state.Manager
+	Base
 	sandboxBinDir string
 	stateDir      string
 }
 
-// Ensure machineChecker satisfies MachineChecker at compile time.
-var _ MachineChecker = (*machineChecker)(nil)
-
 // newMachineChecker constructs a machineChecker.
 // sandboxBinDir and stateDir may be empty strings; the checker will fall back
 // to models.Paths() values at call time.
-func newMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) MachineChecker {
+func newMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) Checker[state.MachineState] {
 	return &machineChecker{
-		sm:            sm,
+		Base:          Base{sm: sm},
 		sandboxBinDir: sandboxBinDir,
 		stateDir:      stateDir,
 	}
 }
 
-// MachineState collects current host software and hardware state.
+func (m *machineChecker) FlushState(st state.MachineState) error {
+	if err := m.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return ErrFlushError.Wrap(err, "failed to refresh state")
+	}
+	fullState := m.sm.State()
+	fullState.MachineState = st
+	if err := m.sm.Set(fullState).Flush(); err != nil {
+		return ErrFlushError.Wrap(err, "failed to persist state with refreshed MachineState")
+	}
+
+	return nil
+}
+
+// RefreshState collects current host software and hardware state.
 // Software state merges: persisted new state > legacy sidecar files > live binary stat.
-func (m *machineChecker) MachineState(_ context.Context) (state.MachineState, error) {
+func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, error) {
 	// must refresh to get the latest persisted state before merging with live checks;
 	// if refresh fails due to missing state (e.g. first run), log and continue with empty state
 	if err := m.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
@@ -58,7 +68,11 @@ func (m *machineChecker) MachineState(_ context.Context) (state.MachineState, er
 	ms.Hardware = m.refreshHardwareState()
 	ms.LastSync = htime.Now()
 
-	logx.As().Debug().Any("refreshedMachineState", ms).Msg("Refreshed machine state")
+	if err := m.FlushState(ms); err != nil {
+		return ms, err
+	}
+
+	logx.As().Debug().Any("machineState", ms).Msg("Refreshed machine state")
 
 	return ms, nil
 }

@@ -21,10 +21,10 @@ import (
 // effective values from the current state are used as-is).
 type ResetHandler struct {
 	bll.BaseHandler[models.BlocknodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeState
+	runtimeState *rsl.BlockNodeRuntimeResolver
 }
 
-func NewResetHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeState) *ResetHandler {
+func NewResetHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *ResetHandler {
 	return &ResetHandler{BaseHandler: base, runtimeState: runtimeState}
 }
 
@@ -34,7 +34,7 @@ func (h *ResetHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
 	// reset has no special validation; pass nil validator
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed and returns the

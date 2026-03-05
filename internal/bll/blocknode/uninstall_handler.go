@@ -19,10 +19,10 @@ import (
 // It optionally purges persistent storage before removing the Helm release.
 type UninstallHandler struct {
 	bll.BaseHandler[models.BlocknodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeState
+	runtimeState *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUninstallHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeState) *UninstallHandler {
+func NewUninstallHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *UninstallHandler {
 	return &UninstallHandler{BaseHandler: base, runtimeState: runtimeState}
 }
 
@@ -31,7 +31,7 @@ func NewUninstallHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeSt
 func (h *UninstallHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed (unless --force) and
