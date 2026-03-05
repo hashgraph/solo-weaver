@@ -188,7 +188,9 @@ func (m *stateManager) Refresh() error {
 		m.lastStateHash = hex.EncodeToString(sum[:])
 	}
 
+	newState.LastAction = m.state.LastAction
 	m.state = newState
+
 	return nil
 }
 
@@ -303,7 +305,7 @@ func (m *stateManager) flushState() error {
 	}
 
 	// Atomic write: write to temp file in same directory and rename.
-	if err := writeAtomicFile(snapshot.StateFile, b); err != nil {
+	if err := m.writeAtomicFile(snapshot.StateFile, b); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
 	}
 
@@ -433,8 +435,12 @@ func encodeCanonical(buf *bytes.Buffer, iface interface{}) error {
 	return nil
 }
 
-func writeAtomicFile(path string, data []byte) error {
+func (m *stateManager) writeAtomicFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
+	if err := m.fm.CreateDirectory(dir, true); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to create directory for state file at %s", dir)
+	}
+
 	tmp, err := os.CreateTemp(dir, ".state.tmp.*")
 	if err != nil {
 		return err

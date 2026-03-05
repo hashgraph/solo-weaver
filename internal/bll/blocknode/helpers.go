@@ -104,6 +104,11 @@ func resolveBlocknodeEffectiveInputs(
 		return nil, errorx.IllegalState.New("failed to resolve block node storage: %v", err)
 	}
 
+	logx.As().Debug().
+		Any("storage", effChartVersion.Get().Val()).
+		Str("strategy", effChartVersion.Strategy().String()).
+		Msg("Determined effective block node storage")
+
 	effectiveInputs := models.UserInputs[models.BlocknodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlocknodeInputs{
