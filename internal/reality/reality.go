@@ -8,6 +8,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	helm2 "github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -51,6 +52,7 @@ type ClusterProbe func() (bool, error)
 
 // checkerConfig holds all options before the sub-checkers are constructed.
 type checkerConfig struct {
+	cfg           models.Config
 	sm            state.Manager
 	sandboxBinDir string
 	stateDir      string
@@ -88,20 +90,21 @@ func WithClusterProbe(fn ClusterProbe) CheckerOption {
 
 // NewCheckers constructs a Checker composed of three focused sub-checkers.
 // Production defaults are applied; use CheckerOption to override for tests.
-func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
-	cfg := &checkerConfig{
+func NewCheckers(cfg models.Config, sm state.Manager, opts ...CheckerOption) (Checkers, error) {
+	cc := &checkerConfig{
+		cfg:           cfg,
 		sm:            sm,
 		newHelm:       func() (HelmManager, error) { return helm2.NewManager() },
 		newKube:       func() (KubeClient, error) { return kube.NewClient() },
 		clusterExists: kube.ClusterExists,
 	}
 	for _, o := range opts {
-		o(cfg)
+		o(cc)
 	}
 
-	cluster := NewClusterChecker(cfg.sm, cfg.clusterExists)
-	machine := newMachineChecker(cfg.sm, cfg.sandboxBinDir, cfg.stateDir)
-	blocknode := newBlockNodeChecker(cfg.sm, cfg.newHelm, cfg.newKube, cfg.clusterExists)
+	cluster := NewClusterChecker(cc.sm, cc.clusterExists)
+	machine := NewMachineChecker(cc.sm, cc.sandboxBinDir, cc.stateDir)
+	blocknode := NewBlockNodeChecker(cc.cfg, cc.sm, cc.newHelm, cc.newKube, cc.clusterExists)
 
 	return Checkers{
 		Cluster:   cluster,

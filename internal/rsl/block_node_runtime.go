@@ -176,11 +176,11 @@ func (br *BlockNodeRuntimeResolver) ChartName() (*automa.EffectiveValue[string],
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) ChartRepo() (*automa.EffectiveValue[string], error) {
+func (br *BlockNodeRuntimeResolver) ChartRef() (*automa.EffectiveValue[string], error) {
 	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
 		if br.state.ReleaseInfo.ChartRef == "" {
 			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty chart repo")
+				New("block node runtime state is inconsistent: deployed release cannot have empty chart ref")
 		}
 
 		return automa.NewEffective[string](

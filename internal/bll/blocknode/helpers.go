@@ -83,7 +83,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effChartName.Strategy().String()).
 		Msg("Determined effective block node chart name")
 
-	effChartRepo, err := runtimeState.ChartRepo()
+	effChartRepo, err := runtimeState.ChartRef()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart repo: %v", err)
 	}

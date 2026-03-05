@@ -68,8 +68,6 @@ func (r *RuntimeResolver) Refresh(ctx context.Context, force bool) (state.State,
 		if err := r.ClusterRuntime.RefreshState(ctx1, force); err != nil {
 			return state.State{}, errorx.IllegalState.New("failed to refresh cluster state: %v", err)
 		}
-
-		logx.As().Debug().Msg("Finished refreshing cluster runtime state")
 	} else {
 		logx.As().Debug().Msg("Cluster runtime is not initialized; skipping refresh")
 	}
@@ -80,8 +78,6 @@ func (r *RuntimeResolver) Refresh(ctx context.Context, force bool) (state.State,
 		if err := r.BlockNodeRuntime.RefreshState(ctx2, force); err != nil {
 			return state.State{}, errorx.IllegalState.New("failed to refresh block node state: %v", err)
 		}
-
-		logx.As().Debug().Msg("Finished refreshing block node runtime state")
 	} else {
 		logx.As().Debug().Msg("Block node runtime is not initialized; skipping refresh")
 	}
@@ -92,14 +88,6 @@ func (r *RuntimeResolver) Refresh(ctx context.Context, force bool) (state.State,
 		if err := r.MachineRuntime.RefreshState(ctx3, force); err != nil {
 			return state.State{}, errorx.IllegalState.New("failed to refresh machine state: %v", err)
 		}
-
-		ms, err := r.MachineRuntime.CurrentState()
-		if err != nil {
-			return state.State{}, errorx.IllegalState.New("failed to read machine state after refresh: %v", err)
-		}
-		logx.As().Debug().
-			Any("machineStateAfterRefresh", ms).
-			Msg("Finished refreshing machine runtime state")
 	} else {
 		logx.As().Debug().Msg("Machine runtime is not initialized; skipping refresh")
 	}
