@@ -3,9 +3,7 @@
 package blocknode
 
 import (
-	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/resolver"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -16,7 +14,7 @@ import (
 // injectChartRef returns the patchState function for block-node flushes.
 // It allows patching the BlockNodeState with workflow-specific values (e.g. ChartRef) that are not live-refreshed from
 // the cluster or machine.
-func injectChartRef(runtime *rsl.Runtime, chartRef string) func(*state.State) error {
+func injectChartRef(runtime *rsl.RuntimeResolver, chartRef string) func(*state.State) error {
 	return func(full *state.State) error {
 		if runtime == nil || runtime.BlockNodeRuntime == nil {
 			return errorx.IllegalState.New("block node runtime is not available; cannot inject chart ref into state")
@@ -36,16 +34,11 @@ func injectChartRef(runtime *rsl.Runtime, chartRef string) func(*state.State) er
 	}
 }
 
-// prepareBlocknodeEffectiveInputs resolves common fields for blocknode commands.
-// fieldGuards contains per-field guard functions (e.g. RequiresExplicitOverride
-// closures) that are evaluated after all fields are resolved; any error from a
-// guard is returned immediately.  validator, if non-nil, runs additional
-// validations on the fully-assembled effective inputs struct.
-func prepareBlocknodeEffectiveInputs(
-	runtimeState *rsl.BlockNodeRuntimeState,
+// resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
+func resolveBlocknodeEffectiveInputs(
+	runtimeState *rsl.BlockNodeRuntimeResolver,
 	inputs *models.UserInputs[models.BlocknodeInputs],
 	validator func(*models.UserInputs[models.BlocknodeInputs]) error,
-	fieldGuards ...func() error,
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
 	if inputs == nil {
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
@@ -54,7 +47,11 @@ func prepareBlocknodeEffectiveInputs(
 	if runtimeState == nil {
 		return nil, errorx.IllegalArgument.New("block node runtime state cannot be nil")
 	}
-	effReleaseName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ReleaseName() })
+
+	// Set user inputs on the runtime state so they can be accessed by resolver strategies.
+	runtimeState.WithUserInputs(inputs.Custom)
+
+	effReleaseName, err := runtimeState.ReleaseName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node release name: %v", err)
 	}
@@ -62,7 +59,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effReleaseName.Strategy().String()).
 		Msg("Determined effective block node release name")
 
-	effVersion, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.Version() })
+	effVersion, err := runtimeState.Version()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node version: %v", err)
 	}
@@ -70,7 +67,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effVersion.Strategy().String()).
 		Msg("Determined effective block node version")
 
-	effNamespace, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.Namespace() })
+	effNamespace, err := runtimeState.Namespace()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node namespace: %v", err)
 	}
@@ -78,7 +75,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effNamespace.Strategy().String()).
 		Msg("Determined effective block node namespace")
 
-	effChartName, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ChartName() })
+	effChartName, err := runtimeState.ChartName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart name: %v", err)
 	}
@@ -86,7 +83,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effChartName.Strategy().String()).
 		Msg("Determined effective block node chart name")
 
-	effChartRepo, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ChartRepo() })
+	effChartRepo, err := runtimeState.ChartRepo()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart repo: %v", err)
 	}
@@ -94,7 +91,7 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effChartRepo.Strategy().String()).
 		Msg("Determined effective block node chart repo")
 
-	effChartVersion, err := resolver.Field(func() (*automa.EffectiveValue[string], error) { return runtimeState.ChartVersion() })
+	effChartVersion, err := runtimeState.ChartVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart version: %v", err)
 	}
@@ -102,17 +99,9 @@ func prepareBlocknodeEffectiveInputs(
 		Str("strategy", effChartVersion.Strategy().String()).
 		Msg("Determined effective block node chart version")
 
-	effStorage, err := resolver.Field(func() (*automa.EffectiveValue[models.BlockNodeStorage], error) { return runtimeState.Storage() })
+	effStorage, err := runtimeState.Storage()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node storage: %v", err)
-	}
-
-	// Run per-field guards (e.g. RequiresExplicitOverride) now that all
-	// effective values and their strategies are available.
-	for _, guard := range fieldGuards {
-		if err := guard(); err != nil {
-			return nil, err
-		}
 	}
 
 	effectiveInputs := models.UserInputs[models.BlocknodeInputs]{

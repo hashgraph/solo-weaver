@@ -18,7 +18,7 @@ type HandlerFactory struct {
 // All dependencies are required; any nil returns an error.
 func NewHandlerFactory(
 	sm state.Manager,
-	runtime *rsl.Runtime,
+	runtime *rsl.RuntimeResolver,
 ) (*HandlerFactory, error) {
 	base, err := bll.NewBaseHandler[models.ClusterInputs](runtime)
 	if err != nil {
@@ -29,7 +29,7 @@ func NewHandlerFactory(
 	}
 
 	if runtime == nil {
-		return nil, errorx.IllegalArgument.New("rsl.Runtime cannot be nil")
+		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
 	}
 
 	h := &HandlerFactory{

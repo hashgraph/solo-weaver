@@ -27,7 +27,7 @@ func TestMachineChecker_MachineState_UsesPersisted(t *testing.T) {
 	tmpDir := t.TempDir()
 	m := newMachineChecker(sm, tmpDir, tmpDir)
 
-	ms, err := m.MachineState(context.Background())
+	ms, err := m.RefreshMachineState(context.Background())
 	require.NoError(t, err)
 
 	sw, ok := ms.Software["kubectl"]
@@ -46,7 +46,7 @@ func TestMachineChecker_MachineState_LiveBinaryPresent(t *testing.T) {
 	require.NoError(t, err)
 
 	m := newMachineChecker(sm, tmpDir, tmpDir)
-	ms, err := m.MachineState(context.Background())
+	ms, err := m.RefreshMachineState(context.Background())
 	require.NoError(t, err)
 
 	sw, ok := ms.Software["kubectl"]
@@ -58,7 +58,7 @@ func TestMachineChecker_MachineState_HasHardware(t *testing.T) {
 	sm := &fakeStateManager{state: state.NewState()}
 	m := newMachineChecker(sm, t.TempDir(), t.TempDir())
 
-	ms, err := m.MachineState(context.Background())
+	ms, err := m.RefreshMachineState(context.Background())
 	require.NoError(t, err)
 	assert.NotEmpty(t, ms.Hardware, "Hardware map should be populated")
 

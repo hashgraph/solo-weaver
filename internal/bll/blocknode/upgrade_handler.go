@@ -23,10 +23,10 @@ import (
 // prevents version downgrade.
 type UpgradeHandler struct {
 	bll.BaseHandler[models.BlocknodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeState
+	runtimeState *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUpgradeHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeState) *UpgradeHandler {
+func NewUpgradeHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *UpgradeHandler {
 	return &UpgradeHandler{BaseHandler: base, runtimeState: runtimeState}
 }
 
@@ -36,7 +36,7 @@ func NewUpgradeHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeStat
 func (h *UpgradeHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
 // BuildWorkflow validates upgrade preconditions and returns the workflow.

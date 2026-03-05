@@ -20,34 +20,45 @@ import (
 // PersistentVolumes to build a BlockNodeState.
 // It depends only on injectable helm/kube factories and a cluster probe.
 type blockNodeChecker struct {
+	Base
 	newHelm       func() (HelmManager, error)
 	newKube       func() (KubeClient, error)
 	clusterExists ClusterProbe
 }
 
-// Ensure blockNodeChecker satisfies BlockNodeChecker at compile time.
-var _ BlockNodeChecker = (*blockNodeChecker)(nil)
-
 // newBlockNodeChecker constructs a blockNodeChecker.
 // In production pass helm2.NewManager, kube.NewClient and kube.ClusterExists.
 // In tests swap them for fakes.
 func newBlockNodeChecker(
+	sm state.Manager,
 	newHelm func() (HelmManager, error),
 	newKube func() (KubeClient, error),
 	clusterExists ClusterProbe,
-) BlockNodeChecker {
+) Checker[state.BlockNodeState] {
 	return &blockNodeChecker{
+		Base: Base{
+			sm: sm,
+		},
 		newHelm:       newHelm,
 		newKube:       newKube,
 		clusterExists: clusterExists,
 	}
 }
 
-// BlockNodeState queries the Kubernetes cluster for the BlockNode Helm release
-// and its associated PersistentVolumes, returning a populated BlockNodeState.
-// Returns an empty BlockNodeState (no error) if the cluster is absent or no
-// BlockNode release is found.
-func (b *blockNodeChecker) BlockNodeState(ctx context.Context) (state.BlockNodeState, error) {
+func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
+	if err := b.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return ErrFlushError.Wrap(err, "failed to refresh state")
+	}
+	fullState := b.sm.State()
+	fullState.BlockNodeState = st
+	if err := b.sm.Set(fullState).Flush(); err != nil {
+		return ErrFlushError.Wrap(err, "failed to persist state with refreshed BlockNodeState")
+	}
+
+	return nil
+}
+
+func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeState, error) {
 	now := htime.Now()
 	bn := state.NewBlockNodeState()
 
@@ -99,7 +110,12 @@ func (b *blockNodeChecker) BlockNodeState(ctx context.Context) (state.BlockNodeS
 		return bn, err
 	}
 
-	logx.As().Debug().Any("state", bn).Msg("Refreshed BlockNodeState")
+	if err = b.FlushState(bn); err != nil {
+		return bn, err
+	}
+
+	logx.As().Debug().Any("blocknodeState", bn).Msg("Refreshed blocknode state")
+
 	return bn, nil
 }
 

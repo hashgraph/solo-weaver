@@ -7,7 +7,7 @@ package bll
 // (cmd layer) and the workflow / step layer.
 //
 // Shared infrastructure lives in BaseHandler so that every per-node-type
-// handler (BlockNodeRuntimeState, MirrorNode, RelayNode, …) inherits it without duplication.
+// handler (BlockNodeRuntimeResolver, MirrorNode, RelayNode, …) inherits it without duplication.
 
 import (
 	"context"
@@ -37,14 +37,14 @@ import (
 //	    uninstall *BlockNodeUninstallHandler
 //	}
 type BaseHandler[T any] struct {
-	Runtime *rsl.Runtime
+	Runtime *rsl.RuntimeResolver
 }
 
 // NewBaseHandler validates the required dependencies and returns a
 // populated BaseHandler.  All fields are required; any nil returns an error.
-func NewBaseHandler[T any](reg *rsl.Runtime) (BaseHandler[T], error) {
+func NewBaseHandler[T any](reg *rsl.RuntimeResolver) (BaseHandler[T], error) {
 	if reg == nil {
-		return BaseHandler[T]{}, errorx.IllegalArgument.New("rsl.Runtime cannot be nil")
+		return BaseHandler[T]{}, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
 	}
 	return BaseHandler[T]{Runtime: reg}, nil
 }
@@ -89,20 +89,14 @@ func (h *BaseHandler[T]) HandleIntent(
 		return nil, err
 	}
 
-	// ── 2. Set user inputs to runtime state ───────────────────────────────────────────────
-	err = h.Runtime.SetUserInputs(intent.Target, inputs.Custom)
-	if err != nil {
-		return nil, errorx.IllegalState.New("failed to set user inputs into runtime: %v", err)
-	}
-
-	// ── 3. Refresh runtime state ───────────────────────────────────────────────
+	// ── 2. Refresh runtime state ───────────────────────────────────────────────
 	// We need to refresh before preparing effective inputs
-	currentState, err := h.Runtime.Refresh(ctx)
+	currentState, err := h.Runtime.Refresh(ctx, true)
 	if err != nil {
 		return nil, err
 	}
 
-	// ── 4. Prepare effective inputs ───────────────────────────────────────────────
+	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(&inputs)
 	if err != nil {
 		return nil, err
@@ -138,13 +132,6 @@ func (h *BaseHandler[T]) HandleIntent(
 }
 
 // FlushNodeState is the exported generic flush used by all node handlers.
-// It performs three live refreshes before persisting:
-//  1. ClusterState  — via Runtime.ClusterRuntimeState.RefreshState  (Helm / k8s queries)
-//  2. Target node state — via Runtime.BlockNodeRuntimeState.RefreshState (Helm release info)
-//  3. MachineState  — via Checker.MachineState (binary presence + sidecar files)
-//
-// All three are written into the full State before the single Flush() call,
-// so state.yaml always reflects reality after every workflow execution.
 func (h *BaseHandler[T]) FlushNodeState(
 	ctx context.Context,
 	report *automa.Report,
@@ -156,19 +143,7 @@ func (h *BaseHandler[T]) FlushNodeState(
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
 
-	// Skip state persistence when the workflow failed in ContinueOnError mode.
-	// In that mode steps may have been skipped or partially applied, so the
-	// resulting cluster state is indeterminate — writing it would produce a
-	// misleading state.yaml.
-	//
-	// StopOnError failures are NOT skipped: rollback will have run, and the
-	// final state after rollback should still be persisted.
-	if report.IsFailed() && effectiveInputs.Common.ExecutionOptions.ExecutionMode == automa.ContinueOnError {
-		logx.As().Warn().Msg("workflow execution failed in ContinueOnError mode; skipping state persistence")
-		return report, nil
-	}
-
-	fullState, err := h.Runtime.Refresh(ctx)
+	fullState, err := h.Runtime.Refresh(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
 	}
@@ -184,6 +159,8 @@ func (h *BaseHandler[T]) FlushNodeState(
 		}
 	}
 
+	// we can also call h.Runtime.Refresh()
+	// However, we are assuming the fullState we have is up to date
 	if err := h.Runtime.Flush(fullState); err != nil {
 		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
 	}

@@ -13,18 +13,18 @@ import (
 
 func TestClusterChecker_ClusterState_ClusterAbsent(t *testing.T) {
 	probe := func() (bool, error) { return false, nil }
-	c := newClusterChecker(probe)
+	c := NewClusterChecker(probe)
 
-	st, err := c.ClusterState(context.Background())
+	st, err := c.RefreshClusterState(context.Background())
 	require.NoError(t, err)
-	assert.False(t, st.Created, "ClusterState.Created should be false when cluster is absent")
+	assert.False(t, st.Created, "RefreshClusterState.Created should be false when cluster is absent")
 }
 
 func TestClusterChecker_ClusterState_ProbeError(t *testing.T) {
 	probe := func() (bool, error) { return false, errors.New("connection refused") }
-	c := newClusterChecker(probe)
+	c := NewClusterChecker(probe)
 
-	st, err := c.ClusterState(context.Background())
+	st, err := c.RefreshClusterState(context.Background())
 	require.NoError(t, err) // error is logged, not propagated
 	assert.False(t, st.Created)
 }

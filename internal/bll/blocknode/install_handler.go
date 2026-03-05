@@ -22,13 +22,13 @@ import (
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
 	bll.BaseHandler[models.BlocknodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeState
+	runtimeState *rsl.BlockNodeRuntimeResolver
 	sm           state.Manager
 }
 
 func NewInstallHandler(
 	base bll.BaseHandler[models.BlocknodeInputs],
-	runtimeState *rsl.BlockNodeRuntimeState,
+	runtimeState *rsl.BlockNodeRuntimeResolver,
 	sm state.Manager) *InstallHandler {
 	return &InstallHandler{BaseHandler: base, runtimeState: runtimeState, sm: sm}
 }
@@ -41,7 +41,7 @@ func NewInstallHandler(
 func (h *InstallHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlocknodeInputs],
 ) (*models.UserInputs[models.BlocknodeInputs], error) {
-	return prepareBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
 // BuildWorkflow validates install preconditions and returns the workflow.

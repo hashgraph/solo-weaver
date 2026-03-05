@@ -14,13 +14,13 @@ import (
 
 type InstallHandler struct {
 	base    bll.BaseHandler[models.ClusterInputs]
-	runtime *rsl.ClusterRuntimeState
+	runtime *rsl.ClusterRuntimeResolver
 	sm      state.Manager
 }
 
 func NewInstallHandler(
 	base bll.BaseHandler[models.ClusterInputs],
-	runtime *rsl.ClusterRuntimeState,
+	runtime *rsl.ClusterRuntimeResolver,
 	sm state.Manager) *InstallHandler {
 	return &InstallHandler{base: base, runtime: runtime, sm: sm}
 }

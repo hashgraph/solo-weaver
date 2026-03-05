@@ -8,26 +8,38 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/joomcode/errorx"
 )
 
 // clusterChecker probes the Kubernetes cluster and returns a ClusterState.
 // It depends only on a ClusterProbe (injectable) and kube.RetrieveClusterInfo.
 type clusterChecker struct {
+	Base
 	clusterExists ClusterProbe
 }
 
-// Ensure clusterChecker satisfies ClusterChecker at compile time.
-var _ ClusterChecker = (*clusterChecker)(nil)
-
-// newClusterChecker constructs a clusterChecker with the given probe.
+// NewClusterChecker constructs a clusterChecker with the given probe.
 // In production pass kube.ClusterExists; in tests pass a fake.
-func newClusterChecker(clusterExists ClusterProbe) ClusterChecker {
-	return &clusterChecker{clusterExists: clusterExists}
+func NewClusterChecker(sm state.Manager, clusterExists ClusterProbe) Checker[state.ClusterState] {
+	return &clusterChecker{
+		Base:          Base{sm: sm},
+		clusterExists: clusterExists}
 }
 
-// ClusterState probes the Kubernetes cluster and returns a ClusterState.
-// If the cluster does not exist or is unreachable, it returns an empty ClusterState.
-func (c *clusterChecker) ClusterState(ctx context.Context) (state.ClusterState, error) {
+func (c *clusterChecker) FlushState(st state.ClusterState) error {
+	if err := c.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return ErrFlushError.Wrap(err, "failed to refresh state")
+	}
+	fullState := c.sm.State()
+	fullState.ClusterState = st
+	if err := c.sm.Set(fullState).Flush(); err != nil {
+		return ErrFlushError.Wrap(err, "failed to persist state with refreshed ClusterState")
+	}
+
+	return nil
+}
+
+func (c *clusterChecker) RefreshState(ctx context.Context) (state.ClusterState, error) {
 	cs := state.NewClusterState()
 
 	exists, err := c.clusterExists()
@@ -43,5 +55,13 @@ func (c *clusterChecker) ClusterState(ctx context.Context) (state.ClusterState, 
 	}
 
 	cs.Initialize(clusterInfo)
+
+	// persist the refreshed state
+	if err = c.FlushState(cs); err != nil {
+		return cs, err
+	}
+
+	logx.As().Debug().Any("clusterState", cs).Msg("Refreshed cluster state")
+
 	return cs, nil
 }
