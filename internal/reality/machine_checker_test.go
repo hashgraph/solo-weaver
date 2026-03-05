@@ -25,7 +25,7 @@ func TestMachineChecker_MachineState_UsesPersisted(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	m := newMachineChecker(sm, tmpDir, tmpDir)
+	m := NewMachineChecker(sm, tmpDir, tmpDir)
 
 	ms, err := m.RefreshMachineState(context.Background())
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestMachineChecker_MachineState_LiveBinaryPresent(t *testing.T) {
 	err := os.WriteFile(filepath.Join(tmpDir, "kubectl"), []byte("fake"), 0755)
 	require.NoError(t, err)
 
-	m := newMachineChecker(sm, tmpDir, tmpDir)
+	m := NewMachineChecker(sm, tmpDir, tmpDir)
 	ms, err := m.RefreshMachineState(context.Background())
 	require.NoError(t, err)
 
@@ -56,7 +56,7 @@ func TestMachineChecker_MachineState_LiveBinaryPresent(t *testing.T) {
 
 func TestMachineChecker_MachineState_HasHardware(t *testing.T) {
 	sm := &fakeStateManager{state: state.NewState()}
-	m := newMachineChecker(sm, t.TempDir(), t.TempDir())
+	m := NewMachineChecker(sm, t.TempDir(), t.TempDir())
 
 	ms, err := m.RefreshMachineState(context.Background())
 	require.NoError(t, err)

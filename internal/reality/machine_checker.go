@@ -27,10 +27,10 @@ type machineChecker struct {
 	stateDir      string
 }
 
-// newMachineChecker constructs a machineChecker.
+// NewMachineChecker constructs a machineChecker.
 // sandboxBinDir and stateDir may be empty strings; the checker will fall back
 // to models.Paths() values at call time.
-func newMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) Checker[state.MachineState] {
+func NewMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) Checker[state.MachineState] {
 	return &machineChecker{
 		Base:          Base{sm: sm},
 		sandboxBinDir: sandboxBinDir,

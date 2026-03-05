@@ -21,15 +21,17 @@ import (
 // It depends only on injectable helm/kube factories and a cluster probe.
 type blockNodeChecker struct {
 	Base
+	cfg           models.Config
 	newHelm       func() (HelmManager, error)
 	newKube       func() (KubeClient, error)
 	clusterExists ClusterProbe
 }
 
-// newBlockNodeChecker constructs a blockNodeChecker.
+// NewBlockNodeChecker constructs a blockNodeChecker.
 // In production pass helm2.NewManager, kube.NewClient and kube.ClusterExists.
 // In tests swap them for fakes.
-func newBlockNodeChecker(
+func NewBlockNodeChecker(
+	cfg models.Config,
 	sm state.Manager,
 	newHelm func() (HelmManager, error),
 	newKube func() (KubeClient, error),
@@ -39,6 +41,7 @@ func newBlockNodeChecker(
 		Base: Base{
 			sm: sm,
 		},
+		cfg:           cfg,
 		newHelm:       newHelm,
 		newKube:       newKube,
 		clusterExists: clusterExists,
@@ -60,15 +63,17 @@ func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
 
 func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeState, error) {
 	now := htime.Now()
-	bn := state.NewBlockNodeState()
+	bn := b.sm.State().BlockNodeState
+	chartRef := b.cfg.BlockNode.Chart // chart ref/repo from config
+	if bn.ReleaseInfo.ChartRef != "" {
+		chartRef = bn.ReleaseInfo.ChartRef // inherit
+	}
 
 	exists, err := b.clusterExists()
 	if !exists {
 		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNodeState check")
 		return bn, nil
 	}
-
-	logx.As().Info().Msg("Refreshing BlockNodeState from Kubernetes cluster")
 
 	re, err := b.findBlockNodeHelmRelease()
 	if err != nil {
@@ -83,7 +88,7 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
-			ChartRef:      "", // patched later by BlockNodePatchState
+			ChartRef:      chartRef,
 			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
