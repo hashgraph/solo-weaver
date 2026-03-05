@@ -96,6 +96,12 @@ func (h *BaseHandler[T]) HandleIntent(
 		return nil, err
 	}
 
+	// add action history
+	h.Runtime.AddActionHistory(state.ActionHistory{
+		Intent: intent,
+		Inputs: inputs,
+	})
+
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(&inputs)
 	if err != nil {
@@ -148,20 +154,14 @@ func (h *BaseHandler[T]) FlushNodeState(
 		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
 	}
 
-	h.Runtime.AddActionHistory(state.ActionHistory{
-		Intent: intent,
-		Inputs: effectiveInputs,
-	})
-
 	if callback != nil {
 		if err := callback(&fullState); err != nil {
 			return nil, errorx.IllegalState.New("failed to patch state after workflow execution: %v", err)
 		}
 	}
 
-	// we can also call h.Runtime.Refresh()
-	// However, we are assuming the fullState we have is up to date
-	if err := h.Runtime.Flush(fullState); err != nil {
+	// flush state and action history
+	if err := h.Runtime.FlushAll(fullState); err != nil {
 		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
 	}
 

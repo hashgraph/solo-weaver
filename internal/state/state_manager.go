@@ -43,8 +43,12 @@ type Writer interface {
 	// State.LastAction. Entries are flushed to disk on the next Flush() call.
 	// Returns the Writer for chaining.
 	AddActionHistory(entry ActionHistory) Writer
-	// Flush persists the current state and any pending action history to disk.
-	Flush() error
+	// FlushState persists the current state without flushing the action history.
+	FlushState() error
+	// FlushActionHistory persists only the pending action history to disk without flushing the full state.
+	FlushActionHistory() error
+	// FlushAll persists both state and action history
+	FlushAll() error
 }
 
 // Persister groups lifecycle operations (load + save) that are needed at the
@@ -134,6 +138,7 @@ func (m *stateManager) State() State {
 func (m *stateManager) Set(s State) Writer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	logx.As().Debug().Any("newState", s).Msg("Setting new state in memory")
 	m.state = s
 	return m
 }
@@ -145,7 +150,7 @@ func (m *stateManager) FileManager() fsx.Manager {
 
 // Refresh reloads the persisted state from disk with write lock
 func (m *stateManager) Refresh() error {
-	// Prevent Refresh from interleaving with an in-progress Flush.
+	// Prevent Refresh from interleaving with an in-progress FlushState.
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
 
@@ -166,7 +171,7 @@ func (m *stateManager) Refresh() error {
 		return errorx.InternalError.Wrap(err, "failed to unmarshal state from YAML")
 	}
 
-	// Use the stored hash as the baseline if available (written by Flush).
+	// Use the stored hash as the baseline if available (written by FlushState).
 	// Fall back to recomputing for hand-edited or legacy files without a hash.
 	if newState.Hash != "" {
 		m.lastStateHash = newState.Hash
@@ -187,16 +192,39 @@ func (m *stateManager) Refresh() error {
 	return nil
 }
 
-// Flush persists the current state to disk with canonical hashing and atomic write.
-func (m *stateManager) Flush() error {
+// FlushState persists the current state to disk with canonical hashing and atomic write.
+func (m *stateManager) FlushState() error {
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
 
+	return m.flushState()
+}
+
+func (m *stateManager) FlushActionHistory() error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+	return m.flushActionHistory()
+}
+
+func (m *stateManager) FlushAll() error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	if err := m.flushState(); err != nil {
+		return err
+	}
+
+	if err := m.flushActionHistory(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *stateManager) flushState() error {
 	// Capture state and pending actions under lock, then release before I/O.
 	m.mu.Lock()
 	snapshot := m.state
-	pendingActions := make([]ActionHistory, len(m.actions))
-	copy(pendingActions, m.actions)
 	lastStateHash := m.lastStateHash
 	m.mu.Unlock()
 
@@ -274,6 +302,27 @@ func (m *stateManager) Flush() error {
 		}
 	}
 
+	// Atomic write: write to temp file in same directory and rename.
+	if err := writeAtomicFile(snapshot.StateFile, b); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
+	}
+
+	// Update in-memory state, clear pending actions, and advance the baseline hash.
+	m.mu.Lock()
+	m.state = toWrite
+	m.lastStateHash = newHashHex // the new state is now the on-disk baseline
+	m.mu.Unlock()
+
+	return nil
+}
+
+func (m *stateManager) flushActionHistory() error {
+	m.mu.Lock()
+	snapshot := m.state
+	pendingActions := make([]ActionHistory, len(m.actions))
+	copy(pendingActions, m.actions)
+	m.mu.Unlock()
+
 	// Append action history entries.
 	// Do this before writing the state file to ensure history is preserved even if the state file flush fails (since pending actions are cleared on successful flush).
 	actionHistoryFile := filepath.Join(filepath.Dir(snapshot.StateFile), "action_history.yaml")
@@ -288,16 +337,9 @@ func (m *stateManager) Flush() error {
 		}
 	}
 
-	// Atomic write: write to temp file in same directory and rename.
-	if err := writeAtomicFile(snapshot.StateFile, b); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
-	}
-
-	// Update in-memory state, clear pending actions, and advance the baseline hash.
+	// Update in-memory state
 	m.mu.Lock()
 	m.actions = []ActionHistory{}
-	m.state = toWrite
-	m.lastStateHash = newHashHex // the new state is now the on-disk baseline
 	m.mu.Unlock()
 
 	return nil
@@ -440,5 +482,6 @@ func (m *stateManager) AddActionHistory(entry ActionHistory) Writer {
 	defer m.mu.Unlock()
 	m.actions = append(m.actions, entry)
 	m.state.LastAction = entry
+	logx.As().Debug().Any("entry", entry).Msg("Added action history entry")
 	return m
 }

@@ -95,7 +95,7 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 		current = SetSoftwareState(current, component, sw)
 	}
 
-	if err = sm.Set(current).Flush(); err != nil {
+	if err = sm.Set(current).FlushState(); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to flush migrated state")
 	}
 

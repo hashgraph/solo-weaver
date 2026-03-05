@@ -141,8 +141,8 @@ func (r *RuntimeResolver) AddActionHistory(entry state.ActionHistory) state.Writ
 	return r.sm.AddActionHistory(entry)
 }
 
-func (r *RuntimeResolver) Flush(currentState state.State) error {
-	if err := r.sm.Set(currentState).Flush(); err != nil {
+func (r *RuntimeResolver) FlushAll(currentState state.State) error {
+	if err := r.sm.Set(currentState).FlushAll(); err != nil {
 		return errorx.IllegalState.New("failed to flush state to disk: %v", err)
 	}
 

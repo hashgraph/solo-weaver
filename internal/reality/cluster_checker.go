@@ -32,7 +32,7 @@ func (c *clusterChecker) FlushState(st state.ClusterState) error {
 	}
 	fullState := c.sm.State()
 	fullState.ClusterState = st
-	if err := c.sm.Set(fullState).Flush(); err != nil {
+	if err := c.sm.Set(fullState).FlushState(); err != nil {
 		return ErrFlushError.Wrap(err, "failed to persist state with refreshed ClusterState")
 	}
 
