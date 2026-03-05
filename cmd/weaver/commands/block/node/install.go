@@ -107,10 +107,12 @@ func applyConfigOverrides() {
 			LivePath:         flagLivePath,
 			LogPath:          flagLogPath,
 			VerificationPath: flagVerificationPath,
+			PluginsPath:      flagPluginsPath,
 			LiveSize:         flagLiveSize,
 			ArchiveSize:      flagArchiveSize,
 			LogSize:          flagLogSize,
 			VerificationSize: flagVerificationSize,
+			PluginsSize:      flagPluginsSize,
 		},
 	}
 	config.OverrideBlockNodeConfig(overrides)

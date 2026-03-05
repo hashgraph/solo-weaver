@@ -29,10 +29,12 @@ type BlockNodeStorage struct {
 	LivePath         string `yaml:"livePath" json:"livePath"`
 	LogPath          string `yaml:"logPath" json:"logPath"`
 	VerificationPath string `yaml:"verificationPath" json:"verificationPath"`
+	PluginsPath      string `yaml:"pluginsPath" json:"pluginsPath"`
 	LiveSize         string `yaml:"liveSize" json:"liveSize"`
 	ArchiveSize      string `yaml:"archiveSize" json:"archiveSize"`
 	LogSize          string `yaml:"logSize" json:"logSize"`
 	VerificationSize string `yaml:"verificationSize" json:"verificationSize"`
+	PluginsSize      string `yaml:"pluginsSize" json:"pluginsSize"`
 }
 
 // Validate validates all storage paths to ensure they are safe and secure.
@@ -74,6 +76,13 @@ func (s *BlockNodeStorage) Validate() error {
 		}
 	}
 
+	// Validate PluginsPath if provided
+	if s.PluginsPath != "" {
+		if _, err := sanity.SanitizePath(s.PluginsPath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid plugins path: %s", s.PluginsPath)
+		}
+	}
+
 	// Validate storage sizes if provided
 	if s.LiveSize != "" {
 		if err := sanity.ValidateStorageSize(s.LiveSize); err != nil {
@@ -96,6 +105,12 @@ func (s *BlockNodeStorage) Validate() error {
 	if s.VerificationSize != "" {
 		if err := sanity.ValidateStorageSize(s.VerificationSize); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid verification storage size: %s", s.VerificationSize)
+		}
+	}
+
+	if s.PluginsSize != "" {
+		if err := sanity.ValidateStorageSize(s.PluginsSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid plugins storage size: %s", s.PluginsSize)
 		}
 	}
 
@@ -449,6 +464,9 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	if overrides.Storage.VerificationPath != "" {
 		globalConfig.BlockNode.Storage.VerificationPath = overrides.Storage.VerificationPath
 	}
+	if overrides.Storage.PluginsPath != "" {
+		globalConfig.BlockNode.Storage.PluginsPath = overrides.Storage.PluginsPath
+	}
 	if overrides.Storage.LiveSize != "" {
 		globalConfig.BlockNode.Storage.LiveSize = overrides.Storage.LiveSize
 	}
@@ -460,6 +478,9 @@ func OverrideBlockNodeConfig(overrides BlockNodeConfig) {
 	}
 	if overrides.Storage.VerificationSize != "" {
 		globalConfig.BlockNode.Storage.VerificationSize = overrides.Storage.VerificationSize
+	}
+	if overrides.Storage.PluginsSize != "" {
+		globalConfig.BlockNode.Storage.PluginsSize = overrides.Storage.PluginsSize
 	}
 }
 

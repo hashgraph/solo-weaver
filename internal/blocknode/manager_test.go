@@ -37,14 +37,15 @@ func TestGetStoragePaths_AllIndividualPathsProvided(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// All individual paths should be returned as-is
 	assert.Equal(t, "/mnt/custom-archive", archivePath)
 	assert.Equal(t, "/mnt/custom-live", livePath)
 	assert.Equal(t, "/mnt/custom-log", logPath)
-	assert.Equal(t, "/mnt/custom-verification", verificationPath)
+	// v0.1.0 has no optional storages
+	assert.Empty(t, optionalPaths)
 }
 
 // TestGetStoragePaths_OldVersionNoVerificationRequired tests that verification storage is not required for versions < 0.26.2
@@ -67,15 +68,15 @@ func TestGetStoragePaths_OldVersionNoVerificationRequired(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// Core paths should be returned as-is
 	assert.Equal(t, "/mnt/custom-archive", archivePath)
 	assert.Equal(t, "/mnt/custom-live", livePath)
 	assert.Equal(t, "/mnt/custom-log", logPath)
-	// Verification path should be empty for older versions
-	assert.Equal(t, "", verificationPath)
+	// No optional storages for older versions
+	assert.Empty(t, optionalPaths)
 }
 
 // TestGetStoragePaths_NewVersionRequiresVerification tests that verification storage is required for versions >= 0.26.2
@@ -123,14 +124,15 @@ func TestGetStoragePaths_OnlyBasePathProvided(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// Paths should be derived from basePath
 	assert.Equal(t, "/mnt/base/archive", archivePath)
 	assert.Equal(t, "/mnt/base/live", livePath)
 	assert.Equal(t, "/mnt/base/logs", logPath)
-	assert.Equal(t, "/mnt/base/verification", verificationPath)
+	require.Len(t, optionalPaths, 1) // Only verification for v0.26.2
+	assert.Equal(t, "/mnt/base/verification", optionalPaths[0])
 }
 
 // TestGetStoragePaths_MixedPaths tests that individual paths override basePath-derived paths
@@ -153,15 +155,17 @@ func TestGetStoragePaths_MixedPaths(t *testing.T) {
 		blockConfig: &blockConfig,
 	}
 
-	archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
+	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
 	require.NoError(t, err)
 
 	// Individual paths should be used when provided
 	assert.Equal(t, "/mnt/custom-archive", archivePath)
 	assert.Equal(t, "/mnt/custom-log", logPath)
-	// Live and verification paths should derive from basePath
+	// Live should derive from basePath
 	assert.Equal(t, "/mnt/base/live", livePath)
-	assert.Equal(t, "/mnt/base/verification", verificationPath)
+	// Verification should derive from basePath
+	require.Len(t, optionalPaths, 1)
+	assert.Equal(t, "/mnt/base/verification", optionalPaths[0])
 }
 
 // TestGetStoragePaths_InvalidArchivePath tests that invalid archive path returns an error
@@ -377,10 +381,6 @@ func TestSetupStorage_PathValidation(t *testing.T) {
 
 // TestStoragePathPrecedence documents the precedence order
 func TestStoragePathPrecedence(t *testing.T) {
-	// This test documents the expected precedence order:
-	// 1. Individual paths (archivePath, livePath, logPath, verificationPath) - HIGHEST PRIORITY
-	// 2. BasePath-derived paths (basePath + "/archive", etc.) - LOWER PRIORITY
-
 	t.Run("individual path takes precedence", func(t *testing.T) {
 		blockConfig := config.BlockNodeConfig{
 			Version: "0.26.2", // Version >= 0.26.2 requires verification storage
@@ -394,20 +394,23 @@ func TestStoragePathPrecedence(t *testing.T) {
 			blockConfig: &blockConfig,
 		}
 
-		archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
+		archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
 		require.NoError(t, err)
 
 		// Archive path should use the individual path, not derived from base
 		assert.Equal(t, "/mnt/override-archive", archivePath, "individual archivePath should take precedence")
 
-		// Live, log, and verification should derive from base since not specified
+		// Live and log should derive from base since not specified
 		assert.Equal(t, "/mnt/base/live", livePath, "should derive from basePath when not specified")
 		assert.Equal(t, "/mnt/base/logs", logPath, "should derive from basePath when not specified")
-		assert.Equal(t, "/mnt/base/verification", verificationPath, "should derive from basePath when not specified")
+		// Verification should derive from base since not specified
+		require.Len(t, optionalPaths, 1)
+		assert.Equal(t, "/mnt/base/verification", optionalPaths[0], "should derive from basePath when not specified")
 	})
 
 	t.Run("all individual paths override base path", func(t *testing.T) {
 		blockConfig := config.BlockNodeConfig{
+			// Version 0.1.0 - no optional storages required
 			Storage: config.BlockNodeStorage{
 				BasePath:         "/mnt/base",
 				ArchivePath:      "/var/archive",
@@ -421,14 +424,13 @@ func TestStoragePathPrecedence(t *testing.T) {
 			blockConfig: &blockConfig,
 		}
 
-		archivePath, livePath, logPath, verificationPath, err := manager.GetStoragePaths()
+		archivePath, livePath, logPath, _, err := manager.GetStoragePaths()
 		require.NoError(t, err)
 
 		// All paths should use individual values, not derived from base
 		assert.Equal(t, "/var/archive", archivePath)
 		assert.Equal(t, "/var/live", livePath)
 		assert.Equal(t, "/var/log", logPath)
-		assert.Equal(t, "/var/verification", verificationPath)
 	})
 }
 
@@ -510,84 +512,101 @@ func TestConfigOverridePrecedence(t *testing.T) {
 // Version-Aware Migration Tests
 // ============================================================================
 
-// TestRequiresVerificationStorage tests the version detection for verification storage
-func TestRequiresVerificationStorage(t *testing.T) {
+// TestOptionalStorageRequiredByVersion tests the version detection for optional storages
+func TestOptionalStorageRequiredByVersion(t *testing.T) {
+	// Find the verification storage entry
+	var verificationStorage OptionalStorage
+	var pluginsStorage OptionalStorage
+	for _, os := range GetOptionalStorages() {
+		switch os.Name {
+		case "verification":
+			verificationStorage = os
+		case "plugins":
+			pluginsStorage = os
+		}
+	}
+
+	t.Run("verification storage", func(t *testing.T) {
+		tests := []struct {
+			name           string
+			targetVersion  string
+			expectedResult bool
+		}{
+			{"version below 0.26.2 should not require verification storage", "0.26.0", false},
+			{"version 0.26.1 should not require verification storage", "0.26.1", false},
+			{"version exactly 0.26.2 should require verification storage", "0.26.2", true},
+			{"version 0.26.3 should require verification storage", "0.26.3", true},
+			{"version 0.27.0 should require verification storage", "0.27.0", true},
+			{"version 1.0.0 should require verification storage", "1.0.0", true},
+			{"very old version 0.20.0 should not require verification storage", "0.20.0", false},
+			{"invalid version should default to false (backward compatible)", "invalid-version", false},
+			{"empty version should default to false", "", false},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := verificationStorage.RequiredByVersion(tt.targetVersion)
+				assert.Equal(t, tt.expectedResult, result)
+			})
+		}
+	})
+
+	t.Run("plugins storage", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			version  string
+			expected bool
+		}{
+			{"v0.27.0 does not require plugins", "0.27.0", false},
+			{"v0.28.0 does not require plugins", "0.28.0", false},
+			{"v0.28.1 requires plugins", "0.28.1", true},
+			{"v0.28.2 requires plugins", "0.28.2", true},
+			{"v0.29.0 requires plugins", "0.29.0", true},
+			{"empty version defaults to false", "", false},
+			{"invalid version defaults to false", "invalid", false},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				assert.Equal(t, tt.expected, pluginsStorage.RequiredByVersion(tt.version))
+			})
+		}
+	})
+}
+
+// TestGetApplicableOptionalStorages tests the filtering of optional storages by version
+func TestGetApplicableOptionalStorages(t *testing.T) {
 	tests := []struct {
-		name           string
-		targetVersion  string
-		expectedResult bool
+		name          string
+		targetVersion string
+		expectedCount int
+		expectedNames []string
 	}{
-		{
-			name:           "version below 0.26.2 should not require verification storage",
-			targetVersion:  "0.26.0",
-			expectedResult: false,
-		},
-		{
-			name:           "version 0.26.1 should not require verification storage",
-			targetVersion:  "0.26.1",
-			expectedResult: false,
-		},
-		{
-			name:           "version exactly 0.26.2 should require verification storage",
-			targetVersion:  "0.26.2",
-			expectedResult: true,
-		},
-		{
-			name:           "version 0.26.3 should require verification storage",
-			targetVersion:  "0.26.3",
-			expectedResult: true,
-		},
-		{
-			name:           "version 0.27.0 should require verification storage",
-			targetVersion:  "0.27.0",
-			expectedResult: true,
-		},
-		{
-			name:           "version 1.0.0 should require verification storage",
-			targetVersion:  "1.0.0",
-			expectedResult: true,
-		},
-		{
-			name:           "very old version 0.20.0 should not require verification storage",
-			targetVersion:  "0.20.0",
-			expectedResult: false,
-		},
-		{
-			name:           "invalid version should default to false (backward compatible)",
-			targetVersion:  "invalid-version",
-			expectedResult: false,
-		},
-		{
-			name:           "empty version should default to false",
-			targetVersion:  "",
-			expectedResult: false,
-		},
+		{"pre-verification version", "0.25.0", 0, nil},
+		{"verification boundary", "0.26.2", 1, []string{"verification"}},
+		{"between verification and plugins", "0.27.0", 1, []string{"verification"}},
+		{"0.28.0 still before plugins boundary", "0.28.0", 1, []string{"verification"}},
+		{"plugins boundary", "0.28.1", 2, []string{"verification", "plugins"}},
+		{"post-plugins version", "0.29.0", 2, []string{"verification", "plugins"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := config.BlockNodeConfig{
-				Version: tt.targetVersion,
+			applicable := GetApplicableOptionalStorages(tt.targetVersion)
+			assert.Len(t, applicable, tt.expectedCount)
+			for i, name := range tt.expectedNames {
+				assert.Equal(t, name, applicable[i].Name)
 			}
-
-			manager := &Manager{
-				blockConfig: &blockConfig,
-				logger:      testLogger(),
-			}
-
-			result := manager.requiresVerificationStorage()
-			assert.Equal(t, tt.expectedResult, result)
 		})
 	}
 }
 
-// TestComputeValuesFile_VersionAwareSelection tests that the correct values file is selected based on version
+// TestComputeValuesFile_VersionAwareSelection tests that the correct values are rendered based on version
 func TestComputeValuesFile_VersionAwareSelection(t *testing.T) {
 	tests := []struct {
 		name            string
 		targetVersion   string
 		profile         string
-		expectedLogMsg  string
 		shouldHaveVerif bool
 	}{
 		{
@@ -624,87 +643,59 @@ func TestComputeValuesFile_VersionAwareSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := config.BlockNodeConfig{
-				Version: tt.targetVersion,
+			applicable := GetApplicableOptionalStorages(tt.targetVersion)
+			hasVerification := false
+			for _, optStor := range applicable {
+				if optStor.Name == "verification" {
+					hasVerification = true
+				}
 			}
-
-			manager := &Manager{
-				blockConfig: &blockConfig,
-				logger:      testLogger(),
-			}
-
-			// Test the requiresVerificationStorage logic which determines file selection
-			result := manager.requiresVerificationStorage()
-			assert.Equal(t, tt.shouldHaveVerif, result)
+			assert.Equal(t, tt.shouldHaveVerif, hasVerification)
 		})
 	}
 }
 
 // TestVersionBoundaryScenarios tests various version boundary scenarios
 func TestVersionBoundaryScenarios(t *testing.T) {
+	var verificationStorage OptionalStorage
+	for _, os := range GetOptionalStorages() {
+		if os.Name == "verification" {
+			verificationStorage = os
+			break
+		}
+	}
+
 	t.Run("upgrade within pre-0.26.2 versions", func(t *testing.T) {
-		// Upgrading from 0.25.0 to 0.26.1 should not require verification storage
-		blockConfig := config.BlockNodeConfig{
-			Version: "0.26.1",
-		}
-		manager := &Manager{
-			blockConfig: &blockConfig,
-			logger:      testLogger(),
-		}
-		assert.False(t, manager.requiresVerificationStorage())
+		assert.False(t, verificationStorage.RequiredByVersion("0.26.1"))
 	})
 
 	t.Run("upgrade across breaking change boundary", func(t *testing.T) {
-		// Target version 0.26.2 requires verification storage
-		blockConfig := config.BlockNodeConfig{
-			Version: "0.26.2",
-		}
-		manager := &Manager{
-			blockConfig: &blockConfig,
-			logger:      testLogger(),
-		}
-		assert.True(t, manager.requiresVerificationStorage())
+		assert.True(t, verificationStorage.RequiredByVersion("0.26.2"))
 	})
 
 	t.Run("upgrade within post-0.26.2 versions", func(t *testing.T) {
-		// Upgrading from 0.26.2 to 0.27.0 should still require verification storage
-		blockConfig := config.BlockNodeConfig{
-			Version: "0.27.0",
-		}
-		manager := &Manager{
-			blockConfig: &blockConfig,
-			logger:      testLogger(),
-		}
-		assert.True(t, manager.requiresVerificationStorage())
+		assert.True(t, verificationStorage.RequiredByVersion("0.27.0"))
 	})
 
 	t.Run("fresh install at 0.26.2", func(t *testing.T) {
-		// Fresh install at 0.26.2 should require verification storage
-		blockConfig := config.BlockNodeConfig{
-			Version: "0.26.2",
-		}
-		manager := &Manager{
-			blockConfig: &blockConfig,
-			logger:      testLogger(),
-		}
-		assert.True(t, manager.requiresVerificationStorage())
+		assert.True(t, verificationStorage.RequiredByVersion("0.26.2"))
 	})
 
 	t.Run("fresh install at older version", func(t *testing.T) {
-		// Fresh install at 0.26.0 should not require verification storage
-		blockConfig := config.BlockNodeConfig{
-			Version: "0.26.0",
-		}
-		manager := &Manager{
-			blockConfig: &blockConfig,
-			logger:      testLogger(),
-		}
-		assert.False(t, manager.requiresVerificationStorage())
+		assert.False(t, verificationStorage.RequiredByVersion("0.26.0"))
 	})
 }
 
 // TestInvalidVersionHandling tests that invalid versions are handled gracefully
 func TestInvalidVersionHandling(t *testing.T) {
+	var verificationStorage OptionalStorage
+	for _, os := range GetOptionalStorages() {
+		if os.Name == "verification" {
+			verificationStorage = os
+			break
+		}
+	}
+
 	tests := []struct {
 		name    string
 		version string
@@ -718,20 +709,9 @@ func TestInvalidVersionHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blockConfig := config.BlockNodeConfig{
-				Version: tt.version,
-			}
-			manager := &Manager{
-				blockConfig: &blockConfig,
-				logger:      testLogger(),
-			}
-
 			// Should not panic and should return false for invalid versions
-			// (fail-safe to maintain backward compatibility)
-			result := manager.requiresVerificationStorage()
+			result := verificationStorage.RequiredByVersion(tt.version)
 
-			// Invalid versions should default to false (no verification storage)
-			// to maintain backward compatibility
 			if tt.version == "" || tt.version == "not-a-version" || tt.version == "0.26" {
 				assert.False(t, result, "invalid version should default to false")
 			}
@@ -739,7 +719,36 @@ func TestInvalidVersionHandling(t *testing.T) {
 	}
 }
 
-// TestVerificationStorageMinVersionConstant verifies the constant is set correctly
-func TestVerificationStorageMinVersionConstant(t *testing.T) {
-	assert.Equal(t, "0.26.2", VerificationStorageMinVersion)
+// TestOptionalStorageRegistryConstants verifies the registry entries have correct min versions
+func TestOptionalStorageRegistryConstants(t *testing.T) {
+	storages := GetOptionalStorages()
+	require.Len(t, storages, 2)
+	assert.Equal(t, "verification", storages[0].Name)
+	assert.Equal(t, "0.26.2", storages[0].MinVersion)
+	assert.Equal(t, "plugins", storages[1].Name)
+	assert.Equal(t, "0.28.1", storages[1].MinVersion)
+}
+
+// TestGetStoragePaths_V0281_IncludesBothOptionalStorages tests that v0.28.1 includes both verification and plugins
+func TestGetStoragePaths_V0281_IncludesBothOptionalStorages(t *testing.T) {
+	blockConfig := config.BlockNodeConfig{
+		Version: "0.28.1",
+		Storage: config.BlockNodeStorage{
+			BasePath: "/mnt/base",
+		},
+	}
+
+	manager := &Manager{
+		blockConfig: &blockConfig,
+	}
+
+	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
+	require.NoError(t, err)
+
+	assert.Equal(t, "/mnt/base/archive", archivePath)
+	assert.Equal(t, "/mnt/base/live", livePath)
+	assert.Equal(t, "/mnt/base/logs", logPath)
+	require.Len(t, optionalPaths, 2)
+	assert.Equal(t, "/mnt/base/verification", optionalPaths[0])
+	assert.Equal(t, "/mnt/base/plugins", optionalPaths[1])
 }

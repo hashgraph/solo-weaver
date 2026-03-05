@@ -22,7 +22,11 @@ blockNode:
           chown 2000:2000 /archive-pvc && \
           chmod 700 /archive-pvc && \
           chown 2000:2000 /logging-pvc && \
-          chmod 700 /logging-pvc
+          chmod 700 /logging-pvc{{ if .IncludeVerification }} && \
+          chown 2000:2000 /verification-pvc && \
+          chmod 700 /verification-pvc{{ end }}{{ if .IncludePlugins }} && \
+          chown 2000:2000 /plugins-pvc && \
+          chmod 700 /plugins-pvc{{ end }}
       volumeMounts:
         - name: live-storage
           mountPath: /live-pvc
@@ -30,6 +34,14 @@ blockNode:
           mountPath: /archive-pvc
         - name: logging-storage
           mountPath: /logging-pvc
+{{- if .IncludeVerification }}
+        - name: verification-storage
+          mountPath: /verification-pvc
+{{- end }}
+{{- if .IncludePlugins }}
+        - name: plugins-storage
+          mountPath: /plugins-pvc
+{{- end }}
   persistence:
     live:
       create: false
@@ -43,6 +55,37 @@ blockNode:
       create: false
       existingClaim: logging-storage-pvc
       subPath: ""
+{{- if .IncludeVerification }}
+    verification:
+      create: false
+      existingClaim: verification-storage-pvc
+      subPath: ""
+{{- end }}
+{{- if .IncludePlugins }}
+    plugins:
+      create: false
+      existingClaim: plugins-storage-pvc
+      subPath: ""
+{{- end }}
+
+# Top-level plugins configuration for the block node chart.
+plugins:
+  names: "facility-messaging,block-access-service,health,server-status,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill"
+  # image for resolving and downloading the above plugins, should have java 21+ and maven
+  mavenImage: "maven:3-eclipse-temurin-25-alpine"
+  # Third-party plugins with full Maven coordinates (groupId:artifactId:version).
+  thirdParty: []
+  # Maven repositories used to resolve plugins.
+  repositories:
+    - id: central
+      url: https://repo1.maven.org/maven2
+    - id: besu-maven
+      url: https://hyperledger.jfrog.io/artifactory/besu-maven
+    - id: consensys
+      url: https://artifacts.consensys.net/public/maven/maven/
+    - id: sonatype-snapshots
+      url: https://central.sonatype.com/repository/maven-snapshots
+      snapshots: true
 
 service:
   type: LoadBalancer
