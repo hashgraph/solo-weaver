@@ -110,13 +110,25 @@ func (b *BlockNodeStorage) Validate() error {
 		}
 	}
 
-	if s.PluginsSize != "" {
-		if err := sanity.ValidateStorageSize(s.PluginsSize); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid plugins storage size: %s", s.PluginsSize)
+	if b.PluginsSize != "" {
+		if err := sanity.ValidateStorageSize(b.PluginsSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid plugins storage size: %s", b.PluginsSize)
 		}
 	}
 
-	return nil
+	// Require either BasePath OR all of ArchivePath, LivePath, LogPath and VerificationPath
+	if strings.TrimSpace(b.BasePath) != "" {
+		return nil
+	}
+
+	if strings.TrimSpace(b.ArchivePath) != "" &&
+		strings.TrimSpace(b.LivePath) != "" &&
+		strings.TrimSpace(b.LogPath) != "" &&
+		strings.TrimSpace(b.VerificationPath) != "" {
+		return nil
+	}
+
+	return errorx.IllegalArgument.New("either basePath must be provided or all of archivePath, livePath, logPath and verificationPath must be provided")
 }
 
 // Validate validates all configuration fields to ensure they are safe and secure.

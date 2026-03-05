@@ -28,6 +28,8 @@ func initializeDependencies() error {
 		return errorx.IllegalState.Wrap(err, "invalid configuration")
 	}
 
+	logx.As().Debug().Any("config", conf).Msg("Loaded configuration")
+
 	sm, err := state.NewStateManager()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
@@ -152,6 +154,12 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			ResetStorage:       flagWithReset,
 			SkipHardwareChecks: parentFlags.SkipHardwareChecks,
 		},
+	}
+
+	// If base path is not provided, use the default from config.
+	// This allows users to specify individual storage paths/sizes without needing to provide a base path.
+	if flagBasePath == "" {
+		inputs.Custom.Storage.BasePath = config.Get().BlockNode.Storage.BasePath
 	}
 
 	if err := inputs.Validate(); err != nil {

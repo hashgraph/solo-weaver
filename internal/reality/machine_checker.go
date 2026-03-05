@@ -61,7 +61,6 @@ func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, er
 	}
 
 	current := m.sm.State()
-	logx.As().Debug().Any("currentMachineState", current.MachineState).Msg("Loaded current state")
 
 	ms := current.MachineState
 	ms.Software = m.refreshSoftwareState(current)
@@ -71,8 +70,6 @@ func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, er
 	if err := m.FlushState(ms); err != nil {
 		return ms, err
 	}
-
-	logx.As().Debug().Any("machineState", ms).Msg("Refreshed machine state")
 
 	return ms, nil
 }
@@ -127,6 +124,8 @@ func (m *machineChecker) refreshSoftwareState(current state.State) map[string]st
 		result[name] = sw
 	}
 
+	logx.As().Debug().Any("result", result).Msg("Refreshed software state")
+
 	return result
 }
 
@@ -154,7 +153,6 @@ func readLegacyStateFiles(stateDir, name, stateType string) (exists bool, versio
 
 // refreshHardwareState collects current host hardware metrics.
 func (m *machineChecker) refreshHardwareState() map[string]state.HardwareState {
-	logx.As().Debug().Msg("Probing hardware state using hardware.GetHostProfile()")
 	result := make(map[string]state.HardwareState)
 	now := htime.Now()
 
