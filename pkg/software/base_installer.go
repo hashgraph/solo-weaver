@@ -7,11 +7,11 @@ import (
 	"path"
 	"strings"
 
-	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	htime "helm.sh/helm/v3/pkg/time"
 )
 
 // WithStateManager injects a state.Manager into the installer so that
@@ -39,11 +39,13 @@ func WithVersion(version string) InstallerOption {
 // baseInstaller provides common functionality for all software installers
 // as well as helper functions for common operations.
 type baseInstaller struct {
+	name                 string
 	downloader           *Downloader
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
 	stateManager         state.Manager
+	softwareState        *state.SoftwareState
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -71,6 +73,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 	}
 
 	bi := &baseInstaller{
+		name:        softwareName,
 		downloader:  NewDownloader(),
 		software:    item,
 		fileManager: fsxManager,
@@ -78,16 +81,6 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 
 	for _, opt := range opts {
 		opt(bi)
-	}
-
-	// stateManager MUST be injected via WithStateManager — callers own the lifecycle.
-	if bi.stateManager == nil {
-		return nil, NewFileSystemError(
-			errorx.IllegalArgument.New(
-				"no state manager provided for installer %q: use software.WithStateManager(sm)",
-				softwareName,
-			),
-		)
 	}
 
 	if bi.versionToBeInstalled == "" {
@@ -756,19 +749,21 @@ func (b *baseInstaller) performConfiguration() error {
 // IsInstalled checks whether the software has been recorded as installed in the state.
 // It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsInstalled() (bool, error) {
-	if err := b.stateManager.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return false, errorx.IllegalState.Wrap(err, "failed to refresh state before IsInstalled check")
+	if err := b.checkInstallation(); err != nil {
+		return false, err
 	}
-	return state.GetSoftwareState(b.stateManager.State(), b.software.Name).Installed, nil
+
+	return b.softwareState.Installed, nil
 }
 
 // IsConfigured checks whether the software has been recorded as configured in the state.
 // It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsConfigured() (bool, error) {
-	if err := b.stateManager.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return false, errorx.IllegalState.Wrap(err, "failed to refresh state before IsConfigured check")
+	if err := b.checkInstallation(); err != nil {
+		return false, err
 	}
-	return state.GetSoftwareState(b.stateManager.State(), b.software.Name).Configured, nil
+
+	return b.softwareState.Configured, nil
 }
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
@@ -818,7 +813,6 @@ func (b *baseInstaller) Uninstall() error {
 	if err != nil {
 		return err
 	}
-	_ = b.clearInstalled()
 	return nil
 }
 
@@ -840,7 +834,6 @@ func (b *baseInstaller) RemoveConfiguration() error {
 	if err != nil {
 		return err
 	}
-	_ = b.clearConfigured()
 	return nil
 }
 
@@ -971,69 +964,26 @@ func (b *baseInstaller) cleanupSymlinks() error {
 
 	return nil
 }
-
-// ── state helpers ─────────────────────────────────────────────────────────────
-// These four methods centralise all state mutations so every concrete installer
-// can share them without duplicating GetSoftwareState/SetSoftwareState logic.
-//
-// Each helper follows the same safe pattern:
-//  1. Fetch the current in-memory snapshot once.
-//  2. Read the existing SoftwareState for this component (zero-value with Name
-//     pre-set when absent — first-time initialisation case).
-//  3. Mutate only the relevant fields; all other fields are preserved.
-//  4. Write back using the *same* snapshot to avoid stomping concurrent changes.
-func (b *baseInstaller) recordInstalled() error {
-	snap := b.stateManager.State()
-	cur := state.GetSoftwareState(snap, b.software.Name)
-	cur.Name = b.software.Name // ensure Name is always populated
-	cur.Installed = true
-	cur.Version = b.versionToBeInstalled
-
-	logx.As().Debug().
-		Str("software", b.software.Name).
-		Str("version", b.versionToBeInstalled).
-		Any("currentState", cur).
-		Msg("Recording software as installed in state")
-
-	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState(); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to flush state after recording installed")
+func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
+	softwareState := &state.SoftwareState{
+		Name:       b.name,
+		Version:    b.Version(),
+		Installed:  false,
+		Configured: false,
+		LastSync:   htime.Now(),
 	}
-	return nil
-}
 
-func (b *baseInstaller) recordConfigured() error {
-	snap := b.stateManager.State()
-	cur := state.GetSoftwareState(snap, b.software.Name)
-	cur.Name = b.software.Name // ensure Name is always populated
-	cur.Configured = true
-	cur.Version = b.versionToBeInstalled
-
-	logx.As().Debug().
-		Str("software", b.software.Name).
-		Str("version", b.versionToBeInstalled).
-		Any("currentState", cur).
-		Msg("Recording software as configured in state")
-
-	if err := b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState(); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to flush state after recording configured")
+	if err := b.verifyExtractedBinaries(); err != nil {
+		return softwareState, nil // if verification fails, treat as not installed
 	}
-	return nil
-}
+	softwareState.Installed = true
 
-func (b *baseInstaller) clearInstalled() error {
-	snap := b.stateManager.State()
-	cur := state.GetSoftwareState(snap, b.software.Name)
-	cur.Name = b.software.Name // ensure Name is always populated
-	cur.Installed = false
-	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState()
-}
+	if err := b.verifyExtractedConfigs(); err != nil {
+		return softwareState, nil // if verification fails, treat as not configured
+	}
+	softwareState.Configured = true
 
-func (b *baseInstaller) clearConfigured() error {
-	snap := b.stateManager.State()
-	cur := state.GetSoftwareState(snap, b.software.Name)
-	cur.Name = b.software.Name // ensure Name is always populated
-	cur.Configured = false
-	return b.stateManager.Set(state.SetSoftwareState(snap, b.software.Name, cur)).FlushState()
+	return softwareState, nil
 }
 
 // installFile copies a file with permissions using the fileManager
@@ -1060,5 +1010,61 @@ func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
 		return errorx.IllegalState.Wrap(err, "failed to set permissions on %s", dst)
 	}
 
+	return nil
+}
+
+func (b *baseInstaller) checkInstallation() error {
+	var err error
+	if b.softwareState == nil {
+		// if state manager is injected, read from it to avoid unnecessary verification on disk which can be expensive
+		// for some software with large binaries and many files
+		if b.stateManager != nil {
+			snap := b.stateManager.State()
+			cur := state.GetSoftwareState(snap, b.software.Name)
+			b.softwareState = &cur
+			return nil
+		}
+
+		b.softwareState, err = b.VerifyInstallation()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *baseInstaller) recordInstalled() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Installed = true
+	return nil
+}
+
+func (b *baseInstaller) clearInstalled() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Installed = false
+	return nil
+}
+
+func (b *baseInstaller) recordConfigured() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Configured = true
+	return nil
+}
+
+func (b *baseInstaller) clearConfigured() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Configured = false
 	return nil
 }

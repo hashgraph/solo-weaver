@@ -34,7 +34,7 @@ func NewBlockNodeChecker(
 	newHelm func() (HelmManager, error),
 	newKube func() (KubeClient, error),
 	clusterExists ClusterProbe,
-) Checker[state.BlockNodeState] {
+) (Checker[state.BlockNodeState], error) {
 	return &blockNodeChecker{
 		Base: Base{
 			sm: sm,
@@ -42,13 +42,24 @@ func NewBlockNodeChecker(
 		newHelm:       newHelm,
 		newKube:       newKube,
 		clusterExists: clusterExists,
-	}
+	}, nil
 }
 
+// FlushState first refreshes the state from disk to get the latest BlockNodeState,
+// then compares the existing BlockNodeState with the new one. If they are equal,
+// no write is performed. If they differ, the new BlockNodeState is persisted to disk.
+// This pattern of refreshing before writing is necessary to prevent overwriting
+// concurrent updates to other parts of the state by separate reality checkers.
 func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
 	if err := b.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return ErrFlushError.Wrap(err, "failed to refresh state")
 	}
+
+	existing := b.sm.State().BlockNodeState
+	if existing.Equal(st) {
+		return nil
+	}
+
 	fullState := b.sm.State()
 	fullState.BlockNodeState = st
 	if err := b.sm.Set(fullState).FlushState(); err != nil {

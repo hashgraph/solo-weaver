@@ -77,6 +77,7 @@ type stateManager struct {
 	state         State
 	actions       []ActionHistory
 	fm            fsx.Manager
+	stateFile     string
 	lastStateHash string // canonical hash of state as last read from / written to disk
 }
 
@@ -99,11 +100,17 @@ func WithState(s State) ManagerOption {
 	}
 }
 
+func WithStateFile(path string) ManagerOption {
+	return func(m *stateManager) error {
+		m.state.StateFile = path
+		return nil
+	}
+}
+
 // NewStateManager creates a Manager with the provided options.
 // Caller must call Refresh() to load the persisted state from disk before accessing the state.
 func NewStateManager(opts ...ManagerOption) (Manager, error) {
 	m := &stateManager{
-		state:   NewState(),
 		actions: []ActionHistory{},
 	}
 
@@ -120,6 +127,8 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 		}
 		m.fm = fm
 	}
+
+	m.state = NewState(m.stateFile)
 
 	return m, nil
 }
@@ -166,7 +175,7 @@ func (m *stateManager) Refresh() error {
 		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.StateFile)
 	}
 
-	newState := NewState()
+	newState := NewState(m.stateFile)
 	if err = yaml.Unmarshal(b, &newState); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to unmarshal state from YAML")
 	}

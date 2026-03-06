@@ -15,6 +15,8 @@ import (
 	"github.com/joomcode/errorx"
 )
 
+const KubeadmBinaryName = "kubeadm"
+
 var (
 	rootPath                  = string(os.PathSeparator)
 	kubeletServiceDirRelPath  = path.Join("usr", "lib", "systemd", "system", "kubelet.service.d")

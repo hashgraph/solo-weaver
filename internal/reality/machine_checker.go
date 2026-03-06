@@ -5,14 +5,10 @@ package reality
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
-	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -23,25 +19,47 @@ import (
 // and optional path overrides for sandbox bin / state directories.
 type machineChecker struct {
 	Base
-	sandboxBinDir string
-	stateDir      string
+	sandboxBinDir      string
+	stateDir           string
+	softwareInstallers map[string]software.Software
 }
 
 // NewMachineChecker constructs a machineChecker.
 // sandboxBinDir and stateDir may be empty strings; the checker will fall back
 // to models.Paths() values at call time.
-func NewMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) Checker[state.MachineState] {
-	return &machineChecker{
-		Base:          Base{sm: sm},
-		sandboxBinDir: sandboxBinDir,
-		stateDir:      stateDir,
+func NewMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) (Checker[state.MachineState], error) {
+	softwareInstallers := make(map[string]software.Software)
+	for name, installerFunc := range software.Installers() {
+		inst, err := installerFunc()
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to create installer for %q", name)
+		}
+		softwareInstallers[name] = inst
 	}
+
+	return &machineChecker{
+		Base:               Base{sm: sm},
+		sandboxBinDir:      sandboxBinDir,
+		stateDir:           stateDir,
+		softwareInstallers: softwareInstallers,
+	}, nil
 }
 
+// FlushState first refreshes the state from disk to get the latest MachineState,
+// then compares the existing MachineState with the new one. If they are equal,
+// no write is performed. If they differ, the new MachineState is persisted to disk.
+// This pattern of refreshing before writing is necessary to prevent overwriting
+// concurrent updates to other parts of the state by separate reality checkers.
 func (m *machineChecker) FlushState(st state.MachineState) error {
 	if err := m.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return ErrFlushError.Wrap(err, "failed to refresh state")
 	}
+
+	existing := m.sm.State().MachineState
+	if existing.Equal(st) {
+		return nil
+	}
+
 	fullState := m.sm.State()
 	fullState.MachineState = st
 	if err := m.sm.Set(fullState).FlushState(); err != nil {
@@ -63,7 +81,7 @@ func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, er
 	current := m.sm.State()
 
 	ms := current.MachineState
-	ms.Software = m.refreshSoftwareState(current)
+	ms.Software = m.refreshSoftwareState()
 	ms.Hardware = m.refreshHardwareState()
 	ms.LastSync = htime.Now()
 
@@ -74,81 +92,22 @@ func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, er
 	return ms, nil
 }
 
-// refreshSoftwareState probes each known binary on the filesystem and merges
-// with persisted version/configured metadata from current state.
-//
-// Source-of-truth priority (highest → lowest):
-//  1. New state.yaml MachineState.Software map  (set by DefaultStateManager)
-//  2. Legacy sidecar files  <StateDir>/<name>.installed / .configured
-//  3. Binary presence on disk  (live filesystem stat)
-func (m *machineChecker) refreshSoftwareState(current state.State) map[string]state.SoftwareState {
+// refreshSoftwareState checks the presence and versions of relevant software binaries on the host.
+func (m *machineChecker) refreshSoftwareState() map[string]state.SoftwareState {
 	result := make(map[string]state.SoftwareState)
-
-	sandboxBinDir := m.sandboxBinDir
-	if sandboxBinDir == "" {
-		sandboxBinDir = models.Paths().SandboxBinDir
-	}
-	stateDir := m.stateDir
-	if stateDir == "" {
-		stateDir = models.Paths().StateDir
-	}
-
-	for _, name := range software.KnownSoftwareNames() {
-		sw := state.SoftwareState{Name: name}
-
-		// --- Priority 1: carry from new MachineState.Software map ---
-		if persisted, ok := current.MachineState.Software[name]; ok && persisted.Name != "" {
-			sw = persisted
-		} else {
-			// --- Priority 2: read legacy sidecar files ---
-			sw.Installed, sw.Version = readLegacyStateFiles(stateDir, name, "installed")
-			if configured, _ := readLegacyStateFiles(stateDir, name, "configured"); configured {
-				sw.Configured = true
-			}
+	for name, inst := range m.softwareInstallers {
+		st, err := inst.VerifyInstallation()
+		if err != nil {
+			logx.As().Error().Err(err).Str("software", name).Msg("Error verifying software installation")
+			continue
 		}
 
-		// --- Priority 3: live binary check always overrides Installed ---
-		// If binary is absent on disk, force Installed=false regardless of what
-		// the state files say (handles manual deletions).
-		binPath := filepath.Join(sandboxBinDir, name)
-		if _, err := os.Stat(binPath); err == nil {
-			sw.Installed = true
-		} else {
-			sw.Installed = false
-			logx.As().Debug().
-				Str("binary", binPath).
-				Msg("Binary not found on filesystem — marking as not installed")
-		}
-
-		sw.LastSync = htime.Now()
-		result[name] = sw
+		result[name] = *st
 	}
 
 	logx.As().Debug().Any("result", result).Msg("Refreshed software state")
 
 	return result
-}
-
-// readLegacyStateFiles reads a legacy <name>.<stateType> state file from stateDir.
-// It returns (true, version) when the file exists, (false, "") otherwise.
-// The file content is expected to be in the format written by state.Manager.RecordState:
-//
-//	"installed at version 1.30.0\n"
-//	"configured at version 1.30.0\n"
-func readLegacyStateFiles(stateDir, name, stateType string) (exists bool, version string) {
-	filePath := filepath.Join(stateDir, name+"."+stateType)
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return false, ""
-	}
-
-	line := strings.TrimSpace(string(data))
-	const marker = " at version "
-	if idx := strings.Index(line, marker); idx != -1 {
-		version = strings.TrimSpace(line[idx+len(marker):])
-	}
-
-	return true, version
 }
 
 // refreshHardwareState collects current host hardware metrics.

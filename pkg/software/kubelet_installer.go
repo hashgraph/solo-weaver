@@ -9,6 +9,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
+const KubeletBinaryName = "kubelet"
 const KubeletServiceName = "kubelet"
 const kubeletServiceFileName = "kubelet.service"
 
