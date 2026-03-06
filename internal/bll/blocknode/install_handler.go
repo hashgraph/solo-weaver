@@ -22,15 +22,15 @@ import (
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeResolver
-	sm           state.Manager
+	runtime *rsl.BlockNodeRuntimeResolver
+	sm      state.Manager
 }
 
 func NewInstallHandler(
 	base bll.BaseHandler[models.BlockNodeInputs],
-	runtimeState *rsl.BlockNodeRuntimeResolver,
+	runtime *rsl.BlockNodeRuntimeResolver,
 	sm state.Manager) *InstallHandler {
-	return &InstallHandler{BaseHandler: base, runtimeState: runtimeState, sm: sm}
+	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}
 }
 
 // PrepareEffectiveInputs resolves the winning value for every block-node field.
@@ -41,7 +41,7 @@ func NewInstallHandler(
 func (h *InstallHandler) PrepareEffectiveInputs(
 	inputs *models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
-	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtime, inputs, nil)
 }
 
 // BuildWorkflow validates install preconditions and returns the workflow.
@@ -80,5 +80,5 @@ func (h *InstallHandler) HandleIntent(
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, nil)
 }

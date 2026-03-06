@@ -61,5 +61,5 @@ func (h *ResetHandler) HandleIntent(
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, nil)
 }

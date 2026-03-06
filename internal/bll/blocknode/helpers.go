@@ -5,38 +5,13 @@ package blocknode
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 )
-
-// injectChartRef returns the patchState function for block-node flushes.
-// It allows patching the BlockNodeState with workflow-specific values (e.g. ChartRef) that are not live-refreshed from
-// the cluster or machine.
-func injectChartRef(runtime *rsl.RuntimeResolver, chartRef string) func(*state.State) error {
-	return func(full *state.State) error {
-		if runtime == nil || runtime.BlockNodeRuntime == nil {
-			return errorx.IllegalState.New("block node runtime is not available; cannot inject chart ref into state")
-		}
-
-		bnState, err := runtime.BlockNodeRuntime.CurrentState()
-		if err != nil {
-			return errorx.IllegalState.New("failed to read block node state after workflow: %v", err)
-		}
-
-		if bnState.ReleaseInfo.Status == release.StatusDeployed {
-			bnState.ReleaseInfo.ChartRef = chartRef
-		}
-
-		full.BlockNodeState = bnState
-		return nil
-	}
-}
 
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
 func resolveBlocknodeEffectiveInputs(
-	runtimeState *rsl.BlockNodeRuntimeResolver,
+	runtime *rsl.BlockNodeRuntimeResolver,
 	inputs *models.UserInputs[models.BlockNodeInputs],
 	validator func(*models.UserInputs[models.BlockNodeInputs]) error,
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
@@ -44,14 +19,14 @@ func resolveBlocknodeEffectiveInputs(
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
 	}
 
-	if runtimeState == nil {
+	if runtime == nil {
 		return nil, errorx.IllegalArgument.New("block node runtime state cannot be nil")
 	}
 
 	// Set user inputs on the runtime state so they can be accessed by resolver strategies.
-	runtimeState.WithUserInputs(inputs.Custom)
+	runtime.WithUserInputs(inputs.Custom)
 
-	effReleaseName, err := runtimeState.ReleaseName()
+	effReleaseName, err := runtime.ReleaseName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node release name: %v", err)
 	}
@@ -59,7 +34,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effReleaseName.Strategy().String()).
 		Msg("Determined effective block node release name")
 
-	effVersion, err := runtimeState.Version()
+	effVersion, err := runtime.Version()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node version: %v", err)
 	}
@@ -67,7 +42,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effVersion.Strategy().String()).
 		Msg("Determined effective block node version")
 
-	effNamespace, err := runtimeState.Namespace()
+	effNamespace, err := runtime.Namespace()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node namespace: %v", err)
 	}
@@ -75,7 +50,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effNamespace.Strategy().String()).
 		Msg("Determined effective block node namespace")
 
-	effChartName, err := runtimeState.ChartName()
+	effChartName, err := runtime.ChartName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart name: %v", err)
 	}
@@ -83,7 +58,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effChartName.Strategy().String()).
 		Msg("Determined effective block node chart name")
 
-	effChartRepo, err := runtimeState.ChartRef()
+	effChartRepo, err := runtime.ChartRef()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart repo: %v", err)
 	}
@@ -91,7 +66,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effChartRepo.Strategy().String()).
 		Msg("Determined effective block node chart repo")
 
-	effChartVersion, err := runtimeState.ChartVersion()
+	effChartVersion, err := runtime.ChartVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart version: %v", err)
 	}
@@ -99,7 +74,7 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effChartVersion.Strategy().String()).
 		Msg("Determined effective block node chart version")
 
-	effStorage, err := runtimeState.Storage()
+	effStorage, err := runtime.Storage()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node storage: %v", err)
 	}

@@ -20,7 +20,7 @@ import (
 
 // blockNodeHandler is the per-command instance of blocknode.Handler, wired in
 // initializeDependencies. It replaces the old package-level bll singleton.
-var blockNodeHandler *blocknode.HandlerFactory
+var blockNodeHandler *blocknode.HandlerRegistry
 
 func initializeDependencies() error {
 	conf := config.Get()
