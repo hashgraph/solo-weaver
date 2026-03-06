@@ -25,7 +25,7 @@ type Base[S any, I any] struct {
 
 	// optional helpers
 	lastSyncFn func(*S) htime.Time
-	cloneFn    func(*S) S
+	cloneFn    func(*S) (*S, error)
 	defaultFn  func() S
 
 	inputs *I
@@ -38,7 +38,7 @@ func NewRuntimeBase[S any, I any](
 	refreshInterval time.Duration,
 	realityChecker reality.Checker[S],
 	lastSyncFn func(*S) htime.Time,
-	cloneFn func(*S) S,
+	cloneFn func(*S) (*S, error),
 	defaultStateFn func() S,
 ) (*Base[S, I], error) {
 	if realityChecker == nil {
@@ -104,7 +104,11 @@ func (b *Base[S, I]) CurrentState() (S, error) {
 	defer b.mu.Unlock()
 
 	if b.cloneFn != nil {
-		return b.cloneFn(b.state), nil
+		c, err := b.cloneFn(b.state)
+		if err != nil {
+			return b.defaultFn(), errorx.IllegalState.Wrap(err, "cloneFn failed for current state")
+		}
+		return *c, nil
 	}
 
 	return b.defaultFn(), errorx.IllegalState.New("cloneFn function is not defined for current state")

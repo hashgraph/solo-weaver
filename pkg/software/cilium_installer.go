@@ -5,6 +5,7 @@ package software
 import (
 	"path"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -28,9 +29,13 @@ func NewCiliumInstaller(opts ...InstallerOption) (Software, error) {
 		return nil, err
 	}
 
-	return &ciliumInstaller{
+	ci := &ciliumInstaller{
 		baseInstaller: bi,
-	}, nil
+	}
+
+	ci.verifyConfigured = ci.verifySandboxConfigs
+
+	return ci, nil
 }
 
 // Configure configures the cilium after installation
@@ -119,4 +124,22 @@ func (ci *ciliumInstaller) createCiliumConfigFile() error {
 	}
 
 	return nil
+}
+
+// verifySandboxConfigs overrides the base implementation to verify the cilium-config.yaml
+// file exists at the expected path in the sandbox after Configure() has been called.
+func (ci *ciliumInstaller) verifySandboxConfigs() (automa.StateBag, error) {
+	meta := &automa.SyncStateBag{}
+	configPath := ci.getCiliumConfigPath()
+
+	_, exists, err := ci.fileManager.PathExists(configPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check cilium config file at %s", configPath)
+	}
+	if !exists {
+		return nil, errorx.IllegalState.New("cilium config file is missing at %s", configPath)
+	}
+	meta.Set("configPath", configPath)
+
+	return meta, nil
 }

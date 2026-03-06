@@ -3,8 +3,11 @@
 package software
 
 import (
+	"os"
 	"path"
+	"strings"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -23,9 +26,14 @@ func NewKubeletInstaller(opts ...InstallerOption) (Software, error) {
 		return nil, err
 	}
 
-	return &kubeletInstaller{
+	ki := &kubeletInstaller{
 		baseInstaller: bi,
-	}, nil
+	}
+
+	// Register the override so VerifyInstallation() calls kubelet-specific config checks
+	ki.baseInstaller.verifyConfigured = ki.verifySandboxConfigs
+
+	return ki, nil
 }
 
 // Install installs the kubelet binary and configuration files in the sandbox folder
@@ -183,4 +191,66 @@ func (ki *kubeletInstaller) createSystemdSymlink() error {
 	}
 
 	return nil
+}
+
+// verifySandboxConfigs verifies that kubelet config files exist, are correctly patched,
+// and that the systemd symlink is in place.
+func (ki *kubeletInstaller) verifySandboxConfigs() (automa.StateBag, error) {
+	meta := &automa.SyncStateBag{}
+
+	// 1. Verify the kubelet.service file exists in the sandbox
+	kubeletServicePath := ki.getKubeletServicePath()
+	_, exists, err := ki.fileManager.PathExists(kubeletServicePath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check kubelet.service existence at %s", kubeletServicePath)
+	}
+	if !exists {
+		return nil, errorx.IllegalState.New("kubelet.service not found at %s", kubeletServicePath)
+	}
+
+	meta.Set("kubeletServicePath", kubeletServicePath)
+
+	// 2. Verify the service file is correctly patched
+	content, err := ki.fileManager.ReadFile(kubeletServicePath, -1)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read kubelet.service at %s", kubeletServicePath)
+	}
+	serviceStr := string(content)
+
+	// Check the unpatched path is no longer present
+	if strings.Contains(serviceStr, "/usr/bin/kubelet") {
+		return nil, errorx.IllegalState.New("kubelet.service still contains unpatched /usr/bin/kubelet path")
+	}
+
+	// Check the sandbox path is present
+	expectedKubeletBinPath := ki.getSandboxKubeletBinPath()
+	if !strings.Contains(serviceStr, expectedKubeletBinPath) {
+		return nil, errorx.IllegalState.New("kubelet.service does not contain expected sandbox kubelet path: %s", expectedKubeletBinPath)
+	}
+	meta.Set("sandboxKubeletPath", expectedKubeletBinPath)
+
+	// 3. Verify the systemd symlink exists and points to the sandbox service file
+	systemdUnitPath := ki.getSystemdUnitPath()
+	_, exists, err = ki.fileManager.PathExists(systemdUnitPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check systemd unit symlink at %s", systemdUnitPath)
+	}
+	if !exists {
+		return nil, errorx.IllegalState.New("systemd unit symlink not found at %s", systemdUnitPath)
+	}
+	meta.Set("systemdUnitPath", systemdUnitPath)
+
+	linkTarget, err := os.Readlink(systemdUnitPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read systemd unit symlink at %s", systemdUnitPath)
+	}
+	if linkTarget != kubeletServicePath {
+		return nil, errorx.IllegalState.New(
+			"systemd unit symlink %s points to %s, expected %s",
+			systemdUnitPath, linkTarget, kubeletServicePath,
+		)
+	}
+	meta.Set("systemdUnitPathTarget", linkTarget)
+
+	return meta, nil
 }

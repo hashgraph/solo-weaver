@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/tomlx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -87,10 +88,14 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 		return nil, err
 	}
 
-	return &crioInstaller{
+	ci := &crioInstaller{
 		baseInstaller: bi,
 		tomlManager:   tomlx.NewTomlConfigManager(),
-	}, nil
+	}
+
+	ci.verifyConfigured = ci.verifySandboxConfigs
+
+	return ci, nil
 }
 
 // Install installs cri-o emulating the same steps performed by the `install` file under the compressed file
@@ -678,4 +683,58 @@ func (ci *crioInstaller) generateExpectedCrioConfig() map[string]interface{} {
 	ci.tomlManager.SetNestedValue(config, "crio.nri.nri_listen", filepath.Join(sandboxDir, "var/run/nri/nri.sock"))
 
 	return config
+}
+
+func (ci *crioInstaller) verifySandboxBinaries() error {
+	sandboxDir := models.Paths().SandboxDir
+
+	requiredBinaries := []string{
+		filepath.Join(sandboxDir, binDir, "crio"),
+		filepath.Join(sandboxDir, binDir, "pinns"),
+		filepath.Join(sandboxDir, binDir, "crictl"),
+		filepath.Join(sandboxDir, libexecCrioDir, "conmon"),
+		filepath.Join(sandboxDir, libexecCrioDir, "crun"),
+		filepath.Join(sandboxDir, libexecCrioDir, "runc"),
+	}
+
+	for _, p := range requiredBinaries {
+		_, exists, err := ci.fileManager.PathExists(p)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to check binary at %s", p)
+		}
+		if !exists {
+			return NewFileNotFoundError(p)
+		}
+	}
+
+	return nil
+}
+
+func (ci *crioInstaller) verifySandboxConfigs() (automa.StateBag, error) {
+	meta := &automa.SyncStateBag{}
+	sandboxDir := models.Paths().SandboxDir
+
+	requiredConfigs := map[string]string{
+		CrioConfFile:          filepath.Join(sandboxDir, crioConfdDir, CrioConfFile),
+		PolicyJsonFile:        filepath.Join(sandboxDir, etcCrioDir, PolicyJsonFile),
+		RegistriesConfFile:    filepath.Join(sandboxDir, containersRegistriesConfdDir, RegistriesConfFile),
+		CrioServiceFile:       filepath.Join(sandboxDir, userSystemdDir, CrioServiceFile),
+		CrioDefaultConfigFile: filepath.Join(sandboxDir, getSysconfigDir(), CrioDefaultConfigFile),
+	}
+
+	for k, p := range requiredConfigs {
+		_, exists, err := ci.fileManager.PathExists(p)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to check config file at %s", p)
+		}
+		if !exists {
+			return nil, NewFileNotFoundError(p)
+		}
+
+		meta.Set(automa.Key(k), p)
+	}
+
+	// TODO add content verification for the configuration files similar to the integration tests
+
+	return meta, nil
 }
