@@ -21,7 +21,6 @@ import (
 // It depends only on injectable helm/kube factories and a cluster probe.
 type blockNodeChecker struct {
 	Base
-	cfg           models.Config
 	newHelm       func() (HelmManager, error)
 	newKube       func() (KubeClient, error)
 	clusterExists ClusterProbe
@@ -31,7 +30,6 @@ type blockNodeChecker struct {
 // In production pass helm2.NewManager, kube.NewClient and kube.ClusterExists.
 // In tests swap them for fakes.
 func NewBlockNodeChecker(
-	cfg models.Config,
 	sm state.Manager,
 	newHelm func() (HelmManager, error),
 	newKube func() (KubeClient, error),
@@ -41,7 +39,6 @@ func NewBlockNodeChecker(
 		Base: Base{
 			sm: sm,
 		},
-		cfg:           cfg,
 		newHelm:       newHelm,
 		newKube:       newKube,
 		clusterExists: clusterExists,
@@ -64,10 +61,6 @@ func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
 func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeState, error) {
 	now := htime.Now()
 	bn := b.sm.State().BlockNodeState
-	chartRef := b.cfg.BlockNode.Chart // chart ref/repo from config
-	if bn.ReleaseInfo.ChartRef != "" {
-		chartRef = bn.ReleaseInfo.ChartRef // inherit
-	}
 
 	exists, err := b.clusterExists()
 	if !exists {
@@ -81,6 +74,13 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 	if re == nil {
 		return bn, nil // no BlockNode release found
+	}
+
+	chartRef := re.Labels["solo-provisioner.hedera.com/chart-ref"]
+	if chartRef == "" {
+		logx.As().Warn().Str("release", re.Name).
+			Any("labels", re.Labels).
+			Msg("BlockNode Helm release is missing expected chart-ref label; BlockNodeState may be incomplete")
 	}
 
 	bn = state.BlockNodeState{
