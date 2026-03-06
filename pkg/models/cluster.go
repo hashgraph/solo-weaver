@@ -3,8 +3,6 @@
 package models
 
 import (
-	"reflect"
-
 	k8sversion "k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -21,7 +19,8 @@ type ClusterInfo struct {
 	Namespace      string                  `yaml:"namespace" json:"namespace"`
 }
 
-// Equal returns true if two ClusterInfo values are equal.
+// Equal returns true if two ClusterInfo values are equal,
+// treating nil and empty maps as equivalent.
 func (c ClusterInfo) Equal(other ClusterInfo) bool {
 	if c.KubeconfigEnv != other.KubeconfigEnv ||
 		c.KubeconfigPath != other.KubeconfigPath ||
@@ -32,42 +31,21 @@ func (c ClusterInfo) Equal(other ClusterInfo) bool {
 		c.ServerVersion != other.ServerVersion {
 		return false
 	}
-
-	if len(c.Clusters) != len(other.Clusters) || len(c.Contexts) != len(other.Contexts) {
+	if len(c.Clusters) != len(other.Clusters) {
 		return false
 	}
-
-	for name, cluster := range c.Clusters {
-		otherCluster, ok := other.Clusters[name]
-		if !ok {
-			return false
-		}
-		if cluster == nil || otherCluster == nil {
-			if cluster != otherCluster {
-				return false
-			}
-			continue
-		}
-		if !reflect.DeepEqual(*cluster, *otherCluster) {
+	for k, v := range c.Clusters {
+		if other.Clusters[k] != v {
 			return false
 		}
 	}
-
-	for name, ctx := range c.Contexts {
-		otherCtx, ok := other.Contexts[name]
-		if !ok {
-			return false
-		}
-		if ctx == nil || otherCtx == nil {
-			if ctx != otherCtx {
-				return false
-			}
-			continue
-		}
-		if !reflect.DeepEqual(*ctx, *otherCtx) {
+	if len(c.Contexts) != len(other.Contexts) {
+		return false
+	}
+	for k, v := range c.Contexts {
+		if other.Contexts[k] != v {
 			return false
 		}
 	}
-
 	return true
 }
