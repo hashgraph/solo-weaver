@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	TeleportBinaryName      = "teleport"
 	TeleportServiceName     = "teleport"
 	teleportServiceFileName = "teleport.service"
 	teleportConfigDir       = "/etc/teleport"

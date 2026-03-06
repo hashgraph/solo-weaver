@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	CrioBinaryName  = "crio"
 	CrioServiceName = "crio"
 
 	// File names - extracted as constants to avoid duplication

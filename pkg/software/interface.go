@@ -4,6 +4,7 @@ package software
 
 import (
 	"github.com/bluet/syspkg"
+	"github.com/hashgraph/solo-weaver/internal/state"
 )
 
 type Package interface {
@@ -55,4 +56,7 @@ type Software interface {
 
 	// GetSoftwareName returns the software name
 	GetSoftwareName() string
+
+	// VerifyInstallation checks if the software is installed and configured
+	VerifyInstallation() (*state.SoftwareState, error)
 }

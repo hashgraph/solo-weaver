@@ -8,6 +8,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	helm2 "github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -99,9 +100,20 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		o(cc)
 	}
 
-	cluster := NewClusterChecker(cc.sm, cc.clusterExists)
-	machine := NewMachineChecker(cc.sm, cc.sandboxBinDir, cc.stateDir)
-	blocknode := NewBlockNodeChecker(cc.sm, cc.newHelm, cc.newKube, cc.clusterExists)
+	cluster, err := NewClusterChecker(cc.sm, cc.clusterExists)
+	if err != nil {
+		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create cluster checker")
+	}
+
+	machine, err := NewMachineChecker(cc.sm, cc.sandboxBinDir, cc.stateDir)
+	if err != nil {
+		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create machine checker")
+	}
+
+	blocknode, err := NewBlockNodeChecker(cc.sm, cc.newHelm, cc.newKube, cc.clusterExists)
+	if err != nil {
+		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create block node checker")
+	}
 
 	return Checkers{
 		Cluster:   cluster,

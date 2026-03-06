@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	CiliumBinaryName     = "cilium"
 	ciliumConfigFileName = "cilium-config.yaml"
 	ciliumTemplateFile   = "files/cilium/cilium-config.yaml"
 )

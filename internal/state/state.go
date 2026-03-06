@@ -120,13 +120,17 @@ func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {
 
 // NewState creates a new State instance with default values
 // It does not load any persisted state from disk.
-func NewState() State {
+func NewState(stateFile string) State {
 	p := models.Paths().Clone()
 
 	// set provisioner state based on current version and executable path, this is informational only and does not impact any functionality
 	exePath, err := os.Executable()
 	if err != nil {
 		logx.As().Warn().Err(err).Msg("Failed to get executable path for provisioner state, using empty string")
+	}
+
+	if stateFile == "" {
+		stateFile = path.Join(p.StateDir, StateFileName)
 	}
 
 	versionInfo := version.Get()
@@ -138,7 +142,7 @@ func NewState() State {
 			GoVersion:  versionInfo.GoVersion,
 			Executable: exePath,
 		},
-		StateFile:      path.Join(p.StateDir, StateFileName),
+		StateFile:      stateFile,
 		MachineState:   NewMachineState(),
 		ClusterState:   NewClusterState(),
 		BlockNodeState: NewBlockNodeState(),
