@@ -27,7 +27,7 @@ import (
 // the reality Checker for live machine-state queries.
 //
 // Embed this struct in any concrete handler to inherit RefreshRuntimeState and
-// FlushNodeState without re-implementing them.
+// FlushState without re-implementing them.
 //
 //	type BlockNodeHandler struct {
 //	    BaseHandler
@@ -90,17 +90,11 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 
 	// ── 2. Refresh runtime state ───────────────────────────────────────────────
-	// We need to refresh before preparing effective inputs
+	// We need to refresh runtime before preparing effective inputs
 	currentState, err := h.Runtime.Refresh(ctx, true)
 	if err != nil {
 		return nil, err
 	}
-
-	// add action history
-	h.Runtime.AddActionHistory(state.ActionHistory{
-		Intent: intent,
-		Inputs: inputs,
-	})
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(&inputs)
@@ -128,7 +122,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	report := wf.Execute(ctx)
 
 	// ── 5. Flush state ─────────────────────────────────────────────────────
-	return h.FlushNodeState(
+	return h.FlushState(
 		ctx,
 		report,
 		intent,
@@ -137,8 +131,8 @@ func (h *BaseHandler[T]) HandleIntent(
 	)
 }
 
-// FlushNodeState is the exported generic flush used by all node handlers.
-func (h *BaseHandler[T]) FlushNodeState(
+// FlushState is the exported generic flush used by all node handlers.
+func (h *BaseHandler[T]) FlushState(
 	ctx context.Context,
 	report *automa.Report,
 	intent models.Intent,
@@ -148,6 +142,11 @@ func (h *BaseHandler[T]) FlushNodeState(
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
+
+	h.Runtime.AddActionHistory(state.ActionHistory{
+		Intent: intent,
+		Inputs: effectiveInputs,
+	})
 
 	fullState, err := h.Runtime.Refresh(ctx, true)
 	if err != nil {

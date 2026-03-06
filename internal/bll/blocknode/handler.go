@@ -18,20 +18,20 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// HandlerFactory is the private struct that holds all per-action handlers for block-node intents.
-type HandlerFactory struct {
+// HandlerRegistry is the private struct that holds all per-action handlers for block-node intents.
+type HandlerRegistry struct {
 	install   *InstallHandler
 	upgrade   *UpgradeHandler
 	reset     *ResetHandler
 	uninstall *UninstallHandler
 }
 
-// NewHandlerFactory validates dependencies and returns a HandlerFactory with all handlers initialized.
+// NewHandlerFactory validates dependencies and returns a HandlerRegistry with all handlers initialized.
 // All dependencies are required; any nil returns an error.
 func NewHandlerFactory(
 	sm state.Manager,
 	runtime *rsl.RuntimeResolver,
-) (*HandlerFactory, error) {
+) (*HandlerRegistry, error) {
 	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
@@ -44,7 +44,7 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
 	}
 
-	h := &HandlerFactory{
+	h := &HandlerRegistry{
 		install:   NewInstallHandler(base, runtime.BlockNodeRuntime, sm),
 		upgrade:   NewUpgradeHandler(base, runtime.BlockNodeRuntime),
 		reset:     NewResetHandler(base, runtime.BlockNodeRuntime),
@@ -55,7 +55,7 @@ func NewHandlerFactory(
 }
 
 // ForAction returns the appropriate IntentHandler for the given action, or an error if the action is unsupported.
-func (h *HandlerFactory) ForAction(
+func (h *HandlerRegistry) ForAction(
 	action models.ActionType,
 ) (bll.IntentHandler[models.BlockNodeInputs], error) {
 	switch action {
