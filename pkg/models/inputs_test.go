@@ -69,14 +69,14 @@ func TestUserInputs_NoCustomValidator(t *testing.T) {
 
 func TestBlocknodeInputs_ValidZeroValue(t *testing.T) {
 	// zero-value should pass validations that are not strict (profile/version/... empty)
-	b := BlocknodeInputs{}
+	b := BlockNodeInputs{}
 	if err := b.Validate(); err != nil {
-		t.Fatalf("expected zero-value BlocknodeInputs to validate, got: %v", err)
+		t.Fatalf("expected zero-value BlockNodeInputs to validate, got: %v", err)
 	}
 }
 
 func TestBlocknodeInputs_InvalidProfile(t *testing.T) {
-	b := BlocknodeInputs{
+	b := BlockNodeInputs{
 		Profile: "invalid/profile!",
 	}
 

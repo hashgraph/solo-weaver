@@ -15,7 +15,7 @@ func NewBlockNodePreflightCheckWorkflow(profile string) *automa.WorkflowBuilder 
 }
 
 // NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node
-func NewBlockNodeInstallWorkflow(inputs models.BlocknodeInputs, sm state.Manager) *automa.WorkflowBuilder {
+func NewBlockNodeInstallWorkflow(inputs models.BlockNodeInputs, sm state.Manager) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
 		InstallClusterWorkflow(models.NodeTypeBlock, inputs.Profile, inputs.SkipHardwareChecks, sm),
 		steps.SetupBlockNode(inputs),
@@ -23,7 +23,7 @@ func NewBlockNodeInstallWorkflow(inputs models.BlocknodeInputs, sm state.Manager
 }
 
 // NewBlockNodeUpgradeWorkflow creates an upgrade workflow for block node
-func NewBlockNodeUpgradeWorkflow(inputs models.BlocknodeInputs, withReset bool) *automa.WorkflowBuilder {
+func NewBlockNodeUpgradeWorkflow(inputs models.BlockNodeInputs, withReset bool) *automa.WorkflowBuilder {
 	if withReset {
 		return automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").Steps(
 			steps.PurgeBlockNodeStorage(inputs),
@@ -36,7 +36,7 @@ func NewBlockNodeUpgradeWorkflow(inputs models.BlocknodeInputs, withReset bool) 
 }
 
 // NewBlockNodeResetWorkflow creates a reset workflow for block node
-func NewBlockNodeResetWorkflow(inputs models.BlocknodeInputs) *automa.WorkflowBuilder {
+func NewBlockNodeResetWorkflow(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-reset").Steps(
 		steps.ResetBlockNode(inputs),
 	)

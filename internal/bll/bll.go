@@ -18,7 +18,7 @@ type Option[T any] func(*T) error
 // ── IntentHandler ─────────────────────────────────────────────────────────────
 
 // IntentHandler is the contract every per-action, per-node-type handler must
-// satisfy.  [I any] is the node-specific inputs struct (e.g. models.BlocknodeInputs).
+// satisfy.  [I any] is the node-specific inputs struct (e.g. models.BlockNodeInputs).
 //
 // Splitting at this boundary means:
 //   - Each handler is independently unit-testable with zero routing boilerplate.

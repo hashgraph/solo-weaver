@@ -59,7 +59,7 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			tempDir := t.TempDir()
 			basePath := filepath.Join(tempDir, "storage")
 
-			blockConfig := models.BlocknodeInputs{
+			blockConfig := models.BlockNodeInputs{
 				Namespace: "test-namespace",
 				Release:   "test-release",
 				Chart:     "test-chart",
@@ -166,7 +166,7 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "storage")
 
-	blockConfig := models.BlocknodeInputs{
+	blockConfig := models.BlockNodeInputs{
 		Namespace: "block-node",
 		Release:   "test-release",
 		Chart:     "test-chart",

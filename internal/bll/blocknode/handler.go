@@ -6,7 +6,7 @@
 // effective inputs and workflow construction to the appropriate per-action
 // handler, executes the workflow, and flushes state to disk.
 //
-// Extending with a new action: implement IntentHandler[models.BlocknodeInputs]
+// Extending with a new action: implement IntentHandler[models.BlockNodeInputs]
 // in a new file and add a case to Handler.HandleIntent.  No other file changes.
 package blocknode
 
@@ -32,7 +32,7 @@ func NewHandlerFactory(
 	sm state.Manager,
 	runtime *rsl.RuntimeResolver,
 ) (*HandlerFactory, error) {
-	base, err := bll.NewBaseHandler[models.BlocknodeInputs](runtime)
+	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}
@@ -57,7 +57,7 @@ func NewHandlerFactory(
 // ForAction returns the appropriate IntentHandler for the given action, or an error if the action is unsupported.
 func (h *HandlerFactory) ForAction(
 	action models.ActionType,
-) (bll.IntentHandler[models.BlocknodeInputs], error) {
+) (bll.IntentHandler[models.BlockNodeInputs], error) {
 	switch action {
 	case models.ActionInstall:
 		return h.install, nil

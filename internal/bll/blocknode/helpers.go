@@ -37,9 +37,9 @@ func injectChartRef(runtime *rsl.RuntimeResolver, chartRef string) func(*state.S
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
 func resolveBlocknodeEffectiveInputs(
 	runtimeState *rsl.BlockNodeRuntimeResolver,
-	inputs *models.UserInputs[models.BlocknodeInputs],
-	validator func(*models.UserInputs[models.BlocknodeInputs]) error,
-) (*models.UserInputs[models.BlocknodeInputs], error) {
+	inputs *models.UserInputs[models.BlockNodeInputs],
+	validator func(*models.UserInputs[models.BlockNodeInputs]) error,
+) (*models.UserInputs[models.BlockNodeInputs], error) {
 	if inputs == nil {
 		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
 	}
@@ -109,9 +109,9 @@ func resolveBlocknodeEffectiveInputs(
 		Str("strategy", effChartVersion.Strategy().String()).
 		Msg("Determined effective block node storage")
 
-	effectiveInputs := models.UserInputs[models.BlocknodeInputs]{
+	effectiveInputs := models.UserInputs[models.BlockNodeInputs]{
 		Common: inputs.Common,
-		Custom: models.BlocknodeInputs{
+		Custom: models.BlockNodeInputs{
 			// Resolved via resolver
 			Profile:      inputs.Custom.Profile,
 			Release:      effReleaseName.Get().Val(),

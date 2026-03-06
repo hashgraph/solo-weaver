@@ -20,19 +20,19 @@ import (
 // node to already be deployed.  Effective-input resolution is a no-op (the
 // effective values from the current state are used as-is).
 type ResetHandler struct {
-	bll.BaseHandler[models.BlocknodeInputs]
+	bll.BaseHandler[models.BlockNodeInputs]
 	runtimeState *rsl.BlockNodeRuntimeResolver
 }
 
-func NewResetHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *ResetHandler {
+func NewResetHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *ResetHandler {
 	return &ResetHandler{BaseHandler: base, runtimeState: runtimeState}
 }
 
 // PrepareEffectiveInputs for reset simply passes inputs through unchanged.
 // All field values are taken from the current state — no resolution is needed.
 func (h *ResetHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.BlocknodeInputs],
-) (*models.UserInputs[models.BlocknodeInputs], error) {
+	inputs *models.UserInputs[models.BlockNodeInputs],
+) (*models.UserInputs[models.BlockNodeInputs], error) {
 	// reset has no special validation; pass nil validator
 	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
@@ -41,7 +41,7 @@ func (h *ResetHandler) PrepareEffectiveInputs(
 // reset workflow.
 func (h *ResetHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.BlocknodeInputs],
+	inputs *models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
@@ -58,7 +58,7 @@ func (h *ResetHandler) BuildWorkflow(
 func (h *ResetHandler) HandleIntent(
 	ctx context.Context,
 	intent models.Intent,
-	inputs models.UserInputs[models.BlocknodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))

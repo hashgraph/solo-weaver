@@ -47,11 +47,11 @@ type Manager struct {
 	helmManager helm.Manager
 	kubeClient  *kube.Client
 	logger      *zerolog.Logger
-	blockConfig models.BlocknodeInputs
+	blockConfig models.BlockNodeInputs
 }
 
 // NewManager creates a new block node manager
-func NewManager(blockConfig models.BlocknodeInputs) (*Manager, error) {
+func NewManager(blockConfig models.BlockNodeInputs) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
