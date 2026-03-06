@@ -21,13 +21,13 @@ import (
 // fields already set by a running deployment cannot be silently overridden),
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
-	bll.BaseHandler[models.BlocknodeInputs]
+	bll.BaseHandler[models.BlockNodeInputs]
 	runtimeState *rsl.BlockNodeRuntimeResolver
 	sm           state.Manager
 }
 
 func NewInstallHandler(
-	base bll.BaseHandler[models.BlocknodeInputs],
+	base bll.BaseHandler[models.BlockNodeInputs],
 	runtimeState *rsl.BlockNodeRuntimeResolver,
 	sm state.Manager) *InstallHandler {
 	return &InstallHandler{BaseHandler: base, runtimeState: runtimeState, sm: sm}
@@ -39,8 +39,8 @@ func NewInstallHandler(
 // deployed state already owns that field and --force is set — preventing silent
 // overwrites during a plain install.
 func (h *InstallHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.BlocknodeInputs],
-) (*models.UserInputs[models.BlocknodeInputs], error) {
+	inputs *models.UserInputs[models.BlockNodeInputs],
+) (*models.UserInputs[models.BlockNodeInputs], error) {
 	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
@@ -49,7 +49,7 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 // included; otherwise the full cluster bootstrap is prepended.
 func (h *InstallHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.BlocknodeInputs],
+	inputs *models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
 	if currentState.BlockNodeState.ReleaseInfo.Status == release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
@@ -77,7 +77,7 @@ func (h *InstallHandler) BuildWorkflow(
 func (h *InstallHandler) HandleIntent(
 	ctx context.Context,
 	intent models.Intent,
-	inputs models.UserInputs[models.BlocknodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))

@@ -98,7 +98,7 @@ func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, parentFlags 
 }
 
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
-func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlocknodeInputs], error) {
+func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlockNodeInputs], error) {
 	var err error
 
 	// extract shared flags set in the parent commands
@@ -126,13 +126,13 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
 
-	inputs := &models.UserInputs[models.BlocknodeInputs]{
+	inputs := &models.UserInputs[models.BlockNodeInputs]{
 		Common: models.CommonInputs{
 			Force:            parentFlags.Force,
 			NodeType:         models.NodeTypeBlock,
 			ExecutionOptions: *execOpts,
 		},
-		Custom: models.BlocknodeInputs{
+		Custom: models.BlockNodeInputs{
 			Namespace:    flagNamespace,
 			Release:      flagReleaseName,
 			Chart:        flagChartRepo,

@@ -22,11 +22,11 @@ import (
 // enforces chart immutability (you cannot switch charts during an upgrade) and
 // prevents version downgrade.
 type UpgradeHandler struct {
-	bll.BaseHandler[models.BlocknodeInputs]
+	bll.BaseHandler[models.BlockNodeInputs]
 	runtimeState *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUpgradeHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *UpgradeHandler {
+func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *UpgradeHandler {
 	return &UpgradeHandler{BaseHandler: base, runtimeState: runtimeState}
 }
 
@@ -34,8 +34,8 @@ func NewUpgradeHandler(base bll.BaseHandler[models.BlocknodeInputs], runtimeStat
 // Chart immutability and semver constraints are enforced inside BuildWorkflow so that all
 // precondition errors are reported together after resolution succeeds.
 func (h *UpgradeHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.BlocknodeInputs],
-) (*models.UserInputs[models.BlocknodeInputs], error) {
+	inputs *models.UserInputs[models.BlockNodeInputs],
+) (*models.UserInputs[models.BlockNodeInputs], error) {
 	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
 
@@ -46,7 +46,7 @@ func (h *UpgradeHandler) PrepareEffectiveInputs(
 //   - Version cannot be downgraded.
 func (h *UpgradeHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.BlocknodeInputs],
+	inputs *models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
@@ -97,7 +97,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 func (h *UpgradeHandler) HandleIntent(
 	ctx context.Context,
 	intent models.Intent,
-	inputs models.UserInputs[models.BlocknodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef(h.Runtime, inputs.Custom.Chart))

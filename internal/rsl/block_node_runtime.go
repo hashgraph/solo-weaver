@@ -40,7 +40,7 @@ import (
 //   - The resolver relies on the runtime base for reality checking, last-sync extraction,
 //     cloning and default state construction.
 type BlockNodeRuntimeResolver struct {
-	*Base[state.BlockNodeState, models.BlocknodeInputs]
+	*Base[state.BlockNodeState, models.BlockNodeInputs]
 	intent *models.Intent
 }
 
@@ -228,7 +228,7 @@ func (br *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[strin
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) WithUserInputs(inputs models.BlocknodeInputs) *BlockNodeRuntimeResolver {
+func (br *BlockNodeRuntimeResolver) WithUserInputs(inputs models.BlockNodeInputs) *BlockNodeRuntimeResolver {
 	br.inputs = &inputs
 	return br
 }
@@ -249,7 +249,7 @@ func NewBlockNodeRuntimeResolver(
 	realityChecker reality.Checker[state.BlockNodeState],
 	refreshInterval time.Duration,
 ) (*BlockNodeRuntimeResolver, error) {
-	rb, err := NewRuntimeBase[state.BlockNodeState, models.BlocknodeInputs](
+	rb, err := NewRuntimeBase[state.BlockNodeState, models.BlockNodeInputs](
 		cfg,
 		blockNodeState,
 		refreshInterval,

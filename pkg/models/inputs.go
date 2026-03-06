@@ -25,7 +25,7 @@ type CommonInputs struct {
 	ExecutionOptions WorkflowExecutionOptions
 }
 
-type BlocknodeInputs struct {
+type BlockNodeInputs struct {
 	Profile            string
 	Version            string
 	Namespace          string
@@ -99,7 +99,7 @@ func (c *CommonInputs) Validate() error {
 }
 
 // Validate validates all block node inputs fields to ensure they are safe and secure.
-func (c *BlocknodeInputs) Validate() error {
+func (c *BlockNodeInputs) Validate() error {
 	if c.Profile != "" {
 		if err := sanity.ValidateIdentifier(c.Profile); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)
@@ -179,6 +179,21 @@ func (c *BlocknodeInputs) Validate() error {
 }
 
 func (c *ClusterInputs) Validate() error {
+	if c.Profile != "" {
+		if err := sanity.ValidateIdentifier(c.Profile); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)
+		}
+
+		// check profile must be one of AllProfiles()
+		if sanity.Contains[string](c.Profile, AllProfiles()) == false {
+			return errorx.IllegalArgument.New("invalid profile: %s", c.Profile)
+		}
+	}
+
+	return nil
+}
+
+func (c *MachineInputs) Validate() error {
 	if c.Profile != "" {
 		if err := sanity.ValidateIdentifier(c.Profile); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)

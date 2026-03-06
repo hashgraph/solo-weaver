@@ -31,7 +31,7 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
-	inputs := models.BlocknodeInputs{
+	inputs := models.BlockNodeInputs{
 		Profile: models.ProfileMainnet,
 	}
 
@@ -107,7 +107,7 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	inputs := models.BlocknodeInputs{
+	inputs := models.BlockNodeInputs{
 		Profile: models.ProfileLocal,
 	}
 
@@ -176,7 +176,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	// Given - already installed from fresh install test
 	//
 
-	inputs := models.BlocknodeInputs{
+	inputs := models.BlockNodeInputs{
 		Profile: models.ProfileLocal,
 	}
 
@@ -231,7 +231,7 @@ func TestResetBlockNode_Success(t *testing.T) {
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	// Install block node first
-	inputs := models.BlocknodeInputs{
+	inputs := models.BlockNodeInputs{
 		Profile: models.ProfileLocal,
 	}
 
