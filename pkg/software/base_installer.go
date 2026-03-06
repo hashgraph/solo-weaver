@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -39,13 +40,15 @@ func WithVersion(version string) InstallerOption {
 // baseInstaller provides common functionality for all software installers
 // as well as helper functions for common operations.
 type baseInstaller struct {
-	name                 string
-	downloader           *Downloader
-	software             *ArtifactMetadata
-	versionToBeInstalled string
-	fileManager          fsx.Manager
-	stateManager         state.Manager
-	softwareState        *state.SoftwareState
+	name                  string
+	downloader            *Downloader
+	software              *ArtifactMetadata
+	versionToBeInstalled  string
+	fileManager           fsx.Manager
+	stateManager          state.Manager
+	softwareState         *state.SoftwareState
+	verifyBinaryInstalled func() error
+	verifyConfigured      func() (automa.StateBag, error)
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -89,6 +92,9 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 			return nil, err
 		}
 	}
+
+	bi.verifyBinaryInstalled = bi.verifySandboxBinaries
+	bi.verifyConfigured = bi.verifySandboxConfigs
 
 	return bi, nil
 }
@@ -964,7 +970,67 @@ func (b *baseInstaller) cleanupSymlinks() error {
 
 	return nil
 }
+
+// verifySandboxBinaries verifies that all binaries are present in the sandbox bin directory
+func (b *baseInstaller) verifySandboxBinaries() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := models.Paths().SandboxBinDir
+
+	for _, binary := range versionInfo.Binaries {
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+
+		_, exists, err := b.fileManager.PathExists(sandboxBinary)
+		if err != nil || !exists {
+			return NewFileNotFoundError(sandboxBinary)
+		}
+
+		info, err := os.Stat(sandboxBinary)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to stat sandbox binary %s", sandboxBinary)
+		}
+		if info.Mode().Perm() != models.DefaultDirOrExecPerm {
+			return errorx.IllegalState.New(
+				"sandbox binary %s has wrong permissions: got %o, want %o",
+				sandboxBinary, info.Mode().Perm(), models.DefaultDirOrExecPerm,
+			)
+		}
+	}
+
+	return nil
+}
+
+// verifySandboxConfigs verifies that all config files are present in the sandbox config directory
+func (b *baseInstaller) verifySandboxConfigs() (automa.StateBag, error) {
+	return nil, nil // By default, we don't have a standard location for configs in the sandbox, so we skip this verification. Specific installers can implement this if needed.
+}
+
 func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
+	if b.verifyBinaryInstalled == nil {
+		return nil, errorx.IllegalState.New("binary verification function is not set, cannot verify installation")
+	}
+
+	if b.verifyConfigured == nil {
+		return nil, errorx.IllegalState.New("configuration verification function is not set, cannot verify configuration")
+	}
+
+	var err error
 	softwareState := &state.SoftwareState{
 		Name:       b.name,
 		Version:    b.Version(),
@@ -973,12 +1039,12 @@ func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
 		LastSync:   htime.Now(),
 	}
 
-	if err := b.verifyExtractedBinaries(); err != nil {
+	if err = b.verifyBinaryInstalled(); err != nil {
 		return softwareState, nil // if verification fails, treat as not installed
 	}
 	softwareState.Installed = true
 
-	if err := b.verifyExtractedConfigs(); err != nil {
+	if softwareState.Metadata, err = b.verifyConfigured(); err != nil {
 		return softwareState, nil // if verification fails, treat as not configured
 	}
 	softwareState.Configured = true

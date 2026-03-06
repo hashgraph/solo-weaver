@@ -2,6 +2,8 @@
 
 package state
 
+import "github.com/automa-saga/automa"
+
 // Equal returns true if two SoftwareState values are equal, ignoring LastSync.
 func (s *SoftwareState) Equal(other SoftwareState) bool {
 	if s.Name != other.Name ||
@@ -10,30 +12,36 @@ func (s *SoftwareState) Equal(other SoftwareState) bool {
 		s.Configured != other.Configured {
 		return false
 	}
-	if len(s.Metadata) != len(other.Metadata) {
-		return false
-	}
-	for k, v := range s.Metadata {
-		if other.Metadata[k] != v {
-			return false
-		}
-	}
-	return true
+	return stateBagEqual(s.Metadata, other.Metadata)
 }
 
 // Equal returns true if two HardwareState values are equal, ignoring LastSync.
-func (h *HardwareState) Equal(other HardwareState) bool {
-	if h.Type != other.Type ||
-		h.Info != other.Info ||
-		h.Count != other.Count ||
-		h.Size != other.Size {
+func (s *HardwareState) Equal(other HardwareState) bool {
+	if s.Type != other.Type ||
+		s.Info != other.Info ||
+		s.Count != other.Count ||
+		s.Size != other.Size {
 		return false
 	}
-	if len(h.Metadata) != len(other.Metadata) {
+	return stateBagEqual(s.Metadata, other.Metadata)
+}
+
+// stateBagEqual compares two automa.StateBag values using Items()
+func stateBagEqual(a, b automa.StateBag) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
 		return false
 	}
-	for k, v := range h.Metadata {
-		if other.Metadata[k] != v {
+	aItems := a.Items()
+	bItems := b.Items()
+	if len(aItems) != len(bItems) {
+		return false
+	}
+	for k, v := range aItems {
+		bv, ok := bItems[k]
+		if !ok || v != bv {
 			return false
 		}
 	}
@@ -99,8 +107,8 @@ func (h *HelmReleaseInfo) Equal(other HelmReleaseInfo) bool {
 }
 
 // Equal returns true if two ClusterState values are equal, ignoring LastSync.
-func (c *ClusterState) Equal(other ClusterState) bool {
-	return c.Created == other.Created && c.ClusterInfo.Equal(other.ClusterInfo)
+func (cs *ClusterState) Equal(other ClusterState) bool {
+	return cs.Created == other.Created && cs.ClusterInfo.Equal(other.ClusterInfo)
 }
 
 // Equal returns true if two BlockNodeState values are equal, ignoring LastSync.

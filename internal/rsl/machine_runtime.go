@@ -31,7 +31,7 @@ func NewMachineRuntimeResolver(
 		refreshInterval,
 		realityChecker,
 		func(s *state.MachineState) htime.Time { return s.LastSync },
-		func(s *state.MachineState) state.MachineState { return s.Clone() },
+		func(s *state.MachineState) (*state.MachineState, error) { return s.Clone() },
 		func() state.MachineState { return state.MachineState{} },
 	)
 

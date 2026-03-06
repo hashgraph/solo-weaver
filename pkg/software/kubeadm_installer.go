@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -35,9 +36,13 @@ func NewKubeadmInstaller(opts ...InstallerOption) (Software, error) {
 		return nil, err
 	}
 
-	return &kubeadmInstaller{
+	ki := &kubeadmInstaller{
 		baseInstaller: bi,
-	}, nil
+	}
+
+	ki.verifyConfigured = ki.verifySandboxConfigs
+
+	return ki, nil
 }
 
 // Install installs the kubeadm binary and configuration files in the sandbox folder
@@ -259,4 +264,28 @@ func (ki *kubeadmInstaller) createKubeletServiceDirSymlink() error {
 	}
 
 	return nil
+}
+
+// verifySandboxConfigs overrides the base implementation to verify kubeadm config files
+// exist at their expected non-standard paths after Install() and Configure() have been called.
+func (ki *kubeadmInstaller) verifySandboxConfigs() (automa.StateBag, error) {
+	meta := &automa.SyncStateBag{}
+	requiredConfigs := map[string]string{
+		"kubeadmConfigPath": ki.getKubeadmConfPath(),       // {sandboxDir}/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf
+		"kubeadmInitPath":   ki.getKubeadmInitConfigPath(), // {sandboxDir}/etc/weaver/kubeadm-init.yaml
+	}
+
+	for k, p := range requiredConfigs {
+		_, exists, err := ki.fileManager.PathExists(p)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to check kubeadm config file at %s", p)
+		}
+		if !exists {
+			return nil, NewFileNotFoundError(p)
+		}
+
+		meta.Set(automa.Key(k), p)
+	}
+
+	return meta, nil
 }

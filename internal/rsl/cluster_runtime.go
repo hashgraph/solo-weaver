@@ -29,7 +29,7 @@ func NewClusterRuntimeResolver(
 		refreshInterval,
 		realityChecker,
 		func(s *state.ClusterState) htime.Time { return s.LastSync },
-		func(s *state.ClusterState) state.ClusterState { return s.Clone() },
+		func(s *state.ClusterState) (*state.ClusterState, error) { return s.Clone() },
 		func() state.ClusterState { return state.ClusterState{} },
 	)
 	if err != nil {

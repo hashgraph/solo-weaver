@@ -257,7 +257,7 @@ func NewBlockNodeRuntimeResolver(
 		// lastSyncFn extractor
 		func(s *state.BlockNodeState) htime.Time { return s.LastSync },
 		// cloneFn helper
-		func(s *state.BlockNodeState) state.BlockNodeState { return s.Clone() },
+		func(s *state.BlockNodeState) (*state.BlockNodeState, error) { return s.Clone() },
 		func() state.BlockNodeState { return state.BlockNodeState{} }, // default state
 	)
 	if err != nil {

@@ -101,6 +101,29 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	require.NotContains(t, contentStr, "/usr/bin/kubelet", "Service file should not contain original kubelet path")
 
 	//
+	// When
+	//
+	st, err := installer.VerifyInstallation()
+	require.NoError(t, err, "VerifyInstallation should succeed after successful installation")
+	require.True(t, st.Installed, "Installed should be true")
+
+	kubeletServicePath, ok := st.Metadata.Get("kubeletServicePath")
+	require.True(t, ok, "Metadata should contain kubeletServicePath")
+	require.NotEmpty(t, kubeletServicePath, "kubeletServicePath should not be empty")
+
+	sandboxKubeletPath, ok := st.Metadata.Get("sandboxKubeletPath")
+	require.True(t, ok, "Metadata should contain sandboxKubeletPath")
+	require.NotEmpty(t, sandboxKubeletPath, "sandboxKubeletPath should not be empty")
+
+	systemdUnitPath, ok := st.Metadata.Get("systemdUnitPath")
+	require.True(t, ok, "Metadata should contain systemdUnitPath")
+	require.NotEmpty(t, systemdUnitPath, "systemdUnitPath should not be empty")
+
+	systemdUnitPathTarget, ok := st.Metadata.Get("systemdUnitPathTarget")
+	require.True(t, ok, "Metadata should contain systemdUnitPathTarget")
+	require.NotEmpty(t, systemdUnitPathTarget, "systemdUnitPathTarget should not be empty")
+
+	//
 	// When - RemoveConfiguration
 	//
 	err = installer.RemoveConfiguration()
