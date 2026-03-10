@@ -87,19 +87,12 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 		return bn, nil // no BlockNode release found
 	}
 
-	chartRef := re.Labels["solo-provisioner.hedera.com/chart-ref"]
-	if chartRef == "" {
-		logx.As().Warn().Str("release", re.Name).
-			Any("labels", re.Labels).
-			Msg("BlockNode Helm release is missing expected chart-ref label; BlockNodeState may be incomplete")
-	}
-
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
 			Version:       re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
-			ChartRef:      chartRef,
+			ChartRef:      "", // it is not stored in Helm Release, so caller need to inject it
 			ChartName:     re.Chart.ChartFullPath(),
 			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,

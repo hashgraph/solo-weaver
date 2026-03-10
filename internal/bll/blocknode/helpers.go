@@ -5,9 +5,20 @@ package blocknode
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
+
+func injectChartRef(inputs models.BlockNodeInputs, st *state.BlockNodeState) error {
+	if inputs.Chart != "" {
+		logx.As().Debug().Str("chartRef", inputs.Chart).
+			Msg("Using user-supplied chart reference for block node")
+	}
+
+	st.ReleaseInfo.ChartRef = inputs.Chart
+	return nil
+}
 
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
 func resolveBlocknodeEffectiveInputs(
