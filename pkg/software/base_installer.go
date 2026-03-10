@@ -7,7 +7,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -40,15 +39,21 @@ func WithVersion(version string) InstallerOption {
 // baseInstaller provides common functionality for all software installers
 // as well as helper functions for common operations.
 type baseInstaller struct {
-	name                  string
-	downloader            *Downloader
-	software              *ArtifactMetadata
-	versionToBeInstalled  string
-	fileManager           fsx.Manager
-	stateManager          state.Manager
-	softwareState         *state.SoftwareState
-	verifyBinaryInstalled func() error
-	verifyConfigured      func() (automa.StateBag, error)
+	name                 string
+	downloader           *Downloader
+	software             *ArtifactMetadata
+	versionToBeInstalled string
+	fileManager          fsx.Manager
+	stateManager         state.Manager
+	softwareState        *state.SoftwareState
+
+	// These function fields allow for installer-specific overrides of the verification logic while still
+	// providing a default implementation in the baseInstaller. For example, kubeadm and kubelet need to verify
+	// configuration files in the sandbox in addition to the binaries, so they override the verifyConfigured function
+	// to point to their own verification logic that includes config checks. Other software that only needs to verify
+	// binaries can use the default implementation provided by baseInstaller.
+	verifyInstalled  func() error
+	verifyConfigured func() (models.StringMap, error)
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -93,7 +98,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 		}
 	}
 
-	bi.verifyBinaryInstalled = bi.verifySandboxBinaries
+	bi.verifyInstalled = bi.verifySandboxBinaries
 	bi.verifyConfigured = bi.verifySandboxConfigs
 
 	return bi, nil
@@ -1017,12 +1022,12 @@ func (b *baseInstaller) verifySandboxBinaries() error {
 }
 
 // verifySandboxConfigs verifies that all config files are present in the sandbox config directory
-func (b *baseInstaller) verifySandboxConfigs() (automa.StateBag, error) {
+func (b *baseInstaller) verifySandboxConfigs() (models.StringMap, error) {
 	return nil, nil // By default, we don't have a standard location for configs in the sandbox, so we skip this verification. Specific installers can implement this if needed.
 }
 
 func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
-	if b.verifyBinaryInstalled == nil {
+	if b.verifyInstalled == nil {
 		return nil, errorx.IllegalState.New("binary verification function is not set, cannot verify installation")
 	}
 
@@ -1039,7 +1044,7 @@ func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
 		LastSync:   htime.Now(),
 	}
 
-	if err = b.verifyBinaryInstalled(); err != nil {
+	if err = b.verifyInstalled(); err != nil {
 		return softwareState, nil // if verification fails, treat as not installed
 	}
 	softwareState.Installed = true

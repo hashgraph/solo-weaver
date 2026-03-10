@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path"
 
-	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -308,8 +307,8 @@ func (ti *teleportNodeAgentInstaller) validateCriticalPaths() error {
 
 // verifySandboxConfigs overrides the base implementation to verify teleport config files
 // exist at their expected non-standard paths after Install() and Configure() have been called.
-func (ti *teleportNodeAgentInstaller) verifySandboxConfigs() (automa.StateBag, error) {
-	meta := &automa.SyncStateBag{}
+func (ti *teleportNodeAgentInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
 	requiredConfigs := map[string]string{
 		"serviceFile": ti.getTeleportServicePath(), // {sandboxDir}/{models.SystemdUnitFilesDir}/teleport.service
 	}
@@ -323,7 +322,7 @@ func (ti *teleportNodeAgentInstaller) verifySandboxConfigs() (automa.StateBag, e
 			return nil, NewFileNotFoundError(p)
 		}
 
-		meta.Set(automa.Key(k), p)
+		meta.Set(k, p)
 	}
 
 	return meta, nil

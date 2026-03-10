@@ -2,7 +2,7 @@
 
 package state
 
-import "github.com/automa-saga/automa"
+import "github.com/hashgraph/solo-weaver/pkg/models"
 
 // Equal returns true if two SoftwareState values are equal, ignoring LastSync.
 func (s *SoftwareState) Equal(other SoftwareState) bool {
@@ -12,7 +12,7 @@ func (s *SoftwareState) Equal(other SoftwareState) bool {
 		s.Configured != other.Configured {
 		return false
 	}
-	return stateBagEqual(s.Metadata, other.Metadata)
+	return models.IsEqualMap(s.Metadata, other.Metadata)
 }
 
 // Equal returns true if two HardwareState values are equal, ignoring LastSync.
@@ -23,29 +23,7 @@ func (s *HardwareState) Equal(other HardwareState) bool {
 		s.Size != other.Size {
 		return false
 	}
-	return stateBagEqual(s.Metadata, other.Metadata)
-}
-
-// stateBagEqual compares two automa.StateBag values using Items()
-func stateBagEqual(a, b automa.StateBag) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	aItems := a.Items()
-	bItems := b.Items()
-	if len(aItems) != len(bItems) {
-		return false
-	}
-	for k, v := range aItems {
-		bv, ok := bItems[k]
-		if !ok || v != bv {
-			return false
-		}
-	}
-	return true
+	return models.IsEqualMap(s.Metadata, other.Metadata)
 }
 
 // Equal returns true if two MachineState values are equal, ignoring LastSync.

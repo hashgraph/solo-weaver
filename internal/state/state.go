@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 
-	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/version"
@@ -51,21 +50,21 @@ type MachineState struct {
 }
 
 type SoftwareState struct {
-	Name       string          `yaml:"name" json:"name"`
-	Version    string          `yaml:"version" json:"version"`
-	Installed  bool            `yaml:"installed" json:"installed"`
-	Configured bool            `yaml:"configured" json:"configured"`
-	Metadata   automa.StateBag `yaml:"meta,omitempty" json:"meta,omitempty"`
-	LastSync   htime.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Name       string           `yaml:"name" json:"name"`
+	Version    string           `yaml:"version" json:"version"`
+	Installed  bool             `yaml:"installed" json:"installed"`
+	Configured bool             `yaml:"configured" json:"configured"`
+	Metadata   models.StringMap `yaml:"meta,omitempty" json:"meta,omitempty"`
+	LastSync   htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type HardwareState struct {
-	Type     string          `yaml:"type" json:"type"`                       // e.g. "CPU", "RAM", "Disk"
-	Info     string          `yaml:"info" json:"info"`                       // e.g. "Intel i7", "16GB", "1TB SSD"
-	Count    int             `yaml:"count,omitempty" json:"count,omitempty"` // e.g. number of CPUs
-	Size     string          `yaml:"size,omitempty" json:"size,omitempty"`   // e.g. size for RAM or Disk
-	Metadata automa.StateBag `yaml:"meta,omitempty" json:"meta,omitempty"`
-	LastSync htime.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Type     string           `yaml:"type" json:"type"`                       // e.g. "CPU", "RAM", "Disk"
+	Info     string           `yaml:"info" json:"info"`                       // e.g. "Intel i7", "16GB", "1TB SSD"
+	Count    int              `yaml:"count,omitempty" json:"count,omitempty"` // e.g. number of CPUs
+	Size     string           `yaml:"size,omitempty" json:"size,omitempty"`   // e.g. size for RAM or Disk
+	Metadata models.StringMap `yaml:"meta,omitempty" json:"meta,omitempty"`
+	LastSync htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 type BlockNodeState struct {
@@ -76,13 +75,13 @@ type BlockNodeState struct {
 
 // ClusterNodeState represents a single Kubernetes node summary.
 type ClusterNodeState struct {
-	Name        string            `yaml:"name" json:"name"`
-	Role        string            `yaml:"role" json:"role"` // e.g. "master", "worker"
-	Ready       bool              `yaml:"ready" json:"ready"`
-	KubeletVer  string            `yaml:"kubeletVersion" json:"kubeletVersion"`
-	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
-	LastSync    htime.Time        `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Name        string           `yaml:"name" json:"name"`
+	Role        string           `yaml:"role" json:"role"` // e.g. "master", "worker"
+	Ready       bool             `yaml:"ready" json:"ready"`
+	KubeletVer  string           `yaml:"kubeletVersion" json:"kubeletVersion"`
+	Labels      models.StringMap `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Annotations models.StringMap `yaml:"annotations,omitempty" json:"annotations,omitempty"`
+	LastSync    htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // HelmReleaseInfo captures minimal status for a Helm release managed by the system.

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path"
 
-	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -268,8 +267,8 @@ func (ki *kubeadmInstaller) createKubeletServiceDirSymlink() error {
 
 // verifySandboxConfigs overrides the base implementation to verify kubeadm config files
 // exist at their expected non-standard paths after Install() and Configure() have been called.
-func (ki *kubeadmInstaller) verifySandboxConfigs() (automa.StateBag, error) {
-	meta := &automa.SyncStateBag{}
+func (ki *kubeadmInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
 	requiredConfigs := map[string]string{
 		"kubeadmConfigPath": ki.getKubeadmConfPath(),       // {sandboxDir}/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf
 		"kubeadmInitPath":   ki.getKubeadmInitConfigPath(), // {sandboxDir}/etc/weaver/kubeadm-init.yaml
@@ -284,7 +283,7 @@ func (ki *kubeadmInstaller) verifySandboxConfigs() (automa.StateBag, error) {
 			return nil, NewFileNotFoundError(p)
 		}
 
-		meta.Set(automa.Key(k), p)
+		meta.Set(k, p)
 	}
 
 	return meta, nil

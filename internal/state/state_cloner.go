@@ -2,13 +2,11 @@
 
 package state
 
-import (
-	"github.com/automa-saga/automa"
-)
+import "github.com/hashgraph/solo-weaver/pkg/models"
 
 // Clone creates a deep copy of SoftwareState
 func (s *SoftwareState) Clone() (*SoftwareState, error) {
-	var meta automa.StateBag
+	var meta models.StringMap
 	var err error
 	if s.Metadata != nil {
 		meta, err = s.Metadata.Clone()
@@ -27,7 +25,7 @@ func (s *SoftwareState) Clone() (*SoftwareState, error) {
 }
 
 func (s *HardwareState) Clone() (*HardwareState, error) {
-	var meta automa.StateBag
+	var meta models.StringMap
 	var err error
 	if s.Metadata != nil {
 		meta, err = s.Metadata.Clone()

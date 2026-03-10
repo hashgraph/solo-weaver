@@ -7,7 +7,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -195,8 +194,8 @@ func (ki *kubeletInstaller) createSystemdSymlink() error {
 
 // verifySandboxConfigs verifies that kubelet config files exist, are correctly patched,
 // and that the systemd symlink is in place.
-func (ki *kubeletInstaller) verifySandboxConfigs() (automa.StateBag, error) {
-	meta := &automa.SyncStateBag{}
+func (ki *kubeletInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
 
 	// 1. Verify the kubelet.service file exists in the sandbox
 	kubeletServicePath := ki.getKubeletServicePath()

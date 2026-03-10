@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/tomlx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -710,8 +709,8 @@ func (ci *crioInstaller) verifySandboxBinaries() error {
 	return nil
 }
 
-func (ci *crioInstaller) verifySandboxConfigs() (automa.StateBag, error) {
-	meta := &automa.SyncStateBag{}
+func (ci *crioInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
 	sandboxDir := models.Paths().SandboxDir
 
 	requiredConfigs := map[string]string{
@@ -731,7 +730,7 @@ func (ci *crioInstaller) verifySandboxConfigs() (automa.StateBag, error) {
 			return nil, NewFileNotFoundError(p)
 		}
 
-		meta.Set(automa.Key(k), p)
+		meta.Set(k, p)
 	}
 
 	// TODO add content verification for the configuration files similar to the integration tests

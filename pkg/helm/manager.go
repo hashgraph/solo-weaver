@@ -194,9 +194,6 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		o.Labels = map[string]string{}
 	}
 
-	if o.Labels["solo-provisioner.hedera.com/chart-ref"] == "" {
-		o.Labels["solo-provisioner.hedera.com/chart-ref"] = chartRef
-	}
 	installClient.Labels = o.Labels
 
 	registryClient, err := newRegistryClient(settings)

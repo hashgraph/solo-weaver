@@ -5,7 +5,6 @@ package software
 import (
 	"path"
 
-	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -128,8 +127,8 @@ func (ci *ciliumInstaller) createCiliumConfigFile() error {
 
 // verifySandboxConfigs overrides the base implementation to verify the cilium-config.yaml
 // file exists at the expected path in the sandbox after Configure() has been called.
-func (ci *ciliumInstaller) verifySandboxConfigs() (automa.StateBag, error) {
-	meta := &automa.SyncStateBag{}
+func (ci *ciliumInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
 	configPath := ci.getCiliumConfigPath()
 
 	_, exists, err := ci.fileManager.PathExists(configPath)
