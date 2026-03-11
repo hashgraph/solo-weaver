@@ -123,8 +123,8 @@ func (b *BlockNodeStorage) Validate() error {
 
 	if strings.TrimSpace(b.ArchivePath) != "" &&
 		strings.TrimSpace(b.LivePath) != "" &&
-		strings.TrimSpace(b.LogPath) != "" &&
-		strings.TrimSpace(b.VerificationPath) != "" {
+		strings.TrimSpace(b.LogPath) != "" {
+		// TODO Add verification for other fields based on migration requirements
 		return nil
 	}
 
