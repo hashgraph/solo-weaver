@@ -23,18 +23,18 @@ import (
 // prevents version downgrade.
 type UpgradeHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeResolver
+	runtimeState rsl.BlockNodeRuntimeResolver
 }
 
-func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *UpgradeHandler {
-	return &UpgradeHandler{BaseHandler: base, runtimeState: runtimeState}
+func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
+	return &UpgradeHandler{BaseHandler: base, runtimeState: runtimeState}, nil
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
 // Chart immutability and semver constraints are enforced inside BuildWorkflow so that all
 // precondition errors are reported together after resolution succeeds.
 func (h *UpgradeHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
 	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
@@ -46,7 +46,7 @@ func (h *UpgradeHandler) PrepareEffectiveInputs(
 //   - Version cannot be downgraded.
 func (h *UpgradeHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
@@ -100,7 +100,5 @@ func (h *UpgradeHandler) HandleIntent(
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, func(st *state.State) error {
-		return injectChartRef(inputs.Custom, &st.BlockNodeState)
-	})
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
 }

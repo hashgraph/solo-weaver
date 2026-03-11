@@ -29,13 +29,13 @@ type IntentHandler[I any] interface {
 	// three sources (config default, current deployed state, user input) and
 	// applies all field-level validators (immutability, override guards, etc.).
 	// The returned inputs are fully resolved and safe to pass to BuildWorkflow.
-	PrepareEffectiveInputs(inputs *models.UserInputs[I]) (*models.UserInputs[I], error)
+	PrepareEffectiveInputs(inputs models.UserInputs[I]) (*models.UserInputs[I], error)
 
 	// BuildWorkflow validates action-level preconditions (e.g. "must be deployed
 	// before upgrade") and returns the ready-to-execute WorkflowBuilder.
 	BuildWorkflow(
 		currentState state.State,
-		inputs *models.UserInputs[I],
+		inputs models.UserInputs[I],
 	) (*automa.WorkflowBuilder, error)
 
 	// HandleIntent is the one-stop shop for handling an intent end-to-end.  It calls

@@ -81,7 +81,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[T],
 	ac IntentHandler[T],
-	callback func(full *state.State) error, // optional callback for applying additional mutations to the full state
+	callback func(full *state.State, effInputs models.UserInputs[T]) error, // optional callback for applying additional mutations to the full state
 ) (*automa.Report, error) {
 	// ── 1. Validate intent and inputs ───────────────────────────────────────────────
 	err := h.ValidateIntent(intent, inputs, models.TargetBlockNode)
@@ -97,12 +97,12 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
-	effectiveInputs, err := ac.PrepareEffectiveInputs(&inputs)
+	effectiveInputs, err := ac.PrepareEffectiveInputs(inputs)
 	if err != nil {
 		return nil, err
 	}
 
-	wb, err := ac.BuildWorkflow(currentState, effectiveInputs)
+	wb, err := ac.BuildWorkflow(currentState, *effectiveInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (h *BaseHandler[T]) FlushState(
 	report *automa.Report,
 	intent models.Intent,
 	effectiveInputs *models.UserInputs[T],
-	callback func(full *state.State) error,
+	callback func(full *state.State, effInputs models.UserInputs[T]) error,
 ) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
@@ -154,9 +154,11 @@ func (h *BaseHandler[T]) FlushState(
 	}
 
 	if callback != nil {
-		if err := callback(&fullState); err != nil {
+		logx.As().Debug().Msg("Applying callback mutations to full state before flush")
+		if err := callback(&fullState, *effectiveInputs); err != nil {
 			return nil, errorx.IllegalState.New("failed to patch state after workflow execution: %v", err)
 		}
+		logx.As().Debug().Any("fullState", fullState).Msg("State after applying callback mutations")
 	}
 
 	// flush state and action history

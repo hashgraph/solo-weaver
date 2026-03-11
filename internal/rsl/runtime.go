@@ -18,9 +18,9 @@ import (
 // into every layer that needs it, eliminating package-level singletons.
 type RuntimeResolver struct {
 	sm               state.Manager
-	BlockNodeRuntime *BlockNodeRuntimeResolver
-	ClusterRuntime   *ClusterRuntimeResolver
-	MachineRuntime   *MachineRuntimeResolver
+	BlockNodeRuntime Resolver[state.BlockNodeState, models.BlockNodeInputs]
+	ClusterRuntime   Resolver[state.ClusterState, models.ClusterInputs]
+	MachineRuntime   Resolver[state.MachineState, models.MachineInputs]
 }
 
 // NewRuntimeResolver creates a RuntimeResolver by constructing each runtime from the supplied

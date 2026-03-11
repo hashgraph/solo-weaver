@@ -3,6 +3,7 @@
 package rsl
 
 import (
+	"context"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
@@ -24,15 +25,12 @@ func NewMachineRuntimeResolver(
 	clusterState state.MachineState,
 	realityChecker reality.Checker[state.MachineState],
 	refreshInterval time.Duration,
-) (*MachineRuntimeResolver, error) {
+) (Resolver[state.MachineState, models.MachineInputs], error) {
 	rb, err := NewRuntimeBase[state.MachineState, models.MachineInputs](
 		cfg,
 		clusterState,
 		refreshInterval,
 		realityChecker,
-		func(s *state.MachineState) htime.Time { return s.LastSync },
-		func(s *state.MachineState) (*state.MachineState, error) { return s.Clone() },
-		func() state.MachineState { return state.MachineState{} },
 	)
 
 	if err != nil {
@@ -42,4 +40,42 @@ func NewMachineRuntimeResolver(
 	return &MachineRuntimeResolver{
 		Base: rb,
 	}, nil
+}
+
+// RefreshState refreshes the current machine state from the reality checker, using the
+// concrete MachineState.LastSync to apply refresh interval checks.
+func (m *MachineRuntimeResolver) RefreshState(ctx context.Context, force bool) error {
+	now := htime.Now()
+
+	if !force {
+		m.mu.Lock()
+		if m.state != nil {
+			if now.Sub(m.state.LastSync) < m.refreshInterval {
+				m.mu.Unlock()
+				return nil
+			}
+		}
+		m.mu.Unlock()
+	}
+
+	st, err := m.realityChecker.RefreshState(ctx)
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.state = &st
+	return nil
+}
+
+func (m *MachineRuntimeResolver) CurrentState() (state.MachineState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.state == nil {
+		return state.NewMachineState(), errorx.IllegalState.New("machine state is not initialized")
+	}
+
+	return *m.state, nil
 }

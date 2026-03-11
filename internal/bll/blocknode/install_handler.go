@@ -22,15 +22,15 @@ import (
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtime *rsl.BlockNodeRuntimeResolver
+	runtime rsl.BlockNodeRuntimeResolver
 	sm      state.Manager
 }
 
 func NewInstallHandler(
 	base bll.BaseHandler[models.BlockNodeInputs],
-	runtime *rsl.BlockNodeRuntimeResolver,
-	sm state.Manager) *InstallHandler {
-	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}
+	runtime rsl.BlockNodeRuntimeResolver,
+	sm state.Manager) (*InstallHandler, error) {
+	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}, nil
 }
 
 // PrepareEffectiveInputs resolves the winning value for every block-node field.
@@ -39,7 +39,7 @@ func NewInstallHandler(
 // deployed state already owns that field and --force is set — preventing silent
 // overwrites during a plain install.
 func (h *InstallHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
 	return resolveBlocknodeEffectiveInputs(h.runtime, inputs, nil)
 }
@@ -49,7 +49,7 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 // included; otherwise the full cluster bootstrap is prepended.
 func (h *InstallHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
 	if currentState.BlockNodeState.ReleaseInfo.Status == release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
@@ -80,7 +80,5 @@ func (h *InstallHandler) HandleIntent(
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, func(st *state.State) error {
-		return injectChartRef(inputs.Custom, &st.BlockNodeState)
-	})
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
 }

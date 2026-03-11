@@ -1,9 +1,11 @@
 package rsl
 
 import (
+	"context"
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -44,203 +46,243 @@ type BlockNodeRuntimeResolver struct {
 	intent *models.Intent
 }
 
-func (br *BlockNodeRuntimeResolver) Namespace() (*automa.EffectiveValue[string], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if br.state.ReleaseInfo.Namespace == "" {
+func (b *BlockNodeRuntimeResolver) Namespace() (*automa.EffectiveValue[string], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if b.state.ReleaseInfo.Namespace == "" {
 			return nil, errorx.IllegalState.
 				New("block node runtime state is inconsistent: deployed release cannot have empty namespace")
 		}
 
 		return automa.NewEffective[string](
-			br.state.ReleaseInfo.Namespace,
+			b.state.ReleaseInfo.Namespace,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil && br.inputs.Namespace != "" {
+	if b.inputs != nil && b.inputs.Namespace != "" {
 		return automa.NewEffective[string](
-			br.inputs.Namespace,
+			b.inputs.Namespace,
 			automa.StrategyUserInput,
 		)
 	}
 
 	return automa.NewEffective[string](
-		br.cfg.BlockNode.Namespace,
+		b.cfg.BlockNode.Namespace,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if err := br.state.Storage.Validate(); err != nil {
+func (b *BlockNodeRuntimeResolver) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if err := b.state.Storage.Validate(); err != nil {
 			return nil, errorx.IllegalState.
 				Wrap(err, "block node runtime state is inconsistent")
 		}
 
 		return automa.NewEffective[models.BlockNodeStorage](
-			br.state.Storage,
+			b.state.Storage,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil {
-		if err := br.state.Storage.Validate(); err == nil {
+	if b.inputs != nil {
+		if err := b.state.Storage.Validate(); err == nil {
 			return automa.NewEffective[models.BlockNodeStorage](
-				br.inputs.Storage,
+				b.inputs.Storage,
 				automa.StrategyUserInput,
 			)
 		}
 	}
 
 	return automa.NewEffective[models.BlockNodeStorage](
-		br.cfg.BlockNode.Storage,
+		b.cfg.BlockNode.Storage,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) Version() (*automa.EffectiveValue[string], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if br.state.ReleaseInfo.Version == "" {
+func (b *BlockNodeRuntimeResolver) Version() (*automa.EffectiveValue[string], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if b.state.ReleaseInfo.Version == "" {
 			return nil, errorx.IllegalState.
 				New("block node runtime state is inconsistent: deployed release cannot have empty version")
 		}
 
 		return automa.NewEffective[string](
-			br.state.ReleaseInfo.Version,
+			b.state.ReleaseInfo.Version,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil && br.inputs.Version != "" {
+	if b.inputs != nil && b.inputs.Version != "" {
 		return automa.NewEffective[string](
-			br.inputs.Version,
+			b.inputs.Version,
 			automa.StrategyUserInput,
 		)
 	}
 
 	return automa.NewEffective[string](
-		br.cfg.BlockNode.Version,
+		b.cfg.BlockNode.Version,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) ReleaseName() (*automa.EffectiveValue[string], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if br.state.ReleaseInfo.Name == "" {
+func (b *BlockNodeRuntimeResolver) ReleaseName() (*automa.EffectiveValue[string], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if b.state.ReleaseInfo.Name == "" {
 			return nil, errorx.IllegalState.
 				New("block node runtime state is inconsistent: deployed release cannot have empty release name")
 		}
 
 		return automa.NewEffective[string](
-			br.state.ReleaseInfo.Name,
+			b.state.ReleaseInfo.Name,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil && br.inputs.Release != "" {
+	if b.inputs != nil && b.inputs.Release != "" {
 		return automa.NewEffective[string](
-			br.inputs.Release,
+			b.inputs.Release,
 			automa.StrategyUserInput,
 		)
 	}
 
 	return automa.NewEffective[string](
-		br.cfg.BlockNode.Release,
+		b.cfg.BlockNode.Release,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) ChartName() (*automa.EffectiveValue[string], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if br.state.ReleaseInfo.ChartName == "" {
+func (b *BlockNodeRuntimeResolver) ChartName() (*automa.EffectiveValue[string], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if b.state.ReleaseInfo.ChartName == "" {
 			return nil, errorx.IllegalState.
 				New("block node runtime state is inconsistent: deployed release cannot have empty chart name")
 		}
 
 		return automa.NewEffective[string](
-			br.state.ReleaseInfo.ChartName,
+			b.state.ReleaseInfo.ChartName,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil && br.inputs.ChartName != "" {
+	if b.inputs != nil && b.inputs.ChartName != "" {
 		return automa.NewEffective[string](
-			br.inputs.ChartName,
+			b.inputs.ChartName,
 			automa.StrategyUserInput,
 		)
 	}
 
 	return automa.NewEffective[string](
-		br.cfg.BlockNode.ChartName,
+		b.cfg.BlockNode.ChartName,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) ChartRef() (*automa.EffectiveValue[string], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if br.state.ReleaseInfo.ChartRef == "" {
-			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty chart ref")
+func (b *BlockNodeRuntimeResolver) ChartRef() (*automa.EffectiveValue[string], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if b.state.ReleaseInfo.ChartRef == "" {
+			logx.As().Warn().Any("releaseInfo", b.state.ReleaseInfo).
+				Msg("Block node runtime state is inconsistent: deployed release has empty chart ref; falling back to user input or config")
 		}
 
 		return automa.NewEffective[string](
-			br.state.ReleaseInfo.ChartRef,
+			b.state.ReleaseInfo.ChartRef,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil && br.inputs.Chart != "" {
+	if b.inputs != nil && b.inputs.Chart != "" {
 		return automa.NewEffective[string](
-			br.inputs.Chart,
+			b.inputs.Chart,
 			automa.StrategyUserInput,
 		)
 	}
 
 	return automa.NewEffective[string](
-		br.cfg.BlockNode.Chart,
+		b.cfg.BlockNode.Chart,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string], error) {
-	if br.state != nil && br.state.ReleaseInfo.Status == release.StatusDeployed {
-		if br.state.ReleaseInfo.ChartVersion == "" {
+func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string], error) {
+	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
+		if b.state.ReleaseInfo.ChartVersion == "" {
 			return nil, errorx.IllegalState.
 				New("block node runtime state is inconsistent: deployed release cannot have empty chart version")
 		}
 
 		return automa.NewEffective[string](
-			br.state.ReleaseInfo.ChartVersion,
+			b.state.ReleaseInfo.ChartVersion,
 			automa.StrategyCurrent,
 		)
 	}
 
-	if br.inputs != nil && br.inputs.ChartVersion != "" {
+	if b.inputs != nil && b.inputs.ChartVersion != "" {
 		return automa.NewEffective[string](
-			br.inputs.ChartVersion,
+			b.inputs.ChartVersion,
 			automa.StrategyUserInput,
 		)
 	}
 
 	return automa.NewEffective[string](
-		br.cfg.BlockNode.ChartVersion,
+		b.cfg.BlockNode.ChartVersion,
 		automa.StrategyConfig,
 	)
 }
 
-func (br *BlockNodeRuntimeResolver) WithUserInputs(inputs models.BlockNodeInputs) *BlockNodeRuntimeResolver {
-	br.inputs = &inputs
-	return br
+func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool) error {
+	var err error
+	var oldState *state.BlockNodeState
+	if b.state != nil {
+		oldState, err = b.state.Clone()
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to clone block node state for refresh")
+		}
+	}
+
+	now := htime.Now()
+	if !force {
+		b.mu.Lock()
+		if b.state != nil {
+			if now.Sub(b.state.LastSync) < b.refreshInterval {
+				b.mu.Unlock()
+				return nil
+			}
+		}
+		b.mu.Unlock()
+	}
+
+	// Fetch the latest state directly from the reality checker
+	st, err := b.realityChecker.RefreshState(ctx)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to refresh block node state")
+	}
+
+	// Replace the current state under lock.
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.state = &st
+
+	// Preserve ChartRef across refresh if it was not set in reality but exists in the old state.
+	if oldState != nil && b.state != nil {
+		if b.state.ReleaseInfo.Status == release.StatusDeployed && b.state.ReleaseInfo.ChartRef == "" && oldState.ReleaseInfo.ChartRef != "" {
+			b.state.ReleaseInfo.ChartRef = oldState.ReleaseInfo.ChartRef
+		}
+	}
+
+	return nil
+
 }
 
-func (br *BlockNodeRuntimeResolver) WithConfig(cfg models.Config) *BlockNodeRuntimeResolver {
-	br.cfg = &cfg
-	return br
-}
+func (b *BlockNodeRuntimeResolver) CurrentState() (state.BlockNodeState, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-func (br *BlockNodeRuntimeResolver) WithState(blockNodeState state.BlockNodeState) *BlockNodeRuntimeResolver {
-	br.state = &blockNodeState
-	return br
+	if b.state == nil {
+		return state.NewBlockNodeState(), errorx.IllegalState.New("cluster state is not initialized")
+	}
+
+	return *b.state, nil
 }
 
 func NewBlockNodeRuntimeResolver(
@@ -248,17 +290,12 @@ func NewBlockNodeRuntimeResolver(
 	blockNodeState state.BlockNodeState,
 	realityChecker reality.Checker[state.BlockNodeState],
 	refreshInterval time.Duration,
-) (*BlockNodeRuntimeResolver, error) {
+) (Resolver[state.BlockNodeState, models.BlockNodeInputs], error) {
 	rb, err := NewRuntimeBase[state.BlockNodeState, models.BlockNodeInputs](
 		cfg,
 		blockNodeState,
 		refreshInterval,
 		realityChecker,
-		// lastSyncFn extractor
-		func(s *state.BlockNodeState) htime.Time { return s.LastSync },
-		// cloneFn helper
-		func(s *state.BlockNodeState) (*state.BlockNodeState, error) { return s.Clone() },
-		func() state.BlockNodeState { return state.BlockNodeState{} }, // default state
 	)
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create block-node runtime")

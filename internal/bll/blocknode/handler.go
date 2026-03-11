@@ -44,11 +44,40 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
 	}
 
+	if runtime.BlockNodeRuntime == nil {
+		return nil, errorx.IllegalArgument.New("runtime.BlockNodeRuntime is nil")
+	}
+
+	bnr, ok := runtime.BlockNodeRuntime.(*rsl.BlockNodeRuntimeResolver)
+	if !ok {
+		return nil, errorx.IllegalArgument.New("expected BlockNodeRuntime to be *rsl.BlockNodeRuntimeResolver but got %T", runtime.BlockNodeRuntime)
+	}
+
+	installHandler, err := NewInstallHandler(base, *bnr, sm)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create InstallHandler: %v", err)
+	}
+
+	upgradeHandler, err := NewUpgradeHandler(base, *bnr)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create UpgradeHandler: %v", err)
+	}
+
+	resetHandler, err := NewResetHandler(base, *bnr)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create ResetHandler: %v", err)
+	}
+
+	uninstallHandler, err := NewUninstallHandler(base, *bnr)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create UninstallHandler: %v", err)
+	}
+
 	h := &HandlerRegistry{
-		install:   NewInstallHandler(base, runtime.BlockNodeRuntime, sm),
-		upgrade:   NewUpgradeHandler(base, runtime.BlockNodeRuntime),
-		reset:     NewResetHandler(base, runtime.BlockNodeRuntime),
-		uninstall: NewUninstallHandler(base, runtime.BlockNodeRuntime),
+		install:   installHandler,
+		upgrade:   upgradeHandler,
+		reset:     resetHandler,
+		uninstall: uninstallHandler,
 	}
 
 	return h, nil

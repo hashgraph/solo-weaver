@@ -19,17 +19,17 @@ import (
 // It optionally purges persistent storage before removing the Helm release.
 type UninstallHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtimeState *rsl.BlockNodeRuntimeResolver
+	runtimeState rsl.BlockNodeRuntimeResolver
 }
 
-func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) *UninstallHandler {
-	return &UninstallHandler{BaseHandler: base, runtimeState: runtimeState}
+func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState rsl.BlockNodeRuntimeResolver) (*UninstallHandler, error) {
+	return &UninstallHandler{BaseHandler: base, runtimeState: runtimeState}, nil
 }
 
 // PrepareEffectiveInputs for uninstall passes inputs through — no field
 // resolution is required since the goal is to remove the deployment.
 func (h *UninstallHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
 	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
 }
@@ -38,7 +38,7 @@ func (h *UninstallHandler) PrepareEffectiveInputs(
 // returns the uninstall workflow.
 func (h *UninstallHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
@@ -66,5 +66,5 @@ func (h *UninstallHandler) HandleIntent(
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, nil)
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
 }

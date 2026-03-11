@@ -10,30 +10,31 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-func injectChartRef(inputs models.BlockNodeInputs, st *state.BlockNodeState) error {
-	if inputs.Chart != "" {
-		logx.As().Debug().Str("chartRef", inputs.Chart).
-			Msg("Using user-supplied chart reference for block node")
-	}
+// injectChartRef is a resolver strategy that injects the user-supplied chart reference into the runtime state.
+func injectChartRef() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+		if effectiveInputs.Custom.Chart == "" {
+			logx.As().Debug().Msg("User did not provide a chart reference; skipping injection into runtime state")
+			return nil
+		}
 
-	st.ReleaseInfo.ChartRef = inputs.Chart
-	return nil
+		if effectiveInputs.Custom.Storage.BasePath != "" {
+			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
+			logx.As().Debug().Str("storageBasePath", effectiveInputs.Custom.Storage.BasePath).
+				Msg("Injected user-supplied storage base path into runtime state")
+		}
+
+		st.BlockNodeState.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
+		return nil
+	}
 }
 
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
 func resolveBlocknodeEffectiveInputs(
-	runtime *rsl.BlockNodeRuntimeResolver,
-	inputs *models.UserInputs[models.BlockNodeInputs],
+	runtime rsl.BlockNodeRuntimeResolver,
+	inputs models.UserInputs[models.BlockNodeInputs],
 	validator func(*models.UserInputs[models.BlockNodeInputs]) error,
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
-	if inputs == nil {
-		return nil, errorx.IllegalArgument.New("user inputs cannot be nil")
-	}
-
-	if runtime == nil {
-		return nil, errorx.IllegalArgument.New("block node runtime state cannot be nil")
-	}
-
 	// Set user inputs on the runtime state so they can be accessed by resolver strategies.
 	runtime.WithUserInputs(inputs.Custom)
 
