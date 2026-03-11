@@ -91,7 +91,11 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
+			var installedByThisStep bool
+			if v, ok := stp.State().Local().Bool(InstalledByThisStep); ok {
+				installedByThisStep = v
+			}
+
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CLI was not installed by this step, skipping rollback"))
 			}
@@ -154,7 +158,11 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
+			var configuredByThisStep bool
+			if v, ok := stp.State().Local().Bool(ConfiguredByThisStep); ok {
+				configuredByThisStep = v
+			}
+
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CLI was not configured by this step, skipping rollback"))
 			}
@@ -236,7 +244,10 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
+			var installedByThisStep bool
+			if v, ok := stp.State().Local().Bool(InstalledByThisStep); ok {
+				installedByThisStep = v
+			}
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CNI was not installed by this step, skipping rollback"))
 			}

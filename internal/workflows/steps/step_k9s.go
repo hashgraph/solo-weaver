@@ -89,7 +89,11 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
+			var installedByThisStep bool
+			if v, ok := stp.State().Local().Bool(InstalledByThisStep); ok {
+				installedByThisStep = v
+			}
+
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("K9s was not installed by this step, skipping rollback"))
 			}
@@ -152,7 +156,11 @@ func configureK9s(provider func(opts ...software.InstallerOption) (software.Soft
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
+			var configuredByThisStep bool
+			if v, ok := stp.State().Local().Bool(ConfiguredByThisStep); ok {
+				configuredByThisStep = v
+			}
+
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("K9s was not configured by this step, skipping rollback"))
 			}

@@ -87,7 +87,7 @@ func installPrometheusOperatorCRDs() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

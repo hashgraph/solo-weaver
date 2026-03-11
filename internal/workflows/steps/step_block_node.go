@@ -108,7 +108,7 @@ func createBlockNodeNamespace(getManager func() (*blocknode.Manager, error)) aut
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if !stp.State().Local().Bool(ConfiguredByThisStep) {
+			if v, _ := stp.State().Local().Bool(ConfiguredByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -156,7 +156,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(ConfiguredByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(ConfiguredByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -251,7 +251,7 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -510,7 +510,7 @@ func scaleDownBlockNode(getManager func() (*blocknode.Manager, error)) automa.Bu
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// On rollback, scale back up
-			if !stp.State().Local().Bool(ConfiguredByThisStep) {
+			if v, _ := stp.State().Local().Bool(ConfiguredByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -619,7 +619,7 @@ func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// On rollback, scale back down (though this is an unusual case)
-			if !stp.State().Local().Bool(ConfiguredByThisStep) {
+			if v, _ := stp.State().Local().Bool(ConfiguredByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

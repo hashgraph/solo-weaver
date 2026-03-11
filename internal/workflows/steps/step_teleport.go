@@ -10,11 +10,11 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -153,7 +153,11 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Local().Bool(InstalledByThisStep)
+			var installedByThisStep bool
+			if v, ok := stp.State().Local().Bool(InstalledByThisStep); ok {
+				installedByThisStep = v
+			}
+
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("teleport was not installed by this step, skipping rollback"))
 			}
@@ -214,7 +218,11 @@ func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Build
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Local().Bool(ConfiguredByThisStep)
+			var configuredByThisStep bool
+			if v, ok := stp.State().Local().Bool(ConfiguredByThisStep); ok {
+				configuredByThisStep = v
+			}
+
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("teleport was not configured by this step, skipping rollback"))
 			}
@@ -338,7 +346,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

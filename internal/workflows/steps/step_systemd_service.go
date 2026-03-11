@@ -75,8 +75,15 @@ func SetupSystemdService(serviceName string) *automa.StepBuilder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			serviceAlreadyEnabled := stp.State().Local().Bool(ServiceAlreadyEnabled)
-			serviceAlreadyRunning := stp.State().Local().Bool(ServiceAlreadyRunning)
+			var serviceAlreadyEnabled bool
+			if v, ok := stp.State().Local().Bool(ServiceAlreadyEnabled); ok {
+				serviceAlreadyEnabled = v
+			}
+
+			var serviceAlreadyRunning bool
+			if v, ok := stp.State().Local().Bool(ServiceAlreadyRunning); ok {
+				serviceAlreadyRunning = v
+			}
 
 			if serviceAlreadyEnabled && serviceAlreadyRunning {
 				return automa.SkippedReport(stp, automa.WithDetail("service was not modified by this step, skipping rollback"))
@@ -88,7 +95,11 @@ func SetupSystemdService(serviceName string) *automa.StepBuilder {
 					automa.WithError(err))
 			}
 
-			serviceStartedByThisStep := stp.State().Local().Bool(ServiceStartedByThisStep)
+			var serviceStartedByThisStep bool
+			if v, ok := stp.State().Local().Bool(ServiceStartedByThisStep); ok {
+				serviceStartedByThisStep = v
+			}
+
 			if serviceStartedByThisStep {
 				err = os.StopService(ctx, serviceName)
 				if err != nil {
@@ -96,7 +107,11 @@ func SetupSystemdService(serviceName string) *automa.StepBuilder {
 				}
 			}
 
-			serviceEnabledByThisStep := stp.State().Local().Bool(ServiceEnabledByThisStep)
+			var serviceEnabledByThisStep bool
+			if v, ok := stp.State().Local().Bool(ServiceEnabledByThisStep); ok {
+				serviceEnabledByThisStep = v
+			}
+
 			if serviceEnabledByThisStep {
 				err = os.DisableService(ctx, serviceName)
 				if err != nil {

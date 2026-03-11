@@ -98,8 +98,14 @@ func setupBindMount(name string, target string) automa.Builder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			alreadyMounted := stp.State().Local().Bool(KeyAlreadyMounted)
-			alreadyInFstab := stp.State().Local().Bool(KeyAlreadyInFstab)
+			var alreadyMounted, alreadyInFstab bool
+			if v, ok := stp.State().Local().Bool(KeyAlreadyMounted); ok {
+				alreadyMounted = v
+			}
+
+			if v, ok := stp.State().Local().Bool(KeyAlreadyInFstab); ok {
+				alreadyInFstab = v
+			}
 
 			if alreadyMounted && alreadyInFstab {
 				return automa.SkippedReport(stp, automa.WithDetail("bind mount was not modified by this step, skipping rollback"))

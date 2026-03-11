@@ -283,7 +283,7 @@ func installNodeExporter() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -470,7 +470,7 @@ func installAlloy() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -558,7 +558,7 @@ func deployAlloyConfig() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -567,7 +567,11 @@ func deployAlloyConfig() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			configMapManifestPath := stp.State().Local().String("configMapManifestPath")
+			var configMapManifestPath string
+			if v, ok := stp.State().Local().String("configMapManifestPath"); ok {
+				configMapManifestPath = v
+			}
+
 			if configMapManifestPath != "" {
 				err = k.DeleteManifest(ctx, configMapManifestPath)
 				if err != nil {
@@ -666,7 +670,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Local().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -676,13 +680,21 @@ func deployBlockNodeMonitoring() automa.Builder {
 			}
 
 			// Clean up ServiceMonitor if it was deployed
-			serviceMonitorPath := stp.State().Local().String("serviceMonitorPath")
+			var serviceMonitorPath string
+			if v, ok := stp.State().Local().String("serviceMonitorPath"); ok {
+				serviceMonitorPath = v
+			}
+
 			if serviceMonitorPath != "" {
 				_ = k.DeleteManifest(ctx, serviceMonitorPath) // Ignore error - may not exist
 			}
 
 			// Clean up PodLogs if it was deployed
-			podLogsPath := stp.State().Local().String("podLogsPath")
+			var podLogsPath string
+			if v, ok := stp.State().Local().String("podLogsPath"); ok {
+				podLogsPath = v
+			}
+
 			if podLogsPath != "" {
 				_ = k.DeleteManifest(ctx, podLogsPath) // Ignore error - may not exist
 			}
