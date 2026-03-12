@@ -69,7 +69,7 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledVersion, installedVersion)
-	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockConfig.Version)
+	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockConfig.ChartVersion)
 
 	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 	if err != nil {

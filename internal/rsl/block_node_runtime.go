@@ -2,6 +2,7 @@ package rsl
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -42,8 +43,46 @@ import (
 //   - The resolver relies on the runtime base for reality checking, last-sync extraction,
 //     cloning and default state construction.
 type BlockNodeRuntimeResolver struct {
-	*Base[state.BlockNodeState, models.BlockNodeInputs]
+	mu              sync.Mutex
+	cfg             *models.Config
+	state           *state.BlockNodeState
+	refreshInterval time.Duration
+	realityChecker  reality.Checker[state.BlockNodeState]
+
+	inputs *models.BlockNodeInputs
 	intent *models.Intent
+}
+
+func (b *BlockNodeRuntimeResolver) WithIntent(intent models.Intent) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.intent = &intent
+	return b
+}
+
+func (b *BlockNodeRuntimeResolver) WithUserInputs(inputs models.BlockNodeInputs) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.inputs = &inputs
+	return b
+}
+
+func (b *BlockNodeRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.cfg = &cfg
+	return b
+}
+
+func (b *BlockNodeRuntimeResolver) WithState(st state.BlockNodeState) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	b.state = &st
+	b.mu.Unlock()
+
+	return b
 }
 
 func (b *BlockNodeRuntimeResolver) Namespace() (*automa.EffectiveValue[string], error) {
@@ -96,32 +135,6 @@ func (b *BlockNodeRuntimeResolver) Storage() (*automa.EffectiveValue[models.Bloc
 
 	return automa.NewEffective[models.BlockNodeStorage](
 		b.cfg.BlockNode.Storage,
-		automa.StrategyConfig,
-	)
-}
-
-func (b *BlockNodeRuntimeResolver) Version() (*automa.EffectiveValue[string], error) {
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.Version == "" {
-			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty version")
-		}
-
-		return automa.NewEffective[string](
-			b.state.ReleaseInfo.Version,
-			automa.StrategyCurrent,
-		)
-	}
-
-	if b.inputs != nil && b.inputs.Version != "" {
-		return automa.NewEffective[string](
-			b.inputs.Version,
-			automa.StrategyUserInput,
-		)
-	}
-
-	return automa.NewEffective[string](
-		b.cfg.BlockNode.Version,
 		automa.StrategyConfig,
 	)
 }
@@ -204,7 +217,59 @@ func (b *BlockNodeRuntimeResolver) ChartRef() (*automa.EffectiveValue[string], e
 	)
 }
 
+// ChartVersion resolves the effective chart version for the block node based on the following precedence:
+// 1. If the current state indicates a deployed release and the intent is an upgrade, the resolver checks for a
+// user-provided chart version in the inputs. If provided, this takes precedence.
+// 2. If no user input is provided for the chart version during an upgrade intent, but the current deployed state has
+// a version, that version is used next.
+// 3. If neither of the above provide a chart version during an upgrade intent, the resolver falls back to the config
+// default.
+// 4. For non-upgrade intents, if the current state indicates a deployed release, the chart version from the deployed
+// state is used and cannot be overridden by user input or config.
+// 5. If there is no deployed release, but user input provides a chart version, that is used next.
+// 6. Finally, if none of the above sources provide a chart version, the resolver returns the config default.
+//
+// This resolution strategy ensures that during an upgrade, user input can specify a new chart version, but if not provided,
+// the system retains the currently deployed version. For non-upgrade actions, the deployed version is authoritative if
+// it exists, preventing unintended changes to the chart version.
 func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string], error) {
+	// During an upgrade intent, the effective chart version is determined with the following precedence:
+	// 1. User input: if the user provided a chart version in the inputs, that takes precedence.
+	// 2. Current state version: if the current deployed state has a version, use that next.
+	// 3. Config default: if neither of the above provide a version, fall back to the config default.
+	if b.intent == nil {
+		return nil, errorx.IllegalState.New("intent is not set in block node runtime resolver")
+	}
+
+	if b.intent.Action == models.ActionUpgrade {
+		if b.state == nil || b.state.ReleaseInfo.Status != release.StatusDeployed {
+			return nil, errorx.IllegalState.New(
+				"block node is not deployed; cannot perform upgrade").
+				WithProperty(models.ErrPropertyResolution,
+					"upgrade action requires a currently deployed block node release")
+		}
+
+		if b.inputs.ChartVersion != "" {
+			return automa.NewEffective[string](
+				b.inputs.ChartVersion,
+				automa.StrategyUserInput,
+			)
+		}
+
+		if b.state.ReleaseInfo.Version != "" {
+			return automa.NewEffective[string](
+				b.state.ReleaseInfo.Version,
+				automa.StrategyCurrent,
+			)
+		}
+
+		return automa.NewEffective[string](
+			b.cfg.BlockNode.ChartVersion,
+			automa.StrategyConfig,
+		)
+	}
+
+	// For non-upgrade intents, the chart version must come from the currently deployed release; user input and config cannot override it.
 	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
 		if b.state.ReleaseInfo.ChartVersion == "" {
 			return nil, errorx.IllegalState.
@@ -217,6 +282,7 @@ func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string
 		)
 	}
 
+	// If there is no deployed release, but user input provides a chart version, that is used next.
 	if b.inputs != nil && b.inputs.ChartVersion != "" {
 		return automa.NewEffective[string](
 			b.inputs.ChartVersion,
@@ -224,6 +290,7 @@ func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string
 		)
 	}
 
+	// Finally, if none of the above sources provide a chart version, the resolver returns the config default.
 	return automa.NewEffective[string](
 		b.cfg.BlockNode.ChartVersion,
 		automa.StrategyConfig,
@@ -274,11 +341,12 @@ func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool)
 	// Preserve ChartRef across refresh if it was not set in reality but exists in the old state.
 	if oldState != nil && b.state != nil {
 		if b.state.ReleaseInfo.Status == release.StatusDeployed && b.state.ReleaseInfo.ChartRef == "" && oldState.ReleaseInfo.ChartRef != "" {
+			logx.As().Debug().Msg("Preserving ChartRef from old state across refresh since reality checker did not provide it for deployed release")
 			b.state.ReleaseInfo.ChartRef = oldState.ReleaseInfo.ChartRef
 		}
 	}
 
-	logx.As().Debug().Any("state", b.state).Msg("Finished refreshing block node state using reality checker")
+	logx.As().Debug().Any("state", b.state).Msg("Refreshed block node state using reality checker")
 
 	return nil
 
@@ -302,18 +370,11 @@ func NewBlockNodeRuntimeResolver(
 	realityChecker reality.Checker[state.BlockNodeState],
 	refreshInterval time.Duration,
 ) (Resolver[state.BlockNodeState, models.BlockNodeInputs], error) {
-	rb, err := NewRuntimeBase[state.BlockNodeState, models.BlockNodeInputs](
-		cfg,
-		blockNodeState,
-		refreshInterval,
-		realityChecker,
-	)
-	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to create block-node runtime")
-	}
-
 	br := &BlockNodeRuntimeResolver{
-		Base: rb,
+		cfg:             &cfg,
+		state:           &blockNodeState,
+		realityChecker:  realityChecker,
+		refreshInterval: refreshInterval,
 	}
 
 	return br, nil

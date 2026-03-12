@@ -2,6 +2,7 @@ package rsl
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
@@ -12,31 +13,46 @@ import (
 )
 
 type ClusterRuntimeResolver struct {
-	*Base[state.ClusterState, models.ClusterInputs]
+	mu              sync.Mutex
+	cfg             *models.Config
+	state           *state.ClusterState
+	refreshInterval time.Duration
+	realityChecker  reality.Checker[state.ClusterState]
+
+	intent *models.Intent
+	inputs *models.ClusterInputs
 }
 
-// NewClusterRuntimeResolver creates a ClusterRuntime with the provided configuration, initial state,
-// reality checker, and refresh interval. The caller is responsible for retaining and injecting
-// the returned instance — no package-level singleton is used.
-func NewClusterRuntimeResolver(
-	cfg models.Config,
-	clusterState state.ClusterState,
-	realityChecker reality.Checker[state.ClusterState],
-	refreshInterval time.Duration,
-) (Resolver[state.ClusterState, models.ClusterInputs], error) {
-	rb, err := NewRuntimeBase[state.ClusterState, models.ClusterInputs](
-		cfg,
-		clusterState,
-		refreshInterval,
-		realityChecker,
-	)
-	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to create cluster runtime")
-	}
+func (c *ClusterRuntimeResolver) WithIntent(intent models.Intent) Resolver[state.ClusterState, models.ClusterInputs] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	return &ClusterRuntimeResolver{
-		Base: rb,
-	}, nil
+	c.intent = &intent
+	return c
+}
+
+func (c *ClusterRuntimeResolver) WithUserInputs(inputs models.ClusterInputs) Resolver[state.ClusterState, models.ClusterInputs] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.inputs = &inputs
+	return c
+}
+
+func (c *ClusterRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.ClusterState, models.ClusterInputs] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.cfg = &cfg
+	return c
+}
+
+func (c *ClusterRuntimeResolver) WithState(st state.ClusterState) Resolver[state.ClusterState, models.ClusterInputs] {
+	c.mu.Lock()
+	c.state = &st
+	c.mu.Unlock()
+
+	return c
 }
 
 // RefreshState refreshes the current state using the configured reality checker.
@@ -80,4 +96,21 @@ func (c *ClusterRuntimeResolver) CurrentState() (state.ClusterState, error) {
 	}
 
 	return *c.state, nil
+}
+
+// NewClusterRuntimeResolver creates a ClusterRuntime with the provided configuration, initial state,
+// reality checker, and refresh interval. The caller is responsible for retaining and injecting
+// the returned instance — no package-level singleton is used.
+func NewClusterRuntimeResolver(
+	cfg models.Config,
+	clusterState state.ClusterState,
+	realityChecker reality.Checker[state.ClusterState],
+	refreshInterval time.Duration,
+) (Resolver[state.ClusterState, models.ClusterInputs], error) {
+	return &ClusterRuntimeResolver{
+		cfg:             &cfg,
+		state:           &clusterState,
+		refreshInterval: refreshInterval,
+		realityChecker:  realityChecker,
+	}, nil
 }

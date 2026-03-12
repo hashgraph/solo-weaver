@@ -22,13 +22,13 @@ import (
 // then builds an install workflow that optionally bootstraps the cluster first.
 type InstallHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtime rsl.BlockNodeRuntimeResolver
+	runtime *rsl.BlockNodeRuntimeResolver
 	sm      state.Manager
 }
 
 func NewInstallHandler(
 	base bll.BaseHandler[models.BlockNodeInputs],
-	runtime rsl.BlockNodeRuntimeResolver,
+	runtime *rsl.BlockNodeRuntimeResolver,
 	sm state.Manager) (*InstallHandler, error) {
 	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}, nil
 }
@@ -39,9 +39,10 @@ func NewInstallHandler(
 // deployed state already owns that field and --force is set — preventing silent
 // overwrites during a plain install.
 func (h *InstallHandler) PrepareEffectiveInputs(
+	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
-	return resolveBlocknodeEffectiveInputs(h.runtime, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtime, intent, inputs, nil)
 }
 
 // BuildWorkflow validates install preconditions and returns the workflow.
@@ -54,7 +55,7 @@ func (h *InstallHandler) BuildWorkflow(
 	if currentState.BlockNodeState.ReleaseInfo.Status == release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is already installed; cannot install again").
-			WithProperty(bll.ErrPropertyResolution,
+			WithProperty(models.ErrPropertyResolution,
 				"use 'weaver block node reset' or 'weaver block node upgrade', or pass --force to continue")
 	}
 

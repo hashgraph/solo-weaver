@@ -27,7 +27,6 @@ type CommonInputs struct {
 
 type BlockNodeInputs struct {
 	Profile            string
-	Version            string
 	Namespace          string
 	Release            string // Helm release name
 	Chart              string // Helm chart reference: OCI, URL, or repo/chart
@@ -108,13 +107,6 @@ func (c *BlockNodeInputs) Validate() error {
 		// check profile must be one of AllProfiles()
 		if sanity.Contains[string](c.Profile, AllProfiles()) == false {
 			return errorx.IllegalArgument.New("invalid profile: %s", c.Profile)
-		}
-	}
-
-	// Validate version if provided (semantic version)
-	if c.Version != "" {
-		if err := sanity.ValidateVersion(c.Version); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid version: %s", c.Version)
 		}
 	}
 

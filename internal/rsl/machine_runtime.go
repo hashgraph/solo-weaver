@@ -4,6 +4,7 @@ package rsl
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
@@ -14,32 +15,46 @@ import (
 )
 
 type MachineRuntimeResolver struct {
-	*Base[state.MachineState, models.MachineInputs]
+	mu              sync.Mutex
+	cfg             *models.Config
+	state           *state.MachineState
+	refreshInterval time.Duration
+	realityChecker  reality.Checker[state.MachineState]
+
+	intent *models.Intent
+	inputs *models.MachineInputs
 }
 
-// NewMachineRuntimeResolver creates a MachineRuntimeResolver with the provided configuration, initial state,
-// reality checker, and refresh interval. The caller is responsible for retaining and injecting
-// the returned instance — no package-level singleton is used.
-func NewMachineRuntimeResolver(
-	cfg models.Config,
-	clusterState state.MachineState,
-	realityChecker reality.Checker[state.MachineState],
-	refreshInterval time.Duration,
-) (Resolver[state.MachineState, models.MachineInputs], error) {
-	rb, err := NewRuntimeBase[state.MachineState, models.MachineInputs](
-		cfg,
-		clusterState,
-		refreshInterval,
-		realityChecker,
-	)
+func (c *MachineRuntimeResolver) WithIntent(intent models.Intent) Resolver[state.MachineState, models.MachineInputs] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to create machine runtime")
-	}
+	c.intent = &intent
+	return c
+}
 
-	return &MachineRuntimeResolver{
-		Base: rb,
-	}, nil
+func (c *MachineRuntimeResolver) WithUserInputs(inputs models.MachineInputs) Resolver[state.MachineState, models.MachineInputs] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.inputs = &inputs
+	return c
+}
+
+func (c *MachineRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.MachineState, models.MachineInputs] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.cfg = &cfg
+	return c
+}
+
+func (c *MachineRuntimeResolver) WithState(st state.MachineState) Resolver[state.MachineState, models.MachineInputs] {
+	c.mu.Lock()
+	c.state = &st
+	c.mu.Unlock()
+
+	return c
 }
 
 // RefreshState refreshes the current machine state from the reality checker, using the
@@ -78,4 +93,21 @@ func (m *MachineRuntimeResolver) CurrentState() (state.MachineState, error) {
 	}
 
 	return *m.state, nil
+}
+
+// NewMachineRuntimeResolver creates a MachineRuntimeResolver with the provided configuration, initial state,
+// reality checker, and refresh interval. The caller is responsible for retaining and injecting
+// the returned instance — no package-level singleton is used.
+func NewMachineRuntimeResolver(
+	cfg models.Config,
+	clusterState state.MachineState,
+	realityChecker reality.Checker[state.MachineState],
+	refreshInterval time.Duration,
+) (Resolver[state.MachineState, models.MachineInputs], error) {
+	return &MachineRuntimeResolver{
+		cfg:             &cfg,
+		state:           &clusterState,
+		realityChecker:  realityChecker,
+		refreshInterval: refreshInterval,
+	}, nil
 }

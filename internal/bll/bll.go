@@ -29,7 +29,7 @@ type IntentHandler[I any] interface {
 	// three sources (config default, current deployed state, user input) and
 	// applies all field-level validators (immutability, override guards, etc.).
 	// The returned inputs are fully resolved and safe to pass to BuildWorkflow.
-	PrepareEffectiveInputs(inputs models.UserInputs[I]) (*models.UserInputs[I], error)
+	PrepareEffectiveInputs(intent models.Intent, inputs models.UserInputs[I]) (*models.UserInputs[I], error)
 
 	// BuildWorkflow validates action-level preconditions (e.g. "must be deployed
 	// before upgrade") and returns the ready-to-execute WorkflowBuilder.

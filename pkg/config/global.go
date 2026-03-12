@@ -20,10 +20,10 @@ var globalConfig = models.Config{
 		FileLogging:    false,
 	},
 	BlockNode: models.BlockNodeConfig{
-		Namespace: deps.BLOCK_NODE_NAMESPACE,
-		Release:   deps.BLOCK_NODE_RELEASE,
-		Chart:     deps.BLOCK_NODE_CHART,
-		Version:   deps.BLOCK_NODE_VERSION,
+		Namespace:    deps.BLOCK_NODE_NAMESPACE,
+		Release:      deps.BLOCK_NODE_RELEASE,
+		Chart:        deps.BLOCK_NODE_CHART,
+		ChartVersion: deps.BLOCK_NODE_VERSION,
 		Storage: models.BlockNodeStorage{
 			BasePath:    deps.BLOCK_NODE_STORAGE_BASE_PATH,
 			ArchivePath: "",
@@ -109,8 +109,8 @@ func OverrideBlockNodeConfig(overrides models.BlockNodeConfig) {
 	if overrides.Chart != "" {
 		globalConfig.BlockNode.Chart = overrides.Chart
 	}
-	if overrides.Version != "" {
-		globalConfig.BlockNode.Version = overrides.Version
+	if overrides.ChartVersion != "" {
+		globalConfig.BlockNode.ChartVersion = overrides.ChartVersion
 	}
 	if overrides.Storage.BasePath != "" {
 		globalConfig.BlockNode.Storage.BasePath = overrides.Storage.BasePath

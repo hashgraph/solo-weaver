@@ -19,19 +19,20 @@ import (
 // It optionally purges persistent storage before removing the Helm release.
 type UninstallHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtimeState rsl.BlockNodeRuntimeResolver
+	runtime *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState rsl.BlockNodeRuntimeResolver) (*UninstallHandler, error) {
-	return &UninstallHandler{BaseHandler: base, runtimeState: runtimeState}, nil
+func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*UninstallHandler, error) {
+	return &UninstallHandler{BaseHandler: base, runtime: runtimeState}, nil
 }
 
 // PrepareEffectiveInputs for uninstall passes inputs through — no field
 // resolution is required since the goal is to remove the deployment.
 func (h *UninstallHandler) PrepareEffectiveInputs(
+	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
-	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtime, intent, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed (unless --force) and
@@ -43,7 +44,7 @@ func (h *UninstallHandler) BuildWorkflow(
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot uninstall").
-			WithProperty(bll.ErrPropertyResolution,
+			WithProperty(models.ErrPropertyResolution,
 				"use 'weaver block node install' to install the block node, or pass --force to continue")
 	}
 

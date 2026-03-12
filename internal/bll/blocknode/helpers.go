@@ -36,12 +36,13 @@ func injectChartRef() func(st *state.State, effectiveInputs models.UserInputs[mo
 
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
 func resolveBlocknodeEffectiveInputs(
-	runtime rsl.BlockNodeRuntimeResolver,
+	runtime *rsl.BlockNodeRuntimeResolver,
+	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 	validator func(*models.UserInputs[models.BlockNodeInputs]) error,
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
 	// Set user inputs on the runtime state so they can be accessed by resolver strategies.
-	runtime.WithUserInputs(inputs.Custom)
+	runtime.WithIntent(intent).WithUserInputs(inputs.Custom)
 
 	effReleaseName, err := runtime.ReleaseName()
 	if err != nil {
@@ -50,14 +51,6 @@ func resolveBlocknodeEffectiveInputs(
 	logx.As().Debug().Str("releaseName", effReleaseName.Get().Val()).
 		Str("strategy", effReleaseName.Strategy().String()).
 		Msg("Determined effective block node release name")
-
-	effVersion, err := runtime.Version()
-	if err != nil {
-		return nil, errorx.IllegalState.New("failed to resolve block node version: %v", err)
-	}
-	logx.As().Debug().Str("version", effVersion.Get().Val()).
-		Str("strategy", effVersion.Strategy().String()).
-		Msg("Determined effective block node version")
 
 	effNamespace, err := runtime.Namespace()
 	if err != nil {
@@ -107,7 +100,6 @@ func resolveBlocknodeEffectiveInputs(
 			// Resolved via resolver
 			Profile:      inputs.Custom.Profile,
 			Release:      effReleaseName.Get().Val(),
-			Version:      effVersion.Get().Val(),
 			Namespace:    effNamespace.Get().Val(),
 			ChartName:    effChartName.Get().Val(),
 			Chart:        effChartRepo.Get().Val(),

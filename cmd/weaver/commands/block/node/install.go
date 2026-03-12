@@ -63,10 +63,10 @@ func init() {
 // This allows flags to take precedence over config file values.
 func applyConfigOverrides() {
 	overrides := models.BlockNodeConfig{
-		Namespace: flagNamespace,
-		Release:   flagReleaseName,
-		Chart:     flagChartRepo,
-		Version:   flagChartVersion,
+		Namespace:    flagNamespace,
+		Release:      flagReleaseName,
+		Chart:        flagChartRepo,
+		ChartVersion: flagChartVersion,
 		Storage: models.BlockNodeStorage{
 			BasePath:         flagBasePath,
 			ArchivePath:      flagArchivePath,

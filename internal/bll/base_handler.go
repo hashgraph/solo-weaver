@@ -97,7 +97,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
-	effectiveInputs, err := ac.PrepareEffectiveInputs(inputs)
+	effectiveInputs, err := ac.PrepareEffectiveInputs(intent, inputs)
 	if err != nil {
 		return nil, err
 	}

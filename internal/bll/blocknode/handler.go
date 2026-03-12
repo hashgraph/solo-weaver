@@ -53,22 +53,22 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("expected BlockNodeRuntime to be *rsl.BlockNodeRuntimeResolver but got %T", runtime.BlockNodeRuntime)
 	}
 
-	installHandler, err := NewInstallHandler(base, *bnr, sm)
+	installHandler, err := NewInstallHandler(base, bnr, sm)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create InstallHandler: %v", err)
 	}
 
-	upgradeHandler, err := NewUpgradeHandler(base, *bnr)
+	upgradeHandler, err := NewUpgradeHandler(base, bnr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create UpgradeHandler: %v", err)
 	}
 
-	resetHandler, err := NewResetHandler(base, *bnr)
+	resetHandler, err := NewResetHandler(base, bnr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create ResetHandler: %v", err)
 	}
 
-	uninstallHandler, err := NewUninstallHandler(base, *bnr)
+	uninstallHandler, err := NewUninstallHandler(base, bnr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create UninstallHandler: %v", err)
 	}

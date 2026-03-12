@@ -150,9 +150,8 @@ type BlockNodeConfig struct {
 	Namespace    string           `yaml:"namespace" json:"namespace"`
 	Release      string           `yaml:"release" json:"release"`
 	Chart        string           `yaml:"chart" json:"chart"`
+	ChartVersion string           `yaml:"version" json:"version"`
 	ChartName    string           `yaml:"chartName" json:"chartName"`
-	ChartVersion string           `yaml:"chartVersion" json:"chartVersion"`
-	Version      string           `yaml:"version" json:"version"`
 	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
 
@@ -204,13 +203,6 @@ func (c *BlockNodeConfig) Validate() error {
 	if c.Chart != "" {
 		if err := sanity.ValidateChartReference(c.Chart); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid chart reference: %s", c.Chart)
-		}
-	}
-
-	// Validate version if provided (semantic version)
-	if c.Version != "" {
-		if err := sanity.ValidateVersion(c.Version); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid version: %s", c.Version)
 		}
 	}
 

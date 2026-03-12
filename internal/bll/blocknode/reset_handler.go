@@ -21,20 +21,21 @@ import (
 // effective values from the current state are used as-is).
 type ResetHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtimeState rsl.BlockNodeRuntimeResolver
+	runtime *rsl.BlockNodeRuntimeResolver
 }
 
-func NewResetHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState rsl.BlockNodeRuntimeResolver) (*ResetHandler, error) {
-	return &ResetHandler{BaseHandler: base, runtimeState: runtimeState}, nil
+func NewResetHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*ResetHandler, error) {
+	return &ResetHandler{BaseHandler: base, runtime: runtimeState}, nil
 }
 
 // PrepareEffectiveInputs for reset simply passes inputs through unchanged.
 // All field values are taken from the current state — no resolution is needed.
 func (h *ResetHandler) PrepareEffectiveInputs(
+	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
 	// reset has no special validation; pass nil validator
-	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtime, intent, inputs, nil)
 }
 
 // BuildWorkflow validates that the block node is deployed and returns the
@@ -46,7 +47,8 @@ func (h *ResetHandler) BuildWorkflow(
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot reset").
-			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
+			WithProperty(models.ErrPropertyResolution, "use 'weaver block node install' to install the "+
+				"block node first, or pass --force to continue")
 	}
 
 	wb := automa.NewWorkflowBuilder().WithId("block-node-reset").

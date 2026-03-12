@@ -162,6 +162,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 		inputs.Custom.Storage.BasePath = config.Get().BlockNode.Storage.BasePath
 	}
 
+	logx.As().Info().Any("inputs", inputs).Msg("User inputs for block node operation")
 	if err := inputs.Validate(); err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "invalid user inputs")
 	}

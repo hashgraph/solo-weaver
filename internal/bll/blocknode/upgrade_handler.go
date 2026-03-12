@@ -23,20 +23,21 @@ import (
 // prevents version downgrade.
 type UpgradeHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
-	runtimeState rsl.BlockNodeRuntimeResolver
+	runtime *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
-	return &UpgradeHandler{BaseHandler: base, runtimeState: runtimeState}, nil
+func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
+	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState}, nil
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
 // Chart immutability and semver constraints are enforced inside BuildWorkflow so that all
 // precondition errors are reported together after resolution succeeds.
 func (h *UpgradeHandler) PrepareEffectiveInputs(
+	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*models.UserInputs[models.BlockNodeInputs], error) {
-	return resolveBlocknodeEffectiveInputs(h.runtimeState, inputs, nil)
+	return resolveBlocknodeEffectiveInputs(h.runtime, intent, inputs, nil)
 }
 
 // BuildWorkflow validates upgrade preconditions and returns the workflow.
@@ -51,14 +52,14 @@ func (h *UpgradeHandler) BuildWorkflow(
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot upgrade").
-			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
+			WithProperty(models.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
 	}
 
 	if currentState.BlockNodeState.ReleaseInfo.ChartRef != inputs.Custom.Chart {
 		return nil, errorx.IllegalState.New(
 			"block node chart is already set to %q; chart cannot be changed during an upgrade",
 			currentState.BlockNodeState.ReleaseInfo.ChartRef).
-			WithProperty(bll.ErrPropertyResolution, "use 'weaver block node reset' then 'weaver block node install'")
+			WithProperty(models.ErrPropertyResolution, "use 'weaver block node reset' then 'weaver block node install'")
 	}
 
 	currentVer, err := semver.NewVersion(currentState.BlockNodeState.ReleaseInfo.Version)
@@ -66,10 +67,10 @@ func (h *UpgradeHandler) BuildWorkflow(
 		return nil, errorx.IllegalState.New(
 			"failed to parse current block node version %q: %v", currentState.BlockNodeState.ReleaseInfo.Version, err)
 	}
-	desiredVer, err := semver.NewVersion(inputs.Custom.Version)
+	desiredVer, err := semver.NewVersion(inputs.Custom.ChartVersion)
 	if err != nil {
 		return nil, errorx.IllegalState.New(
-			"failed to parse desired block node version %q: %v", inputs.Custom.Version, err)
+			"failed to parse desired block node version %q: %v", inputs.Custom.ChartVersion, err)
 	}
 	if desiredVer.LessThan(currentVer) {
 		return nil, errorx.IllegalArgument.New(

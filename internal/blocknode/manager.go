@@ -390,7 +390,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 		ctx,
 		m.blockConfig.Release,
 		m.blockConfig.Chart,
-		m.blockConfig.Version,
+		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		helm.InstallChartOptions{
 			ValueOpts: &values.Options{
@@ -444,7 +444,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 		ctx,
 		m.blockConfig.Release,
 		m.blockConfig.Chart,
-		m.blockConfig.Version,
+		m.blockConfig.ChartVersion,
 		m.blockConfig.Namespace,
 		helm.UpgradeChartOptions{
 			ValueOpts: &values.Options{
@@ -460,7 +460,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 		m.logger.Error().
 			Err(err).
 			Str("chart", m.blockConfig.Chart).
-			Str("version", m.blockConfig.Version).
+			Str("version", m.blockConfig.ChartVersion).
 			Str("namespace", m.blockConfig.Namespace).
 			Msg("Helm upgrade failed")
 		return errorx.IllegalState.Wrap(err, "failed to upgrade block node chart")
