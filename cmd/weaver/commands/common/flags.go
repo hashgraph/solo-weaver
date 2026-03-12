@@ -122,6 +122,13 @@ var (
 		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
 		Default:     false,
 	}
+
+	FlagLogLevel = FlagDefinition[string]{
+		Name:        "log-level",
+		ShortName:   "",
+		Description: "Set log level (debug, info, warn, error)",
+		Default:     "info",
+	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.
@@ -385,6 +392,7 @@ type ParentCmdFlags struct {
 	Config             string
 	Force              bool
 	SkipHardwareChecks bool
+	LogLevel           string
 
 	// block node cmd flags
 	Profile string
@@ -407,6 +415,11 @@ func ExtractRootFlags(cmd *cobra.Command, args []string, parentFlags *ParentCmdF
 	parentFlags.SkipHardwareChecks, err = FlagSkipHardwareChecks.Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get skip-hardware-checks flag")
+	}
+
+	parentFlags.LogLevel, err = FlagLogLevel.Value(cmd, args)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "failed to get log-level flag")
 	}
 
 	return nil

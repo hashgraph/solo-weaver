@@ -37,6 +37,7 @@ var (
 	flagSkipHardwareChecks bool
 	flagForce              bool
 	flagProxy              bool
+	flagLogLevel           string
 
 	rootCmd = &cobra.Command{
 		Use:   "solo-provisioner",
@@ -57,6 +58,7 @@ var (
 
 // Register state migrations at startup
 func init() {
+	common.FlagLogLevel.SetVarP(rootCmd, &flagLogLevel, false)
 	common.FlagForce.SetVarP(rootCmd, &flagForce, false)
 	common.FlagConfig.SetVarP(rootCmd, &flagConfig, false)
 
@@ -122,6 +124,10 @@ func initConfig(ctx context.Context) {
 	}
 
 	logConfig := config.Get().Log
+	if flagLogLevel != "" {
+		logConfig.Level = flagLogLevel // override log level if flag is set
+	}
+
 	err = logx.Initialize(logConfig)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
