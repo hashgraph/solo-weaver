@@ -109,3 +109,6 @@ promtail:
 service:
   type: LoadBalancer
   port: 40840
+
+loadBalancer:
+  enabled: false
