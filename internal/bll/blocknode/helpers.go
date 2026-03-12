@@ -8,11 +8,16 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 )
 
 // injectChartRef is a resolver strategy that injects the user-supplied chart reference into the runtime state.
 func injectChartRef() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			return nil
+		}
+
 		if effectiveInputs.Custom.Chart == "" {
 			logx.As().Debug().Msg("User did not provide a chart reference; skipping injection into runtime state")
 			return nil

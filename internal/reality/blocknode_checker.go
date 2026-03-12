@@ -57,6 +57,7 @@ func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
 
 	existing := b.sm.State().BlockNodeState
 	if existing.Equal(st) {
+		logx.As().Debug().Msg("BlockNodeState is unchanged, skipping flush")
 		return nil
 	}
 
@@ -83,10 +84,18 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	if err != nil {
 		return bn, err
 	}
-	if re == nil {
-		return bn, nil // no BlockNode release found
+
+	if bn.ReleaseInfo.Status == release.StatusDeployed && re == nil {
+		logx.As().Debug().Msg("BlockNode Helm release was previously deployed but is now missing; treating as deleted or unknown")
+		return state.NewBlockNodeState(), nil
 	}
 
+	if re == nil {
+		logx.As().Debug().Msg("No BlockNode Helm release found; returning default BlockNodeState")
+		return state.NewBlockNodeState(), nil
+	}
+
+	logx.As().Debug().Msg("Found BlockNode Helm release; building BlockNodeState")
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
@@ -122,8 +131,6 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	if err = b.FlushState(bn); err != nil {
 		return bn, err
 	}
-
-	logx.As().Debug().Any("blocknodeState", bn).Msg("Refreshed blocknode state")
 
 	return bn, nil
 }

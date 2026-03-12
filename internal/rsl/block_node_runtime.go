@@ -231,6 +231,8 @@ func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string
 }
 
 func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool) error {
+	logx.As().Debug().Msg("Refreshing block node state using reality checker")
+
 	var err error
 	var oldState *state.BlockNodeState
 	if b.state != nil {
@@ -246,6 +248,11 @@ func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool)
 		if b.state != nil {
 			if now.Sub(b.state.LastSync) < b.refreshInterval {
 				b.mu.Unlock()
+				logx.As().Debug().
+					Time("lastSync", b.state.LastSync.Time).
+					Dur("refreshInterval", b.refreshInterval).
+					Dur("timeSinceLastSync", now.Sub(b.state.LastSync)).
+					Msg("Block node state is fresh; skipping refresh")
 				return nil
 			}
 		}
@@ -262,6 +269,7 @@ func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.state = &st
+	b.state.LastSync = now
 
 	// Preserve ChartRef across refresh if it was not set in reality but exists in the old state.
 	if oldState != nil && b.state != nil {
@@ -269,6 +277,8 @@ func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool)
 			b.state.ReleaseInfo.ChartRef = oldState.ReleaseInfo.ChartRef
 		}
 	}
+
+	logx.As().Debug().Any("state", b.state).Msg("Finished refreshing block node state using reality checker")
 
 	return nil
 
@@ -282,6 +292,7 @@ func (b *BlockNodeRuntimeResolver) CurrentState() (state.BlockNodeState, error) 
 		return state.NewBlockNodeState(), errorx.IllegalState.New("cluster state is not initialized")
 	}
 
+	logx.As().Debug().Any("state", b.state).Msg("Reading current block node state")
 	return *b.state, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -53,7 +54,8 @@ func (b *Base[S, I]) WithConfig(cfg models.Config) *Base[S, I] {
 	return b
 }
 
-func (b *Base[S, I]) WithState(blockNodeState S) *Base[S, I] {
-	b.state = &blockNodeState
+func (b *Base[S, I]) WithState(s S) *Base[S, I] {
+	b.state = &s
+	logx.As().Debug().Any("state", b.state).Msg("Updating state in runtime base")
 	return b
 }
