@@ -56,9 +56,7 @@ func (ki *kubeletInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ki.recordInstalled()
-
-	return nil
+	return ki.recordInstalled()
 }
 
 // Uninstall removes the kubelet binary and configuration files from the sandbox folder

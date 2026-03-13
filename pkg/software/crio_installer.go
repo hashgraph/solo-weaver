@@ -92,6 +92,7 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 		tomlManager:   tomlx.NewTomlConfigManager(),
 	}
 
+	ci.verifyInstalled = ci.verifySandboxBinaries
 	ci.verifyConfigured = ci.verifySandboxConfigs
 
 	return ci, nil
@@ -241,9 +242,7 @@ func (ci *crioInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ci.recordInstalled()
-
-	return nil
+	return ci.recordInstalled()
 }
 
 // copyCNIPlugins copies all CNI plugin binaries from the cni-plugins directory

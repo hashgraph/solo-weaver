@@ -546,8 +546,7 @@ func (b *baseInstaller) Install() error {
 	if err != nil {
 		return err
 	}
-	_ = b.recordInstalled()
-	return nil
+	return b.recordInstalled()
 }
 
 // performInstall performs the installation logic

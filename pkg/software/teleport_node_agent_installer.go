@@ -81,9 +81,7 @@ func (ti *teleportNodeAgentInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ti.recordInstalled()
-
-	return nil
+	return ti.recordInstalled()
 }
 
 // Uninstall removes the teleport binaries from the sandbox folder

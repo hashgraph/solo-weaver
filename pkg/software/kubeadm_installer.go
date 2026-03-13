@@ -60,9 +60,7 @@ func (ki *kubeadmInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ki.recordInstalled()
-
-	return nil
+	return ki.recordInstalled()
 }
 
 // Configure configures the kubeadm binary,
