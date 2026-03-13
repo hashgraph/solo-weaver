@@ -177,13 +177,19 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 	downloader := NewDownloader(WithHTTPClient(client))
 	downloader.allowedDomains = []string{"localhost", "127.0.0.1"}
 
-	return &baseInstaller{
+	bi := &baseInstaller{
 		downloader:           downloader,
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
 		stateManager:         prepareStateManager(t),
 	}
+
+	// Match newBaseInstaller() defaults
+	bi.verifyInstalled = bi.verifySandboxBinaries
+	bi.verifyConfigured = bi.verifySandboxConfigs
+
+	return bi
 }
 
 // calculateSHA256 calculates SHA256 checksum of given data

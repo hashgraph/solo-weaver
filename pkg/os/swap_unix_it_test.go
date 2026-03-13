@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/stretchr/testify/require"
 )
