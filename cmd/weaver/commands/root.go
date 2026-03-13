@@ -92,8 +92,8 @@ func RegisterMigrations() {
 	// Register all migrations at startup in a sequence that reflects the order of changes in the codebase.
 	// This ensures that when a user upgrades from an older version, all necessary migrations will be applied in the
 	// correct order to update their state to be compatible with the new version.
-	migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
 	migration.Register(state.MigrationComponent, state.NewUnifiedStateMigration())
+	migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
 	migration.Register(workflows.MigrationComponent, workflows.NewLegacyBinaryMigration())
 }
 

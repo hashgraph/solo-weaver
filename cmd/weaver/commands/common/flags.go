@@ -70,7 +70,7 @@ var (
 		Name:        "profile",
 		ShortName:   "p",
 		Description: fmt.Sprintf("Deployment profiles %s", models.AllProfiles()),
-		Default:     models.ProfileLocal,
+		Default:     "",
 	}
 
 	FlagValuesFile = FlagDefinition[string]{

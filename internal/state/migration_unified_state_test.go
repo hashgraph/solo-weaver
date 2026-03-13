@@ -82,7 +82,7 @@ func TestFormatStateContent(t *testing.T) {
 func TestUnifiedState_YAMLMarshal(t *testing.T) {
 	// The old UnifiedState/ComponentState types are removed. This test now verifies
 	// that SoftwareState entries round-trip correctly through the unified state.yaml.
-	s := NewState()
+	s := NewState("")
 	s = SetSoftwareState(s, "cilium", SoftwareState{Installed: true, Configured: true, Version: "1.16.0"})
 	s = SetSoftwareState(s, "helm", SoftwareState{Installed: true, Version: "3.14.0"})
 
