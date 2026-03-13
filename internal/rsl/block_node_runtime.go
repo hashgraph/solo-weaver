@@ -193,15 +193,19 @@ func (b *BlockNodeRuntimeResolver) ChartName() (*automa.EffectiveValue[string], 
 
 func (b *BlockNodeRuntimeResolver) ChartRef() (*automa.EffectiveValue[string], error) {
 	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.ChartRef == "" {
-			logx.As().Warn().Any("releaseInfo", b.state.ReleaseInfo).
-				Msg("Block node runtime state is inconsistent: deployed release has empty chart ref; falling back to user input or config")
+		if b.state.ReleaseInfo.ChartRef != "" {
+			return automa.NewEffective[string](
+				b.state.ReleaseInfo.ChartRef,
+				automa.StrategyCurrent,
+			)
 		}
 
-		return automa.NewEffective[string](
-			b.state.ReleaseInfo.ChartRef,
-			automa.StrategyCurrent,
-		)
+		logx.As().Warn().
+			Any("releaseInfo", b.state.ReleaseInfo).
+			Any("input", b.inputs).
+			Any("config", b.cfg.BlockNode).
+			Msg("Block node runtime state is inconsistent: deployed release has empty chart ref; falling back to user input or config")
+
 	}
 
 	if b.inputs != nil && b.inputs.Chart != "" {

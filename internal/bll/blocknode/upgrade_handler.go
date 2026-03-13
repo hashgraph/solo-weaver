@@ -7,6 +7,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -55,11 +56,12 @@ func (h *UpgradeHandler) BuildWorkflow(
 			WithProperty(models.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
 	}
 
-	if currentState.BlockNodeState.ReleaseInfo.ChartRef != inputs.Custom.Chart {
-		return nil, errorx.IllegalState.New(
-			"block node chart is already set to %q; chart cannot be changed during an upgrade",
-			currentState.BlockNodeState.ReleaseInfo.ChartRef).
-			WithProperty(models.ErrPropertyResolution, "use 'weaver block node reset' then 'weaver block node install'")
+	if currentState.BlockNodeState.ReleaseInfo.ChartRef != "" &&
+		currentState.BlockNodeState.ReleaseInfo.ChartRef != inputs.Custom.Chart {
+		logx.As().Warn().
+			Str("current_chart", currentState.BlockNodeState.ReleaseInfo.ChartRef).
+			Str("desired_chart", inputs.Custom.Chart).
+			Msg("Block node chart reference is changing during upgrade; this is not recommended and may cause issues")
 	}
 
 	currentVer, err := semver.NewVersion(currentState.BlockNodeState.ReleaseInfo.Version)
