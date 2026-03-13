@@ -20,189 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFlagPrecedence_ChartConfiguration tests that command-line flags override config file values
-// for chart-related settings (version, repo, namespace, release name)
-func TestFlagPrecedence_ChartConfiguration(t *testing.T) {
-	serial(t) // Enforce sequential execution due to shared flag variables
-
-	resetFlags(nil)
-	testutil.Reset(t)
-
-	// Create a test config file with specific values
-	configContent := `
-log:
-  level: debug
-  consoleLogging: true
-  fileLogging: false
-blockNode:
-  namespace: "config-namespace"
-  release: "config-release"
-  chart: "oci://config.example.com/chart"
-  version: "0.22.1"
-  storage:
-    basePath: "/mnt/config-storage"
-`
-	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
-	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	// Initialize config from file
-	err = config.Initialize(tmpConfigFile)
-	require.NoError(t, err)
-
-	// Verify config file values are loaded
-	cfg := config.Get()
-	assert.Equal(t, "config-namespace", cfg.BlockNode.Namespace)
-	assert.Equal(t, "config-release", cfg.BlockNode.Release)
-	assert.Equal(t, "oci://config.example.com/chart", cfg.BlockNode.Chart)
-	assert.Equal(t, "0.22.1", cfg.BlockNode.Version)
-	assert.Equal(t, "/mnt/config-storage", cfg.BlockNode.Storage.BasePath)
-
-	// Simulate flag values
-	flagNamespace = "flag-namespace"
-	flagReleaseName = "flag-release"
-	flagChartRepo = "oci://flag.example.com/chart"
-	flagChartVersion = "0.24.0"
-	flagBasePath = "/mnt/flag-storage"
-
-	// Apply config overrides (simulating what install/upgrade commands do)
-	applyConfigOverrides()
-
-	// Verify flags override config file values
-	cfg = config.Get()
-	assert.Equal(t, "flag-namespace", cfg.BlockNode.Namespace, "flag should override config namespace")
-	assert.Equal(t, "flag-release", cfg.BlockNode.Release, "flag should override config release")
-	assert.Equal(t, "oci://flag.example.com/chart", cfg.BlockNode.Chart, "flag should override config chart")
-	assert.Equal(t, "0.24.0", cfg.BlockNode.Version, "flag should override config version")
-	assert.Equal(t, "/mnt/flag-storage", cfg.BlockNode.Storage.BasePath, "flag should override config basePath")
-}
-
-// TestFlagPrecedence_PartialOverride tests that only specified flags override config values
-// while unspecified flags leave config values intact
-func TestFlagPrecedence_PartialOverride(t *testing.T) {
-	serial(t) // Enforce sequential execution due to shared flag variables
-
-	resetFlags(nil)
-
-	testutil.Reset(t)
-
-	// Create a test config file
-	configContent := `
-blockNode:
-  namespace: "config-namespace"
-  release: "config-release"
-  chart: "oci://config.example.com/chart"
-  version: "0.20.0"
-  storage:
-    basePath: "/mnt/config-storage"
-`
-	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
-	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	err = config.Initialize(tmpConfigFile)
-	require.NoError(t, err)
-
-	// Only set some flags (not all)
-	flagNamespace = "flag-namespace"
-	flagChartVersion = "0.35.0"
-	// Leave other flags empty
-
-	applyConfigOverrides()
-
-	cfg := config.Get()
-	// Overridden values
-	assert.Equal(t, "flag-namespace", cfg.BlockNode.Namespace, "specified flag should override")
-	assert.Equal(t, "0.35.0", cfg.BlockNode.Version, "specified flag should override")
-
-	// Unchanged values (flags were empty, so config values remain)
-	assert.Equal(t, "config-release", cfg.BlockNode.Release, "unspecified flag should keep config value")
-	assert.Equal(t, "oci://config.example.com/chart", cfg.BlockNode.Chart, "unspecified flag should keep config value")
-	assert.Equal(t, "/mnt/config-storage", cfg.BlockNode.Storage.BasePath, "unspecified flag should keep config value")
-}
-
-// TestFlagPrecedence_StoragePaths tests precedence for storage path configurations
-func TestFlagPrecedence_StoragePaths(t *testing.T) {
-	serial(t) // Enforce sequential execution due to shared flag variables
-
-	resetFlags(nil)
-
-	testutil.Reset(t)
-
-	// Create a test config file
-	configContent := `
-blockNode:
-  namespace: "block-node"
-  release: "block-node"
-  chart: "oci://example.com/chart"
-  version: "0.20.0"
-  storage:
-    basePath: "/mnt/config-base"
-    archivePath: "/mnt/config-archive"
-    livePath: "/mnt/config-live"
-    logPath: "/mnt/config-log"
-`
-	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
-	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	err = config.Initialize(tmpConfigFile)
-	require.NoError(t, err)
-
-	// Set flag values
-	flagBasePath = "/mnt/flag-base"
-	flagArchivePath = "/mnt/flag-archive"
-	flagLivePath = "/mnt/flag-live"
-	flagLogPath = "/mnt/flag-log"
-
-	applyConfigOverrides()
-
-	cfg := config.Get()
-	assert.Equal(t, "/mnt/flag-base", cfg.BlockNode.Storage.BasePath, "flag should override config basePath")
-	assert.Equal(t, "/mnt/flag-archive", cfg.BlockNode.Storage.ArchivePath, "flag should override config archivePath")
-	assert.Equal(t, "/mnt/flag-live", cfg.BlockNode.Storage.LivePath, "flag should override config livePath")
-	assert.Equal(t, "/mnt/flag-log", cfg.BlockNode.Storage.LogPath, "flag should override config logPath")
-}
-
-// TestFlagPrecedence_IndividualPathsOverBasePath tests that individual paths take precedence over basePath
-func TestFlagPrecedence_IndividualPathsOverBasePath(t *testing.T) {
-	serial(t) // Enforce sequential execution due to shared flag variables
-
-	resetFlags(nil)
-
-	testutil.Reset(t)
-
-	// Create a test config file with only basePath
-	configContent := `
-blockNode:
-  namespace: "block-node"
-  release: "block-node"
-  chart: "oci://example.com/chart"
-  version: "0.20.0"
-  storage:
-    basePath: "/mnt/base-storage"
-`
-	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
-	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	err = config.Initialize(tmpConfigFile)
-	require.NoError(t, err)
-
-	// Set individual path flags (these should override derived paths from basePath)
-	flagArchivePath = "/mnt/custom-archive"
-	flagLivePath = "/mnt/custom-live"
-	// Don't set logPath - it should derive from basePath
-
-	applyConfigOverrides()
-
-	cfg := config.Get()
-	assert.Equal(t, "/mnt/base-storage", cfg.BlockNode.Storage.BasePath)
-	assert.Equal(t, "/mnt/custom-archive", cfg.BlockNode.Storage.ArchivePath, "individual archive path should be set")
-	assert.Equal(t, "/mnt/custom-live", cfg.BlockNode.Storage.LivePath, "individual live path should be set")
-	assert.Equal(t, "", cfg.BlockNode.Storage.LogPath, "logPath not set by flag, should be empty in config")
-}
-
 // TestHelmLifecycle_InstallAndUpgradeWithValueReuse tests a complete installation flow with flag overrides
 // and multiple upgrade scenarios with different value reuse behaviors
 func TestHelmLifecycle_InstallAndUpgradeWithValueReuse(t *testing.T) {
@@ -265,16 +82,6 @@ blockNode:
 
 		err = cmd.Execute()
 		require.NoError(t, err)
-
-		// Verify config was overridden
-		cfg := config.Get()
-		assert.Equal(t, namespace, cfg.BlockNode.Namespace)
-		assert.Equal(t, releaseName, cfg.BlockNode.Release)
-		assert.Equal(t, "0.24.0", cfg.BlockNode.Version)
-		assert.Equal(t, basePath, cfg.BlockNode.Storage.BasePath)
-		assert.Empty(t, cfg.BlockNode.Storage.LivePath)
-		assert.Empty(t, cfg.BlockNode.Storage.LogPath)
-		assert.Equal(t, archivePath, cfg.BlockNode.Storage.ArchivePath)
 
 		// Check existence of storage directories
 		assert.DirExists(t, archivePath, "archivePath directory should exist")
@@ -427,7 +234,7 @@ blockNode:
 
 		// Verify config was updated with flag overrides
 		cfg := config.Get()
-		assert.Equal(t, "0.22.1", cfg.BlockNode.Version, "version should be updated")
+		assert.Equal(t, "0.22.1", cfg.BlockNode.ChartVersion, "version should be updated")
 		assert.Equal(t, "/mnt/custom-archive", cfg.BlockNode.Storage.ArchivePath, "archive path should be updated")
 
 		// Get manifest from revision 5
@@ -472,6 +279,9 @@ func resetFlags(cmd *cobra.Command) {
 		cmd.ResetFlags()
 		// Add the profile flag since it's required by the parent block command
 		cmd.PersistentFlags().String(common.FlagProfile.Name, "", "profile to use for block commands")
+		cmd.PersistentFlags().String(common.FlagConfig.Name, "", "config file for commands")
+		cmd.PersistentFlags().Bool(common.FlagForce.Name, false, "force continue even if checks fail")
+		cmd.PersistentFlags().String(common.FlagLogLevel.Name, "debug", "logrus log level (trace, debug, info, warn, error, fatal, panic)")
 		// Re-add skip-hardware-checks since it's registered on the root command
 		cmd.PersistentFlags().Bool(common.FlagSkipHardwareChecks.Name, false, "Skip hardware validation checks")
 	}
@@ -641,6 +451,8 @@ blockNode:
   release: "test-release"
   chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
+  storage:
+    basePath: "/mnt/storage"
 `
 			tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
 			err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
@@ -688,6 +500,8 @@ blockNode:
   release: "test-release"
   chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
+  storage:
+    basePath: "/mnt/storage"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
 	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
@@ -728,6 +542,8 @@ blockNode:
   release: "test-release"
   chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
   version: "0.24.0"
+  storage:
+    basePath: "/mnt/storage"
 `
 	tmpConfigFile := filepath.Join(t.TempDir(), "test-config.yaml")
 	err := os.WriteFile(tmpConfigFile, []byte(configContent), 0644)
@@ -822,14 +638,8 @@ blockNode:
 			err := config.Initialize(tmpConfigFile)
 			require.NoError(t, err)
 
-			// Set the chart version flag
-			flagChartVersion = tc.chartVersion
-			applyConfigOverrides()
-
 			cfg := config.Get()
-			// Verify the version was set in the config
-			assert.Equal(t, tc.chartVersion, cfg.BlockNode.Version)
-
+			cfg.BlockNode.ChartVersion = tc.chartVersion
 			// Now validate the configuration to ensure invalid versions are rejected
 			validateErr := cfg.Validate()
 			if tc.expectError {

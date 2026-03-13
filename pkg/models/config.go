@@ -128,7 +128,7 @@ func (b *BlockNodeStorage) Validate() error {
 		return nil
 	}
 
-	return errorx.IllegalArgument.New("either basePath must be provided or all of archivePath, livePath, logPath and verificationPath must be provided")
+	return errorx.IllegalArgument.New("either basePath must be provided or all of archivePath, livePath, and logPath must be provided")
 }
 
 // Validate validates all configuration fields to ensure they are safe and secure.
@@ -189,6 +189,12 @@ func (c *BlockNodeConfig) Validate() error {
 	if c.Namespace != "" {
 		if err := sanity.ValidateIdentifier(c.Namespace); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid namespace: %s", c.Namespace)
+		}
+	}
+
+	if c.ChartVersion != "" {
+		if err := sanity.ValidateVersion(c.ChartVersion); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid chart version: %s", c.ChartVersion)
 		}
 	}
 

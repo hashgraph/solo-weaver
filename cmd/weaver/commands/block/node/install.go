@@ -5,7 +5,6 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -57,29 +56,4 @@ var installCmd = &cobra.Command{
 func init() {
 	initializeExecutionFlags(installCmd)
 	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
-}
-
-// applyConfigOverrides applies flag values to override the configuration.
-// This allows flags to take precedence over config file values.
-func applyConfigOverrides() {
-	overrides := models.BlockNodeConfig{
-		Namespace:    flagNamespace,
-		Release:      flagReleaseName,
-		Chart:        flagChartRepo,
-		ChartVersion: flagChartVersion,
-		Storage: models.BlockNodeStorage{
-			BasePath:         flagBasePath,
-			ArchivePath:      flagArchivePath,
-			LivePath:         flagLivePath,
-			LogPath:          flagLogPath,
-			VerificationPath: flagVerificationPath,
-			PluginsPath:      flagPluginsPath,
-			LiveSize:         flagLiveSize,
-			ArchiveSize:      flagArchiveSize,
-			LogSize:          flagLogSize,
-			VerificationSize: flagVerificationSize,
-			PluginsSize:      flagPluginsSize,
-		},
-	}
-	config.OverrideBlockNodeConfig(overrides)
 }
