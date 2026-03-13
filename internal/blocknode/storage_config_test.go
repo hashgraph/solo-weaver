@@ -65,10 +65,10 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			basePath := filepath.Join(tempDir, "storage")
 
 			blockConfig := models.BlockNodeInputs{
-				Namespace: "test-namespace",
-				Release:   "test-release",
-				Chart:     "test-chart",
-				Version:   "0.1.0",
+				Namespace:    "test-namespace",
+				Release:      "test-release",
+				Chart:        "test-chart",
+				ChartVersion: "0.1.0",
 				Storage: models.BlockNodeStorage{
 					BasePath:         basePath,
 					LiveSize:         tt.liveSize,
@@ -85,9 +85,9 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 
 			// Get the computed storage paths
 			// Use a version that includes all optional storages for this test
-			manager.blockNodeInputs.Version = "0.28.1"
+			manager.blockNodeInputs.ChartVersion = "0.28.1"
 			archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
-			manager.blockNodeInputs.Version = "0.1.0"
+			manager.blockNodeInputs.ChartVersion = "0.1.0"
 			require.NoError(t, err)
 
 			// Map optional paths by name using the registry order
@@ -199,10 +199,10 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	basePath := filepath.Join(tempDir, "storage")
 
 	blockConfig := models.BlockNodeInputs{
-		Namespace: "block-node",
-		Release:   "test-release",
-		Chart:     "test-chart",
-		Version:   "0.1.0",
+		Namespace:    "block-node",
+		Release:      "test-release",
+		Chart:        "test-chart",
+		ChartVersion: "0.1.0",
 		Storage: models.BlockNodeStorage{
 			BasePath:         basePath,
 			LiveSize:         "10Gi",
@@ -219,9 +219,9 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 
 	// Get the computed storage paths
 	// Use a version that includes all optional storages for this test
-	manager.blockNodeInputs.Version = "0.28.1"
+	manager.blockNodeInputs.ChartVersion = "0.28.1"
 	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
-	manager.blockNodeInputs.Version = "0.1.0"
+	manager.blockNodeInputs.ChartVersion = "0.1.0"
 	require.NoError(t, err)
 
 	// Map optional paths by name using the registry order

@@ -128,7 +128,9 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 		m.fm = fm
 	}
 
-	m.state = NewState(m.stateFile)
+	if m.state.StateFile == "" {
+		m.state = NewState(m.stateFile)
+	}
 
 	return m, nil
 }
@@ -168,15 +170,19 @@ func (m *stateManager) Refresh() error {
 
 	b, err := m.fm.ReadFile(m.state.StateFile, -1)
 	if err != nil {
-		if errorx.IsOfType(err, fsx.FileNotFound) {
+		if !errorx.IsOfType(err, fsx.FileNotFound) {
 			m.lastStateHash = "" // no file on disk
-			return NotFoundError.Wrap(err, "state file does not exist at %s", m.state.StateFile)
+			return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.StateFile)
 		}
-		return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.StateFile)
+		return nil // no file on disk, keep initial state
 	}
 
-	newState := NewState(m.stateFile)
-	if err = yaml.Unmarshal(b, &newState); err != nil {
+	newState, err := m.state.Clone()
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to clone current state for refresh")
+	}
+
+	if err = yaml.Unmarshal(b, newState); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to unmarshal state from YAML")
 	}
 
@@ -198,7 +204,7 @@ func (m *stateManager) Refresh() error {
 	}
 
 	newState.LastAction = m.state.LastAction
-	m.state = newState
+	m.state = *newState
 
 	return nil
 }

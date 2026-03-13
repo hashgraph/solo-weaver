@@ -22,10 +22,6 @@ type UninstallHandler struct {
 	runtime *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*UninstallHandler, error) {
-	return &UninstallHandler{BaseHandler: base, runtime: runtimeState}, nil
-}
-
 // PrepareEffectiveInputs for uninstall passes inputs through — no field
 // resolution is required since the goal is to remove the deployment.
 func (h *UninstallHandler) PrepareEffectiveInputs(
@@ -68,4 +64,9 @@ func (h *UninstallHandler) HandleIntent(
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
+}
+
+func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs],
+	runtimeState *rsl.BlockNodeRuntimeResolver) (*UninstallHandler, error) {
+	return &UninstallHandler{BaseHandler: base, runtime: runtimeState}, nil
 }

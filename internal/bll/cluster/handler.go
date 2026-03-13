@@ -32,8 +32,13 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
 	}
 
+	cr, ok := runtime.ClusterRuntime.(*rsl.ClusterRuntimeResolver)
+	if !ok {
+		return nil, errorx.IllegalArgument.New("expected BlockNodeRuntime to be *rsl.BlockNodeRuntimeResolver but got %T", runtime.BlockNodeRuntime)
+	}
+
 	h := &HandlerFactory{
-		install: NewInstallHandler(base, runtime.ClusterRuntime, sm),
+		install: NewInstallHandler(base, cr, sm),
 		//upgrade:   newUpgradeHandler(base, runtime.BlockNodeRuntime),
 		//uninstall: newUninstallHandler(base, runtime.BlockNodeRuntime),
 	}

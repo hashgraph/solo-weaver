@@ -15,12 +15,13 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/security"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
 // newTestState returns a State with the StateFile pointing to tmp.
 func newTestState(tmp string) State {
-	s := NewState()
+	s := NewState("")
 	s.StateFile = tmp
 	return s
 }
@@ -69,6 +70,9 @@ func TestFlushWritesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStateManager returned error: %v", err)
 	}
+
+	err = m.Refresh()
+	require.NoError(t, err)
 
 	if err := m.FlushState(); err != nil {
 		t.Fatalf("FlushState returned error: %v", err)
@@ -232,7 +236,7 @@ func TestActionHistory_SingleFlush(t *testing.T) {
 		Inputs: map[string]any{"profile": "local"},
 	})
 
-	if err := m.FlushState(); err != nil {
+	if err := m.FlushAll(); err != nil {
 		t.Fatalf("FlushState: %v", err)
 	}
 
@@ -284,12 +288,12 @@ func TestActionHistory_FlushClearsInMemoryBuffer(t *testing.T) {
 		Inputs: map[string]any{"step": "first"},
 	})
 
-	if err := m.FlushState(); err != nil {
+	if err := m.FlushAll(); err != nil {
 		t.Fatalf("first FlushState: %v", err)
 	}
 
 	// Second FlushState with nothing new — file should still have exactly 1 entry.
-	if err := m.FlushState(); err != nil {
+	if err := m.FlushAll(); err != nil {
 		t.Fatalf("second FlushState: %v", err)
 	}
 
@@ -317,7 +321,7 @@ func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 		Intent: models.Intent{Action: models.ActionSetup, Target: models.TargetCluster},
 		Inputs: map[string]any{"round": "1"},
 	})
-	if err := m.FlushState(); err != nil {
+	if err := m.FlushAll(); err != nil {
 		t.Fatalf("first FlushState: %v", err)
 	}
 
@@ -335,7 +339,7 @@ func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 		Intent: models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"round": "2b"},
 	})
-	if err := m.FlushState(); err != nil {
+	if err := m.FlushAll(); err != nil {
 		t.Fatalf("second FlushState: %v", err)
 	}
 

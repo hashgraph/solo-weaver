@@ -26,13 +26,6 @@ type InstallHandler struct {
 	sm      state.Manager
 }
 
-func NewInstallHandler(
-	base bll.BaseHandler[models.BlockNodeInputs],
-	runtime *rsl.BlockNodeRuntimeResolver,
-	sm state.Manager) (*InstallHandler, error) {
-	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}, nil
-}
-
 // PrepareEffectiveInputs resolves the winning value for every block-node field.
 // For each field the priority is: StrategyCurrent > StrategyUserInput > StrategyConfig.
 // RequiresExplicitOverride fires when the user supplied a value but the current
@@ -82,4 +75,11 @@ func (h *InstallHandler) HandleIntent(
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
+}
+
+func NewInstallHandler(
+	base bll.BaseHandler[models.BlockNodeInputs],
+	runtime *rsl.BlockNodeRuntimeResolver,
+	sm state.Manager) (*InstallHandler, error) {
+	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}, nil
 }

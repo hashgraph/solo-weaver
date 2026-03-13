@@ -18,23 +18,16 @@ type InstallHandler struct {
 	sm      state.Manager
 }
 
-func NewInstallHandler(
-	base bll.BaseHandler[models.ClusterInputs],
-	runtime *rsl.ClusterRuntimeResolver,
-	sm state.Manager) *InstallHandler {
-	return &InstallHandler{base: base, runtime: runtime, sm: sm}
-}
-
 func (h *InstallHandler) PrepareEffectiveInputs(
-	inputs *models.UserInputs[models.ClusterInputs],
+	intent models.Intent,
+	inputs models.UserInputs[models.ClusterInputs],
 ) (*models.UserInputs[models.ClusterInputs], error) {
-	// TODO
 	return nil, nil
 }
 
 func (h *InstallHandler) BuildWorkflow(
 	currentState state.State,
-	inputs *models.UserInputs[models.ClusterInputs],
+	inputs models.UserInputs[models.ClusterInputs],
 ) (*automa.WorkflowBuilder, error) {
 	return nil, nil
 }
@@ -46,4 +39,11 @@ func (h *InstallHandler) HandleIntent(
 	inputs models.UserInputs[models.ClusterInputs],
 ) (*automa.Report, error) {
 	return nil, nil
+}
+
+func NewInstallHandler(
+	base bll.BaseHandler[models.ClusterInputs],
+	runtime *rsl.ClusterRuntimeResolver,
+	sm state.Manager) *InstallHandler {
+	return &InstallHandler{base: base, runtime: runtime, sm: sm}
 }

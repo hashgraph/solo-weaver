@@ -24,10 +24,6 @@ type ResetHandler struct {
 	runtime *rsl.BlockNodeRuntimeResolver
 }
 
-func NewResetHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*ResetHandler, error) {
-	return &ResetHandler{BaseHandler: base, runtime: runtimeState}, nil
-}
-
 // PrepareEffectiveInputs for reset simply passes inputs through unchanged.
 // All field values are taken from the current state — no resolution is needed.
 func (h *ResetHandler) PrepareEffectiveInputs(
@@ -64,4 +60,8 @@ func (h *ResetHandler) HandleIntent(
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
+}
+
+func NewResetHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*ResetHandler, error) {
+	return &ResetHandler{BaseHandler: base, runtime: runtimeState}, nil
 }

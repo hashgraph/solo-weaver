@@ -27,10 +27,6 @@ type UpgradeHandler struct {
 	runtime *rsl.BlockNodeRuntimeResolver
 }
 
-func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
-	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState}, nil
-}
-
 // PrepareEffectiveInputs resolves fields for an upgrade.
 // Chart immutability and semver constraints are enforced inside BuildWorkflow so that all
 // precondition errors are reported together after resolution succeeds.
@@ -104,4 +100,9 @@ func (h *UpgradeHandler) HandleIntent(
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
+}
+
+func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs],
+	runtimeState *rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
+	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState}, nil
 }
