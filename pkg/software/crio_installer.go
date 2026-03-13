@@ -730,7 +730,67 @@ func (ci *crioInstaller) verifySandboxConfigs() (models.StringMap, error) {
 		meta.Set(k, p)
 	}
 
-	// TODO add content verification for the configuration files similar to the integration tests
+	// Verify systemd unit symlink: /usr/lib/systemd/system/crio.service -> <sandbox>/usr/lib/systemd/system/crio.service
+	systemdPath := filepath.Join(userSystemdDir, CrioServiceFile)
+	_, existsSysd, err := ci.fileManager.PathExists(systemdPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check system service file at %s", systemdPath)
+	}
+	if !existsSysd {
+		return nil, NewFileNotFoundError(systemdPath)
+	}
+	fi, err := os.Lstat(systemdPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to lstat %s", systemdPath)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return nil, errorx.IllegalState.New("system service %s is not a symlink", systemdPath)
+	}
+	target, err := os.Readlink(systemdPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read symlink %s", systemdPath)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(systemdPath), target)
+	}
+	target = filepath.Clean(target)
+	expectedService := filepath.Clean(filepath.Join(sandboxDir, userSystemdDir, CrioServiceFile))
+	if target != expectedService {
+		return nil, errorx.IllegalState.New("system service symlink %s -> %s does not point to sandbox %s",
+			systemdPath, target, expectedService)
+	}
+	meta.Set("crio.service.system", systemdPath)
+
+	// Verify /etc/containers is symlinked to sandbox /etc/containers (so registries.conf.d is rooted in sandbox)
+	systemContainersPath := etcContainersFolder // `/etc/containers`
+	_, existsContainers, err := ci.fileManager.PathExists(systemContainersPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check system containers path at %s", systemContainersPath)
+	}
+	if !existsContainers {
+		return nil, NewFileNotFoundError(systemContainersPath)
+	}
+	fi, err = os.Lstat(systemContainersPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to lstat %s", systemContainersPath)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return nil, errorx.IllegalState.New("system containers path %s is not a symlink", systemContainersPath)
+	}
+	target, err = os.Readlink(systemContainersPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read symlink %s", systemContainersPath)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(systemContainersPath), target)
+	}
+	target = filepath.Clean(target)
+	expectedContainers := filepath.Clean(filepath.Join(sandboxDir, etcContainersFolder))
+	if target != expectedContainers {
+		return nil, errorx.IllegalState.New("system containers symlink %s -> %s does not point to sandbox %s",
+			systemContainersPath, target, expectedContainers)
+	}
+	meta.Set("containers.etc.system", systemContainersPath)
 
 	return meta, nil
 }
