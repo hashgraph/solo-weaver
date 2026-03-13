@@ -222,7 +222,7 @@ func InitializeCluster() *automa.StepBuilder {
 
 			// Step 2: Initialize cluster with kubeadm
 			initCmd := []string{
-				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
+				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml --v=3", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
 			_, err = automa_steps.RunBashScript(initCmd, "")
