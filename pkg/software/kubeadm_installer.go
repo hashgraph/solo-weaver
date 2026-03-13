@@ -90,9 +90,7 @@ func (ki *kubeadmInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ki.recordConfigured()
-
-	return nil
+	return ki.recordConfigured()
 }
 
 // Uninstall removes the kubeadm binary and configuration files from the sandbox folder

@@ -146,9 +146,7 @@ func (ti *teleportNodeAgentInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ti.recordConfigured()
-
-	return nil
+	return ti.recordConfigured()
 }
 
 // RemoveConfiguration removes the teleport configuration and symlinks

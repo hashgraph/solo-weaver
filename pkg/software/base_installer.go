@@ -713,8 +713,7 @@ func (b *baseInstaller) Configure() error {
 	if err != nil {
 		return err
 	}
-	_ = b.recordConfigured()
-	return nil
+	return b.recordConfigured()
 }
 
 // performConfiguration performs the configuration logic

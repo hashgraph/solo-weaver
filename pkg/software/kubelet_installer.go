@@ -103,9 +103,7 @@ func (ki *kubeletInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ki.recordConfigured()
-
-	return nil
+	return ki.recordConfigured()
 }
 
 // RestoreConfiguration restores the kubelet binary and configuration files to their original state

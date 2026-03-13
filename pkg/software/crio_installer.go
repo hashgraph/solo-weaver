@@ -344,9 +344,7 @@ func (ci *crioInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ci.recordConfigured()
-
-	return nil
+	return ci.recordConfigured()
 }
 
 // patchCrioConf updates the CRI-O configuration file with the correct paths in place

@@ -52,9 +52,7 @@ func (ci *ciliumInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ci.recordConfigured()
-
-	return nil
+	return ci.recordConfigured()
 }
 
 // RemoveConfiguration restores the cilium binary and configuration files to their original state
