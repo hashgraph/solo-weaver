@@ -1088,7 +1088,7 @@ func (b *baseInstaller) checkInstallation() error {
 	if b.softwareState == nil {
 		// if state manager is injected, read from it to avoid unnecessary verification on disk which can be expensive
 		// for some software with large binaries and many files
-		if b.stateManager != nil {
+		if b.stateManager != nil && !b.stateManager.State().LastSync.IsZero() {
 			snap := b.stateManager.State()
 			cur := state.GetSoftwareState(snap, b.software.Name)
 			b.softwareState = &cur

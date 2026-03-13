@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )

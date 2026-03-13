@@ -31,7 +31,7 @@ func Test_StepKubeadm_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm(nil).Build()
 
 	//
 	// Then
@@ -68,7 +68,7 @@ func Test_StepKubeadm_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	testutil.Reset(t)
 
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -78,7 +78,7 @@ func Test_StepKubeadm_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupKubeadm().Build()
+	step, err = SetupKubeadm(nil).Build()
 
 	//
 	// Then
@@ -109,7 +109,7 @@ func Test_StepKubeadm_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -177,7 +177,7 @@ func Test_StepKubeadm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -234,7 +234,7 @@ func Test_StepKubeadm_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -291,7 +291,7 @@ func Test_StepKubeadm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -352,7 +352,7 @@ func Test_StepKubeadm_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -413,7 +413,7 @@ func Test_StepKubeadm_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -461,7 +461,7 @@ func Test_StepKubeadm_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	testutil.Reset(t)
 
 	// First run to configure kubeadm
-	step, err := SetupKubeadm().Build()
+	step, err := SetupKubeadm(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
@@ -469,7 +469,7 @@ func Test_StepKubeadm_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	//
 	// When - Run again
 	//
-	step, err = SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err = SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 
@@ -508,7 +508,7 @@ func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	testutil.Reset(t)
 
 	// Install and configure kubeadm
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
@@ -569,7 +569,7 @@ func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupCrioLevel)
 
-	step, err := SetupKubeadm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)

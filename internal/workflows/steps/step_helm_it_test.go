@@ -30,7 +30,7 @@ func Test_StepHelm_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().Build()
+	step, err := SetupHelm(nil).Build()
 
 	//
 	// Then
@@ -68,7 +68,7 @@ func Test_StepHelm_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
-	step, err := SetupHelm().Build()
+	step, err := SetupHelm(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -78,7 +78,7 @@ func Test_StepHelm_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupHelm().Build()
+	step, err = SetupHelm(nil).Build()
 
 	//
 	// Then
@@ -110,7 +110,7 @@ func Test_StepHelm_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupHelm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -179,7 +179,7 @@ func Test_StepHelm_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupHelm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -237,7 +237,7 @@ func Test_StepHelm_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupHelm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -299,7 +299,7 @@ func Test_StepHelm_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupHelm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -366,7 +366,7 @@ func Test_StepHelm_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupHelm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -433,7 +433,7 @@ func Test_StepHelm_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupHelm().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupHelm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//

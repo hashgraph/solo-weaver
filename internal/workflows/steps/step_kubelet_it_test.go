@@ -30,7 +30,7 @@ func Test_StepKubelet_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet(nil).Build()
 
 	//
 	// Then
@@ -67,7 +67,7 @@ func Test_StepKubelet_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -77,7 +77,7 @@ func Test_StepKubelet_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupKubelet().Build()
+	step, err = SetupKubelet(nil).Build()
 
 	//
 	// Then
@@ -108,7 +108,7 @@ func Test_StepKubelet_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubelet(nil).WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -177,7 +177,7 @@ func Test_StepKubelet_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubelet(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -235,7 +235,7 @@ func Test_StepKubelet_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubelet(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -293,7 +293,7 @@ func Test_StepKubelet_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubelet(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -355,7 +355,7 @@ func Test_StepKubelet_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupKubelet(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -417,7 +417,7 @@ func Test_StepKubelet_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet(nil).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -457,7 +457,7 @@ func Test_StepKubelet_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	testutil.CleanUpTempDir(t)
 
 	// First run to configure kubelet
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
@@ -465,7 +465,7 @@ func Test_StepKubelet_ServiceConfiguration_AlreadyConfigured_Integration(t *test
 	//
 	// When - Run again
 	//
-	step, err = SetupKubelet().Build()
+	step, err = SetupKubelet(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 
@@ -497,7 +497,7 @@ func Test_StepKubelet_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	testutil.CleanUpTempDir(t)
 
 	// Install and configure kubelet
-	step, err := SetupKubelet().Build()
+	step, err := SetupKubelet(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)

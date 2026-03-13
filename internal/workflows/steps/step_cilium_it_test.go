@@ -30,7 +30,7 @@ func Test_StepCilium_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium(nil).Build()
 
 	//
 	// Then
@@ -68,7 +68,7 @@ func Test_StepCilium_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	testutil.Reset(t)
 
-	step, err := SetupCilium().Build()
+	step, err := SetupCilium(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -78,7 +78,7 @@ func Test_StepCilium_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupCilium().Build()
+	step, err = SetupCilium(nil).Build()
 
 	//
 	// Then
@@ -110,7 +110,7 @@ func Test_StepCilium_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCilium(nil).WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -180,7 +180,7 @@ func Test_StepCilium_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCilium(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -237,7 +237,7 @@ func Test_StepCilium_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCilium(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -294,7 +294,7 @@ func Test_StepCilium_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCilium(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -355,7 +355,7 @@ func Test_StepCilium_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCilium(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -426,7 +426,7 @@ func Test_StartCilium_Rollback_Integration(t *testing.T) {
 	SetupPrerequisitesToLevel(t, SetupKubeadmLevel)
 
 	// Setup Cilium CLI first
-	step, err := SetupCilium().WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCilium(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup Cilium CLI")
