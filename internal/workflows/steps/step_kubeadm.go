@@ -38,14 +38,8 @@ func SetupKubeadm() *automa.WorkflowBuilder {
 func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing kubeadm")
+			notify.As().StepDetail(ctx, stp, "installing kubeadm...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install kubeadm")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -112,14 +106,8 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring kubeadm")
+			notify.As().StepDetail(ctx, stp, "configuring kubeadm...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure kubeadm")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

@@ -31,14 +31,8 @@ func SetupKubectl() *automa.WorkflowBuilder {
 func installKubectl(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubectl").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing kubectl")
+			notify.As().StepDetail(ctx, stp, "installing kubectl...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install kubectl")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubectl installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -105,14 +99,8 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 func configureKubectl(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubectl").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring kubectl")
+			notify.As().StepDetail(ctx, stp, "configuring kubectl...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure kubectl")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubectl configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

@@ -32,14 +32,8 @@ func SetupK9s() *automa.WorkflowBuilder {
 func installK9s(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-k9s").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing K9s")
+			notify.As().StepDetail(ctx, stp, "installing K9s...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install K9s")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "K9s installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -112,14 +106,8 @@ func installK9s(provider func(opts ...software.InstallerOption) (software.Softwa
 func configureK9s(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-k9s").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring K9s")
+			notify.As().StepDetail(ctx, stp, "configuring K9s...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure K9s")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "K9s configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()

@@ -655,7 +655,7 @@ tasks:
           echo ""
           echo "Ready for Block Node deployment:"
           echo "  task vm:ssh"
-          echo "  sudo weaver block node install -p local -c /mnt/solo-weaver/test/config/config.yaml"
+          echo "  sudo solo-provisioner block node install -p local -c /mnt/solo-weaver/test/config/config.yaml"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   vm:start:
@@ -1720,11 +1720,18 @@ tasks:
           public.ecr.aws/gravitational/teleport-distroless:18.6.4 \
           configure --roles=proxy,auth --public-addr="$NODE_IP:3080" -o /etc/teleport/teleport.yaml
         
-        # Step 5: Start Teleport
+        # Step 5: Restart Docker daemon to ensure iptables chains are clean
+        # This prevents "No chain/target/match by that name" errors when creating networks
+        if command -v systemctl &> /dev/null; then
+          echo "🔄 Restarting Docker daemon to refresh iptables chains..."
+          sudo systemctl restart docker
+        fi
+        
+        # Step 6: Start Teleport
         echo "🚀 Starting Teleport server..."
         docker compose up -d
         
-        # Step 6: Wait for it to be ready
+        # Step 7: Wait for it to be ready
         echo "⏳ Waiting for Teleport to be ready..."
         max_attempts=30
         attempt=0
@@ -1740,7 +1747,7 @@ tasks:
         
         echo "✅ Teleport server is running!"
         
-        # Step 7: Add certificate to system trust store
+        # Step 8: Add certificate to system trust store
         echo ""
         echo "🔐 Adding Teleport certificate to system trust store..."
         CERT_FILE="/tmp/teleport-server.crt"
@@ -1754,7 +1761,7 @@ tasks:
           echo "⚠️  Could not extract certificate (will need manual trust setup)"
         fi
         
-        # Step 8: Generate a join token
+        # Step 9: Generate a join token
         echo ""
         echo "🎫 Generating Teleport join token..."
         TOKEN=$(docker exec solo-weaver-teleport tctl tokens add --type=kube --ttl=24h --format=text 2>/dev/null)
@@ -1764,7 +1771,7 @@ tasks:
           TOKEN="REPLACE_WITH_JOIN_TOKEN"
         fi
         
-        # Step 9: Create the configured values file
+        # Step 10: Create the configured values file
         OUTPUT_FILE="/tmp/teleport-values-configured.yaml"
         sed "s|REPLACE_WITH_NODE_IP|$NODE_IP|g; s|REPLACE_WITH_JOIN_TOKEN|$TOKEN|g" teleport-values-local.yaml > "$OUTPUT_FILE"
         
@@ -1781,10 +1788,10 @@ tasks:
         echo ""
         echo "📝 Next steps:"
         echo "   1. Install Kubernetes cluster (if not already done):"
-        echo "      sudo weaver kube cluster install --profile=local --node-type=block"
+        echo "      sudo solo-provisioner kube cluster install --profile=local --node-type=block"
         echo ""
         echo "   2. Install Teleport cluster agent:"
-        echo "      sudo weaver teleport cluster install --values=$OUTPUT_FILE"
+        echo "      sudo solo-provisioner teleport cluster install --values=$OUTPUT_FILE"
         echo ""
         echo "   3. (Optional) Generate Teleport node agent token for SSH access:"
         echo "      task teleport:node-agent-token"
@@ -1902,7 +1909,7 @@ tasks:
         echo "Expires: 15 minutes"
         echo ""
         echo "📝 To install with weaver, run:"
-        echo "   sudo weaver teleport node install \\"
+        echo "   sudo solo-provisioner teleport node install \\"
         echo "     --token=$NEW_TOKEN \\"
         echo "     --proxy=${NODE_IP}:3080"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1935,9 +1942,9 @@ tasks:
         echo "📋 Next steps:"
         echo "   1. SSH into VM: task vm:ssh"
         echo "   2. Install Kubernetes cluster:"
-        echo "      sudo weaver kube cluster install --profile=local --node-type=block"
+        echo "      sudo solo-provisioner kube cluster install --profile=local --node-type=block"
         echo "   3. Install Teleport cluster agent:"
-        echo "      sudo weaver teleport cluster install \\"
+        echo "      sudo solo-provisioner teleport cluster install \\"
         echo "        --values=/tmp/teleport-values-configured.yaml"
         echo ""
         echo "💡 To access Teleport Web UI from your Mac:"

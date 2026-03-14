@@ -33,14 +33,8 @@ func SetupCilium() *automa.WorkflowBuilder {
 func installCilium(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-cilium-cli").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Cilium CLI")
+			notify.As().StepDetail(ctx, stp, "installing Cilium CLI...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Cilium CLI")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -113,14 +107,8 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 func configureCilium(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-cilium-cli").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring Cilium CLI")
+			notify.As().StepDetail(ctx, stp, "configuring Cilium CLI...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure Cilium CLI")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider()
@@ -194,14 +182,8 @@ func StartCilium() *automa.WorkflowBuilder {
 func installCiliumCNI(version string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("install-cilium-cni").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Cilium CNI")
+			notify.As().StepDetail(ctx, stp, "installing Cilium CNI...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Cilium CNI")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CNI installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Prepare metadata for reporting

@@ -14,8 +14,10 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -60,6 +62,13 @@ func init() {
 	// support '--version', '-v' to show version information
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Show version")
 	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format (yaml|json)")
+
+	// Verbose output flag - shows full error stacktraces and profiling data
+	rootCmd.PersistentFlags().BoolVarP(&ui.Verbose, "verbose", "V", false, "Enable verbose output with full error details")
+
+	// TUI override flag - hidden to discourage casual use
+	rootCmd.PersistentFlags().BoolVar(&ui.NoTUI, "no-tui", false, "Disable TUI output (use simple line-based output)")
+	_ = rootCmd.PersistentFlags().MarkHidden("no-tui")
 
 	// Hardware check override flag - hidden to discourage casual use
 	rootCmd.PersistentFlags().BoolVar(&flagSkipHardwareChecks, common.FlagSkipHardwareChecks.Name, false,
@@ -113,9 +122,45 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
+	// Propagate verbose flag to the doctor package for error diagnostics
+	doctor.Verbose = ui.Verbose
+
 	logConfig := config.Get().Log
+
+	// Always enable file logging regardless of config so every run produces a log file
+	logConfig.FileLogging = true
+	if logConfig.Directory == "" {
+		logConfig.Directory = core.Paths().LogsDir
+	}
+	if logConfig.Filename == "" {
+		logConfig.Filename = "solo-provisioner.log"
+	}
+	if logConfig.MaxSize == 0 {
+		logConfig.MaxSize = 50 // 50 MB
+	}
+	if logConfig.MaxBackups == 0 {
+		logConfig.MaxBackups = 3
+	}
+	if logConfig.MaxAge == 0 {
+		logConfig.MaxAge = 30 // 30 days
+	}
+
+	// Suppress console logging when the TUI is active to avoid interleaving
+	// raw zerolog lines with the Bubble Tea render loop. The TUI owns stdout.
+	// NOTE: upstream logx.Initialize() ignores the ConsoleLogging field and
+	// always creates a ConsoleWriter, so we must replace the logger afterwards.
+	if ui.ShouldUseTUI() {
+		logConfig.ConsoleLogging = false
+	}
+
 	err = logx.Initialize(logConfig)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
+	}
+
+	// Replace the logx logger with a file-only writer when TUI is active.
+	// This works around upstream logx unconditionally adding a ConsoleWriter.
+	if ui.ShouldUseTUI() {
+		ui.SuppressConsoleLogging(logConfig)
 	}
 }

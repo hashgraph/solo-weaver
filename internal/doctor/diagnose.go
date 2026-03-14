@@ -243,13 +243,68 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 	}
 }
 
+// Verbose controls whether CheckErr displays the full stacktrace and profiling
+// data on the terminal. When false (the default), a compact human-friendly
+// error panel is shown and the details are written only to the log file.
+// Set by the --verbose / -V root flag.
+var Verbose bool
+
 // CheckErr prints diagnosis and exit with error code 1
 // Optional instructions can be provided to give additional context to the user
 func CheckErr(ctx context.Context, err error, instructions ...string) {
-	fmt.Printf("\n%s%s************************************** Error Stacktrace ******************************************%s\n", Bold, Gray, Reset)
-	fmt.Printf("\n%+v\n", err) // Print full error with stack trace for logs
+	// Always log the full stacktrace to the log file via logx
+	log.Printf("[ERROR] %+v", err)
 
 	resp := Diagnose(ctx, err)
+
+	if Verbose {
+		checkErrVerbose(resp, instructions...)
+	} else {
+		checkErrCompact(resp, instructions...)
+	}
+
+	os.Exit(1)
+}
+
+// checkErrCompact prints a concise, human-friendly error panel to stderr.
+func checkErrCompact(resp *ErrorDiagnosis, instructions ...string) {
+	fmt.Fprintf(os.Stderr, "\n  %s%s✗ Error:%s %s\n", Bold, Red, Reset, resp.Message)
+	if resp.Cause != "" {
+		fmt.Fprintf(os.Stderr, "  %s  Cause:%s %s\n", White, Reset, resp.Cause)
+	}
+
+	// Print resolution
+	if len(instructions) > 0 && instructions[0] != "" {
+		fmt.Fprintf(os.Stderr, "\n  %s%sResolution:%s\n", Bold, Yellow, Reset)
+		for _, line := range strings.Split(instructions[0], "\n") {
+			if line == "" {
+				fmt.Fprintln(os.Stderr)
+			} else {
+				fmt.Fprintf(os.Stderr, "    %s\n", line)
+			}
+		}
+	} else if len(resp.Resolution) > 0 {
+		fmt.Fprintf(os.Stderr, "\n  %s%sResolution:%s\n", Bold, Yellow, Reset)
+		for i, r := range resp.Resolution {
+			fmt.Fprintf(os.Stderr, "    %d. %s\n", i+1, r)
+		}
+	}
+
+	// Always show the log file path so users can dig deeper
+	logfile := resp.Logfile
+	if logfile == "" {
+		logfile = config.Get().Log.Filename
+	}
+	if logfile != "" {
+		fmt.Fprintf(os.Stderr, "\n  %sSee logs:%s %s\n", Cyan, Reset, logfile)
+	}
+	fmt.Fprintf(os.Stderr, "  %sUse --verbose for full error details%s\n", Gray, Reset)
+}
+
+// checkErrVerbose prints the full legacy error output with stacktrace and profiling.
+func checkErrVerbose(resp *ErrorDiagnosis, instructions ...string) {
+	fmt.Printf("\n%s%s************************************** Error Stacktrace ******************************************%s\n", Bold, Gray, Reset)
+	fmt.Printf("\n%+v\n", resp.Error) // Print full error with stack trace
 
 	fmt.Printf("\n%s%s************************************** Error Diagnostics ******************************************%s\n", Bold, Red, Reset)
 	fmt.Printf("\t%sError:%s %s\n", Bold+White, Reset, resp.Message)
@@ -293,8 +348,6 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 			fmt.Printf("\t%s\n", White+r+Reset)
 		}
 	}
-
-	os.Exit(1)
 }
 
 // CheckReportErr checks an automa.Report for errors and runs diagnosis if any are found

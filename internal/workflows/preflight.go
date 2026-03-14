@@ -55,16 +55,14 @@ func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			logx.As().Info().Msg("Starting host profile validation")
+			notify.As().StepStart(ctx, stp, "Validating host profile")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			logx.As().Error().Err(rpt.Error).Msg("Failed to validate host profile")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating host profile")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			if rpt.IsSuccess() {
-				logx.As().Info().Msg("Host profile validation step completed successfully")
-			}
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating host profile")
 		})
 }
 
@@ -91,15 +89,15 @@ func CheckPrivilegesStep() automa.Builder {
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting privilege validation")
+			notify.As().StepStart(ctx, stp, "Validating privileges")
 			return ctx, nil
 
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Privilege validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating privileges")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Privilege validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating privileges")
 		})
 }
 
@@ -237,14 +235,14 @@ func CheckWeaverUserStep() automa.Builder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting Solo Provisioner user validation")
+			notify.As().StepStart(ctx, stp, "Validating service account")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Solo Provisioner user validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating service account")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner user validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating service account")
 		})
 }
 
@@ -267,14 +265,14 @@ func CheckOSStep(nodeType string, profile string) automa.Builder {
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting OS validation")
+			notify.As().StepStart(ctx, stp, "Validating OS requirements")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "OS validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating OS requirements")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "OS validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating OS requirements")
 		})
 }
 
@@ -298,14 +296,14 @@ func CheckCPUStep(nodeType string, profile string) automa.Builder {
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting CPU validation")
+			notify.As().StepStart(ctx, stp, "Validating CPU requirements")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "CPU validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating CPU requirements")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "CPU validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating CPU requirements")
 		})
 
 }
@@ -328,14 +326,14 @@ func CheckMemoryStep(nodeType string, profile string) automa.Builder {
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting memory validation")
+			notify.As().StepStart(ctx, stp, "Validating memory requirements")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Memory validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating memory requirements")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Memory validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating memory requirements")
 		})
 }
 
@@ -359,14 +357,14 @@ func CheckStorageStep(nodeType string, profile string) automa.Builder {
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting storage validation")
+			notify.As().StepStart(ctx, stp, "Validating storage requirements")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Storage validation failed")
+			notify.As().StepFailure(ctx, stp, rpt, "Validating storage requirements")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Storage validation step completed successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Validating storage requirements")
 		})
 }
 
@@ -394,13 +392,13 @@ func NewNodeSafetyCheckWorkflow(nodeType string, profile string, skipHardwareChe
 		WithId(nodeType + "-node-preflight").
 		Steps(preflightSteps...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Starting node preflight checks")
+			notify.As().PhaseStart(ctx, stp, "Preflight Checks")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Node preflight checks failed")
+			notify.As().PhaseFailure(ctx, stp, rpt, "Preflight Checks")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Node preflight checks completed successfully")
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Preflight Checks")
 		})
 }

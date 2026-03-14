@@ -134,14 +134,8 @@ func installMetalLB() automa.Builder {
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing MetalLB")
+			notify.As().StepDetail(ctx, stp, "installing MetalLB...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install MetalLB")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB installed successfully")
 		})
 }
 
@@ -184,14 +178,8 @@ func prepareMetalLBConfigFile(configFilePath string) automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring MetalLB")
+			notify.As().StepDetail(ctx, stp, "configuring MetalLB...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure MetalLB")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB configured successfully")
 		})
 }
 
@@ -232,14 +220,8 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Deploying MetalLB configuration")
+			notify.As().StepDetail(ctx, stp, "deploying MetalLB configuration...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to deploy MetalLB configuration")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB configuration deployed successfully")
 		})
 }
 
@@ -262,13 +244,7 @@ func isMetalLBPodsReady() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Verifying MetalLB readiness")
+			notify.As().StepDetail(ctx, stp, "verifying MetalLB readiness...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "MetalLB is not ready")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "MetalLB is ready")
 		})
 }
