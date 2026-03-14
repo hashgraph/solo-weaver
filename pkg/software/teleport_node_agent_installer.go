@@ -8,12 +8,12 @@ import (
 	"os/exec"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
 const (
+	TeleportBinaryName      = "teleport"
 	TeleportServiceName     = "teleport"
 	teleportServiceFileName = "teleport.service"
 	teleportConfigDir       = "/etc/teleport"
@@ -81,9 +81,7 @@ func (ti *teleportNodeAgentInstaller) Install() error {
 	}
 
 	// Record installed state
-	_ = ti.GetStateManager().RecordState(ti.GetSoftwareName(), state.TypeInstalled, ti.Version())
-
-	return nil
+	return ti.recordInstalled()
 }
 
 // Uninstall removes the teleport binaries from the sandbox folder
@@ -95,7 +93,7 @@ func (ti *teleportNodeAgentInstaller) Uninstall() error {
 	}
 
 	// Remove recorded installed state
-	_ = ti.GetStateManager().RemoveState(ti.GetSoftwareName(), state.TypeInstalled)
+	_ = ti.clearInstalled()
 
 	return nil
 }
@@ -148,9 +146,7 @@ func (ti *teleportNodeAgentInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ti.GetStateManager().RecordState(ti.GetSoftwareName(), state.TypeConfigured, ti.Version())
-
-	return nil
+	return ti.recordConfigured()
 }
 
 // RemoveConfiguration removes the teleport configuration and symlinks
@@ -174,7 +170,7 @@ func (ti *teleportNodeAgentInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove recorded configured state
-	_ = ti.GetStateManager().RemoveState(ti.GetSoftwareName(), state.TypeConfigured)
+	_ = ti.clearConfigured()
 
 	return nil
 }
@@ -273,25 +269,25 @@ func (ti *teleportNodeAgentInstaller) createSystemdSymlink() error {
 
 // getTeleportServicePath returns the path to the teleport.service file in the sandbox
 func (ti *teleportNodeAgentInstaller) getTeleportServicePath() string {
-	return path.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir, teleportServiceFileName)
+	return path.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir, teleportServiceFileName)
 }
 
 // getSystemdUnitPath returns the path to the teleport.service file in the systemd directory
 func (ti *teleportNodeAgentInstaller) getSystemdUnitPath() string {
-	return path.Join(core.SystemdUnitFilesDir, teleportServiceFileName)
+	return path.Join(models.SystemdUnitFilesDir, teleportServiceFileName)
 }
 
 // getSandboxTeleportBinPath returns the path to the teleport binary in the sandbox
 func (ti *teleportNodeAgentInstaller) getSandboxTeleportBinPath() string {
-	return path.Join(core.Paths().SandboxBinDir, "teleport")
+	return path.Join(models.Paths().SandboxBinDir, "teleport")
 }
 
 // validateCriticalPaths performs basic validation on critical paths used by the installer
 func (ti *teleportNodeAgentInstaller) validateCriticalPaths() error {
 	paths := []string{
-		core.Paths().SandboxDir,
-		core.Paths().SandboxBinDir,
-		core.SystemdUnitFilesDir,
+		models.Paths().SandboxDir,
+		models.Paths().SandboxBinDir,
+		models.SystemdUnitFilesDir,
 	}
 
 	for _, p := range paths {
@@ -303,4 +299,27 @@ func (ti *teleportNodeAgentInstaller) validateCriticalPaths() error {
 		}
 	}
 	return nil
+}
+
+// verifySandboxConfigs overrides the base implementation to verify teleport config files
+// exist at their expected non-standard paths after Install() and Configure() have been called.
+func (ti *teleportNodeAgentInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
+	requiredConfigs := map[string]string{
+		"serviceFile": ti.getTeleportServicePath(), // {sandboxDir}/{models.SystemdUnitFilesDir}/teleport.service
+	}
+
+	for k, p := range requiredConfigs {
+		_, exists, err := ti.fileManager.PathExists(p)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to check teleport config file at %s", p)
+		}
+		if !exists {
+			return nil, NewFileNotFoundError(p)
+		}
+
+		meta.Set(k, p)
+	}
+
+	return meta, nil
 }

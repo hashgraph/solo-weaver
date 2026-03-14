@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 const (
@@ -58,7 +58,7 @@ type ConfigBuilder struct {
 
 // NewConfigBuilder creates a new ConfigBuilder from the application config.
 // Returns an error if cluster name cannot be determined (neither provided nor hostname available).
-func NewConfigBuilder(cfg config.AlloyConfig) (*ConfigBuilder, error) {
+func NewConfigBuilder(cfg models.AlloyConfig) (*ConfigBuilder, error) {
 	cb := &ConfigBuilder{
 		monitorBlockNode: cfg.MonitorBlockNode,
 	}
@@ -161,7 +161,7 @@ func (cb *ConfigBuilder) ShouldUseHostNetwork() bool {
 }
 
 // buildPrometheusRemotes converts config to internal remote format.
-func buildPrometheusRemotes(cfg config.AlloyConfig) []Remote {
+func buildPrometheusRemotes(cfg models.AlloyConfig) []Remote {
 	var remotes []Remote
 
 	if len(cfg.PrometheusRemotes) > 0 {
@@ -187,7 +187,7 @@ func buildPrometheusRemotes(cfg config.AlloyConfig) []Remote {
 }
 
 // buildLokiRemotes converts config to internal remote format.
-func buildLokiRemotes(cfg config.AlloyConfig) []Remote {
+func buildLokiRemotes(cfg models.AlloyConfig) []Remote {
 	var remotes []Remote
 
 	if len(cfg.LokiRemotes) > 0 {

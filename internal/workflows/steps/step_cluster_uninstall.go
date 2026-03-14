@@ -9,7 +9,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	osutil "github.com/hashgraph/solo-weaver/pkg/os"
@@ -124,18 +125,22 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 				return automa.SuccessReport(stp)
 			}
 
-			// Remove each top-level directory/file except downloads
+			// Remove each top-level directory/file except the below ones
+			skipDirs := map[string]bool{
+				models.Paths().DownloadsDir: true,
+				models.Paths().BinDir:       true,
+				models.Paths().LogsDir:      true,
+			}
 			for _, entry := range entries {
 				entryPath := filepath.Join(weaverHome, entry.Name())
 
 				// Skip the downloads, bin, and logs folders
-				if entryPath == core.Paths().DownloadsDir ||
-					entryPath == core.Paths().BinDir ||
-					entryPath == core.Paths().LogsDir {
+				if skipDirs[entryPath] {
+					logx.As().Debug().Str("path", entryPath).Msg("Preserving directory during cleanup")
 					continue
 				}
 
-				// Remove all other directories/files
+				// Remove directories/files
 				if err := fsManager.RemoveAll(entryPath); err != nil {
 					logx.As().Warn().Err(err).Msgf("Failed to remove %s, continuing with teardown", entryPath)
 				}

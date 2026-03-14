@@ -14,7 +14,7 @@ import (
 // mockStep implements automa.Step for testing
 type mockStep struct {
 	id    string
-	state automa.StateBag
+	state automa.NamespacedStateBag
 }
 
 func (m *mockStep) Prepare(ctx context.Context) (context.Context, error) {
@@ -29,12 +29,17 @@ func (m *mockStep) Rollback(ctx context.Context) *automa.Report {
 	return automa.SuccessReport(m)
 }
 
-func (m *mockStep) State() automa.StateBag {
+func (m *mockStep) State() automa.NamespacedStateBag {
 	if m.state == nil {
-		m.state = &automa.SyncStateBag{}
+		m.state = automa.NewNamespacedStateBag(nil, nil)
 	}
 
 	return m.state
+}
+
+func (m *mockStep) WithState(s automa.NamespacedStateBag) automa.Step {
+	m.state = s
+	return m
 }
 
 func (m *mockStep) Id() string { return m.id }

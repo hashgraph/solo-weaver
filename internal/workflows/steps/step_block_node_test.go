@@ -9,7 +9,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/stretchr/testify/assert"
@@ -30,8 +31,11 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
+	inputs := models.BlockNodeInputs{
+		Profile: models.ProfileMainnet,
+	}
 
-	wb := SetupBlockNode(core.ProfileMainnet, "")
+	wb := SetupBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -103,7 +107,11 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	wb := SetupBlockNode(core.ProfileLocal, "")
+	inputs := models.BlockNodeInputs{
+		Profile: models.ProfileLocal,
+	}
+
+	wb := SetupBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -168,7 +176,11 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	// Given - already installed from fresh install test
 	//
 
-	wb := SetupBlockNode(core.ProfileLocal, "")
+	inputs := models.BlockNodeInputs{
+		Profile: models.ProfileLocal,
+	}
+
+	wb := SetupBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -219,7 +231,11 @@ func TestResetBlockNode_Success(t *testing.T) {
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	// Install block node first
-	installWb := SetupBlockNode(core.ProfileLocal, "")
+	inputs := models.BlockNodeInputs{
+		Profile: models.ProfileLocal,
+	}
+
+	installWb := SetupBlockNode(inputs)
 	require.NotNil(t, installWb)
 	installWorkflow, err := installWb.Build()
 	require.NoError(t, err)
@@ -228,7 +244,7 @@ func TestResetBlockNode_Success(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 
 	// Now test the reset workflow
-	wb := ResetBlockNode()
+	wb := ResetBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()

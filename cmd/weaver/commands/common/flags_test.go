@@ -25,7 +25,7 @@ func runStringFlagTest(t *testing.T, persistent bool) {
 
 	// default
 	if persistent {
-		got, err := fp.ValueP(cmd, nil)
+		got, err := fp.Value(cmd, nil)
 		require.NoError(t, err)
 		require.Equal(t, fp.Default, got)
 	} else {
@@ -37,7 +37,7 @@ func runStringFlagTest(t *testing.T, persistent bool) {
 	// set and verify
 	if persistent {
 		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "alice"))
-		got, err := fp.ValueP(cmd, nil)
+		got, err := fp.Value(cmd, nil)
 		require.NoError(t, err)
 		require.Equal(t, "alice", got)
 	} else {
@@ -62,7 +62,7 @@ func runBoolFlagTest(t *testing.T, persistent bool) {
 
 	if persistent {
 		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "true"))
-		got, err := fp.ValueP(cmd, nil)
+		got, err := fp.Value(cmd, nil)
 		require.NoError(t, err)
 		require.True(t, got)
 	} else {
@@ -87,7 +87,7 @@ func runIntFlagTest(t *testing.T, persistent bool) {
 
 	if persistent {
 		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "42"))
-		got, err := fp.ValueP(cmd, nil)
+		got, err := fp.Value(cmd, nil)
 		require.NoError(t, err)
 		require.Equal(t, 42, got)
 	} else {
@@ -112,7 +112,7 @@ func runStringSliceFlagTest(t *testing.T, persistent bool) {
 
 	if persistent {
 		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "a,b,c"))
-		got, err := fp.ValueP(cmd, nil)
+		got, err := fp.Value(cmd, nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"a", "b", "c"}, got)
 	} else {
@@ -137,7 +137,7 @@ func runDurationFlagTest(t *testing.T, persistent bool) {
 
 	if persistent {
 		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "5s"))
-		got, err := fp.ValueP(cmd, nil)
+		got, err := fp.Value(cmd, nil)
 		require.NoError(t, err)
 		require.Equal(t, 5*time.Second, got)
 	} else {
@@ -199,13 +199,7 @@ func TestValue_CheckPersistentFlagInParentCommand(t *testing.T) {
 	cmd := &cobra.Command{}
 	rc.AddCommand(cmd)
 
-	// child won't see default from persistent flag if using ValueP()
-	got, err := fp.ValueP(cmd, nil)
-	require.Error(t, err) // because ValueP doesn't look into parent commands
-	require.Equal(t, "", got)
-
-	// but Value() will
-	got, err = fp.Value(cmd, nil)
+	got, err := fp.Value(cmd, nil)
 	require.NoError(t, err)
 	require.Equal(t, fp.Default, got)
 
@@ -213,15 +207,11 @@ func TestValue_CheckPersistentFlagInParentCommand(t *testing.T) {
 	require.NoError(t, rc.PersistentFlags().Set(fp.Name, "alice")) // set on root command
 
 	// get from root command
-	got, err = fp.ValueP(rc, nil)
+	got, err = fp.Value(rc, nil)
 	require.NoError(t, err)
 	require.Equal(t, "alice", got)
 
-	// get from child command
-	got, err = fp.ValueP(cmd, nil)
-	require.Error(t, err) // because ValueP doesn't look into parent commands
-	require.Equal(t, "", got)
-
+	// can also get from subcommand
 	got, err = fp.Value(cmd, nil)
 	require.NoError(t, err)
 	require.Equal(t, "alice", got)

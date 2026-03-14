@@ -8,16 +8,17 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestSetupHomeDirectoryStructure_Integration(t *testing.T) {
 	// Use a real temp directory as the home
 	tmpHome := t.TempDir()
-	pp := core.NewWeaverPaths(tmpHome)
+	pp := models.NewWeaverPaths(tmpHome)
 
-	step, err := SetupHomeDirectoryStructure(pp).Build()
+	step, err := SetupHomeDirectoryStructure(*pp).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())

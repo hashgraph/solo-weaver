@@ -8,14 +8,14 @@
 // (SetupStorage, CreatePersistentVolumes, GetStoragePaths, ComputeValuesFile, etc.)
 // iterates over this registry, so adding a new storage type requires only:
 //   1. Add an entry to optionalStorages below
-//   2. Add the corresponding field(s) to config.BlockNodeStorage (if not already present)
+//   2. Add the corresponding field(s) to models.BlockNodeStorage (if not already present)
 //   3. Add the storage section to the Go-templated values YAML (using {{- if .Include<Name> }})
 //   4. Register a migration in migrations.go via InitMigrations()
 
 package blocknode
 
 import (
-	"github.com/hashgraph/solo-weaver/internal/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
 )
 
@@ -38,14 +38,14 @@ type OptionalStorage struct {
 	// DirName is the subdirectory name under basePath (e.g., "verification").
 	DirName string
 
-	// GetPath returns the configured path from the storage config.
-	GetPath func(s *config.BlockNodeStorage) string
+	// GetPath returns the models.red path from the storage models.
+	GetPath func(s *models.BlockNodeStorage) string
 
-	// SetPath sets the path in the storage config.
-	SetPath func(s *config.BlockNodeStorage, p string)
+	// SetPath sets the path in the storage models.
+	SetPath func(s *models.BlockNodeStorage, p string)
 
-	// GetSize returns the configured size from the storage config.
-	GetSize func(s *config.BlockNodeStorage) string
+	// GetSize returns the models.red size from the storage models.
+	GetSize func(s *models.BlockNodeStorage) string
 }
 
 // optionalStorages is the canonical registry of all optional storage types.
@@ -57,9 +57,9 @@ var optionalStorages = []OptionalStorage{
 		PVName:     "verification-storage-pv",
 		PVCName:    "verification-storage-pvc",
 		DirName:    "verification",
-		GetPath:    func(s *config.BlockNodeStorage) string { return s.VerificationPath },
-		SetPath:    func(s *config.BlockNodeStorage, p string) { s.VerificationPath = p },
-		GetSize:    func(s *config.BlockNodeStorage) string { return s.VerificationSize },
+		GetPath:    func(s *models.BlockNodeStorage) string { return s.VerificationPath },
+		SetPath:    func(s *models.BlockNodeStorage, p string) { s.VerificationPath = p },
+		GetSize:    func(s *models.BlockNodeStorage) string { return s.VerificationSize },
 	},
 	{
 		Name:       "plugins",
@@ -67,9 +67,9 @@ var optionalStorages = []OptionalStorage{
 		PVName:     "plugins-storage-pv",
 		PVCName:    "plugins-storage-pvc",
 		DirName:    "plugins",
-		GetPath:    func(s *config.BlockNodeStorage) string { return s.PluginsPath },
-		SetPath:    func(s *config.BlockNodeStorage, p string) { s.PluginsPath = p },
-		GetSize:    func(s *config.BlockNodeStorage) string { return s.PluginsSize },
+		GetPath:    func(s *models.BlockNodeStorage) string { return s.PluginsPath },
+		SetPath:    func(s *models.BlockNodeStorage, p string) { s.PluginsPath = p },
+		GetSize:    func(s *models.BlockNodeStorage) string { return s.PluginsSize },
 	},
 }
 

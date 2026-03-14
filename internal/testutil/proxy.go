@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -32,16 +32,16 @@ func InstallCrioRegistriesConf() error {
 
 	// Build the registries.conf path inline to avoid import cycle
 	// This is equivalent to software.GetRegistriesConfPath()
-	registriesConfPath := filepath.Join(core.Paths().SandboxDir, "etc", "containers", "registries.conf.d", "registries.conf")
+	registriesConfPath := filepath.Join(models.Paths().SandboxDir, "etc", "containers", "registries.conf.d", "registries.conf")
 
 	// if the directory does not exist, create it
-	err = os.MkdirAll(filepath.Dir(registriesConfPath), core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(filepath.Dir(registriesConfPath), models.DefaultDirOrExecPerm)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create registries.conf.d directory")
 	}
 
 	// Write to the sandbox registries.conf.d directory
-	err = os.WriteFile(registriesConfPath, []byte(content), core.DefaultFilePerm)
+	err = os.WriteFile(registriesConfPath, []byte(content), models.DefaultFilePerm)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write custom registries.conf")
 	}

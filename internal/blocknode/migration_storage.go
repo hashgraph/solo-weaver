@@ -22,8 +22,8 @@ package blocknode
 import (
 	"context"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -80,14 +80,14 @@ func (m *StorageMigration) Execute(ctx context.Context, mctx *migration.Context)
 		if err := manager.fsManager.CreateDirectory(storagePath, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create %s storage directory", m.storage.Name)
 		}
-		if err := manager.fsManager.WritePermissions(storagePath, core.DefaultDirOrExecPerm, true); err != nil {
+		if err := manager.fsManager.WritePermissions(storagePath, models.DefaultDirOrExecPerm, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to set permissions on %s storage", m.storage.Name)
 		}
 	}
 
 	// Create the PV/PVC
 	logger.Info().Str("storage", m.storage.Name).Msg("Creating storage PV/PVC")
-	if err := manager.CreateOptionalStorage(ctx, core.Paths().TempDir, m.storage); err != nil {
+	if err := manager.CreateOptionalStorage(ctx, models.Paths().TempDir, m.storage); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create %s storage PV/PVC", m.storage.Name)
 	}
 
@@ -106,7 +106,7 @@ func (m *StorageMigration) Rollback(ctx context.Context, mctx *migration.Context
 	logger := mctx.Logger
 	logger.Warn().Str("storage", m.storage.Name).Msg("Rolling back storage migration")
 
-	if err := manager.kubeClient.DeletePVC(ctx, manager.blockConfig.Namespace, m.storage.PVCName); err != nil {
+	if err := manager.kubeClient.DeletePVC(ctx, manager.blockNodeInputs.Namespace, m.storage.PVCName); err != nil {
 		logger.Warn().Err(err).Str("pvc", m.storage.PVCName).Msg("Could not delete PVC during rollback")
 	}
 	if err := manager.kubeClient.DeletePV(ctx, m.storage.PVName); err != nil {

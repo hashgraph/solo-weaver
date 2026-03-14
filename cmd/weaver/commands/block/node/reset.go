@@ -5,10 +5,7 @@ package node
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/pkg/hardware"
-	"github.com/joomcode/errorx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -26,47 +23,40 @@ This command will:
 
 WARNING: This operation is destructive and cannot be undone. All block data will be lost.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := common.FlagProfile.Value(cmd, args)
+		err := initializeDependencies()
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
-		}
-
-		// Validate profile early if provided
-		if flagProfile != "" {
-			if !hardware.IsValidProfile(flagProfile) {
-				return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-					flagProfile, hardware.SupportedProfiles())
-			}
-			// Set the profile in the global config
-			config.SetProfile(flagProfile)
-		}
-
-		// Apply configuration overrides from flags
-		applyConfigOverrides()
-
-		// Validate the configuration
-		if err := config.Get().Validate(); err != nil {
 			return err
 		}
 
-		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		inputs, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
-			return errorx.Decorate(err, "failed to determine execution mode")
+			return err
 		}
-		opts := workflows.DefaultWorkflowExecutionOptions()
-		opts.ExecutionMode = execMode
+
+		intent := models.Intent{
+			Action: models.ActionReset,
+			Target: models.TargetBlockNode,
+		}
 
 		logx.As().Debug().
-			Strs("args", args).
-			Str("nodeType", nodeType).
-			Str("profile", flagProfile).
-			Any("opts", opts).
+			Any("intent", intent).
+			Any("inputs", inputs).
 			Msg("Resetting Hedera Block Node")
 
-		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewBlockNodeResetWorkflow(), opts)
+		handler, err := blockNodeHandler.ForAction(intent.Action)
+		if err != nil {
+			return err
+		}
 
-		common.RunWorkflow(cmd.Context(), wb)
+		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
+		if err != nil {
+			return err
+		}
+
+		if err != nil {
+			return err
+		}
+		common.CheckWorkflowReport(cmd.Context(), report)
 
 		logx.As().Info().Msg("Successfully reset Hedera Block Node")
 		return nil
@@ -74,7 +64,5 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 }
 
 func init() {
-	common.FlagStopOnError.SetVarP(resetCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(resetCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(resetCmd, &flagContinueOnError, false)
+	initializeExecutionFlags(resetCmd)
 }

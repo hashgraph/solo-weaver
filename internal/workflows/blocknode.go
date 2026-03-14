@@ -4,39 +4,40 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 // NewBlockNodePreflightCheckWorkflow creates a safety check workflow for block node.
 func NewBlockNodePreflightCheckWorkflow(profile string) *automa.WorkflowBuilder {
-	return NewNodeSafetyCheckWorkflow(core.NodeTypeBlock, profile, false)
+	return NewNodeSafetyCheckWorkflow(models.NodeTypeBlock, profile, false)
 }
 
-// NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node.
-func NewBlockNodeInstallWorkflow(profile string, valuesFile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
+// NewBlockNodeInstallWorkflow creates a comprehensive install workflow for block node
+func NewBlockNodeInstallWorkflow(inputs models.BlockNodeInputs, sm state.Manager) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-install").Steps(
-		InstallClusterWorkflow(core.NodeTypeBlock, profile, skipHardwareChecks),
-		steps.SetupBlockNode(profile, valuesFile),
+		InstallClusterWorkflow(models.NodeTypeBlock, inputs.Profile, inputs.SkipHardwareChecks, sm),
+		steps.SetupBlockNode(inputs),
 	)
 }
 
 // NewBlockNodeUpgradeWorkflow creates an upgrade workflow for block node
-func NewBlockNodeUpgradeWorkflow(profile string, valuesFile string, reuseValues bool, withReset bool) *automa.WorkflowBuilder {
+func NewBlockNodeUpgradeWorkflow(inputs models.BlockNodeInputs, withReset bool) *automa.WorkflowBuilder {
 	if withReset {
 		return automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").Steps(
-			steps.PurgeBlockNodeStorage(),
-			steps.UpgradeBlockNode(profile, valuesFile, reuseValues),
+			steps.PurgeBlockNodeStorage(inputs),
+			steps.UpgradeBlockNode(inputs),
 		)
 	}
 	return automa.NewWorkflowBuilder().WithId("block-node-upgrade").Steps(
-		steps.UpgradeBlockNode(profile, valuesFile, reuseValues),
+		steps.UpgradeBlockNode(inputs),
 	)
 }
 
 // NewBlockNodeResetWorkflow creates a reset workflow for block node
-func NewBlockNodeResetWorkflow() *automa.WorkflowBuilder {
+func NewBlockNodeResetWorkflow(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-reset").Steps(
-		steps.ResetBlockNode(),
+		steps.ResetBlockNode(inputs),
 	)
 }

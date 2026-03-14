@@ -13,8 +13,9 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/alloy"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -277,12 +278,12 @@ func installNodeExporter() automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -350,13 +351,13 @@ func createAlloyNamespace() automa.Builder {
 			}
 
 			// Create namespace manifest using template
-			namespaceManifestPath := path.Join(core.Paths().TempDir, "alloy-namespace.yaml")
+			namespaceManifestPath := path.Join(models.Paths().TempDir, "alloy-namespace.yaml")
 			namespaceManifest, err := alloy.NamespaceManifest()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), core.DefaultFilePerm)
+			err = os.WriteFile(namespaceManifestPath, []byte(namespaceManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -461,7 +462,7 @@ func installAlloy() automa.Builder {
 			// This prevents rollback from uninstalling a pre-existing release
 			if isFreshInstall {
 				meta[InstalledByThisStep] = "true"
-				stp.State().Set(InstalledByThisStep, true)
+				stp.State().Local().Set(InstalledByThisStep, true)
 			} else {
 				meta["upgraded"] = "true"
 			}
@@ -469,7 +470,7 @@ func installAlloy() automa.Builder {
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -537,8 +538,8 @@ func deployAlloyConfig() automa.Builder {
 			}
 
 			// Write manifest to temp file for kubectl apply
-			configMapManifestPath := path.Join(core.Paths().TempDir, "alloy-configmap.yaml")
-			err = os.WriteFile(configMapManifestPath, []byte(configMapManifest), core.DefaultFilePerm)
+			configMapManifestPath := path.Join(models.Paths().TempDir, "alloy-configmap.yaml")
+			err = os.WriteFile(configMapManifestPath, []byte(configMapManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -551,13 +552,13 @@ func deployAlloyConfig() automa.Builder {
 
 			meta[InstalledByThisStep] = "true"
 			meta["modules"] = strings.Join(moduleNames, ",")
-			stp.State().Set(InstalledByThisStep, true)
-			stp.State().Set("configMapManifestPath", configMapManifestPath)
+			stp.State().Local().Set(InstalledByThisStep, true)
+			stp.State().Local().Set("configMapManifestPath", configMapManifestPath)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -566,7 +567,11 @@ func deployAlloyConfig() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			configMapManifestPath := stp.State().String("configMapManifestPath")
+			var configMapManifestPath string
+			if v, ok := stp.State().Local().String("configMapManifestPath"); ok {
+				configMapManifestPath = v
+			}
+
 			if configMapManifestPath != "" {
 				err = k.DeleteManifest(ctx, configMapManifestPath)
 				if err != nil {
@@ -629,8 +634,8 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			serviceMonitorPath := path.Join(core.Paths().TempDir, "block-node-servicemonitor.yaml")
-			err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), core.DefaultFilePerm)
+			serviceMonitorPath := path.Join(models.Paths().TempDir, "block-node-servicemonitor.yaml")
+			err = os.WriteFile(serviceMonitorPath, []byte(serviceMonitorManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -639,15 +644,15 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			stp.State().Set("serviceMonitorPath", serviceMonitorPath)
+			stp.State().Local().Set("serviceMonitorPath", serviceMonitorPath)
 
 			// Deploy PodLogs for logs discovery
 			podLogsManifest, err := alloy.BlockNodePodLogsManifest(blockNodeNamespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			podLogsPath := path.Join(core.Paths().TempDir, "block-node-podlogs.yaml")
-			err = os.WriteFile(podLogsPath, []byte(podLogsManifest), core.DefaultFilePerm)
+			podLogsPath := path.Join(models.Paths().TempDir, "block-node-podlogs.yaml")
+			err = os.WriteFile(podLogsPath, []byte(podLogsManifest), models.DefaultFilePerm)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -656,16 +661,16 @@ func deployBlockNodeMonitoring() automa.Builder {
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			stp.State().Set("podLogsPath", podLogsPath)
+			stp.State().Local().Set("podLogsPath", podLogsPath)
 
 			l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor and PodLogs deployed for metrics/logs discovery")
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -675,13 +680,21 @@ func deployBlockNodeMonitoring() automa.Builder {
 			}
 
 			// Clean up ServiceMonitor if it was deployed
-			serviceMonitorPath := stp.State().String("serviceMonitorPath")
+			var serviceMonitorPath string
+			if v, ok := stp.State().Local().String("serviceMonitorPath"); ok {
+				serviceMonitorPath = v
+			}
+
 			if serviceMonitorPath != "" {
 				_ = k.DeleteManifest(ctx, serviceMonitorPath) // Ignore error - may not exist
 			}
 
 			// Clean up PodLogs if it was deployed
-			podLogsPath := stp.State().String("podLogsPath")
+			var podLogsPath string
+			if v, ok := stp.State().Local().String("podLogsPath"); ok {
+				podLogsPath = v
+			}
+
 			if podLogsPath != "" {
 				_ = k.DeleteManifest(ctx, podLogsPath) // Ignore error - may not exist
 			}

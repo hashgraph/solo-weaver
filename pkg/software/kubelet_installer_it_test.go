@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,7 +71,7 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	// Check binary permissions
 	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/kubelet")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "kubelet binary should have executable permissions")
+	require.Equal(t, os.FileMode(models.DefaultDirOrExecPerm), info.Mode().Perm(), "kubelet binary should have executable permissions")
 
 	//
 	// When - Configure
@@ -99,6 +99,29 @@ func Test_KubeletInstaller_FullWorkflow_Success(t *testing.T) {
 	contentStr := string(serviceContent)
 	require.Contains(t, contentStr, "/opt/solo/weaver/sandbox/bin/kubelet", "Service file should contain updated kubelet path")
 	require.NotContains(t, contentStr, "/usr/bin/kubelet", "Service file should not contain original kubelet path")
+
+	//
+	// When
+	//
+	st, err := installer.VerifyInstallation()
+	require.NoError(t, err, "VerifyInstallation should succeed after successful installation")
+	require.True(t, st.Installed, "Installed should be true")
+
+	kubeletServicePath, ok := st.Metadata.Get("kubeletServicePath")
+	require.True(t, ok, "Metadata should contain kubeletServicePath")
+	require.NotEmpty(t, kubeletServicePath, "kubeletServicePath should not be empty")
+
+	sandboxKubeletPath, ok := st.Metadata.Get("sandboxKubeletPath")
+	require.True(t, ok, "Metadata should contain sandboxKubeletPath")
+	require.NotEmpty(t, sandboxKubeletPath, "sandboxKubeletPath should not be empty")
+
+	systemdUnitPath, ok := st.Metadata.Get("systemdUnitPath")
+	require.True(t, ok, "Metadata should contain systemdUnitPath")
+	require.NotEmpty(t, systemdUnitPath, "systemdUnitPath should not be empty")
+
+	systemdUnitPathTarget, ok := st.Metadata.Get("systemdUnitPathTarget")
+	require.True(t, ok, "Metadata should contain systemdUnitPathTarget")
+	require.NotEmpty(t, systemdUnitPathTarget, "systemdUnitPathTarget should not be empty")
 
 	//
 	// When - RemoveConfiguration
@@ -221,7 +244,7 @@ func Test_KubeletInstaller_IsInstalled_False_WhenBinaryMissing(t *testing.T) {
 
 	// Install config files only by accessing the kubeletInstaller directly
 	ki := installer.(*kubeletInstaller)
-	err = ki.installConfig(filepath.Join(core.Paths().SandboxDir, core.SystemdUnitFilesDir))
+	err = ki.installConfig(filepath.Join(models.Paths().SandboxDir, models.SystemdUnitFilesDir))
 	require.NoError(t, err, "Failed to install kubelet configs")
 
 	//

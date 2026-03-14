@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -64,12 +64,12 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			tempDir := t.TempDir()
 			basePath := filepath.Join(tempDir, "storage")
 
-			blockConfig := config.BlockNodeConfig{
-				Namespace: "test-namespace",
-				Release:   "test-release",
-				Chart:     "test-chart",
-				Version:   "0.1.0",
-				Storage: config.BlockNodeStorage{
+			blockConfig := models.BlockNodeInputs{
+				Namespace:    "test-namespace",
+				Release:      "test-release",
+				Chart:        "test-chart",
+				ChartVersion: "0.1.0",
+				Storage: models.BlockNodeStorage{
 					BasePath:         basePath,
 					LiveSize:         tt.liveSize,
 					ArchiveSize:      tt.archiveSize,
@@ -80,14 +80,14 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			}
 
 			manager := &Manager{
-				blockConfig: &blockConfig,
+				blockNodeInputs: blockConfig,
 			}
 
 			// Get the computed storage paths
 			// Use a version that includes all optional storages for this test
-			manager.blockConfig.Version = "0.28.1"
+			manager.blockNodeInputs.ChartVersion = "0.28.1"
 			archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
-			manager.blockConfig.Version = "0.1.0"
+			manager.blockNodeInputs.ChartVersion = "0.1.0"
 			require.NoError(t, err)
 
 			// Map optional paths by name using the registry order
@@ -121,17 +121,17 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 				IncludeVerification bool
 				IncludePlugins      bool
 			}{
-				Namespace:           manager.blockConfig.Namespace,
+				Namespace:           manager.blockNodeInputs.Namespace,
 				LivePath:            livePath,
 				ArchivePath:         archivePath,
 				LogPath:             logPath,
 				VerificationPath:    verificationPath,
 				PluginsPath:         pluginsPath,
-				LiveSize:            manager.blockConfig.Storage.LiveSize,
-				ArchiveSize:         manager.blockConfig.Storage.ArchiveSize,
-				LogSize:             manager.blockConfig.Storage.LogSize,
-				VerificationSize:    manager.blockConfig.Storage.VerificationSize,
-				PluginsSize:         manager.blockConfig.Storage.PluginsSize,
+				LiveSize:            manager.blockNodeInputs.Storage.LiveSize,
+				ArchiveSize:         manager.blockNodeInputs.Storage.ArchiveSize,
+				LogSize:             manager.blockNodeInputs.Storage.LogSize,
+				VerificationSize:    manager.blockNodeInputs.Storage.VerificationSize,
+				PluginsSize:         manager.blockNodeInputs.Storage.PluginsSize,
 				IncludeVerification: true, // Include verification storage in tests
 				IncludePlugins:      true, // Include plugins storage in tests
 			}
@@ -198,12 +198,12 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	tempDir := t.TempDir()
 	basePath := filepath.Join(tempDir, "storage")
 
-	blockConfig := config.BlockNodeConfig{
-		Namespace: "block-node",
-		Release:   "test-release",
-		Chart:     "test-chart",
-		Version:   "0.1.0",
-		Storage: config.BlockNodeStorage{
+	blockConfig := models.BlockNodeInputs{
+		Namespace:    "block-node",
+		Release:      "test-release",
+		Chart:        "test-chart",
+		ChartVersion: "0.1.0",
+		Storage: models.BlockNodeStorage{
 			BasePath:         basePath,
 			LiveSize:         "10Gi",
 			ArchiveSize:      "20Gi",
@@ -214,14 +214,14 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	}
 
 	manager := &Manager{
-		blockConfig: &blockConfig,
+		blockNodeInputs: blockConfig,
 	}
 
 	// Get the computed storage paths
 	// Use a version that includes all optional storages for this test
-	manager.blockConfig.Version = "0.28.1"
+	manager.blockNodeInputs.ChartVersion = "0.28.1"
 	archivePath, livePath, logPath, optionalPaths, err := manager.GetStoragePaths()
-	manager.blockConfig.Version = "0.1.0"
+	manager.blockNodeInputs.ChartVersion = "0.1.0"
 	require.NoError(t, err)
 
 	// Map optional paths by name using the registry order
@@ -255,17 +255,17 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 		IncludeVerification bool
 		IncludePlugins      bool
 	}{
-		Namespace:           manager.blockConfig.Namespace,
+		Namespace:           manager.blockNodeInputs.Namespace,
 		LivePath:            livePath,
 		ArchivePath:         archivePath,
 		LogPath:             logPath,
 		VerificationPath:    verificationPath,
 		PluginsPath:         pluginsPath,
-		LiveSize:            manager.blockConfig.Storage.LiveSize,
-		ArchiveSize:         manager.blockConfig.Storage.ArchiveSize,
-		LogSize:             manager.blockConfig.Storage.LogSize,
-		VerificationSize:    manager.blockConfig.Storage.VerificationSize,
-		PluginsSize:         manager.blockConfig.Storage.PluginsSize,
+		LiveSize:            manager.blockNodeInputs.Storage.LiveSize,
+		ArchiveSize:         manager.blockNodeInputs.Storage.ArchiveSize,
+		LogSize:             manager.blockNodeInputs.Storage.LogSize,
+		VerificationSize:    manager.blockNodeInputs.Storage.VerificationSize,
+		PluginsSize:         manager.blockNodeInputs.Storage.PluginsSize,
 		IncludeVerification: true,
 		IncludePlugins:      true,
 	}

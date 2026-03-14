@@ -5,18 +5,18 @@ package hardware
 import (
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
 // SupportedNodeTypes returns all supported node types
 func SupportedNodeTypes() []string {
-	return []string{core.NodeTypeBlock, core.NodeTypeConsensus}
+	return []string{models.NodeTypeBlock, models.NodeTypeConsensus}
 }
 
 // SupportedProfiles returns all supported deployment profiles
 func SupportedProfiles() []string {
-	return []string{core.ProfileLocal, core.ProfilePerfnet, core.ProfileTestnet, core.ProfilePreviewnet, core.ProfileMainnet}
+	return []string{models.ProfileLocal, models.ProfilePerfnet, models.ProfileTestnet, models.ProfilePreviewnet, models.ProfileMainnet}
 }
 
 // IsValidNodeType checks if the given node type is supported

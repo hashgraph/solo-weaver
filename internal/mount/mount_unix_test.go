@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -123,7 +123,7 @@ UUID=1234 / ext4 defaults 0 1
 /source/kubelet /var/lib/kubelet none bind,nofail 0 0
 `
 
-	err := os.WriteFile(testFstab, []byte(content), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte(content), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	entries, lines, err := readFstab(testFstab)
@@ -178,7 +178,7 @@ func Test_writeFstab(t *testing.T) {
 	// Check permissions
 	info, err := os.Stat(testFstab)
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultFilePerm), info.Mode().Perm())
+	require.Equal(t, os.FileMode(models.DefaultFilePerm), info.Mode().Perm())
 }
 
 func Test_addFstabEntry(t *testing.T) {
@@ -196,7 +196,7 @@ func Test_addFstabEntry(t *testing.T) {
 	initialContent := `# Test fstab
 /existing/source /existing/target none bind,nofail 0 0
 `
-	err := os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Add a new entry
@@ -273,7 +273,7 @@ func Test_addFstabEntry_PreventsDuplicates(t *testing.T) {
 	initialContent := `# Test fstab
 /sandbox/etc/kubernetes /etc/kubernetes none bind,nofail 0 0
 `
-	err := os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Try to add entry with same target but different source
@@ -314,7 +314,7 @@ func Test_removeFstabEntry(t *testing.T) {
 /source2 /target2 none bind,nofail 0 0
 /source3 /target3 none bind,nofail 0 0
 `
-	err := os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Remove middle entry
@@ -347,7 +347,7 @@ func Test_removeFstabEntry_NonExistent(t *testing.T) {
 	initialContent := `# Test fstab
 /source1 /target1 none bind,nofail 0 0
 `
-	err := os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Try to remove non-existent entry - should not error
@@ -392,16 +392,16 @@ func Test_IsBindMountedWithFstab_BothExist(t *testing.T) {
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err := os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sourceDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(targetDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create fstab with entry
 	initialContent := fmt.Sprintf(`# Test fstab
 %s %s none bind,nofail 0 0
 `, sourceDir, targetDir)
-	err = os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err = os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -432,14 +432,14 @@ func Test_IsBindMountedWithFstab_OnlyFstabEntryExists(t *testing.T) {
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err := os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sourceDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create fstab with entry
 	initialContent := fmt.Sprintf(`# Test fstab
 %s %s none bind,nofail 0 0
 `, sourceDir, targetDir)
-	err = os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err = os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -465,7 +465,7 @@ func Test_IsBindMountedWithFstab_NeitherExists(t *testing.T) {
 	fstabFile = testFstab
 
 	// Create empty fstab
-	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte("# Test fstab\n"), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	mount := BindMount{
@@ -495,18 +495,18 @@ func Test_IsBindMountedWithFstab_DifferentSourceInFstab(t *testing.T) {
 	sourceDir2 := filepath.Join(tempDir, "source2")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err := os.MkdirAll(sourceDir1, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sourceDir1, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(sourceDir2, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(sourceDir2, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(targetDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Create fstab with sourceDir1 -> targetDir
 	initialContent := fmt.Sprintf(`# Test fstab
 %s %s none bind,nofail 0 0
 `, sourceDir1, targetDir)
-	err = os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err = os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Check with different source (sourceDir2)
@@ -536,9 +536,9 @@ func Test_IsBindMountedWithFstab_EmptyFstab(t *testing.T) {
 	sourceDir := filepath.Join(tempDir, "source")
 	targetDir := filepath.Join(tempDir, "target")
 
-	err := os.MkdirAll(sourceDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(sourceDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
-	err = os.MkdirAll(targetDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(targetDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	// Don't create fstab file at all
@@ -574,7 +574,7 @@ func Test_IsBindMountedWithFstab_MultipleFstabEntries(t *testing.T) {
 	target3 := filepath.Join(tempDir, "target3")
 
 	for _, dir := range []string{source1, source2, source3, target1, target2, target3} {
-		err := os.MkdirAll(dir, core.DefaultDirOrExecPerm)
+		err := os.MkdirAll(dir, models.DefaultDirOrExecPerm)
 		require.NoError(t, err)
 	}
 
@@ -584,7 +584,7 @@ func Test_IsBindMountedWithFstab_MultipleFstabEntries(t *testing.T) {
 %s %s none bind,nofail 0 0
 %s %s none bind,nofail 0 0
 `, source1, target1, source2, target2, source3, target3)
-	err := os.WriteFile(testFstab, []byte(initialContent), core.DefaultFilePerm)
+	err := os.WriteFile(testFstab, []byte(initialContent), models.DefaultFilePerm)
 	require.NoError(t, err)
 
 	// Check for the second mount
@@ -903,7 +903,7 @@ overlay /sandbox/mmm overlay rw 0 0
 			// Create temp file with proc mounts content
 			tempDir := t.TempDir()
 			testProcMounts := filepath.Join(tempDir, "mounts")
-			err := os.WriteFile(testProcMounts, []byte(tt.procMounts), core.DefaultFilePerm)
+			err := os.WriteFile(testProcMounts, []byte(tt.procMounts), models.DefaultFilePerm)
 			require.NoError(t, err)
 
 			procMountsFile = testProcMounts

@@ -7,11 +7,22 @@ import (
 	"path"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	htime "helm.sh/helm/v3/pkg/time"
 )
+
+// WithStateManager injects a state.Manager into the installer so that
+// IsInstalled/IsConfigured reads and Install/Configure/Uninstall/RemoveConfiguration
+// writes flow through the shared DefaultStateManager instead of the legacy
+// file-per-component Manager.
+func WithStateManager(sm state.Manager) InstallerOption {
+	return func(bi *baseInstaller) {
+		bi.stateManager = sm
+	}
+}
 
 type InstallerOption func(*baseInstaller)
 
@@ -28,11 +39,21 @@ func WithVersion(version string) InstallerOption {
 // baseInstaller provides common functionality for all software installers
 // as well as helper functions for common operations.
 type baseInstaller struct {
+	name                 string
 	downloader           *Downloader
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
-	stateManager         *state.Manager
+	stateManager         state.Manager
+	softwareState        *state.SoftwareState
+
+	// These function fields allow for installer-specific overrides of the verification logic while still
+	// providing a default implementation in the baseInstaller. For example, kubeadm and kubelet need to verify
+	// configuration files in the sandbox in addition to the binaries, so they override the verifyConfigured function
+	// to point to their own verification logic that includes config checks. Other software that only needs to verify
+	// binaries can use the default implementation provided by baseInstaller.
+	verifyInstalled  func() error
+	verifyConfigured func() (models.StringMap, error)
 }
 
 var _ Software = (*baseInstaller)(nil)
@@ -60,10 +81,10 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 	}
 
 	bi := &baseInstaller{
-		downloader:   NewDownloader(),
-		software:     item,
-		fileManager:  fsxManager,
-		stateManager: state.NewManager(fsxManager),
+		name:        softwareName,
+		downloader:  NewDownloader(),
+		software:    item,
+		fileManager: fsxManager,
 	}
 
 	for _, opt := range opts {
@@ -77,13 +98,16 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 		}
 	}
 
+	bi.verifyInstalled = bi.verifySandboxBinaries
+	bi.verifyConfigured = bi.verifySandboxConfigs
+
 	return bi, nil
 }
 
 // Download handles the common download logic with checksum verification
 // It downloads all archives, binaries (with URLs), and config files if available.
 func (b *baseInstaller) Download() error {
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 
 	// Create download folder if it doesn't exist
 	err := b.fileManager.CreateDirectory(downloadFolder, true)
@@ -149,7 +173,7 @@ func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, archiveName)
+	destinationFile := path.Join(models.Paths().DownloadsDir, archiveName)
 
 	// Get expected checksum for this archive
 	osInfo, exists := archive.PlatformChecksum[platform.os]
@@ -233,7 +257,7 @@ func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	destinationFile := path.Join(core.Paths().DownloadsDir, binaryName)
+	destinationFile := path.Join(models.Paths().DownloadsDir, binaryName)
 
 	// Get expected checksum for this binary
 	osInfo, exists := binary.PlatformChecksum[platform.os]
@@ -287,7 +311,7 @@ func (b *baseInstaller) downloadConfigs() error {
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(core.Paths().DownloadsDir, config.Name)
+		configFile := path.Join(models.Paths().DownloadsDir, config.Name)
 
 		// Check if file already exists and verify checksum
 		_, exists, err := b.fileManager.PathExists(configFile)
@@ -392,7 +416,7 @@ func (b *baseInstaller) extractArchive(archive ArchiveDetail, extractFolder stri
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	compressedFile := path.Join(core.Paths().DownloadsDir, archiveName)
+	compressedFile := path.Join(models.Paths().DownloadsDir, archiveName)
 
 	// Verify that the compressed file exists
 	_, exists, err := b.fileManager.PathExists(compressedFile)
@@ -516,17 +540,13 @@ func (b *baseInstaller) verifyExtractedConfigs() error {
 }
 
 // Install provides a basic install implementation for simple binary installations.
-// It also records the installation state.
+// It also records the installation state via the injected state.Writer.
 func (b *baseInstaller) Install() error {
 	err := b.performInstall()
 	if err != nil {
 		return err
 	}
-
-	// Record installation state
-	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeInstalled, b.Version())
-
-	return nil
+	return b.recordInstalled()
 }
 
 // performInstall performs the installation logic
@@ -544,7 +564,7 @@ func (b *baseInstaller) performInstall() error {
 	}
 
 	// Get sandbox bin directory from core paths
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Create sandbox bin directory if it doesn't exist
 	err := b.fileManager.CreateDirectory(sandboxBinDir, true)
@@ -552,7 +572,7 @@ func (b *baseInstaller) performInstall() error {
 		return NewInstallationError(err, "", sandboxBinDir)
 	}
 
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 	extractFolder := b.extractFolder()
 
 	// Install all binaries
@@ -584,7 +604,7 @@ func (b *baseInstaller) performInstall() error {
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
 
 		// Copy binary to sandbox
-		err = b.installFile(sourcePath, sandboxBinary, core.DefaultDirOrExecPerm)
+		err = b.installFile(sourcePath, sandboxBinary, models.DefaultDirOrExecPerm)
 		if err != nil {
 			return NewInstallationError(err, sourcePath, sandboxBinDir)
 		}
@@ -616,7 +636,7 @@ func (b *baseInstaller) installConfig(destinationDir string) error {
 		return errorx.IllegalState.Wrap(err, "failed to create %s directory in sandbox", destinationDir)
 	}
 
-	downloadFolder := core.Paths().DownloadsDir
+	downloadFolder := models.Paths().DownloadsDir
 	extractFolder := b.extractFolder()
 
 	// Install each config file into the sandbox
@@ -687,16 +707,13 @@ func (b *baseInstaller) uninstallConfig(destinationDir string) error {
 }
 
 // Configure provides a basic configuration implementation.
-// It also records the configuration state.
+// It also records the configuration state via the injected state.Writer.
 func (b *baseInstaller) Configure() error {
 	err := b.performConfiguration()
 	if err != nil {
 		return err
 	}
-
-	_ = b.stateManager.RecordState(b.GetSoftwareName(), state.TypeConfigured, b.Version())
-
-	return nil
+	return b.recordConfigured()
 }
 
 // performConfiguration performs the configuration logic
@@ -713,7 +730,7 @@ func (b *baseInstaller) performConfiguration() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Create symbolic links for all binaries
 	for _, binary := range versionInfo.Binaries {
@@ -726,7 +743,7 @@ func (b *baseInstaller) performConfiguration() error {
 		// Get the base name for the destination (just the filename without path)
 		binaryBasename := path.Base(binaryName)
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
 		// Create symlink to /usr/local/bin for system-wide access
 		err = b.fileManager.CreateSymbolicLink(sandboxBinary, systemBinary, true)
@@ -738,14 +755,24 @@ func (b *baseInstaller) performConfiguration() error {
 	return nil
 }
 
-// IsInstalled provides a basic installation check
+// IsInstalled checks whether the software has been recorded as installed in the state.
+// It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsInstalled() (bool, error) {
-	return b.stateManager.Exists(b.software.Name, state.TypeInstalled)
+	if err := b.checkInstallation(); err != nil {
+		return false, err
+	}
+
+	return b.softwareState.Installed, nil
 }
 
-// IsConfigured provides a basic configuration check
+// IsConfigured checks whether the software has been recorded as configured in the state.
+// It refreshes from disk first so the result always reflects persisted state.
 func (b *baseInstaller) IsConfigured() (bool, error) {
-	return b.stateManager.Exists(b.software.Name, state.TypeConfigured)
+	if err := b.checkInstallation(); err != nil {
+		return false, err
+	}
+
+	return b.softwareState.Configured, nil
 }
 
 // replaceAllInFile replaces all occurrences of old with new in the given file
@@ -765,7 +792,7 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 	}
 
 	// rw-r--r-- permissions that are typical for config and data files
-	err = fileManager.WritePermissions(sourceFile, core.DefaultFilePerm, false)
+	err = fileManager.WritePermissions(sourceFile, models.DefaultFilePerm, false)
 	if err != nil {
 		return err
 	}
@@ -775,17 +802,12 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 
 // extractFolder returns the software-specific extraction folder path
 func (b *baseInstaller) extractFolder() string {
-	return path.Join(core.Paths().TempDir, b.software.Name, core.DefaultUnpackFolderName)
+	return path.Join(models.Paths().TempDir, b.software.Name, models.DefaultUnpackFolderName)
 }
 
 // Version returns the version being installed
 func (b *baseInstaller) Version() string {
 	return b.versionToBeInstalled
-}
-
-// GetStateManager returns the state manager for external state management
-func (b *baseInstaller) GetStateManager() *state.Manager {
-	return b.stateManager
 }
 
 // GetSoftwareName returns the software name
@@ -794,16 +816,12 @@ func (b *baseInstaller) GetSoftwareName() string {
 }
 
 // Uninstall removes the software from the sandbox and cleans up related files.
-// It also removes the installation state.
+// It also clears the installation state.
 func (b *baseInstaller) Uninstall() error {
 	err := b.performUninstall()
 	if err != nil {
 		return err
 	}
-
-	// Remove installation state
-	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeInstalled)
-
 	return nil
 }
 
@@ -819,15 +837,12 @@ func (b *baseInstaller) performUninstall() error {
 }
 
 // RemoveConfiguration restores the configuration of the software after an uninstall.
-// It also removes the configuration state.
+// It also clears the configuration state.
 func (b *baseInstaller) RemoveConfiguration() error {
 	err := b.performConfigurationRemoval()
 	if err != nil {
 		return err
 	}
-
-	_ = b.stateManager.RemoveState(b.GetSoftwareName(), state.TypeConfigured)
-
 	return nil
 }
 
@@ -855,7 +870,7 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Remove each binary from the sandbox bin directory
 	for _, binary := range versionInfo.Binaries {
@@ -891,7 +906,7 @@ func (b *baseInstaller) removeSandboxBinaries() error {
 // Cleanup performs any necessary cleanup after installation
 // It only removes the extraction folder, keeping downloaded files for reuse
 func (b *baseInstaller) Cleanup() error {
-	extractFolder := path.Join(core.Paths().TempDir, b.software.Name)
+	extractFolder := path.Join(models.Paths().TempDir, b.software.Name)
 
 	// Clean up only the software-specific extraction folder
 	// The shared downloads folder is preserved to enable checksum-based caching
@@ -917,7 +932,7 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		ARCH:    platform.arch,
 	}
 
-	sandboxBinDir := core.Paths().SandboxBinDir
+	sandboxBinDir := models.Paths().SandboxBinDir
 
 	// Check each binary and remove its symlink if it exists
 	for _, binary := range versionInfo.Binaries {
@@ -930,7 +945,7 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		// Get the base name for the destination (just the filename without path)
 		binaryBasename := path.Base(binaryName)
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
-		systemBinary := path.Join(core.SystemBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
 		// Check if symlink exists in system bin directory
 		_, exists, err := b.fileManager.PathExists(systemBinary)
@@ -959,6 +974,87 @@ func (b *baseInstaller) cleanupSymlinks() error {
 	return nil
 }
 
+// verifySandboxBinaries verifies that all binaries are present in the sandbox bin directory
+func (b *baseInstaller) verifySandboxBinaries() error {
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	sandboxBinDir := models.Paths().SandboxBinDir
+
+	for _, binary := range versionInfo.Binaries {
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return NewTemplateError(err, b.software.Name)
+		}
+
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+
+		_, exists, err := b.fileManager.PathExists(sandboxBinary)
+		if err != nil || !exists {
+			return NewFileNotFoundError(sandboxBinary)
+		}
+
+		info, err := os.Stat(sandboxBinary)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to stat sandbox binary %s", sandboxBinary)
+		}
+		if info.Mode().Perm() != models.DefaultDirOrExecPerm {
+			return errorx.IllegalState.New(
+				"sandbox binary %s has wrong permissions: got %o, want %o",
+				sandboxBinary, info.Mode().Perm(), models.DefaultDirOrExecPerm,
+			)
+		}
+	}
+
+	return nil
+}
+
+// verifySandboxConfigs verifies that all config files are present in the sandbox config directory
+func (b *baseInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	return nil, nil // By default, we don't have a standard location for configs in the sandbox, so we skip this verification. Specific installers can implement this if needed.
+}
+
+func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
+	if b.verifyInstalled == nil {
+		return nil, errorx.IllegalState.New("binary verification function is not set, cannot verify installation")
+	}
+
+	if b.verifyConfigured == nil {
+		return nil, errorx.IllegalState.New("configuration verification function is not set, cannot verify configuration")
+	}
+
+	var err error
+	softwareState := &state.SoftwareState{
+		Name:       b.name,
+		Version:    b.Version(),
+		Installed:  false,
+		Configured: false,
+		LastSync:   htime.Now(),
+	}
+
+	if err = b.verifyInstalled(); err != nil {
+		return softwareState, nil // if verification fails, treat as not installed
+	}
+	softwareState.Installed = true
+
+	if softwareState.Metadata, err = b.verifyConfigured(); err != nil {
+		return softwareState, nil // if verification fails, treat as not configured
+	}
+	softwareState.Configured = true
+
+	return softwareState, nil
+}
+
 // installFile copies a file with permissions using the fileManager
 // This is a helper method that can be used by any installer that needs to copy files
 // with specific permissions during installation.
@@ -983,5 +1079,61 @@ func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
 		return errorx.IllegalState.Wrap(err, "failed to set permissions on %s", dst)
 	}
 
+	return nil
+}
+
+func (b *baseInstaller) checkInstallation() error {
+	var err error
+	if b.softwareState == nil {
+		// if state manager is injected, read from it to avoid unnecessary verification on disk which can be expensive
+		// for some software with large binaries and many files
+		if b.stateManager != nil && !b.stateManager.State().LastSync.IsZero() {
+			snap := b.stateManager.State()
+			cur := state.GetSoftwareState(snap, b.software.Name)
+			b.softwareState = &cur
+			return nil
+		}
+
+		b.softwareState, err = b.VerifyInstallation()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *baseInstaller) recordInstalled() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Installed = true
+	return nil
+}
+
+func (b *baseInstaller) clearInstalled() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Installed = false
+	return nil
+}
+
+func (b *baseInstaller) recordConfigured() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Configured = true
+	return nil
+}
+
+func (b *baseInstaller) clearConfigured() error {
+	if err := b.checkInstallation(); err != nil {
+		return err
+	}
+
+	b.softwareState.Configured = false
 	return nil
 }

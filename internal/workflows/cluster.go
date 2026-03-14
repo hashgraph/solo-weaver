@@ -4,26 +4,22 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// WorkflowExecutionOptions defines options for setting up various components of the cluster
-type WorkflowExecutionOptions struct {
-	ExecutionMode automa.TypeMode
-	RollbackMode  automa.TypeMode
-}
-
 // DefaultWorkflowExecutionOptions returns WorkflowExecutionOptions with all boolean options defaulted to true.
-func DefaultWorkflowExecutionOptions() *WorkflowExecutionOptions {
-	return &WorkflowExecutionOptions{
+func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
+	return &models.WorkflowExecutionOptions{
 		ExecutionMode: automa.StopOnError,
 		RollbackMode:  automa.ContinueOnError,
 	}
 }
 
 // InstallClusterWorkflow creates a workflow to set up a kubernetes cluster.
-func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
+func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool, sm state.Manager) *automa.WorkflowBuilder {
 	// Build the base steps that are common to all node types
 	baseSteps := []automa.Builder{
 		NodeSetupWorkflow(nodeType, profile, skipHardwareChecks),
@@ -34,25 +30,25 @@ func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks 
 		steps.SetupBindMounts(),
 
 		// kubelet
-		steps.SetupKubelet(),
+		steps.SetupKubelet(sm),
 		steps.SetupSystemdService(software.KubeletServiceName),
 
 		// setup cli tools
-		steps.SetupKubectl(),
-		steps.SetupHelm(), // required by MetalLB setup, so we install it earlier
-		steps.SetupK9s(),
+		steps.SetupKubectl(sm),
+		steps.SetupHelm(sm), // required by MetalLB setup, so we install it earlier
+		steps.SetupK9s(sm),
 
 		// CRI-O
-		steps.SetupCrio(),
+		steps.SetupCrio(sm),
 		steps.SetupSystemdService(software.CrioServiceName),
 
 		// kubeadm
-		steps.SetupKubeadm(),
+		steps.SetupKubeadm(sm),
 
 		// init cluster
 		steps.InitializeCluster(),
 
-		steps.SetupCilium(),
+		steps.SetupCilium(sm),
 		steps.StartCilium(),
 
 		steps.SetupMetalLB(),
@@ -68,7 +64,7 @@ func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks 
 
 // WithWorkflowExecutionMode applies the given WorkflowExecutionOptions to the provided WorkflowBuilder.
 // If opts is nil, it uses DefaultWorkflowExecutionOptions.
-func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *WorkflowExecutionOptions) *automa.WorkflowBuilder {
+func WithWorkflowExecutionMode(wf *automa.WorkflowBuilder, opts *models.WorkflowExecutionOptions) *automa.WorkflowBuilder {
 	if opts == nil {
 		opts = DefaultWorkflowExecutionOptions()
 	}

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	os2 "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -225,7 +225,7 @@ func setupBindMount(mount BindMount) error {
 	}
 
 	// Create target directory if it doesn't exist
-	if err := os.MkdirAll(mount.Target, core.DefaultDirOrExecPerm); err != nil {
+	if err := os.MkdirAll(mount.Target, models.DefaultDirOrExecPerm); err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to create directory %s", mount.Target)
 	}
 
@@ -374,7 +374,7 @@ func readFstab(fstabPath string) ([]*fstabEntry, []string, error) {
 func writeFstab(fstabPath string, lines []string) error {
 	// Get original file info for permissions
 	info, err := os.Stat(fstabPath)
-	var mode os.FileMode = core.DefaultFilePerm
+	var mode os.FileMode = models.DefaultFilePerm
 	if err == nil {
 		mode = info.Mode()
 	}

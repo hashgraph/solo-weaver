@@ -514,6 +514,27 @@ func (m *unixManager) WriteFile(path string, payload []byte) error {
 	return m.setupAccessForServiceUser(path)
 }
 
+func (m *unixManager) AppendToFile(path string, payload []byte) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, defaultFileMode)
+	if err != nil {
+		return errorx.IllegalArgument.New("failed to open file at %q", path).WithUnderlyingErrors(err)
+	}
+	defer Close(file)
+
+	n, err := file.Write(payload)
+	if err != nil {
+		return errorx.IllegalArgument.New("failed to append to file %q", path).WithUnderlyingErrors(err)
+	}
+
+	if n != len(payload) {
+		return errorx.IllegalArgument.
+			New("failed to append full payload to file %q", path).
+			WithUnderlyingErrors(err)
+	}
+
+	return nil
+}
+
 func (m *unixManager) checkAndOverwritePath(path string, overwrite bool) error {
 	_, exists, err := m.PathExists(path)
 	if err != nil {

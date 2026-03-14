@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/tomlx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
 const (
+	CrioBinaryName  = "crio"
 	CrioServiceName = "crio"
 
 	// File names - extracted as constants to avoid duplication
@@ -73,7 +73,7 @@ var (
 // GetRegistriesConfPath returns the full path to the registries.conf file in the sandbox
 // This is used by tests to install custom registry mirror configuration
 func GetRegistriesConfPath() string {
-	return filepath.Join(core.Paths().SandboxDir, containersRegistriesConfdDir, RegistriesConfFile)
+	return filepath.Join(models.Paths().SandboxDir, containersRegistriesConfdDir, RegistriesConfFile)
 }
 
 type crioInstaller struct {
@@ -87,10 +87,15 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 		return nil, err
 	}
 
-	return &crioInstaller{
+	ci := &crioInstaller{
 		baseInstaller: bi,
 		tomlManager:   tomlx.NewTomlConfigManager(),
-	}, nil
+	}
+
+	ci.verifyInstalled = ci.verifySandboxBinaries
+	ci.verifyConfigured = ci.verifySandboxConfigs
+
+	return ci, nil
 }
 
 // Install installs cri-o emulating the same steps performed by the `install` file under the compressed file
@@ -98,7 +103,7 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 func (ci *crioInstaller) Install() error {
 	// Variables matching the shell script structure
 	srcDir := path.Join(ci.extractFolder(), "cri-o")
-	destDir := core.Paths().SandboxDir
+	destDir := models.Paths().SandboxDir
 
 	// Ensure directories exist
 	dirs := []string{
@@ -189,7 +194,7 @@ func (ci *crioInstaller) Install() error {
 		"crictl":   filepath.Join(destDir, binDir, "crictl"),
 	}
 	for src, dst := range binaries {
-		err := ci.installFile(filepath.Join(srcDir, "bin", src), dst, core.DefaultDirOrExecPerm)
+		err := ci.installFile(filepath.Join(srcDir, "bin", src), dst, models.DefaultDirOrExecPerm)
 		if err != nil {
 			return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
 		}
@@ -230,16 +235,14 @@ func (ci *crioInstaller) Install() error {
 		// if dst doesn't exist then copy the file
 		_, exists, _ := ci.fileManager.PathExists(dst)
 		if !exists {
-			if err = ci.installFile(filepath.Join(srcDir, src), dst, core.DefaultFilePerm); err != nil {
+			if err = ci.installFile(filepath.Join(srcDir, src), dst, models.DefaultFilePerm); err != nil {
 				return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
 			}
 		}
 	}
 
 	// Record installed state
-	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeInstalled, ci.Version())
-
-	return nil
+	return ci.recordInstalled()
 }
 
 // copyCNIPlugins copies all CNI plugin binaries from the cni-plugins directory
@@ -266,7 +269,7 @@ func (ci *crioInstaller) copyCNIPlugins(srcDir, destDir string) error {
 		}
 		src := filepath.Join(cniPluginsDir, entry.Name())
 		dst := filepath.Join(destDir, entry.Name())
-		if err := ci.installFile(src, dst, core.DefaultDirOrExecPerm); err != nil {
+		if err := ci.installFile(src, dst, models.DefaultDirOrExecPerm); err != nil {
 			return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
 		}
 	}
@@ -292,7 +295,7 @@ func getSysconfigDir() string {
 
 // Configure configures the cri-o after installation
 func (ci *crioInstaller) Configure() error {
-	sandboxDir := core.Paths().SandboxDir
+	sandboxDir := models.Paths().SandboxDir
 
 	// Patch crio.conf.d/10-crio.conf with adjusted paths
 	err := ci.patchCrioConf(sandboxDir, binDir, libexecDir, etcCrioDir)
@@ -341,9 +344,7 @@ func (ci *crioInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeConfigured, ci.Version())
-
-	return nil
+	return ci.recordConfigured()
 }
 
 // patchCrioConf updates the CRI-O configuration file with the correct paths in place
@@ -374,17 +375,17 @@ func (ci *crioInstaller) patchCrioConf(destdir, bindir, libexecdir, etcdir strin
 
 // getCrioConfPath returns the path to the 10-crio.conf file in the sandbox
 func getCrioConfPath() string {
-	return path.Join(core.Paths().SandboxDir, crioConfdDir, CrioConfFile)
+	return path.Join(models.Paths().SandboxDir, crioConfdDir, CrioConfFile)
 }
 
 // generateEtcDefaultCrioConfigurationFile generates the /etc/default/crio file in the sandbox
 func (ci *crioInstaller) generateEtcDefaultCrioConfigurationFile() error {
-	sandboxDir := core.Paths().SandboxDir
+	sandboxDir := models.Paths().SandboxDir
 
 	// Generate the content using the shared logic
 	crioConfigContent := ci.generateExpectedEtcDefaultCrioContent()
 
-	err := os.WriteFile(filepath.Join(sandboxDir, "etc", "default", CrioDefaultConfigFile), []byte(crioConfigContent), core.DefaultFilePerm)
+	err := os.WriteFile(filepath.Join(sandboxDir, "etc", "default", CrioDefaultConfigFile), []byte(crioConfigContent), models.DefaultFilePerm)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create CRI-O default file")
 	}
@@ -397,12 +398,12 @@ func (ci *crioInstaller) patchServiceFile() error {
 	serviceFilePath := getCrioServicePath()
 
 	// Patch the service file
-	err := ci.replaceAllInFile(serviceFilePath, "/usr/local/bin/crio", filepath.Join(core.Paths().SandboxLocalBinDir, "crio"))
+	err := ci.replaceAllInFile(serviceFilePath, "/usr/local/bin/crio", filepath.Join(models.Paths().SandboxLocalBinDir, "crio"))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to patch crio.service file")
 	}
 
-	err = ci.replaceAllInFile(serviceFilePath, "/etc/sysconfig/crio", filepath.Join(core.Paths().SandboxDir, "etc", "default", CrioDefaultConfigFile))
+	err = ci.replaceAllInFile(serviceFilePath, "/etc/sysconfig/crio", filepath.Join(models.Paths().SandboxDir, "etc", "default", CrioDefaultConfigFile))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to patch crio.service sysconfig path")
 	}
@@ -413,7 +414,7 @@ func (ci *crioInstaller) patchServiceFile() error {
 
 // getCrioServicePath returns the path to the crio.service file in the sandbox
 func getCrioServicePath() string {
-	return path.Join(core.Paths().SandboxDir, "usr", "lib", "systemd", "system", CrioServiceFile)
+	return path.Join(models.Paths().SandboxDir, "usr", "lib", "systemd", "system", CrioServiceFile)
 }
 
 // updateCrioTomlConfig updates the CRI-O TOML configuration file with sandbox paths
@@ -445,7 +446,7 @@ func (ci *crioInstaller) generateCrioInstallList(destDir string) error {
 		return err
 	}
 
-	if err := os.WriteFile(installListPath, []byte(content), core.DefaultFilePerm); err != nil {
+	if err := os.WriteFile(installListPath, []byte(content), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write crio-install list file")
 	}
 
@@ -455,7 +456,7 @@ func (ci *crioInstaller) generateCrioInstallList(destDir string) error {
 // Uninstall removes the CRI-O software from the sandbox and cleans up related files
 // This reverses the operations performed by Install()
 func (ci *crioInstaller) Uninstall() error {
-	sandboxDir := core.Paths().SandboxDir
+	sandboxDir := models.Paths().SandboxDir
 
 	// Remove all installed binaries
 	binaries := []string{
@@ -540,7 +541,7 @@ func (ci *crioInstaller) Uninstall() error {
 	}
 
 	// Remove installed state
-	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeInstalled)
+	_ = ci.clearInstalled()
 
 	return nil
 }
@@ -562,7 +563,7 @@ func (ci *crioInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove /etc/default/crio configuration file from sandbox
-	sandboxDir := core.Paths().SandboxDir
+	sandboxDir := models.Paths().SandboxDir
 	etcDefaultCrioPath := filepath.Join(sandboxDir, "etc", "default", CrioDefaultConfigFile)
 	err = ci.fileManager.RemoveAll(etcDefaultCrioPath)
 	if err != nil {
@@ -570,7 +571,7 @@ func (ci *crioInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove configured state
-	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeConfigured)
+	_ = ci.clearConfigured()
 
 	return nil
 }
@@ -616,7 +617,7 @@ func (ci *crioInstaller) generateExpectedCrioInstallContent(destDir string) (str
 // generateExpectedEtcDefaultCrioContent generates the expected content for /etc/default/crio file
 // This mirrors the logic in generateEtcDefaultCrioConfigurationFile() without writing to file
 func (ci *crioInstaller) generateExpectedEtcDefaultCrioContent() string {
-	sandboxDir := core.Paths().SandboxDir
+	sandboxDir := models.Paths().SandboxDir
 
 	return fmt.Sprintf(`# /etc/default/crio
 
@@ -644,8 +645,8 @@ CRIO_CONFIG_OPTIONS="--config-dir=%s/etc/crio/crio.conf.d"
 // All paths are adjusted to use the sandbox directory structure rather than
 // system-wide paths, enabling isolated testing and development environments.
 func (ci *crioInstaller) generateExpectedCrioConfig() map[string]interface{} {
-	sandboxDir := core.Paths().SandboxDir
-	sandboxLocalBin := core.Paths().SandboxLocalBinDir
+	sandboxDir := models.Paths().SandboxDir
+	sandboxLocalBin := models.Paths().SandboxLocalBinDir
 
 	config := make(map[string]interface{})
 
@@ -678,4 +679,118 @@ func (ci *crioInstaller) generateExpectedCrioConfig() map[string]interface{} {
 	ci.tomlManager.SetNestedValue(config, "crio.nri.nri_listen", filepath.Join(sandboxDir, "var/run/nri/nri.sock"))
 
 	return config
+}
+
+func (ci *crioInstaller) verifySandboxBinaries() error {
+	sandboxDir := models.Paths().SandboxDir
+
+	requiredBinaries := []string{
+		filepath.Join(sandboxDir, binDir, "crio"),
+		filepath.Join(sandboxDir, binDir, "pinns"),
+		filepath.Join(sandboxDir, binDir, "crictl"),
+		filepath.Join(sandboxDir, libexecCrioDir, "conmon"),
+		filepath.Join(sandboxDir, libexecCrioDir, "crun"),
+		filepath.Join(sandboxDir, libexecCrioDir, "runc"),
+	}
+
+	for _, p := range requiredBinaries {
+		_, exists, err := ci.fileManager.PathExists(p)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to check binary at %s", p)
+		}
+		if !exists {
+			return NewFileNotFoundError(p)
+		}
+	}
+
+	return nil
+}
+
+func (ci *crioInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
+	sandboxDir := models.Paths().SandboxDir
+
+	requiredConfigs := map[string]string{
+		CrioConfFile:          filepath.Join(sandboxDir, crioConfdDir, CrioConfFile),
+		PolicyJsonFile:        filepath.Join(sandboxDir, etcCrioDir, PolicyJsonFile),
+		RegistriesConfFile:    filepath.Join(sandboxDir, containersRegistriesConfdDir, RegistriesConfFile),
+		CrioServiceFile:       filepath.Join(sandboxDir, userSystemdDir, CrioServiceFile),
+		CrioDefaultConfigFile: filepath.Join(sandboxDir, getSysconfigDir(), CrioDefaultConfigFile),
+	}
+
+	for k, p := range requiredConfigs {
+		_, exists, err := ci.fileManager.PathExists(p)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to check config file at %s", p)
+		}
+		if !exists {
+			return nil, NewFileNotFoundError(p)
+		}
+
+		meta.Set(k, p)
+	}
+
+	// Verify systemd unit symlink: /usr/lib/systemd/system/crio.service -> <sandbox>/usr/lib/systemd/system/crio.service
+	systemdPath := filepath.Join(userSystemdDir, CrioServiceFile)
+	_, existsSysd, err := ci.fileManager.PathExists(systemdPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check system service file at %s", systemdPath)
+	}
+	if !existsSysd {
+		return nil, NewFileNotFoundError(systemdPath)
+	}
+	fi, err := os.Lstat(systemdPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to lstat %s", systemdPath)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return nil, errorx.IllegalState.New("system service %s is not a symlink", systemdPath)
+	}
+	target, err := os.Readlink(systemdPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read symlink %s", systemdPath)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(systemdPath), target)
+	}
+	target = filepath.Clean(target)
+	expectedService := filepath.Clean(filepath.Join(sandboxDir, userSystemdDir, CrioServiceFile))
+	if target != expectedService {
+		return nil, errorx.IllegalState.New("system service symlink %s -> %s does not point to sandbox %s",
+			systemdPath, target, expectedService)
+	}
+	meta.Set("crio.service.system", systemdPath)
+
+	// Verify /etc/containers is symlinked to sandbox /etc/containers (so registries.conf.d is rooted in sandbox)
+	systemContainersPath := etcContainersFolder // `/etc/containers`
+	_, existsContainers, err := ci.fileManager.PathExists(systemContainersPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check system containers path at %s", systemContainersPath)
+	}
+	if !existsContainers {
+		return nil, NewFileNotFoundError(systemContainersPath)
+	}
+	fi, err = os.Lstat(systemContainersPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to lstat %s", systemContainersPath)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return nil, errorx.IllegalState.New("system containers path %s is not a symlink", systemContainersPath)
+	}
+	target, err = os.Readlink(systemContainersPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read symlink %s", systemContainersPath)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(systemContainersPath), target)
+	}
+	target = filepath.Clean(target)
+	expectedContainers := filepath.Clean(filepath.Join(sandboxDir, etcContainersFolder))
+	if target != expectedContainers {
+		return nil, errorx.IllegalState.New("system containers symlink %s -> %s does not point to sandbox %s",
+			systemContainersPath, target, expectedContainers)
+	}
+	meta.Set("containers.etc.system", systemContainersPath)
+
+	return meta, nil
 }

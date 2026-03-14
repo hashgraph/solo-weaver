@@ -258,6 +258,15 @@ func (sc *ArtifactCollection) GetArtifactByName(name string) (*ArtifactMetadata,
 	return nil, NewSoftwareNotFoundError(name)
 }
 
+// Names returns the names of all managed software artifacts.
+func (sc *ArtifactCollection) Names() []string {
+	names := make([]string, 0, len(sc.Artifact))
+	for _, item := range sc.Artifact {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
 // executeTemplate executes a template string with the given data
 func executeTemplate(templateStr string, data TemplateData) (string, error) {
 	tmpl, err := template.New("software").Parse(templateStr)
