@@ -118,14 +118,26 @@ func (b *BlockNodeRuntimeResolver) Storage() (*automa.EffectiveValue[models.Bloc
 				Wrap(err, "block node runtime state is inconsistent")
 		}
 
+		storage := b.state.Storage
+
+		// State storage is populated from PV hostPaths by the reality checker,
+		// so it contains individual paths (LivePath, ArchivePath, …) but never
+		// BasePath — PVs do not carry that information.  Fall back to the config
+		// default so that migrations can derive new optional storage paths
+		// (e.g. verification = basePath + "/verification") when the user has not
+		// explicitly set the individual path.
+		if storage.BasePath == "" && b.cfg.BlockNode.Storage.BasePath != "" {
+			storage.BasePath = b.cfg.BlockNode.Storage.BasePath
+		}
+
 		return automa.NewEffective[models.BlockNodeStorage](
-			b.state.Storage,
+			storage,
 			automa.StrategyCurrent,
 		)
 	}
 
 	if b.inputs != nil {
-		if err := b.state.Storage.Validate(); err == nil {
+		if err := b.inputs.Storage.Validate(); err == nil {
 			return automa.NewEffective[models.BlockNodeStorage](
 				b.inputs.Storage,
 				automa.StrategyUserInput,

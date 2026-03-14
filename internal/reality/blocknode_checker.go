@@ -235,7 +235,11 @@ func (b *blockNodeChecker) populateStorageFromPVs(
 		case strings.Contains(claimName, "verification"):
 			storage.VerificationPath = hostpath
 			storage.VerificationSize = size
+		case strings.Contains(claimName, "plugins"):
+			storage.PluginsPath = hostpath
+			storage.PluginsSize = size
 		}
+
 	}
 
 	return nil

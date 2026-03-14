@@ -94,6 +94,7 @@ func RegisterMigrations() {
 	// correct order to update their state to be compatible with the new version.
 	migration.Register(state.MigrationComponent, state.NewUnifiedStateMigration())
 	migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
+	migration.Register(blocknode.ComponentBlockNode, blocknode.NewPluginsStorageMigration())
 	migration.Register(workflows.MigrationComponent, workflows.NewLegacyBinaryMigration())
 }
 
