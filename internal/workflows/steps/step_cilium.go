@@ -8,6 +8,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -35,14 +36,8 @@ func SetupCilium(sm state.Manager) *automa.WorkflowBuilder {
 func installCilium(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-cilium-cli").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Cilium CLI")
+			notify.As().StepDetail(ctx, stp, "installing Cilium CLI...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Cilium CLI")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider(software.WithStateManager(sm))
@@ -50,6 +45,8 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			logx.As().Info().Str("step_id", stp.Id()).Str("software", installer.GetSoftwareName()).Str("version", installer.Version()).Msgf("%s version: %s", installer.GetSoftwareName(), installer.Version())
 
 			// Prepare metadata for reporting
 			meta := map[string]string{}
@@ -119,14 +116,8 @@ func installCilium(provider func(opts ...software.InstallerOption) (software.Sof
 func configureCilium(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-cilium-cli").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring Cilium CLI")
+			notify.As().StepDetail(ctx, stp, "configuring Cilium CLI...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure Cilium CLI")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CLI configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider(software.WithStateManager(sm))
@@ -204,16 +195,12 @@ func StartCilium() *automa.WorkflowBuilder {
 func installCiliumCNI(version string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("install-cilium-cni").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Cilium CNI")
+			notify.As().StepDetail(ctx, stp, "installing Cilium CNI...")
 			return ctx, nil
 		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Cilium CNI")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium CNI installed successfully")
-		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			logx.As().Info().Str("step_id", stp.Id()).Str("software", "cilium-cni").Str("version", version).Msgf("cilium-cni version: %s", version)
+
 			// Prepare metadata for reporting
 			meta := map[string]string{}
 

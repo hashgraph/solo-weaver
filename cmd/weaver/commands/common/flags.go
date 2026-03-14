@@ -10,7 +10,9 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -383,9 +385,26 @@ func InitConfig(ctx context.Context, flags *RootFlags) {
 		logConfig.Level = flags.LogLevel // override log level if flag is set
 	}
 
-	err = logx.Initialize(logConfig)
-	if err != nil {
-		doctor.CheckErr(ctx, err)
+	logConfig.FileLogging = true
+	if logConfig.Directory == "" {
+		logConfig.Directory = models.Paths().LogsDir
+	}
+	if logConfig.Filename == "" {
+		logConfig.Filename = "solo-provisioner.log"
+	}
+
+	if ui.IsUnformatted() {
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+	} else {
+		logConfig.ConsoleLogging = false
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+		ui.SuppressConsoleLogging(logConfig)
 	}
 }
 

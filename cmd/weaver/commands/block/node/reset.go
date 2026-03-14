@@ -3,6 +3,7 @@
 package node
 
 import (
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -48,15 +49,9 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			return err
 		}
 
-		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
-		if err != nil {
-			return err
-		}
-
-		if err != nil {
-			return err
-		}
-		common.CheckWorkflowReport(cmd.Context(), report)
+		common.RunHandlerWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		})
 
 		logx.As().Info().Msg("Successfully reset Hedera Block Node")
 		return nil

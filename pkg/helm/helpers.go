@@ -3,6 +3,7 @@
 package helm
 
 import (
+	"io"
 	"os"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -47,7 +48,7 @@ func newRegistryClient(settings *cli.EnvSettings) (*registry.Client, error) {
 	opts := []registry.ClientOption{
 		registry.ClientOptDebug(settings.Debug),
 		registry.ClientOptEnableCache(true),
-		registry.ClientOptWriter(os.Stderr),
+		registry.ClientOptWriter(io.Discard),
 		registry.ClientOptCredentialsFile(settings.RegistryConfig),
 	}
 

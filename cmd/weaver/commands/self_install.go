@@ -35,7 +35,6 @@ var selfUninstallCmd = &cobra.Command{
 	Long:  "Uninstall Solo Provisioner from the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflow(cmd.Context(), workflows.NewSelfUninstallWorkflow())
-		logx.As().Info().Msg("Solo Provisioner is uninstalled successfully")
 		return nil
 	},
 }

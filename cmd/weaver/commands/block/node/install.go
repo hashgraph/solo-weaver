@@ -3,6 +3,7 @@
 package node
 
 import (
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -40,12 +41,9 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		report, err := handler.HandleIntent(cmd.Context(), intent, *inputs)
-		if err != nil {
-			return err
-		}
-
-		common.CheckWorkflowReport(cmd.Context(), report)
+		common.RunHandlerWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		})
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 

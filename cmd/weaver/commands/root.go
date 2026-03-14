@@ -12,9 +12,13 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -63,6 +67,9 @@ func init() {
 	// support '--version', '-v' to show version information
 	common.FlagVersion().SetVarP(rootCmd, &flagVersion, false)
 	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
+
+	// Verbose output flag — count-based: -V, -VV, -VVV
+	rootCmd.PersistentFlags().CountVarP(&ui.VerboseLevel, "verbose", "V", "Increase output verbosity (-V, -VV, -VVV for raw)")
 
 	// Hardware checks override flag - hidden to discourage casual use
 	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
@@ -116,6 +123,10 @@ func Execute(ctx context.Context) error {
 		return errorx.IllegalArgument.New("context is required")
 	}
 
+	cobra.OnInitialize(func() {
+		initConfig(ctx)
+	})
+
 	// execute the root command
 	_, err := rootCmd.ExecuteContextC(ctx)
 	if err != nil {
@@ -123,4 +134,55 @@ func Execute(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func initConfig(ctx context.Context) {
+	var err error
+	err = config.Initialize(flagConfig)
+	if err != nil {
+		doctor.CheckErr(ctx, err)
+	}
+
+	// Propagate verbose flag to the doctor package for error diagnostics
+	doctor.VerboseLevel = ui.VerboseLevel
+
+	logConfig := config.Get().Log
+	if flagLogLevel != "" {
+		logConfig.Level = flagLogLevel
+	}
+
+	// Always enable file logging regardless of config so every run produces a log file
+	logConfig.FileLogging = true
+	if logConfig.Directory == "" {
+		logConfig.Directory = models.Paths().LogsDir
+	}
+	if logConfig.Filename == "" {
+		logConfig.Filename = "solo-provisioner.log"
+	}
+	if logConfig.MaxSize == 0 {
+		logConfig.MaxSize = 50 // 50 MB
+	}
+	if logConfig.MaxBackups == 0 {
+		logConfig.MaxBackups = 3
+	}
+	if logConfig.MaxAge == 0 {
+		logConfig.MaxAge = 30 // 30 days
+	}
+
+	if ui.IsUnformatted() {
+		// Raw mode: let zerolog write directly to the console (no suppression).
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+	} else {
+		// Suppress console logging — the output handler (TUI or fallback)
+		// owns stdout, not zerolog. Raw log lines go only to the log file.
+		logConfig.ConsoleLogging = false
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+		ui.SuppressConsoleLogging(logConfig)
+	}
 }
