@@ -49,10 +49,94 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	t.Helper()
 	sm := prepareStateManager(t)
 
-	// preflight & basic setup
-	step, err := SetupKubectl(sm).Build()
+	// Setup home directory structure
+	step, err := SetupHomeDirectoryStructure(models.Paths()).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to setup home directory structure")
+
+	// Refresh system package index
+	step, err = RefreshSystemPackageIndex().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to refresh system package index")
+
+	// Install required system packages
+	step, err = InstallSystemPackage("iptables", software.NewIptables).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install iptables")
+
+	step, err = InstallSystemPackage("gpg", software.NewGpg).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install gpg")
+
+	step, err = InstallSystemPackage("conntrack", software.NewConntrack).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install conntrack")
+
+	step, err = InstallSystemPackage("ebtables", software.NewEbtables).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install ebtables")
+
+	step, err = InstallSystemPackage("socat", software.NewSocat).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install socat")
+
+	step, err = InstallSystemPackage("nftables", software.NewNftables).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install nftables")
+
+	// Setup nftables systemd service
+	step, err = SetupSystemdService("nftables").Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to setup nftables service")
+
+	// Install kernel modules (required before sysctl configuration)
+	step, err = InstallKernelModule("overlay").Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install overlay kernel module")
+
+	step, err = InstallKernelModule("br_netfilter").Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to install br_netfilter kernel module")
+
+	// Auto-remove orphaned packages
+	step, err = AutoRemoveOrphanedPackages().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to auto-remove orphaned packages")
+
+	// Disable swap (required by kubeadm)
+	step, err = DisableSwap().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to disable swap")
+
+	// Configure sysctl for Kubernetes (requires br_netfilter module)
+	step, err = ConfigureSysctlForKubernetes().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to configure sysctl")
+
+	// Setup bind mounts
+	step, err = SetupBindMounts().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to setup bind mounts")
+
+	// preflight & basic setup
+	step, err = SetupKubectl(sm).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup kubectl")
 
 	if level == SetupBasicLevel {

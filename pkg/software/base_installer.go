@@ -1019,9 +1019,63 @@ func (b *baseInstaller) verifySandboxBinaries() error {
 	return nil
 }
 
-// verifySandboxConfigs verifies that all config files are present in the sandbox config directory
+// verifySandboxConfigs verifies that system-wide symlinks in /usr/local/bin
+// exist for every binary and point back to the corresponding sandbox binary.
+// This mirrors what performConfiguration() creates.
+// Installers with additional config files (kubelet, kubeadm, crio, cilium)
+// override this with their own checks.
 func (b *baseInstaller) verifySandboxConfigs() (models.StringMap, error) {
-	return nil, nil // By default, we don't have a standard location for configs in the sandbox, so we skip this verification. Specific installers can implement this if needed.
+	versionInfo, exists := b.software.Versions[Version(b.versionToBeInstalled)]
+	if !exists {
+		return nil, NewVersionNotFoundError(b.software.Name, b.versionToBeInstalled)
+	}
+
+	platform := b.software.getPlatform()
+	data := TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
+
+	meta := models.NewStringMap()
+	sandboxBinDir := models.Paths().SandboxBinDir
+
+	for _, binary := range versionInfo.Binaries {
+		binaryName, err := executeTemplate(binary.Name, data)
+		if err != nil {
+			return nil, NewTemplateError(err, b.software.Name)
+		}
+
+		binaryBasename := path.Base(binaryName)
+		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
+		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
+
+		// Check symlink exists
+		_, exists, err := b.fileManager.PathExists(systemBinary)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to check symlink at %s", systemBinary)
+		}
+		if !exists {
+			return nil, errorx.IllegalState.New("system symlink not found at %s", systemBinary)
+		}
+
+		// Verify it points to the sandbox binary
+		linkTarget, err := os.Readlink(systemBinary)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to read symlink at %s", systemBinary)
+		}
+		if linkTarget != sandboxBinary {
+			return nil, errorx.IllegalState.New(
+				"symlink %s points to %s, expected %s",
+				systemBinary, linkTarget, sandboxBinary,
+			)
+		}
+
+		meta.Set(binaryBasename+"SystemPath", systemBinary)
+		meta.Set(binaryBasename+"SandboxPath", sandboxBinary)
+	}
+
+	return meta, nil
 }
 
 func (b *baseInstaller) VerifyInstallation() (*state.SoftwareState, error) {
