@@ -18,7 +18,7 @@ var installCmd = &cobra.Command{
 	Short: "Install a Kubernetes Cluster",
 	Long:  "Run safety checks, setup a K8s cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := common.FlagProfile.Value(cmd, args)
+		flagProfile, err := common.FlagProfile().Value(cmd, args)
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}
@@ -54,9 +54,9 @@ var installCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Installing Kubernetes Cluster")
 
-		skipHardwareChecks, err := cmd.Flags().GetBool(common.FlagSkipHardwareChecks.Name)
+		skipHardwareChecks, err := common.FlagSkipHardwareChecks().Value(cmd, args)
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
+			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks().Name)
 		}
 
 		sm, err := state.NewStateManager()
@@ -77,8 +77,8 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	common.FlagNodeType.SetVarP(installCmd, &flagNodeType, true)
-	common.FlagStopOnError.SetVarP(installCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(installCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(installCmd, &flagContinueOnError, false)
+	common.FlagNodeType().SetVarP(installCmd, &flagNodeType, true)
+	common.FlagStopOnError().SetVarP(installCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError().SetVarP(installCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError().SetVarP(installCmd, &flagContinueOnError, false)
 }

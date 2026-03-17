@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	common.FlagProfile.SetVarP(kubeCmd, &flagProfile, false)
+	common.FlagProfile().SetVarP(kubeCmd, &flagProfile, false)
 	kubeCmd.AddCommand(cluster.GetCmd())
 }
 

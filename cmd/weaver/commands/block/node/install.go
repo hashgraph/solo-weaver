@@ -54,6 +54,5 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	initializeExecutionFlags(installCmd)
-	common.FlagValuesFile.SetVarP(installCmd, &flagValuesFile, false)
+	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
 }

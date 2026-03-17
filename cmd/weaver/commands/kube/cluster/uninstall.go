@@ -37,7 +37,7 @@ var uninstallCmd = &cobra.Command{
 }
 
 func init() {
-	common.FlagStopOnError.SetVarP(uninstallCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(uninstallCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(uninstallCmd, &flagContinueOnError, false)
+	common.FlagStopOnError().SetVarP(uninstallCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError().SetVarP(uninstallCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError().SetVarP(uninstallCmd, &flagContinueOnError, false)
 }

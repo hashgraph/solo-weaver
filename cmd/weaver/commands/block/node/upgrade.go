@@ -6,8 +6,6 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/sanity"
-	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
@@ -29,24 +27,6 @@ var (
 			if err != nil {
 				return err
 			}
-
-			// Validate the value file path if provided
-			// This is the primary security validation point for user-supplied file paths.
-			var validatedValuesFile string
-			if flagValuesFile != "" {
-				validatedValuesFile, err = sanity.ValidateInputFile(flagValuesFile)
-				if err != nil {
-					return err
-				}
-			}
-
-			flagWithReset, err = common.FlagWithStorageReset.Value(cmd, args)
-			if err != nil {
-				return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagWithStorageReset.Name)
-			}
-
-			inputs.Custom.ValuesFile = validatedValuesFile
-			inputs.Custom.ResetStorage = flagWithReset
 
 			intent := models.Intent{
 				Action: models.ActionUpgrade,
@@ -77,8 +57,7 @@ var (
 )
 
 func init() {
-	initializeExecutionFlags(upgradeCmd)
-	common.FlagWithStorageReset.SetVarP(upgradeCmd, &flagWithReset, false)
-	common.FlagValuesFile.SetVarP(upgradeCmd, &flagValuesFile, false)
-	common.FlagNoReuseValues.SetVarP(upgradeCmd, &flagNoReuseValues, false)
+	common.FlagWithStorageReset().SetVarP(upgradeCmd, &flagWithReset, false)
+	common.FlagValuesFile().SetVarP(upgradeCmd, &flagValuesFile, false)
+	common.FlagNoReuseValues().SetVarP(upgradeCmd, &flagNoReuseValues, false)
 }

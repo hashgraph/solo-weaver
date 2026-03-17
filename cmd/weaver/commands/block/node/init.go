@@ -63,35 +63,26 @@ func initializeDependencies() error {
 	return nil
 }
 
-func initializeExecutionFlags(resetCmd *cobra.Command) {
-	common.FlagStopOnError.SetVarP(resetCmd, &flagStopOnError, false)
-	common.FlagRollbackOnError.SetVarP(resetCmd, &flagRollbackOnError, false)
-	common.FlagContinueOnError.SetVarP(resetCmd, &flagContinueOnError, false)
-}
-
-func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, parentFlags *common.ParentCmdFlags) error {
-	var err error
-
-	// extract common flags set in the root command
-	err = common.ExtractRootFlags(cmd, args, parentFlags)
-	if err != nil {
+func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, flags *BlockNodeFlags) error {
+	// extract root-level flags and the profile flag
+	if err := common.ExtractRootFlags(cmd, args, &flags.RootFlags); err != nil {
 		return err
 	}
 
-	// extract the profile flag set in the block node command
-	parentFlags.Profile, err = common.FlagProfile.Value(cmd, args)
+	var err error
+	flags.Profile, err = common.FlagProfile().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 	}
 
-	if parentFlags.Profile == "" {
+	// validate profile — extraction is done, validation is the caller's responsibility
+	if flags.Profile == "" {
 		return errorx.IllegalArgument.New("profile flag is required")
 	}
 
-	// Validate profile early for better error messages
-	if parentFlags.Profile != "" && !hardware.IsValidProfile(parentFlags.Profile) {
+	if !hardware.IsValidProfile(flags.Profile) {
 		return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-			parentFlags.Profile, hardware.SupportedProfiles())
+			flags.Profile, hardware.SupportedProfiles())
 	}
 
 	return nil
@@ -102,7 +93,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	var err error
 
 	// extract shared flags set in the parent commands
-	var parentFlags common.ParentCmdFlags
+	var parentFlags BlockNodeFlags
 	err = extractBlockNodeParentFlags(cmd, args, &parentFlags)
 	if err != nil {
 		return nil, err
