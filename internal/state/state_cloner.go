@@ -127,32 +127,36 @@ func (cs *ClusterState) Clone() (*ClusterState, error) {
 
 // Clone creates a deep copy of State
 func (s *State) Clone() (*State, error) {
-	c := State{
-		ProvisionerState: s.ProvisionerState,
-		StateFile:        s.StateFile,
-		LastSync:         s.LastSync,
-	}
-
-	// MachineState
+	// MachineState requires a deep copy because it contains maps.
 	ms, err := s.MachineState.Clone()
 	if err != nil {
 		return nil, err
 	}
-	c.MachineState = *ms
 
-	// ClusterState
 	cs, err := s.ClusterState.Clone()
 	if err != nil {
 		return nil, err
 	}
-	c.ClusterState = *cs
 
-	// BlockNodeState
 	bs, err := s.BlockNodeState.Clone()
 	if err != nil {
 		return nil, err
 	}
-	c.BlockNodeState = *bs
 
-	return &c, err
+	return &State{
+		// Envelope fields
+		Hash:      s.Hash,
+		HashAlgo:  s.HashAlgo,
+		StateFile: s.StateFile,
+		LastSync:  s.LastSync,
+		// Domain content
+		StateRecord: StateRecord{
+			Version:          s.Version,
+			ProvisionerState: s.ProvisionerState,
+			MachineState:     *ms,
+			ClusterState:     *cs,
+			BlockNodeState:   *bs,
+			LastAction:       s.LastAction,
+		},
+	}, nil
 }

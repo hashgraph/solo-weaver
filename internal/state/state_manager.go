@@ -191,11 +191,7 @@ func (m *stateManager) Refresh() error {
 	if newState.Hash != "" {
 		m.lastStateHash = newState.Hash
 	} else {
-		noHash := newState
-		noHash.Hash = ""
-		noHash.HashAlgo = ""
-		noHash.LastSync = htime.Time{}
-		canonical, err := canonicalJSON(noHash)
+		canonical, err := canonicalJSON(newState.Hashable())
 		if err != nil {
 			return errorx.InternalError.Wrap(err, "failed to canonicalize refreshed state for baseline hash")
 		}
@@ -247,14 +243,9 @@ func (m *stateManager) flushState() error {
 
 	logx.As().Debug().Any("snapshot", snapshot).Msg("Flushing state to disk")
 
-	// Prepare state for hashing: zero metadata fields that should not affect the digest.
-	noHash := snapshot
-	noHash.Hash = ""
-	noHash.HashAlgo = ""
-	noHash.LastSync = htime.Time{}
-
-	// Compute deterministic canonical JSON and hash it.
-	canonical, err := canonicalJSON(noHash)
+	// Compute deterministic canonical JSON over only the domain record (envelope
+	// fields and all LastSync timestamps are excluded by Hashable()).
+	canonical, err := canonicalJSON(snapshot.Hashable())
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to create canonical representation of state for hashing")
 	}
@@ -298,11 +289,8 @@ func (m *stateManager) flushState() error {
 		if existingState.Hash != "" {
 			diskHash = existingState.Hash
 		} else {
-			// Fallback for hand-edited or legacy files without a hash.
-			existingState.Hash = ""
-			existingState.HashAlgo = ""
-			existingState.LastSync = htime.Time{}
-			canonicalExisting, err := canonicalJSON(existingState)
+			// Fallback for hand-edited or legacy files without a stored hash.
+			canonicalExisting, err := canonicalJSON(existingState.Hashable())
 			if err != nil {
 				return errorx.InternalError.Wrap(err, "failed to canonicalize existing state on disk")
 			}

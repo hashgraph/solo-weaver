@@ -16,18 +16,90 @@ import (
 const ModelVersion = "v1" // State model version — increment on breaking changes requiring migration
 const StateFileName = "state.yaml"
 
+// State is the on-disk envelope.  Envelope fields (Hash, HashAlgo, StateFile,
+// LastSync) are bookkeeping metadata that never participate in hashing.
+//
+// StateRecord is serialised as a nested "state" object so the envelope/content
+// split is immediately visible to anyone reading the YAML or JSON file:
+//
+//	hash: "e3b0c4..."
+//	hashAlgo: sha256
+//	stateFile: /opt/solo/weaver/state/state.yaml
+//	lastSync: "2026-03-17T..."
+//	state:
+//	  version: v1
+//	  machineState: ...
+//	  clusterState: ...
+//	  blockNodeState: ...
+//
+// Go field promotion still applies — all StateRecord fields (Version,
+// MachineState, …) are accessible directly as state.Version, state.MachineState,
+// etc. without going through state.StateRecord.
 type State struct {
-	Hash     string `yaml:"hash,omitempty" json:"hash,omitempty"`         // digest of the serialized state
-	HashAlgo string `yaml:"hashAlgo,omitempty" json:"hashAlgo,omitempty"` // algorithm used for Hash (e.g. "sha256")
+	// Envelope — excluded from hash; never add domain data here
+	Hash      string     `yaml:"hash,omitempty"     json:"hash,omitempty"`     // digest of StateRecord
+	HashAlgo  string     `yaml:"hashAlgo,omitempty" json:"hashAlgo,omitempty"` // algorithm used for Hash (e.g. "sha256")
+	StateFile string     `yaml:"stateFile"          json:"stateFile"`          // path to the state file on disk
+	LastSync  htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was flushed to disk
 
+	// Domain content — serialised as a nested "state" object for readability.
+	// The named YAML/JSON tag does not affect Go field promotion: state.Version,
+	// state.MachineState, etc. all still resolve directly.
+	StateRecord `yaml:"state" json:"state"`
+}
+
+// StateRecord holds all provisioning domain data — the fields that participate
+// in the content hash. Add new domain fields here, never directly to State.
+//
+// Envelope fields (Hash, HashAlgo, StateFile, LastSync) live in State and are
+// intentionally excluded from hashing because they are bookkeeping metadata,
+// not provisioning state.
+type StateRecord struct {
 	Version          string          `yaml:"version" json:"version"`
-	StateFile        string          `yaml:"stateFile" json:"stateFile"` // path to the state file
 	ProvisionerState ProvisionerInfo `yaml:"provisioner" json:"provisioner"`
 	MachineState     MachineState    `yaml:"machineState" json:"machineState"`
 	ClusterState     ClusterState    `yaml:"clusterState" json:"clusterState"`
 	BlockNodeState   BlockNodeState  `yaml:"blockNodeState" json:"blockNodeState"`
 	LastAction       ActionHistory   `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
-	LastSync         htime.Time      `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`     // last time state was sy
+}
+
+// Hashable returns a deep copy of the domain StateRecord with all reconciliation
+// timestamps (LastSync) zeroed. This is the canonical input for hashing:
+//   - Envelope fields (Hash, HashAlgo, StateFile, LastSync on State) are already
+//     excluded by returning only StateRecord.
+//   - Sub-state LastSync fields are zeroed because they advance on every
+//     reconciliation cycle and do not represent meaningful provisioning changes.
+//
+// Note: We don't want to use pointer receiver here because we don't need to modify the original state instance.
+func (s State) Hashable() StateRecord {
+	r := s.StateRecord
+
+	// Zero sub-state reconciliation timestamps
+	r.MachineState.LastSync = htime.Time{}
+	r.ClusterState.LastSync = htime.Time{}
+	r.BlockNodeState.LastSync = htime.Time{}
+
+	// Software map — copy before mutation to avoid aliasing the original
+	if len(r.MachineState.Software) > 0 {
+		sw := make(map[string]SoftwareState, len(r.MachineState.Software))
+		for k, v := range r.MachineState.Software {
+			v.LastSync = htime.Time{}
+			sw[k] = v
+		}
+		r.MachineState.Software = sw
+	}
+
+	// Hardware map — same copy-before-mutation pattern
+	if len(r.MachineState.Hardware) > 0 {
+		hw := make(map[string]HardwareState, len(r.MachineState.Hardware))
+		for k, v := range r.MachineState.Hardware {
+			v.LastSync = htime.Time{}
+			hw[k] = v
+		}
+		r.MachineState.Hardware = hw
+	}
+
+	return r
 }
 
 type ActionHistory struct {
@@ -135,18 +207,22 @@ func NewState(stateFile string) State {
 
 	versionInfo := version.Get()
 	return State{
-		Version: ModelVersion,
-		ProvisionerState: ProvisionerInfo{
-			Version:    versionInfo.Number,
-			Commit:     versionInfo.Commit,
-			GoVersion:  versionInfo.GoVersion,
-			Executable: exePath,
+		// Envelope fields
+		StateFile: stateFile,
+		LastSync:  htime.Time{},
+		// Domain content
+		StateRecord: StateRecord{
+			Version: ModelVersion,
+			ProvisionerState: ProvisionerInfo{
+				Version:    versionInfo.Number,
+				Commit:     versionInfo.Commit,
+				GoVersion:  versionInfo.GoVersion,
+				Executable: exePath,
+			},
+			MachineState:   NewMachineState(),
+			ClusterState:   NewClusterState(),
+			BlockNodeState: NewBlockNodeState(),
 		},
-		StateFile:      stateFile,
-		MachineState:   NewMachineState(),
-		ClusterState:   NewClusterState(),
-		BlockNodeState: NewBlockNodeState(),
-		LastSync:       htime.Time{},
 	}
 }
 
