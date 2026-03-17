@@ -33,7 +33,7 @@
     [
       "@semantic-release/exec",
       {
-        "cmd": "echo ${nextRelease.version} > pkg/version/VERSION"
+        "cmd": "printf \"%s\" \"${nextRelease.version}\" > pkg/version/VERSION"
       }
     ],
     [
