@@ -11,126 +11,9 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/pkg/config"
-	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-)
-
-// Examples of typed flag definitions
-var (
-	FlagConfig = FlagDefinition[string]{
-		Name:        "config",
-		ShortName:   "c",
-		Description: "Path to config file",
-		Default:     "",
-	}
-
-	FlagVersion = FlagDefinition[bool]{
-		Name:        "version",
-		ShortName:   "v",
-		Description: "Print version and exit",
-		Default:     false,
-	}
-
-	FlagOutputFormat = FlagDefinition[string]{
-		Name:        "output",
-		ShortName:   "o",
-		Description: "Output format (json, yaml)",
-		Default:     "json",
-	}
-
-	FlagNodeType = FlagDefinition[string]{
-		Name:        "node-type",
-		ShortName:   "n",
-		Description: fmt.Sprintf("Type of node to deploy %s", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
-		Default:     models.NodeTypeBlock,
-	}
-
-	FlagStopOnError = FlagDefinition[bool]{
-		Name:        "stop-on-error",
-		ShortName:   "",
-		Description: "Stop execution on first error",
-		Default:     true,
-	}
-
-	FlagRollbackOnError = FlagDefinition[bool]{
-		Name:        "rollback-on-error",
-		ShortName:   "",
-		Description: "Rollback executed steps on error",
-		Default:     false,
-	}
-
-	FlagContinueOnError = FlagDefinition[bool]{
-		Name:        "continue-on-error",
-		ShortName:   "",
-		Description: "Continue executing steps even if some steps fail",
-		Default:     false,
-	}
-
-	FlagProfile = FlagDefinition[string]{
-		Name:        "profile",
-		ShortName:   "p",
-		Description: fmt.Sprintf("Deployment profiles %s", models.AllProfiles()),
-		Default:     "",
-	}
-
-	FlagValuesFile = FlagDefinition[string]{
-		Name:        "values",
-		ShortName:   "f",
-		Description: "Path to custom values file for chart",
-		Default:     "",
-	}
-
-	FlagMetricsServer = FlagDefinition[bool]{
-		Name:        "metrics-server",
-		ShortName:   "m",
-		Description: "Install Metrics Server",
-		Default:     true,
-	}
-
-	FlagWithStorageReset = FlagDefinition[bool]{
-		Name:        "with-reset",
-		ShortName:   "",
-		Description: "Reset storage before upgrading (clears all data)",
-		Default:     false,
-	}
-
-	FlagNoReuseValues = FlagDefinition[bool]{
-		Name:        "no-reuse-values",
-		ShortName:   "",
-		Description: "Do not reuse values from previous installations (resets to chart defaults)",
-	}
-
-	// FlagSkipHardwareChecks is a hidden persistent flag registered on the root command.
-	// When set, it skips CPU, memory, and storage validation in NewNodeSafetyCheckWorkflow
-	// (see internal/workflows/preflight.go). Privilege, user, and host profile checks
-	// still run. This flag is intentionally not supported by the "check" command since its
-	// purpose is to validate hardware requirements.
-	//
-	// Used by: block node install, kube cluster install.
-	// Registered in: cmd/weaver/commands/root.go (hidden).
-	// See docs/dev/hidden-flags.md for full documentation.
-	FlagSkipHardwareChecks = FlagDefinition[bool]{
-		Name:        "skip-hardware-checks",
-		ShortName:   "",
-		Description: "DANGEROUS: Skip hardware validation checks. May cause node instability or data loss.",
-		Default:     false,
-	}
-
-	FlagForce = FlagDefinition[bool]{
-		Name:        "force",
-		ShortName:   "y",
-		Description: fmt.Sprintf("Force override or skip prompts where applicable"),
-		Default:     false,
-	}
-
-	FlagLogLevel = FlagDefinition[string]{
-		Name:        "log-level",
-		ShortName:   "",
-		Description: "Set log level (debug, info, warn, error)",
-		Default:     "info",
-	}
 )
 
 // FlagDefinition defines a command-line flag typed by T.
@@ -141,7 +24,9 @@ type FlagDefinition[T any] struct {
 	Default     T
 }
 
-func (fp *FlagDefinition[T]) Clone() FlagDefinition[T] {
+// Clone returns an independent copy of the descriptor.
+// Useful when you need a local variant with a different default or description.
+func (fp FlagDefinition[T]) Clone() FlagDefinition[T] {
 	return FlagDefinition[T]{
 		Name:        fp.Name,
 		ShortName:   fp.ShortName,
@@ -152,7 +37,7 @@ func (fp *FlagDefinition[T]) Clone() FlagDefinition[T] {
 
 // valueFrom contains the common type-switch logic to extract a value
 // from the provided pflag.FlagSet.
-func (fp *FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
+func (fp FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
 	var zero T
 	switch any(zero).(type) {
 	case string:
@@ -214,7 +99,7 @@ func (fp *FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
 //  3. Persistent flags inherited from parent/root commands (merged by Cobra via ParseFlags)
 //
 // Use ValueLocal() or ValueOwnPersistent() if you need strict single-scope semantics.
-func (fp *FlagDefinition[T]) Value(cmd *cobra.Command, args []string) (T, error) {
+func (fp FlagDefinition[T]) Value(cmd *cobra.Command, args []string) (T, error) {
 	var zero T
 	if cmd == nil {
 		return zero, errorx.IllegalArgument.New("command cannot be nil")
@@ -239,7 +124,7 @@ func (fp *FlagDefinition[T]) Value(cmd *cobra.Command, args []string) (T, error)
 	return zero, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
 }
 
-func (fp *FlagDefinition[T]) ValueLocal(cmd *cobra.Command, args []string) (T, error) {
+func (fp FlagDefinition[T]) ValueLocal(cmd *cobra.Command, args []string) (T, error) {
 	if args == nil {
 		args = []string{}
 	}
@@ -257,7 +142,7 @@ func (fp *FlagDefinition[T]) ValueLocal(cmd *cobra.Command, args []string) (T, e
 //
 // Use Value() if you want the full resolution chain (local → own persistent → inherited persistent).
 // Use ValueLocal() if you want only local (non-persistent) flags on this command.
-func (fp *FlagDefinition[T]) ValueOwnPersistent(cmd *cobra.Command, args []string) (T, error) {
+func (fp FlagDefinition[T]) ValueOwnPersistent(cmd *cobra.Command, args []string) (T, error) {
 	if args == nil {
 		args = []string{}
 	}
@@ -269,21 +154,21 @@ func (fp *FlagDefinition[T]) ValueOwnPersistent(cmd *cobra.Command, args []strin
 }
 
 // SetVarP sets up the persistent flag and exits on error.
-func (fp *FlagDefinition[T]) SetVarP(cmd *cobra.Command, p *T, required bool) {
+func (fp FlagDefinition[T]) SetVarP(cmd *cobra.Command, p *T, required bool) {
 	if err := fp.varP(cmd, p, required); err != nil {
 		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
 	}
 }
 
 // SetVar sets up the non-persistent flag and exits on error.
-func (fp *FlagDefinition[T]) SetVar(cmd *cobra.Command, p *T, required bool) {
+func (fp FlagDefinition[T]) SetVar(cmd *cobra.Command, p *T, required bool) {
 	if err := fp.varNP(cmd, p, required); err != nil {
 		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
 	}
 }
 
 // varP sets up a persistent flag (kept for tests/compat) by delegating to setFlagVar.
-func (fp *FlagDefinition[T]) varP(cmd *cobra.Command, p *T, required bool) error {
+func (fp FlagDefinition[T]) varP(cmd *cobra.Command, p *T, required bool) error {
 	err := fp.setFlagVar(cmd.PersistentFlags(), cmd, p)
 	if err != nil {
 		return err
@@ -293,7 +178,7 @@ func (fp *FlagDefinition[T]) varP(cmd *cobra.Command, p *T, required bool) error
 }
 
 // varNP sets up a non-persistent flag by delegating to setFlagVar.
-func (fp *FlagDefinition[T]) varNP(cmd *cobra.Command, p *T, required bool) error {
+func (fp FlagDefinition[T]) varNP(cmd *cobra.Command, p *T, required bool) error {
 	err := fp.setFlagVar(cmd.Flags(), cmd, p)
 	if err != nil {
 		return err
@@ -303,7 +188,7 @@ func (fp *FlagDefinition[T]) varNP(cmd *cobra.Command, p *T, required bool) erro
 }
 
 // setFlagVar contains the common registration logic and is used to set up both persistent and non-persistent flags.
-func (fp *FlagDefinition[T]) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command, p *T) error {
+func (fp FlagDefinition[T]) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command, p *T) error {
 	if p == nil {
 		return errorx.IllegalArgument.New("pointer for flag %s is nil", fp.Name)
 	}
@@ -389,7 +274,7 @@ func (fp *FlagDefinition[T]) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command
 	return nil
 }
 
-func (fp *FlagDefinition[T]) MarkRequired(cmd *cobra.Command, v bool) error {
+func (fp FlagDefinition[T]) MarkRequired(cmd *cobra.Command, v bool) error {
 	if v {
 		err := cmd.MarkFlagRequired(fp.Name)
 		if err != nil {
@@ -400,7 +285,7 @@ func (fp *FlagDefinition[T]) MarkRequired(cmd *cobra.Command, v bool) error {
 	return nil
 }
 
-func (fp *FlagDefinition[T]) MarkRequiredP(cmd *cobra.Command, v bool) error {
+func (fp FlagDefinition[T]) MarkRequiredP(cmd *cobra.Command, v bool) error {
 	if v {
 		err := cmd.MarkPersistentFlagRequired(fp.Name)
 		if err != nil {
@@ -459,22 +344,22 @@ type RootFlags struct {
 func ExtractRootFlags(cmd *cobra.Command, args []string, flags *RootFlags) error {
 	var err error
 
-	flags.Config, err = FlagConfig.Value(cmd, args)
+	flags.Config, err = FlagConfig().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get config flag")
 	}
 
-	flags.Force, err = FlagForce.Value(cmd, args)
+	flags.Force, err = FlagForce().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get force flag")
 	}
 
-	flags.SkipHardwareChecks, err = FlagSkipHardwareChecks.Value(cmd, args)
+	flags.SkipHardwareChecks, err = FlagSkipHardwareChecks().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get skip-hardware-checks flag")
 	}
 
-	flags.LogLevel, err = FlagLogLevel.Value(cmd, args)
+	flags.LogLevel, err = FlagLogLevel().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get log-level flag")
 	}

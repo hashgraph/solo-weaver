@@ -56,17 +56,17 @@ var (
 
 // Register state migrations at startup
 func init() {
-	common.FlagLogLevel.SetVarP(rootCmd, &flagLogLevel, false)
-	common.FlagForce.SetVarP(rootCmd, &flagForce, false)
-	common.FlagConfig.SetVarP(rootCmd, &flagConfig, false)
+	common.FlagLogLevel().SetVarP(rootCmd, &flagLogLevel, false)
+	common.FlagForce().SetVarP(rootCmd, &flagForce, false)
+	common.FlagConfig().SetVarP(rootCmd, &flagConfig, false)
 
 	// support '--version', '-v' to show version information
-	common.FlagVersion.SetVarP(rootCmd, &flagVersion, false)
-	common.FlagOutputFormat.SetVarP(rootCmd, &flagOutputFormat, false)
+	common.FlagVersion().SetVarP(rootCmd, &flagVersion, false)
+	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
 
 	// Hardware checks override flag - hidden to discourage casual use
-	common.FlagSkipHardwareChecks.SetVarP(rootCmd, &flagSkipHardwareChecks, false)
-	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks.Name)
+	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
+	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks().Name)
 
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false

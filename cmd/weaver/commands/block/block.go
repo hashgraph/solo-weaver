@@ -20,8 +20,8 @@ var (
 )
 
 func init() {
-	// flagProfile is a binding target for Cobra; child commands read the value via FlagProfile.Value()
-	common.FlagProfile.SetVarP(blockCmd, &flagProfile, false)
+	// flagProfile is a binding target for Cobra; child commands read the value via FlagProfile().Value()
+	common.FlagProfile().SetVarP(blockCmd, &flagProfile, false)
 
 	blockCmd.AddCommand(node.GetCmd())
 }

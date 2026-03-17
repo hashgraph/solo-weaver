@@ -47,12 +47,12 @@ func resetFlags(cmd *cobra.Command) {
 	if cmd != nil {
 		cmd.ResetFlags()
 		// Add the profile flag since it's required by the parent block command
-		cmd.PersistentFlags().String(common.FlagProfile.Name, "", "profile to use for block commands")
-		cmd.PersistentFlags().String(common.FlagConfig.Name, "", "config file for commands")
-		cmd.PersistentFlags().Bool(common.FlagForce.Name, false, "force continue even if checks fail")
-		cmd.PersistentFlags().String(common.FlagLogLevel.Name, "debug", "logrus log level (trace, debug, info, warn, error, fatal, panic)")
+		cmd.PersistentFlags().String(common.FlagProfile().Name, "", "profile to use for block commands")
+		cmd.PersistentFlags().String(common.FlagConfig().Name, "", "config file for commands")
+		cmd.PersistentFlags().Bool(common.FlagForce().Name, false, "force continue even if checks fail")
+		cmd.PersistentFlags().String(common.FlagLogLevel().Name, "debug", "logrus log level (trace, debug, info, warn, error, fatal, panic)")
 		// Re-add skip-hardware-checks since it's registered on the root command
-		cmd.PersistentFlags().Bool(common.FlagSkipHardwareChecks.Name, false, "Skip hardware validation checks")
+		cmd.PersistentFlags().Bool(common.FlagSkipHardwareChecks().Name, false, "Skip hardware validation checks")
 	}
 }
 

@@ -256,14 +256,38 @@ func TestGetExecutionMode_MutuallyExclusiveFlags_ReturnsError(t *testing.T) {
 }
 
 func TestFlagCloneIndependent(t *testing.T) {
-	orig := FlagConfig
+	orig := FlagConfig()
 	clone := orig.Clone()
 	clone.ShortName = "x"
 	clone.Default = "abc"
 
-	// original should be unchanged
+	// original should be unchanged — each FlagConfig() call returns a fresh value
 	require.Equal(t, "c", orig.ShortName)
 	require.Equal(t, "", orig.Default)
+}
+
+// TestFlagDescriptorsAreImmutable verifies that mutating a descriptor returned by a
+// factory function does not affect subsequent calls to that factory.
+// This is the key contract provided by Option 2 (factory functions).
+func TestFlagDescriptorsAreImmutable(t *testing.T) {
+	first := FlagConfig()
+	first.ShortName = "z"
+	first.Default = "/bad/path"
+	first.Name = "corrupted"
+
+	second := FlagConfig()
+
+	// second must be pristine regardless of what we did to first
+	require.Equal(t, "config", second.Name)
+	require.Equal(t, "c", second.ShortName)
+	require.Equal(t, "", second.Default)
+
+	// same for a bool flag
+	bf := FlagForce()
+	bf.ShortName = "x"
+	bf.Default = true
+	require.Equal(t, "y", FlagForce().ShortName)
+	require.Equal(t, false, FlagForce().Default)
 }
 
 func TestValueFallbackPersistent(t *testing.T) {
@@ -272,12 +296,12 @@ func TestValueFallbackPersistent(t *testing.T) {
 	root.AddCommand(child)
 
 	var cfgPath string
-	FlagConfig.SetVarP(root, &cfgPath, false)
+	FlagConfig().SetVarP(root, &cfgPath, false)
 
 	// simulate executing child with --config=/tmp/foo
 	args := []string{"--config", "/tmp/foo"}
 	// Use child so parsing will use root persistent flags as fallback
-	got, err := FlagConfig.Value(child, args)
+	got, err := FlagConfig().Value(child, args)
 	require.NoError(t, err)
 	require.Equal(t, "/tmp/foo", got)
 }

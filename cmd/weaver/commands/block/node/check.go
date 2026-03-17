@@ -17,7 +17,7 @@ var checkCmd = &cobra.Command{
 	Short: "Runs safety checks to validate system readiness for Hedera Block node",
 	Long:  "Runs safety checks to validate system readiness for deploying Hedera Block node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		flagProfile, err := common.FlagProfile.Value(cmd, args)
+		flagProfile, err := common.FlagProfile().Value(cmd, args)
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 		}

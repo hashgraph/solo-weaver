@@ -70,7 +70,7 @@ func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, flags *Block
 	}
 
 	var err error
-	flags.Profile, err = common.FlagProfile.Value(cmd, args)
+	flags.Profile, err = common.FlagProfile().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
 	}
