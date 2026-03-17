@@ -40,7 +40,18 @@ var (
 	}
 )
 
+// BlockNodeFlags contains the root-level flags plus the profile flag
+// required by all block node subcommands (install, upgrade, reset, uninstall, check).
+type BlockNodeFlags struct {
+	common.RootFlags
+	Profile string
+}
+
 func init() {
+	common.FlagStopOnError.SetVarP(nodeCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError.SetVarP(nodeCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError.SetVarP(nodeCmd, &flagContinueOnError, false)
+
 	// Helm chart configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	nodeCmd.PersistentFlags().StringVar(&flagChartRepo, "chart-repo", "", "Helm chart repository URL")

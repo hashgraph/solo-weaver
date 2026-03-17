@@ -54,6 +54,5 @@ var uninstallCmd = &cobra.Command{
 }
 
 func init() {
-	initializeExecutionFlags(uninstallCmd)
 	common.FlagWithStorageReset.SetVarP(uninstallCmd, &flagWithReset, false)
 }

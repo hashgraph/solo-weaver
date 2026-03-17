@@ -62,7 +62,3 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 		return nil
 	},
 }
-
-func init() {
-	initializeExecutionFlags(resetCmd)
-}

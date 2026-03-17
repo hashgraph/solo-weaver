@@ -254,3 +254,99 @@ func TestGetExecutionMode_MutuallyExclusiveFlags_ReturnsError(t *testing.T) {
 	_, err = GetExecutionMode(true, true, true)
 	require.Error(t, err)
 }
+
+func TestFlagCloneIndependent(t *testing.T) {
+	orig := FlagConfig
+	clone := orig.Clone()
+	clone.ShortName = "x"
+	clone.Default = "abc"
+
+	// original should be unchanged
+	require.Equal(t, "c", orig.ShortName)
+	require.Equal(t, "", orig.Default)
+}
+
+func TestValueFallbackPersistent(t *testing.T) {
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child"}
+	root.AddCommand(child)
+
+	var cfgPath string
+	FlagConfig.SetVarP(root, &cfgPath, false)
+
+	// simulate executing child with --config=/tmp/foo
+	args := []string{"--config", "/tmp/foo"}
+	// Use child so parsing will use root persistent flags as fallback
+	got, err := FlagConfig.Value(child, args)
+	require.NoError(t, err)
+	require.Equal(t, "/tmp/foo", got)
+}
+
+// TestValueOwnPersistent_DoesNotFindInheritedFlag asserts that ValueOwnPersistent
+// only reads the command's own persistent FlagSet and does NOT find a flag
+// registered persistently on a parent/root command.
+func TestValueOwnPersistent_DoesNotFindInheritedFlag(t *testing.T) {
+	fp := FlagDefinition[string]{Name: "cfg", ShortName: "", Description: "config", Default: ""}
+	var v string
+
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child"}
+	root.AddCommand(child)
+
+	// register flag persistently on ROOT only
+	err := fp.varP(root, &v, false)
+	require.NoError(t, err)
+	require.NoError(t, root.PersistentFlags().Set(fp.Name, "/etc/foo.yaml"))
+
+	// ValueOwnPersistent on child must NOT find root's persistent flag
+	_, err = fp.ValueOwnPersistent(child, nil)
+	require.Error(t, err, "ValueOwnPersistent on child must not find a flag registered only on root")
+}
+
+// TestValueOwnPersistent_FindsOwnPersistentFlag asserts that ValueOwnPersistent
+// correctly reads a flag registered persistently on the same command.
+func TestValueOwnPersistent_FindsOwnPersistentFlag(t *testing.T) {
+	fp := FlagDefinition[string]{Name: "cfg", ShortName: "", Description: "config", Default: "default"}
+	var v string
+
+	cmd := &cobra.Command{Use: "cmd"}
+	err := fp.varP(cmd, &v, false)
+	require.NoError(t, err)
+	require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "/etc/bar.yaml"))
+
+	got, err := fp.ValueOwnPersistent(cmd, nil)
+	require.NoError(t, err)
+	require.Equal(t, "/etc/bar.yaml", got)
+}
+
+func TestDetectShortNameCollisions(t *testing.T) {
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child"}
+	root.AddCommand(child)
+
+	var a string
+	FlagA := FlagDefinition[string]{Name: "a", ShortName: "x", Default: ""}
+	FlagB := FlagDefinition[string]{Name: "b", ShortName: "x", Default: ""}
+	FlagA.SetVarP(root, &a, false)
+	FlagB.SetVar(child, &a, false)
+	found := DetectShortNameCollisions(root)
+	require.True(t, found)
+}
+
+func TestDetectShortNameCollisions_PersistentOnNonRoot(t *testing.T) {
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child"}
+	root.AddCommand(child)
+
+	var a, b string
+	// persistent flag on child (not root) with shorthand -x
+	FlagA := FlagDefinition[string]{Name: "alpha", ShortName: "x", Default: ""}
+	// another persistent flag on child with the same shorthand -x
+	FlagB := FlagDefinition[string]{Name: "beta", ShortName: "x", Default: ""}
+
+	FlagA.SetVarP(child, &a, false) // persistent on child
+	FlagB.SetVar(child, &b, false)  // local on child
+
+	found := DetectShortNameCollisions(root)
+	require.True(t, found, "should detect collision between persistent and local flags on non-root command")
+}

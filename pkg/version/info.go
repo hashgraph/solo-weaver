@@ -24,6 +24,10 @@ const (
 )
 
 func (v Info) Format(format string) (string, error) {
+	if format == "" {
+		return FormatJSON, nil
+	}
+
 	var output []byte
 	var err error
 	switch strings.ToLower(format) {

@@ -54,7 +54,7 @@ var installCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Installing Kubernetes Cluster")
 
-		skipHardwareChecks, err := cmd.Flags().GetBool(common.FlagSkipHardwareChecks.Name)
+		skipHardwareChecks, err := common.FlagSkipHardwareChecks.Value(cmd, args)
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks.Name)
 		}

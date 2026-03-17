@@ -12,11 +12,9 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -85,7 +83,13 @@ func init() {
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.Cmd())
 
+	if common.DetectShortNameCollisions(rootCmd) {
+		logx.As().Warn().Msg("flag short name collisions detected among commands; consider using unique short names " +
+			"to avoid confusion when using flags with multiple commands")
+	}
+
 	RegisterMigrations()
+
 }
 
 func RegisterMigrations() {
@@ -104,10 +108,6 @@ func Execute(ctx context.Context) error {
 		return errorx.IllegalArgument.New("context is required")
 	}
 
-	cobra.OnInitialize(func() {
-		initConfig(ctx)
-	})
-
 	// execute the root command
 	_, err := rootCmd.ExecuteContextC(ctx)
 	if err != nil {
@@ -115,22 +115,4 @@ func Execute(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func initConfig(ctx context.Context) {
-	var err error
-	err = config.Initialize(flagConfig)
-	if err != nil {
-		doctor.CheckErr(ctx, err)
-	}
-
-	logConfig := config.Get().Log
-	if flagLogLevel != "" {
-		logConfig.Level = flagLogLevel // override log level if flag is set
-	}
-
-	err = logx.Initialize(logConfig)
-	if err != nil {
-		doctor.CheckErr(ctx, err)
-	}
 }

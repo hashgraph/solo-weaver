@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -139,6 +141,15 @@ type FlagDefinition[T any] struct {
 	Default     T
 }
 
+func (fp *FlagDefinition[T]) Clone() FlagDefinition[T] {
+	return FlagDefinition[T]{
+		Name:        fp.Name,
+		ShortName:   fp.ShortName,
+		Description: fp.Description,
+		Default:     fp.Default,
+	}
+}
+
 // valueFrom contains the common type-switch logic to extract a value
 // from the provided pflag.FlagSet.
 func (fp *FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
@@ -197,21 +208,64 @@ func (fp *FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
 	}
 }
 
-// Value extracts the flag value (from the full flag set: persistent, non-persistent or from parent) of the provided cobra command.
-// This is the preferred method to get flag values.
+// Value resolves a flag value using the following precedence:
+//  1. Local (non-persistent) flags on this command
+//  2. Own persistent flags on this command (defined via SetVarP on this command directly)
+//  3. Persistent flags inherited from parent/root commands (merged by Cobra via ParseFlags)
+//
+// Use ValueLocal() or ValueOwnPersistent() if you need strict single-scope semantics.
 func (fp *FlagDefinition[T]) Value(cmd *cobra.Command, args []string) (T, error) {
+	var zero T
+	if cmd == nil {
+		return zero, errorx.IllegalArgument.New("command cannot be nil")
+	}
+
 	if args == nil {
 		args = []string{}
 	}
 
-	// Parse the flags to ensure they are up to date such that it also retrieves from parent commands.
-	err := cmd.ParseFlags(args)
-	if err != nil {
+	// Step 1: try local flags (cmd.Flags() — also includes inherited persistent
+	// after Cobra's mergePersistentFlags fires inside ParseFlags)
+	if val, err := fp.ValueLocal(cmd, args); err == nil {
+		return val, nil
+	}
+
+	// Step 2: fallback to own persistent flags (flags registered with SetVarP
+	// directly on this command that may not appear in the merged cmd.Flags())
+	if val, err := fp.ValueOwnPersistent(cmd, args); err == nil {
+		return val, nil
+	}
+
+	return zero, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
+}
+
+func (fp *FlagDefinition[T]) ValueLocal(cmd *cobra.Command, args []string) (T, error) {
+	if args == nil {
+		args = []string{}
+	}
+
+	if err := cmd.ParseFlags(args); err != nil {
 		var zero T
 		return zero, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
 	}
 
 	return fp.valueFrom(cmd.Flags())
+}
+
+// ValueOwnPersistent reads the value of a persistent flag defined directly on this
+// command (via SetVarP). It does NOT search ancestor/parent commands.
+//
+// Use Value() if you want the full resolution chain (local → own persistent → inherited persistent).
+// Use ValueLocal() if you want only local (non-persistent) flags on this command.
+func (fp *FlagDefinition[T]) ValueOwnPersistent(cmd *cobra.Command, args []string) (T, error) {
+	if args == nil {
+		args = []string{}
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		var zero T
+		return zero, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
+	}
+	return fp.valueFrom(cmd.PersistentFlags())
 }
 
 // SetVarP sets up the persistent flag and exits on error.
@@ -308,7 +362,12 @@ func (fp *FlagDefinition[T]) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command
 		flags.Uint64VarP(pu64, fp.Name, fp.ShortName, def, fp.Description)
 
 	case []string:
-		def := any(fp.Default).([]string)
+		var def []string
+		if any(fp.Default) != nil {
+			def = any(fp.Default).([]string)
+		} else {
+			def = []string{}
+		}
 		pss, ok := any(p).(*[]string)
 		if !ok {
 			return errorx.IllegalArgument.New("expected *[]string for flag %s", fp.Name)
@@ -386,41 +445,122 @@ func GetExecutionMode(continueOnErr bool, stopOnErr bool, rollbackOnErr bool) (a
 	}
 }
 
-// ParentCmdFlags contains the common flags set in the parent commands.
-type ParentCmdFlags struct {
-	// root cmd flags
+// RootFlags contains the flags registered on the root command and available
+// to every subcommand via persistent inheritance.
+type RootFlags struct {
 	Config             string
 	Force              bool
 	SkipHardwareChecks bool
 	LogLevel           string
-
-	// block node cmd flags
-	Profile string
 }
 
-// ExtractRootFlags extracts the common flags set in the root command.
-func ExtractRootFlags(cmd *cobra.Command, args []string, parentFlags *ParentCmdFlags) error {
+// ExtractRootFlags extracts the flags registered on the root command.
+// It also calls InitConfig to load configuration and initialise logging.
+func ExtractRootFlags(cmd *cobra.Command, args []string, flags *RootFlags) error {
 	var err error
 
-	parentFlags.Config, err = FlagConfig.Value(cmd, args)
+	flags.Config, err = FlagConfig.Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get config flag")
 	}
 
-	parentFlags.Force, err = FlagForce.Value(cmd, args)
+	flags.Force, err = FlagForce.Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get force flag")
 	}
 
-	parentFlags.SkipHardwareChecks, err = FlagSkipHardwareChecks.Value(cmd, args)
+	flags.SkipHardwareChecks, err = FlagSkipHardwareChecks.Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get skip-hardware-checks flag")
 	}
 
-	parentFlags.LogLevel, err = FlagLogLevel.Value(cmd, args)
+	flags.LogLevel, err = FlagLogLevel.Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get log-level flag")
 	}
 
+	InitConfig(cmd.Context(), flags)
+
+	logx.As().Info().Any("root-flags", flags).Msg("Extracted root command flags")
 	return nil
+}
+
+// InitConfig loads the configuration file and initialises the logger.
+func InitConfig(ctx context.Context, flags *RootFlags) {
+	var err error
+	err = config.Initialize(flags.Config)
+	if err != nil {
+		doctor.CheckErr(ctx, err)
+	}
+
+	logConfig := config.Get().Log
+	if flags.LogLevel != "" {
+		logConfig.Level = flags.LogLevel // override log level if flag is set
+	}
+
+	err = logx.Initialize(logConfig)
+	if err != nil {
+		doctor.CheckErr(ctx, err)
+	}
+}
+
+func DetectShortNameCollisions(root *cobra.Command) bool {
+	found := false
+
+	var walk func(cmd *cobra.Command, inherited map[string]string)
+	walk = func(cmd *cobra.Command, inherited map[string]string) {
+		// Collect this command's own flags (local + persistent)
+		own := map[string]string{}
+
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Shorthand == "" {
+				return
+			}
+			key := cmd.Name() + ":" + f.Name
+			if existing, ok := own[f.Shorthand]; ok {
+				// two flags on same command share a shorthand
+				found = true
+				logx.As().Warn().Msgf("flag short name '-%s' collision on same command: %s vs %s", f.Shorthand, existing, key)
+			}
+			own[f.Shorthand] = key
+		})
+
+		cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+			if f.Shorthand == "" {
+				return
+			}
+			key := cmd.Name() + "(persistent):" + f.Name
+			if existing, ok := own[f.Shorthand]; ok {
+				found = true
+				logx.As().Warn().Msgf("flag short name '-%s' collision on same command: %s vs %s", f.Shorthand, existing, key)
+			}
+			own[f.Shorthand] = key
+		})
+
+		// Check own flags against what is inherited from ancestors
+		for short, ownKey := range own {
+			if inheritedKey, ok := inherited[short]; ok {
+				found = true
+				logx.As().Warn().Msgf("flag short name '-%s' collision with inherited flag: %s shadows %s", short, ownKey, inheritedKey)
+			}
+		}
+
+		// Build inherited map for children: add this command's persistent flags
+		childInherited := make(map[string]string, len(inherited))
+		for k, v := range inherited {
+			childInherited[k] = v
+		}
+		cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+			if f.Shorthand != "" {
+				childInherited[f.Shorthand] = cmd.Name() + "(persistent):" + f.Name
+			}
+		})
+
+		for _, c := range cmd.Commands() {
+			walk(c, childInherited)
+		}
+	}
+
+	walk(root, map[string]string{})
+	return found
 }
