@@ -54,7 +54,7 @@ type SoftwareState struct {
 	Version    string           `yaml:"version" json:"version"`
 	Installed  bool             `yaml:"installed" json:"installed"`
 	Configured bool             `yaml:"configured" json:"configured"`
-	Metadata   models.StringMap `yaml:"meta,omitempty" json:"meta,omitempty"`
+	Metadata   models.StringMap `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 	LastSync   htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
@@ -63,7 +63,7 @@ type HardwareState struct {
 	Info     string           `yaml:"info" json:"info"`                       // e.g. "Intel i7", "16GB", "1TB SSD"
 	Count    int              `yaml:"count,omitempty" json:"count,omitempty"` // e.g. number of CPUs
 	Size     string           `yaml:"size,omitempty" json:"size,omitempty"`   // e.g. size for RAM or Disk
-	Metadata models.StringMap `yaml:"meta,omitempty" json:"meta,omitempty"`
+	Metadata models.StringMap `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 	LastSync htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
