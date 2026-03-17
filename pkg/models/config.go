@@ -150,7 +150,7 @@ type BlockNodeConfig struct {
 	Namespace    string           `yaml:"namespace" json:"namespace"`
 	Release      string           `yaml:"release" json:"release"`
 	Chart        string           `yaml:"chart" json:"chart"`
-	ChartVersion string           `yaml:"version" json:"version"`
+	ChartVersion string           `yaml:"version" json:"version" mapstructure:"version"`
 	ChartName    string           `yaml:"chartName" json:"chartName"`
 	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
 }
