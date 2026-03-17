@@ -355,8 +355,8 @@ dist/
 /bin/
 
 ### Application Version Info ###
-internal/version/COMMIT
-internal/version/VERSION
+pkg/version/COMMIT
+pkg/version/VERSION
 
 ### Generated Files ###
 **/mocks_generated.go
@@ -372,9 +372,4 @@ docs/playbooks/production/dir-structure.txt
 .ssh/
 integration-test-report.md
 integration-test.json
-
-pkg/version/VERSION
-pkg/version/COMMIT
 .aiassistant
-pkg/version/COMMIT
-pkg/version/VERSION

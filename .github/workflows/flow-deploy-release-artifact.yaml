@@ -126,8 +126,8 @@ jobs:
               echo "::notice::Dry-run mode - no release would be created"
             fi
           else
-            if [[ -f "internal/version/VERSION" ]]; then
-              echo "number=$(cat internal/version/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
+            if [[ -f "pkg/version/VERSION" ]]; then
+              echo "number=$(cat pkg/version/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
             else
               echo "::error::VERSION file not found after release"
               exit 1
