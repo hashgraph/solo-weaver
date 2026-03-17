@@ -69,7 +69,7 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledVersion, installedVersion)
-	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockConfig.Version)
+	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockNodeInputs.ChartVersion)
 
 	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
 	if err != nil {
@@ -90,7 +90,7 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 
 	// Append the single upgrade step that brings the chart to the target version
 	// after all PV/PVCs have been created.
-	targetVersion := manager.blockConfig.Version
+	targetVersion := manager.blockNodeInputs.ChartVersion
 	upgradeStep := buildMigrationUpgradeStep(manager, mctx, installedVersion, targetVersion, profile, valuesFile, migrations)
 	wf.Steps(upgradeStep)
 
@@ -146,9 +146,9 @@ func buildMigrationUpgradeStep(
 				Msg("Rolling back migration upgrade, downgrading chart")
 
 			// Temporarily set version to installed version for ComputeValuesFile + UpgradeChart
-			originalVersion := manager.blockConfig.Version
-			manager.blockConfig.Version = installedVersion
-			defer func() { manager.blockConfig.Version = originalVersion }()
+			originalVersion := manager.blockNodeInputs.ChartVersion
+			manager.blockNodeInputs.ChartVersion = installedVersion
+			defer func() { manager.blockNodeInputs.ChartVersion = originalVersion }()
 
 			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
 			if err != nil {
@@ -173,7 +173,7 @@ func buildMigrationUpgradeStep(
 					continue
 				}
 				l.Info().Str("storage", sm.storage.Name).Msg("Cleaning up PV/PVC after rollback")
-				if delErr := manager.kubeClient.DeletePVC(ctx, manager.blockConfig.Namespace, sm.storage.PVCName); delErr != nil {
+				if delErr := manager.kubeClient.DeletePVC(ctx, manager.blockNodeInputs.Namespace, sm.storage.PVCName); delErr != nil {
 					l.Warn().Err(delErr).Str("pvc", sm.storage.PVCName).Msg("Could not delete PVC")
 				}
 				if delErr := manager.kubeClient.DeletePV(ctx, sm.storage.PVName); delErr != nil {

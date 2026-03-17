@@ -54,9 +54,9 @@ type Software interface {
 	// Cleanup removes temporary files created during download and extraction
 	Cleanup() error
 
-	// GetStateManager returns the state manager for external state management
-	GetStateManager() *state.Manager
-
 	// GetSoftwareName returns the software name
 	GetSoftwareName() string
+
+	// VerifyInstallation checks if the software is installed and configured
+	VerifyInstallation() (*state.SoftwareState, error)
 }

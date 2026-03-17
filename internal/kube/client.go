@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -20,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -30,6 +33,8 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+const inClusterSentinel = "in-cluster"
 
 type ResourceKind string
 
@@ -45,6 +50,7 @@ const (
 	KindStatefulSet ResourceKind = "StatefulSet"
 	KindJob         ResourceKind = "Job"
 	KindPVC         ResourceKind = "PersistentVolumeClaim"
+	KindPV          ResourceKind = "PersistentVolume"
 	KindCRD         ResourceKind = "CustomResourceDefinition"
 )
 
@@ -58,6 +64,7 @@ var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
 	KindStatefulSet: {Group: "apps", Version: "v1", Resource: "statefulsets"},
 	KindJob:         {Group: "batch", Version: "v1", Resource: "jobs"},
 	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	KindPV:          {Group: "", Version: "v1", Resource: "persistentvolumes"},
 	KindCRD:         {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
 }
 
@@ -1171,4 +1178,150 @@ func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namesp
 	}
 
 	return nil
+}
+
+// ClusterExists returns true if a Kubernetes cluster is reachable.
+//
+// It uses a two-stage fast path to avoid the default 32-second API timeout:
+//
+//  1. Kubeconfig presence check (local, no I/O beyond a stat call).
+//     If no kubeconfig file exists at the resolved path, the cluster cannot
+//     exist — returns false immediately.
+//
+//  2. Short-deadline API probe (3 s).
+//     Calls /version with a tight deadline.  A timeout or network error is
+//     treated as "cluster not reachable" (returns false, nil) rather than a
+//     hard error, so callers can skip cluster-dependent work without aborting.
+func ClusterExists() (bool, error) {
+	// ── Stage 1: kubeconfig presence (no network) ─────────────────────────────
+	kubeconfigPath := resolveKubeconfigPath()
+	if kubeconfigPath == "" {
+		// No kubeconfig source found at all — cluster cannot exist.
+		logx.As().Debug().Msg("No kubeconfig found; cluster does not exist")
+		return false, nil
+	}
+
+	if kubeconfigPath != inClusterSentinel {
+		if _, err := os.Stat(kubeconfigPath); err != nil {
+			// File absent or unreadable — treat as no cluster.
+			logx.As().Debug().Str("path", kubeconfigPath).Msg("Kubeconfig file not found; cluster does not exist")
+			return false, nil
+		}
+	}
+
+	// ── Stage 2: short-deadline API probe ────────────────────────────────────
+	cfg, err := loadKubeConfig()
+	if err != nil {
+		// Config cannot be parsed (corrupted / missing context) — no cluster.
+		logx.As().Debug().Err(err).Msg("Failed to load kubeconfig; cluster does not exist")
+		return false, nil
+	}
+
+	// Override the default timeout (which can be up to 32 s) with a tight deadline.
+	const probeTimeout = 3 * time.Second
+	cfg.Timeout = probeTimeout
+
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		logx.As().Debug().Err(err).Msg("Failed to create discovery client; cluster does not exist")
+		return false, nil
+	}
+
+	if _, err = disco.ServerVersion(); err != nil {
+		// Any error here (timeout, connection refused, TLS failure) means the
+		// cluster is not reachable right now — not a hard error for callers.
+		logx.As().Debug().Err(err).Msg("API server probe failed; cluster does not exist or is unreachable")
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// resolveKubeconfigPath returns the kubeconfig path that loadKubeConfig would
+// use, without actually loading it.  Returns "" if no path can be determined.
+func resolveKubeconfigPath() string {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		// In-cluster: no file path, but config comes from the service-account mount.
+		// Return a non-empty sentinel so Stage 1 is skipped and Stage 2 runs.
+		return inClusterSentinel
+	}
+	if p := os.Getenv("KUBECONFIG"); p != "" {
+		return p
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		return filepath.Join(home, ".kube", "config")
+	}
+	return ""
+}
+
+func RetrieveClusterInfo() (*models.ClusterInfo, error) {
+	cfg, err := loadKubeConfig()
+	if err != nil {
+		// Couldn't construct config (no kubeconfig / in-cluster config failure)
+		return nil, err
+	}
+
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		if kerrors.IsUnauthorized(err) || kerrors.IsForbidden(err) {
+			// API server is reachable but credentials are invalid or insufficient
+			return nil, errorx.ExternalError.Wrap(err, "API server is reachable but credentials are invalid or insufficient")
+		}
+		if kerrors.IsNotFound(err) {
+			// API server is reachable but the requested resource is not found (e.g., /version)
+			return nil, errorx.ExternalError.Wrap(err, "API server is reachable but the requested resource is not found")
+		}
+		// Any other error likely indicates the cluster is not reachable or misconfigured
+		return nil, errorx.ExternalError.Wrap(err, "failed to retrieve cluster info")
+	}
+
+	// ServerVersion performs a simple call to the API server; if it succeeds
+	// the cluster is reachable and responding.
+	server, err := disco.ServerVersion()
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to contact API server")
+	}
+
+	cls := &models.ClusterInfo{
+		Host:           cfg.Host,
+		ServerVersion:  *server,
+		KubeconfigEnv:  os.Getenv("KUBECONFIG"),
+		KubeconfigPath: filepath.Join(os.Getenv("HOME"), ".kube", "config"),
+	}
+
+	if _, err := os.Stat(cls.KubeconfigPath); err != nil {
+		logx.As().Debug().Str("defaultKubeconfigPath", cls.KubeconfigPath).Msg("Default kubeconfig not found, skipping kubeconfig parsing")
+		cls.KubeconfigPath = ""
+	} else {
+		logx.As().Debug().Str("kubeconfigPath", cls.KubeconfigPath).Msg("Using kubeconfig to retrieve cluster contexts and namespace")
+		conf := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			&clientcmd.ClientConfigLoadingRules{ExplicitPath: cls.KubeconfigPath},
+			&clientcmd.ConfigOverrides{CurrentContext: ""},
+		)
+
+		rawCfg, err := conf.RawConfig()
+		if err != nil {
+			return nil, errorx.InternalError.Wrap(err, "failed to get raw kubeconfig")
+		}
+
+		cls.Contexts = rawCfg.Contexts
+		for _, c := range cls.Contexts {
+			c.Extensions = map[string]runtime.Object{} // Don't include extensions data
+		}
+
+		cls.Clusters = rawCfg.Clusters
+		for _, c := range cls.Clusters {
+			c.CertificateAuthorityData = []byte{} // Don't include cert data
+		}
+
+		cls.CurrentContext = rawCfg.CurrentContext
+
+		ns, _, err := conf.Namespace()
+		if err != nil {
+			return nil, errorx.InternalError.Wrap(err, "failed to get namespace from kubeconfig")
+		}
+		cls.Namespace = ns
+	}
+
+	return cls, nil
 }

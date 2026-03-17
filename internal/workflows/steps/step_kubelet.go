@@ -6,15 +6,16 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupKubelet() *automa.WorkflowBuilder {
+func SetupKubelet(sm state.Manager) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubelet").
 		Steps(
-			installKubelet(software.NewKubeletInstaller),
-			configureKubelet(software.NewKubeletInstaller),
+			installKubelet(software.NewKubeletInstaller, sm),
+			configureKubelet(software.NewKubeletInstaller, sm),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubelet")
@@ -28,7 +29,7 @@ func SetupKubelet() *automa.WorkflowBuilder {
 		})
 }
 
-func installKubelet(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func installKubelet(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubelet").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Installing kubelet")
@@ -41,11 +42,11 @@ func installKubelet(provider func(opts ...software.InstallerOption) (software.So
 			notify.As().StepCompletion(ctx, stp, rpt, "kubelet installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
+			// ...existing code...
 
 			// Prepare metadata for reporting
 			meta := map[string]string{}
@@ -70,7 +71,7 @@ func installKubelet(provider func(opts ...software.InstallerOption) (software.So
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			err = installer.Cleanup()
 			if err != nil {
@@ -81,28 +82,30 @@ func installKubelet(provider func(opts ...software.InstallerOption) (software.So
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			var installedByThisStep bool
+			if v, ok := stp.State().Local().Bool(InstalledByThisStep); ok {
+				installedByThisStep = v
+			}
+
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubelet was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
 			err = installer.Uninstall()
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
 			return automa.SuccessReport(stp)
 		})
 }
 
-func configureKubelet(provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+func configureKubelet(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubelet").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Configuring kubelet")
@@ -115,13 +118,11 @@ func configureKubelet(provider func(opts ...software.InstallerOption) (software.
 			notify.As().StepCompletion(ctx, stp, rpt, "kubelet configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
-			// Prepare metadata for reporting
 			meta := map[string]string{}
 
 			configured, err := installer.IsConfigured()
@@ -138,26 +139,28 @@ func configureKubelet(provider func(opts ...software.InstallerOption) (software.
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			var configuredByThisStep bool
+			if v, ok := stp.State().Local().Bool(ConfiguredByThisStep); ok {
+				configuredByThisStep = v
+			}
+
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("kubelet was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider()
+			installer, err := provider(software.WithStateManager(sm))
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
 			err = installer.RemoveConfiguration()
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
 			return automa.SuccessReport(stp)

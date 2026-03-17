@@ -4,8 +4,8 @@ package workflows
 
 import (
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -18,7 +18,7 @@ func NodeSetupWorkflow(nodeType string, profile string, skipHardwareChecks bool)
 			// First run preflight checks to ensure system readiness
 			NewNodeSafetyCheckWorkflow(nodeType, profile, skipHardwareChecks),
 			// Then perform the actual setup
-			steps.SetupHomeDirectoryStructure(core.Paths()),
+			steps.SetupHomeDirectoryStructure(models.Paths()),
 			steps.RefreshSystemPackageIndex(),
 			steps.InstallSystemPackage("iptables", software.NewIptables),
 			steps.InstallSystemPackage("gpg", software.NewGpg),

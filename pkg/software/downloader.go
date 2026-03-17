@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 )
 
@@ -93,7 +94,7 @@ func NewDownloader(opts ...DownloaderOption) *Downloader {
 	// Use HomeDir as basePath since downloads and extractions span multiple folders under home
 	downloader := &Downloader{
 		timeout:        30 * time.Minute,
-		basePath:       core.Paths().HomeDir,
+		basePath:       models.Paths().HomeDir,
 		allowedDomains: sanity.AllowedDomains(),
 		insecureTLS:    false,
 	}
@@ -215,18 +216,18 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 
 			// Validate that the target path is within the extraction directory
 			if _, err := sanity.ValidatePathWithinBase(cleanDestDir, targetPath); err != nil {
-				return NewExtractionError(fmt.Errorf("path traversal attempt in hdr.Name: %s", hdr.Name), cleanCompressedPath, cleanDestDir)
+				return NewExtractionError(fmt.Errorf("path traversal attempt in hdr.ServerName: %s", hdr.Name), cleanCompressedPath, cleanDestDir)
 			}
 
 			switch hdr.Typeflag {
 			case tar.TypeDir:
 				// Create directories
-				if err := os.MkdirAll(targetPath, core.DefaultDirOrExecPerm); err != nil {
+				if err := os.MkdirAll(targetPath, models.DefaultDirOrExecPerm); err != nil {
 					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
 				}
 			case tar.TypeReg:
 				// Ensure parent directory exists
-				if err := os.MkdirAll(filepath.Dir(targetPath), core.DefaultDirOrExecPerm); err != nil {
+				if err := os.MkdirAll(filepath.Dir(targetPath), models.DefaultDirOrExecPerm); err != nil {
 					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
 				}
 
@@ -261,7 +262,7 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				}
 
 				// Ensure parent directory exists
-				if err := os.MkdirAll(filepath.Dir(targetPath), core.DefaultDirOrExecPerm); err != nil {
+				if err := os.MkdirAll(filepath.Dir(targetPath), models.DefaultDirOrExecPerm); err != nil {
 					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
 				}
 
@@ -290,7 +291,7 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				}
 
 				// Ensure parent directory exists
-				if err := os.MkdirAll(filepath.Dir(targetPath), core.DefaultDirOrExecPerm); err != nil {
+				if err := os.MkdirAll(filepath.Dir(targetPath), models.DefaultDirOrExecPerm); err != nil {
 					return NewExtractionError(err, cleanCompressedPath, cleanDestDir)
 				}
 

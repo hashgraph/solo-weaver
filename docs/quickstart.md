@@ -1,6 +1,8 @@
 # Quickstart Guide
 
-Below is a quickstart guide to get you up and running with Solo Provisioner.
+Solo Weaver is a Kubernetes-native deployment automation platform for Hedera network components. It enables node operators to migrate from traditional deployment models to modern, containerized infrastructure with automated lifecycle management.
+
+Below is a quickstart guide to get you up and running with Solo Weaver.
 
 ## Prerequisites
 

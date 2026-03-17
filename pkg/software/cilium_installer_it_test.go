@@ -9,9 +9,9 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,7 +73,7 @@ func Test_CiliumInstaller_FullWorkflow_Success(t *testing.T) {
 	// Check binary permissions (should be executable)
 	info, err := os.Stat("/opt/solo/weaver/sandbox/bin/cilium")
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(core.DefaultDirOrExecPerm), info.Mode().Perm(), "cilium binary should have 0755 permissions")
+	require.Equal(t, os.FileMode(models.DefaultDirOrExecPerm), info.Mode().Perm(), "cilium binary should have 0755 permissions")
 
 	//
 	// When - Cleanup

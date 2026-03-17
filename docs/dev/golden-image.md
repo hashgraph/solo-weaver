@@ -112,6 +112,11 @@ We don't need to do this often, but it's useful to know how to create and update
 6. Since .utm file is a directory, we need to compress it before uploading:
     ```bash
     cd /path/to/saved/utm/file
-    tar -czvf solo-weaver-{{.TYPE}}-golden.utm.tar.gz solo-weaver-{{.TYPE}}-golden.utm
+    TYPE=debian # or ubuntu
+    rm -f solo-weaver-"${TYPE}"-golden.utm.tar.gz || true
+    tar -czvf solo-weaver-"${TYPE}"-golden.utm.tar.gz solo-weaver-"${TYPE}"-golden.utm
     ```
-7. Upload this to the shared bucket `gs://solo-weaver/solo-weaver-debian-golden.utm.tar.gz` for use in provisioning new VMs.
+7. Upload this to the shared bucket `gs://solo-weaver/solo-weaver-"${TYPE}"-golden.utm.tar.gz` for use in provisioning new VMs.
+``` 
+gsutil cp solo-weaver-"${TYPE}"-golden.utm.tar.gz gs://solo-weaver/solo-weaver-"${TYPE}"-golden.utm.tar.gz
+```

@@ -607,3 +607,13 @@ func ValidateStorageSize(size string) error {
 
 	return nil
 }
+
+// Contains checks if a slice contains a specific item. It uses the equality operator (==) for comparison.
+func Contains[T comparable](item T, slice []T) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
+}

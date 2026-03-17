@@ -9,12 +9,11 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
@@ -40,15 +39,15 @@ const (
 
 // Manager handles block node setup and management operations
 type Manager struct {
-	fsManager   fsx.Manager
-	helmManager helm.Manager
-	kubeClient  *kube.Client
-	logger      *zerolog.Logger
-	blockConfig *config.BlockNodeConfig
+	fsManager       fsx.Manager
+	helmManager     helm.Manager
+	kubeClient      *kube.Client
+	logger          *zerolog.Logger
+	blockNodeInputs models.BlockNodeInputs
 }
 
 // NewManager creates a new block node manager
-func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
+func NewManager(blockConfig models.BlockNodeInputs) (*Manager, error) {
 	l := logx.As()
 
 	// File system manager
@@ -70,11 +69,11 @@ func NewManager(blockConfig config.BlockNodeConfig) (*Manager, error) {
 	}
 
 	return &Manager{
-		fsManager:   fsManager,
-		helmManager: helmManager,
-		kubeClient:  kubeClient,
-		logger:      l,
-		blockConfig: &blockConfig,
+		fsManager:       fsManager,
+		helmManager:     helmManager,
+		kubeClient:      kubeClient,
+		logger:          l,
+		blockNodeInputs: blockConfig,
 	}, nil
 }
 
@@ -115,7 +114,7 @@ func (m *Manager) SetupStorage(ctx context.Context) error {
 			return errorx.IllegalState.Wrap(err, "failed to create directory: %s", dirPath)
 		}
 
-		if err := m.fsManager.WritePermissions(dirPath, core.DefaultDirOrExecPerm, true); err != nil {
+		if err := m.fsManager.WritePermissions(dirPath, models.DefaultDirOrExecPerm, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to set permissions on: %s", dirPath)
 		}
 	}
@@ -129,7 +128,7 @@ func (m *Manager) CreateNamespace(ctx context.Context, tempDir string) error {
 	data := struct {
 		Namespace string
 	}{
-		Namespace: m.blockConfig.Namespace,
+		Namespace: m.blockNodeInputs.Namespace,
 	}
 
 	// Render the namespace template
@@ -140,7 +139,7 @@ func (m *Manager) CreateNamespace(ctx context.Context, tempDir string) error {
 
 	// Write to temp file
 	manifestFilePath := path.Join(tempDir, "block-node-namespace.yaml")
-	if err := oslib.WriteFile(manifestFilePath, []byte(namespaceContent), core.DefaultFilePerm); err != nil {
+	if err := oslib.WriteFile(manifestFilePath, []byte(namespaceContent), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write namespace manifest to temp file")
 	}
 
@@ -149,7 +148,7 @@ func (m *Manager) CreateNamespace(ctx context.Context, tempDir string) error {
 		return errorx.IllegalState.Wrap(err, "failed to apply namespace manifest")
 	}
 
-	m.logger.Info().Msgf("Applied namespace manifest for: %s", m.blockConfig.Namespace)
+	m.logger.Info().Msgf("Applied namespace manifest for: %s", m.blockNodeInputs.Namespace)
 	return nil
 }
 
@@ -167,13 +166,13 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 		return errorx.IllegalState.Wrap(err, "failed to get storage paths")
 	}
 
-	applicable := GetApplicableOptionalStorages(m.blockConfig.Version)
+	applicable := GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion)
 	includeVerification := false
 	includePlugins := false
 	verificationPath := ""
 	pluginsPath := ""
-	verificationSize := m.blockConfig.Storage.VerificationSize
-	pluginsSize := m.blockConfig.Storage.PluginsSize
+	verificationSize := m.blockNodeInputs.Storage.VerificationSize
+	pluginsSize := m.blockNodeInputs.Storage.PluginsSize
 
 	for i, os := range applicable {
 		switch os.Name {
@@ -216,15 +215,15 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 		IncludeVerification bool
 		IncludePlugins      bool
 	}{
-		Namespace:           m.blockConfig.Namespace,
+		Namespace:           m.blockNodeInputs.Namespace,
 		LivePath:            livePath,
 		ArchivePath:         archivePath,
 		LogPath:             logPath,
 		VerificationPath:    verificationPath,
 		PluginsPath:         pluginsPath,
-		LiveSize:            m.blockConfig.Storage.LiveSize,
-		ArchiveSize:         m.blockConfig.Storage.ArchiveSize,
-		LogSize:             m.blockConfig.Storage.LogSize,
+		LiveSize:            m.blockNodeInputs.Storage.LiveSize,
+		ArchiveSize:         m.blockNodeInputs.Storage.ArchiveSize,
+		LogSize:             m.blockNodeInputs.Storage.LogSize,
 		VerificationSize:    verificationSize,
 		PluginsSize:         pluginsSize,
 		IncludeVerification: includeVerification,
@@ -241,7 +240,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	// Write to temp file
 	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
 	m.logger.Debug().Str("configFile", configFilePath).Msg("Writing storage config to temp file")
-	if err := oslib.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
+	if err := oslib.WriteFile(configFilePath, []byte(storageConfig), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write storage config to temp file")
 	}
 
@@ -265,7 +264,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 
 	for _, pvcName := range pvcNames {
 		m.logger.Info().Str("pvc", pvcName).Msg("Waiting for PVC to be bound...")
-		if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockConfig.Namespace, pvcName, kube.IsPVCBound, timeout); err != nil {
+		if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockNodeInputs.Namespace, pvcName, kube.IsPVCBound, timeout); err != nil {
 			return errorx.IllegalState.Wrap(err, "PVC %s did not become bound in time", pvcName)
 		}
 		m.logger.Info().Str("pvc", pvcName).Msg("PVC is bound")
@@ -297,7 +296,7 @@ func (m *Manager) CreateOptionalStorage(ctx context.Context, tempDir string, opt
 		Path      string
 		Size      string
 	}{
-		Namespace: m.blockConfig.Namespace,
+		Namespace: m.blockNodeInputs.Namespace,
 		PVName:    optStor.PVName,
 		PVCName:   optStor.PVCName,
 		Path:      storagePath,
@@ -318,7 +317,7 @@ func (m *Manager) CreateOptionalStorage(ctx context.Context, tempDir string, opt
 
 	// Write to temp file
 	configFilePath := path.Join(tempDir, "block-node-"+optStor.Name+"-storage.yaml")
-	if err := oslib.WriteFile(configFilePath, []byte(storageConfig), core.DefaultFilePerm); err != nil {
+	if err := oslib.WriteFile(configFilePath, []byte(storageConfig), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write %s storage config", optStor.Name)
 	}
 
@@ -330,7 +329,7 @@ func (m *Manager) CreateOptionalStorage(ctx context.Context, tempDir string, opt
 	// Wait for PVC to be bound
 	m.logger.Info().Str("pvc", optStor.PVCName).Msgf("Waiting for %s PVC to be bound...", optStor.Name)
 	timeout := 2 * time.Minute
-	if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockConfig.Namespace, optStor.PVCName, kube.IsPVCBound, timeout); err != nil {
+	if err := m.kubeClient.WaitForResource(ctx, kube.KindPVC, m.blockNodeInputs.Namespace, optStor.PVCName, kube.IsPVCBound, timeout); err != nil {
 		return errorx.IllegalState.Wrap(err, "%s PVC did not become bound in time", optStor.Name)
 	}
 	m.logger.Info().Str("pvc", optStor.PVCName).Msgf("%s PVC is bound", optStor.Name)
@@ -341,12 +340,12 @@ func (m *Manager) CreateOptionalStorage(ctx context.Context, tempDir string, opt
 // resolveOptionalStoragePathAndSize derives the effective path and size for an optional storage,
 // using basePath derivation when the individual path is not explicitly configured.
 func (m *Manager) resolveOptionalStoragePathAndSize(optStor OptionalStorage) (string, string, error) {
-	storagePath := optStor.GetPath(&m.blockConfig.Storage)
-	storageSize := optStor.GetSize(&m.blockConfig.Storage)
+	storagePath := optStor.GetPath(&m.blockNodeInputs.Storage)
+	storageSize := optStor.GetSize(&m.blockNodeInputs.Storage)
 
 	// If individual path is not set, derive from basePath
 	if storagePath == "" {
-		basePath := m.blockConfig.Storage.BasePath
+		basePath := m.blockNodeInputs.Storage.BasePath
 		if basePath != "" {
 			sanitizedBase, err := sanity.SanitizePath(basePath)
 			if err != nil {
@@ -376,7 +375,7 @@ func (m *Manager) resolveOptionalStoragePathAndSize(optStor OptionalStorage) (st
 // InstallChart installs the block node helm chart
 func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, error) {
 	// Check if already installed
-	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 	if err != nil {
 		return false, errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -389,10 +388,10 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 	// Install the chart
 	_, err = m.helmManager.InstallChart(
 		ctx,
-		m.blockConfig.Release,
-		m.blockConfig.Chart,
-		m.blockConfig.Version,
-		m.blockConfig.Namespace,
+		m.blockNodeInputs.Release,
+		m.blockNodeInputs.Chart,
+		m.blockNodeInputs.ChartVersion,
+		m.blockNodeInputs.Namespace,
 		helm.InstallChartOptions{
 			ValueOpts: &values.Options{
 				ValueFiles: []string{valuesFile},
@@ -412,13 +411,13 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 
 // UninstallChart uninstalls the block node helm chart
 func (m *Manager) UninstallChart(ctx context.Context) error {
-	return m.helmManager.UninstallChart(m.blockConfig.Release, m.blockConfig.Namespace)
+	return m.helmManager.UninstallChart(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 }
 
 // UpgradeChart upgrades the block node helm chart
 func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValues bool) error {
 	// Check if installed first
-	isInstalled, err := m.helmManager.IsInstalled(m.blockConfig.Release, m.blockConfig.Namespace)
+	isInstalled, err := m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
 	}
@@ -443,10 +442,10 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 	// Upgrade the chart
 	_, err = m.helmManager.UpgradeChart(
 		ctx,
-		m.blockConfig.Release,
-		m.blockConfig.Chart,
-		m.blockConfig.Version,
-		m.blockConfig.Namespace,
+		m.blockNodeInputs.Release,
+		m.blockNodeInputs.Chart,
+		m.blockNodeInputs.ChartVersion,
+		m.blockNodeInputs.Namespace,
 		helm.UpgradeChartOptions{
 			ValueOpts: &values.Options{
 				ValueFiles: valueFiles,
@@ -460,9 +459,9 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 	if err != nil {
 		m.logger.Error().
 			Err(err).
-			Str("chart", m.blockConfig.Chart).
-			Str("version", m.blockConfig.Version).
-			Str("namespace", m.blockConfig.Namespace).
+			Str("chart", m.blockNodeInputs.Chart).
+			Str("version", m.blockNodeInputs.ChartVersion).
+			Str("namespace", m.blockNodeInputs.Namespace).
 			Msg("Helm upgrade failed")
 		return errorx.IllegalState.Wrap(err, "failed to upgrade block node chart")
 	}
@@ -476,13 +475,13 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 // that changes volumeClaimTemplates, since Kubernetes forbids in-place updates to those fields.
 // Returns nil if the StatefulSet doesn't exist.
 func (m *Manager) DeleteStatefulSetForUpgrade(ctx context.Context) error {
-	stsName := m.blockConfig.Release + ResourceNameSuffix
+	stsName := m.blockNodeInputs.Release + ResourceNameSuffix
 
 	m.logger.Info().
 		Str("statefulset", stsName).
 		Msg("Deleting StatefulSet (orphan cascade) to allow volumeClaimTemplates update")
 
-	if err := m.kubeClient.DeleteStatefulSet(ctx, m.blockConfig.Namespace, stsName); err != nil {
+	if err := m.kubeClient.DeleteStatefulSet(ctx, m.blockNodeInputs.Namespace, stsName); err != nil {
 		m.logger.Warn().Err(err).Str("statefulset", stsName).Msg("Failed to delete StatefulSet before upgrade")
 		return errorx.ExternalError.Wrap(err, "failed to delete StatefulSet before upgrade")
 	}
@@ -491,7 +490,7 @@ func (m *Manager) DeleteStatefulSetForUpgrade(ctx context.Context) error {
 	// Polling avoids the race where Helm patches a stale StatefulSet.
 	m.logger.Info().Str("statefulset", stsName).Msg("Waiting for StatefulSet deletion to complete")
 	waitTimeout := 60 * time.Second
-	if err := m.kubeClient.WaitForResource(ctx, kube.KindStatefulSet, m.blockConfig.Namespace, stsName, kube.IsDeleted, waitTimeout); err != nil {
+	if err := m.kubeClient.WaitForResource(ctx, kube.KindStatefulSet, m.blockNodeInputs.Namespace, stsName, kube.IsDeleted, waitTimeout); err != nil {
 		m.logger.Warn().Err(err).Str("statefulset", stsName).Msg("Timeout waiting for StatefulSet deletion, proceeding with upgrade attempt")
 	}
 
@@ -500,14 +499,14 @@ func (m *Manager) DeleteStatefulSetForUpgrade(ctx context.Context) error {
 
 // ScaleStatefulSet scales the block node statefulset to the specified number of replicas
 func (m *Manager) ScaleStatefulSet(ctx context.Context, replicas int32) error {
-	resourceName := m.blockConfig.Release + ResourceNameSuffix
+	resourceName := m.blockNodeInputs.Release + ResourceNameSuffix
 
 	m.logger.Info().
 		Str("statefulset", resourceName).
 		Int32("replicas", replicas).
 		Msg("Scaling block node statefulset")
 
-	if err := m.kubeClient.ScaleStatefulSet(ctx, m.blockConfig.Namespace, resourceName, replicas); err != nil {
+	if err := m.kubeClient.ScaleStatefulSet(ctx, m.blockNodeInputs.Namespace, resourceName, replicas); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to scale statefulset: %s", resourceName)
 	}
 
@@ -524,7 +523,7 @@ func (m *Manager) WaitForPodsTerminated(ctx context.Context) error {
 	}
 
 	// Wait until no pods exist with the block node label
-	if err := m.kubeClient.WaitForResourcesDeletion(ctx, kube.KindPod, m.blockConfig.Namespace, timeout, opts); err != nil {
+	if err := m.kubeClient.WaitForResourcesDeletion(ctx, kube.KindPod, m.blockNodeInputs.Namespace, timeout, opts); err != nil {
 		return errorx.IllegalState.Wrap(err, "pods did not terminate in time")
 	}
 
@@ -587,13 +586,13 @@ func (m *Manager) ResetStorage(ctx context.Context) error {
 
 // AnnotateService annotates the block node service with MetalLB address pool
 func (m *Manager) AnnotateService(ctx context.Context) error {
-	resourceName := m.blockConfig.Release + ResourceNameSuffix
+	resourceName := m.blockNodeInputs.Release + ResourceNameSuffix
 
 	annotations := map[string]string{
 		"metallb.io/address-pool": "public-address-pool",
 	}
 
-	if err := m.kubeClient.AnnotateResource(ctx, kube.KindService, m.blockConfig.Namespace, resourceName, annotations); err != nil {
+	if err := m.kubeClient.AnnotateResource(ctx, kube.KindService, m.blockNodeInputs.Namespace, resourceName, annotations); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", resourceName)
 	}
 
@@ -609,7 +608,7 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 		LabelSelector: PodLabelSelector,
 	}
 
-	if err := m.kubeClient.WaitForResources(ctx, kube.KindPod, m.blockConfig.Namespace, kube.IsPodReady, timeout, opts); err != nil {
+	if err := m.kubeClient.WaitForResources(ctx, kube.KindPod, m.blockNodeInputs.Namespace, kube.IsPodReady, timeout, opts); err != nil {
 		return errorx.IllegalState.Wrap(err, "pod did not become ready in time")
 	}
 
@@ -636,7 +635,7 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 
 	if valuesFile == "" {
 		// Determine which optional storages are needed
-		applicable := GetApplicableOptionalStorages(m.blockConfig.Version)
+		applicable := GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion)
 		includeVerification := false
 		includePlugins := false
 		for _, optStor := range applicable {
@@ -650,7 +649,7 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 
 		// Select the base template based on profile
 		valuesTemplatePath := ValuesPath
-		if profile == core.ProfileLocal {
+		if profile == models.ProfileLocal {
 			valuesTemplatePath = NanoValuesPath
 			logx.As().Info().
 				Bool("includeVerification", includeVerification).
@@ -701,8 +700,8 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	}
 
 	// Write temporary copy to weaver's temp directory
-	valuesFilePath := path.Join(core.Paths().TempDir, "block-node-values.yaml")
-	if err = oslib.WriteFile(valuesFilePath, valuesContent, core.DefaultFilePerm); err != nil {
+	valuesFilePath := path.Join(models.Paths().TempDir, "block-node-values.yaml")
+	if err = oslib.WriteFile(valuesFilePath, valuesContent, models.DefaultFilePerm); err != nil {
 		return "", errorx.InternalError.Wrap(err, "failed to write block node values file")
 	}
 
@@ -733,7 +732,7 @@ func (m *Manager) injectPersistenceOverrides(valuesContent []byte) ([]byte, erro
 	}
 
 	// Add applicable optional storage entries
-	for _, optStor := range GetApplicableOptionalStorages(m.blockConfig.Version) {
+	for _, optStor := range GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion) {
 		entries = append(entries, persistenceEntry{
 			name:      optStor.Name,
 			claimName: optStor.PVCName,
@@ -799,14 +798,14 @@ func (m *Manager) injectPersistenceOverrides(valuesContent []byte) ([]byte, erro
 // All paths are validated using sanity checks.
 // optionalPaths contains the paths for applicable optional storages (in registry order).
 func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, optionalPaths []string, err error) {
-	archivePath = m.blockConfig.Storage.ArchivePath
-	livePath = m.blockConfig.Storage.LivePath
-	logPath = m.blockConfig.Storage.LogPath
+	archivePath = m.blockNodeInputs.Storage.ArchivePath
+	livePath = m.blockNodeInputs.Storage.LivePath
+	logPath = m.blockNodeInputs.Storage.LogPath
 
-	applicable := GetApplicableOptionalStorages(m.blockConfig.Version)
+	applicable := GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion)
 
 	// Sanitize basePath before using it to construct other paths
-	basePath := m.blockConfig.Storage.BasePath
+	basePath := m.blockNodeInputs.Storage.BasePath
 	if basePath != "" {
 		basePath, err = sanity.SanitizePath(basePath)
 		if err != nil {
@@ -818,7 +817,7 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, opti
 	corePathsMissing := archivePath == "" || livePath == "" || logPath == ""
 	optionalPathMissing := false
 	for _, optStor := range applicable {
-		if optStor.GetPath(&m.blockConfig.Storage) == "" {
+		if optStor.GetPath(&m.blockNodeInputs.Storage) == "" {
 			optionalPathMissing = true
 			break
 		}
@@ -840,7 +839,7 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, opti
 
 	// Derive and validate optional storage paths
 	for _, optStor := range applicable {
-		p := optStor.GetPath(&m.blockConfig.Storage)
+		p := optStor.GetPath(&m.blockNodeInputs.Storage)
 		if p == "" {
 			p = path.Join(basePath, optStor.DirName)
 		}
@@ -877,13 +876,13 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, opti
 
 // GetTargetVersion returns the configured target version for block node.
 func (m *Manager) GetTargetVersion() string {
-	return m.blockConfig.Version
+	return m.blockNodeInputs.ChartVersion
 }
 
 // GetInstalledVersion returns the currently installed Block Node chart version.
 // Returns empty string if not installed.
 func (m *Manager) GetInstalledVersion() (string, error) {
-	rel, err := m.helmManager.GetRelease(m.blockConfig.Release, m.blockConfig.Namespace)
+	rel, err := m.helmManager.GetRelease(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 	if err != nil {
 		if errorx.IsOfType(err, helm.ErrNotFound) {
 			return "", nil
@@ -901,7 +900,7 @@ func (m *Manager) GetInstalledVersion() (string, error) {
 // GetReleaseValues returns the user-supplied values from the currently installed release.
 // Returns nil if not installed or if no user values were supplied.
 func (m *Manager) GetReleaseValues() (map[string]interface{}, error) {
-	rel, err := m.helmManager.GetRelease(m.blockConfig.Release, m.blockConfig.Namespace)
+	rel, err := m.helmManager.GetRelease(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 	if err != nil {
 		if errorx.IsOfType(err, helm.ErrNotFound) {
 			return nil, nil

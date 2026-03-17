@@ -10,13 +10,14 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/config"
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
@@ -36,13 +37,13 @@ const (
 // SetupTeleportNodeAgent returns a workflow builder that sets up the Teleport node agent.
 // This provides SSH access to the node via Teleport with full session recording.
 // Used by 'solo-provisioner teleport node install' command.
-func SetupTeleportNodeAgent() *automa.WorkflowBuilder {
+func SetupTeleportNodeAgent(sm state.Manager) *automa.WorkflowBuilder {
 	cfg := config.Get().Teleport
 
 	return automa.NewWorkflowBuilder().WithId("setup-teleport-node-agent").
 		Steps(
-			installTeleportNodeAgent(newTeleportInstallerProvider(cfg)),
-			configureTeleportNodeAgent(newTeleportInstallerProvider(cfg)),
+			installTeleportNodeAgent(newTeleportInstallerProvider(cfg, sm)),
+			configureTeleportNodeAgent(newTeleportInstallerProvider(cfg, sm)),
 			SetupSystemdService(software.TeleportServiceName),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -84,14 +85,13 @@ func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
 type teleportInstallerProvider func(opts ...software.InstallerOption) (software.Software, error)
 
 // newTeleportInstallerProvider creates a provider function that includes the teleport configuration
-func newTeleportInstallerProvider(cfg config.TeleportConfig) teleportInstallerProvider {
+func newTeleportInstallerProvider(cfg models.TeleportConfig, sm state.Manager) teleportInstallerProvider {
 	return func(opts ...software.InstallerOption) (software.Software, error) {
 		configOpts := &software.TeleportNodeAgentConfigureOptions{
 			ProxyAddr: cfg.NodeAgentProxyAddr,
 			JoinToken: cfg.NodeAgentToken,
 		}
-
-		return software.NewTeleportNodeAgentInstallerWithConfig(configOpts, opts...)
+		return software.NewTeleportNodeAgentInstallerWithConfig(configOpts, append(opts, software.WithStateManager(sm))...)
 	}
 }
 
@@ -142,7 +142,7 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			err = installer.Cleanup()
 			if err != nil {
@@ -153,7 +153,11 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installedByThisStep := stp.State().Bool(InstalledByThisStep)
+			var installedByThisStep bool
+			if v, ok := stp.State().Local().Bool(InstalledByThisStep); ok {
+				installedByThisStep = v
+			}
+
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("teleport was not installed by this step, skipping rollback"))
 			}
@@ -209,12 +213,16 @@ func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Build
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 			meta[ConfiguredByThisStep] = "true"
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			configuredByThisStep := stp.State().Bool(ConfiguredByThisStep)
+			var configuredByThisStep bool
+			if v, ok := stp.State().Local().Bool(ConfiguredByThisStep); ok {
+				configuredByThisStep = v
+			}
+
 			if !configuredByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("teleport was not configured by this step, skipping rollback"))
 			}
@@ -242,7 +250,7 @@ func CreateTeleportNamespace() automa.Builder {
 			}
 
 			// Create namespace manifest using template
-			namespaceManifestPath := path.Join(core.Paths().TempDir, "teleport-namespace.yaml")
+			namespaceManifestPath := path.Join(models.Paths().TempDir, "teleport-namespace.yaml")
 			namespaceManifest, err := templates.Render("files/teleport/namespace.yaml", map[string]string{
 				"Namespace": TeleportNamespace,
 			})
@@ -333,12 +341,12 @@ func InstallTeleportKubeAgent() automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

@@ -83,6 +83,16 @@ func Test_CrioInstaller_FullWorkflow_Success(t *testing.T) {
 	err = installer.Configure()
 	require.NoError(t, err, "Failed to configure cri-o")
 
+	//
+	// Verify (after Install, before Configure)
+	//
+	verifyResult, err := installer.VerifyInstallation()
+	require.NoError(t, err, "VerifyInstallation() should not return an error")
+	require.NotNil(t, verifyResult, "VerifyInstallation() result should not be nil")
+	require.True(t, verifyResult.Installed, "VerifyInstallation() should report software as installed after Install()")
+	require.True(t, verifyResult.Configured, "VerifyInstallation() should report software as not yet configured before Configure()")
+	require.NotEmpty(t, verifyResult.Version, "VerifyInstallation() result should include a non-empty version string")
+
 	// Verify Symlink CRI-O /etc/containers/registries.conf.d
 	linkTarget, err := os.Readlink("/etc/containers")
 	require.NoError(t, err)

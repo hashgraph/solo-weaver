@@ -5,14 +5,14 @@ package software
 import (
 	"path"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/network"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
 const (
+	CiliumBinaryName     = "cilium"
 	ciliumConfigFileName = "cilium-config.yaml"
 	ciliumTemplateFile   = "files/cilium/cilium-config.yaml"
 )
@@ -28,9 +28,13 @@ func NewCiliumInstaller(opts ...InstallerOption) (Software, error) {
 		return nil, err
 	}
 
-	return &ciliumInstaller{
+	ci := &ciliumInstaller{
 		baseInstaller: bi,
-	}, nil
+	}
+
+	ci.verifyConfigured = ci.verifySandboxConfigs
+
+	return ci, nil
 }
 
 // Configure configures the cilium after installation
@@ -48,9 +52,7 @@ func (ci *ciliumInstaller) Configure() error {
 	}
 
 	// Record configured state
-	_ = ci.GetStateManager().RecordState(ci.GetSoftwareName(), state.TypeConfigured, ci.Version())
-
-	return nil
+	return ci.recordConfigured()
 }
 
 // RemoveConfiguration restores the cilium binary and configuration files to their original state
@@ -69,7 +71,7 @@ func (ci *ciliumInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove configured state
-	_ = ci.GetStateManager().RemoveState(ci.GetSoftwareName(), state.TypeConfigured)
+	_ = ci.clearConfigured()
 
 	return nil
 }
@@ -81,7 +83,7 @@ func (ci *ciliumInstaller) getCiliumConfigPath() string {
 
 // getConfigurationDir returns the path to the weaver configuration directory
 func (ci *ciliumInstaller) getConfigurationDir() string {
-	return path.Join(core.Paths().SandboxDir, "etc", "weaver")
+	return path.Join(models.Paths().SandboxDir, "etc", "weaver")
 }
 
 // createCiliumConfigFile creates the cilium configuration file from template
@@ -95,7 +97,7 @@ func (ci *ciliumInstaller) createCiliumConfigFile() error {
 		SandboxDir string
 		MachineIP  string
 	}{
-		SandboxDir: core.Paths().SandboxDir,
+		SandboxDir: models.Paths().SandboxDir,
 		MachineIP:  machineIp,
 	}
 
@@ -119,4 +121,22 @@ func (ci *ciliumInstaller) createCiliumConfigFile() error {
 	}
 
 	return nil
+}
+
+// verifySandboxConfigs overrides the base implementation to verify the cilium-config.yaml
+// file exists at the expected path in the sandbox after Configure() has been called.
+func (ci *ciliumInstaller) verifySandboxConfigs() (models.StringMap, error) {
+	meta := models.NewStringMap()
+	configPath := ci.getCiliumConfigPath()
+
+	_, exists, err := ci.fileManager.PathExists(configPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check cilium config file at %s", configPath)
+	}
+	if !exists {
+		return nil, errorx.IllegalState.New("cilium config file is missing at %s", configPath)
+	}
+	meta.Set("configPath", configPath)
+
+	return meta, nil
 }

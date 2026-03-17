@@ -373,4 +373,8 @@ docs/playbooks/production/dir-structure.txt
 integration-test-report.md
 integration-test.json
 
+pkg/version/VERSION
+pkg/version/COMMIT
 .aiassistant
+pkg/version/COMMIT
+pkg/version/VERSION

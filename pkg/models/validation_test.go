@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package config
+package models
 
 import (
 	"testing"
@@ -86,6 +86,9 @@ func TestBlockNodeStorage_Validate(t *testing.T) {
 		{
 			name: "valid_verification_path",
 			storage: BlockNodeStorage{
+				ArchivePath:      "/mnt/storage/archive",
+				LivePath:         "/mnt/storage/live",
+				LogPath:          "/mnt/storage/logs",
 				VerificationPath: "/mnt/storage/verification",
 			},
 			expectError: false,
@@ -97,6 +100,7 @@ func TestBlockNodeStorage_Validate(t *testing.T) {
 				ArchiveSize:      "100Gi",
 				LogSize:          "5Gi",
 				VerificationSize: "50Gi",
+				BasePath:         "/mnt/storage",
 			},
 			expectError: false,
 		},
@@ -140,7 +144,7 @@ func TestBlockNodeStorage_Validate(t *testing.T) {
 				LivePath:    "",
 				LogPath:     "",
 			},
-			expectError: false, // Empty paths are allowed - defaults will be used
+			expectError: true, // Empty paths are not allowed
 		},
 	}
 
@@ -169,10 +173,10 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 		{
 			name: "valid_config",
 			config: BlockNodeConfig{
-				Namespace: "block-node-ns",
-				Release:   "my-release",
-				Chart:     "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
-				Version:   "0.24.0",
+				Namespace:    "block-node-ns",
+				Release:      "my-release",
+				Chart:        "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+				ChartVersion: "0.24.0",
 				Storage: BlockNodeStorage{
 					BasePath: "/mnt/storage",
 				},
@@ -218,11 +222,11 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 			errorMsg:    "shell metacharacters",
 		},
 		{
-			name: "valid_empty_optional_fields",
+			name: "invalid_empty_optional_fields",
 			config: BlockNodeConfig{
 				Storage: BlockNodeStorage{},
 			},
-			expectError: false,
+			expectError: true,
 		},
 	}
 

@@ -21,6 +21,7 @@ type InstallChartOptions struct {
 	Wait            bool
 	Timeout         time.Duration
 	CreateNamespace bool
+	Labels          map[string]string
 }
 
 // UpgradeChartOptions for upgrading Helm charts
@@ -30,6 +31,7 @@ type UpgradeChartOptions struct {
 	Wait        bool
 	Timeout     time.Duration
 	ReuseValues bool
+	Labels      map[string]string
 }
 
 // DeployChartOptions for idempotent install/upgrade
@@ -40,4 +42,5 @@ type DeployChartOptions struct {
 	Timeout         time.Duration
 	CreateNamespace bool
 	ReuseValues     bool
+	Labels          map[string]string
 }

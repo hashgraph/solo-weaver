@@ -9,12 +9,29 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestBlockNodeInputs creates a BlockNodeInputs with sensible defaults
+// matching what the production CLI would provide.
+func newTestBlockNodeInputs(profile string) models.BlockNodeInputs {
+	return models.BlockNodeInputs{
+		Profile:      profile,
+		Namespace:    deps.BLOCK_NODE_NAMESPACE,
+		Release:      deps.BLOCK_NODE_RELEASE,
+		Chart:        deps.BLOCK_NODE_CHART,
+		ChartVersion: deps.BLOCK_NODE_VERSION,
+		Storage: models.BlockNodeStorage{
+			BasePath: deps.BLOCK_NODE_STORAGE_BASE_PATH,
+		},
+	}
+}
 
 func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	// Check if system has at least 16GB memory for block node
@@ -30,8 +47,9 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
+	inputs := newTestBlockNodeInputs(models.ProfileMainnet)
 
-	wb := SetupBlockNode(core.ProfileMainnet, "")
+	wb := SetupBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -103,7 +121,9 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
-	wb := SetupBlockNode(core.ProfileLocal, "")
+	inputs := newTestBlockNodeInputs(models.ProfileLocal)
+
+	wb := SetupBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -168,7 +188,9 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	// Given - already installed from fresh install test
 	//
 
-	wb := SetupBlockNode(core.ProfileLocal, "")
+	inputs := newTestBlockNodeInputs(models.ProfileLocal)
+
+	wb := SetupBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
@@ -219,7 +241,9 @@ func TestResetBlockNode_Success(t *testing.T) {
 	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
 
 	// Install block node first
-	installWb := SetupBlockNode(core.ProfileLocal, "")
+	inputs := newTestBlockNodeInputs(models.ProfileLocal)
+
+	installWb := SetupBlockNode(inputs)
 	require.NotNil(t, installWb)
 	installWorkflow, err := installWb.Build()
 	require.NoError(t, err)
@@ -228,7 +252,7 @@ func TestResetBlockNode_Success(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 
 	// Now test the reset workflow
-	wb := ResetBlockNode()
+	wb := ResetBlockNode(inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()

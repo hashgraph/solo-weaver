@@ -11,7 +11,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -37,7 +38,7 @@ const (
 
 var (
 	// we create a temp file for metallb configuration
-	metalLBConfigFilePath = path.Join(core.Paths().TempDir, "metallb-config.yaml")
+	metalLBConfigFilePath = path.Join(models.Paths().TempDir, "metallb-config.yaml")
 )
 
 func SetupMetalLB() *automa.WorkflowBuilder {
@@ -111,12 +112,12 @@ func installMetalLB() automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -180,7 +181,7 @@ func prepareMetalLBConfigFile(configFilePath string) automa.Builder {
 			meta[ConfiguredByThisStep] = "true"
 			meta[ConfigurationFile] = configFilePath
 
-			stp.State().Set(ConfiguredByThisStep, true)
+			stp.State().Local().Set(ConfiguredByThisStep, true)
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -210,12 +211,12 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 			}
 
 			meta[InstalledByThisStep] = "true"
-			stp.State().Set(InstalledByThisStep, true)
+			stp.State().Local().Set(InstalledByThisStep, true)
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if stp.State().Bool(InstalledByThisStep) == false {
+			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
 

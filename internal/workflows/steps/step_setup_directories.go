@@ -7,19 +7,15 @@ import (
 	"strings"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
-	"github.com/joomcode/errorx"
 )
 
-func SetupHomeDirectoryStructure(pp *core.WeaverPaths) *automa.StepBuilder {
+func SetupHomeDirectoryStructure(pp models.WeaverPaths) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("home_directories").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if pp == nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.IllegalArgument.New("weaver path is nil")))
-			}
-
 			mg, err := fsx.NewManager()
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
@@ -39,7 +35,7 @@ func SetupHomeDirectoryStructure(pp *core.WeaverPaths) *automa.StepBuilder {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}
 
-				err = mg.WritePermissions(dir, core.DefaultDirOrExecPerm, true)
+				err = mg.WritePermissions(dir, models.DefaultDirOrExecPerm, true)
 				if err != nil {
 					return automa.FailureReport(stp, automa.WithError(err))
 				}

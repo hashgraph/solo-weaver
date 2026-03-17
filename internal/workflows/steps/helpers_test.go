@@ -6,8 +6,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +25,14 @@ func TestRunCmd_Error(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to execute bash command")
 }
 
+// prepareStateManager creates a state.Manager for use in unit tests.
+func prepareStateManager(t *testing.T) state.Manager {
+	t.Helper()
+	sm, err := state.NewStateManager()
+	require.NoError(t, err, "failed to create state manager for test")
+	return sm
+}
+
 type SetupLevel int
 
 const (
@@ -38,18 +47,21 @@ const (
 // SetupPrerequisitesToLevel sets up all the required components before cluster initialization
 func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	t.Helper()
+	sm := prepareStateManager(t)
 
-	// preflight & basic setup
-	step, err := SetupHomeDirectoryStructure(core.Paths()).Build()
+	// Setup home directory structure
+	step, err := SetupHomeDirectoryStructure(models.Paths()).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup home directory structure")
 
+	// Refresh system package index
 	step, err = RefreshSystemPackageIndex().Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to refresh system package index")
 
+	// Install required system packages
 	step, err = InstallSystemPackage("iptables", software.NewIptables).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
@@ -80,11 +92,13 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to install nftables")
 
+	// Setup nftables systemd service
 	step, err = SetupSystemdService("nftables").Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup nftables service")
 
+	// Install kernel modules (required before sysctl configuration)
 	step, err = InstallKernelModule("overlay").Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
@@ -95,18 +109,19 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to install br_netfilter kernel module")
 
+	// Auto-remove orphaned packages
 	step, err = AutoRemoveOrphanedPackages().Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to auto-remove orphaned packages")
 
-	// Disable swap
+	// Disable swap (required by kubeadm)
 	step, err = DisableSwap().Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to disable swap")
 
-	// Configure sysctl for Kubernetes
+	// Configure sysctl for Kubernetes (requires br_netfilter module)
 	step, err = ConfigureSysctlForKubernetes().Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
@@ -118,8 +133,8 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup bind mounts")
 
-	// Setup kubectl
-	step, err = SetupKubectl().Build()
+	// preflight & basic setup
+	step, err = SetupKubectl(sm).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup kubectl")
@@ -129,7 +144,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup kubelet
-	step, err = SetupKubelet().Build()
+	step, err = SetupKubelet(sm).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup kubelet")
@@ -145,7 +160,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup CRI-O
-	step, err = SetupCrio().Build()
+	step, err = SetupCrio(sm).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup CRI-O")
@@ -165,7 +180,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup Kubeadm
-	step, err = SetupKubeadm().Build()
+	step, err = SetupKubeadm(sm).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup Kubeadm")
@@ -181,7 +196,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup Cilium
-	step, err = SetupCilium().Build()
+	step, err = SetupCilium(sm).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup Cilium")
@@ -202,7 +217,5 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup MetalLB")
 
-	if level == SetupMetalLBLevel {
-		return
-	}
+	_ = models.Paths() // ensure models is used
 }

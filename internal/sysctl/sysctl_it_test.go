@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,7 +59,7 @@ func Test_RemoveSysctlConfigurationFiles_Integration(t *testing.T) {
 }
 
 func Test_BackupSysctlConfiguration_Integration(t *testing.T) {
-	backupFile := path.Join(core.Paths().BackupDir, "sysctl.conf")
+	backupFile := path.Join(models.Paths().BackupDir, "sysctl.conf")
 
 	// Record pre-existing backup file and contents
 	var originalData []byte

@@ -13,7 +13,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
-	"github.com/hashgraph/solo-weaver/internal/version"
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 )
 

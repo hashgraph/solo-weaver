@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -124,7 +124,7 @@ func Test_Downloader_Extract(t *testing.T) {
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	// Test extraction
@@ -450,7 +450,7 @@ func Test_Downloader_Extract_Symlink(t *testing.T) {
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	// Test extraction
@@ -492,7 +492,7 @@ func Test_Downloader_Extract_Hardlink(t *testing.T) {
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	// Test extraction
@@ -550,7 +550,7 @@ func Test_Downloader_Extract_SymlinkPathTraversal(t *testing.T) {
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	// Test extraction - symlink with path traversal target should be rejected
@@ -567,7 +567,7 @@ func Test_Downloader_Extract_SymlinkPathTraversal(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "Malicious symlink should not be created")
 }
 
-// Test_Downloader_Extract_MaliciousHeaderName tests that tar entries with path traversal in hdr.Name are rejected
+// Test_Downloader_Extract_MaliciousHeaderName tests that tar entries with path traversal in hdr.ServerName are rejected
 func Test_Downloader_Extract_MaliciousHeaderName(t *testing.T) {
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "test_extract_malicious_name_*")
@@ -581,15 +581,15 @@ func Test_Downloader_Extract_MaliciousHeaderName(t *testing.T) {
 
 	// Create extraction destination
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
-	// Test extraction - should fail because path traversal in hdr.Name is rejected
+	// Test extraction - should fail because path traversal in hdr.ServerName is rejected
 	downloader := NewDownloader(
 		WithBasePath(filepath.Dir(tempDir)),
 	)
 	err = downloader.Extract(tarGzPath, extractDir)
-	require.Error(t, err, "Extract should fail for path traversal in hdr.Name")
+	require.Error(t, err, "Extract should fail for path traversal in hdr.ServerName")
 	require.Contains(t, err.Error(), "path traversal attempt", "Error should mention path traversal")
 }
 
@@ -604,7 +604,7 @@ func Test_Downloader_Extract_SymlinkInSubdirectory(t *testing.T) {
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	downloader := NewDownloader(
@@ -633,7 +633,7 @@ func Test_Downloader_Extract_OverwriteExistingSymlink(t *testing.T) {
 
 	// Create extraction destination with a pre-existing symlink
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	// Create a file and an existing symlink pointing to it
@@ -678,7 +678,7 @@ func Test_Downloader_Extract_AbsoluteSymlinkTarget(t *testing.T) {
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	downloader := NewDownloader(
@@ -700,7 +700,7 @@ func Test_Downloader_Extract_HardlinkPathTraversal(t *testing.T) {
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	downloader := NewDownloader(
@@ -722,7 +722,7 @@ func Test_Downloader_Extract_AbsoluteHardlinkTarget(t *testing.T) {
 	require.NoError(t, err, "Failed to create test tar.gz")
 
 	extractDir := filepath.Join(tempDir, "extracted")
-	err = os.MkdirAll(extractDir, core.DefaultDirOrExecPerm)
+	err = os.MkdirAll(extractDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err, "Failed to create extraction directory")
 
 	downloader := NewDownloader(

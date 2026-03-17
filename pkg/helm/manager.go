@@ -190,6 +190,11 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 	if installClient.Timeout == 0 {
 		installClient.Timeout = DefaultTimeout
 	}
+	if o.Labels == nil {
+		o.Labels = map[string]string{}
+	}
+
+	installClient.Labels = o.Labels
 
 	registryClient, err := newRegistryClient(settings)
 	if err != nil {
@@ -321,6 +326,7 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 	upgradeClient.Wait = o.Wait
 	upgradeClient.ReuseValues = o.ReuseValues
 	upgradeClient.Timeout = o.Timeout
+	upgradeClient.Labels = o.Labels
 
 	// Set defaults if ValueOpts is not provided
 	if o.ValueOpts == nil {
@@ -513,6 +519,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 				Atomic:          o.Atomic,
 				Wait:            o.Wait,
 				Timeout:         o.Timeout,
+				Labels:          o.Labels,
 			})
 		}
 
@@ -528,6 +535,7 @@ func (h *helmManager) DeployChart(ctx context.Context, releaseName, chartRef, ch
 		Wait:        o.Wait,
 		ReuseValues: o.ReuseValues,
 		Timeout:     o.Timeout,
+		Labels:      o.Labels,
 	})
 }
 

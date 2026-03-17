@@ -1,67 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+package models
 
 import (
 	"path"
-
-	"github.com/hashgraph/solo-weaver/pkg/security"
 )
-
-const (
-	// File and directory permissions
-	DefaultDirOrExecPerm = 0755 // for directories and executable files
-	DefaultFilePerm      = 0644 // for regular data/config files
-
-	// Weaver paths
-	DefaultWeaverHome       = "/opt/solo/weaver"
-	DefaultUnpackFolderName = "unpack"
-	SystemBinDir            = "/usr/local/bin"
-	SystemdUnitFilesDir     = "/usr/lib/systemd/system"
-
-	// Node types
-	NodeTypeLocal     = "local"
-	NodeTypeBlock     = "block"
-	NodeTypeConsensus = "consensus"
-	NodeTypeMirror    = "mirror"
-	NodeTypeRelay     = "relay"
-
-	// Deployment profiles
-	ProfileLocal      = "local"
-	ProfilePerfnet    = "perfnet"
-	ProfileTestnet    = "testnet"
-	ProfilePreviewnet = "previewnet"
-	ProfileMainnet    = "mainnet"
-)
-
-var allProfiles = []string{
-	ProfileLocal,
-	ProfilePerfnet,
-	ProfileTestnet,
-	ProfilePreviewnet,
-	ProfileMainnet,
-}
-
-func AllProfiles() []string {
-	// return a copy to prevent modification
-	profilesCopy := make([]string, len(allProfiles))
-	copy(profilesCopy, allProfiles)
-	return profilesCopy
-}
-
-var (
-	pp     = NewWeaverPaths(DefaultWeaverHome)
-	svcAcc = security.ServiceAccount{
-		UserName:  "weaver",
-		UserId:    "2500",
-		GroupName: "weaver",
-		GroupId:   "2500",
-	}
-)
-
-func init() {
-	security.SetServiceAccount(svcAcc)
-}
 
 type WeaverPaths struct {
 	HomeDir        string
@@ -154,10 +97,20 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	return pp
 }
 
-func Paths() *WeaverPaths {
-	return pp
-}
+// Clone returns a deep copy of the WeaverPaths.
+// It is nil-safe and copies slice contents to avoid shared backing arrays.
+func (w WeaverPaths) Clone() *WeaverPaths {
+	// shallow copy of struct fields (strings are value-copied)
+	cp := w
 
-func ServiceAccount() security.ServiceAccount {
-	return svcAcc
+	// deep-copy slices to avoid sharing backing arrays
+	if w.AllDirectories != nil {
+		cp.AllDirectories = make([]string, len(w.AllDirectories))
+		copy(cp.AllDirectories, w.AllDirectories)
+	}
+	if w.SandboxDirectories != nil {
+		cp.SandboxDirectories = make([]string, len(w.SandboxDirectories))
+		copy(cp.SandboxDirectories, w.SandboxDirectories)
+	}
+	return &cp
 }

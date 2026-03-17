@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +18,7 @@ func TestCopyConfigurationFiles(t *testing.T) {
 		_ = os.RemoveAll(tmpDir)
 	}()
 
-	err := os.MkdirAll(destDir, core.DefaultDirOrExecPerm)
+	err := os.MkdirAll(destDir, models.DefaultDirOrExecPerm)
 	require.NoError(t, err)
 
 	srcDir := "files/sysctl" // Ensure this points to the correct embedded files location

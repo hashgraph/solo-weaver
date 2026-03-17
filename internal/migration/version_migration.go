@@ -33,11 +33,22 @@ func (v *VersionMigration) Description() string { return v.description }
 
 // Applies returns true if upgrading across the version boundary.
 func (v *VersionMigration) Applies(mctx *Context) (bool, error) {
-	installedVersion := mctx.Data.String(CtxKeyInstalledVersion)
-	targetVersion := mctx.Data.String(CtxKeyTargetVersion)
+	var installedVersion string
+	if v, ok := mctx.Data.String(CtxKeyInstalledVersion); ok {
+		installedVersion = v
+	}
 
 	if installedVersion == "" {
 		return false, nil
+	}
+
+	var targetVersion string
+	if v, ok := mctx.Data.String(CtxKeyTargetVersion); ok {
+		targetVersion = v
+	}
+
+	if targetVersion == "" {
+		return false, errorx.IllegalArgument.New("target version not provided in context")
 	}
 
 	installed, err := semver.NewSemver(installedVersion)

@@ -11,12 +11,13 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
-	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/version"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -34,6 +35,9 @@ var (
 	flagVersion            bool
 	flagOutputFormat       string
 	flagSkipHardwareChecks bool
+	flagForce              bool
+	flagProxy              bool
+	flagLogLevel           string
 
 	rootCmd = &cobra.Command{
 		Use:   "solo-provisioner",
@@ -44,8 +48,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
-				version.PrintVersion(cmd, flagOutputFormat)
-				return nil
+				return version.Print(cmd, flagOutputFormat)
 			}
 
 			return cmd.Help()
@@ -55,15 +58,16 @@ var (
 
 // Register state migrations at startup
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path")
+	common.FlagLogLevel.SetVarP(rootCmd, &flagLogLevel, false)
+	common.FlagForce.SetVarP(rootCmd, &flagForce, false)
+	common.FlagConfig.SetVarP(rootCmd, &flagConfig, false)
 
 	// support '--version', '-v' to show version information
-	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Show version")
-	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "yaml", "Output format (yaml|json)")
+	common.FlagVersion.SetVarP(rootCmd, &flagVersion, false)
+	common.FlagOutputFormat.SetVarP(rootCmd, &flagOutputFormat, false)
 
-	// Hardware check override flag - hidden to discourage casual use
-	rootCmd.PersistentFlags().BoolVar(&flagSkipHardwareChecks, common.FlagSkipHardwareChecks.Name, false,
-		"DANGEROUS: Skip hardware validation checks. May cause node instability or data loss.")
+	// Hardware checks override flag - hidden to discourage casual use
+	common.FlagSkipHardwareChecks.SetVarP(rootCmd, &flagSkipHardwareChecks, false)
 	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks.Name)
 
 	// disable command sorting to keep the order of commands as added
@@ -79,12 +83,19 @@ func init() {
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
-	rootCmd.AddCommand(version.GetCmd())
+	rootCmd.AddCommand(version.Cmd())
 
-	// Register all migrations at startup
-	blocknode.InitMigrations()
-	state.InitMigrations()
-	workflows.InitMigrations()
+	RegisterMigrations()
+}
+
+func RegisterMigrations() {
+	// Register all migrations at startup in a sequence that reflects the order of changes in the codebase.
+	// This ensures that when a user upgrades from an older version, all necessary migrations will be applied in the
+	// correct order to update their state to be compatible with the new version.
+	migration.Register(state.MigrationComponent, state.NewUnifiedStateMigration())
+	migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
+	migration.Register(blocknode.ComponentBlockNode, blocknode.NewPluginsStorageMigration())
+	migration.Register(workflows.MigrationComponent, workflows.NewLegacyBinaryMigration())
 }
 
 // Execute executes the root command.
@@ -114,6 +125,10 @@ func initConfig(ctx context.Context) {
 	}
 
 	logConfig := config.Get().Log
+	if flagLogLevel != "" {
+		logConfig.Level = flagLogLevel // override log level if flag is set
+	}
+
 	err = logx.Initialize(logConfig)
 	if err != nil {
 		doctor.CheckErr(ctx, err)

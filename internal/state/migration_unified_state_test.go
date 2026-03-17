@@ -80,33 +80,27 @@ func TestFormatStateContent(t *testing.T) {
 }
 
 func TestUnifiedState_YAMLMarshal(t *testing.T) {
-	state := &UnifiedState{
-		Version: "1.0.0",
-		Components: map[string]*ComponentState{
-			"cilium": {
-				Installed:  &StateEntry{Version: "1.16.0"},
-				Configured: &StateEntry{Version: "1.16.0"},
-			},
-			"helm": {
-				Installed: &StateEntry{Version: "3.14.0"},
-			},
-		},
-	}
+	// The old UnifiedState/ComponentState types are removed. This test now verifies
+	// that SoftwareState entries round-trip correctly through the unified state.yaml.
+	s := NewState("")
+	s = SetSoftwareState(s, "cilium", SoftwareState{Installed: true, Configured: true, Version: "1.16.0"})
+	s = SetSoftwareState(s, "helm", SoftwareState{Installed: true, Version: "3.14.0"})
 
-	data, err := yaml.Marshal(state)
+	data, err := yaml.Marshal(s)
 	require.NoError(t, err)
 
-	// Unmarshal and verify
-	var parsed UnifiedState
+	var parsed State
 	require.NoError(t, yaml.Unmarshal(data, &parsed))
 
-	assert.Equal(t, "1.0.0", parsed.Version)
-	assert.NotNil(t, parsed.Components["cilium"])
-	assert.NotNil(t, parsed.Components["cilium"].Installed)
-	assert.Equal(t, "1.16.0", parsed.Components["cilium"].Installed.Version)
-	assert.NotNil(t, parsed.Components["helm"])
-	assert.NotNil(t, parsed.Components["helm"].Installed)
-	assert.Nil(t, parsed.Components["helm"].Configured)
+	cilium := GetSoftwareState(parsed, "cilium")
+	assert.Equal(t, "1.16.0", cilium.Version)
+	assert.True(t, cilium.Installed)
+	assert.True(t, cilium.Configured)
+
+	helm := GetSoftwareState(parsed, "helm")
+	assert.Equal(t, "3.14.0", helm.Version)
+	assert.True(t, helm.Installed)
+	assert.False(t, helm.Configured)
 }
 
 func TestRegisterMigrations_State(t *testing.T) {

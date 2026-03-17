@@ -9,7 +9,8 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/core"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+
 	"github.com/hashgraph/solo-weaver/internal/mount"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
@@ -55,10 +56,10 @@ func setupBindMount(name string, target string) automa.Builder {
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			bindMount := mount.BindMount{
-				Source: path.Join(core.Paths().SandboxDir, target),
+				Source: path.Join(models.Paths().SandboxDir, target),
 				Target: target,
 			}
-			stp.State().Set(KeyBindMount, bindMount)
+			stp.State().Local().Set(KeyBindMount, bindMount)
 
 			modifiedByThisStep := false
 
@@ -68,8 +69,8 @@ func setupBindMount(name string, target string) automa.Builder {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
-			stp.State().Set(KeyAlreadyMounted, alreadyMounted)
-			stp.State().Set(KeyAlreadyInFstab, alreadyInFstab)
+			stp.State().Local().Set(KeyAlreadyMounted, alreadyMounted)
+			stp.State().Local().Set(KeyAlreadyInFstab, alreadyInFstab)
 
 			// Prepare metadata for reporting
 			meta := map[string]string{
@@ -91,21 +92,27 @@ func setupBindMount(name string, target string) automa.Builder {
 			}
 
 			modifiedByThisStep = true
-			stp.State().Set(KeyModifiedByThisStep, modifiedByThisStep)
+			stp.State().Local().Set(KeyModifiedByThisStep, modifiedByThisStep)
 			meta[KeyModifiedByThisStep] = fmt.Sprintf("%t", modifiedByThisStep)
 
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			alreadyMounted := stp.State().Bool(KeyAlreadyMounted)
-			alreadyInFstab := stp.State().Bool(KeyAlreadyInFstab)
+			var alreadyMounted, alreadyInFstab bool
+			if v, ok := stp.State().Local().Bool(KeyAlreadyMounted); ok {
+				alreadyMounted = v
+			}
+
+			if v, ok := stp.State().Local().Bool(KeyAlreadyInFstab); ok {
+				alreadyInFstab = v
+			}
 
 			if alreadyMounted && alreadyInFstab {
 				return automa.SkippedReport(stp, automa.WithDetail("bind mount was not modified by this step, skipping rollback"))
 			}
 
 			var bindMount mount.BindMount
-			if val, ok := stp.State().Get(KeyBindMount); ok {
+			if val, ok := stp.State().Local().Get(KeyBindMount); ok {
 				bindMount = val.(mount.BindMount)
 			}
 
@@ -163,7 +170,7 @@ func teardownBindMount(name string, target string) automa.Builder {
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			bindMount := mount.BindMount{
-				Source: path.Join(core.Paths().SandboxDir, target),
+				Source: path.Join(models.Paths().SandboxDir, target),
 				Target: target,
 			}
 
@@ -192,7 +199,7 @@ func teardownSandboxMounts() automa.Builder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Sandbox mounts removed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			sandboxDir := core.Paths().SandboxDir
+			sandboxDir := models.Paths().SandboxDir
 
 			// Get all mounts under sandbox directory using mount module
 			mountsToUnmount, err := mount.GetMountsUnderPath(sandboxDir)
