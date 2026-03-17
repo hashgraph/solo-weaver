@@ -23,12 +23,12 @@ This command will:
 
 WARNING: This operation is destructive and cannot be undone. All block data will be lost.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := initializeDependencies()
+		inputs, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
 			return err
 		}
 
-		inputs, err := prepareBlocknodeInputs(cmd, args)
+		err = initializeDependencies()
 		if err != nil {
 			return err
 		}

@@ -160,6 +160,6 @@ func FlagLogLevel() FlagDefinition[string] {
 		Name:        "log-level",
 		ShortName:   "",
 		Description: "Set log level (debug, info, warn, error)",
-		Default:     "info",
+		Default:     "",
 	}
 }
