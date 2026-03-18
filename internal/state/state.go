@@ -163,14 +163,6 @@ type ClusterNodeState struct {
 //   - yaml:"appVersion" is new; stores the app version (was yaml:"version" in v1).
 //   - yaml:"deletedAt" renamed from yaml:"deleted" in v1.
 //   - yaml:"status"    gained an explicit YAML tag (was JSON-only in v1).
-//
-// No automatic on-load migration is provided for v1 state.yaml files written by
-// v0.13.0. When such a file is read, its contents are temporarily misinterpreted
-// (ChartVersion holds the old app version, AppVersion is empty) until the next
-// successful RefreshState()/Helm sync, which fetches live data and overwrites the
-// cached values. If the cluster is unreachable, RefreshState() returns early with
-// the stale cache intact; in that scenario the upgrade handler's semver downgrade
-// check will compare against the wrong value (app version instead of chart version).
 type HelmReleaseInfo struct {
 	Name         string         `yaml:"name"             json:"name"`
 	ChartVersion string         `yaml:"version"          json:"version"`    // Helm chart version; yaml key "version" preserved for on-disk compatibility

@@ -203,7 +203,7 @@ func (m *stateManager) Refresh() error {
 
 	// Advance the model version stamp so the next FlushState() writes the
 	// current ModelVersion even when loading a legacy file (e.g. v1 → v2).
-	// This is not a data migration: field values are unchanged; the version
+	// This is not a data migration: field values are unchanged here; the version
 	// stamp is updated solely so the on-disk file reflects the running code version.
 	if newState.Version != ModelVersion {
 		newState.Version = ModelVersion
