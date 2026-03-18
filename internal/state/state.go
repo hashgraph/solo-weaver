@@ -13,7 +13,7 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-const ModelVersion = "v1" // State model version — increment on breaking changes requiring migration
+const ModelVersion = "v2" // State model version (from v0.14.0) — increment on breaking changes requiring migration
 const StateFileName = "state.yaml"
 
 // State is the on-disk envelope.  Envelope fields (Hash, HashAlgo, StateFile,
@@ -27,7 +27,7 @@ const StateFileName = "state.yaml"
 //	stateFile: /opt/solo/weaver/state/state.yaml
 //	lastSync: "2026-03-17T..."
 //	state:
-//	  version: v1
+//	  version: v2
 //	  machineState: ...
 //	  clusterState: ...
 //	  blockNodeState: ...
@@ -157,21 +157,34 @@ type ClusterNodeState struct {
 }
 
 // HelmReleaseInfo captures minimal status for a Helm release managed by the system.
+//
+// Breaking change introduced in ModelVersion v2 (released with v0.14.0):
+//   - yaml:"version"   now stores the Helm chart version (was app version in v1).
+//   - yaml:"appVersion" is new; stores the app version (was yaml:"version" in v1).
+//   - yaml:"deletedAt" renamed from yaml:"deleted" in v1.
+//   - yaml:"status"    gained an explicit YAML tag (was JSON-only in v1).
+//
+// No automatic on-load migration is provided for v1 state.yaml files written by
+// v0.13.0. When such a file is read, its contents are temporarily misinterpreted
+// (ChartVersion holds the old app version, AppVersion is empty) until the next
+// successful RefreshState()/Helm sync, which fetches live data and overwrites the
+// cached values. If the cluster is unreachable, RefreshState() returns early with
+// the stale cache intact; in that scenario the upgrade handler's semver downgrade
+// check will compare against the wrong value (app version instead of chart version).
 type HelmReleaseInfo struct {
-	Name         string `yaml:"name" json:"name"`
-	Version      string `yaml:"version" json:"version"` // App version
-	Namespace    string `yaml:"namespace" json:"namespace"`
-	ChartRef     string `yaml:"chartRef" json:"chartRef"` // e.g. "oci://ghcr.io/hedera/solo-weaver-block-node" needs to match deployed chart
-	ChartName    string `yaml:"chartName" json:"chartName"`
-	ChartVersion string `yaml:"chartVersion" json:"chartVersion"` // ChartName version
-	// Status is the current state of the release
-	Status release.Status `json:"status,omitempty"`
+	Name         string         `yaml:"name"             json:"name"`
+	ChartVersion string         `yaml:"version"          json:"version"`    // Helm chart version; yaml key "version" preserved for on-disk compatibility
+	AppVersion   string         `yaml:"appVersion"       json:"appVersion"` // version of the application packaged inside the chart (Metadata.AppVersion)
+	Namespace    string         `yaml:"namespace"        json:"namespace"`
+	ChartRef     string         `yaml:"chartRef"         json:"chartRef"` // e.g. "oci://ghcr.io/hedera/solo-weaver-block-node" needs to match deployed chart
+	ChartName    string         `yaml:"chartName"        json:"chartName"`
+	Status       release.Status `yaml:"status,omitempty" json:"status,omitempty"` // current state of the release
 	// FirstDeployed is when the release was first deployed.
 	FirstDeployed htime.Time `yaml:"firstDeployed,omitempty" json:"first_deployed,omitempty"`
 	// LastDeployed is when the release was last deployed.
 	LastDeployed htime.Time `yaml:"lastDeployed,omitempty" json:"last_deployed,omitempty"`
-	// Deleted tracks when this object was deleted.
-	Deleted htime.Time `yaml:"deleted" json:"deleted"`
+	// DeletedAt tracks when this release was deleted.
+	DeletedAt htime.Time `yaml:"deletedAt,omitempty" json:"deletedAt,omitempty"`
 }
 
 // ClusterState represents the persisted state of a Kubernetes cluster.

@@ -60,24 +60,24 @@ func (h *UpgradeHandler) BuildWorkflow(
 			Msg("Block node chart reference is changing during upgrade; this is not recommended and may cause issues")
 	}
 
-	currentVer, err := semver.NewVersion(currentState.BlockNodeState.ReleaseInfo.Version)
+	currentVer, err := semver.NewVersion(currentState.BlockNodeState.ReleaseInfo.ChartVersion)
 	if err != nil {
 		return nil, errorx.IllegalState.New(
-			"failed to parse current block node version %q: %v", currentState.BlockNodeState.ReleaseInfo.Version, err)
+			"failed to parse current chart version %q: %v", currentState.BlockNodeState.ReleaseInfo.ChartVersion, err)
 	}
 	desiredVer, err := semver.NewVersion(inputs.Custom.ChartVersion)
 	if err != nil {
 		return nil, errorx.IllegalState.New(
-			"failed to parse desired block node version %q: %v", inputs.Custom.ChartVersion, err)
+			"failed to parse desired chart version %q: %v", inputs.Custom.ChartVersion, err)
 	}
 	if desiredVer.LessThan(currentVer) {
 		return nil, errorx.IllegalArgument.New(
-			"block node version cannot be downgraded from %q to %q",
+			"block node chart version cannot be downgraded from %q to %q",
 			currentVer, desiredVer)
 	}
 	if desiredVer.Equal(currentVer) && !inputs.Common.Force {
 		return nil, errorx.IllegalArgument.New(
-			"block node is already at version %q; use --force to re-apply", currentVer)
+			"block node is already at chart version %q; use --force to re-apply", currentVer)
 	}
 
 	ins := inputs.Custom

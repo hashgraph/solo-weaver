@@ -272,9 +272,9 @@ func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string
 			)
 		}
 
-		if b.state.ReleaseInfo.Version != "" {
+		if b.state.ReleaseInfo.ChartVersion != "" {
 			return automa.NewEffective[string](
-				b.state.ReleaseInfo.Version,
+				b.state.ReleaseInfo.ChartVersion,
 				automa.StrategyCurrent,
 			)
 		}

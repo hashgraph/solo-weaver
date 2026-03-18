@@ -73,15 +73,15 @@ func (c *ClusterNodeState) Equal(other ClusterNodeState) bool {
 	return true
 }
 
-// Equal returns true if two HelmReleaseInfo values are equal, ignoring time fields.
+// Equal returns true if two HelmReleaseInfo values are equal, ignoring time fields
 func (h *HelmReleaseInfo) Equal(other HelmReleaseInfo) bool {
 	return h.Name == other.Name &&
-		h.Version == other.Version &&
+		h.ChartVersion == other.ChartVersion &&
 		h.Namespace == other.Namespace &&
 		h.ChartRef == other.ChartRef &&
 		h.ChartName == other.ChartName &&
-		h.ChartVersion == other.ChartVersion &&
-		h.Status == other.Status
+		h.Status == other.Status &&
+		h.AppVersion == other.AppVersion
 }
 
 // Equal returns true if two ClusterState values are equal, ignoring LastSync.
