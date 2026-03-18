@@ -100,7 +100,7 @@ func preCheckAlloy() automa.Builder {
 				}
 
 				// Build config to determine required secrets
-				cb, err := alloy.NewConfigBuilder(cfg)
+				cb, err := alloy.NewConfigBuilder(cfg, config.Get().Profile)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
@@ -417,7 +417,7 @@ func installAlloy() automa.Builder {
 			}
 
 			// Build config to check if host network is needed
-			cb, err := alloy.NewConfigBuilder(cfg)
+			cb, err := alloy.NewConfigBuilder(cfg, config.Get().Profile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -512,7 +512,7 @@ func deployAlloyConfig() automa.Builder {
 			}
 
 			// Build config using the alloy package
-			cb, err := alloy.NewConfigBuilder(cfg)
+			cb, err := alloy.NewConfigBuilder(cfg, config.Get().Profile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -604,7 +604,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 			l := logx.As()
 			meta := map[string]string{}
 
-			cb, err := alloy.NewConfigBuilder(cfg)
+			cb, err := alloy.NewConfigBuilder(cfg, config.Get().Profile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

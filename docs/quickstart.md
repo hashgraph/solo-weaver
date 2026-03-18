@@ -371,8 +371,8 @@ sudo solo-provisioner alloy cluster install \
 |------|-------------|
 | `--cluster-name` | Cluster name for metrics/logs labels |
 | `--monitor-block-node` | Enable Block Node specific monitoring |
-| `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
-| `--add-loki-remote` | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>`). Repeatable |
+| `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng` |
+| `--add-loki-remote` | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng` |
 | `--prometheus-url` | Prometheus remote write URL *(deprecated: use `--add-prometheus-remote`)* |
 | `--prometheus-username` | Prometheus authentication username *(deprecated)* |
 | `--loki-url` | Loki remote write URL *(deprecated: use `--add-loki-remote`)* |
@@ -382,10 +382,11 @@ sudo solo-provisioner alloy cluster install \
 
 #### Multiple Remote Endpoints
 
-The `--add-prometheus-remote` and `--add-loki-remote` flags use the format `name=<name>,url=<url>,username=<username>`:
+The `--add-prometheus-remote` and `--add-loki-remote` flags use the format `name=<name>,url=<url>,username=<username>[,labelProfile=<profile>]`:
 - **name**: Unique identifier for the remote (e.g., `primary`, `backup`, `grafana-cloud`)
 - **url**: The remote write endpoint URL
 - **username**: Authentication username (password is read from the K8s Secret)
+- **labelProfile** *(optional)*: Label profile to auto-inject additional labels (default: `eng`, which adds only `cluster`). See [Label Profiles](#label-profiles) below
 
 **K8s Secret Keys** (for multiple remotes):
 
@@ -443,6 +444,38 @@ sudo solo-provisioner alloy cluster install \
 ```
 
 > **Important:** Each run replaces the previous remote configuration. Always specify all the remotes you want to keep.
+
+#### Label Profiles
+
+Label profiles auto-inject additional labels into every metric and log stream. The optional `labelProfile` key on any remote activates a profile.
+
+**Available profiles:**
+
+| Profile | Labels Added |
+|---------|-------------|
+| `eng` *(default)* | `cluster` |
+| `ops` | `cluster`, `environment`, `instance_type`, `inventory_name`, `ip` (optional) |
+
+**Example** — install with the `ops` label profile:
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=lfh02-previewnet-blocknode \
+  --add-prometheus-remote=name=primary,url=https://prom.example.com/api/v1/write,username=user1,labelProfile=ops \
+  --add-loki-remote=name=primary,url=https://loki.example.com/loki/api/v1/push,username=user1,labelProfile=ops \
+  --monitor-block-node
+```
+
+With `--cluster-name=lfh02-previewnet-blocknode` and `--profile=previewnet`, the `ops` profile derives:
+
+| Label | Value | Source |
+|-------|-------|--------|
+| `cluster` | `lfh02-previewnet-blocknode` | Always set (from `--cluster-name`) |
+| `environment` | `previewnet` | From `--profile` (deploy profile) |
+| `instance_type` | `lfh` | Alphabetic prefix of the first segment of cluster name |
+| `inventory_name` | `lfh02-previewnet-blocknode` | Full cluster name |
+| `ip` | `<ip>` | Optional; set when an IP address label is available for the node |
+
+> **Note:** If `labelProfile` is omitted for a given remote, that remote uses the default `eng` profile (only the `cluster` label). Each remote can specify its own `labelProfile`.
 
 
 #### Uninstall Alloy Stack
@@ -504,10 +537,12 @@ alloy:
     - name: "primary"
       url: "https://prometheus.example.com/api/v1/write"
       username: "metrics"
+      labelProfile: "ops"    # Optional: auto-inject additional labels
   lokiRemotes:
     - name: "primary"
       url: "https://loki.example.com/loki/api/v1/push"
       username: "logs"
+      labelProfile: "ops"    # Optional: auto-inject additional labels
 
 teleport:
   version: "16.0.0"
@@ -702,5 +737,5 @@ solo-provisioner --help
 
 ---
 
-*Document Version: 1.1.0 | Last Updated: February 2026*
+*Document Version: 1.2.0 | Last Updated: March 2026*
 

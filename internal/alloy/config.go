@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/alloy/labels"
+	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
@@ -46,6 +48,7 @@ type Remote struct {
 	URL            string
 	Username       string
 	PasswordEnvVar string
+	LabelProfile   string
 }
 
 // ConfigBuilder helps build Alloy configuration from various sources.
@@ -54,11 +57,13 @@ type ConfigBuilder struct {
 	prometheusRemotes []Remote
 	lokiRemotes       []Remote
 	monitorBlockNode  bool
+	deployProfile     string // stored for per-remote label resolution
+	machineIP         string // host IP for the "ip" label (best-effort)
 }
 
 // NewConfigBuilder creates a new ConfigBuilder from the application config.
 // Returns an error if cluster name cannot be determined (neither provided nor hostname available).
-func NewConfigBuilder(cfg models.AlloyConfig) (*ConfigBuilder, error) {
+func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuilder, error) {
 	cb := &ConfigBuilder{
 		monitorBlockNode: cfg.MonitorBlockNode,
 	}
@@ -79,7 +84,30 @@ func NewConfigBuilder(cfg models.AlloyConfig) (*ConfigBuilder, error) {
 	// Build Loki remotes
 	cb.lokiRemotes = buildLokiRemotes(cfg)
 
+	// Store deployProfile for per-remote label resolution
+	cb.deployProfile = deployProfile
+
+	// Resolve machine IP for the "ip" label (best-effort, non-fatal)
+	if ip, err := network.GetMachineIP(); err == nil {
+		cb.machineIP = ip
+	}
+
 	return cb, nil
+}
+
+// newLabelInput constructs a LabelInput from the builder's fields.
+func (cb *ConfigBuilder) newLabelInput() labels.LabelInput {
+	return labels.LabelInput{
+		ClusterName:   cb.clusterName,
+		DeployProfile: cb.deployProfile,
+		MachineIP:     cb.machineIP,
+	}
+}
+
+// ResolvedLabels returns the resolved label map for the given label profile.
+// If labelProfile is empty, the default profile is used.
+func (cb *ConfigBuilder) ResolvedLabels(labelProfile string) map[string]string {
+	return labels.Resolve(labelProfile, cb.newLabelInput())
 }
 
 // ClusterName returns the cluster name.
@@ -121,6 +149,9 @@ func (cb *ConfigBuilder) LokiForwardTo() string {
 }
 
 // ToTemplateRemotes converts internal remotes to template remotes.
+// The resolved label rules are pre-rendered into AlloyRemote.CustomRules
+// so templates can inject them. Each remote resolves labels from its own
+// LabelProfile (defaulting to "eng", which produces only the cluster label).
 func (cb *ConfigBuilder) ToTemplateRemotes() ([]templates.AlloyRemote, []templates.AlloyRemote) {
 	promRemotes := make([]templates.AlloyRemote, len(cb.prometheusRemotes))
 	for i, r := range cb.prometheusRemotes {
@@ -129,6 +160,10 @@ func (cb *ConfigBuilder) ToTemplateRemotes() ([]templates.AlloyRemote, []templat
 			URL:            r.URL,
 			Username:       r.Username,
 			PasswordEnvVar: r.PasswordEnvVar,
+		}
+		resolved := labels.Resolve(r.LabelProfile, cb.newLabelInput())
+		if len(resolved) > 0 {
+			promRemotes[i].CustomRules = labels.RenderLabelRules(resolved)
 		}
 	}
 
@@ -139,6 +174,10 @@ func (cb *ConfigBuilder) ToTemplateRemotes() ([]templates.AlloyRemote, []templat
 			URL:            r.URL,
 			Username:       r.Username,
 			PasswordEnvVar: r.PasswordEnvVar,
+		}
+		resolved := labels.Resolve(r.LabelProfile, cb.newLabelInput())
+		if len(resolved) > 0 {
+			lokiRemotes[i].CustomRules = labels.RenderLabelRules(resolved)
 		}
 	}
 
@@ -171,6 +210,7 @@ func buildPrometheusRemotes(cfg models.AlloyConfig) []Remote {
 				URL:            r.URL,
 				Username:       r.Username,
 				PasswordEnvVar: "PROMETHEUS_PASSWORD_" + toEnvVarName(r.Name),
+				LabelProfile:   r.LabelProfile,
 			})
 		}
 	} else if cfg.PrometheusURL != "" {
@@ -197,6 +237,7 @@ func buildLokiRemotes(cfg models.AlloyConfig) []Remote {
 				URL:            r.URL,
 				Username:       r.Username,
 				PasswordEnvVar: "LOKI_PASSWORD_" + toEnvVarName(r.Name),
+				LabelProfile:   r.LabelProfile,
 			})
 		}
 	} else if cfg.LokiURL != "" {

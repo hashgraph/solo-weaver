@@ -3,7 +3,7 @@
 // Only loaded when block node is installed.
 
 prometheus.operator.servicemonitors "block_node_server" {
-  forward_to = [{{.PrometheusForwardTo}}]
+  forward_to = [{{range $i, $r := .PrometheusRemotes}}{{if $i}}, {{end}}prometheus.relabel.block_node_metrics_{{$r.Name}}.receiver{{end}}]
 
   clustering {
     enabled = false
@@ -21,21 +21,21 @@ prometheus.operator.servicemonitors "block_node_server" {
       values   = ["block-node-server"]
     }
   }
-
-  rule {
-    target_label = "cluster"
-    replacement  = "{{.ClusterName}}"
-  }
 }
+{{range .PrometheusRemotes}}
+prometheus.relabel "block_node_metrics_{{.Name}}" {
+  forward_to = [prometheus.remote_write.{{.Name}}.receiver]
+{{.CustomRules}}}
+{{end}}
 
 loki.relabel "block_node_server" {
-  forward_to = [{{.LokiForwardTo}}]
-
-  rule {
-    target_label = "cluster"
-    replacement  = "{{.ClusterName}}"
-  }
+  forward_to = [{{range $i, $r := .LokiRemotes}}{{if $i}}, {{end}}loki.relabel.block_node_logs_{{$r.Name}}.receiver{{end}}]
 }
+{{range .LokiRemotes}}
+loki.relabel "block_node_logs_{{.Name}}" {
+  forward_to = [loki.write.{{.Name}}.receiver]
+{{.CustomRules}}}
+{{end}}
 
 loki.source.podlogs "block_node_server" {
   forward_to = [loki.relabel.block_node_server.receiver]
@@ -58,4 +58,3 @@ loki.source.podlogs "block_node_server" {
   namespace_selector {
   }
 }
-

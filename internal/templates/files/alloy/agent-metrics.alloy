@@ -21,7 +21,7 @@ discovery.relabel "alloy" {
 
 prometheus.scrape "alloy" {
   targets = discovery.relabel.alloy.output
-  forward_to = [prometheus.relabel.alloy.receiver]
+  forward_to = [{{range $i, $r := .PrometheusRemotes}}{{if $i}}, {{end}}prometheus.relabel.alloy_{{$r.Name}}.receiver{{end}}]
 
   scrape_interval = "10s"
 
@@ -29,13 +29,8 @@ prometheus.scrape "alloy" {
     enabled = false
   }
 }
-
-prometheus.relabel "alloy" {
-  forward_to = [{{.PrometheusForwardTo}}]
-
-  rule {
-    target_label = "cluster"
-    replacement  = "{{.ClusterName}}"
-  }
-}
-
+{{range .PrometheusRemotes}}
+prometheus.relabel "alloy_{{.Name}}" {
+  forward_to = [prometheus.remote_write.{{.Name}}.receiver]
+{{.CustomRules}}}
+{{end}}

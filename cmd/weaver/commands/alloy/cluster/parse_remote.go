@@ -44,8 +44,10 @@ func parseRemoteFlags(flags []string) ([]models.AlloyRemoteConfig, error) {
 				remote.URL = value
 			case "username":
 				remote.Username = value
+			case "labelprofile":
+				remote.LabelProfile = value
 			default:
-				return nil, fmt.Errorf("unknown key %q in %q, valid keys are: name, url, username", key, flag)
+				return nil, fmt.Errorf("unknown key %q in %q, valid keys are: name, url, username, labelProfile", key, flag)
 			}
 		}
 

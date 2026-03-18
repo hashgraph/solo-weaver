@@ -27,22 +27,14 @@ type AlloyRemote struct {
 	URL            string // Remote write URL
 	Username       string // Basic auth username
 	PasswordEnvVar string // Environment variable name containing the password
+	CustomRules    string // Pre-rendered Alloy rule {} blocks for per-remote relabel injection
 }
 
-// AlloyData contains data for rendering the main Alloy configuration templates.
+// AlloyData contains data for rendering Alloy configuration templates.
+// Used by both the remotes template and individual module templates.
+// Per-remote custom labels are handled via AlloyRemote.CustomRules.
 type AlloyData struct {
-	ClusterName         string
-	PrometheusRemotes   []AlloyRemote
-	LokiRemotes         []AlloyRemote
-	PrometheusForwardTo string // Comma-separated list of prometheus remote receivers
-	LokiForwardTo       string // Comma-separated list of loki remote receivers
-	MonitorBlockNode    bool
-}
-
-// AlloyModuleData contains data for rendering individual Alloy module templates.
-// This is used for modules that only need cluster name and forward-to receivers.
-type AlloyModuleData struct {
-	ClusterName         string
-	PrometheusForwardTo string // Comma-separated list of prometheus remote receivers
-	LokiForwardTo       string // Comma-separated list of loki remote receivers
+	ClusterName       string
+	PrometheusRemotes []AlloyRemote
+	LokiRemotes       []AlloyRemote
 }

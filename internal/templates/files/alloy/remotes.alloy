@@ -29,4 +29,3 @@ loki.write "{{.Name}}" {
   }
 }
 {{end}}
-
