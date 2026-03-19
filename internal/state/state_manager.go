@@ -309,7 +309,7 @@ func (m *stateManager) flushState() error {
 	}
 
 	// Atomic write: write to temp file in same directory and rename.
-	if err := m.writeAtomicFile(snapshot.StateFile, b); err != nil {
+	if err := atomicWriteFile(snapshot.StateFile, b); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
 	}
 
@@ -436,41 +436,6 @@ func encodeCanonical(buf *bytes.Buffer, iface interface{}) error {
 		}
 		buf.Write(b)
 	}
-	return nil
-}
-
-func (m *stateManager) writeAtomicFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := m.fm.CreateDirectory(dir, true); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to create directory for state file at %s", dir)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".state.tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	success := false
-	defer func() {
-		tmp.Close()
-		if !success {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	success = true
 	return nil
 }
 

@@ -16,9 +16,6 @@
 package state
 
 import (
-	"os"
-	"path/filepath"
-
 	"gopkg.in/yaml.v3"
 )
 
@@ -89,43 +86,4 @@ func renameMappingKey(node *yaml.Node, oldKey, newKey string) {
 			return
 		}
 	}
-}
-
-// ── Atomic file write ─────────────────────────────────────────────────────────
-
-// atomicWriteFile writes data to a temp file in the same directory as path and
-// then renames it into place, ensuring the write is atomic on POSIX systems.
-func atomicWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, ".state-migration.tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	success := false
-	defer func() {
-		_ = tmp.Close()
-		if !success {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	success = true
-	return nil
 }
