@@ -548,4 +548,3 @@ func migrationWithTempState(t *testing.T, yamlContent string) *HelmReleaseSchema
 	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0o644))
 	return &HelmReleaseSchemaV2Migration{stateFileOverride: path}
 }
-

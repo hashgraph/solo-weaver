@@ -129,4 +129,3 @@ func atomicWriteFile(path string, data []byte) error {
 	success = true
 	return nil
 }
-

@@ -224,4 +224,3 @@ func renameHelmReleaseFieldsV2ToV1(node *yaml.Node) {
 	renameMappingKey(node, "appVersion", "version")
 	renameMappingKey(node, "deletedAt", "deleted")
 }
-
