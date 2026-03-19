@@ -99,14 +99,14 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
-			Version:       re.Chart.Metadata.AppVersion,
+			ChartVersion:  re.Chart.Metadata.Version,
+			AppVersion:    re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
 			ChartRef:      "", // it is not stored in Helm Release, so caller need to inject it
 			ChartName:     re.Chart.ChartFullPath(),
-			ChartVersion:  re.Chart.Metadata.Version,
 			FirstDeployed: re.Info.FirstDeployed,
 			LastDeployed:  re.Info.LastDeployed,
-			Deleted:       re.Info.Deleted,
+			DeletedAt:     re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
 		Storage:  models.BlockNodeStorage{},

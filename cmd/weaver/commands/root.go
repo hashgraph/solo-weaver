@@ -97,6 +97,7 @@ func RegisterMigrations() {
 	// This ensures that when a user upgrades from an older version, all necessary migrations will be applied in the
 	// correct order to update their state to be compatible with the new version.
 	migration.Register(state.MigrationComponent, state.NewUnifiedStateMigration())
+	migration.Register(state.MigrationComponent, state.NewHelmReleaseSchemaV2Migration())
 	migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
 	migration.Register(blocknode.ComponentBlockNode, blocknode.NewPluginsStorageMigration())
 	migration.Register(workflows.MigrationComponent, workflows.NewLegacyBinaryMigration())

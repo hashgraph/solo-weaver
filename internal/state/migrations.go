@@ -7,7 +7,8 @@
 //   - BuildMigrationWorkflow(): Builds an automa workflow for applicable migrations
 //
 // Individual migration implementations are in separate migration_*.go files:
-//   - migration_unified_state.go: Handles unified state file migration
+//   - migration_unified_state.go:           Handles unified state file migration (legacy *.installed/*.configured → state.yaml)
+//   - migration_helm_release_schema_v2.go:  Migrates HelmReleaseInfo schema from v1 to v2
 //
 // To add a new migration:
 //  1. Create a new migration_<name>.go file implementing the migration.Migration interface
@@ -30,6 +31,7 @@ const MigrationComponent = "state"
 // Called once at startup from root.go.
 func InitMigrations() {
 	migration.Register(MigrationComponent, NewUnifiedStateMigration())
+	migration.Register(MigrationComponent, NewHelmReleaseSchemaV2Migration())
 }
 
 // BuildMigrationWorkflow returns an automa workflow for executing applicable state migrations.
