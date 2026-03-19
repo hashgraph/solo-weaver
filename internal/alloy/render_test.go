@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -151,7 +152,7 @@ func TestConfigMapManifest(t *testing.T) {
 	assert.Contains(t, manifest, "apiVersion: v1")
 	assert.Contains(t, manifest, "kind: ConfigMap")
 	assert.Contains(t, manifest, "name: "+ConfigMapName)
-	assert.Contains(t, manifest, "namespace: "+Namespace)
+	assert.Contains(t, manifest, "namespace: "+deps.ALLOY_NAMESPACE)
 
 	// Verify main config.alloy is present with concatenated content
 	assert.Contains(t, manifest, "config.alloy: |")
@@ -214,7 +215,7 @@ func TestNamespaceManifest(t *testing.T) {
 	// Verify it's a valid namespace manifest
 	assert.Contains(t, manifest, "apiVersion: v1")
 	assert.Contains(t, manifest, "kind: Namespace")
-	assert.Contains(t, manifest, "name: "+Namespace)
+	assert.Contains(t, manifest, "name: "+deps.ALLOY_NAMESPACE)
 }
 
 func TestBuildHelmEnvVars_DefaultSecret(t *testing.T) {

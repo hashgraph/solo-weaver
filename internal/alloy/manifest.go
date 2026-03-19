@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 )
 
 // ConfigMapTemplateData holds data for the ConfigMap template.
@@ -44,7 +45,7 @@ func ConfigMapManifest(modules []ModuleConfig) (string, error) {
 
 	data := ConfigMapTemplateData{
 		ConfigMapName: ConfigMapName,
-		Namespace:     Namespace,
+		Namespace:     deps.ALLOY_NAMESPACE,
 		Modules:       templateModules,
 	}
 
@@ -122,7 +123,7 @@ type NamespaceTemplateData struct {
 // Uses the namespace.yaml template file.
 func NamespaceManifest() (string, error) {
 	data := NamespaceTemplateData{
-		Namespace: Namespace,
+		Namespace: deps.ALLOY_NAMESPACE,
 	}
 
 	return templates.Render("files/alloy/namespace.yaml", data)
