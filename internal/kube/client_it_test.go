@@ -44,6 +44,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -1209,4 +1210,236 @@ func TestWithCluster_GetResourceNestedString_MissingField(t *testing.T) {
 	if value != "" {
 		t.Fatalf("expected empty string for missing field, got %q", value)
 	}
+}
+
+// TestWithCluster_ApplyManifest_IdempotentUnderMutation_Integration verifies that
+// ApplyManifest is idempotent when called repeatedly and, critically, does NOT
+// return a 409 Conflict when a controller has mutated the resource between two
+// successive applies — the exact race that Server-Side Apply (SSA) is designed
+// to eliminate.
+//
+// Three scenarios are exercised inside a single shared namespace:
+//
+//  1. repeated_apply_is_idempotent
+//     Apply the same ConfigMap manifest three times without any external
+//     mutation.  Every call must succeed and the desired data must be intact.
+//
+//  2. apply_after_controller_mutation_no_409
+//     Apply a ConfigMap, then simulate a controller that stamps extra
+//     annotations and an additional data key via a JSON-merge-patch (the
+//     classic out-of-band write that used to cause a 409 between Get and
+//     Update).  Re-apply the original manifest — must succeed with no error
+//     and the declared data field must still hold its manifest value.
+//
+//  3. pvc_apply_after_provisioner_mutation_no_409
+//     Apply a PVC manifest, then inject the annotations a real CSI /
+//     volume-provisioner adds ("pv.kubernetes.io/bind-completed",
+//     "pv.kubernetes.io/bound-by-controller",
+//     "volume.beta.kubernetes.io/storage-provisioner").  Re-apply the
+//     original PVC manifest twice — must not return 409 or any other error,
+//     and spec.storageClassName / spec.accessModes must survive.
+func TestWithCluster_ApplyManifest_IdempotentUnderMutation_Integration(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	c := mustClient(t)
+
+	// ── Shared namespace ────────────────────────────────────────────────────
+	nsName := fmt.Sprintf("it-apply-idempotent-%d", time.Now().UnixNano())
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	defer deleteAndWait(t, c, nsGVR, "", nsName, 2*time.Minute)
+
+	nsManifest := fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+`, nsName)
+	nsPath, nsCleanup := testutil.WriteTempManifest(t, nsManifest)
+	defer nsCleanup()
+
+	if err := c.ApplyManifest(ctx, nsPath); err != nil {
+		t.Fatalf("ApplyManifest (namespace): %v", err)
+	}
+	if err := c.WaitForResource(ctx, KindNamespace, "", nsName, IsPresent, 30*time.Second); err != nil {
+		t.Fatalf("waiting for namespace %s: %v", nsName, err)
+	}
+
+	// ── Scenario 1: Repeated apply is idempotent ────────────────────────────
+	t.Run("repeated_apply_is_idempotent", func(t *testing.T) {
+		cmName := "cm-idempotent"
+		manifest := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+data:
+  hello: world
+`, cmName, nsName)
+		path, cleanup := testutil.WriteTempManifest(t, manifest)
+		defer cleanup()
+
+		const rounds = 3
+		for i := 1; i <= rounds; i++ {
+			if err := c.ApplyManifest(ctx, path); err != nil {
+				t.Fatalf("ApplyManifest round %d/%d: %v", i, rounds, err)
+			}
+		}
+
+		// Desired data must be intact after repeated applies.
+		cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+		cm, err := c.Dyn.Resource(cmGVR).Namespace(nsName).Get(ctx, cmName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("failed to get ConfigMap after repeated apply: %v", err)
+		}
+		val, _, _ := unstructured.NestedString(cm.Object, "data", "hello")
+		if val != "world" {
+			t.Errorf("expected data.hello=world after %d applies, got %q", rounds, val)
+		}
+	})
+
+	// ── Scenario 2: Re-apply after a controller mutates the resource ────────
+	//
+	// Reproduces the 409 race: controller stamps annotations + extra data
+	// between our last apply and the next one.  SSA (force=true) must absorb
+	// the conflict transparently.
+	t.Run("apply_after_controller_mutation_no_409", func(t *testing.T) {
+		cmName := "cm-mutated"
+		manifest := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+data:
+  config: original
+`, cmName, nsName)
+		path, cleanup := testutil.WriteTempManifest(t, manifest)
+		defer cleanup()
+
+		cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+		dr := c.Dyn.Resource(cmGVR).Namespace(nsName)
+
+		// First apply — creates the ConfigMap.
+		if err := c.ApplyManifest(ctx, path); err != nil {
+			t.Fatalf("first ApplyManifest: %v", err)
+		}
+
+		// Simulate a controller that adds its own annotation and an extra data
+		// key.  This is the out-of-band write that, with the old Get→Update
+		// approach, would produce a 409 on the subsequent apply.
+		controllerPatch := []byte(
+			`{"metadata":{"annotations":{"controller.example.io/injected":"true"}},` +
+				`"data":{"injected-by-controller":"yes"}}`,
+		)
+		if _, err := dr.Patch(ctx, cmName, types.MergePatchType, controllerPatch, metav1.PatchOptions{}); err != nil {
+			t.Fatalf("failed to simulate controller mutation: %v", err)
+		}
+
+		// Re-apply — must NOT return 409 or any other conflict error.
+		if err := c.ApplyManifest(ctx, path); err != nil {
+			t.Fatalf("ApplyManifest after controller mutation: %v (want no 409 conflict)", err)
+		}
+
+		// The manifest's declared field must still hold its value.
+		cm, err := dr.Get(ctx, cmName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("failed to get ConfigMap after re-apply: %v", err)
+		}
+		val, _, _ := unstructured.NestedString(cm.Object, "data", "config")
+		if val != "original" {
+			t.Errorf("expected data.config=original after re-apply, got %q", val)
+		}
+	})
+
+	// ── Scenario 3: PVC re-apply after storage-provisioner annotations ──────
+	//
+	// Storage provisioners stamp several well-known annotations on PVCs
+	// ("pv.kubernetes.io/bind-completed", etc.) the moment binding starts.
+	// With the old Get→Update strategy this races into a 409; SSA must handle
+	// it gracefully.
+	//
+	// No StorageClass is required: the PVC is created with storageClassName:""
+	// (explicit empty string, which opts out of dynamic provisioning on every
+	// cluster).  The PVC stays Pending — that is fine because this test is
+	// about SSA idempotency under annotation mutation, not about actual
+	// storage binding.  The provisioner annotations are injected manually.
+	t.Run("pvc_apply_after_provisioner_mutation_no_409", func(t *testing.T) {
+		pvcName := "pvc-mutation-test"
+		pvcGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
+
+		// storageClassName: "" opts out of dynamic provisioning so the test
+		// works on bare clusters that have no StorageClass at all.
+		pvcManifest := fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
+`, pvcName, nsName)
+		path, cleanup := testutil.WriteTempManifest(t, pvcManifest)
+		defer cleanup()
+
+		// First apply — creates the PVC.
+		if err := c.ApplyManifest(ctx, path); err != nil {
+			t.Fatalf("first ApplyManifest (PVC): %v", err)
+		}
+		defer deleteAndWait(t, c, pvcGVR, nsName, pvcName, 2*time.Minute)
+
+		if err := c.WaitForResource(ctx, KindPVC, nsName, pvcName, IsPresent, 30*time.Second); err != nil {
+			t.Fatalf("waiting for PVC %s/%s: %v", nsName, pvcName, err)
+		}
+
+		// Inject the exact annotations a CSI / in-tree volume provisioner adds
+		// during the bind cycle — the root cause of the original 409 race.
+		provisionerPatch := []byte(
+			`{"metadata":{"annotations":{` +
+				`"pv.kubernetes.io/bind-completed":"yes",` +
+				`"pv.kubernetes.io/bound-by-controller":"yes",` +
+				`"volume.beta.kubernetes.io/storage-provisioner":"example.csi.driver.k8s.io"` +
+				`}}}`,
+		)
+		if _, err := c.Dyn.Resource(pvcGVR).Namespace(nsName).Patch(
+			ctx, pvcName, types.MergePatchType, provisionerPatch, metav1.PatchOptions{},
+		); err != nil {
+			t.Fatalf("failed to inject provisioner annotations: %v", err)
+		}
+
+		// Re-apply the same PVC manifest multiple times — must NOT return 409.
+		const rounds = 2
+		for i := 1; i <= rounds; i++ {
+			if err := c.ApplyManifest(ctx, path); err != nil {
+				t.Fatalf("ApplyManifest round %d/%d after provisioner mutation: %v (want no 409 conflict)", i, rounds, err)
+			}
+		}
+
+		// Spec fields declared in the manifest must survive re-apply.
+		pvc, err := c.Dyn.Resource(pvcGVR).Namespace(nsName).Get(ctx, pvcName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("failed to get PVC after re-apply: %v", err)
+		}
+		modes, _, _ := unstructured.NestedStringSlice(pvc.Object, "spec", "accessModes")
+		if len(modes) == 0 || modes[0] != "ReadWriteOnce" {
+			t.Errorf("expected spec.accessModes=[ReadWriteOnce] after re-apply, got %v", modes)
+		}
+		// storageClassName must remain the empty string we declared, confirming
+		// SSA did not silently overwrite it with a cluster default.
+		sc, _, _ := unstructured.NestedString(pvc.Object, "spec", "storageClassName")
+		if sc != "" {
+			t.Errorf("expected spec.storageClassName=\"\" after re-apply, got %q", sc)
+		}
+		// The injected provisioner annotations must still be present: SSA with
+		// force:true owns only the fields in the manifest; foreign annotations
+		// managed by other actors are left untouched.
+		annotations := pvc.GetAnnotations()
+		if annotations["pv.kubernetes.io/bind-completed"] != "yes" {
+			t.Errorf("expected provisioner annotation pv.kubernetes.io/bind-completed=yes, got annotations=%v", annotations)
+		}
+	})
 }

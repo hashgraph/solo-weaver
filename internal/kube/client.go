@@ -326,7 +326,24 @@ func (c *Client) processResources(ctx context.Context, objs []*unstructured.Unst
 // Apply / Delete Manifests
 // =====================
 
-// ApplyManifest applies resources defined in the given manifest file
+// ApplyManifest applies resources defined in the given manifest file using
+// Server-Side Apply (SSA). A single PATCH per resource replaces the previous
+// Get → Create/Update two-step, eliminating the 409 Conflict race that occurs
+// when a controller (e.g. the storage provisioner) mutates a resource between
+// the Get and the Update.
+//
+// SSA rules that matter here:
+//   - No resourceVersion is sent — the API server handles optimistic concurrency.
+//   - fieldManager "solo-weaver" declares ownership of every field in the manifest.
+//   - force:true tells the API server to accept the manifest's values even when
+//     they conflict with fields managed by other actors, resolving ownership
+//     conflicts in favor of "solo-weaver" and potentially changing existing values.
+//   - Create-or-update is handled automatically by the API server; no explicit
+//     IsNotFound branch is needed.
+//
+// Manifests must only contain desired-state fields (no status, resourceVersion,
+// uid, managedFields). The block-node storage-config templates already satisfy
+// this requirement.
 func (c *Client) ApplyManifest(ctx context.Context, manifestPath string) error {
 	objs, err := parseManifests(manifestPath)
 	if err != nil {
@@ -334,19 +351,23 @@ func (c *Client) ApplyManifest(ctx context.Context, manifestPath string) error {
 	}
 
 	handler := func(ctx context.Context, mapping *meta.RESTMapping, dr dynamic.ResourceInterface, u *unstructured.Unstructured) error {
-		existing, err := dr.Get(ctx, u.GetName(), metav1.GetOptions{})
-		if kerrors.IsNotFound(err) {
-			if _, err := dr.Create(ctx, u, metav1.CreateOptions{}); err != nil {
-				return errorx.IllegalArgument.Wrap(err, "error during create %s/%s", mapping.Resource.Resource, u.GetName())
-			}
-			return nil
-		} else if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "error during get %s/%s", mapping.Resource.Resource, u.GetName())
+		data, err := u.MarshalJSON()
+		if err != nil {
+			return errorx.InternalError.Wrap(err, "error marshaling %s/%s for server-side apply", mapping.Resource.Resource, u.GetName())
 		}
 
-		u.SetResourceVersion(existing.GetResourceVersion())
-		if _, err := dr.Update(ctx, u, metav1.UpdateOptions{}); err != nil {
-			return errorx.InternalError.Wrap(err, "error during update %s/%s", mapping.Resource.Resource, u.GetName())
+		force := true
+		if _, err := dr.Patch(ctx, u.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
+			FieldManager: "solo-weaver",
+			Force:        &force,
+		}); err != nil {
+			if kerrors.IsBadRequest(err) || kerrors.IsInvalid(err) {
+				return errorx.IllegalArgument.Wrap(err, "error during apply %s/%s", mapping.Resource.Resource, u.GetName())
+			}
+			if kerrors.IsForbidden(err) || kerrors.IsUnauthorized(err) {
+				return errorx.ExternalError.Wrap(err, "error during apply %s/%s", mapping.Resource.Resource, u.GetName())
+			}
+			return errorx.InternalError.Wrap(err, "error during apply %s/%s", mapping.Resource.Resource, u.GetName())
 		}
 		return nil
 	}
