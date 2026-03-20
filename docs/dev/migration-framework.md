@@ -6,29 +6,48 @@ This document describes the migration framework used in Solo Provisioner to hand
 
 The migration framework provides a simple, extensible way to handle breaking changes:
 
-- **Global Registry**: Migrations are registered at startup in `root.go`
-- **Two Migration Types**: Version-based (crosses version boundary) and State-based (checks actual system state)
-- **Automa Integration**: Migrations convert to automa workflows for execution with automatic rollback
-- **Component-Scoped**: Each component (blocknode, state, etc.) owns its migrations
+- **Centralised registration**: all migrations are registered in a single place — `root.go RegisterMigrations()`. No `InitMigrations()` function exists anywhere else.
+- **Two execution scopes**: `startup` (every CLI invocation) and `block-node` (during block node upgrades only).
+- **Two migration base types**: `VersionMigration` (chart version boundary) and `CLIVersionMigration` (CLI binary version boundary). State-based migrations implement `Applies()` directly.
+- **Automa integration**: migrations convert to automa workflows with automatic rollback on failure.
+- **Idempotent `Applies()`**: ground truth (on-disk state or version comparison) is used instead of a persistent ledger.
 
 ## Architecture
 
 ```
 cmd/weaver/commands/
-└── root.go                     # Registers all migrations at startup
+└── root.go                         # Single authoritative RegisterMigrations()
+
+cmd/weaver/commands/common/
+└── run.go                          # RunStartupMigrations() — drives startup scope
 
 internal/migration/
-├── migration.go                # Interface, Context, Registry, ToWorkflow
-└── version_migration.go        # VersionMigration base implementation
-
-internal/blocknode/
-├── migrations.go               # InitMigrations(), BuildMigrationWorkflow()
-└── migration_verification_storage.go  # Specific migration
+├── migration.go                    # Interface, Context, Registry, MigrationsToWorkflow, scope constants
+├── version_migration.go            # VersionMigration base (chart version boundary)
+├── cli_version_migration.go        # CLIVersionMigration base (CLI binary version boundary)
+└── migration_test.go
 
 internal/state/
-├── migrations.go               # InitMigrations(), BuildMigrationWorkflow()
-└── migration_unified_state.go  # Specific migration (state-based)
+├── migrations.go                   # ReadProvisionerVersionFromDisk()
+├── migration_unified_state.go      # State-based: legacy *.installed/*.configured → state.yaml
+└── migration_helm_release_schema_v2.go
+
+internal/blocknode/
+├── migrations.go                   # BuildMigrationWorkflow() — block-node scope only
+├── migration_storage.go            # StorageMigration base
+├── migration_verification_storage.go
+└── migration_plugins_storage.go
+
+internal/workflows/
+└── migration_legacy_binary.go      # Startup: remove legacy "weaver" binary
 ```
+
+## Scopes
+
+| Scope | Constant | When it runs |
+|---|---|---|
+| `"startup"` | `migration.ScopeStartup` | Before every CLI command, in `RunGlobalChecks` |
+| `"block-node"` | `blocknode.ComponentBlockNode` | Explicitly during block node upgrade workflow |
 
 ## Core Components
 
@@ -36,19 +55,10 @@ internal/state/
 
 ```go
 type Migration interface {
-    // ID returns a unique identifier for this migration
     ID() string
-
-    // Description returns a human-readable description
     Description() string
-
-    // Applies checks if this migration applies to the given context
     Applies(mctx *Context) (bool, error)
-
-    // Execute performs the migration
     Execute(ctx context.Context, mctx *Context) error
-
-    // Rollback attempts to undo the migration (best-effort)
     Rollback(ctx context.Context, mctx *Context) error
 }
 ```
@@ -57,383 +67,215 @@ type Migration interface {
 
 ```go
 type Context struct {
-    Component string                 // e.g., "block-node", "state"
+    Component string          // scope — e.g. migration.ScopeStartup
     Logger    *zerolog.Logger
-    Data      map[string]interface{} // All migration data (versions, managers, etc.)
+    Data      automa.StateBag // key/value bag for migration data
 }
 
-// Well-known context keys
+// Chart version keys (block-node scope)
 const (
-    CtxKeyInstalledVersion = "installedVersion"  // Used by version-based migrations
-    CtxKeyTargetVersion    = "targetVersion"     // Used by version-based migrations
+    CtxKeyInstalledVersion = "installedVersion"
+    CtxKeyTargetVersion    = "targetVersion"
+)
+
+// CLI version keys (startup scope)
+const (
+    CtxKeyInstalledCLIVersion = "installedCLIVersion"
+    CtxKeyCurrentCLIVersion   = "currentCLIVersion"
 )
 ```
 
-The `Data` map holds all migration-specific data. Version-based migrations use the well-known keys `CtxKeyInstalledVersion` and `CtxKeyTargetVersion`.
-
 ### Global Registry
 
-Migrations are registered at startup via package-level functions:
-
 ```go
-// Register a migration for a component
-migration.Register("block-node", myMigration)
+// Register a migration under a scope
+migration.Register(migration.ScopeStartup, myMigration)
 
-// Get applicable migrations (caller prepares context with any needed data)
-mctx := &migration.Context{Component: "block-node", Data: make(map[string]interface{})}
-mctx.Set(migration.CtxKeyInstalledVersion, installedVersion)  // For version-based migrations
-mctx.Set(migration.CtxKeyTargetVersion, targetVersion)
-migrations, err := migration.GetApplicableMigrations("block-node", mctx)
-
-// Check if migration is needed
-if len(migrations) == 0 {
-    // No migrations needed
+// Retrieve applicable migrations
+mctx := &migration.Context{
+    Component: migration.ScopeStartup,
+    Data:      &automa.SyncStateBag{},
 }
+mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedVersion)
+mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Number())
 
-// Convert to automa workflow
-workflow := migration.MigrationsToWorkflow(migrations, mctx)
+migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 ```
 
 ## Migration Types
 
-### 1. Version-Based Migrations
+### 1. CLI-Version-Based (startup scope)
 
-Use `VersionMigration` when a specific version introduces breaking changes:
+Use `CLIVersionMigration` when a CLI binary version introduces a breaking change that must be fixed before any command runs:
 
 ```go
-type MyMigration struct {
-    migration.VersionMigration
+type MyStartupMigration struct {
+    migration.CLIVersionMigration
 }
 
-func NewMyMigration() *MyMigration {
-    return &MyMigration{
-        VersionMigration: migration.NewVersionMigration(
-            "my-feature-v1.0.0",           // ID
-            "Description of the migration", // Description  
-            "1.0.0",                        // MinVersion - applies when crossing this boundary
+func NewMyStartupMigration() *MyStartupMigration {
+    return &MyStartupMigration{
+        CLIVersionMigration: migration.NewCLIVersionMigration(
+            "my-change-v1.2.0",              // ID
+            "Description of the migration",  // Description
+            "1.2.0",                         // minVersion boundary
         ),
     }
 }
 
-// Must implement Execute and Rollback
-func (m *MyMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-    // Migration logic
-    return nil
-}
-
-func (m *MyMigration) Rollback(ctx context.Context, mctx *migration.Context) error {
-    // Rollback logic (optional)
-    return nil
-}
+func (m *MyStartupMigration) Execute(ctx context.Context, mctx *migration.Context) error { ... }
+func (m *MyStartupMigration) Rollback(ctx context.Context, mctx *migration.Context) error { ... }
 ```
 
-The `VersionMigration` automatically provides `Applies()` logic:
-- Returns `true` if: `installedVersion < minVersion AND targetVersion >= minVersion`
-- Returns `false` for fresh installs (empty installedVersion)
+`CLIVersionMigration.Applies()` returns `true` when:
+`installedCLIVersion < minVersion AND currentCLIVersion >= minVersion`
 
-### 2. State-Based Migrations
+### 2. Chart-Version-Based (block-node scope)
 
-Use custom `Applies()` when migration depends on actual system state:
-
-```go
-type UnifiedStateMigration struct {
-    id          string
-    description string
-}
-
-func (m *UnifiedStateMigration) ID() string          { return m.id }
-func (m *UnifiedStateMigration) Description() string { return m.description }
-
-// Custom Applies - checks file system state instead of versions
-func (m *UnifiedStateMigration) Applies(mctx *migration.Context) (bool, error) {
-    // Check for legacy state files
-    legacyFiles, err := findLegacyStateFiles(stateDir)
-    if err != nil {
-        return false, err
-    }
-    return len(legacyFiles) > 0, nil
-}
-
-func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-    // Migration logic
-    return nil
-}
-
-func (m *UnifiedStateMigration) Rollback(ctx context.Context, mctx *migration.Context) error {
-    // Rollback logic
-    return nil
-}
-```
-
-## Adding New Migrations
-
-### Step 1: Create Migration File
-
-Create `internal/<component>/migration_<feature>.go`:
+Use `VersionMigration` when a Helm chart version introduces breaking storage changes:
 
 ```go
-package mycomponent
-
-import (
-    "context"
-    "github.com/hashgraph/solo-weaver/internal/migration"
-)
-
-type MyFeatureMigration struct {
+type MyStorageMigration struct {
     migration.VersionMigration
 }
 
-func NewMyFeatureMigration() *MyFeatureMigration {
-    return &MyFeatureMigration{
+func NewMyStorageMigration() *MyStorageMigration {
+    return &MyStorageMigration{
         VersionMigration: migration.NewVersionMigration(
-            "my-feature-v1.0.0",
-            "Add support for my feature",
-            "1.0.0",
+            "my-storage-v1.2.0",
+            "Add new PV/PVC for v1.2.0",
+            "1.2.0",
         ),
     }
 }
 
-func (m *MyFeatureMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-    // Get component-specific data from context
-    manager := mctx.Data["mycomponent.manager"].(*Manager)
-    
-    // Implement migration logic
-    return nil
-}
-
-func (m *MyFeatureMigration) Rollback(ctx context.Context, mctx *migration.Context) error {
-    // Implement rollback logic
-    return nil
-}
+func (m *MyStorageMigration) Execute(ctx context.Context, mctx *migration.Context) error { ... }
+func (m *MyStorageMigration) Rollback(ctx context.Context, mctx *migration.Context) error { ... }
 ```
 
-### Step 2: Create/Update migrations.go
+`VersionMigration.Applies()` returns `true` when:
+`installedChartVersion < minVersion AND targetChartVersion >= minVersion`
 
-Create `internal/<component>/migrations.go`:
+### 3. State-Based (startup scope)
+
+Use a custom `Applies()` when the migration should run based on actual on-disk state rather than version numbers:
 
 ```go
-package mycomponent
+type MyStateMigration struct{ id, description string }
 
-import (
-    "github.com/automa-saga/automa"
-    "github.com/hashgraph/solo-weaver/internal/migration"
-)
+func (m *MyStateMigration) ID() string          { return m.id }
+func (m *MyStateMigration) Description() string { return m.description }
 
-const MigrationComponent = "my-component"
-
-// InitMigrations registers all migrations for this component.
-// Called once at startup from root.go.
-func InitMigrations() {
-    migration.Register(MigrationComponent, NewMyFeatureMigration())
-    // Add future migrations here in chronological order
+func (m *MyStateMigration) Applies(mctx *migration.Context) (bool, error) {
+    // Check actual on-disk state
+    legacyFiles, err := findLegacyFiles(stateDir)
+    return len(legacyFiles) > 0, err
 }
 
-// BuildMigrationWorkflow returns an automa workflow for applicable migrations.
-func BuildMigrationWorkflow(manager *Manager, ...) (*automa.WorkflowBuilder, error) {
-    installedVersion, err := manager.GetInstalledVersion()
-    if err != nil {
-        return nil, err
-    }
-
-    if installedVersion == "" {
-        return nil, nil
-    }
-
-    // Build context first
-    mctx := &migration.Context{
-        Component: MigrationComponent,
-        Logger:    manager.logger,
-        Data:      make(map[string]interface{}),
-    }
-    mctx.Set(migration.CtxKeyInstalledVersion, installedVersion)
-    mctx.Set(migration.CtxKeyTargetVersion, targetVersion)
-
-    migrations, err := migration.GetApplicableMigrations(MigrationComponent, mctx)
-    if err != nil {
-        return nil, err
-    }
-
-    if len(migrations) == 0 {
-        return nil, nil
-    }
-
-    // Add component-specific data
-    mctx.Set("mycomponent.manager", manager)
-
-    return migration.MigrationsToWorkflow(migrations, mctx), nil
-}
+func (m *MyStateMigration) Execute(ctx context.Context, mctx *migration.Context) error { ... }
+func (m *MyStateMigration) Rollback(ctx context.Context, mctx *migration.Context) error { ... }
 ```
 
-### Step 3: Register in root.go
+**Idempotency contract**: `Applies()` must return `false` after a successful `Execute()`. Ground truth (actual on-disk state) is more reliable than a separate ledger.
 
-Add the registration call in `cmd/weaver/commands/root.go`:
+## Adding a New Migration
+
+### Step 1: Create the migration file
+
+Create `internal/<package>/migration_<name>.go` implementing `migration.Migration`. Choose the appropriate base type.
+
+### Step 2: Register in `root.go`
+
+Append to `RegisterMigrations()` at the chronologically correct position:
 
 ```go
-func init() {
-    // Register all migrations at startup
-    blocknode.InitMigrations()
-    state.InitMigrations()
-    mycomponent.InitMigrations()  // Add new component
-    
-    // ...
+func RegisterMigrations() {
+    // Startup migrations
+    migration.Register(migration.ScopeStartup, state.NewUnifiedStateMigration())
+    migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
+    migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
+    migration.Register(migration.ScopeStartup, mypkg.NewMyStartupMigration()) // ← add here
+
+    // Block-node upgrade migrations
+    migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
+    migration.Register(blocknode.ComponentBlockNode, blocknode.NewPluginsStorageMigration())
+    // migration.Register(blocknode.ComponentBlockNode, blocknode.NewMyStorageMigration()) // ← or here
 }
 ```
 
-### Step 4: Integrate with Workflow
+### Step 3: Done
 
-In the upgrade workflow step:
+No `InitMigrations()` to update. The migration runs automatically on the next CLI invocation.
 
-```go
-func upgradeMyComponent(...) automa.Builder {
-    return automa.NewStepBuilder().WithId("upgrade-mycomponent").
-        WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-            // Check for migrations
-            workflow, err := mycomponent.BuildMigrationWorkflow(manager, ...)
-            if err != nil {
-                return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-            }
+## Startup Migration Runner
 
-            if workflow != nil {
-                wf, _ := workflow.Build()
-                report := wf.Execute(ctx)
-                if report.Error != nil {
-                    return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
-                }
-                return automa.StepSuccessReport(stp.Id())
-            }
+`RunStartupMigrations()` (called from `RunGlobalChecks` before every command) drives a single ordered pass over all `"startup"`-scoped migrations:
 
-            // Normal upgrade path (no migration needed)
-            // ...
-        })
-}
-```
+1. Reads the provisioner version last written to disk via `state.ReadProvisionerVersionFromDisk()` — this is the *installed* CLI version.
+2. Gets the *current* CLI version from `version.Number()`.
+3. Builds a `migration.Context` with both version keys populated.
+4. Calls `migration.GetApplicableMigrations(migration.ScopeStartup, mctx)`.
+5. Executes the workflow with rollback on error.
 
-## Current Implementations
+After the first command runs, `stateManager.Refresh()` stamps `ProvisionerState.Version = version.Number()` to disk, so subsequent invocations of the same binary version see no applicable CLI-version-gated migrations.
 
-### Block Node: Verification Storage Migration
+## Block-Node Upgrade Workflow
 
-**Purpose**: Block Node v0.26.2 added a new PersistentVolume for verification data. Upgrading from < 0.26.2 requires adding the new PV/PVC before the Helm upgrade.
+`blocknode.BuildMigrationWorkflow()` uses a special two-phase structure because Kubernetes forbids in-place `volumeClaimTemplates` updates:
 
-**Type**: Version-based (uses `VersionMigration`)
+1. **Phase 1** — each `StorageMigration.Execute()` creates its storage directory + PV/PVC.
+2. **Phase 2** — a single final step deletes the StatefulSet (orphan cascade) and performs one Helm upgrade to the target version.
 
-**Files**:
-- `internal/blocknode/migrations.go`
-- `internal/blocknode/migration_verification_storage.go`
+This avoids multiple StatefulSet deletions and intermediate chart upgrades when several storage migrations apply at once.
 
-**Steps**:
-1. Create verification storage directory on host
-2. Create verification PV/PVC (existing PVs are kept)
-3. Ensure values file has correct verification persistence settings
-4. Perform in-place Helm upgrade with new chart version
-
-### State: Unified State Migration
-
-**Purpose**: Consolidate individual state files (`*.installed`, `*.configured`) into a single `state.yaml`.
-
-**Type**: State-based (custom `Applies()` checks for legacy files)
-
-**Files**:
-- `internal/state/migrations.go`
-- `internal/state/migration_unified_state.go`
-
-**Steps**:
-1. Find all legacy state files
-2. Parse component name and version from each
-3. Write unified `state.yaml`
-4. Remove old files
-
-## Rollback Behavior
+## Rollback Behaviour
 
 The framework uses automa's `RollbackOnError` execution mode:
 
-1. Migrations execute in registration order
-2. If a migration fails, automa automatically rolls back completed migrations in reverse order
-3. Each migration's `Rollback()` is called
-4. Rollback errors are logged but don't stop other rollbacks
-
-## Best Practices
-
-1. **One concern per migration**: Keep migrations focused on a single change
-2. **Implement Rollback**: Always provide rollback logic where possible
-3. **Idempotent operations**: Make migration steps idempotent when possible
-4. **Test thoroughly**: Test both Execute and Rollback paths
-5. **Chronological registration**: Register migrations in the order they should execute
-6. **Use context for data**: Pass component-specific data via `Context.Data`
-7. **Private context keys**: Use unexported constants for context keys (e.g., `ctxKeyManager`)
+1. Migrations execute in registration order.
+2. If a migration fails, automa rolls back completed migrations in reverse order.
+3. Each migration's `Rollback()` is called — errors are logged but do not abort other rollbacks.
+4. Because `Applies()` is ground-truth-based, a successful rollback automatically re-enables the migration on the next invocation.
 
 ## Testing
 
-### Test Applies Logic
-
 ```go
+// Test Applies() boundary logic
 func TestMyMigration_Applies(t *testing.T) {
     m := NewMyMigration()
-    
-    tests := []struct {
-        name      string
-        installed string
-        target    string
-        expected  bool
-    }{
-        {"crosses boundary", "0.9.0", "1.0.0", true},
-        {"already past", "1.0.0", "1.1.0", false},
-        {"fresh install", "", "1.0.0", false},
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            mctx := &migration.Context{
-                Data: make(map[string]interface{}),
-            }
-            mctx.Set(migration.CtxKeyInstalledVersion, tt.installed)
-            mctx.Set(migration.CtxKeyTargetVersion, tt.target)
-            
-            applies, err := m.Applies(mctx)
-            require.NoError(t, err)
-            assert.Equal(t, tt.expected, applies)
-        })
-    }
-}
-```
-
-### Test Registration
-
-```go
-func TestInitMigrations(t *testing.T) {
-    migration.ClearRegistry()
-    InitMigrations()
-    defer migration.ClearRegistry()
-
-    mctx := &migration.Context{Data: make(map[string]interface{})}
-    mctx.Set(migration.CtxKeyInstalledVersion, "0.9.0")
-    mctx.Set(migration.CtxKeyTargetVersion, "1.0.0")
-
-    migrations, err := migration.GetApplicableMigrations(MigrationComponent, mctx)
+    mctx := &migration.Context{Data: &automa.SyncStateBag{}}
+    mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, "1.1.0")
+    mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, "1.2.0")
+    applies, err := m.Applies(mctx)
     require.NoError(t, err)
-    assert.Len(t, migrations, 1)
-    assert.Equal(t, "my-feature-v1.0.0", migrations[0].ID())
+    assert.True(t, applies)
+}
+
+// Test registration (register directly — no InitMigrations())
+func TestMyMigration_Registration(t *testing.T) {
+    migration.ClearRegistry()
+    defer migration.ClearRegistry()
+    migration.Register(migration.ScopeStartup, NewMyMigration())
+
+    mctx := &migration.Context{
+        Component: migration.ScopeStartup,
+        Data:      &automa.SyncStateBag{},
+    }
+    migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
+    require.NoError(t, err)
+    // assert expected count / IDs
+}
+
+// Idempotency contract
+func TestMyMigration_Idempotency(t *testing.T) {
+    m := NewMyMigration()
+    // ... set up state so Applies() returns true
+    // execute
+    err := m.Execute(context.Background(), mctx)
+    require.NoError(t, err)
+    // Applies() must now return false
+    applies, err := m.Applies(mctx)
+    require.NoError(t, err)
+    assert.False(t, applies, "Applies() must return false after Execute()")
 }
 ```
-
-## File Structure Summary
-
-```
-cmd/weaver/commands/
-└── root.go                              # Registers all migrations
-
-internal/migration/
-├── migration.go                         # Interface, Context, Registry, ToWorkflow
-├── version_migration.go                 # VersionMigration base
-└── migration_test.go
-
-internal/blocknode/
-├── migrations.go                        # InitMigrations, BuildMigrationWorkflow
-├── migration_verification_storage.go    # v0.26.2 migration
-└── migration_test.go
-
-internal/state/
-├── migrations.go                        # InitMigrations, BuildMigrationWorkflow
-├── migration_unified_state.go           # Unified state migration
-└── migration_unified_state_test.go
-```
-

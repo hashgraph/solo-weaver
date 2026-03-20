@@ -92,15 +92,22 @@ func init() {
 
 }
 
+// RegisterMigrations is the single authoritative place where every migration is registered.
+// Migrations are listed in chronological order of introduction so that when a user upgrades
+// from an older version, all applicable migrations run in the correct sequence.
+//
+// Scopes:
+//   - migration.ScopeStartup ("startup"):    runs before every command in RunGlobalChecks.
+//   - migration.ScopeBlockNode ("block-node"): runs explicitly during block node upgrades.
 func RegisterMigrations() {
-	// Register all migrations at startup in a sequence that reflects the order of changes in the codebase.
-	// This ensures that when a user upgrades from an older version, all necessary migrations will be applied in the
-	// correct order to update their state to be compatible with the new version.
-	migration.Register(state.MigrationComponent, state.NewUnifiedStateMigration())
-	migration.Register(state.MigrationComponent, state.NewHelmReleaseSchemaV2Migration())
-	migration.Register(blocknode.ComponentBlockNode, blocknode.NewVerificationStorageMigration())
-	migration.Register(blocknode.ComponentBlockNode, blocknode.NewPluginsStorageMigration())
-	migration.Register(workflows.MigrationComponent, workflows.NewLegacyBinaryMigration())
+	// ── Startup migrations (run before every CLI invocation) ─────────────────
+	migration.Register(migration.ScopeStartup, state.NewUnifiedStateMigration())
+	migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
+	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
+
+	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
+	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
+	migration.Register(migration.ScopeBlockNode, blocknode.NewPluginsStorageMigration())
 }
 
 // Execute executes the root command.

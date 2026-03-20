@@ -231,7 +231,8 @@ func TestPluginsStorageMigration_Applies(t *testing.T) {
 func TestGetApplicable_BlockNode(t *testing.T) {
 	// Clear and register to ensure clean state
 	migration.ClearRegistry()
-	InitMigrations()
+	migration.Register(migration.ScopeBlockNode, NewVerificationStorageMigration())
+	migration.Register(migration.ScopeBlockNode, NewPluginsStorageMigration())
 	defer migration.ClearRegistry()
 
 	tests := []struct {
@@ -291,7 +292,7 @@ func TestGetApplicable_BlockNode(t *testing.T) {
 			mctx.Data.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
 			mctx.Data.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
 
-			migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
+			migrations, err := migration.GetApplicableMigrations(migration.ScopeBlockNode, mctx)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -307,14 +308,15 @@ func TestGetApplicable_BlockNode(t *testing.T) {
 // TestMigrationRegistration tests that migrations can be registered correctly
 func TestMigrationRegistration(t *testing.T) {
 	migration.ClearRegistry()
-	InitMigrations()
+	migration.Register(migration.ScopeBlockNode, NewVerificationStorageMigration())
+	migration.Register(migration.ScopeBlockNode, NewPluginsStorageMigration())
 	defer migration.ClearRegistry()
 
 	// Check that verification migration is registered
 	mctx := &migration.Context{Data: &automa.SyncStateBag{}}
 	mctx.Data.Set(migration.CtxKeyInstalledVersion, "0.26.0")
 	mctx.Data.Set(migration.CtxKeyTargetVersion, "0.26.2")
-	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
+	migrations, err := migration.GetApplicableMigrations(migration.ScopeBlockNode, mctx)
 	require.NoError(t, err)
 	require.Len(t, migrations, 1)
 	assert.Equal(t, "verification-storage-v0.26.2", migrations[0].ID())
@@ -323,7 +325,7 @@ func TestMigrationRegistration(t *testing.T) {
 	mctx2 := &migration.Context{Data: &automa.SyncStateBag{}}
 	mctx2.Data.Set(migration.CtxKeyInstalledVersion, "0.27.0")
 	mctx2.Data.Set(migration.CtxKeyTargetVersion, "0.28.1")
-	migrations2, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx2)
+	migrations2, err := migration.GetApplicableMigrations(migration.ScopeBlockNode, mctx2)
 	require.NoError(t, err)
 	require.Len(t, migrations2, 1)
 	assert.Equal(t, "plugins-storage-v0.28.1", migrations2[0].ID())

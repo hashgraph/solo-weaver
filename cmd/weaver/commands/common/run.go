@@ -11,10 +11,12 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/spf13/cobra"
 )
 
@@ -73,37 +75,53 @@ func RunGlobalChecks(cmd *cobra.Command, args []string) error {
 		doctor.CheckReportErr(ctx, report)
 	}
 
-	// Run any pending state migrations before any command executes.
-	if err := RunStateMigrations(ctx); err != nil {
+	// Run any pending startup migrations before any command executes.
+	if err := RunStartupMigrations(ctx); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// RunStateMigrations runs any applicable state migrations.
-// It is a no-op when no legacy state files exist.
-func RunStateMigrations(ctx context.Context) error {
-	migrationWf, err := state.BuildMigrationWorkflow()
+// RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
+// It is a no-op when no migrations apply.
+func RunStartupMigrations(ctx context.Context) error {
+	// Read the provisioner version last written to disk — this is the "installed"
+	// CLI version before the current binary ran for the first time.
+	installedCLIVersion, err := state.ReadProvisionerVersionFromDisk()
 	if err != nil {
 		return err
 	}
-	if migrationWf == nil {
-		logx.As().Debug().Msg("No state migrations needed")
-		return nil // nothing to migrate
+
+	mctx := &migration.Context{
+		Component: migration.ScopeStartup,
+		Data:      &automa.SyncStateBag{},
+	}
+	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedCLIVersion)
+	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Number())
+
+	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
+	if err != nil {
+		return err
 	}
 
+	if len(migrations) == 0 {
+		logx.As().Debug().Msg("No startup migrations needed")
+		return nil
+	}
+
+	migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
 	wf, err := migrationWf.Build()
 	if err != nil {
 		return err
 	}
 
-	logx.As().Info().Msg("Running state migrations...")
+	logx.As().Info().Msg("Running startup migrations...")
 	report := wf.Execute(ctx)
 	if report.Error != nil {
 		return report.Error
 	}
-	logx.As().Info().Msg("State migrations completed successfully")
+	logx.As().Info().Msg("Startup migrations completed successfully")
 	return nil
 }
 

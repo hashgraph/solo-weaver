@@ -7,7 +7,7 @@
 //   - Checks if the legacy "weaver" binary exists in the bin directory
 //   - Removes the binary and its symlink in /usr/local/bin
 //
-// This file is registered in migrations.go via InitMigrations().
+// This migration is registered in cmd/weaver/commands/root.go RegisterMigrations() under migration.ScopeStartup.
 
 package workflows
 

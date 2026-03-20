@@ -15,6 +15,15 @@ var selfInstallCmd = &cobra.Command{
 	Long:  "Perform self-installation of Solo Provisioner on the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflow(cmd.Context(), workflows.NewSelfInstallWorkflow())
+
+		// RunGlobalChecks (and therefore RunStartupMigrations) is skipped for
+		// the install command, so we invoke it explicitly here. This ensures
+		// startup-scoped migrations such as LegacyBinaryMigration run even when
+		// the user is installing or re-installing.
+		if err := common.RunStartupMigrations(cmd.Context()); err != nil {
+			return err
+		}
+
 		logx.As().Info().Msg("Solo Provisioner is installed successfully; run 'solo-provisioner -h' to see available commands")
 		return nil
 	},

@@ -105,17 +105,17 @@ func TestUnifiedState_YAMLMarshal(t *testing.T) {
 
 func TestRegisterMigrations_State(t *testing.T) {
 	migration.ClearRegistry()
-	InitMigrations()
 	defer migration.ClearRegistry()
 
-	// Verify migration is registered by checking it can be retrieved.
-	// GetApplicableMigrations returns migrations where Applies() returns true.
-	// The result depends on whether legacy state files exist in the environment,
-	// so we just verify the call succeeds without asserting a specific count.
+	migration.Register(migration.ScopeStartup, NewUnifiedStateMigration())
+	migration.Register(migration.ScopeStartup, NewHelmReleaseSchemaV2Migration())
+
+	// Verify migrations can be retrieved without error.
+	// Applies() depends on on-disk state, so we just confirm no error.
 	mctx := &migration.Context{
-		Component: MigrationComponent,
+		Component: migration.ScopeStartup,
 		Data:      &automa.SyncStateBag{},
 	}
-	_, err := migration.GetApplicableMigrations(MigrationComponent, mctx)
+	_, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 	require.NoError(t, err)
 }
