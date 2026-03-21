@@ -10,7 +10,7 @@
 //   1. Add an entry to optionalStorages below
 //   2. Add the corresponding field(s) to models.BlockNodeStorage (if not already present)
 //   3. Add the storage section to the Go-templated values YAML (using {{- if .Include<Name> }})
-//   4. Register a migration in migrations.go via InitMigrations()
+//   4. Register the migration in cmd/weaver/commands/root.go RegisterMigrations()
 
 package blocknode
 

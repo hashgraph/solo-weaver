@@ -14,6 +14,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -198,6 +199,13 @@ func (m *stateManager) Refresh() error {
 		sum := sha256.Sum256(canonical)
 		m.lastStateHash = hex.EncodeToString(sum[:])
 	}
+
+	// Stamp the current CLI version so the provisioner.version field on disk
+	// always reflects the binary that last ran, establishing the two-value
+	// invariant used by startup migrations:
+	//   lastCLIVersion  = the version read from disk before this Refresh()
+	//   currentCLIVersion = version.Number() (the running binary)
+	newState.ProvisionerState.Version = version.Number()
 
 	newState.LastAction = m.state.LastAction
 

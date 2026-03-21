@@ -1,55 +1,53 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// migrations.go provides the component-level orchestration for state migrations.
-//
-// This file contains:
-//   - InitMigrations(): Registers all state migrations at startup (called from root.go)
-//   - BuildMigrationWorkflow(): Builds an automa workflow for applicable migrations
+// migrations.go provides state-layer helpers used by the migration framework.
 //
 // Individual migration implementations are in separate migration_*.go files:
 //   - migration_unified_state.go:           Handles unified state file migration (legacy *.installed/*.configured → state.yaml)
 //   - migration_helm_release_schema_v2.go:  Migrates HelmReleaseInfo schema from v1 to v2
 //
-// To add a new migration:
-//  1. Create a new migration_<name>.go file implementing the migration.Migration interface
-//  2. Register it in InitMigrations() below
-//
+// All migrations are registered centrally in cmd/weaver/commands/root.go RegisterMigrations().
 // See docs/dev/migration-framework.md for the full guide.
 
 package state
 
 import (
-	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/migration"
+	"os"
+	"path/filepath"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	"gopkg.in/yaml.v3"
 )
 
-// MigrationComponent is the component name for state migrations.
-const MigrationComponent = "state"
+// ReadProvisionerVersionFromDisk extracts the provisioner version from the on-disk state file
+// without loading the full state into memory. Returns an empty string when no state file exists.
+func ReadProvisionerVersionFromDisk() (string, error) {
+	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
 
-// InitMigrations registers all state migrations.
-// Called once at startup from root.go.
-func InitMigrations() {
-	migration.Register(MigrationComponent, NewUnifiedStateMigration())
-	migration.Register(MigrationComponent, NewHelmReleaseSchemaV2Migration())
-}
-
-// BuildMigrationWorkflow returns an automa workflow for executing applicable state migrations.
-// Returns nil if no migrations are needed.
-func BuildMigrationWorkflow() (*automa.WorkflowBuilder, error) {
-	mctx := &migration.Context{
-		Component: MigrationComponent,
-		Data:      &automa.SyncStateBag{},
-	}
-
-	migrations, err := migration.GetApplicableMigrations(MigrationComponent, mctx)
+	data, err := os.ReadFile(stateFile)
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to get applicable state migrations")
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", errorx.InternalError.Wrap(err, "failed to read state file at %s", stateFile)
 	}
 
-	if len(migrations) == 0 {
-		return nil, nil
+	// Use a minimal struct that mirrors only the path we need:
+	//   state:
+	//     provisioner:
+	//       version: "v0.x.y"
+	var doc struct {
+		State struct {
+			Provisioner struct {
+				Version string `yaml:"version"`
+			} `yaml:"provisioner"`
+		} `yaml:"state"`
 	}
 
-	return migration.MigrationsToWorkflow(migrations, mctx), nil
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to parse state file at %s", stateFile)
+	}
+
+	return doc.State.Provisioner.Version, nil
 }

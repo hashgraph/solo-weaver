@@ -44,7 +44,7 @@ func TestLegacyBinaryMigration_Applies(t *testing.T) {
 			// Note: This test is limited because it uses the actual models.Paths().BinDir
 			// A more complete test would mock the paths
 			mctx := &migration.Context{
-				Component: MigrationComponent,
+				Component: migration.ScopeStartup,
 				Data:      &automa.SyncStateBag{},
 			}
 
@@ -81,7 +81,7 @@ func TestLegacyBinaryMigration_Execute(t *testing.T) {
 func TestLegacyBinaryMigration_Rollback(t *testing.T) {
 	m := NewLegacyBinaryMigration()
 	mctx := &migration.Context{
-		Component: MigrationComponent,
+		Component: migration.ScopeStartup,
 		Data:      &automa.SyncStateBag{},
 	}
 
@@ -90,21 +90,20 @@ func TestLegacyBinaryMigration_Rollback(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestInitMigrations(t *testing.T) {
+func TestLegacyBinaryMigration_Registration(t *testing.T) {
 	migration.ClearRegistry()
-	InitMigrations()
 	defer migration.ClearRegistry()
 
+	migration.Register(migration.ScopeStartup, NewLegacyBinaryMigration())
+
 	mctx := &migration.Context{
-		Component: MigrationComponent,
+		Component: migration.ScopeStartup,
 		Data:      &automa.SyncStateBag{},
 	}
 
-	// Should be able to get migrations for our component without error
-	// The migration will only apply if legacy binary exists, which it doesn't in test
-	// So we expect an empty slice (or nil), not an error
-	migrations, err := migration.GetApplicableMigrations(MigrationComponent, mctx)
+	// Should be able to get migrations for startup scope without error.
+	// The migration will only apply if the legacy binary exists, which it doesn't in CI.
+	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 	require.NoError(t, err)
-	// No legacy binary exists in test environment, so no migrations should apply
 	assert.Empty(t, migrations)
 }

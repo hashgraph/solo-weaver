@@ -72,6 +72,14 @@ type Context struct {
 	Data automa.StateBag
 }
 
+// Scope constants for migration registration.
+// Use ScopeStartup for migrations that run at every CLI invocation before any command.
+// Use ScopeBlockNode for migrations that run explicitly during block node upgrade workflows.
+const (
+	ScopeStartup   = "startup"
+	ScopeBlockNode = "block-node"
+)
+
 // Global registry of migrations per component
 var (
 	registry = make(map[string][]Migration)

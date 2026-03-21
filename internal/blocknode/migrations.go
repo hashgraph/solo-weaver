@@ -3,7 +3,6 @@
 // migrations.go provides the component-level orchestration for block node migrations.
 //
 // This file contains:
-//   - InitMigrations(): Registers all block node migrations at startup (called from root.go)
 //   - BuildMigrationWorkflow(): Builds an automa workflow for applicable migrations during upgrades
 //
 // The workflow uses a two-phase approach:
@@ -14,11 +13,13 @@
 // This avoids intermediate chart upgrades, version-swapping, and repeated
 // StatefulSet deletions when multiple storage migrations apply at once.
 //
+// All block node migrations are registered centrally in cmd/weaver/commands/root.go RegisterMigrations().
+//
 // To add a new storage migration:
 //  1. Add an OptionalStorage entry to optionalStorages in optional_storage.go
 //  2. Add the corresponding config fields to config.BlockNodeStorage
 //  3. Add the conditional section to the Go-templated values YAML files
-//  4. Register the migration in InitMigrations() below
+//  4. Register the migration in root.go RegisterMigrations()
 //
 // See docs/dev/migration-framework.md for the full guide.
 
@@ -32,16 +33,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/joomcode/errorx"
 )
-
-// ComponentBlockNode is the component name for block node migrations.
-const ComponentBlockNode = "block-node"
-
-// InitMigrations registers all block node migrations.
-// Called once at startup from root.go.
-func InitMigrations() {
-	migration.Register(ComponentBlockNode, NewVerificationStorageMigration())
-	migration.Register(ComponentBlockNode, NewPluginsStorageMigration())
-}
 
 // BuildMigrationWorkflow returns an automa workflow for executing applicable migrations.
 // Returns nil if no migrations are needed (installed version is empty or no applicable migrations).
@@ -64,14 +55,14 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 
 	// Build context
 	mctx := &migration.Context{
-		Component: ComponentBlockNode,
+		Component: migration.ScopeBlockNode,
 		Logger:    manager.logger,
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledVersion, installedVersion)
 	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockNodeInputs.ChartVersion)
 
-	migrations, err := migration.GetApplicableMigrations(ComponentBlockNode, mctx)
+	migrations, err := migration.GetApplicableMigrations(migration.ScopeBlockNode, mctx)
 	if err != nil {
 		return nil, err
 	}
