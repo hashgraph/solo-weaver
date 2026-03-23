@@ -222,7 +222,7 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 			errorMsg:    "shell metacharacters",
 		},
 		{
-			name:   "valid_empty_storage",
+			name: "valid_empty_storage",
 			config: BlockNodeConfig{
 				Storage: BlockNodeStorage{},
 			},
