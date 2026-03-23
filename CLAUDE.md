@@ -78,24 +78,42 @@ Entry point is `cmd/weaver/main.go`. Commands use [Cobra](https://github.com/spf
 
 ```
 solo-provisioner
-├── block node     # Block node lifecycle (install, check, etc.)
-├── alloy cluster  # Alloy cluster operations
-├── kube           # Kubernetes operations
-└── teleport       # Teleport integration
+├── install              # Self-install the provisioner
+├── uninstall            # Self-uninstall the provisioner
+├── kube cluster         # Kubernetes cluster (install, uninstall)
+├── block node           # Block node lifecycle (check, init, install, upgrade, reset, uninstall)
+├── teleport             # Teleport integration
+│   ├── node install     #   Node-level teleport agent
+│   └── cluster install  #   Cluster-level teleport agent
+├── alloy cluster        # Alloy observability cluster (install, uninstall)
+└── version              # Print version information
 ```
 
-Global flags: `--config`, `--profile`, `--output`. Error control flags: `--stop-on-error`, `--rollback-on-error`, `--continue-on-error`.
+Root persistent flags: `--config`, `--output`, `--version`/`-v`, `--log-level`, `--force`, `--skip-hardware-checks` (hidden).
+
+Command-specific flags (on `block`, `kube`): `--profile`. Error control flags (on workflow commands like `block node`): `--stop-on-error`, `--rollback-on-error`, `--continue-on-error`.
 
 ### Business Logic (`internal/`)
 
 Key packages:
-- `internal/workflows/` — Multi-phase orchestration (preflight → setup → deploy → verify). Workflow steps live in `internal/workflows/steps/`.
-- `internal/migration/` — Handles migration from legacy deployments
-- `internal/state/` — Application state management
-- `internal/blocknode/` — Block node provisioning logic
-- `internal/kube/` — Kubernetes operations
-- `internal/bll/` — Business logic layer
-- `internal/reality/` — Hardware detection/validation
+- `internal/workflows/` — Multi-phase orchestration (preflight → setup → deploy → verify) using the [automa](https://github.com/automa-saga/automa) framework. Workflow steps live in `internal/workflows/steps/`.
+- `internal/migration/` — Scoped migration framework (startup migrations run before every CLI invocation; block-node migrations run during upgrades). See `docs/dev/migration-framework.md`.
+- `internal/state/` — Application state management (cluster state, software state, atomic writes)
+- `internal/blocknode/` — Block node provisioning logic and storage migrations
+- `internal/kube/` — Kubernetes client and admin operations
+- `internal/bll/` — Business logic layer with subpackages: `bll/blocknode/` (install, upgrade, reset, uninstall handlers), `bll/cluster/` (cluster install handler)
+- `internal/reality/` — Hardware detection/validation (machine, cluster, block node checkers)
+- `internal/alloy/` — Grafana Alloy observability configuration and rendering
+- `internal/doctor/` — Error handling, diagnostics, and styled CLI output
+- `internal/mount/` — Linux-only mount operations (build-tagged `linux`)
+- `internal/network/` — Network configuration
+- `internal/nio/` — Network I/O utilities (stdout/stderr wrappers)
+- `internal/paths/` — Path management utilities
+- `internal/rsl/` — Runtime specification layer (machine, cluster, block node runtimes)
+- `internal/sysctl/` — System control parameter management
+- `internal/templates/` — Embedded template files (alloy, block-node, cilium, crio, kubeadm, metallb, sysctl, teleport)
+- `internal/tomlx/` — TOML extension utilities
+- `internal/version/` — Version file management (VERSION, COMMIT)
 
 ### Public Packages (`pkg/`)
 
@@ -103,10 +121,20 @@ Reusable packages with defined interfaces and generated mocks:
 - `pkg/fsx/` — Filesystem abstraction (interface + mock for testing)
 - `pkg/software/` — Software management (interface + mock)
 - `pkg/kernel/` — Kernel management (interface + mock)
-- `pkg/security/` — Security/principal management (interface + mock)
-- `pkg/helm/` — Helm chart operations
+- `pkg/security/principal/` — Security/principal management (interface + mock)
+- `pkg/helm/` — Helm chart operations (interface + mock)
 - `pkg/config/` — Configuration models (parsed via Viper)
-- `pkg/models/` — Shared data models
+- `pkg/models/` — Shared data models (profiles, paths, inputs, execution modes)
+
+Additional packages:
+- `pkg/collections/` — Data structure utilities (pairs)
+- `pkg/deps/` — Dependency management
+- `pkg/exit/` — Exit code handling
+- `pkg/hardware/` — Hardware specs, validation, and requirements
+- `pkg/os/` — OS operations (signals, swap, systemd)
+- `pkg/sanity/` — Sanity/domain checks
+- `pkg/semver/` — Semantic versioning utilities
+- `pkg/version/` — Version printing
 
 ### Mocks
 
@@ -115,6 +143,15 @@ Mocks are generated with `mockgen` from interface files. When adding a new inter
 ### Logging
 
 Uses `github.com/automa-saga/logx` (zerolog-based). Trace IDs are initialized in `main.go` and propagated via context.
+
+### Developer Documentation
+
+Detailed framework docs live in `docs/dev/`:
+- `migration-framework.md` — Migration system design and usage
+- `functionality-test-suite.md` — Testing approach and patterns
+- `golden-image.md` — VM golden image setup
+- `hidden-flags.md` — Undocumented/hidden flags reference
+- `effective-value-resolution.md` — Flag and config value resolution
 
 ## Key Conventions
 
