@@ -42,10 +42,12 @@ func init() {
 
 	// Multi-remote flags (repeatable)
 	clusterCmd.PersistentFlags().StringArrayVar(&flagPrometheusRemotes, "add-prometheus-remote", nil,
-		"Add a Prometheus remote (format: name=<name>,url=<url>,username=<username>). Can be specified multiple times. "+
+		"Add a Prometheus remote (format: name=<name>,url=<url>,username=<username>[,labelProfile=eng|ops]). Can be specified multiple times. "+
+			"Default labelProfile is 'eng' (cluster label only). "+
 			"Password is expected in K8s Secret 'grafana-alloy-secrets' under key 'PROMETHEUS_PASSWORD_<NAME>'")
 	clusterCmd.PersistentFlags().StringArrayVar(&flagLokiRemotes, "add-loki-remote", nil,
-		"Add a Loki remote (format: name=<name>,url=<url>,username=<username>). Can be specified multiple times. "+
+		"Add a Loki remote (format: name=<name>,url=<url>,username=<username>[,labelProfile=eng|ops]). Can be specified multiple times. "+
+			"Default labelProfile is 'eng' (cluster label only). "+
 			"Password is expected in K8s Secret 'grafana-alloy-secrets' under key 'LOKI_PASSWORD_<NAME>'")
 
 	// Legacy single-remote flags (kept for backward compatibility)

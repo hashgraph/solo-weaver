@@ -624,6 +624,63 @@ func TestAlloyConfig_Validate(t *testing.T) {
 			config:      AlloyConfig{},
 			expectError: false,
 		},
+		{
+			name: "valid_eng_label_profile",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1", LabelProfile: "eng"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_ops_label_profile",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1", LabelProfile: "ops"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_mixed_label_profiles",
+			config: AlloyConfig{
+				ClusterName: "lfh02-previewnet-blocknode",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "local", URL: "http://prom:9090/api/v1/write", Username: "admin", LabelProfile: "ops"},
+					{Name: "backup", URL: "http://prom2:9090/api/v1/write", Username: "admin", LabelProfile: "eng"},
+				},
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "local", URL: "http://loki:3100/loki/api/v1/push", Username: "admin", LabelProfile: "ops"},
+					{Name: "backup", URL: "http://loki2:3100/loki/api/v1/push", Username: "admin", LabelProfile: "eng"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid_prometheus_remote_unknown_label_profile",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				PrometheusRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user1", LabelProfile: "unknown"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid labelProfile",
+		},
+		{
+			name: "invalid_loki_remote_unknown_label_profile",
+			config: AlloyConfig{
+				ClusterName: "test-cluster",
+				LokiRemotes: []AlloyRemoteConfig{
+					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user1", LabelProfile: "unknown"},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid labelProfile",
+		},
 	}
 
 	for _, tt := range tests {

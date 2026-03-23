@@ -3,7 +3,7 @@
 
 prometheus.operator.servicemonitors "node_exporter" {
   namespaces = ["node-exporter"]
-  forward_to = [{{.PrometheusForwardTo}}]
+  forward_to = [{{range $i, $r := .PrometheusRemotes}}{{if $i}}, {{end}}prometheus.relabel.node_exporter_{{$r.Name}}.receiver{{end}}]
 
   clustering {
     enabled = false
@@ -21,10 +21,9 @@ prometheus.operator.servicemonitors "node_exporter" {
       values   = ["node-exporter"]
     }
   }
-
-  rule {
-    target_label = "cluster"
-    replacement  = "{{.ClusterName}}"
-  }
 }
-
+{{range .PrometheusRemotes}}
+prometheus.relabel "node_exporter_{{.Name}}" {
+  forward_to = [prometheus.remote_write.{{.Name}}.receiver]
+{{.CustomRules}}}
+{{end}}

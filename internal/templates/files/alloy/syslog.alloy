@@ -41,14 +41,15 @@ loki.relabel "syslog" {
 }
 
 loki.source.journal "syslog" {
-  forward_to = [{{.LokiForwardTo}}]
+  forward_to = [{{range $i, $r := .LokiRemotes}}{{if $i}}, {{end}}loki.relabel.syslog_{{$r.Name}}.receiver{{end}}]
 
   path = "/host/var/log/journal"
 
-  labels = {
-    cluster = "{{.ClusterName}}",
-  }
 
   relabel_rules = loki.relabel.syslog.rules
 }
-
+{{range .LokiRemotes}}
+loki.relabel "syslog_{{.Name}}" {
+  forward_to = [loki.write.{{.Name}}.receiver]
+{{.CustomRules}}}
+{{end}}

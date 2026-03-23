@@ -25,11 +25,9 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	var modules []ModuleConfig
 
 	prometheusRemotes, lokiRemotes := cb.ToTemplateRemotes()
-	prometheusForwardTo := cb.PrometheusForwardTo()
-	lokiForwardTo := cb.LokiForwardTo()
 
-	hasPrometheusRemotes := prometheusForwardTo != ""
-	hasLokiRemotes := lokiForwardTo != ""
+	hasPrometheusRemotes := len(prometheusRemotes) > 0
+	hasLokiRemotes := len(lokiRemotes) > 0
 
 	// 1. Core config (always required)
 	coreConfig, err := templates.Render(CoreTemplatePath, nil)
@@ -61,10 +59,10 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	}
 
 	// Common module data for most modules
-	moduleData := templates.AlloyModuleData{
-		ClusterName:         cb.ClusterName(),
-		PrometheusForwardTo: prometheusForwardTo,
-		LokiForwardTo:       lokiForwardTo,
+	moduleData := templates.AlloyData{
+		ClusterName:       cb.ClusterName(),
+		PrometheusRemotes: prometheusRemotes,
+		LokiRemotes:       lokiRemotes,
 	}
 
 	// 3. Agent metrics config (only if Prometheus remotes are configured)

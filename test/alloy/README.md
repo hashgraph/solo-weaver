@@ -285,6 +285,54 @@ task vm:alloy:clean
 
 ## 🔧 Advanced
 
+### Custom Profile Labels (`labelProfile`)
+
+You can attach a label profile to any remote. The profile auto-injects additional labels (e.g. `environment`, `instance_type`, `inventory_name`, `ip`) into every metric and log stream.
+
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=lfh02-previewnet-blocknode \
+  --add-prometheus-remote=name=local,url=http://$NODE_IP:9090/api/v1/write,username=admin,labelProfile=ops \
+  --add-loki-remote=name=local,url=http://$NODE_IP:3100/loki/api/v1/push,username=admin,labelProfile=ops \
+  --monitor-block-node
+```
+
+With `labelProfile=ops` and `--cluster-name=lfh02-previewnet-blocknode`, the `ops` profile derives the following labels:
+
+| Label | Value | Source |
+|-------|-------|--------|
+| `cluster` | `lfh02-previewnet-blocknode` | Always set (from `--cluster-name`) |
+| `environment` | `previewnet` | From `--profile` (deploy profile) |
+| `instance_type` | `lfh` | Alphabetic prefix of first cluster name segment |
+| `inventory_name` | `lfh02-previewnet-blocknode` | Full cluster name |
+| `ip` | `<machine IP>` | Auto-detected host IP address |
+
+#### Verify Profile Labels in Grafana
+
+**Prometheus queries** — check that custom labels appear on metrics:
+```promql
+# All metrics with custom labels from the ops profile
+up{cluster="lfh02-previewnet-blocknode", instance_type="lfh"}
+
+# Node metrics with environment label
+node_cpu_seconds_total{environment="previewnet", ip="10.0.0.1"}
+
+# Filter by inventory_name
+alloy_build_info{inventory_name="lfh02-previewnet-blocknode"}
+```
+
+**Loki queries** — check that custom labels appear on log streams:
+```logql
+# System logs with profile labels
+{cluster="lfh02-previewnet-blocknode", instance_type="lfh"}
+
+# Filter by environment
+{environment="previewnet"} | priority = "err"
+```
+
+> **Note:** If `labelProfile` is omitted from a remote, the default `eng` profile is used, which applies only the `cluster` label.
+> Each remote can have its own `labelProfile` independently — for example, one remote with `labelProfile=ops` and another without.
+
 ### Multiple Remote Endpoints
 
 You can configure multiple Prometheus and Loki remote endpoints for redundancy or multi-tenancy:

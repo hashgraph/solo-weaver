@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/logx"
 
+	"github.com/hashgraph/solo-weaver/internal/alloy/labels"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 )
@@ -160,9 +161,10 @@ type BlockNodeConfig struct {
 //   - Prometheus: PROMETHEUS_PASSWORD_<NAME>
 //   - Loki: LOKI_PASSWORD_<NAME>
 type AlloyRemoteConfig struct {
-	Name     string `yaml:"name" json:"name"`         // Unique identifier for this remote
-	URL      string `yaml:"url" json:"url"`           // Remote write URL
-	Username string `yaml:"username" json:"username"` // Basic auth username
+	Name         string `yaml:"name" json:"name"`                 // Unique identifier for this remote
+	URL          string `yaml:"url" json:"url"`                   // Remote write URL
+	Username     string `yaml:"username" json:"username"`         // Basic auth username
+	LabelProfile string `yaml:"labelProfile" json:"labelProfile"` // Label profile name (e.g. ops) for auto-derived labels
 }
 
 // AlloyConfig represents the `alloy` configuration block for observability.
@@ -281,6 +283,22 @@ func (c *AlloyConfig) Validate() error {
 		if remote.Username != "" {
 			if err := sanity.ValidateIdentifier(remote.Username); err != nil {
 				return errorx.IllegalArgument.Wrap(err, "loki remote[%d] (%s): invalid username", i, remote.Name)
+			}
+		}
+	}
+
+	// Validate label profiles on each remote.
+	for i, remote := range c.PrometheusRemotes {
+		if remote.LabelProfile != "" {
+			if !labels.IsValid(remote.LabelProfile) {
+				return errorx.IllegalArgument.New("prometheus remote[%d] (%s): invalid labelProfile %q, valid values are: %s", i, remote.Name, remote.LabelProfile, strings.Join(labels.ValidNames(), ", "))
+			}
+		}
+	}
+	for i, remote := range c.LokiRemotes {
+		if remote.LabelProfile != "" {
+			if !labels.IsValid(remote.LabelProfile) {
+				return errorx.IllegalArgument.New("loki remote[%d] (%s): invalid labelProfile %q, valid values are: %s", i, remote.Name, remote.LabelProfile, strings.Join(labels.ValidNames(), ", "))
 			}
 		}
 	}
