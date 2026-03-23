@@ -212,9 +212,12 @@ func (c *BlockNodeConfig) Validate() error {
 		}
 	}
 
-	// Validate storage paths
-	if err := c.Storage.Validate(); err != nil {
-		return err
+	// Validate storage paths only when storage is configured in config.
+	// When empty, paths will be supplied via CLI flags and validated in BlockNodeInputs.Validate().
+	if !c.Storage.IsEmpty() {
+		if err := c.Storage.Validate(); err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -222,11 +222,99 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 			errorMsg:    "shell metacharacters",
 		},
 		{
-			name: "invalid_empty_optional_fields",
+			name:   "valid_empty_storage",
 			config: BlockNodeConfig{
 				Storage: BlockNodeStorage{},
 			},
+			expectError: false,
+		},
+		{
+			name: "valid_config_with_individual_paths_no_base",
+			config: BlockNodeConfig{
+				Storage: BlockNodeStorage{
+					ArchivePath: "/mnt/archive",
+					LivePath:    "/mnt/live",
+					LogPath:     "/mnt/logs",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid_config_partial_individual_paths",
+			config: BlockNodeConfig{
+				Storage: BlockNodeStorage{
+					ArchivePath: "/mnt/archive",
+					LivePath:    "/mnt/live",
+					// LogPath missing
+				},
+			},
 			expectError: true,
+			errorMsg:    "either basePath must be provided",
+		},
+		{
+			name: "invalid_config_with_only_sizes_in_storage",
+			config: BlockNodeConfig{
+				Namespace:    "block-node",
+				ChartVersion: "0.30.0",
+				Storage: BlockNodeStorage{
+					LiveSize:    "100Gi",
+					ArchiveSize: "4Ti",
+					LogSize:     "10Gi",
+				},
+			},
+			expectError: true,
+			errorMsg:    "either basePath must be provided",
+		},
+		{
+			name: "valid_config_base_and_individual_paths",
+			config: BlockNodeConfig{
+				Storage: BlockNodeStorage{
+					BasePath:    "/mnt/storage",
+					ArchivePath: "/mnt/storage/archive",
+					LivePath:    "/mnt/storage/live",
+					LogPath:     "/mnt/storage/logs",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_config_individual_paths_outside_base",
+			config: BlockNodeConfig{
+				Storage: BlockNodeStorage{
+					BasePath:    "/mnt/fast-storage",
+					ArchivePath: "/mnt/slow-storage/archive",
+					LivePath:    "/mnt/fast-storage/live",
+					LogPath:     "/mnt/logs-volume/logs",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_config_base_path_only_with_sizes",
+			config: BlockNodeConfig{
+				Storage: BlockNodeStorage{
+					BasePath:    "/mnt/storage",
+					LiveSize:    "100Gi",
+					ArchiveSize: "4Ti",
+					LogSize:     "10Gi",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_config_individual_paths_with_sizes",
+			config: BlockNodeConfig{
+				Storage: BlockNodeStorage{
+					ArchivePath:      "/mnt/archive",
+					LivePath:         "/mnt/live",
+					LogPath:          "/mnt/logs",
+					LiveSize:         "100Gi",
+					ArchiveSize:      "4Ti",
+					LogSize:          "10Gi",
+					VerificationSize: "5Gi",
+				},
+			},
+			expectError: false,
 		},
 	}
 
