@@ -9,16 +9,9 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"helm.sh/helm/v3/pkg/cli/values"
-)
-
-const (
-	MetricsServerNamespace    = "kube-system"
-	MetricsServerRelease      = "metrics-server"
-	MetricsServerChart        = "metrics-server/metrics-server"
-	MetricsServerChartVersion = "3.13.0"
-	MetricsServerRepo         = "https://kubernetes-sigs.github.io/metrics-server"
 )
 
 func DeployMetricsServer(valueOptions *values.Options) *automa.WorkflowBuilder {
@@ -56,7 +49,7 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(MetricsServerRelease, MetricsServerNamespace)
+			isInstalled, err := hm.IsInstalled(deps.METRICS_SERVER_RELEASE, deps.METRICS_SERVER_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -67,23 +60,23 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(MetricsServerRelease, MetricsServerRepo, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(deps.METRICS_SERVER_RELEASE, deps.METRICS_SERVER_REPO, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			// if chartVersion doesn't start with "v", prepend it
-			chartVersion := MetricsServerChartVersion
+			chartVersion := deps.METRICS_SERVER_VERSION
 			if !strings.HasPrefix(chartVersion, "v") {
 				chartVersion = "v" + chartVersion
 			}
 
 			_, err = hm.InstallChart(
 				ctx,
-				MetricsServerRelease,
-				MetricsServerChart,
+				deps.METRICS_SERVER_RELEASE,
+				deps.METRICS_SERVER_CHART,
 				chartVersion,
-				MetricsServerNamespace,
+				deps.METRICS_SERVER_NAMESPACE,
 				helm.InstallChartOptions{
 					ValueOpts:       valueOptions,
 					CreateNamespace: true,
@@ -112,7 +105,7 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(MetricsServerRelease, MetricsServerNamespace)
+			err = hm.UninstallChart(deps.METRICS_SERVER_RELEASE, deps.METRICS_SERVER_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

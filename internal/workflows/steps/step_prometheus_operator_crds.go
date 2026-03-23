@@ -10,18 +10,15 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/joomcode/errorx"
 )
 
 const (
-	PrometheusOperatorCRDsNamespace = "grafana-alloy"
-	PrometheusOperatorCRDsRelease   = "prometheus-operator-crds"
-	PrometheusOperatorCRDsChart     = "oci://ghcr.io/prometheus-community/charts/prometheus-operator-crds"
-	PrometheusOperatorCRDsVersion   = "24.0.1"
-	SetupPrometheusCRDsStepId       = "setup-prometheus-crds"
-	InstallPrometheusCRDsStepId     = "install-prometheus-crds"
-	IsPrometheusCRDsReadyStepId     = "is-prometheus-crds-ready"
+	SetupPrometheusCRDsStepId   = "setup-prometheus-crds"
+	InstallPrometheusCRDsStepId = "install-prometheus-crds"
+	IsPrometheusCRDsReadyStepId = "is-prometheus-crds-ready"
 )
 
 // SetupPrometheusOperatorCRDs returns a workflow builder that sets up Prometheus Operator CRDs.
@@ -53,7 +50,7 @@ func installPrometheusOperatorCRDs() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(PrometheusOperatorCRDsRelease, PrometheusOperatorCRDsNamespace)
+			isInstalled, err := hm.IsInstalled(deps.PROMETHEUS_OPERATOR_CRDS_RELEASE, deps.PROMETHEUS_OPERATOR_CRDS_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -66,10 +63,10 @@ func installPrometheusOperatorCRDs() automa.Builder {
 
 			_, err = hm.InstallChart(
 				ctx,
-				PrometheusOperatorCRDsRelease,
-				PrometheusOperatorCRDsChart,
-				PrometheusOperatorCRDsVersion,
-				PrometheusOperatorCRDsNamespace,
+				deps.PROMETHEUS_OPERATOR_CRDS_RELEASE,
+				deps.PROMETHEUS_OPERATOR_CRDS_CHART,
+				deps.PROMETHEUS_OPERATOR_CRDS_VERSION,
+				deps.PROMETHEUS_OPERATOR_CRDS_NAMESPACE,
 				helm.InstallChartOptions{
 					CreateNamespace: true,
 					Atomic:          true,
@@ -97,7 +94,7 @@ func installPrometheusOperatorCRDs() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(PrometheusOperatorCRDsRelease, PrometheusOperatorCRDsNamespace)
+			err = hm.UninstallChart(deps.PROMETHEUS_OPERATOR_CRDS_RELEASE, deps.PROMETHEUS_OPERATOR_CRDS_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -182,7 +179,7 @@ func uninstallPrometheusOperatorCRDs() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(PrometheusOperatorCRDsRelease, PrometheusOperatorCRDsNamespace)
+			isInstalled, err := hm.IsInstalled(deps.PROMETHEUS_OPERATOR_CRDS_RELEASE, deps.PROMETHEUS_OPERATOR_CRDS_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -192,7 +189,7 @@ func uninstallPrometheusOperatorCRDs() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			err = hm.UninstallChart(PrometheusOperatorCRDsRelease, PrometheusOperatorCRDsNamespace)
+			err = hm.UninstallChart(deps.PROMETHEUS_OPERATOR_CRDS_RELEASE, deps.PROMETHEUS_OPERATOR_CRDS_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

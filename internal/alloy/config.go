@@ -14,19 +14,8 @@ import (
 
 const (
 	// Kubernetes resource names
-	Namespace     = "grafana-alloy"
-	Release       = "grafana-alloy"
-	Chart         = "grafana/alloy"
-	Version       = "1.4.0"
-	Repo          = "https://grafana.github.io/helm-charts"
 	ConfigMapName = "grafana-alloy-cm"
 	SecretsName   = "grafana-alloy-secrets"
-
-	// Node exporter settings
-	NodeExporterNamespace = "node-exporter"
-	NodeExporterRelease   = "node-exporter"
-	NodeExporterChart     = "oci://registry-1.docker.io/bitnamicharts/node-exporter"
-	NodeExporterVersion   = "4.5.19"
 
 	// Template paths
 	CoreTemplatePath            = "files/alloy/core.alloy"

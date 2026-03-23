@@ -14,6 +14,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -108,17 +109,17 @@ func preCheckAlloy() automa.Builder {
 				// Verify that required K8s secrets exist with expected keys
 				requiredSecrets := cb.RequiredSecrets()
 				for secretName, expectedKeys := range requiredSecrets {
-					actualKeys, err := k.GetSecretKeys(ctx, alloy.Namespace, secretName)
+					actualKeys, err := k.GetSecretKeys(ctx, deps.ALLOY_NAMESPACE, secretName)
 					if err != nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("failed to read K8s Secret %q in namespace %q: %w", secretName, alloy.Namespace, err)))
+							fmt.Errorf("failed to read K8s Secret %q in namespace %q: %w", secretName, deps.ALLOY_NAMESPACE, err)))
 					}
 					if actualKeys == nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
 							fmt.Errorf("K8s Secret %q not found in namespace %q; expected keys: %v. "+
 								"Create the secret before installing Alloy, e.g.: "+
 								"kubectl create secret generic %s --namespace=%s --from-literal=<KEY>=<password>",
-								secretName, alloy.Namespace, expectedKeys, secretName, alloy.Namespace)))
+								secretName, deps.ALLOY_NAMESPACE, expectedKeys, secretName, deps.ALLOY_NAMESPACE)))
 					}
 
 					// Check that all expected keys are present in the secret
@@ -135,10 +136,10 @@ func preCheckAlloy() automa.Builder {
 					if len(missingKeys) > 0 {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
 							fmt.Errorf("K8s Secret %q in namespace %q is missing required keys: %v; found keys: %v",
-								secretName, alloy.Namespace, missingKeys, actualKeys)))
+								secretName, deps.ALLOY_NAMESPACE, missingKeys, actualKeys)))
 					}
 
-					l.Info().Str("name", secretName).Str("namespace", alloy.Namespace).Strs("expectedKeys", expectedKeys).Msg("Required K8s Secret found")
+					l.Info().Str("name", secretName).Str("namespace", deps.ALLOY_NAMESPACE).Strs("expectedKeys", expectedKeys).Msg("Required K8s Secret found")
 				}
 
 				// Check Prometheus remote endpoints reachability
@@ -232,7 +233,7 @@ func installNodeExporter() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(alloy.NodeExporterRelease, alloy.NodeExporterNamespace)
+			isInstalled, err := hm.IsInstalled(deps.NODE_EXPORTER_RELEASE, deps.NODE_EXPORTER_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -259,10 +260,10 @@ func installNodeExporter() automa.Builder {
 
 			_, err = hm.InstallChart(
 				ctx,
-				alloy.NodeExporterRelease,
-				alloy.NodeExporterChart,
-				alloy.NodeExporterVersion,
-				alloy.NodeExporterNamespace,
+				deps.NODE_EXPORTER_RELEASE,
+				deps.NODE_EXPORTER_CHART,
+				deps.NODE_EXPORTER_VERSION,
+				deps.NODE_EXPORTER_NAMESPACE,
 				helm.InstallChartOptions{
 					ValueOpts: &values.Options{
 						Values: helmValues,
@@ -293,7 +294,7 @@ func installNodeExporter() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(alloy.NodeExporterRelease, alloy.NodeExporterNamespace)
+			err = hm.UninstallChart(deps.NODE_EXPORTER_RELEASE, deps.NODE_EXPORTER_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -322,7 +323,7 @@ func isNodeExporterPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for node-exporter pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, alloy.NodeExporterNamespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "node-exporter"})
+			err = k.WaitForResources(ctx, kube.KindPod, deps.NODE_EXPORTER_NAMESPACE, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "node-exporter"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -397,7 +398,7 @@ func installAlloy() automa.Builder {
 			meta := map[string]string{}
 
 			// Check if already installed to provide better logging and track for rollback
-			isInstalled, err := hm.IsInstalled(alloy.Release, alloy.Namespace)
+			isInstalled, err := hm.IsInstalled(deps.ALLOY_RELEASE, deps.ALLOY_NAMESPACE)
 			if err != nil {
 				l.Warn().Err(err).Msg("Failed to check if Grafana Alloy is installed, proceeding with install/upgrade")
 			}
@@ -411,7 +412,7 @@ func installAlloy() automa.Builder {
 				l.Info().Msg("Installing Grafana Alloy")
 			}
 
-			_, err = hm.AddRepo("grafana", alloy.Repo, helm.RepoAddOptions{})
+			_, err = hm.AddRepo("grafana", deps.ALLOY_REPO, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -440,10 +441,10 @@ func installAlloy() automa.Builder {
 			// This will install if not present, or upgrade if already installed
 			_, err = hm.DeployChart(
 				ctx,
-				alloy.Release,
-				alloy.Chart,
-				alloy.Version,
-				alloy.Namespace,
+				deps.ALLOY_RELEASE,
+				deps.ALLOY_CHART,
+				deps.ALLOY_VERSION,
+				deps.ALLOY_NAMESPACE,
 				helm.DeployChartOptions{
 					ValueOpts: &values.Options{
 						Values: helmValues,
@@ -480,7 +481,7 @@ func installAlloy() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(alloy.Release, alloy.Namespace)
+			err = hm.UninstallChart(deps.ALLOY_RELEASE, deps.ALLOY_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -724,7 +725,7 @@ func isAlloyPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for alloy pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, alloy.Namespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "grafana-alloy"})
+			err = k.WaitForResources(ctx, kube.KindPod, deps.ALLOY_NAMESPACE, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "grafana-alloy"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -755,7 +756,7 @@ func uninstallAlloy() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(alloy.Release, alloy.Namespace)
+			isInstalled, err := hm.IsInstalled(deps.ALLOY_RELEASE, deps.ALLOY_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -765,7 +766,7 @@ func uninstallAlloy() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			err = hm.UninstallChart(alloy.Release, alloy.Namespace)
+			err = hm.UninstallChart(deps.ALLOY_RELEASE, deps.ALLOY_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -796,7 +797,7 @@ func uninstallNodeExporter() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(alloy.NodeExporterRelease, alloy.NodeExporterNamespace)
+			isInstalled, err := hm.IsInstalled(deps.NODE_EXPORTER_RELEASE, deps.NODE_EXPORTER_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -806,7 +807,7 @@ func uninstallNodeExporter() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			err = hm.UninstallChart(alloy.NodeExporterRelease, alloy.NodeExporterNamespace)
+			err = hm.UninstallChart(deps.NODE_EXPORTER_RELEASE, deps.NODE_EXPORTER_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

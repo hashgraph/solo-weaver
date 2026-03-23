@@ -23,11 +23,6 @@ import (
 )
 
 const (
-	TeleportNamespace             = "teleport-agent"
-	TeleportRelease               = "teleport-agent"
-	TeleportChart                 = "teleport/teleport-kube-agent"
-	TeleportRepo                  = "https://charts.releases.teleport.dev"
-	TeleportDefaultVersion        = deps.TELEPORT_VERSION
 	SetupTeleportStepId           = "setup-teleport"
 	InstallTeleportStepId         = "install-teleport"
 	CreateTeleportNamespaceStepId = "create-teleport-namespace"
@@ -252,7 +247,7 @@ func CreateTeleportNamespace() automa.Builder {
 			// Create namespace manifest using template
 			namespaceManifestPath := path.Join(models.Paths().TempDir, "teleport-namespace.yaml")
 			namespaceManifest, err := templates.Render("files/teleport/namespace.yaml", map[string]string{
-				"Namespace": TeleportNamespace,
+				"Namespace": deps.TELEPORT_NAMESPACE,
 			})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
@@ -296,7 +291,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(TeleportRelease, TeleportNamespace)
+			isInstalled, err := hm.IsInstalled(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -307,7 +302,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo("teleport", TeleportRepo, helm.RepoAddOptions{})
+			_, err = hm.AddRepo("teleport", deps.TELEPORT_REPO, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -315,17 +310,17 @@ func InstallTeleportKubeAgent() automa.Builder {
 			// Determine chart version
 			chartVersion := cfg.Version
 			if chartVersion == "" {
-				chartVersion = TeleportDefaultVersion
+				chartVersion = deps.TELEPORT_VERSION
 			}
 
 			l.Info().Str("path", cfg.ValuesFile).Msg("Using Teleport values file")
 
 			_, err = hm.InstallChart(
 				ctx,
-				TeleportRelease,
-				TeleportChart,
+				deps.TELEPORT_RELEASE,
+				deps.TELEPORT_CHART,
 				chartVersion,
-				TeleportNamespace,
+				deps.TELEPORT_NAMESPACE,
 				helm.InstallChartOptions{
 					ValueOpts: &values.Options{
 						ValueFiles: []string{cfg.ValuesFile},
@@ -356,7 +351,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(TeleportRelease, TeleportNamespace)
+			err = hm.UninstallChart(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -386,7 +381,7 @@ func IsTeleportPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for teleport pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, TeleportNamespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "teleport-agent"})
+			err = k.WaitForResources(ctx, kube.KindPod, deps.TELEPORT_NAMESPACE, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "teleport-agent"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
