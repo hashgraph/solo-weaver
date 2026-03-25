@@ -301,6 +301,44 @@ func TestRenderModularConfigs_MixedLabelProfiles(t *testing.T) {
 	assert.Contains(t, agentMetrics, `prometheus.relabel "alloy_backup"`)
 }
 
+func TestRenderBlockNodeLogProcessingPipeline(t *testing.T) {
+	cfg := models.AlloyConfig{
+		ClusterName:      "test-cluster",
+		MonitorBlockNode: true,
+		PrometheusRemotes: []models.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
+		},
+		LokiRemotes: []models.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
+		},
+	}
+
+	cb, err := NewConfigBuilder(cfg, "")
+	require.NoError(t, err)
+	modules, err := RenderModularConfigs(cb)
+	require.NoError(t, err)
+
+	var blockNodeContent string
+	for _, m := range modules {
+		if m.Name == "block-node" {
+			blockNodeContent = m.Content
+			break
+		}
+	}
+	require.NotEmpty(t, blockNodeContent, "block-node module should exist")
+
+	// Verify loki.process component exists with all expected stages
+	assert.Contains(t, blockNodeContent, `loki.process "block_node_server"`)
+	assert.Contains(t, blockNodeContent, "stage.multiline")
+	assert.Contains(t, blockNodeContent, "stage.regex")
+	assert.Contains(t, blockNodeContent, "stage.timestamp")
+	assert.Contains(t, blockNodeContent, "stage.labels")
+
+	// Verify the pipeline wiring: podlogs → process → relabel
+	assert.Contains(t, blockNodeContent, "loki.process.block_node_server.receiver")
+	assert.Contains(t, blockNodeContent, "loki.relabel.block_node_server.receiver")
+}
+
 func TestConfigMapManifest(t *testing.T) {
 	modules := []ModuleConfig{
 		{Name: "core", Filename: "models.alloy", Content: "// core config"},

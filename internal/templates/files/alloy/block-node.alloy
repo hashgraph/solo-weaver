@@ -28,6 +28,33 @@ prometheus.relabel "block_node_metrics_{{.Name}}" {
 {{.CustomRules}}}
 {{end}}
 
+loki.process "block_node_server" {
+  forward_to = [loki.relabel.block_node_server.receiver]
+
+  // Aggregate multiline stack traces before parsing
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2}"
+    max_wait_time = "3s"
+  }
+
+  // Parse JVM System.Logger format:
+  // <timestamp> <LEVEL> [<thread>] <logger> - <message>
+  stage.regex {
+    expression = "^(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) (?P<level>\\w+) \\[(?P<thread>[^\\]]+)\\] (?P<logger>\\S+) - (?P<message>.*)"
+  }
+
+  // Use application timestamp instead of container capture time
+  stage.timestamp {
+    source = "timestamp"
+    format = "2006-01-02 15:04:05.000"
+  }
+
+  // Promote level to a label for filtering in Grafana
+  stage.labels {
+    values = { level = "" }
+  }
+}
+
 loki.relabel "block_node_server" {
   forward_to = [{{range $i, $r := .LokiRemotes}}{{if $i}}, {{end}}loki.relabel.block_node_logs_{{$r.Name}}.receiver{{end}}]
 }
@@ -38,7 +65,7 @@ loki.relabel "block_node_logs_{{.Name}}" {
 {{end}}
 
 loki.source.podlogs "block_node_server" {
-  forward_to = [loki.relabel.block_node_server.receiver]
+  forward_to = [loki.process.block_node_server.receiver]
 
   clustering {
     enabled = false
