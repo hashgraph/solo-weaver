@@ -45,10 +45,15 @@ func initActionConfigList(settings *cli.EnvSettings, debug action.DebugLog, allN
 }
 
 func newRegistryClient(settings *cli.EnvSettings) (*registry.Client, error) {
+	writer := io.Writer(io.Discard)
+	if settings.Debug {
+		writer = os.Stderr
+	}
+
 	opts := []registry.ClientOption{
 		registry.ClientOptDebug(settings.Debug),
 		registry.ClientOptEnableCache(true),
-		registry.ClientOptWriter(io.Discard),
+		registry.ClientOptWriter(writer),
 		registry.ClientOptCredentialsFile(settings.RegistryConfig),
 	}
 

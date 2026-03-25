@@ -47,8 +47,7 @@ func TestTuiLogHook_FiltersByLevel(t *testing.T) {
 		{"info forwards", zerolog.InfoLevel, 0, true},
 		{"warn forwards", zerolog.WarnLevel, 0, true},
 		{"debug skipped at level 0", zerolog.DebugLevel, 0, false},
-		{"debug skipped at level 1", zerolog.DebugLevel, 1, false},
-		{"debug forwards at level 2", zerolog.DebugLevel, 2, true},
+		{"debug forwards at level 1", zerolog.DebugLevel, 1, true},
 		{"error skipped", zerolog.ErrorLevel, 0, false},
 		{"fatal skipped", zerolog.FatalLevel, 0, false},
 		{"trace skipped", zerolog.TraceLevel, 0, false},
@@ -112,7 +111,7 @@ func TestFallbackLogHook_FiltersByLevel(t *testing.T) {
 		{"info forwards", zerolog.InfoLevel, 0, true},
 		{"warn forwards", zerolog.WarnLevel, 0, true},
 		{"debug skipped at level 0", zerolog.DebugLevel, 0, false},
-		{"debug forwards at level 2", zerolog.DebugLevel, 2, true},
+		{"debug forwards at level 1", zerolog.DebugLevel, 1, true},
 		{"error skipped", zerolog.ErrorLevel, 0, false},
 	}
 
@@ -182,7 +181,7 @@ func (h *testableHook) run(level zerolog.Level, message string) {
 	case zerolog.InfoLevel, zerolog.WarnLevel:
 		// forward
 	case zerolog.DebugLevel:
-		if VerboseLevel < 2 {
+		if VerboseLevel < 1 {
 			return
 		}
 	default:

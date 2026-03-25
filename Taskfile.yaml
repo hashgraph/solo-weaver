@@ -1675,6 +1675,7 @@ tasks:
           -L 9090:localhost:9090 \
           -L 3100:localhost:3100 \
           -L 3000:localhost:3000 \
+          -L 12345:localhost:12345 \
           {{.VM_USER}}@$VM_IP \
           'echo "✅ Port forwarding active. Press Ctrl+C to stop..." && tail -f /dev/null'
 

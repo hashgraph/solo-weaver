@@ -41,7 +41,7 @@ var checkCmd = &cobra.Command{
 			Str("profile", flagProfile).
 			Msg("Running preflight checks for Hedera Block Node")
 
-		common.RunWorkflow(cmd.Context(), workflows.NewBlockNodePreflightCheckWorkflow(flagProfile))
+		common.RunBuilderWorkflow(cmd.Context(), workflows.NewBlockNodePreflightCheckWorkflow(flagProfile))
 
 		logx.As().Info().Msg("Node preflight checks completed successfully for block node")
 		return nil

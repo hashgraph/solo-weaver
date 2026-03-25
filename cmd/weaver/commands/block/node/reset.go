@@ -49,7 +49,7 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			return err
 		}
 
-		common.RunHandlerWorkflow(cmd.Context(), func() (*automa.Report, error) {
+		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 			return handler.HandleIntent(cmd.Context(), intent, *inputs)
 		})
 

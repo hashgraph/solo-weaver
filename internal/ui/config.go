@@ -6,19 +6,32 @@
 //
 // Global flags (set from root command):
 //
-//	VerboseLevel – controls output detail: 0=compact, 1=completions only, 2=full detail, 3=unformatted.
+//	VerboseLevel    – controls output detail: 0=compact, 1=verbose.
+//	NonInteractive  – disables TUI, outputs raw zerolog for CI/pipelines.
 package ui
 
-// VerboseLevel controls output verbosity. Set by the -V count flag.
+import "os"
+
+// VerboseLevel controls output verbosity. Set by the -V flag.
 //
 //	0 (default) — collapsed phases with progress bar + current step name
-//	1 (-V)      — completion lines only (✓/✗/⊘), no start lines or transient detail
-//	2 (-VV)     — all steps (start + completion) + detail lines + version info + full error stacktraces
-//	3 (-VVV)    — unformatted: no TUI/fallback, zerolog writes directly to the console
+//	1 (-V)      — all steps (start + completion) + transient detail + version info
 var VerboseLevel int
 
-// IsUnformatted returns true when verbosity is high enough (-VVV) to bypass
-// all output formatting and let zerolog write directly to the console.
+// NonInteractive disables the TUI and outputs raw zerolog lines. Set by --non-interactive.
+// Intended for CI pipelines and machine-readable output.
+var NonInteractive bool
+
+// IsUnformatted returns true when the TUI should be bypassed and zerolog
+// writes directly to the console. This is the case when --non-interactive is
+// set OR when stdout is not a terminal (CI, pipes, redirected output).
 func IsUnformatted() bool {
-	return VerboseLevel >= 3
+	if NonInteractive {
+		return true
+	}
+	stat, err := os.Stdout.Stat()
+	if err != nil {
+		return true
+	}
+	return stat.Mode()&os.ModeCharDevice == 0
 }

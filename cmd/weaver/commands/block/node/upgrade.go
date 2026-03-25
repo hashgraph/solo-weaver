@@ -44,7 +44,7 @@ var (
 				return err
 			}
 
-			common.RunHandlerWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 				return handler.HandleIntent(cmd.Context(), intent, *inputs)
 			})
 

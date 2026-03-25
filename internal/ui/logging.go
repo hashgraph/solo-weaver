@@ -19,7 +19,7 @@ import (
 const (
 	// detailThrottleInterval is the minimum time between consecutive
 	// detail sends. This prevents rapid-fire log messages from
-	// overwhelming the render loop (TUI) or producing flicker (fallback).
+	// overwhelming the TUI render loop or producing flicker.
 	detailThrottleInterval = 80 * time.Millisecond
 
 	// detailMaxLen is the maximum character length for a detail message
@@ -28,7 +28,7 @@ const (
 )
 
 // logHook is a zerolog.Hook that forwards log messages as detail text.
-// Used by both TUI (sends StepDetailMsg) and fallback (calls onDetail callback).
+// Used by the TUI to forward log messages as StepDetailMsg.
 // It filters by level, throttles rapid sends, and sanitizes messages.
 type logHook struct {
 	onDetail func(string)
@@ -37,7 +37,7 @@ type logHook struct {
 }
 
 // Run implements zerolog.Hook. It forwards Info and Warn level messages as
-// detail text. Debug messages are included only at VerboseLevel >= 2.
+// detail text. Debug messages are included only at VerboseLevel >= 1.
 // Error/Fatal/Panic levels are not forwarded — they surface via notify callbacks.
 func (h *logHook) Run(_ *zerolog.Event, level zerolog.Level, message string) {
 	if message == "" {
@@ -48,25 +48,22 @@ func (h *logHook) Run(_ *zerolog.Event, level zerolog.Level, message string) {
 	case zerolog.InfoLevel, zerolog.WarnLevel:
 		// always forward
 	case zerolog.DebugLevel:
-		if VerboseLevel < 2 {
+		if VerboseLevel < 1 {
 			return
 		}
 	default:
 		return
 	}
 
-	// Throttle rapid messages at levels 0–1 (where detail is transient/inline)
-	// to prevent flicker. At level 2+ detail lines are permanent, so no throttle.
-	if VerboseLevel < 2 {
-		h.mu.Lock()
-		now := time.Now()
-		if now.Sub(h.lastSend) < detailThrottleInterval {
-			h.mu.Unlock()
-			return
-		}
-		h.lastSend = now
+	// Throttle rapid messages (detail is always transient) to prevent flicker.
+	h.mu.Lock()
+	now := time.Now()
+	if now.Sub(h.lastSend) < detailThrottleInterval {
 		h.mu.Unlock()
+		return
 	}
+	h.lastSend = now
+	h.mu.Unlock()
 
 	detail := sanitizeDetail(message)
 	if detail == "" {
@@ -85,11 +82,6 @@ func newTUILogHook(program *tea.Program) *logHook {
 	}
 }
 
-// newFallbackLogHook creates a hook that forwards log messages via a callback.
-func newFallbackLogHook(onDetail func(string)) *logHook {
-	return &logHook{onDetail: onDetail}
-}
-
 // sanitizeDetail cleans and truncates a log message for TUI display.
 func sanitizeDetail(msg string) string {
 	// Strip newlines and collapse whitespace.
@@ -105,8 +97,7 @@ func sanitizeDetail(msg string) string {
 }
 
 // newFileOnlyLogger creates a zerolog.Logger that writes only to a log file
-// (no ConsoleWriter). This is the shared core of SuppressConsoleLogging and
-// SuppressConsoleLoggingForFallback.
+// (no ConsoleWriter). Used by SuppressConsoleLogging.
 func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 	fileWriter := &lumberjack.Logger{
 		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
@@ -143,18 +134,5 @@ func SuppressConsoleLogging(cfg logx.LoggingConfig, program ...*tea.Program) {
 	}
 
 	// Replace the global logx logger in-place.
-	*logx.As() = logger
-}
-
-// SuppressConsoleLoggingForFallback replaces the global logx logger with a
-// file-only writer and attaches a fallbackLogHook that forwards log messages
-// as transient detail text via the provided callback.
-func SuppressConsoleLoggingForFallback(cfg logx.LoggingConfig, onDetail func(string)) {
-	logger := newFileOnlyLogger(cfg)
-
-	if onDetail != nil {
-		logger = logger.Hook(newFallbackLogHook(onDetail))
-	}
-
 	*logx.As() = logger
 }

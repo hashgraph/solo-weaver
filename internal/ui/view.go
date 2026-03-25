@@ -38,18 +38,24 @@ var (
 // View renders the TUI output. The layout depends on VerboseLevel:
 //
 //	0 — collapsed phases with progress bar + current step
-//	1 — completion lines only (✓/✗/⊘)
-//	2 — all steps (start + completion) + detail lines under running step
+//	1 (-V) — all steps visible with transient detail text
 func (m Model) View() string {
 	var b strings.Builder
-	header := RenderVersionHeader()
-	if header != "" {
-		b.WriteString(header)
-	} else {
+	if VerboseLevel < 1 {
 		b.WriteString("\n")
 	}
 
+	prevAnimating := false
 	for _, ph := range m.phases {
+		// At level 1+, completed phases were already printed above the TUI
+		// via program.Println in the handler — only show running phases.
+		if VerboseLevel >= 1 && ph.status != statusRunning {
+			continue
+		}
+		// Wait for the previous phase's completion animation before showing the next.
+		if ph.status == statusRunning && prevAnimating {
+			continue
+		}
 		// Unnamed default phases (e.g. self-install) always expand to show
 		// individual steps — there is no phase header to collapse into.
 		if ph.name == "" || VerboseLevel >= 1 {
@@ -57,10 +63,15 @@ func (m Model) View() string {
 		} else {
 			b.WriteString(m.renderPhaseCompact(ph))
 		}
+		// Detect if this completed phase is still animating its progress bar fill.
+		if ph.status == statusSuccess && !m.done && !ph.completedAt.IsZero() {
+			fill := ph.completedSteps + int(time.Since(ph.completedAt)/(15*time.Millisecond))
+			prevAnimating = fill < progressBarWidth
+		}
 	}
 
-	if m.weaving != "" && !m.isAnyStepRunning() {
-		b.WriteString(fmt.Sprintf("    %s\n", subDetailStyle.Render(m.weaving)))
+	if m.backgroundDetail != "" && !m.isAnyStepRunning() {
+		b.WriteString(fmt.Sprintf("    %s\n", subDetailStyle.Render(m.backgroundDetail)))
 	}
 
 	if !m.done {
@@ -78,7 +89,16 @@ func (m Model) renderPhaseCompact(ph phaseEntry) string {
 
 	switch ph.status {
 	case statusSuccess:
-		b.WriteString(fmt.Sprintf("  %s %s %s\n", successIcon, name, durationStyle.Render(dur)))
+		fill := progressBarWidth
+		if !m.done && !ph.completedAt.IsZero() {
+			fill = ph.completedSteps + int(time.Since(ph.completedAt)/(15*time.Millisecond))
+		}
+		if fill < progressBarWidth {
+			bar := renderStepProgressBar(fill, progressBarWidth, ph.duration)
+			b.WriteString(fmt.Sprintf("  %s %s  %s\n", m.spinner.View(), name, bar))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s %s %s\n", successIcon, name, durationStyle.Render(dur)))
+		}
 
 	case statusSkipped:
 		b.WriteString(fmt.Sprintf("  %s %s %s\n", skippedIcon, name, durationStyle.Render(dur)))
@@ -96,8 +116,7 @@ func (m Model) renderPhaseCompact(ph phaseEntry) string {
 
 	case statusRunning:
 		elapsed := time.Since(ph.started)
-		expected := PhaseBenchmarks[ph.id]
-		bar := renderTimeProgressBar(elapsed, expected)
+		bar := renderStepProgressBar(ph.completedSteps, progressBarWidth, elapsed)
 
 		// Find current step name
 		stepName := ""
@@ -108,11 +127,10 @@ func (m Model) renderPhaseCompact(ph phaseEntry) string {
 			}
 		}
 
-		b.WriteString(fmt.Sprintf("  %s %s\n", m.spinner.View(), name))
 		if stepName != "" {
-			b.WriteString(fmt.Sprintf("    %s  %s\n", bar, durationStyle.Render(stepName)))
+			b.WriteString(fmt.Sprintf("  %s %s  %s  %s\n", m.spinner.View(), name, bar, durationStyle.Render(stepName)))
 		} else {
-			b.WriteString(fmt.Sprintf("    %s\n", bar))
+			b.WriteString(fmt.Sprintf("  %s %s  %s\n", m.spinner.View(), name, bar))
 		}
 
 	case statusPending:
@@ -141,8 +159,13 @@ func (m Model) renderPhaseExpanded(ph phaseEntry) string {
 	name := phaseNameStyle.Render(ph.name)
 	dur := formatDuration(ph.duration)
 
-	// Phase header (skip for unnamed default phases)
-	if ph.name != "" {
+	// Phase header — at level 1+, named phase headers are printed permanently
+	// via tea.Println on PhaseStartedMsg, so skip them here.
+	if ph.name == "" {
+		// Unnamed default phases always show their header in the view.
+		// (No header to render for unnamed phases.)
+	} else if VerboseLevel < 1 {
+		// Level 0: phase header is part of the compact view (rendered by renderPhaseCompact).
 		switch ph.status {
 		case statusRunning:
 			b.WriteString(fmt.Sprintf("  %s %s\n", m.spinner.View(), name))
@@ -156,20 +179,25 @@ func (m Model) renderPhaseExpanded(ph phaseEntry) string {
 			b.WriteString(fmt.Sprintf("  %s %s\n", pendingIcon, durationStyle.Render(ph.name)))
 		}
 	}
+	// Level 1+: header already printed above via tea.Println — skip.
 
 	// All child steps
 	indent := "    "
-	detailIndent := "      "
+	detailIndent := "        "
 	if ph.name == "" {
 		indent = "  "
-		detailIndent = "    "
+		detailIndent = "      "
 	}
 
 	for _, s := range ph.steps {
+		// At level 1+, completed steps were printed above via program.Println.
+		if VerboseLevel >= 1 && s.status != statusRunning {
+			continue
+		}
 		switch s.status {
 		case statusRunning:
 			b.WriteString(fmt.Sprintf("%s%s %s\n", indent, m.spinner.View(), stepNameStyle.Render(s.name)))
-			if s.detail != "" && VerboseLevel >= 2 {
+			if s.detail != "" {
 				b.WriteString(fmt.Sprintf("%s%s\n", detailIndent, subDetailStyle.Render(s.detail)))
 			}
 		case statusSuccess:
@@ -189,19 +217,13 @@ func (m Model) renderPhaseExpanded(ph phaseEntry) string {
 
 // ── Progress bar ─────────────────────────────────────────────────────────
 
-const progressBarWidth = 40
+const progressBarWidth = 30
 
-// renderTimeProgressBar renders a time-based progress bar using benchmark data.
-// If no benchmark exists, returns an empty string (no bar).
-func renderTimeProgressBar(elapsed, expected time.Duration) string {
-	if expected <= 0 {
-		// No benchmark — just show elapsed time
-		return durationStyle.Render(fmt.Sprintf("(%s)", formatDurationShort(elapsed)))
-	}
-
-	ratio := float64(elapsed) / float64(expected)
-	if ratio > 1 {
-		ratio = 1
+// renderStepProgressBar renders a step-count-based progress bar with elapsed time.
+func renderStepProgressBar(completed, total int, elapsed time.Duration) string {
+	ratio := 0.0
+	if total > 0 {
+		ratio = float64(completed) / float64(total)
 	}
 
 	bar := progress.New(
@@ -211,14 +233,8 @@ func renderTimeProgressBar(elapsed, expected time.Duration) string {
 		progress.WithColorProfile(termenv.TrueColor),
 	).ViewAs(ratio)
 
-	// Time estimate
-	estimate := ""
-	if elapsed < expected {
-		remaining := expected - elapsed
-		estimate = fmt.Sprintf(" ~%s", formatDurationShort(remaining))
-	}
-
-	return bar + durationStyle.Render(estimate)
+	pct := int(ratio * 100)
+	return bar + durationStyle.Render(fmt.Sprintf(" %d%% (%s)", pct, formatDurationShort(elapsed)))
 }
 
 // formatDurationShort formats a duration for the progress bar estimate.
@@ -264,7 +280,7 @@ func RenderVersionHeader() string {
 // ── Summary ──────────────────────────────────────────────────────────────
 
 // RenderSummaryTable produces a compact summary for use after the TUI quits
-// or in fallback mode. reportPath and logPath are included if non-empty.
+// or in line handler mode. reportPath and logPath are included if non-empty.
 func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, reportPath string, logPath string) string {
 	if report == nil {
 		return ""

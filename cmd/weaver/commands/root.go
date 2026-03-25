@@ -68,8 +68,11 @@ func init() {
 	common.FlagVersion().SetVarP(rootCmd, &flagVersion, false)
 	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
 
-	// Verbose output flag — count-based: -V, -VV, -VVV
-	rootCmd.PersistentFlags().CountVarP(&ui.VerboseLevel, "verbose", "V", "Increase output verbosity (-V, -VV, -VVV for raw)")
+	// Verbose output flag — -V enables expanded step-by-step output
+	rootCmd.PersistentFlags().CountVarP(&ui.VerboseLevel, "verbose", "V", "Show expanded step-by-step output")
+
+	// --non-interactive disables the TUI and outputs raw zerolog (for CI/pipelines)
+	rootCmd.PersistentFlags().BoolVar(&ui.NonInteractive, "non-interactive", false, "Disable TUI and output raw logs (for CI/pipelines)")
 
 	// Hardware checks override flag - hidden to discourage casual use
 	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
@@ -89,6 +92,7 @@ func init() {
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.Cmd())
+	rootCmd.AddCommand(tuiDemoCmd)
 
 	if common.DetectShortNameCollisions(rootCmd) {
 		logx.As().Warn().Msg("flag short name collisions detected among commands; consider using unique short names " +
@@ -143,6 +147,11 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
+	// Cap verbose level at 1 (extra -V's are harmless)
+	if ui.VerboseLevel > 1 {
+		ui.VerboseLevel = 1
+	}
+
 	// Propagate verbose flag to the doctor package for error diagnostics
 	doctor.VerboseLevel = ui.VerboseLevel
 
@@ -176,8 +185,8 @@ func initConfig(ctx context.Context) {
 			doctor.CheckErr(ctx, err)
 		}
 	} else {
-		// Suppress console logging — the output handler (TUI or fallback)
-		// owns stdout, not zerolog. Raw log lines go only to the log file.
+		// Suppress console logging — the TUI owns stdout, not zerolog.
+		// Raw log lines go only to the log file.
 		logConfig.ConsoleLogging = false
 		err = logx.Initialize(logConfig)
 		if err != nil {

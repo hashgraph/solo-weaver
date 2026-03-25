@@ -244,7 +244,7 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 	}
 }
 
-// VerboseLevel controls error output detail. When >= 2 (-VV), CheckErr displays
+// VerboseLevel controls error output detail. When >= 1 (-V), CheckErr displays
 // the full stacktrace and profiling data. Otherwise a compact human-friendly
 // error panel is shown and details are written only to the log file.
 var VerboseLevel int
@@ -257,7 +257,7 @@ func CheckErr(ctx context.Context, err error, instructions ...string) {
 
 	resp := Diagnose(ctx, err)
 
-	if VerboseLevel >= 2 {
+	if VerboseLevel >= 1 {
 		checkErrVerbose(resp, instructions...)
 	} else {
 		checkErrCompact(resp, instructions...)
@@ -298,7 +298,7 @@ func checkErrCompact(resp *ErrorDiagnosis, instructions ...string) {
 	if logfile != "" {
 		fmt.Fprintf(os.Stderr, "\n  %sSee logs:%s %s\n", Cyan, Reset, logfile)
 	}
-	fmt.Fprintf(os.Stderr, "  %sUse -VV for full diagnostics%s\n", Gray, Reset)
+	fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics%s\n", Gray, Reset)
 }
 
 // checkErrVerbose prints the full legacy error output with stacktrace and profiling.

@@ -42,19 +42,20 @@ type phaseEntry struct {
 	errMsg         string
 	started        time.Time
 	steps          []stepEntry
-	completedSteps int // incremented on StepDone/StepFailed
+	completedSteps int       // incremented on StepDone/StepFailed
+	completedAt    time.Time // when the phase transitioned to done (for compact view delay)
 }
 
 // Model is the Bubble Tea model for the TUI display.
 type Model struct {
-	phases   []phaseEntry
-	spinner  spinner.Model
-	quitting bool
-	report   *automa.Report
-	err      error
-	done     bool
-	start    time.Time
-	weaving  string // latest background activity message
+	phases           []phaseEntry
+	spinner          spinner.Model
+	quitting         bool
+	report           *automa.Report
+	err              error
+	done             bool
+	start            time.Time
+	backgroundDetail string // latest background activity message
 }
 
 // NewModel creates a new TUI model ready for use with tea.NewProgram.
@@ -124,6 +125,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.phases[i].status = statusSuccess
 				}
 				m.phases[i].duration = msg.Duration
+				m.phases[i].completedAt = time.Now()
 				return m, nil
 			}
 		}
@@ -227,7 +229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StepDetailMsg:
-		m.weaving = msg.Detail
+		m.backgroundDetail = msg.Detail
 		for i := len(m.phases) - 1; i >= 0; i-- {
 			for j := len(m.phases[i].steps) - 1; j >= 0; j-- {
 				if m.phases[i].steps[j].status == statusRunning {
@@ -242,7 +244,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.done = true
 		m.report = msg.Report
 		m.err = msg.Err
-		m.weaving = ""
+		m.backgroundDetail = ""
 		m.quitting = true
 		return m, tea.Quit
 	}

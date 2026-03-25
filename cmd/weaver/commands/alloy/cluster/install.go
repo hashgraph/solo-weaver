@@ -102,7 +102,7 @@ Examples:
 
 		wb := workflows.NewAlloyInstallWorkflow()
 
-		common.RunWorkflow(cmd.Context(), wb)
+		common.RunBuilderWorkflow(cmd.Context(), wb)
 
 		l.Info().Msg("Successfully installed Alloy observability stack")
 		return nil

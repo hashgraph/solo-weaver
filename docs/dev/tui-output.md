@@ -14,14 +14,14 @@ spinner/status-icon flow inspired by `docker`, `terraform`, and `gh`.
 ┌──────────────────────────────────────────────────────┐
 │  cmd/weaver/commands/common/run.go  (RunWorkflow)    │
 │  ┌────────────┐          ┌──────────────────┐        │
-│  │ TTY?       │──yes───▶ │ runWithTUI()     │        │
-│  │            │          │ tea.NewProgram() │        │
+│  │ TTY?       │──yes───▶ │ tea.NewProgram() │        │
+│  │            │          │ TUI mode         │        │
 │  └────────────┘          └──────────────────┘        │
 │        │ no                       │                   │
 │        ▼                          ▼                   │
 │  ┌──────────────────┐   ┌──────────────────────────┐ │
-│  │ runWithFallback() │   │ notify.SetDefault(       │ │
-│  │ line-based output │   │   ui.NewTUIHandler(pgm)) │ │
+│  │ unformatted mode │   │ notify.SetDefault(       │ │
+│  │ zerolog output   │   │   ui.NewTUIHandler(pgm)) │ │
 │  └──────────────────┘   └──────────────────────────┘ │
 │                                   │                   │
 │                        ┌──────────▼──────────┐       │
@@ -45,18 +45,17 @@ spinner/status-icon flow inspired by `docker`, `terraform`, and `gh`.
 
 | Package | Purpose |
 |---------|---------|
-| `internal/ui` | Bubble Tea model, messages, TUI & fallback handlers, logging hooks |
+| `internal/ui` | Bubble Tea model, messages, TUI handler, logging hooks |
 | `internal/workflows/notify` | Callback interface (`StepStart`, `StepCompletion`, `StepFailure`, `StepDetail`, `PhaseStart`, `PhaseCompletion`, `PhaseFailure`) |
 | `cmd/weaver/commands/common` | `RunWorkflow` orchestration — detects TTY and wires the appropriate handler |
-| `internal/doctor` | Error diagnostics — compact by default, full stacktrace with `-VV` |
+| `internal/doctor` | Error diagnostics — compact by default, full stacktrace with `-V` |
 
 ### Integration model
 
 The TUI layer works by calling `notify.SetDefault(handler)` at startup to replace
-the default logging-based handler with one that sends Bubble Tea messages (TUI mode)
-or writes formatted lines (fallback mode). Workflow steps use the existing
-`notify.As().StepStart(...)`, `notify.As().StepCompletion(...)`, etc. callbacks
-without any TUI-specific knowledge.
+the default logging-based handler with one that sends Bubble Tea messages.
+Workflow steps use the existing `notify.As().StepStart(...)`,
+`notify.As().StepCompletion(...)`, etc. callbacks without any TUI-specific knowledge.
 
 ---
 
@@ -80,7 +79,7 @@ Model
 │   └── completedSteps          ← count of finished steps
 ├── spinner                     ← Bubble Tea spinner component (animated dot)
 ├── report                      ← automa.Report captured on WorkflowDoneMsg
-├── weaving                     ← latest background detail message
+├── backgroundDetail            ← latest background detail message
 ├── done                        ← true after WorkflowDoneMsg
 └── quitting                    ← true on ctrl+c or workflow completion
 ```
@@ -110,69 +109,60 @@ verbosity:
 
 - **`renderPhaseCompact(ph)`** — used at level 0 when the phase has a name. Shows a
   single line per phase: completed phases show `✓ PhaseName (duration)`, running
-  phases show a spinner + progress bar on two lines.
+  phases show a spinner + progress bar + current step name.
 
-- **`renderPhaseExpanded(ph)`** — used at level 1+ or for unnamed phases. Shows the
-  phase header, then all child steps with status icons. At level 2+, running steps
-  also show their `detail` text.
+- **`renderPhaseExpanded(ph)`** — used at level 1 or for unnamed phases. Shows the
+  phase header, then all child steps with status icons and detail text.
 
 Both renderers use the same style constants (`successIcon`, `failedIcon`, etc.) and
 `formatDuration()` for consistent output.
 
-The progress bar (`renderTimeProgressBar`) uses `bubbles/progress.ViewAs(ratio)` for
-static gradient rendering. The ratio is `elapsed / PhaseBenchmarks[phaseID]`.
+The progress bar (`renderStepProgressBar`) uses `bubbles/progress.ViewAs(ratio)` for
+static gradient rendering. The ratio is `completedSteps / progressBarWidth`.
 
 The summary table (`RenderSummaryTable`) is rendered **after** the TUI quits, not
 inside `View()`, because it needs the full `automa.Report` which includes steps that
 may not have emitted notify callbacks.
 
-### Fallback handler (`handler.go`)
+### Non-interactive / non-TUI behaviour
 
-When stdout is not a TTY, the fallback handler replaces the TUI. It uses the same
-notify callbacks but writes directly to a file descriptor instead of sending Bubble
-Tea messages. Key differences:
+`RunWorkflow` checks `ui.IsUnformatted()` before creating a Bubble Tea program.
+`IsUnformatted()` returns true when either:
 
-- **Level 0:** Uses `writeInline()` for overwritable multi-line content (phase name +
-  progress bar). A 1-second ticker refreshes the progress bar.
-- **Level 1:** `StepStart` writes an inline (transient) line, replaced by
-  `StepCompletion` which writes a permanent line with duration.
-- **Level 2:** `StepStart` writes a permanent line. Detail lines are written as
-  permanent indented grey text below.
+- The `--non-interactive` flag is set, **or**
+- stdout is not a TTY (pipes, CI, redirected output) — detected via `os.Stdout.Stat()`
 
-State tracked via closure variables: `curPhaseName` (for indentation decisions),
-`startTimes` map (for duration calculation), `curStepName`/`curDetail` (for compact
-inline rendering).
+In unformatted mode, `RunWorkflow` executes the workflow directly without a TUI
+program. Progress and errors are reported via the existing logging pipeline (zerolog),
+producing plain, line-oriented output suitable for non-interactive environments.
 
 ---
 
 ## Verbosity levels
-
 | Level | Flag | Behaviour |
 |-------|------|-----------|
 | 0 | (none) | Collapsed phases with gradient progress bar + current step name |
-| 1 | `-V` | Completion lines only (✓/✗/⊘) with durations, indented under phase headers |
-| 2 | `-VV` | All steps (start + completion) + greyed detail lines + software version info + full error stacktraces |
-| 3 | `-VVV` | Unformatted output: no formatting, zerolog writes directly to the console (replaces `--raw`) |
+| 1 | `-V` | All steps visible with status icons, durations, detail text, and version header |
+
+`VerboseLevel` is capped at 1 in `root.go`. Values above 1 are treated as 1.
 
 ### Level 0 — Compact (default)
 
 Phases are collapsed into a single line with a gradient progress bar. The bar
 uses the `bubbles/progress` component with a scaled gradient (`#6C6CFF` → `#22D3EE`).
-Phase name appears on the first line, progress bar + time estimate + current step
-on the second:
+Phase name appears with a spinner, progress bar, and current step name:
 
 ```
   ✓ Preflight Checks  (1.2s)
   ✓ System Setup  (5.2s)
-  • Kubernetes Setup
-    ████████████████████░░░░░░░░░░░░░░░░░░░░  ~2m47s  Initializing Kubernetes cluster
+  ⠋ Kubernetes Setup  ████████████████████░░░░░░░░░░  67% (2m47s)  Initializing Kubernetes cluster
 ```
 
-### Level 1 — Completions only (`-V`)
+### Level 1 — Verbose (`-V`)
 
 Phase headers appear with `•` (blue dot) before their children. Steps are
-indented and show only the completion line with duration. A version header is
-printed at the top:
+indented and show completion lines with duration. Detail text from log messages
+appears as greyed text below running steps. A version header is printed at the top:
 
 ```
   solo-provisioner 0.29.0 (f5806409) go1.25.2
@@ -191,32 +181,11 @@ printed at the top:
 ```
 
 At this level, `StepStart` is rendered as an inline (transient) line that shows
-`• Setting up kubelet` briefly, then gets replaced by the `✓` completion line.
-
-### Level 2 — Full detail (`-VV`)
-
-Both start and completion lines are shown for each step. Detail lines (from
-`StepDetail` callbacks and the zerolog log hook) appear indented below the
-running step, making it clear which step they belong to. Software version info
-is displayed:
-
-```
-  • Kubernetes Setup
-    • Setting up kubelet
-        installing kubelet...
-        resolved software version
-        kubelet version: 1.33.4
-    ✓ kubelet setup successfully (2.3s)
-    • Setting up Helm
-        installing Helm...
-        Helm version: 3.18.6
-    ✓ Helm setup successfully (1.1s)
-  ✓ Kubernetes Setup (2m20s)
-```
+`⠋ Setting up kubelet` briefly, then gets replaced by the `✓` completion line.
 
 ### Error output
 
-**Default (compact, levels 0–1):**
+**Default (level 0):**
 ```
   ✗ Error: requires superuser privilege
     Cause: current user is not root
@@ -225,11 +194,11 @@ is displayed:
     1. Run the command with 'sudo': `sudo solo-provisioner block node install`
 
   See logs: /opt/solo/weaver/logs/solo-provisioner.log
-  Use -VV for full diagnostics
+  Use -V for full diagnostics
 ```
 
-**With `-VV`:**
-Full error stacktrace, error diagnostics panel, profiling data, and resolution.
+**With `-V`:**
+Full error stacktrace, error diagnostics panel, and resolution.
 
 ---
 
@@ -237,11 +206,11 @@ Full error stacktrace, error diagnostics panel, profiling data, and resolution.
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--verbose` | `-V` | `0` | Increase output verbosity (`-V`, `-VV`, `-VVV` for raw) |
+| `--verbose` | `-V` | `0` | Show expanded step-by-step output |
+| `--non-interactive` | | `false` | Disable TUI and output raw logs (for CI/pipelines) |
 
-Persistent flag on the root command, applies to all subcommands. Non-TTY
-environments (pipes, CI) automatically use the fallback handler. TTY detection
-(`ShouldUseTUI()`) selects between the Bubble Tea TUI and the line-based fallback.
+`--verbose` is a persistent flag on the root command, applies to all subcommands.
+Non-TTY environments (pipes, CI) automatically bypass the TUI via `IsUnformatted()`.
 
 ---
 
@@ -263,12 +232,12 @@ Defaults (applied when not overridden by config):
 
 ### Console logging suppression
 
-The output is **mutually exclusive**: either the TUI/fallback handler owns stdout,
+The output is **mutually exclusive**: either the TUI handler owns stdout,
 or zerolog does — **never both**. File logging is always active.
 
-When the TUI or fallback handler is active, `ui.SuppressConsoleLogging()` replaces
+When the TUI handler is active, `ui.SuppressConsoleLogging()` replaces
 the global zerolog logger with a **file-only** writer. A `logHook` is attached
-that forwards log messages to the output handler as greyed detail text.
+that forwards log messages to the TUI as greyed detail text.
 
 > **Why SuppressConsoleLogging?** The upstream `logx.Initialize()` unconditionally
 > creates a `ConsoleWriter` regardless of the `ConsoleLogging` config field.
@@ -292,7 +261,7 @@ logx.As().Info().Msgf("kubelet version: 1.33.4")
         │
         ├── Level filter:
         │   • Info, Warn     → always forwarded
-        │   • Debug          → forwarded only at VerboseLevel >= 2 (-VV)
+        │   • Debug          → forwarded only at VerboseLevel >= 1 (-V)
         │   • Trace and below → never forwarded
         │   • Error and above → never forwarded (handled by notify.StepFailure)
         │
@@ -300,21 +269,15 @@ logx.As().Info().Msgf("kubelet version: 1.33.4")
         │
         ├── Sanitize: collapse whitespace, truncate at 200 chars
         │
-        └──▶ Output handler
-             • TUI mode:     program.Send(StepDetailMsg{Detail: "kubelet version: 1.33.4"})
-             • Fallback mode: writes greyed indented line to stdout
+        └──▶ program.Send(StepDetailMsg{Detail: "kubelet version: 1.33.4"})
 ```
 
 **Key implication for step authors:** The `Msg`/`Msgf` text of any `Info`-level log
-call will appear as greyed detail text at `-VV`. To show useful information at `-VV`,
+call will appear as greyed detail text in the TUI. To show useful information,
 make the message human-friendly. Structured fields (`Str`, `Int`, etc.) only go to
 the log file — they are not visible on the terminal.
 
-Detail text is only displayed when inside an active phase (`curPhaseName != ""`).
-Log messages emitted before any phase starts (e.g. during global checks) are
-silently dropped from the terminal but still written to the log file.
-
-### Examples of log messages designed for `-VV` display
+### Examples of log messages designed for TUI display
 
 Software version (shown as detail under the running step):
 ```go
@@ -337,14 +300,13 @@ The progress bar uses the `bubbles/progress` component (`charmbracelet/bubbles v
 with `ViewAs(ratio)` for static rendering — no animation machinery is needed.
 
 Configuration:
-- **Width:** 40 characters
+- **Width:** 30 characters
 - **Gradient:** Scaled gradient from `#6C6CFF` (indigo) to `#22D3EE` (cyan)
 - **Color profile:** Forced to `TrueColor` (avoids detection issues when stdout is captured)
-- **No percentage:** Time estimate is shown instead (`~2m47s`)
+- **Display:** Percentage + elapsed time (e.g. `67% (2m47s)`)
 
-Benchmark durations for each phase are stored in `internal/ui/benchmark.go`. The
-progress bar ratio is `elapsed / expected`, capped at 1.0. When no benchmark exists
-for a phase, only the elapsed time is shown.
+The progress ratio is `completedSteps / progressBarWidth`. For completed phases,
+a fill-up animation runs briefly before showing the final checkmark.
 
 ---
 
@@ -373,14 +335,13 @@ the output handler to write to.
 
 | File | Description |
 |------|-------------|
-| `internal/ui/config.go` | Package-level `VerboseLevel` flag variable and `IsUnformatted()` helper |
+| `internal/ui/config.go` | Package-level `VerboseLevel`, `NonInteractive` flag variables and `IsUnformatted()` TTY detection |
 | `internal/ui/messages.go` | Bubble Tea message types (`StepStartedMsg`, `StepDoneMsg`, `StepFailedMsg`, `StepDetailMsg`, `PhaseStartedMsg`, `PhaseDoneMsg`, `PhaseFailedMsg`, `WorkflowDoneMsg`) |
 | `internal/ui/model.go` | Bubble Tea `Model` — data structures (`phaseEntry`, `stepEntry`), `Init()`, `Update()` message handling |
 | `internal/ui/view.go` | `View()` rendering, `renderPhaseCompact`, `renderPhaseExpanded`, progress bar, version header, summary table, styles |
-| `internal/ui/handler.go` | `NewTUIHandler()` and `NewFallbackHandler()` — bridges `notify.Handler` into the TUI or line-based output |
-| `internal/ui/logging.go` | `logHook` (unified zerolog hook), `SuppressConsoleLogging()`, `SuppressConsoleLoggingForFallback()`, `sanitizeDetail()` |
+| `internal/ui/handler.go` | `NewTUIHandler()` — bridges `notify.Handler` callbacks into Bubble Tea messages |
+| `internal/ui/logging.go` | `logHook` (zerolog hook for TUI detail text), `SuppressConsoleLogging()`, `sanitizeDetail()` |
 | `internal/ui/capture_unix.go` | OS-level stdout/stderr capture via `dup2` |
-| `internal/ui/benchmark.go` | Phase benchmark durations for progress bar estimates |
 
 ---
 
@@ -391,12 +352,8 @@ the output handler to write to.
   progress via the `notify` handler. After the TUI quits, `handleWorkflowResult()`
   prints the summary table.
 
-- **Fallback mode** (non-TTY): The fallback handler prints line-based step events
-  to stdout. Console logging is suppressed. After the workflow,
-  `handleWorkflowResult()` prints the summary.
-
-- **Unformatted mode** (`-VVV`): No formatting. Zerolog writes directly to the console.
-  The default notify handler logs via logx.
+- **Unformatted mode** (`--non-interactive` or non-TTY): No TUI. Zerolog writes
+  directly to the console. The default notify handler logs via logx.
 
 **Never both.** File logging is always active regardless of output mode.
 

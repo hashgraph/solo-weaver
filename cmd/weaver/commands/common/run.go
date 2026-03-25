@@ -42,34 +42,18 @@ func ensureLogConfig() logx.LoggingConfig {
 	return cfg
 }
 
-// RunWorkflow executes a workflow and handles error.
-// When stdout is a TTY, it renders progress via Bubble Tea with spinners and
-// status icons. Otherwise it falls back to a simple line-based output suitable
-// for CI and piped environments.
-func RunWorkflow(ctx context.Context, b automa.Builder) {
-	wb, err := b.Build()
-	if err != nil {
-		doctor.CheckErr(ctx, err)
-	}
-
+// RunWorkflow executes a workflow function and renders progress via Bubble Tea
+// with spinners and status icons, or raw zerolog output when --non-interactive is set.
+func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) {
 	if ui.IsUnformatted() {
-		runUnformatted(ctx, wb)
-	} else if ui.ShouldUseTUI() {
-		runWithTUI(ctx, wb)
-	} else {
-		runWithFallback(ctx, wb)
+		report, err := fn()
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+		handleWorkflowResult(ctx, report)
+		return
 	}
-}
 
-// runUnformatted runs the workflow with no output formatting (-VVV). Zerolog
-// writes directly to the console. The default notify handler logs via logx.
-func runUnformatted(ctx context.Context, step automa.Step) {
-	report := step.Execute(ctx)
-	handleWorkflowResult(ctx, report)
-}
-
-// runWithTUI runs the workflow with the Bubble Tea TUI active.
-func runWithTUI(ctx context.Context, step automa.Step) {
 	// Capture os.Stdout BEFORE creating the program so third-party libs
 	// (Helm OCI pull, syspkg) write to the captured pipe, not the terminal.
 	origStdout, restoreStdout := ui.CaptureOutput()
@@ -77,12 +61,14 @@ func runWithTUI(ctx context.Context, step automa.Step) {
 	m := ui.NewModel()
 	program := tea.NewProgram(m, tea.WithOutput(origStdout))
 
-	// Replace the default notify handler to feed messages into the TUI
+	// Replace the default notify handler to feed messages into the TUI.
+	prevHandler := *notify.As()
 	notify.SetDefault(ui.NewTUIHandler(program))
+	defer notify.SetDefault(&prevHandler)
 
 	// Re-apply console suppression with the program reference so that a
-	// zerolog hook forwards log messages to the TUI as transient "weaving"
-	// detail text beneath the currently running step.
+	// zerolog hook forwards log messages to the TUI as transient detail
+	// text beneath the currently running step.
 	ui.SuppressConsoleLogging(ensureLogConfig(), program)
 
 	// Suppress Go standard log output while the TUI owns stdout.
@@ -93,19 +79,20 @@ func runWithTUI(ctx context.Context, step automa.Step) {
 	// owns the main goroutine until the workflow finishes.
 	reportCh := make(chan *automa.Report, 1)
 	go func() {
-		report := step.Execute(ctx)
+		report, err := fn()
 		reportCh <- report
-		program.Send(ui.WorkflowDoneMsg{Report: report})
+		program.Send(ui.WorkflowDoneMsg{Report: report, Err: err})
 	}()
 
 	finalModel, err := program.Run()
 
-	// Restore stdout and log before printing the summary.
+	// Restore stdout, log, and detach the TUI log hook before printing the summary.
 	restoreStdout()
 	log.SetOutput(origLogOutput)
+	ui.SuppressConsoleLogging(ensureLogConfig())
 
 	if err != nil {
-		fmt.Printf("TUI error: %v — falling back to simple output\n", err)
+		fmt.Printf("TUI error: %v\n", err)
 		report := <-reportCh
 		handleWorkflowResult(ctx, report)
 		return
@@ -116,69 +103,23 @@ func runWithTUI(ctx context.Context, step automa.Step) {
 		doctor.CheckErr(ctx, fmt.Errorf("unexpected TUI model type"))
 	}
 
+	if result.Err() != nil {
+		doctor.CheckErr(ctx, result.Err())
+	}
+
 	handleWorkflowResult(ctx, result.Report())
 }
 
-// runWithFallback runs the workflow with the line-based fallback handler.
-func runWithFallback(ctx context.Context, step automa.Step) {
-	// Capture os.Stdout so third-party libs (Helm OCI, syspkg) don't write
-	// stray lines to the terminal. The handler writes to origStdout directly.
-	origStdout, restoreStdout := ui.CaptureOutput()
-
-	handler, detailFn := ui.NewFallbackHandler(origStdout)
-	notify.SetDefault(handler)
-
-	// Re-apply console suppression with the fallback log hook so that log
-	// messages are forwarded as transient detail text (same as TUI mode).
-	ui.SuppressConsoleLoggingForFallback(ensureLogConfig(), detailFn)
-
-	// Suppress Go standard log output while the fallback handler owns stdout.
-	origLogOutput := log.Writer()
-	log.SetOutput(io.Discard)
-
-	report := step.Execute(ctx)
-
-	// Restore stdout and log before printing the summary.
-	restoreStdout()
-	log.SetOutput(origLogOutput)
-
-	handleWorkflowResult(ctx, report)
-}
-
-// RunHandlerWorkflow wraps a handler-based workflow (like block node install)
-// with the same output capture, handler setup, and summary rendering as
-// RunWorkflow. Use this for commands that call HandleIntent directly instead
-// of building an automa workflow.
-func RunHandlerWorkflow(ctx context.Context, fn func() (*automa.Report, error)) {
-	if ui.IsUnformatted() {
-		report, err := fn()
+// RunBuilderWorkflow is a convenience wrapper that builds an automa workflow
+// and runs it via RunWorkflow.
+func RunBuilderWorkflow(ctx context.Context, b automa.Builder) {
+	RunWorkflow(ctx, func() (*automa.Report, error) {
+		step, err := b.Build()
 		if err != nil {
-			doctor.CheckErr(ctx, err)
+			return nil, err
 		}
-		handleWorkflowResult(ctx, report)
-		return
-	}
-
-	origStdout, restoreOutput := ui.CaptureOutput()
-
-	handler, detailFn := ui.NewFallbackHandler(origStdout)
-	notify.SetDefault(handler)
-
-	ui.SuppressConsoleLoggingForFallback(ensureLogConfig(), detailFn)
-
-	origLogOutput := log.Writer()
-	log.SetOutput(io.Discard)
-
-	report, err := fn()
-
-	restoreOutput()
-	log.SetOutput(origLogOutput)
-
-	if err != nil {
-		doctor.CheckErr(ctx, err)
-	}
-
-	handleWorkflowResult(ctx, report)
+		return step.Execute(ctx), nil
+	})
 }
 
 // CheckWorkflowReport checks for errors, saves the YAML report, and prints a
