@@ -10,9 +10,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
-	"github.com/hashgraph/solo-weaver/internal/ui"
-	"github.com/hashgraph/solo-weaver/pkg/config"
-	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -342,7 +339,7 @@ type RootFlags struct {
 }
 
 // ExtractRootFlags extracts the flags registered on the root command.
-// It also calls InitConfig to load configuration and initialise logging.
+// Config and logging are already initialized by root.go's initConfig (via cobra.OnInitialize).
 func ExtractRootFlags(cmd *cobra.Command, args []string, flags *RootFlags) error {
 	var err error
 
@@ -366,46 +363,8 @@ func ExtractRootFlags(cmd *cobra.Command, args []string, flags *RootFlags) error
 		return errorx.IllegalArgument.Wrap(err, "failed to get log-level flag")
 	}
 
-	InitConfig(cmd.Context(), flags)
-
 	logx.As().Info().Any("root-flags", flags).Msg("Extracted root command flags")
 	return nil
-}
-
-// InitConfig loads the configuration file and initialises the logger.
-func InitConfig(ctx context.Context, flags *RootFlags) {
-	var err error
-	err = config.Initialize(flags.Config)
-	if err != nil {
-		doctor.CheckErr(ctx, err)
-	}
-
-	logConfig := config.Get().Log
-	if flags.LogLevel != "" {
-		logConfig.Level = flags.LogLevel // override log level if flag is set
-	}
-
-	logConfig.FileLogging = true
-	if logConfig.Directory == "" {
-		logConfig.Directory = models.Paths().LogsDir
-	}
-	if logConfig.Filename == "" {
-		logConfig.Filename = "solo-provisioner.log"
-	}
-
-	if ui.IsUnformatted() {
-		err = logx.Initialize(logConfig)
-		if err != nil {
-			doctor.CheckErr(ctx, err)
-		}
-	} else {
-		logConfig.ConsoleLogging = false
-		err = logx.Initialize(logConfig)
-		if err != nil {
-			doctor.CheckErr(ctx, err)
-		}
-		ui.SuppressConsoleLogging(logConfig)
-	}
 }
 
 func DetectShortNameCollisions(root *cobra.Command) bool {
