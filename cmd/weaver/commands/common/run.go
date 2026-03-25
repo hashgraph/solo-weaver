@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"path"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	tea "github.com/charmbracelet/bubbletea"
-	pkgconfig "github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -22,6 +20,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	pkgconfig "github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/spf13/cobra"
@@ -197,13 +196,14 @@ func handleWorkflowResult(ctx context.Context, report *automa.Report) {
 	}
 
 	// Save the full YAML report to a file (always)
+	logCfg := ensureLogConfig()
 	timestamp := time.Now().Format("20060102_150405")
-	reportPath := path.Join(models.Paths().LogsDir, fmt.Sprintf("setup_report_%s.yaml", timestamp))
+	reportPath := path.Join(logCfg.Directory, fmt.Sprintf("setup_report_%s.yaml", timestamp))
 	steps.PrintWorkflowReport(report, reportPath)
 
 	// Print compact summary to stdout (after TUI has quit, safe to write)
 	totalDuration := report.EndTime.Sub(report.StartTime)
-	logPath := path.Join(models.Paths().LogsDir, "solo-provisioner.log")
+	logPath := path.Join(logCfg.Directory, logCfg.Filename)
 	fmt.Print(ui.RenderSummaryTable(report, totalDuration, reportPath, logPath))
 
 	logx.As().Info().
@@ -245,12 +245,8 @@ func RunGlobalChecks(cmd *cobra.Command, args []string) error {
 		doctor.CheckErr(cmd.Context(), err)
 	}
 
-	// Execute quietly — only check for errors, no summary/report.
-	// In raw mode, use the default logx-based notify handler (no formatting).
-	if !ui.IsUnformatted() {
-		handler, _ := ui.NewFallbackHandler(os.Stdout)
-		notify.SetDefault(handler)
-	}
+	// Execute quietly — the default logx-based notify handler logs to the file
+	// only. Errors are surfaced via CheckReportErr below.
 	report := wb.Execute(cmd.Context())
 	if report != nil && report.Error != nil {
 		doctor.CheckReportErr(cmd.Context(), report)

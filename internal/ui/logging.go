@@ -4,7 +4,7 @@ package ui
 
 import (
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -109,7 +109,7 @@ func sanitizeDetail(msg string) string {
 // SuppressConsoleLoggingForFallback.
 func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 	fileWriter := &lumberjack.Logger{
-		Filename:   path.Join(cfg.Directory, cfg.Filename),
+		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
 		MaxSize:    cfg.MaxSize,
 		MaxBackups: cfg.MaxBackups,
 		MaxAge:     cfg.MaxAge,
