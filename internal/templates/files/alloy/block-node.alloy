@@ -49,7 +49,36 @@ loki.process "block_node_server" {
     format = "2006-01-02 15:04:05.000"
   }
 
-  // Promote level to a label for filtering in Grafana
+  // Normalize log level to lowercase and collapse JVM-specific levels
+  // Map DEBUG variants to "debug"
+  stage.replace {
+    source     = "level"
+    expression = "(?i)debug"
+    replace    = "debug"
+  }
+
+  // Map INFO variants to "info"
+  stage.replace {
+    source     = "level"
+    expression = "(?i)info"
+    replace    = "info"
+  }
+
+  // Map WARN/WARNING variants to "warn"
+  stage.replace {
+    source     = "level"
+    expression = "(?i)warn(ing)?"
+    replace    = "warn"
+  }
+
+  // Map ERROR/SEVERE variants to "error"
+  stage.replace {
+    source     = "level"
+    expression = "(?i)(error|severe)"
+    replace    = "error"
+  }
+
+  // Promote normalized level to a label for filtering in Grafana
   stage.labels {
     values = { level = "" }
   }
