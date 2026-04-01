@@ -58,7 +58,7 @@ loki.process "block_node_server" {
   }
 
   // Parse the JVM java.util.logging format:
-  //   <timestamp> <LEVEL>   [<logger> <method>] <message>
+  //   <timestamp> <LEVEL>   [<logger and method>] <message>
   stage.regex {
     expression = "^(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\+\\d{4})\\s+(?P<level>\\w+)\\s+\\[(?P<logger>[^\\]]+)\\]\\s+(?P<message>.*)"
   }
