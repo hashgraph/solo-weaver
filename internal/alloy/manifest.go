@@ -98,22 +98,6 @@ func BlockNodeServiceMonitorManifest(namespace string) (string, error) {
 	return templates.Render(BlockNodeServiceMonitorPath, data)
 }
 
-// BlockNodePodLogsTemplateData holds data for the block-node PodLogs template.
-type BlockNodePodLogsTemplateData struct {
-	Namespace string
-}
-
-// BlockNodePodLogsManifest generates the PodLogs manifest for block-node.
-// This is required for Alloy to discover and collect block-node logs.
-// The namespace parameter should be the block node's configured namespace.
-func BlockNodePodLogsManifest(namespace string) (string, error) {
-	data := BlockNodePodLogsTemplateData{
-		Namespace: namespace,
-	}
-
-	return templates.Render(BlockNodePodLogsPath, data)
-}
-
 // NamespaceTemplateData holds data for the namespace template.
 type NamespaceTemplateData struct {
 	Namespace string

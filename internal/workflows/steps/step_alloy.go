@@ -594,10 +594,10 @@ func deployAlloyConfig() automa.Builder {
 		})
 }
 
-// deployBlockNodeMonitoring deploys the ServiceMonitor and PodLogs resources for block-node monitoring.
-// This step must run AFTER installAlloy() because the PodLogs CRD (monitoring.grafana.com/v1alpha2)
-// is registered by the Alloy Helm chart. If it ran before, the PodLogs resource would fail to apply
-// because the CRD would not exist yet.
+// deployBlockNodeMonitoring deploys the ServiceMonitor resource for block-node metrics discovery.
+// This step must run AFTER installAlloy() because the ServiceMonitor CRD is registered by the
+// Alloy Helm chart. Block-node log collection uses file-based discovery (loki.source.file) instead
+// of PodLogs CRD, so no PodLogs resource is needed.
 func deployBlockNodeMonitoring() automa.Builder {
 	return automa.NewStepBuilder().WithId(DeployBlockNodeMonitoringStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -611,7 +611,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 			}
 
 			if !cb.MonitorBlockNode() {
-				l.Info().Msg("Block node monitoring not enabled; skipping ServiceMonitor and PodLogs deployment")
+				l.Info().Msg("Block node monitoring not enabled; skipping ServiceMonitor deployment")
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -626,7 +626,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(fmt.Errorf("failed to discover block node namespace: %w", err)))
 			}
 			if blockNodeNamespace == "" {
-				l.Warn().Msg("Block node monitoring enabled but block node not found; skipping ServiceMonitor and PodLogs deployment")
+				l.Warn().Msg("Block node monitoring enabled but block node not found; skipping ServiceMonitor deployment")
 				return automa.StepSkippedReport(stp.Id())
 			}
 
@@ -647,24 +647,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 			}
 			stp.State().Local().Set("serviceMonitorPath", serviceMonitorPath)
 
-			// Deploy PodLogs for logs discovery
-			podLogsManifest, err := alloy.BlockNodePodLogsManifest(blockNodeNamespace)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			podLogsPath := path.Join(models.Paths().TempDir, "block-node-podlogs.yaml")
-			err = os.WriteFile(podLogsPath, []byte(podLogsManifest), models.DefaultFilePerm)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			err = k.ApplyManifest(ctx, podLogsPath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			stp.State().Local().Set("podLogsPath", podLogsPath)
-
-			l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor and PodLogs deployed for metrics/logs discovery")
+			l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor deployed for metrics discovery")
 
 			meta[InstalledByThisStep] = "true"
 			stp.State().Local().Set(InstalledByThisStep, true)
@@ -688,16 +671,6 @@ func deployBlockNodeMonitoring() automa.Builder {
 
 			if serviceMonitorPath != "" {
 				_ = k.DeleteManifest(ctx, serviceMonitorPath) // Ignore error - may not exist
-			}
-
-			// Clean up PodLogs if it was deployed
-			var podLogsPath string
-			if v, ok := stp.State().Local().String("podLogsPath"); ok {
-				podLogsPath = v
-			}
-
-			if podLogsPath != "" {
-				_ = k.DeleteManifest(ctx, podLogsPath) // Ignore error - may not exist
 			}
 
 			return automa.StepSuccessReport(stp.Id())
