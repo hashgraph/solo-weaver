@@ -45,14 +45,41 @@ var handler = &Handler{
 
 		l.Msgf(msg, args...)
 	},
+	StepDetail: func(ctx context.Context, stp automa.Step, msg string, args ...interface{}) {
+		// Default: log at debug level (not shown on console)
+		logx.As().Debug().
+			Str("step_id", stp.Id()).
+			Msgf(msg, args...)
+	},
+	PhaseStart: func(ctx context.Context, stp automa.Step, msg string, args ...interface{}) {
+		logx.As().Info().
+			Str("phase_id", stp.Id()).
+			Msgf(msg, args...)
+	},
+	PhaseCompletion: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
+		logx.As().Info().
+			Str("phase_id", stp.Id()).
+			Str("status", report.Status.String()).
+			Msgf(msg, args...)
+	},
+	PhaseFailure: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
+		logx.As().Error().Err(report.Error).
+			Str("phase_id", stp.Id()).
+			Str("status", report.Status.String()).
+			Msgf(msg, args...)
+	},
 }
 
 // Handler defines callbacks for step events
 // Caller may pass a custom handler to pass message to a channel or different logging mechanism or webhook (e.g. Slack).
 type Handler struct {
-	StepStart      func(ctx context.Context, stp automa.Step, msg string, args ...interface{})
-	StepCompletion func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
-	StepFailure    func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
+	StepStart       func(ctx context.Context, stp automa.Step, msg string, args ...interface{})
+	StepCompletion  func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
+	StepFailure     func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
+	StepDetail      func(ctx context.Context, stp automa.Step, msg string, args ...interface{})
+	PhaseStart      func(ctx context.Context, stp automa.Step, msg string, args ...interface{})
+	PhaseCompletion func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
+	PhaseFailure    func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{})
 }
 
 // SetDefault sets the default callback handler for step events
@@ -70,9 +97,39 @@ func SetDefault(h *Handler) {
 	if h.StepFailure != nil {
 		handler.StepFailure = h.StepFailure
 	}
+
+	if h.StepDetail != nil {
+		handler.StepDetail = h.StepDetail
+	}
+
+	if h.PhaseStart != nil {
+		handler.PhaseStart = h.PhaseStart
+	}
+
+	if h.PhaseCompletion != nil {
+		handler.PhaseCompletion = h.PhaseCompletion
+	}
+
+	if h.PhaseFailure != nil {
+		handler.PhaseFailure = h.PhaseFailure
+	}
 }
 
 // As returns the current notification handler
 func As() *Handler {
 	return handler
+}
+
+// PhaseStartCtxKey is a context key for passing total step count to PhaseStart.
+type phaseStepsKey struct{}
+
+// CtxWithPhaseSteps returns a context carrying the total step count for a phase.
+func CtxWithPhaseSteps(ctx context.Context, totalSteps int) context.Context {
+	return context.WithValue(ctx, phaseStepsKey{}, totalSteps)
+}
+
+// PhaseStepsFromCtx extracts the total step count from a context, or 0.
+func PhaseStepsFromCtx(ctx context.Context) int {
+	v, _ := ctx.Value(phaseStepsKey{}).(int)
+	return v
 }

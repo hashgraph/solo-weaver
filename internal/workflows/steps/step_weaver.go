@@ -13,6 +13,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 )
@@ -59,6 +60,16 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking solo-provisioner installation")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Solo Provisioner installation check failed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner installation verified")
 		})
 }
 
@@ -181,6 +192,16 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 				Msg("Solo Provisioner installed successfully")
 
 			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Installing solo-provisioner")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to install solo-provisioner")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner installed successfully")
 		})
 }
 
@@ -203,5 +224,15 @@ func UninstallWeaver(binDir string) *automa.StepBuilder {
 				Msg("Solo Provisioner uninstalled successfully")
 
 			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling solo-provisioner")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall solo-provisioner")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner uninstalled successfully")
 		})
 }

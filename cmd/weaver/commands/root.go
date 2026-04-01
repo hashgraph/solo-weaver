@@ -12,9 +12,13 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -64,6 +68,12 @@ func init() {
 	common.FlagVersion().SetVarP(rootCmd, &flagVersion, false)
 	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
 
+	// Verbose output flag — -V enables expanded step-by-step output
+	rootCmd.PersistentFlags().CountVarP(&ui.VerboseLevel, "verbose", "V", "Show expanded step-by-step output")
+
+	// --non-interactive disables the TUI and outputs raw zerolog (for CI/pipelines)
+	rootCmd.PersistentFlags().BoolVar(&ui.NonInteractive, "non-interactive", false, "Disable TUI and output raw logs (for CI/pipelines)")
+
 	// Hardware checks override flag - hidden to discourage casual use
 	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
 	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks().Name)
@@ -82,6 +92,7 @@ func init() {
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.Cmd())
+	rootCmd.AddCommand(tuiDemoCmd)
 
 	if common.DetectShortNameCollisions(rootCmd) {
 		logx.As().Warn().Msg("flag short name collisions detected among commands; consider using unique short names " +
@@ -116,6 +127,10 @@ func Execute(ctx context.Context) error {
 		return errorx.IllegalArgument.New("context is required")
 	}
 
+	cobra.OnInitialize(func() {
+		initConfig(ctx)
+	})
+
 	// execute the root command
 	_, err := rootCmd.ExecuteContextC(ctx)
 	if err != nil {
@@ -123,4 +138,60 @@ func Execute(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func initConfig(ctx context.Context) {
+	var err error
+	err = config.Initialize(flagConfig)
+	if err != nil {
+		doctor.CheckErr(ctx, err)
+	}
+
+	// Cap verbose level at 1 (extra -V's are harmless)
+	if ui.VerboseLevel > 1 {
+		ui.VerboseLevel = 1
+	}
+
+	// Propagate verbose flag to the doctor package for error diagnostics
+	doctor.VerboseLevel = ui.VerboseLevel
+
+	logConfig := config.Get().Log
+	if flagLogLevel != "" {
+		logConfig.Level = flagLogLevel
+	}
+
+	// Always enable file logging regardless of config so every run produces a log file
+	logConfig.FileLogging = true
+	if logConfig.Directory == "" {
+		logConfig.Directory = models.Paths().LogsDir
+	}
+	if logConfig.Filename == "" {
+		logConfig.Filename = "solo-provisioner.log"
+	}
+	if logConfig.MaxSize == 0 {
+		logConfig.MaxSize = 50 // 50 MB
+	}
+	if logConfig.MaxBackups == 0 {
+		logConfig.MaxBackups = 3
+	}
+	if logConfig.MaxAge == 0 {
+		logConfig.MaxAge = 30 // 30 days
+	}
+
+	if ui.IsUnformatted() {
+		// Raw mode: let zerolog write directly to the console (no suppression).
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+	} else {
+		// Suppress console logging — the TUI owns stdout, not zerolog.
+		// Raw log lines go only to the log file.
+		logConfig.ConsoleLogging = false
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+		ui.SuppressConsoleLogging(logConfig)
+	}
 }

@@ -62,7 +62,7 @@ var installCmd = &cobra.Command{
 		wb := workflows.WithWorkflowExecutionMode(
 			workflows.NewTeleportNodeAgentInstallWorkflow(sm), opts)
 
-		common.RunWorkflow(cmd.Context(), wb)
+		common.RunBuilderWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Teleport node agent")
 		return nil

@@ -20,6 +20,9 @@ vars:
   VM_USER: "provisioner"
   SSH_PRIVATE_KEY: "{{.PWD}}/.ssh/id_rsa_vm"
   SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
+  # Common SSH options for all VM connections. IdentityAgent=none prevents
+  # external SSH agents (e.g. 1Password) from intercepting key auth.
+  SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none"
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
   GET_VM_IP: |
     get_vm_ip() {
@@ -670,14 +673,14 @@ tasks:
         # Poll for VM to be ready with timeout
         MAX_ATTEMPTS=24  # 24 * 5 seconds = 2 minutes max wait
         ATTEMPT=0
-        
+
         while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
           ATTEMPT=$((ATTEMPT + 1))
-        
+
           # Check if VM is running
           if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
             echo "✓ VM is running, checking if network is ready..."
-        
+
             VM_IP=$({{.GET_VM_IP}} get_vm_ip)
             if [ -n "$VM_IP" ]; then
               echo "✓ VM started successfully and network is ready at $VM_IP!"
@@ -688,12 +691,12 @@ tasks:
           else
             echo "VM is starting... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
           fi
-        
+
           if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
             sleep 5
           fi
         done
-        
+
         # Final check
         if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
           echo "⚠️  VM may not be fully ready after 2 minutes, but continuing..."
@@ -707,7 +710,7 @@ tasks:
       - |
         # Check if VM is configured with SSH (check if SSH key works)
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
-        if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o PubkeyAuthentication=yes {{.VM_USER}}@$VM_IP "echo 'SSH test successful'" >/dev/null 2>&1; then
+        if ! ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=5 -o PasswordAuthentication=no -o PubkeyAuthentication=yes {{.VM_USER}}@$VM_IP "echo 'SSH test successful'" >/dev/null 2>&1; then
           echo "SSH key authentication failed. VM may not be configured yet."
           exit 0
         fi
@@ -722,7 +725,7 @@ tasks:
           echo "✓ Port 2222 is available"
         fi
         # Forward port 2222 to 22 on the VM
-        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
         echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
   
   vm:configure:
@@ -781,19 +784,19 @@ tasks:
         SSH_ATTEMPT=0
         while [ $SSH_ATTEMPT -lt $MAX_SSH_ATTEMPTS ]; do
           SSH_ATTEMPT=$((SSH_ATTEMPT + 1))
-        
+
           echo -n "Attempt $SSH_ATTEMPT/$MAX_SSH_ATTEMPTS: "
-        
-          if ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes {{.VM_USER}}@$VM_IP "echo 'SSH ready'" >/dev/null 2>&1; then
+
+          if ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=3 -o BatchMode=yes {{.VM_USER}}@$VM_IP "echo 'SSH ready'" >/dev/null 2>&1; then
             echo "✓ SSH is ready!"
             break
           fi
-        
+
           echo "Connection failed, retrying..."
-        
+
           sleep 3
         done
-        
+
         if [ $SSH_ATTEMPT -eq $MAX_SSH_ATTEMPTS ]; then
           echo ""
           echo "❌ SSH is not responding after $MAX_SSH_ATTEMPTS attempts"
@@ -807,7 +810,7 @@ tasks:
         
         # Now use SSH as provisioner with sudo to configure root and system
         # Passwordless sudo was already configured via utmctl exec
-        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 {{.VM_USER}}@$VM_IP "
           set -e
         
           echo 'Verifying sudo is available...'
@@ -871,7 +874,7 @@ tasks:
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
         echo "Installing development tools (Git, Task, Go, Delve, rsync) via SSH at $VM_IP..."
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 {{.VM_USER}}@$VM_IP "
           set -e
           echo 'Installing git, curl, rsync, and build tools...'
           sudo apt-get update -qq
@@ -927,7 +930,7 @@ tasks:
         
         echo "Connecting to VM at $VM_IP..."
         env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
   
   vm:test:unit:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
@@ -940,13 +943,13 @@ tasks:
           echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
           
           # Check if VM is accessible
-          if ! ssh -i {{.SSH_PRIVATE_KEY}} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
+          if ! ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=10 {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
             echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
             exit 1
           fi
           
           # Install dependencies and run tests on the VM with verbose output
-          ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP "
+          ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP "
             source /etc/profile.d/go.sh 2>/dev/null || true
             cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit:verbose
           "
@@ -963,8 +966,7 @@ tasks:
           
           # Install dependencies and run tests on the VM with verbose output
           ssh -i {{.SSH_PRIVATE_KEY}} \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
+              {{.SSH_OPTS}} \
               -o ExitOnForwardFailure=yes \
               -o ServerAliveInterval=60 \
               -o ServerAliveCountMax=3 \
@@ -1142,12 +1144,12 @@ tasks:
           
           # Copy to VM
           echo "Copying CA certificate to VM..."
-          scp -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          scp -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
             "$CA_CERT_PATH" {{.VM_USER}}@$VM_IP:/tmp/solo-weaver-ca.crt
           
           # Install in VM
           echo "Installing certificate in VM..."
-          ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{.VM_USER}}@$VM_IP \
+          ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
             "sudo cp /tmp/solo-weaver-ca.crt /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
              sudo chmod 644 /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
              sudo update-ca-certificates --fresh && \
@@ -1520,7 +1522,7 @@ tasks:
           exit 1
         fi
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP 'bash -s' <<'ENDSSH'
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP 'bash -s' <<'ENDSSH'
         set -euo pipefail
         
         echo "📦 Checking if Docker is already installed..."
@@ -1589,7 +1591,7 @@ tasks:
         # Task is already installed in the VM and /mnt/solo-weaver is already synced
         # So we can just use 'task alloy:start' directly!
         # Use sudo newgrp to ensure docker group permissions are active
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
           "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:start'"
         
         echo ""
@@ -1618,7 +1620,7 @@ tasks:
           exit 1
         fi
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
           "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:stop'"
         echo "✅ Alloy stack stopped"
 
@@ -1635,7 +1637,7 @@ tasks:
           exit 1
         fi
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
           "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:clean'"
         echo "✅ Alloy stack cleaned"
 
@@ -1668,11 +1670,12 @@ tasks:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
           -L 8200:localhost:8200 \
           -L 9090:localhost:9090 \
           -L 3100:localhost:3100 \
           -L 3000:localhost:3000 \
+          -L 12345:localhost:12345 \
           {{.VM_USER}}@$VM_IP \
           'echo "✅ Port forwarding active. Press Ctrl+C to stop..." && tail -f /dev/null'
 
@@ -1720,11 +1723,18 @@ tasks:
           public.ecr.aws/gravitational/teleport-distroless:18.6.4 \
           configure --roles=proxy,auth --public-addr="$NODE_IP:3080" -o /etc/teleport/teleport.yaml
         
-        # Step 5: Start Teleport
+        # Step 5: Restart Docker daemon to ensure iptables chains are clean
+        # This prevents "No chain/target/match by that name" errors when creating networks
+        if command -v systemctl &> /dev/null; then
+          echo "🔄 Restarting Docker daemon to refresh iptables chains..."
+          sudo systemctl restart docker
+        fi
+        
+        # Step 6: Start Teleport
         echo "🚀 Starting Teleport server..."
         docker compose up -d
         
-        # Step 6: Wait for it to be ready
+        # Step 7: Wait for it to be ready
         echo "⏳ Waiting for Teleport to be ready..."
         max_attempts=30
         attempt=0
@@ -1740,7 +1750,7 @@ tasks:
         
         echo "✅ Teleport server is running!"
         
-        # Step 7: Add certificate to system trust store
+        # Step 8: Add certificate to system trust store
         echo ""
         echo "🔐 Adding Teleport certificate to system trust store..."
         CERT_FILE="/tmp/teleport-server.crt"
@@ -1754,7 +1764,7 @@ tasks:
           echo "⚠️  Could not extract certificate (will need manual trust setup)"
         fi
         
-        # Step 8: Generate a join token
+        # Step 9: Generate a join token
         echo ""
         echo "🎫 Generating Teleport join token..."
         TOKEN=$(docker exec solo-weaver-teleport tctl tokens add --type=kube --ttl=24h --format=text 2>/dev/null)
@@ -1764,7 +1774,7 @@ tasks:
           TOKEN="REPLACE_WITH_JOIN_TOKEN"
         fi
         
-        # Step 9: Create the configured values file
+        # Step 10: Create the configured values file
         OUTPUT_FILE="/tmp/teleport-values-configured.yaml"
         sed "s|REPLACE_WITH_NODE_IP|$NODE_IP|g; s|REPLACE_WITH_JOIN_TOKEN|$TOKEN|g" teleport-values-local.yaml > "$OUTPUT_FILE"
         
@@ -1925,7 +1935,7 @@ tasks:
           exit 1
         fi
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
           "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task teleport:start'"
         
         echo ""
@@ -1957,7 +1967,7 @@ tasks:
           exit 1
         fi
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
           "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task teleport:stop'"
         echo "✅ Teleport server stopped"
 
@@ -1974,7 +1984,7 @@ tasks:
           exit 1
         fi
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no {{.VM_USER}}@$VM_IP \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
           "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task teleport:clean'"
         echo "✅ Teleport server cleaned"
 
@@ -2006,7 +2016,7 @@ tasks:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         
-        ssh -i {{.SSH_PRIVATE_KEY}} -o StrictHostKeyChecking=no \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
           -L 3080:localhost:3080 \
           -L 3023:localhost:3023 \
           -L 3024:localhost:3024 \

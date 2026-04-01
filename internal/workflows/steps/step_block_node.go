@@ -43,14 +43,14 @@ func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up Block Node")
+			notify.As().PhaseStart(ctx, stp, "Block Node Deployment")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Block Node")
+			notify.As().PhaseFailure(ctx, stp, rpt, "Block Node Deployment")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node setup successfully")
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Block Node Deployment")
 		})
 }
 

@@ -3,8 +3,11 @@
 package workflows
 
 import (
+	"context"
+
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -20,46 +23,62 @@ func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
 
 // InstallClusterWorkflow creates a workflow to set up a kubernetes cluster.
 func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool, sm state.Manager) *automa.WorkflowBuilder {
-	// Build the base steps that are common to all node types
-	baseSteps := []automa.Builder{
-		NodeSetupWorkflow(nodeType, profile, skipHardwareChecks),
-
-		// setup env for k8s
-		steps.DisableSwap(),
-		steps.ConfigureSysctlForKubernetes(),
-		steps.SetupBindMounts(),
-
-		// kubelet
-		steps.SetupKubelet(sm),
-		steps.SetupSystemdService(software.KubeletServiceName),
-
-		// setup cli tools
-		steps.SetupKubectl(sm),
-		steps.SetupHelm(sm), // required by MetalLB setup, so we install it earlier
-		steps.SetupK9s(sm),
-
-		// CRI-O
-		steps.SetupCrio(sm),
-		steps.SetupSystemdService(software.CrioServiceName),
-
-		// kubeadm
-		steps.SetupKubeadm(sm),
-
-		// init cluster
-		steps.InitializeCluster(),
-
-		steps.SetupCilium(sm),
-		steps.StartCilium(),
-
-		steps.SetupMetalLB(),
-
-		steps.DeployMetricsServer(nil),
-		steps.CheckClusterHealth(),
-	}
-
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
-		Steps(baseSteps...)
+		Steps(
+			NodeSetupWorkflow(nodeType, profile, skipHardwareChecks),
+			kubernetesSetupWorkflow(sm),
+		)
+}
+
+// kubernetesSetupWorkflow installs and configures Kubernetes components.
+// Rendered as the "Kubernetes Setup" phase in the TUI.
+func kubernetesSetupWorkflow(sm state.Manager) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("kubernetes-setup").
+		Steps(
+			// setup env for k8s
+			steps.DisableSwap(),
+			steps.ConfigureSysctlForKubernetes(),
+			steps.SetupBindMounts(),
+
+			// kubelet
+			steps.SetupKubelet(sm),
+			steps.SetupSystemdService(software.KubeletServiceName),
+
+			// setup cli tools
+			steps.SetupKubectl(sm),
+			steps.SetupHelm(sm), // required by MetalLB setup, so we install it earlier
+			steps.SetupK9s(sm),
+
+			// CRI-O
+			steps.SetupCrio(sm),
+			steps.SetupSystemdService(software.CrioServiceName),
+
+			// kubeadm
+			steps.SetupKubeadm(sm),
+
+			// init cluster
+			steps.InitializeCluster(),
+
+			steps.SetupCilium(sm),
+			steps.StartCilium(),
+
+			steps.SetupMetalLB(),
+
+			steps.DeployMetricsServer(nil),
+			steps.CheckClusterHealth(),
+		).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().PhaseStart(ctx, stp, "Kubernetes Setup")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseFailure(ctx, stp, rpt, "Kubernetes Setup")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Kubernetes Setup")
+		})
 }
 
 // WithWorkflowExecutionMode applies the given WorkflowExecutionOptions to the provided WorkflowBuilder.

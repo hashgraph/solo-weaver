@@ -69,7 +69,7 @@ var installCmd = &cobra.Command{
 		}
 
 		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile, skipHardwareChecks, sm), opts)
-		common.RunWorkflow(cmd.Context(), wb)
+		common.RunBuilderWorkflow(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")
 		return nil

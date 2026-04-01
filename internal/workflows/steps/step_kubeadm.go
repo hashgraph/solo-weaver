@@ -40,14 +40,8 @@ func SetupKubeadm(sm state.Manager) *automa.WorkflowBuilder {
 func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing kubeadm")
+			notify.As().StepDetail(ctx, stp, "installing kubeadm...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install kubeadm")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider(software.WithStateManager(sm))
@@ -55,6 +49,8 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			logx.As().Info().Str("step_id", stp.Id()).Str("software", installer.GetSoftwareName()).Str("version", installer.Version()).Msgf("%s version: %s", installer.GetSoftwareName(), installer.Version())
 
 			// Prepare metadata for reporting
 			meta := map[string]string{}
@@ -118,14 +114,8 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring kubeadm")
+			notify.As().StepDetail(ctx, stp, "configuring kubeadm...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure kubeadm")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "kubeadm configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider(software.WithStateManager(sm))

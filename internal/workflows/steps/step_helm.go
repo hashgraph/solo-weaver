@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -33,14 +34,8 @@ func SetupHelm(sm state.Manager) *automa.WorkflowBuilder {
 func installHelm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-helm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Helm")
+			notify.As().StepDetail(ctx, stp, "installing Helm...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Helm")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Helm installed successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider(software.WithStateManager(sm))
@@ -48,6 +43,8 @@ func installHelm(provider func(opts ...software.InstallerOption) (software.Softw
 				return automa.FailureReport(stp,
 					automa.WithError(err))
 			}
+
+			logx.As().Info().Str("step_id", stp.Id()).Str("software", installer.GetSoftwareName()).Str("version", installer.Version()).Msgf("%s version: %s", installer.GetSoftwareName(), installer.Version())
 
 			// Prepare metadata for reporting
 			meta := map[string]string{}
@@ -117,14 +114,8 @@ func installHelm(provider func(opts ...software.InstallerOption) (software.Softw
 func configureHelm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-helm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Configuring Helm")
+			notify.As().StepDetail(ctx, stp, "configuring Helm...")
 			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to configure Helm")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Helm configured successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			installer, err := provider(software.WithStateManager(sm))
