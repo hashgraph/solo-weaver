@@ -595,9 +595,9 @@ func deployAlloyConfig() automa.Builder {
 }
 
 // deployBlockNodeMonitoring deploys the ServiceMonitor resource for block-node metrics discovery.
-// This step must run AFTER installAlloy() because the ServiceMonitor CRD is registered by the
-// Alloy Helm chart. Block-node log collection uses file-based discovery (loki.source.file) instead
-// of PodLogs CRD, so no PodLogs resource is needed.
+// This step assumes the ServiceMonitor CRD has already been installed (for example via the
+// Prometheus Operator CRDs workflow). Block-node log collection uses file-based discovery
+// (loki.source.file) instead of the PodLogs CRD, so no PodLogs resource is needed.
 func deployBlockNodeMonitoring() automa.Builder {
 	return automa.NewStepBuilder().WithId(DeployBlockNodeMonitoringStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
