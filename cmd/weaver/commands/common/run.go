@@ -110,9 +110,9 @@ func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) {
 	handleWorkflowResult(ctx, result.Report())
 }
 
-// RunBuilderWorkflow is a convenience wrapper that builds an automa workflow
+// RunWorkflowBuilder is a convenience wrapper that builds an automa workflow
 // and runs it via RunWorkflow.
-func RunBuilderWorkflow(ctx context.Context, b automa.Builder) {
+func RunWorkflowBuilder(ctx context.Context, b automa.Builder) {
 	RunWorkflow(ctx, func() (*automa.Report, error) {
 		step, err := b.Build()
 		if err != nil {

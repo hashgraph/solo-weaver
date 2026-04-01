@@ -21,9 +21,9 @@ var tuiDemoCmd = &cobra.Command{
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if flagDemoStress {
-			common.RunBuilderWorkflow(cmd.Context(), demoStressWorkflow())
+			common.RunWorkflowBuilder(cmd.Context(), demoStressWorkflow())
 		} else {
-			common.RunBuilderWorkflow(cmd.Context(), demoWorkflow())
+			common.RunWorkflowBuilder(cmd.Context(), demoWorkflow())
 		}
 		return nil
 	},
