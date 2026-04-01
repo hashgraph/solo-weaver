@@ -28,7 +28,6 @@ const (
 	SyslogTemplatePath          = "files/alloy/syslog.alloy"
 	BlockNodeTemplatePath       = "files/alloy/block-node.alloy"
 	BlockNodeServiceMonitorPath = "files/alloy/block-node-servicemonitor.yaml"
-	BlockNodePodLogsPath        = "files/alloy/block-node-podlogs.yaml"
 )
 
 // Remote represents a single remote endpoint for Prometheus or Loki.
