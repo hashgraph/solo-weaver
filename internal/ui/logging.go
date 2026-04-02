@@ -133,6 +133,6 @@ func SuppressConsoleLogging(cfg logx.LoggingConfig, program ...*tea.Program) {
 		logger = logger.Hook(newTUILogHook(program[0]))
 	}
 
-	// Replace the global logx logger in-place.
-	*logx.As() = logger
+	// Replace the global logx logger atomically.
+	logx.SetLogger(logger)
 }
