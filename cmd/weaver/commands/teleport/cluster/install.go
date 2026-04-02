@@ -60,7 +60,7 @@ var installCmd = &cobra.Command{
 		wb := workflows.WithWorkflowExecutionMode(
 			workflows.NewTeleportClusterAgentInstallWorkflow(), opts)
 
-		common.RunBuilderWorkflow(cmd.Context(), wb)
+		common.RunWorkflowBuilder(cmd.Context(), wb)
 
 		logx.As().Info().Msg("Successfully installed Teleport cluster agent")
 		return nil

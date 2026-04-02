@@ -14,7 +14,7 @@ var selfInstallCmd = &cobra.Command{
 	Short: "Perform self-installation of Solo Provisioner",
 	Long:  "Perform self-installation of Solo Provisioner on the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		common.RunBuilderWorkflow(cmd.Context(), workflows.NewSelfInstallWorkflow())
+		common.RunWorkflowBuilder(cmd.Context(), workflows.NewSelfInstallWorkflow())
 
 		// RunGlobalChecks (and therefore RunStartupMigrations) is skipped for
 		// the install command, so we invoke it explicitly here. This ensures
@@ -34,7 +34,7 @@ var selfUninstallCmd = &cobra.Command{
 	Short: "Uninstall Solo Provisioner from the local system",
 	Long:  "Uninstall Solo Provisioner from the local system",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		common.RunBuilderWorkflow(cmd.Context(), workflows.NewSelfUninstallWorkflow())
+		common.RunWorkflowBuilder(cmd.Context(), workflows.NewSelfUninstallWorkflow())
 		return nil
 	},
 }
