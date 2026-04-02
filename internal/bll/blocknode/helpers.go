@@ -11,24 +11,16 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-// injectChartRef is a resolver strategy that injects the user-supplied chart reference into the runtime state.
+// injectChartRef saves the user-supplied chart reference into the runtime state.
 func injectChartRef() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil
 		}
-
 		if effectiveInputs.Custom.Chart == "" {
 			logx.As().Debug().Msg("User did not provide a chart reference; skipping injection into runtime state")
 			return nil
 		}
-
-		if effectiveInputs.Custom.Storage.BasePath != "" {
-			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
-			logx.As().Debug().Str("storageBasePath", effectiveInputs.Custom.Storage.BasePath).
-				Msg("Injected user-supplied storage base path into runtime state")
-		}
-
 		st.BlockNodeState.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
 		return nil
 	}

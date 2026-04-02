@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -50,6 +51,11 @@ func (h *InstallHandler) BuildWorkflow(
 			"block node is already installed; cannot install again").
 			WithProperty(models.ErrPropertyResolution,
 				"use 'weaver block node reset' or 'weaver block node upgrade', or pass --force to continue")
+	}
+
+	// Fail fast if storage paths can't be resolved — don't set up a cluster for nothing.
+	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion); err != nil {
+		return nil, err
 	}
 
 	ins := inputs.Custom

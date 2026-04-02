@@ -112,42 +112,36 @@ func (b *BlockNodeRuntimeResolver) Namespace() (*automa.EffectiveValue[string], 
 }
 
 func (b *BlockNodeRuntimeResolver) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
+	// Merge storage fields from all sources. Priority (highest → lowest):
+	//   1. User inputs (CLI flags)
+	//   2. Current state (for example, PV hostPaths, and it may also preserve BasePath)
+	//   3. Config file
+	// MergeFrom fills empty fields without overwriting existing ones, so we
+	// apply sources from highest to lowest priority.
+
+	var storage models.BlockNodeStorage
+	strategy := automa.StrategyConfig
+
+	// Start with user inputs (highest priority for fields that are set).
+	if b.inputs != nil && !b.inputs.Storage.IsEmpty() {
+		storage = b.inputs.Storage
+		strategy = automa.StrategyUserInput
+	}
+
+	// Fill gaps from current state (PV paths, sizes).
 	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if err := b.state.Storage.Validate(); err != nil {
-			return nil, errorx.IllegalState.
-				Wrap(err, "block node runtime state is inconsistent")
-		}
-
-		storage := b.state.Storage
-
-		// State storage is populated from PV hostPaths by the reality checker,
-		// so it contains individual paths (LivePath, ArchivePath, …) but never
-		// BasePath — PVs do not carry that information.  Fall back to the config
-		// default so that migrations can derive new optional storage paths
-		// (e.g. verification = basePath + "/verification") when the user has not
-		// explicitly set the individual path.
-		if storage.BasePath == "" && b.cfg.BlockNode.Storage.BasePath != "" {
-			storage.BasePath = b.cfg.BlockNode.Storage.BasePath
-		}
-
-		return automa.NewEffective[models.BlockNodeStorage](
-			storage,
-			automa.StrategyCurrent,
-		)
-	}
-
-	if b.inputs != nil {
-		if err := b.inputs.Storage.Validate(); err == nil {
-			return automa.NewEffective[models.BlockNodeStorage](
-				b.inputs.Storage,
-				automa.StrategyUserInput,
-			)
+		storage.MergeFrom(b.state.Storage)
+		if strategy == automa.StrategyConfig {
+			strategy = automa.StrategyCurrent
 		}
 	}
+
+	// Fill remaining gaps from config.
+	storage.MergeFrom(b.cfg.BlockNode.Storage)
 
 	return automa.NewEffective[models.BlockNodeStorage](
-		b.cfg.BlockNode.Storage,
-		automa.StrategyConfig,
+		storage,
+		strategy,
 	)
 }
 

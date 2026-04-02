@@ -364,7 +364,7 @@ func (m *Manager) resolveOptionalStoragePathAndSize(optStor OptionalStorage) (st
 		storagePath = sanitized
 	} else {
 		return "", "", errorx.IllegalArgument.New(
-			"%s storage path is empty: set storage.basePath or the specific %s path flag",
+			"%s storage path is empty: set --base-path (or storage.basePath in config) or --%s-path",
 			optStor.Name, optStor.Name,
 		)
 	}
@@ -824,7 +824,7 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, opti
 	}
 
 	if basePath == "" && (corePathsMissing || optionalPathMissing) {
-		return "", "", "", nil, errorx.IllegalArgument.New("at least one storage path is not set and base storage path is empty")
+		return "", "", "", nil, errorx.IllegalArgument.New("at least one storage path is not set and base path is empty; set --base-path flag or storage.basePath in config")
 	}
 
 	if archivePath == "" {

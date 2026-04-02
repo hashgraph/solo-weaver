@@ -149,12 +149,6 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 		},
 	}
 
-	// If base path is not provided, use the default from config.
-	// This allows users to specify individual storage paths/sizes without needing to provide a base path.
-	if flagBasePath == "" {
-		inputs.Custom.Storage.BasePath = config.Get().BlockNode.Storage.BasePath
-	}
-
 	logx.As().Info().Any("inputs", inputs).Msg("User inputs for block node operation")
 	if err := inputs.Validate(); err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "invalid user inputs")

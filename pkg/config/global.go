@@ -70,8 +70,8 @@ func Initialize(path string) error {
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 
-		if err := viper.Unmarshal(&globalConfig); err != nil {
-			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration").
+		if err := viper.UnmarshalExact(&globalConfig); err != nil {
+			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration (check for unknown fields)").
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 	}
