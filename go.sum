@@ -24,8 +24,8 @@ github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3d
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/automa-saga/automa v0.10.0 h1:K3cBRwVl7MgHFre4FYmnLZMYsphoUOnoGJ50hjDe4NY=
 github.com/automa-saga/automa v0.10.0/go.mod h1:AVzNGE+ci5sAJ7ao3ZkmC+CMe4kpwJhE6AloBJv3Udc=
-github.com/automa-saga/logx v0.1.0 h1:BP6CMErwX/YPDlqjNtre1zVhI53wHe8I2CuiNc+cDLQ=
-github.com/automa-saga/logx v0.1.0/go.mod h1:inlus7bMGEUD5wIEgtoKcGO5Ulhl93CHkzUBlqJJK6I=
+github.com/automa-saga/logx v0.2.0 h1:ELDncCDx+wr24jvVG/RmY6kxP+wlRdaqGCza7uKPQZ8=
+github.com/automa-saga/logx v0.2.0/go.mod h1:inlus7bMGEUD5wIEgtoKcGO5Ulhl93CHkzUBlqJJK6I=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
