@@ -28,6 +28,88 @@ prometheus.relabel "block_node_metrics_{{.Name}}" {
 {{.CustomRules}}}
 {{end}}
 
+// Discover block-node-server container log files from CRI log directory.
+// Uses file-based collection instead of PodLogs CRD to preserve all log lines
+// (including multiline stack traces that share the same CRI timestamp).
+local.file_match "block_node_server" {
+  path_targets = [{
+    __path__ = "/host/var/log/pods/*block-node*server*/block-node-server/*.log",
+    job      = "block-node/block-node-server",
+  }]
+}
+
+loki.source.file "block_node_server" {
+  targets    = local.file_match.block_node_server.targets
+  forward_to = [loki.process.block_node_server.receiver]
+}
+
+loki.process "block_node_server" {
+  forward_to = [loki.relabel.block_node_server.receiver]
+
+  // Parse the CRI log format to extract the raw application log line.
+  stage.cri {}
+
+  // Aggregate Java stack traces into the preceding log entry.
+  // Any line not starting with a timestamp is treated as a continuation.
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}"
+    max_wait_time = "3s"
+    max_lines     = 128
+  }
+
+  // Parse the JVM java.util.logging format:
+  //   <timestamp> <LEVEL>   [<logger and method>] <message>
+  stage.regex {
+    expression = "^(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\+\\d{4})\\s+(?P<level>\\w+)\\s+\\[(?P<logger>[^\\]]+)\\]\\s+(?P<message>.*)"
+  }
+
+  // Normalize JUL levels to standard Loki levels.
+  // Uses stage.replace with source to transform the extracted level value.
+  // Note: capturing groups are required for stage.replace to apply the replacement.
+  stage.replace {
+    expression = "^(FINEST|FINER)$"
+    source     = "level"
+    replace    = "trace"
+  }
+
+  stage.replace {
+    expression = "^(FINE|CONFIG)$"
+    source     = "level"
+    replace    = "debug"
+  }
+
+  stage.replace {
+    expression = "^(INFO)$"
+    source     = "level"
+    replace    = "info"
+  }
+
+  stage.replace {
+    expression = "^(WARNING)$"
+    source     = "level"
+    replace    = "warn"
+  }
+
+  stage.replace {
+    expression = "^(SEVERE)$"
+    source     = "level"
+    replace    = "error"
+  }
+
+  // Promote extracted level to a Loki label for filtering in Grafana.
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  // Use the parsed timestamp as the Loki entry timestamp.
+  stage.timestamp {
+    source = "timestamp"
+    format = "2006-01-02 15:04:05.000-0700"
+  }
+}
+
 loki.relabel "block_node_server" {
   forward_to = [{{range $i, $r := .LokiRemotes}}{{if $i}}, {{end}}loki.relabel.block_node_logs_{{$r.Name}}.receiver{{end}}]
 }
@@ -36,25 +118,3 @@ loki.relabel "block_node_logs_{{.Name}}" {
   forward_to = [loki.write.{{.Name}}.receiver]
 {{.CustomRules}}}
 {{end}}
-
-loki.source.podlogs "block_node_server" {
-  forward_to = [loki.relabel.block_node_server.receiver]
-
-  clustering {
-    enabled = false
-  }
-
-  // Select the PodLogs CRD we created (block-node-podlogs.yaml)
-  // The PodLogs CRD has label app.kubernetes.io/name=block-node-server
-  selector {
-    match_expression {
-      key      = "app.kubernetes.io/name"
-      operator = "In"
-      values   = ["block-node-server"]
-    }
-  }
-
-  // Allow discovering PodLogs in any namespace
-  namespace_selector {
-  }
-}

@@ -138,6 +138,59 @@ func TestRenderModularConfigs(t *testing.T) {
 	}
 }
 
+func TestRenderModularConfigs_BlockNodeLogProcessing(t *testing.T) {
+	cfg := models.AlloyConfig{
+		ClusterName:      "test-cluster",
+		MonitorBlockNode: true,
+		PrometheusRemotes: []models.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
+		},
+		LokiRemotes: []models.AlloyRemoteConfig{
+			{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
+		},
+	}
+
+	cb, err := NewConfigBuilder(cfg, "")
+	require.NoError(t, err)
+	modules, err := RenderModularConfigs(cb)
+	require.NoError(t, err)
+
+	var blockNodeContent string
+	for _, m := range modules {
+		if m.Name == "block-node" {
+			blockNodeContent = m.Content
+			break
+		}
+	}
+	require.NotEmpty(t, blockNodeContent, "block-node module should exist")
+
+	// Verify loki.process component exists with multiline, regex, timestamp, and labels stages
+	assert.Contains(t, blockNodeContent, `loki.process "block_node_server"`)
+	assert.Contains(t, blockNodeContent, "stage.multiline")
+	assert.Contains(t, blockNodeContent, "stage.regex")
+	assert.Contains(t, blockNodeContent, "stage.timestamp")
+	assert.Contains(t, blockNodeContent, "stage.labels")
+
+	// Verify multiline firstline pattern matches JVM timestamp format
+	assert.Contains(t, blockNodeContent, `firstline`)
+	assert.Contains(t, blockNodeContent, `\\d{4}-\\d{2}-\\d{2}`)
+
+	// Verify JUL level normalization stages (replace on extracted level)
+	assert.Contains(t, blockNodeContent, `(WARNING)`)
+	assert.Contains(t, blockNodeContent, `"warn"`)
+	assert.Contains(t, blockNodeContent, `(SEVERE)`)
+	assert.Contains(t, blockNodeContent, `"error"`)
+
+	// Verify file-based log collection with CRI parsing
+	assert.Contains(t, blockNodeContent, `local.file_match "block_node_server"`)
+	assert.Contains(t, blockNodeContent, `loki.source.file "block_node_server"`)
+	assert.Contains(t, blockNodeContent, "stage.cri")
+
+	// Verify pipeline wiring: file → process → relabel
+	assert.Contains(t, blockNodeContent, `forward_to = [loki.process.block_node_server.receiver]`)
+	assert.Contains(t, blockNodeContent, `forward_to = [loki.relabel.block_node_server.receiver]`)
+}
+
 func TestRenderModularConfigs_WithOpsLabelProfile_AllModules(t *testing.T) {
 	cfg := models.AlloyConfig{
 		ClusterName:      "lfh02-previewnet-blocknode",
