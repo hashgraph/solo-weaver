@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -78,6 +79,11 @@ func (h *UpgradeHandler) BuildWorkflow(
 	if desiredVer.Equal(currentVer) && !inputs.Common.Force {
 		return nil, errorx.IllegalArgument.New(
 			"block node is already at chart version %q; use --force to re-apply", currentVer)
+	}
+
+	// Fail fast if storage paths can't be resolved.
+	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion); err != nil {
+		return nil, err
 	}
 
 	ins := inputs.Custom

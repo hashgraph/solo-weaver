@@ -101,7 +101,7 @@ func TestGetStoragePaths_NewVersionRequiresVerification(t *testing.T) {
 
 	_, _, _, _, err := manager.GetStoragePaths()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one storage path is not set and base storage path is empty")
+	assert.Contains(t, err.Error(), "at least one storage path is not set and base path is empty")
 }
 
 // TestGetStoragePaths_OnlyBasePathProvided tests that paths are derived from basePath when individual paths are empty

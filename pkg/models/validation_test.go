@@ -144,7 +144,7 @@ func TestBlockNodeStorage_Validate(t *testing.T) {
 				LivePath:    "",
 				LogPath:     "",
 			},
-			expectError: true, // Empty paths are not allowed
+			expectError: false, // Completeness is validated in BlockNodeInputs.Validate(), not here
 		},
 	}
 
@@ -240,19 +240,18 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "invalid_config_partial_individual_paths",
+			name: "valid_config_partial_individual_paths",
 			config: BlockNodeConfig{
 				Storage: BlockNodeStorage{
 					ArchivePath: "/mnt/archive",
 					LivePath:    "/mnt/live",
-					// LogPath missing
+					// LogPath missing — completeness checked in BlockNodeInputs.Validate()
 				},
 			},
-			expectError: true,
-			errorMsg:    "either basePath must be provided",
+			expectError: false,
 		},
 		{
-			name: "invalid_config_with_only_sizes_in_storage",
+			name: "valid_config_with_only_sizes_in_storage",
 			config: BlockNodeConfig{
 				Namespace:    "block-node",
 				ChartVersion: "0.30.0",
@@ -262,8 +261,7 @@ func TestBlockNodeConfig_Validate(t *testing.T) {
 					LogSize:     "10Gi",
 				},
 			},
-			expectError: true,
-			errorMsg:    "either basePath must be provided",
+			expectError: false, // Completeness checked in BlockNodeInputs.Validate()
 		},
 		{
 			name: "valid_config_base_and_individual_paths",

@@ -145,7 +145,9 @@ func (c *BlockNodeInputs) Validate() error {
 		}
 	}
 
-	// Validate storage paths
+	// Validate storage paths (sanitizes individual values that are present).
+	// Completeness (basePath OR all individual paths) is validated later in
+	// GetStoragePaths() after config and state values have been merged by the resolver.
 	if err := c.Storage.Validate(); err != nil {
 		return err
 	}
@@ -158,13 +160,9 @@ func (c *BlockNodeInputs) Validate() error {
 		}
 
 		if validatedValuesFile != c.ValuesFile {
-			return errorx.IllegalArgument.New("values file is not validi [ input = %s, validated = %s",
+			return errorx.IllegalArgument.New("values file path is not valid: input=%s, validated=%s",
 				c.ValuesFile, validatedValuesFile)
 		}
-	}
-
-	if err := c.Storage.Validate(); err != nil {
-		return err
 	}
 
 	return nil

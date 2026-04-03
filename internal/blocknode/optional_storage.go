@@ -15,8 +15,11 @@
 package blocknode
 
 import (
+	"strings"
+
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
+	"github.com/joomcode/errorx"
 )
 
 // OptionalStorage describes an optional storage volume that is conditionally
@@ -94,6 +97,34 @@ func (o *OptionalStorage) RequiredByVersion(targetVersion string) bool {
 	}
 
 	return !target.LessThan(minVer)
+}
+
+// ValidateStorageCompleteness checks that enough storage paths are set to
+// resolve all required paths for the given chart version. Either basePath must
+// be set (to derive missing paths) or all required individual paths must be
+// explicit. This includes core paths (archive, live, log) and version-dependent
+// optional paths (verification, plugins).
+func ValidateStorageCompleteness(storage models.BlockNodeStorage, chartVersion string) error {
+	// If basePath is set, all missing paths can be derived.
+	if strings.TrimSpace(storage.BasePath) != "" {
+		return nil
+	}
+	// Without basePath, all core paths must be explicit.
+	if strings.TrimSpace(storage.ArchivePath) == "" ||
+		strings.TrimSpace(storage.LivePath) == "" ||
+		strings.TrimSpace(storage.LogPath) == "" {
+		return errorx.IllegalArgument.New(
+			"at least one storage path is not set and base path is empty; set --base-path flag or storage.basePath in config")
+	}
+	// Without basePath, version-dependent optional paths must also be explicit.
+	for _, opt := range GetApplicableOptionalStorages(chartVersion) {
+		if strings.TrimSpace(opt.GetPath(&storage)) == "" {
+			return errorx.IllegalArgument.New(
+				"%s storage path is required for chart version %s; set --base-path (or storage.basePath in config) or --%s-path",
+				opt.Name, chartVersion, opt.Name)
+		}
+	}
+	return nil
 }
 
 // GetApplicableOptionalStorages returns the subset of optional storages

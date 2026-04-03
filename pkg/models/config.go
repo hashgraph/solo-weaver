@@ -47,6 +47,44 @@ func (b *BlockNodeStorage) IsEmpty() bool {
 		strings.TrimSpace(b.LogSize) == ""
 }
 
+// MergeFrom copies non-empty fields from other into b, filling gaps without
+// overwriting fields already set in b.
+func (b *BlockNodeStorage) MergeFrom(other BlockNodeStorage) {
+	if strings.TrimSpace(b.BasePath) == "" && strings.TrimSpace(other.BasePath) != "" {
+		b.BasePath = other.BasePath
+	}
+	if strings.TrimSpace(b.ArchivePath) == "" && strings.TrimSpace(other.ArchivePath) != "" {
+		b.ArchivePath = other.ArchivePath
+	}
+	if strings.TrimSpace(b.LivePath) == "" && strings.TrimSpace(other.LivePath) != "" {
+		b.LivePath = other.LivePath
+	}
+	if strings.TrimSpace(b.LogPath) == "" && strings.TrimSpace(other.LogPath) != "" {
+		b.LogPath = other.LogPath
+	}
+	if strings.TrimSpace(b.VerificationPath) == "" && strings.TrimSpace(other.VerificationPath) != "" {
+		b.VerificationPath = other.VerificationPath
+	}
+	if strings.TrimSpace(b.PluginsPath) == "" && strings.TrimSpace(other.PluginsPath) != "" {
+		b.PluginsPath = other.PluginsPath
+	}
+	if strings.TrimSpace(b.LiveSize) == "" && strings.TrimSpace(other.LiveSize) != "" {
+		b.LiveSize = other.LiveSize
+	}
+	if strings.TrimSpace(b.ArchiveSize) == "" && strings.TrimSpace(other.ArchiveSize) != "" {
+		b.ArchiveSize = other.ArchiveSize
+	}
+	if strings.TrimSpace(b.LogSize) == "" && strings.TrimSpace(other.LogSize) != "" {
+		b.LogSize = other.LogSize
+	}
+	if strings.TrimSpace(b.VerificationSize) == "" && strings.TrimSpace(other.VerificationSize) != "" {
+		b.VerificationSize = other.VerificationSize
+	}
+	if strings.TrimSpace(b.PluginsSize) == "" && strings.TrimSpace(other.PluginsSize) != "" {
+		b.PluginsSize = other.PluginsSize
+	}
+}
+
 // Validate validates all storage paths to ensure they are safe and secure.
 // This performs early validation of user-provided paths to catch security issues
 // before workflow execution begins.
@@ -86,6 +124,13 @@ func (b *BlockNodeStorage) Validate() error {
 		}
 	}
 
+	// Validate PluginsPath if provided
+	if b.PluginsPath != "" {
+		if _, err := sanity.SanitizePath(b.PluginsPath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid plugins path: %s", b.PluginsPath)
+		}
+	}
+
 	// Validate storage sizes if provided
 	if b.LiveSize != "" {
 		if err := sanity.ValidateStorageSize(b.LiveSize); err != nil {
@@ -117,19 +162,10 @@ func (b *BlockNodeStorage) Validate() error {
 		}
 	}
 
-	// Require either BasePath OR all of ArchivePath, LivePath, LogPath and VerificationPath
-	if strings.TrimSpace(b.BasePath) != "" {
-		return nil
-	}
-
-	if strings.TrimSpace(b.ArchivePath) != "" &&
-		strings.TrimSpace(b.LivePath) != "" &&
-		strings.TrimSpace(b.LogPath) != "" {
-		// TODO Add verification for other fields based on migration requirements
-		return nil
-	}
-
-	return errorx.IllegalArgument.New("either basePath must be provided or all of archivePath, livePath, and logPath must be provided")
+	// Path completeness (basePath OR all individual paths) is not enforced here
+	// because CLI flags have not been merged yet. Completeness is validated in
+	// BlockNodeInputs.Validate() after flag merging.
+	return nil
 }
 
 // Validate validates all configuration fields to ensure they are safe and secure.
