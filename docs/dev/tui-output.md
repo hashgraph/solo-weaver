@@ -241,7 +241,7 @@ that forwards log messages to the TUI as greyed detail text.
 
 > **Why SuppressConsoleLogging?** The upstream `logx.Initialize()` unconditionally
 > creates a `ConsoleWriter` regardless of the `ConsoleLogging` config field.
-> `SuppressConsoleLogging()` calls `*logx.As() = ...` to replace the logger
+> `SuppressConsoleLogging()` calls `logx.SetLogger(...)` to replace the logger
 > in-place after `Initialize()` returns.
 
 ### How `logx` messages flow to the terminal
