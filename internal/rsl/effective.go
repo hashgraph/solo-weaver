@@ -29,8 +29,9 @@
 //
 // # Lifecycle
 //
-//  1. Construct with [NewEffectiveValue], passing the hardcoded default and a
-//     [Selector].  StrategyDefault is seeded automatically.
+//  1. Construct with [NewEffectiveValue], passing a [Selector].  The sources map
+//     starts empty; call [EffectiveValue.SetSource] (or the With* methods on the
+//     owning resolver) to populate sources before resolving.
 //  2. Call [EffectiveValue.SetSource] / [EffectiveValue.ClearSource] as inputs
 //     arrive (config load, user flags, state refresh).  Each mutation
 //     invalidates the cache.
@@ -60,8 +61,8 @@ const (
 	StrategyZero automa.EffectiveStrategy = 100
 
 	// StrategyDefault indicates the value came from a hardcoded compile-time
-	// constant (e.g. deps.BLOCK_NODE_NAMESPACE).  It is seeded at construction
-	// time and never changes during a run.
+	// constant (e.g. deps.BLOCK_NODE_NAMESPACE).  Set via WithDefaults and
+	// typically never changes after initial wiring.
 	StrategyDefault automa.EffectiveStrategy = 101
 
 	// StrategyEnv indicates the value came from an environment variable
@@ -353,23 +354,27 @@ func (e *EffectiveValue[T]) RealityVal() (automa.Value[T], error) {
 	return e.ValOf(StrategyReality), nil
 }
 
-// NewEffectiveValue constructs an [EffectiveValue] for a single field.
-// defaultVal is registered immediately as [StrategyDefault] (the hardcoded
-// compile-time fallback).  selector is the [Selector] that will be invoked on
-// the first call to [EffectiveValue.Resolve].
-//
-// Returns an error only if defaultVal cannot be encoded by gob, which is not
-// expected for the plain string and struct types used by RSL fields.
-func NewEffectiveValue[T any](defaultVal T, selector Selector[T]) (*EffectiveValue[T], error) {
-	v, err := automa.NewValue(defaultVal)
-	if err != nil {
-		return nil, err
+// NewEffectiveValue constructs an [EffectiveValue] for a single field with an
+// empty sources map.  Callers populate sources via [EffectiveValue.SetSource] or
+// the owning resolver's With* methods (WithDefaults, WithConfig, WithEnv, …).
+// selector is the [Selector] invoked on the first call to [EffectiveValue.Resolve].
+// If selector is nil, [DefaultSelector] is used.
+func NewEffectiveValue[T any](selector Selector[T]) (*EffectiveValue[T], error) {
+	if selector == nil {
+		selector = &DefaultSelector[T]{}
 	}
-
 	return &EffectiveValue[T]{
-		sources: map[automa.EffectiveStrategy]automa.Value[T]{
-			StrategyDefault: v,
-		},
+		sources:  make(map[automa.EffectiveStrategy]automa.Value[T]),
 		selector: selector,
 	}, nil
+}
+
+// WithSelector replaces the current [Selector] and invalidates the cache so the
+// next call to [EffectiveValue.Resolve] uses the new algorithm.
+func (e *EffectiveValue[T]) WithSelector(selector Selector[T]) {
+	if selector == nil {
+		selector = &DefaultSelector[T]{}
+	}
+	e.selector = selector
+	e.Invalidate()
 }

@@ -94,6 +94,35 @@ blockNode:
 	}
 }
 
+// TestDefaultsConfig_ReturnsDepsConstants verifies that DefaultsConfig returns
+// the hardcoded deps constants and does not read env vars or config files.
+func TestDefaultsConfig_ReturnsDepsConstants(t *testing.T) {
+	cfg := DefaultsConfig()
+
+	if cfg.BlockNode.Namespace == "" {
+		t.Error("Namespace: expected non-empty deps constant, got empty")
+	}
+	if cfg.BlockNode.Release == "" {
+		t.Error("Release: expected non-empty deps constant, got empty")
+	}
+	if cfg.BlockNode.Chart == "" {
+		t.Error("Chart: expected non-empty deps constant, got empty")
+	}
+	if cfg.BlockNode.ChartVersion == "" {
+		t.Error("ChartVersion: expected non-empty deps constant, got empty")
+	}
+	if cfg.BlockNode.Storage.BasePath == "" {
+		t.Error("Storage.BasePath: expected non-empty deps constant, got empty")
+	}
+	if cfg.Teleport.Version == "" {
+		t.Error("Teleport.Version: expected non-empty deps constant, got empty")
+	}
+	// Alloy and cluster fields are intentionally not in defaults (no deps constants for them)
+	if cfg.Alloy.ClusterName != "" {
+		t.Errorf("Alloy.ClusterName: expected empty (no default), got %q", cfg.Alloy.ClusterName)
+	}
+}
+
 // TestEnvConfig_ReadsEnvVars verifies that EnvConfig populates fields from
 // SOLO_PROVISIONER_* environment variables and leaves unset fields at zero value.
 func TestEnvConfig_ReadsEnvVars(t *testing.T) {

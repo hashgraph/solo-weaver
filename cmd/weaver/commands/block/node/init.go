@@ -53,8 +53,10 @@ func initializeDependencies() error {
 		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
 	}
 
-	// Inject SOLO_PROVISIONER_* env vars as StrategyEnv — above config file but below CLI flags.
-	// config.EnvConfig() reads the env vars; WithEnv seeds them into the resolver.
+	// Seed the full precedence chain for block-node resolution (lowest → highest priority):
+	//   WithDefaults → WithConfig → WithEnv → (WithState already seeded in constructor)
+	// WithUserInputs and WithIntent are called per-command in the BLL layer.
+	runtime.BlockNodeRuntime.WithDefaults(config.DefaultsConfig())
 	runtime.BlockNodeRuntime.WithEnv(config.EnvConfig())
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.

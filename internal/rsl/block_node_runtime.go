@@ -268,6 +268,32 @@ func (b *BlockNodeRuntimeResolver) WithState(st state.BlockNodeState) Resolver[s
 	return b
 }
 
+// WithDefaults registers hardcoded compile-time constants as StrategyDefault sources —
+// the lowest-priority fallback in the resolution chain. cfg should be the result of
+// config.DefaultsConfig() (i.e. values sourced exclusively from the deps package).
+//
+// Zero-value fields in cfg are not registered so they don't shadow a higher-priority
+// source with an empty string.
+func (b *BlockNodeRuntimeResolver) WithDefaults(cfg models.Config) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	setOrClearString(b.namespace, StrategyDefault, cfg.BlockNode.Namespace)
+	setOrClearString(b.releaseName, StrategyDefault, cfg.BlockNode.Release)
+	setOrClearString(b.chartName, StrategyDefault, cfg.BlockNode.ChartName)
+	setOrClearString(b.chartRef, StrategyDefault, cfg.BlockNode.Chart)
+	setOrClearString(b.chartVersion, StrategyDefault, cfg.BlockNode.ChartVersion)
+
+	defaultStorage := cfg.BlockNode.Storage
+	if !defaultStorage.IsEmpty() {
+		_ = b.storage.SetSource(StrategyDefault, defaultStorage)
+	} else {
+		b.storage.ClearSource(StrategyDefault)
+	}
+
+	return b
+}
+
 // WithEnv registers env-var-sourced values as StrategyEnv sources, giving them
 // the correct precedence: above StrategyConfig (config file) but below
 // StrategyUserInput (CLI flags).
@@ -429,38 +455,38 @@ func NewBlockNodeRuntimeResolver(
 
 	var err error
 
-	br.namespace, err = NewEffectiveValue(cfg.BlockNode.Namespace, &validatedStringResolver{fieldName: "namespace"})
+	br.namespace, err = NewEffectiveValue[string](&validatedStringResolver{fieldName: "namespace"})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create namespace resolver")
 	}
 
-	br.releaseName, err = NewEffectiveValue(cfg.BlockNode.Release, &validatedStringResolver{fieldName: "release name"})
+	br.releaseName, err = NewEffectiveValue[string](&validatedStringResolver{fieldName: "release name"})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create release name resolver")
 	}
 
-	br.chartName, err = NewEffectiveValue(cfg.BlockNode.ChartName, &validatedStringResolver{fieldName: "chart name"})
+	br.chartName, err = NewEffectiveValue[string](&validatedStringResolver{fieldName: "chart name"})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create chart name resolver")
 	}
 
-	br.chartRef, err = NewEffectiveValue(cfg.BlockNode.Chart, &chartRefResolver{})
+	br.chartRef, err = NewEffectiveValue[string](&chartRefResolver{})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create chart ref resolver")
 	}
 
-	br.chartVersion, err = NewEffectiveValue(cfg.BlockNode.ChartVersion, &chartVersionResolver{intent: &br.intent})
+	br.chartVersion, err = NewEffectiveValue[string](&chartVersionResolver{intent: &br.intent})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create chart version resolver")
 	}
 
-	br.storage, err = NewEffectiveValue(cfg.BlockNode.Storage, &storageResolver{})
+	br.storage, err = NewEffectiveValue[models.BlockNodeStorage](&storageResolver{})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create storage resolver")
 	}
 
-	// Seed StrategyConfig from the provided config (StrategyDefault was seeded
-	// above via NewEffectiveValueResolver's defaultVal).
+	// Seed sources in lowest-to-highest precedence order so that higher-priority
+	// sources correctly override lower ones from the start.
 	br.WithConfig(cfg)
 
 	// Seed StrategyState from the initial persisted state.

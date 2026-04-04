@@ -100,6 +100,27 @@ func SetProfile(profile string) {
 	globalConfig.Profile = profile
 }
 
+// DefaultsConfig returns a models.Config populated with hardcoded compile-time
+// defaults from the deps package. This is passed to Resolver.WithDefaults so that
+// the RSL layer has correct StrategyDefault values — always the deps constants,
+// never the config file values.
+func DefaultsConfig() models.Config {
+	return models.Config{
+		BlockNode: models.BlockNodeConfig{
+			Namespace:    deps.BLOCK_NODE_NAMESPACE,
+			Release:      deps.BLOCK_NODE_RELEASE,
+			Chart:        deps.BLOCK_NODE_CHART,
+			ChartVersion: deps.BLOCK_NODE_VERSION,
+			Storage: models.BlockNodeStorage{
+				BasePath: deps.BLOCK_NODE_STORAGE_BASE_PATH,
+			},
+		},
+		Teleport: models.TeleportConfig{
+			Version: deps.TELEPORT_VERSION,
+		},
+	}
+}
+
 // EnvConfig returns a models.Config populated exclusively from SOLO_PROVISIONER_*
 // environment variables. Fields with no matching env var are left at their zero value.
 //
