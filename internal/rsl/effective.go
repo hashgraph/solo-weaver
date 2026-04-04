@@ -42,7 +42,12 @@
 //     triggering resolution.
 package rsl
 
-import "github.com/automa-saga/automa"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/automa-saga/automa"
+)
 
 // RSL-specific strategy constants extend automa.EffectiveStrategy using values
 // 100–106 to avoid conflicts with automa's built-in range (0–4).
@@ -377,4 +382,50 @@ func (e *EffectiveValue[T]) WithSelector(selector Selector[T]) {
 	}
 	e.selector = selector
 	e.Invalidate()
+}
+
+// String returns a human-readable summary of the effective value suitable for
+// use in log lines (e.g. logx.Any("namespace", ns)).
+//
+// Format:
+//
+//	strategy=<name> value=<val> sources=[<name>:<val>, …]
+//
+// Sources are listed in precedence order (highest → lowest), skipping
+// [StrategyZero] since it is the implicit fallback and never stored.
+// Resolution is triggered lazily if not yet cached; errors are surfaced as
+// value=<error: …>.
+func (e *EffectiveValue[T]) String() string {
+	// Resolve (uses cache if already computed).
+	ev, err := e.Resolve()
+
+	var winVal, winStrategy string
+	if err != nil {
+		winVal = fmt.Sprintf("<error: %v>", err)
+		winStrategy = StrategyName(StrategyZero)
+	} else if ev == nil {
+		winVal = "<nil>"
+		winStrategy = StrategyName(StrategyZero)
+	} else {
+		winVal = fmt.Sprintf("%v", ev.Get().Val())
+		winStrategy = StrategyName(ev.Strategy())
+	}
+
+	// Build ordered sources list, skipping StrategyZero (implicit, never stored).
+	var parts []string
+	for _, st := range defaultOrderedStrategies {
+		if st == StrategyZero {
+			continue
+		}
+		if v, ok := e.sources[st]; ok {
+			parts = append(parts, fmt.Sprintf("%s:%v", StrategyName(st), v.Val()))
+		}
+	}
+
+	sources := "[]"
+	if len(parts) > 0 {
+		sources = "[" + strings.Join(parts, ", ") + "]"
+	}
+
+	return fmt.Sprintf("strategy=%s value=%v sources=%s", winStrategy, winVal, sources)
 }

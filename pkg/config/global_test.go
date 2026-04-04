@@ -127,10 +127,10 @@ func TestDefaultsConfig_ReturnsDepsConstants(t *testing.T) {
 // SOLO_PROVISIONER_* environment variables and leaves unset fields at zero value.
 func TestEnvConfig_ReadsEnvVars(t *testing.T) {
 	vars := map[string]string{
-		"SOLO_PROVISIONER_BLOCKNODE_NAMESPACE":            "env-ns",
-		"SOLO_PROVISIONER_BLOCKNODE_VERSION":              "1.2.3",
-		"SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH":     "/env/base",
-		"SOLO_PROVISIONER_BLOCKNODE_STORAGE_ARCHIVEPATH":  "/env/archive",
+		"SOLO_PROVISIONER_BLOCKNODE_NAMESPACE":           "env-ns",
+		"SOLO_PROVISIONER_BLOCKNODE_VERSION":             "1.2.3",
+		"SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH":    "/env/base",
+		"SOLO_PROVISIONER_BLOCKNODE_STORAGE_ARCHIVEPATH": "/env/archive",
 	}
 	for k, v := range vars {
 		orig := os.Getenv(k)
