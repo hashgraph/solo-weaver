@@ -176,7 +176,17 @@ func (r *storageResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Va
 	}
 
 	if strategy == StrategyZero {
-		strategy = StrategyConfig // nothing was deployed and no user input
+		// No user input and nothing deployed — pick the highest-priority lower
+		// source that actually contributed a non-empty value.
+		for _, st := range []automa.EffectiveStrategy{StrategyConfig, StrategyDefault} {
+			if cv, ok := sources[st]; ok {
+				v := cv.Val() // copy needed: IsEmpty() has a pointer receiver
+				if !v.IsEmpty() {
+					strategy = st
+					break
+				}
+			}
+		}
 	}
 
 	sv, err := automa.NewValue(storage)
@@ -250,12 +260,23 @@ func (b *BlockNodeRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	_ = b.namespace.SetSource(StrategyConfig, cfg.BlockNode.Namespace)
-	_ = b.releaseName.SetSource(StrategyConfig, cfg.BlockNode.Release)
-	_ = b.chartName.SetSource(StrategyConfig, cfg.BlockNode.ChartName)
-	_ = b.chartRef.SetSource(StrategyConfig, cfg.BlockNode.Chart)
-	_ = b.chartVersion.SetSource(StrategyConfig, cfg.BlockNode.ChartVersion)
-	_ = b.storage.SetSource(StrategyConfig, cfg.BlockNode.Storage)
+	// Use setOrClearString so that a field absent from config.yaml (empty string)
+	// does NOT register a StrategyConfig source.  Without this guard an empty
+	// StrategyConfig entry would shadow a StrategyDefault entry in the resolver's
+	// presence-only check (if v, ok := sources[st]; ok), causing defaults to be
+	// silently ignored whenever a field is missing from the config file.
+	setOrClearString(b.namespace, StrategyConfig, cfg.BlockNode.Namespace)
+	setOrClearString(b.releaseName, StrategyConfig, cfg.BlockNode.Release)
+	setOrClearString(b.chartName, StrategyConfig, cfg.BlockNode.ChartName)
+	setOrClearString(b.chartRef, StrategyConfig, cfg.BlockNode.Chart)
+	setOrClearString(b.chartVersion, StrategyConfig, cfg.BlockNode.ChartVersion)
+
+	configStorage := cfg.BlockNode.Storage
+	if !configStorage.IsEmpty() {
+		_ = b.storage.SetSource(StrategyConfig, configStorage)
+	} else {
+		b.storage.ClearSource(StrategyConfig)
+	}
 	return b
 }
 
