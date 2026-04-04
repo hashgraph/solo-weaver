@@ -7,61 +7,6 @@ import (
 	"testing"
 )
 
-func TestInitialize_EnvOverride_BlockNodeStorageBasePath(t *testing.T) {
-	// prepare a temp config file with a different storage.basePath
-	yamlCfg := `
-log:
-  level: "Info"
-blockNode:
-  namespace: "original-ns"
-  release: "original-release"
-  chart: "original-chart"
-  version: "0.0.1"
-  storage:
-    basePath: "/mnt/fast-storage"
-`
-	tmpFile, err := os.CreateTemp("", "weaver-config-*.yaml")
-	if err != nil {
-		t.Fatalf("create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.WriteString(yamlCfg); err != nil {
-		tmpFile.Close()
-		t.Fatalf("write temp config: %v", err)
-	}
-	tmpFile.Close()
-
-	// set environment variable to override the storage.basePath
-	envKey := "SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH"
-	expected := "/data/block-node"
-	orig := os.Getenv(envKey)
-	if err := os.Setenv(envKey, expected); err != nil {
-		t.Fatalf("set env: %v", err)
-	}
-	// restore env afterwards
-	defer func() {
-		_ = os.Setenv(envKey, orig)
-	}()
-
-	// call Initialize with the temp config path
-	if err := Initialize(tmpFile.Name()); err != nil {
-		t.Fatalf("Initialize failed: %v", err)
-	}
-
-	// verify the env variable value took precedence
-	got := Get().BlockNode.Storage.BasePath
-	if got != expected {
-		t.Fatalf("env override failed: expected %q, got %q", expected, got)
-	}
-
-	// verify the chart version from config file was loaded correctly
-	gotVersion := Get().BlockNode.ChartVersion
-	if gotVersion != "0.0.1" {
-		t.Fatalf("chart version not loaded from config: expected %q, got %q", "0.0.1", gotVersion)
-	}
-}
-
 func TestInitialize_ChartVersionFromConfigFile(t *testing.T) {
 	yamlCfg := `
 blockNode:
@@ -104,5 +49,82 @@ blockNode:
 	}
 	if cfg.BlockNode.Storage.BasePath != "/mnt/fast-storage" {
 		t.Fatalf("BasePath: expected %q, got %q", "/mnt/fast-storage", cfg.BlockNode.Storage.BasePath)
+	}
+}
+
+// TestInitialize_EnvVarNotAppliedAtConfigLayer verifies that SOLO_PROVISIONER_* environment
+// variables are NOT merged into models.Config during Initialize. Env var overrides are now
+// handled exclusively by the RSL layer (Resolver.WithEnv), which gives them the correct
+// precedence: env > config file, but not > CLI flags.
+func TestInitialize_EnvVarNotAppliedAtConfigLayer(t *testing.T) {
+	yamlCfg := `
+blockNode:
+  namespace: "original-ns"
+  storage:
+    basePath: "/mnt/fast-storage"
+`
+	tmpFile, err := os.CreateTemp("", "weaver-config-*.yaml")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(yamlCfg); err != nil {
+		tmpFile.Close()
+		t.Fatalf("write temp config: %v", err)
+	}
+	tmpFile.Close()
+
+	envKey := "SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH"
+	envVal := "/data/block-node"
+	orig := os.Getenv(envKey)
+	if err := os.Setenv(envKey, envVal); err != nil {
+		t.Fatalf("set env: %v", err)
+	}
+	defer func() { _ = os.Setenv(envKey, orig) }()
+
+	if err := Initialize(tmpFile.Name()); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// config layer must return the file value — env override is the RSL layer's job
+	got := Get().BlockNode.Storage.BasePath
+	if got != "/mnt/fast-storage" {
+		t.Fatalf("config layer must not apply env var: expected %q (file value), got %q", "/mnt/fast-storage", got)
+	}
+}
+
+// TestEnvConfig_ReadsEnvVars verifies that EnvConfig populates fields from
+// SOLO_PROVISIONER_* environment variables and leaves unset fields at zero value.
+func TestEnvConfig_ReadsEnvVars(t *testing.T) {
+	vars := map[string]string{
+		"SOLO_PROVISIONER_BLOCKNODE_NAMESPACE":            "env-ns",
+		"SOLO_PROVISIONER_BLOCKNODE_VERSION":              "1.2.3",
+		"SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH":     "/env/base",
+		"SOLO_PROVISIONER_BLOCKNODE_STORAGE_ARCHIVEPATH":  "/env/archive",
+	}
+	for k, v := range vars {
+		orig := os.Getenv(k)
+		_ = os.Setenv(k, v)
+		defer func(key, orig string) { _ = os.Setenv(key, orig) }(k, orig)
+	}
+
+	cfg := EnvConfig()
+
+	if cfg.BlockNode.Namespace != "env-ns" {
+		t.Errorf("Namespace: expected %q, got %q", "env-ns", cfg.BlockNode.Namespace)
+	}
+	if cfg.BlockNode.ChartVersion != "1.2.3" {
+		t.Errorf("ChartVersion: expected %q, got %q", "1.2.3", cfg.BlockNode.ChartVersion)
+	}
+	if cfg.BlockNode.Storage.BasePath != "/env/base" {
+		t.Errorf("BasePath: expected %q, got %q", "/env/base", cfg.BlockNode.Storage.BasePath)
+	}
+	if cfg.BlockNode.Storage.ArchivePath != "/env/archive" {
+		t.Errorf("ArchivePath: expected %q, got %q", "/env/archive", cfg.BlockNode.Storage.ArchivePath)
+	}
+	// unset fields must be empty
+	if cfg.BlockNode.Release != "" {
+		t.Errorf("Release: expected empty, got %q", cfg.BlockNode.Release)
 	}
 }

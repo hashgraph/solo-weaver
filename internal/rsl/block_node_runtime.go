@@ -268,6 +268,34 @@ func (b *BlockNodeRuntimeResolver) WithState(st state.BlockNodeState) Resolver[s
 	return b
 }
 
+// WithEnv registers env-var-sourced values as StrategyEnv sources, giving them
+// the correct precedence: above StrategyConfig (config file) but below
+// StrategyUserInput (CLI flags).
+//
+// cfg should be the result of config.EnvConfig() — a models.Config populated
+// exclusively from SOLO_PROVISIONER_* environment variables, with zero values for
+// fields that have no matching env var.  Zero values are not registered as sources
+// so they don't shadow the config file.
+func (b *BlockNodeRuntimeResolver) WithEnv(cfg models.Config) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	setOrClearString(b.namespace, StrategyEnv, cfg.BlockNode.Namespace)
+	setOrClearString(b.releaseName, StrategyEnv, cfg.BlockNode.Release)
+	setOrClearString(b.chartName, StrategyEnv, cfg.BlockNode.ChartName)
+	setOrClearString(b.chartRef, StrategyEnv, cfg.BlockNode.Chart)
+	setOrClearString(b.chartVersion, StrategyEnv, cfg.BlockNode.ChartVersion)
+
+	envStorage := cfg.BlockNode.Storage
+	if !envStorage.IsEmpty() {
+		_ = b.storage.SetSource(StrategyEnv, envStorage)
+	} else {
+		b.storage.ClearSource(StrategyEnv)
+	}
+
+	return b
+}
+
 // setStateSources pushes state values into the per-field resolvers under the
 // given strategy tier (StrategyState or StrategyReality).
 // Must be called with b.mu held.

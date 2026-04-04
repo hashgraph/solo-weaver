@@ -22,6 +22,7 @@ type Resolver[S any, I any] interface {
 	WithIntent(intent models.Intent) Resolver[S, I]
 	WithUserInputs(inputs I) Resolver[S, I]
 	WithConfig(cfg models.Config) Resolver[S, I]
+	WithEnv(cfg models.Config) Resolver[S, I]
 	WithState(blockNodeState S) Resolver[S, I]
 	RefreshState(ctx context.Context, force bool) error
 	CurrentState() (S, error)

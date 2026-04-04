@@ -3,7 +3,7 @@
 package config
 
 import (
-	"strings"
+	"os"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
@@ -49,6 +49,9 @@ var globalConfig = models.Config{
 }
 
 // Initialize loads the configuration from the specified file.
+// Environment variable overrides (SOLO_PROVISIONER_*) are intentionally NOT applied here.
+// They are handled by the RSL layer via WithEnv(EnvConfig()) so that precedence is tracked
+// correctly per-field (env > config file, but not > CLI flags).
 //
 // Parameters:
 //   - path: The path to the configuration file.
@@ -60,9 +63,9 @@ func Initialize(path string) error {
 		globalConfig = models.Config{}
 		viper.Reset()
 		viper.SetConfigFile(path)
-		viper.SetEnvPrefix("SOLO_PROVISIONER")
-		viper.AutomaticEnv()
-		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		// AutomaticEnv is intentionally omitted: env var merging now happens in the RSL
+		// layer (BlockNodeRuntimeResolver.WithEnv) so that StrategyEnv has the correct
+		// precedence position between StrategyUserInput and StrategyConfig.
 
 		err := viper.ReadInConfig()
 		if err != nil {
@@ -95,6 +98,42 @@ func Set(c *models.Config) error {
 // SetProfile sets the active profile in the global configuration.
 func SetProfile(profile string) {
 	globalConfig.Profile = profile
+}
+
+// EnvConfig returns a models.Config populated exclusively from SOLO_PROVISIONER_*
+// environment variables. Fields with no matching env var are left at their zero value.
+//
+// This is intended to be passed to Resolver.WithEnv so that the RSL layer can register
+// env vars as StrategyEnv — above StrategyConfig (config file) but below StrategyUserInput
+// (CLI flags).
+//
+// The env key naming follows the same convention previously used by Viper:
+// prefix "SOLO_PROVISIONER" + uppercase field path with dots replaced by underscores.
+// Note: ChartVersion uses the yaml tag "version", so its env key is
+// SOLO_PROVISIONER_BLOCKNODE_VERSION (not BLOCKNODE_CHARTVERSION).
+func EnvConfig() models.Config {
+	return models.Config{
+		BlockNode: models.BlockNodeConfig{
+			Namespace:    os.Getenv("SOLO_PROVISIONER_BLOCKNODE_NAMESPACE"),
+			Release:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_RELEASE"),
+			Chart:        os.Getenv("SOLO_PROVISIONER_BLOCKNODE_CHART"),
+			ChartVersion: os.Getenv("SOLO_PROVISIONER_BLOCKNODE_VERSION"),
+			ChartName:    os.Getenv("SOLO_PROVISIONER_BLOCKNODE_CHARTNAME"),
+			Storage: models.BlockNodeStorage{
+				BasePath:         os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH"),
+				ArchivePath:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_ARCHIVEPATH"),
+				LivePath:         os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_LIVEPATH"),
+				LogPath:          os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_LOGPATH"),
+				VerificationPath: os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_VERIFICATIONPATH"),
+				PluginsPath:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_PLUGINSPATH"),
+				LiveSize:         os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_LIVESIZE"),
+				ArchiveSize:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_ARCHIVESIZE"),
+				LogSize:          os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_LOGSIZE"),
+				VerificationSize: os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_VERIFICATIONSIZE"),
+				PluginsSize:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_PLUGINSSIZE"),
+			},
+		},
+	}
 }
 
 // OverrideBlockNodeConfig updates the block node configuration with provided overrides.

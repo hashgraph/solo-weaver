@@ -49,6 +49,13 @@ func (c *MachineRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.Ma
 	return c
 }
 
+// WithEnv is a no-op stub satisfying the Resolver interface.
+// MachineRuntimeResolver has no field-level EffectiveValue resolvers yet,
+// so env var injection is not applicable.
+func (m *MachineRuntimeResolver) WithEnv(_ models.Config) Resolver[state.MachineState, models.MachineInputs] {
+	return m
+}
+
 func (c *MachineRuntimeResolver) WithState(st state.MachineState) Resolver[state.MachineState, models.MachineInputs] {
 	c.mu.Lock()
 	c.state = &st
