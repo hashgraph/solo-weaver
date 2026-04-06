@@ -549,6 +549,12 @@ teleport:
   valuesFile: "/path/to/teleport-values.yaml"
   nodeAgentToken: ""      # Set via flag for security
   nodeAgentProxyAddr: "proxy.teleport.example.com:443"
+
+proxy:
+  enabled: false                # Set to true to route traffic through a proxy
+  url: "127.0.0.1:3128"        # Proxy address as host:port
+  sslCertFile: "/etc/ssl/certs/ca-certificates.crt"
+  containerRegistryProxy: "localhost:5050"
 ```
 
 ### Configuration Precedence
@@ -559,6 +565,34 @@ Solo Provisioner uses this precedence order (highest to lowest):
 2. Environment variables (when using `--config`)
 3. Configuration file
 4. Built-in defaults
+
+### Proxy Configuration
+
+Solo Provisioner supports routing all network traffic through an HTTP/HTTPS proxy. This is useful for:
+
+- **Caching**: Speed up repeated deployments by caching binary downloads and container images through a local proxy
+- **Security**: Route traffic through a corporate proxy for auditing, filtering, or compliance requirements
+- **Air-gapped environments**: Use a proxy to reach external registries from restricted networks
+
+To enable proxy support, add a `proxy` section to your config file:
+
+```yaml
+proxy:
+  enabled: true
+  url: "127.0.0.1:3128"
+  sslCertFile: "/etc/ssl/certs/ca-certificates.crt"
+  containerRegistryProxy: "localhost:5050"
+```
+
+| Field | Description |
+|-------|-------------|
+| `enabled` | Enable proxy mode |
+| `url` | Proxy address as `host:port` (sets both `HTTP_PROXY` and `HTTPS_PROXY`) |
+| `noProxy` | Comma-separated hosts/CIDRs to bypass proxy (defaults to localhost and private networks) |
+| `sslCertFile` | CA certificate bundle path for TLS verification (sets `SSL_CERT_FILE`) |
+| `containerRegistryProxy` | Container image pull-through cache as `host:port` (configures CRI-O registry mirror) |
+
+When proxy is enabled, Solo Provisioner sets the appropriate environment variables so that all HTTP clients and Helm operations automatically route through the proxy. The `sslCertFile` allows trusting custom CA certificates (e.g., for MITM proxy inspection) without disabling TLS verification.
 
 ### Environment Variables
 

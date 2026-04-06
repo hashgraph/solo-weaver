@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -38,7 +39,6 @@ var (
 	flagOutputFormat       string
 	flagSkipHardwareChecks bool
 	flagForce              bool
-	flagProxy              bool
 	flagLogLevel           string
 
 	rootCmd = &cobra.Command{
@@ -63,7 +63,6 @@ func init() {
 	common.FlagLogLevel().SetVarP(rootCmd, &flagLogLevel, false)
 	common.FlagForce().SetVarP(rootCmd, &flagForce, false)
 	common.FlagConfig().SetVarP(rootCmd, &flagConfig, false)
-
 	// support '--version', '-v' to show version information
 	common.FlagVersion().SetVarP(rootCmd, &flagVersion, false)
 	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
@@ -193,5 +192,20 @@ func initConfig(ctx context.Context) {
 			doctor.CheckErr(ctx, err)
 		}
 		ui.SuppressConsoleLogging(logConfig)
+	}
+
+	// Activate proxy after logging is initialized so the activation log
+	// respects TUI suppression and goes to the log file instead of stdout.
+	activateProxy(ctx)
+}
+
+func activateProxy(ctx context.Context) {
+	proxyCfg := config.Get().Proxy
+	if !proxyCfg.Enabled {
+		return
+	}
+
+	if err := proxy.Activate(proxyCfg); err != nil {
+		doctor.CheckErr(ctx, err)
 	}
 }

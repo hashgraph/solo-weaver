@@ -134,6 +134,34 @@ Flags:
 Use "solo-provisioner [command] --help" for more information about a command.
 ```
 
+#### Using the Cache Proxy
+
+A local cache proxy speeds up downloads during development by caching binaries, container images,
+and Go modules. It can also be used to route traffic through corporate proxies for security or
+compliance requirements.
+
+1. Start the cache proxy on macOS:
+```sh
+task proxy:start
+```
+
+2. SSH into the VM **with proxy tunnels** (required — plain `task vm:ssh` does not set up tunnels):
+```sh
+task vm:ssh:proxy
+```
+
+3. Inside the VM, self-install and run with a proxy-enabled config:
+```sh
+cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
+sudo ./solo-provisioner-linux-arm64 install
+sudo solo-provisioner block node install -p local -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+```
+
+To verify traffic goes through the proxy, run `task proxy:status` on macOS to see Squid access logs
+and cache hit/miss stats.
+
+For full details, see [Proxy Support](proxy.md).
+
 ##### Debug using IntelliJ IDEA (Recommended)
 
 The project includes pre-configured IntelliJ IDEA run configurations for seamless debugging:
