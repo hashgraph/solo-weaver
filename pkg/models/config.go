@@ -264,9 +264,9 @@ func (c *BlockNodeConfig) Validate() error {
 // Validate validates all Alloy configuration fields.
 func (c *AlloyConfig) Validate() error {
 
-	// Validate cluster name if provided
+	// Validate cluster name if provided — allows DNS hostnames (dots are permitted)
 	if c.ClusterName != "" {
-		if err := sanity.ValidateIdentifier(c.ClusterName); err != nil {
+		if err := sanity.ValidateDNSName(c.ClusterName); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid cluster name: %s", c.ClusterName)
 		}
 	}

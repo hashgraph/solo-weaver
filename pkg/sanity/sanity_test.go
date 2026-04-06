@@ -2245,3 +2245,146 @@ func TestSanity_ValidateHostPort(t *testing.T) {
 		})
 	}
 }
+
+func TestSanity_TruncateDNSName(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "within limit unchanged",
+			input:    "s01.blk.bnce",
+			maxLen:   32,
+			expected: "s01.blk.bnce",
+		},
+		{
+			name:     "exactly at limit",
+			input:    "s01.blk.bnce.dal.lat.ope.eng.xxx", // 32 chars
+			maxLen:   32,
+			expected: "s01.blk.bnce.dal.lat.ope.eng.xxx",
+		},
+		{
+			name:     "truncate FQDN at dot boundary",
+			input:    "s01.blk.bnce.dal.lat.ope.eng.hashgraph.io",
+			maxLen:   32,
+			expected: "s01.blk.bnce.dal.lat.ope.eng",
+		},
+		{
+			name:     "no dots within limit falls back to hard truncate",
+			input:    "abcdefghijklmnopqrstuvwxyz1234567890",
+			maxLen:   32,
+			expected: "abcdefghijklmnopqrstuvwxyz123456",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			maxLen:   32,
+			expected: "",
+		},
+		{
+			name:     "short hostname no truncation",
+			input:    "my-cluster",
+			maxLen:   32,
+			expected: "my-cluster",
+		},
+		{
+			name:     "truncate at nearest dot from right within limit",
+			input:    "node01.very-long-subdomain.example.com",
+			maxLen:   32,
+			expected: "node01.very-long-subdomain",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := TruncateDNSName(tc.input, tc.maxLen)
+			require.Equal(t, tc.expected, result)
+			if tc.maxLen > 0 {
+				require.LessOrEqual(t, len(result), tc.maxLen)
+			}
+		})
+	}
+}
+
+func TestSanity_ValidateDNSName(t *testing.T) {
+	testCases := []struct {
+		name        string
+		dnsName     string
+		expectError bool
+		errorMsg    string
+	}{
+		// Valid DNS names
+		{
+			name:        "simple hostname",
+			dnsName:     "localhost",
+			expectError: false,
+		},
+		{
+			name:        "hostname with hyphens",
+			dnsName:     "my-cluster-01",
+			expectError: false,
+		},
+		{
+			name:        "short FQDN",
+			dnsName:     "node-01.example.com",
+			expectError: false,
+		},
+		{
+			name:        "long FQDN",
+			dnsName:     "s01.blk.bnce.dal.lat.ope.eng.hashgraph.io",
+			expectError: false,
+		},
+		{
+			name:        "numeric start",
+			dnsName:     "123.example.com",
+			expectError: false,
+		},
+		// Invalid DNS names
+		{
+			name:        "empty string",
+			dnsName:     "",
+			expectError: true,
+			errorMsg:    "DNS name cannot be empty",
+		},
+		{
+			name:        "shell injection",
+			dnsName:     "host; echo hacked",
+			expectError: true,
+			errorMsg:    "DNS name contains invalid characters",
+		},
+		{
+			name:        "starts with dot",
+			dnsName:     ".example.com",
+			expectError: true,
+			errorMsg:    "DNS name contains invalid characters",
+		},
+		{
+			name:        "starts with hyphen",
+			dnsName:     "-example.com",
+			expectError: true,
+			errorMsg:    "DNS name contains invalid characters",
+		},
+		{
+			name:        "contains underscore",
+			dnsName:     "my_host.example.com",
+			expectError: true,
+			errorMsg:    "DNS name contains invalid characters",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateDNSName(tc.dnsName)
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
