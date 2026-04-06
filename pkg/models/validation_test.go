@@ -620,6 +620,20 @@ func TestAlloyConfig_Validate(t *testing.T) {
 			errorMsg:    "invalid cluster name",
 		},
 		{
+			name: "valid_cluster_name_with_fqdn",
+			config: AlloyConfig{
+				ClusterName: "s01.blk.bnce.dal.lat.ope.eng.hashgraph.io",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_cluster_name_with_short_hostname",
+			config: AlloyConfig{
+				ClusterName: "node-01.example.com",
+			},
+			expectError: false,
+		},
+		{
 			name:        "valid_empty_config",
 			config:      AlloyConfig{},
 			expectError: false,
