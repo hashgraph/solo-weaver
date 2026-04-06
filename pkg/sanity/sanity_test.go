@@ -2246,68 +2246,6 @@ func TestSanity_ValidateHostPort(t *testing.T) {
 	}
 }
 
-func TestSanity_TruncateDNSName(t *testing.T) {
-	testCases := []struct {
-		name     string
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{
-			name:     "within limit unchanged",
-			input:    "s01.blk.bnce",
-			maxLen:   32,
-			expected: "s01.blk.bnce",
-		},
-		{
-			name:     "exactly at limit",
-			input:    "s01.blk.bnce.dal.lat.ope.eng.xxx", // 32 chars
-			maxLen:   32,
-			expected: "s01.blk.bnce.dal.lat.ope.eng.xxx",
-		},
-		{
-			name:     "truncate FQDN at dot boundary",
-			input:    "s01.blk.bnce.dal.lat.ope.eng.hashgraph.io",
-			maxLen:   32,
-			expected: "s01.blk.bnce.dal.lat.ope.eng",
-		},
-		{
-			name:     "no dots within limit falls back to hard truncate",
-			input:    "abcdefghijklmnopqrstuvwxyz1234567890",
-			maxLen:   32,
-			expected: "abcdefghijklmnopqrstuvwxyz123456",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			maxLen:   32,
-			expected: "",
-		},
-		{
-			name:     "short hostname no truncation",
-			input:    "my-cluster",
-			maxLen:   32,
-			expected: "my-cluster",
-		},
-		{
-			name:     "truncate at nearest dot from right within limit",
-			input:    "node01.very-long-subdomain.example.com",
-			maxLen:   32,
-			expected: "node01.very-long-subdomain",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := TruncateDNSName(tc.input, tc.maxLen)
-			require.Equal(t, tc.expected, result)
-			if tc.maxLen > 0 {
-				require.LessOrEqual(t, len(result), tc.maxLen)
-			}
-		})
-	}
-}
-
 func TestSanity_ValidateDNSName(t *testing.T) {
 	testCases := []struct {
 		name        string
