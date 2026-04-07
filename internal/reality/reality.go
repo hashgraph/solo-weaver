@@ -15,7 +15,6 @@ import (
 
 // Checker is the composite abstraction for accessing the current state of the
 type Checker[T any] interface {
-	FlushState(st T) error
 	RefreshState(ctx context.Context) (T, error)
 }
 

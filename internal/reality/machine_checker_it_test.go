@@ -6,7 +6,6 @@ package reality_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -98,52 +97,4 @@ func TestMachineChecker_Integration_SoftwareState(t *testing.T) {
 			assert.False(t, sw.LastSync.IsZero(), "LastSync should be set for %q", name)
 		})
 	}
-}
-
-func TestMachineChecker_Integration_FlushState_Idempotent(t *testing.T) {
-	sm := newTestStateManager(t)
-	checker, err := reality.NewMachineChecker(sm, "", "")
-	require.NoError(t, err)
-
-	err = sm.FlushState()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	ms1, err := checker.RefreshState(ctx)
-	require.NoError(t, err)
-
-	// Capture state file mtime before second refresh
-	info1, err := os.Stat(sm.State().StateFile)
-	require.NoError(t, err)
-
-	// FlushState with same state should not modify the file
-	err = checker.FlushState(ms1)
-	require.NoError(t, err)
-
-	info2, err := os.Stat(sm.State().StateFile)
-	require.NoError(t, err)
-
-	assert.Equal(t, info1.ModTime(), info2.ModTime(),
-		"FlushState with identical state should not re-write the state file")
-}
-
-func TestMachineChecker_Integration_StatePersistedToDisk(t *testing.T) {
-	sm := newTestStateManager(t)
-	checker, err := reality.NewMachineChecker(sm, "", "")
-	require.NoError(t, err)
-
-	ms, err := checker.RefreshState(context.Background())
-	require.NoError(t, err)
-
-	// Re-read from a brand-new manager pointing at the same file
-	sm2, err := state.NewStateManager(state.WithStateFile(sm.State().StateFile))
-	require.NoError(t, err)
-	require.NoError(t, sm2.Refresh())
-
-	persisted := sm2.State().MachineState
-
-	assert.Equal(t, len(ms.Software), len(persisted.Software),
-		"persisted software count should match in-memory count")
-	assert.Equal(t, len(ms.Hardware), len(persisted.Hardware),
-		"persisted hardware count should match in-memory count")
 }
