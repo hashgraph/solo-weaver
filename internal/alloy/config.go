@@ -12,7 +12,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/sanity"
 )
 
 const (
@@ -57,14 +56,14 @@ func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuil
 		monitorBlockNode: cfg.MonitorBlockNode,
 	}
 
-	// Determine cluster name — truncate to 32 chars at the nearest dot boundary
-	cb.clusterName = sanity.TruncateDNSName(cfg.ClusterName, sanity.MaxAlloyClusterNameLength)
+	// Determine cluster name
+	cb.clusterName = cfg.ClusterName
 	if cb.clusterName == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
 			return nil, fmt.Errorf("cluster name not provided and failed to get hostname: %w", err)
 		}
-		cb.clusterName = sanity.TruncateDNSName(hostname, sanity.MaxAlloyClusterNameLength)
+		cb.clusterName = hostname
 	}
 
 	// Build Prometheus remotes

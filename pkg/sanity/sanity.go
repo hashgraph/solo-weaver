@@ -117,26 +117,6 @@ func ValidateDNSName(s string) error {
 	return nil
 }
 
-// MaxAlloyClusterNameLength is the maximum allowed length for a cluster name label value.
-const MaxAlloyClusterNameLength = 32
-
-// TruncateDNSName truncates a DNS name to maxLen characters, cutting at the last dot
-// separator that falls at or before the limit. If no dot exists within the limit, the
-// string is truncated at maxLen. If s is already within the limit, it is returned as-is.
-func TruncateDNSName(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-
-	// Find the last dot at or before maxLen
-	truncated := s[:maxLen]
-	if lastDot := strings.LastIndex(truncated, "."); lastDot > 0 {
-		return s[:lastDot]
-	}
-
-	return truncated
-}
-
 // ValidateHexToken validates that a string is a valid hexadecimal token.
 // This is used for tokens like Teleport join tokens which are hex strings.
 // The token must:
