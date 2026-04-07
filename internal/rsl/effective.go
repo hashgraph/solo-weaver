@@ -43,6 +43,7 @@
 package rsl
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -384,8 +385,9 @@ func (e *EffectiveValue[T]) WithSelector(selector Selector[T]) {
 	e.Invalidate()
 }
 
-// String returns a human-readable summary of the effective value suitable for
-// use in log lines (e.g. logx.Any("namespace", ns)).
+// String returns a human-readable one-liner summary of the effective value,
+// intended for console output, fmt.Sprintf, and error messages.
+// For structured logging use logx.Any() — which calls MarshalJSON().
 //
 // Format:
 //
@@ -428,4 +430,55 @@ func (e *EffectiveValue[T]) String() string {
 	}
 
 	return fmt.Sprintf("strategy=%s value=%v sources=%s", winStrategy, winVal, sources)
+}
+
+// jsonEffectiveValue is the JSON wire representation of [EffectiveValue].
+type jsonEffectiveValue struct {
+	Strategy string         `json:"strategy"`
+	Value    any            `json:"value"`
+	Sources  map[string]any `json:"sources"`
+}
+
+// MarshalJSON implements json.Marshaler, emitting a structured JSON object so
+// that zerolog's Any() and other JSON encoders produce a queryable log field
+// rather than a plain text string or an empty "{}".
+//
+// Output shape:
+//
+//	{"strategy":"<name>","value":<val>,"sources":{"<name>":<val>,…}}
+//
+// "strategy" and "value" reflect the winning source.  "sources" contains every
+// registered (non-zero) source keyed by strategy name.  Resolution errors are
+// surfaced as the "value" string "<error: …>" and strategy "zero".
+func (e *EffectiveValue[T]) MarshalJSON() ([]byte, error) {
+	ev, resolveErr := e.Resolve()
+
+	var winVal any
+	var winStrategy string
+	if resolveErr != nil {
+		winVal = fmt.Sprintf("<error: %v>", resolveErr)
+		winStrategy = StrategyName(StrategyZero)
+	} else if ev == nil {
+		winVal = nil
+		winStrategy = StrategyName(StrategyZero)
+	} else {
+		winVal = ev.Get().Val()
+		winStrategy = StrategyName(ev.Strategy())
+	}
+
+	sources := make(map[string]any, len(e.sources))
+	for _, st := range defaultOrderedStrategies {
+		if st == StrategyZero {
+			continue
+		}
+		if v, ok := e.sources[st]; ok {
+			sources[StrategyName(st)] = v.Val()
+		}
+	}
+
+	return json.Marshal(jsonEffectiveValue{
+		Strategy: winStrategy,
+		Value:    winVal,
+		Sources:  sources,
+	})
 }

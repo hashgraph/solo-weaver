@@ -5,6 +5,7 @@
 package rsl
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -498,4 +499,125 @@ func TestEffectiveValue_BoolType_Works(t *testing.T) {
 
 	require.NoError(t, ev.SetSource(StrategyConfig, true))
 	assert.True(t, ev.Get().Val())
+}
+
+// ── MarshalJSON ───────────────────────────────────────────────────────────────
+
+// unmarshalEV is a helper that unmarshals a MarshalJSON result into a plain map.
+func unmarshalEV(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(data, &out))
+	return out
+}
+
+func TestEffectiveValue_MarshalJSON_ProducesStructuredJSONObject(t *testing.T) {
+	ev, _ := NewEffectiveValue[string](&DefaultSelector[string]{})
+	require.NoError(t, ev.SetSource(StrategyDefault, "dep-val"))
+	require.NoError(t, ev.SetSource(StrategyConfig, "cfg-val"))
+
+	data, err := json.Marshal(ev)
+	require.NoError(t, err)
+
+	out := unmarshalEV(t, data)
+	assert.Equal(t, "config", out["strategy"], "strategy field must name the winning strategy")
+	assert.Equal(t, "cfg-val", out["value"], "value field must hold the winning value")
+
+	sources, ok := out["sources"].(map[string]any)
+	require.True(t, ok, "sources must be a JSON object, got: %T", out["sources"])
+	assert.Equal(t, "cfg-val", sources["config"])
+	assert.Equal(t, "dep-val", sources["default"])
+}
+
+func TestEffectiveValue_MarshalJSON_NotAPlainString(t *testing.T) {
+	ev, _ := NewEffectiveValue[string](&DefaultSelector[string]{})
+	require.NoError(t, ev.SetSource(StrategyConfig, "ns"))
+
+	data, err := json.Marshal(ev)
+	require.NoError(t, err)
+
+	// Must be a JSON object ("{…}"), not a JSON string (""…"") or empty object.
+	assert.Equal(t, byte('{'), data[0], "output must be a JSON object, not a string: %s", data)
+	assert.NotEqual(t, "{}", string(data), "output must not be the empty object produced by unexported fields")
+}
+
+func TestEffectiveValue_MarshalJSON_EmptySources_ProducesZeroStrategy(t *testing.T) {
+	ev, _ := NewEffectiveValue[string](&DefaultSelector[string]{})
+
+	data, err := json.Marshal(ev)
+	require.NoError(t, err)
+
+	out := unmarshalEV(t, data)
+	assert.Equal(t, "zero", out["strategy"])
+	assert.Equal(t, "", out["value"])
+
+	sources, ok := out["sources"].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, sources, "no sources registered, sources object must be empty")
+}
+
+func TestEffectiveValue_MarshalJSON_SelectorError_SurfacesErrorInValueField(t *testing.T) {
+	ev, _ := NewEffectiveValue[string](&errorSelector[string]{err: errors.New("boom")})
+	require.NoError(t, ev.SetSource(StrategyDefault, "v"))
+
+	data, err := json.Marshal(ev)
+	require.NoError(t, err) // MarshalJSON itself must not error
+
+	out := unmarshalEV(t, data)
+	assert.Equal(t, "zero", out["strategy"])
+	valStr, _ := out["value"].(string)
+	assert.True(t, strings.Contains(valStr, "<error:"), "error must be in value field: %s", valStr)
+}
+
+func TestEffectiveValue_MarshalJSON_AllSourcesPresent(t *testing.T) {
+	ev, _ := NewEffectiveValue[string](&DefaultSelector[string]{})
+	require.NoError(t, ev.SetSource(StrategyDefault, "dep"))
+	require.NoError(t, ev.SetSource(StrategyConfig, "cfg"))
+	require.NoError(t, ev.SetSource(StrategyEnv, "env"))
+	require.NoError(t, ev.SetSource(StrategyUserInput, "user"))
+	require.NoError(t, ev.SetSource(StrategyState, "state"))
+	require.NoError(t, ev.SetSource(StrategyReality, "reality"))
+
+	data, err := json.Marshal(ev)
+	require.NoError(t, err)
+
+	out := unmarshalEV(t, data)
+	assert.Equal(t, "reality", out["strategy"])
+	assert.Equal(t, "reality", out["value"])
+
+	sources, ok := out["sources"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "dep", sources["default"])
+	assert.Equal(t, "cfg", sources["config"])
+	assert.Equal(t, "env", sources["env"])
+	assert.Equal(t, "user", sources["userInput"])
+	assert.Equal(t, "state", sources["state"])
+	assert.Equal(t, "reality", sources["reality"])
+	assert.NotContains(t, sources, "zero", "StrategyZero must never appear in sources")
+}
+
+func TestEffectiveValue_MarshalJSON_IntType(t *testing.T) {
+	ev, _ := NewEffectiveValue[int](&DefaultSelector[int]{})
+	require.NoError(t, ev.SetSource(StrategyConfig, 42))
+
+	data, err := json.Marshal(ev)
+	require.NoError(t, err)
+
+	out := unmarshalEV(t, data)
+	assert.Equal(t, "config", out["strategy"])
+	// JSON numbers unmarshal as float64 by default.
+	assert.InDelta(t, float64(42), out["value"], 0)
+}
+
+func TestEffectiveValue_MarshalJSON_UsedViaAnyInterface(t *testing.T) {
+	ev, _ := NewEffectiveValue[string](&DefaultSelector[string]{})
+	require.NoError(t, ev.SetSource(StrategyConfig, "ns"))
+
+	// Simulate what zerolog's AppendInterface / json.Marshal does for Any().
+	data, err := json.Marshal(ev)
+	require.NoError(t, err)
+	assert.NotEqual(t, "{}", string(data),
+		"private-field struct must not produce empty object '{}' — MarshalJSON must be invoked")
+	assert.NotEqual(t, "null", string(data))
+	assert.Equal(t, byte('{'), data[0], "Any() must embed a JSON object, not a quoted string")
 }
