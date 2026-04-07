@@ -7,16 +7,15 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func SetupKubectl(sm state.Manager) *automa.WorkflowBuilder {
+func SetupKubectl(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubectl").
 		Steps(
-			installKubectl(software.NewKubectlInstaller, sm),
-			configureKubectl(software.NewKubectlInstaller, sm),
+			installKubectl(software.NewKubectlInstaller, mr),
+			configureKubectl(software.NewKubectlInstaller, mr),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubectl")
@@ -30,14 +29,14 @@ func SetupKubectl(sm state.Manager) *automa.WorkflowBuilder {
 		})
 }
 
-func installKubectl(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
+func installKubectl(provider func(opts ...software.InstallerOption) (software.Software, error), mr software.MachineRuntime) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubectl").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepDetail(ctx, stp, "installing kubectl...")
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -88,7 +87,7 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 				return automa.SkippedReport(stp, automa.WithDetail("kubectl was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -104,14 +103,14 @@ func installKubectl(provider func(opts ...software.InstallerOption) (software.So
 		})
 }
 
-func configureKubectl(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
+func configureKubectl(provider func(opts ...software.InstallerOption) (software.Software, error), mr software.MachineRuntime) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubectl").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepDetail(ctx, stp, "configuring kubectl...")
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -149,7 +148,7 @@ func configureKubectl(provider func(opts ...software.InstallerOption) (software.
 				return automa.SkippedReport(stp, automa.WithDetail("kubectl was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))

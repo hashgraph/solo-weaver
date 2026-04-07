@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -182,7 +181,7 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Match newBaseInstaller() defaults
@@ -197,14 +196,6 @@ func calculateSHA256(data []byte) string {
 	hash := sha256.New()
 	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
-}
-
-// prepareStateManager creates a state.Manager for use in unit tests.
-func prepareStateManager(t *testing.T) state.Manager {
-	t.Helper()
-	sm, err := state.NewStateManager()
-	require.NoError(t, err, "failed to create state manager for test")
-	return sm
 }
 
 // Test scenarios using table-driven tests
@@ -598,7 +589,7 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 }
 
@@ -857,7 +848,7 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -994,7 +985,7 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox bin directory with a binary
@@ -1103,7 +1094,7 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -1199,7 +1190,7 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -1274,7 +1265,7 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -1345,7 +1336,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -1427,7 +1418,7 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -1517,7 +1508,7 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure
@@ -1585,7 +1576,7 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "2.0.0", // Version not in metadata
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	//
@@ -1628,7 +1619,7 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
+		machineRuntime:       nil,
 	}
 
 	// Create sandbox directory structure but no symlinks

@@ -14,13 +14,12 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-// WithStateManager injects a state.Manager into the installer so that
-// IsInstalled/IsConfigured reads and Install/Configure/Uninstall/RemoveConfiguration
-// writes flow through the shared DefaultStateManager instead of the legacy
-// file-per-component Manager.
-func WithStateManager(sm state.Manager) InstallerOption {
+// WithMachineRuntime injects a MachineRuntime into the installer so that
+// IsInstalled/IsConfigured reads flow through the RSL MachineRuntimeResolver
+// instead of falling back to expensive disk verification.
+func WithMachineRuntime(mr MachineRuntime) InstallerOption {
 	return func(bi *baseInstaller) {
-		bi.stateManager = sm
+		bi.machineRuntime = mr
 	}
 }
 
@@ -44,7 +43,7 @@ type baseInstaller struct {
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
-	stateManager         state.Manager
+	machineRuntime       MachineRuntime
 	softwareState        *state.SoftwareState
 
 	// These function fields allow for installer-specific overrides of the verification logic while still
@@ -1137,17 +1136,17 @@ func (b *baseInstaller) installFile(src, dst string, perm os.FileMode) error {
 }
 
 func (b *baseInstaller) checkInstallation() error {
-	var err error
 	if b.softwareState == nil {
-		// if state manager is injected, read from it to avoid unnecessary verification on disk which can be expensive
-		// for some software with large binaries and many files
-		if b.stateManager != nil && !b.stateManager.State().LastSync.IsZero() {
-			snap := b.stateManager.State()
-			cur := state.GetSoftwareState(snap, b.software.Name)
-			b.softwareState = &cur
-			return nil
+		if b.machineRuntime != nil {
+			cur, ok := b.machineRuntime.SoftwareState(b.software.Name)
+			if ok {
+				b.softwareState = &cur
+				return nil
+			}
+			// ok==false means RSL not yet initialized; fall through to disk verification
 		}
 
+		var err error
 		b.softwareState, err = b.VerifyInstallation()
 		if err != nil {
 			return err

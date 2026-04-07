@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
 )
@@ -24,7 +25,7 @@ import (
 type InstallHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
 	runtime *rsl.BlockNodeRuntimeResolver
-	sm      state.Manager
+	mr      software.MachineRuntime
 }
 
 // PrepareEffectiveInputs resolves the winning value for every block-node field.
@@ -66,7 +67,7 @@ func (h *InstallHandler) BuildWorkflow(
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(
-				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks, h.sm),
+				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks, h.mr),
 				steps.SetupBlockNode(ins),
 			)
 	}
@@ -86,6 +87,6 @@ func (h *InstallHandler) HandleIntent(
 func NewInstallHandler(
 	base bll.BaseHandler[models.BlockNodeInputs],
 	runtime *rsl.BlockNodeRuntimeResolver,
-	sm state.Manager) (*InstallHandler, error) {
-	return &InstallHandler{BaseHandler: base, runtime: runtime, sm: sm}, nil
+	mr software.MachineRuntime) (*InstallHandler, error) {
+	return &InstallHandler{BaseHandler: base, runtime: runtime, mr: mr}, nil
 }

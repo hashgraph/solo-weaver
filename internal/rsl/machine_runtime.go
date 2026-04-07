@@ -97,6 +97,20 @@ func (m *MachineRuntimeResolver) RefreshState(ctx context.Context, force bool) e
 	return nil
 }
 
+// SoftwareState returns the effective SoftwareState for the named software component.
+// Returns (zero, false) when machine state has not been initialized yet; the caller
+// should fall back to disk verification in that case.
+// Returns (state, true) once machine state is available — even if the name is absent
+// from the map (meaning the component is not installed/configured per RSL state).
+func (m *MachineRuntimeResolver) SoftwareState(name string) (state.SoftwareState, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state == nil {
+		return state.SoftwareState{}, false
+	}
+	return m.state.Software[name], true
+}
+
 func (m *MachineRuntimeResolver) CurrentState() (state.MachineState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

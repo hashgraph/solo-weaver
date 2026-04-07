@@ -44,7 +44,7 @@ type BaseHandler[T any] struct {
 // populated BaseHandler.  All fields are required; any nil returns an error.
 func NewBaseHandler[T any](reg *rsl.RuntimeResolver) (BaseHandler[T], error) {
 	if reg == nil {
-		return BaseHandler[T]{}, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
+		return BaseHandler[T]{}, errorx.IllegalArgument.New("RuntimeResolver cannot be nil")
 	}
 	return BaseHandler[T]{Runtime: reg}, nil
 }

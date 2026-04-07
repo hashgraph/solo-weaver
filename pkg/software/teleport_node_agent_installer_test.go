@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewTeleportNodeAgentInstaller_Success(t *testing.T) {
-	installer, err := NewTeleportNodeAgentInstaller(WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstaller(WithMachineRuntime(nil))
 	require.NoError(t, err)
 	require.NotNil(t, installer)
 }
@@ -23,13 +23,13 @@ func TestNewTeleportNodeAgentInstallerWithConfig_Success(t *testing.T) {
 		JoinToken: "test-token-12345",
 	}
 
-	installer, err := NewTeleportNodeAgentInstallerWithConfig(configOpts, WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstallerWithConfig(configOpts, WithMachineRuntime(nil))
 	require.NoError(t, err)
 	require.NotNil(t, installer)
 }
 
 func TestNewTeleportNodeAgentInstaller_WithVersion(t *testing.T) {
-	installer, err := NewTeleportNodeAgentInstaller(WithStateManager(prepareStateManager(t)), WithVersion("17.0.0"))
+	installer, err := NewTeleportNodeAgentInstaller(WithMachineRuntime(nil), WithVersion("17.0.0"))
 	require.NoError(t, err)
 	require.NotNil(t, installer)
 	require.Equal(t, "17.0.0", installer.Version())
@@ -37,7 +37,7 @@ func TestNewTeleportNodeAgentInstaller_WithVersion(t *testing.T) {
 
 func TestTeleportNodeAgentInstaller_Configure_MissingOptions(t *testing.T) {
 	// Create installer without config options
-	installer, err := NewTeleportNodeAgentInstaller(WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstaller(WithMachineRuntime(nil))
 	require.NoError(t, err)
 
 	err = installer.Configure()
@@ -51,7 +51,7 @@ func TestTeleportNodeAgentInstaller_Configure_MissingProxyAddr(t *testing.T) {
 		JoinToken: "test-token-12345",
 	}
 
-	installer, err := NewTeleportNodeAgentInstallerWithConfig(configOpts, WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstallerWithConfig(configOpts, WithMachineRuntime(nil))
 	require.NoError(t, err)
 
 	err = installer.Configure()
@@ -65,7 +65,7 @@ func TestTeleportNodeAgentInstaller_Configure_MissingJoinToken(t *testing.T) {
 		JoinToken: "",
 	}
 
-	installer, err := NewTeleportNodeAgentInstallerWithConfig(configOpts, WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstallerWithConfig(configOpts, WithMachineRuntime(nil))
 	require.NoError(t, err)
 
 	err = installer.Configure()
@@ -74,13 +74,13 @@ func TestTeleportNodeAgentInstaller_Configure_MissingJoinToken(t *testing.T) {
 }
 
 func TestTeleportNodeAgentInstaller_GetSoftwareName(t *testing.T) {
-	installer, err := NewTeleportNodeAgentInstaller(WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstaller(WithMachineRuntime(nil))
 	require.NoError(t, err)
 	require.Equal(t, "teleport", installer.GetSoftwareName())
 }
 
 func TestTeleportNodeAgentInstaller_Version(t *testing.T) {
-	installer, err := NewTeleportNodeAgentInstaller(WithStateManager(prepareStateManager(t)))
+	installer, err := NewTeleportNodeAgentInstaller(WithMachineRuntime(nil))
 	require.NoError(t, err)
 
 	version := installer.Version()
@@ -194,9 +194,9 @@ func TestTeleportNodeAgentConfigureOptions_Validation(t *testing.T) {
 			var err error
 
 			if tc.opts != nil {
-				installer, err = NewTeleportNodeAgentInstallerWithConfig(tc.opts, WithStateManager(prepareStateManager(t)))
+				installer, err = NewTeleportNodeAgentInstallerWithConfig(tc.opts, WithMachineRuntime(nil))
 			} else {
-				installer, err = NewTeleportNodeAgentInstaller(WithStateManager(prepareStateManager(t)))
+				installer, err = NewTeleportNodeAgentInstaller(WithMachineRuntime(nil))
 			}
 			require.NoError(t, err)
 

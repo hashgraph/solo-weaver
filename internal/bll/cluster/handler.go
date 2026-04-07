@@ -5,7 +5,6 @@ package cluster
 import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -17,28 +16,29 @@ type HandlerFactory struct {
 // NewHandlerFactory validates dependencies and returns a HandlerFactory with all handlers initialized.
 // All dependencies are required; any nil returns an error.
 func NewHandlerFactory(
-	sm state.Manager,
 	runtime *rsl.RuntimeResolver,
 ) (*HandlerFactory, error) {
 	base, err := bll.NewBaseHandler[models.ClusterInputs](runtime)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}
-	if sm == nil {
-		return nil, errorx.IllegalArgument.New("state.Manager cannot be nil")
-	}
 
 	if runtime == nil {
-		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
+		return nil, errorx.IllegalArgument.New("RuntimeResolver cannot be nil")
 	}
 
 	cr, ok := runtime.ClusterRuntime.(*rsl.ClusterRuntimeResolver)
 	if !ok {
-		return nil, errorx.IllegalArgument.New("expected BlockNodeRuntime to be *rsl.BlockNodeRuntimeResolver but got %T", runtime.BlockNodeRuntime)
+		return nil, errorx.IllegalArgument.New("expected ClusterRuntime to be *rsl.ClusterRuntimeResolver but got %T", runtime.ClusterRuntime)
+	}
+
+	mr, ok := runtime.MachineRuntime.(*rsl.MachineRuntimeResolver)
+	if !ok {
+		return nil, errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", runtime.MachineRuntime)
 	}
 
 	h := &HandlerFactory{
-		install: NewInstallHandler(base, cr, sm),
+		install: NewInstallHandler(base, cr, mr),
 		//upgrade:   newUpgradeHandler(base, runtime.BlockNodeRuntime),
 		//uninstall: newUninstallHandler(base, runtime.BlockNodeRuntime),
 	}
