@@ -6,7 +6,6 @@ package reality_test
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
@@ -47,52 +46,4 @@ func TestBlockNodeChecker_Integration_RefreshState(t *testing.T) {
 			assert.False(t, bn.LastSync.IsZero(), "LastSync should be set after RefreshState")
 		})
 	}
-}
-
-// TestBlockNodeChecker_Integration_FlushState_Idempotent verifies that calling
-// FlushState twice with the same BlockNodeState does NOT re-write the state file
-// on the second call (mtime must not change).
-func TestBlockNodeChecker_Integration_FlushState_Idempotent(t *testing.T) {
-	sm := newTestStateManager(t)
-	checker := newTestBlockNodeChecker(t)
-
-	err := sm.FlushState()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	bn, err := checker.RefreshState(ctx)
-	require.NoError(t, err)
-
-	info1, err := os.Stat(sm.State().StateFile)
-	require.NoError(t, err)
-
-	// Second flush with identical state must not touch the file.
-	err = checker.FlushState(bn)
-	require.NoError(t, err)
-
-	info2, err := os.Stat(sm.State().StateFile)
-	require.NoError(t, err)
-
-	assert.Equal(t, info1.ModTime(), info2.ModTime(),
-		"FlushState with identical BlockNodeState must not re-write the state file")
-}
-
-// TestBlockNodeChecker_Integration_StatePersistedToDisk verifies that the state
-// written by RefreshState can be read back by a fresh state.Manager.
-func TestBlockNodeChecker_Integration_StatePersistedToDisk(t *testing.T) {
-	sm := newTestStateManager(t)
-	checker := newTestBlockNodeChecker(t)
-
-	bn, err := checker.RefreshState(context.Background())
-	require.NoError(t, err)
-
-	// Re-read from a brand-new manager pointing at the same file.
-	sm2, err := state.NewStateManager(state.WithStateFile(sm.State().StateFile))
-	require.NoError(t, err)
-	require.NoError(t, sm2.Refresh())
-
-	persisted := sm2.State().BlockNodeState
-
-	assert.Equal(t, bn.ReleaseInfo.Name, persisted.ReleaseInfo.Name,
-		"persisted ReleaseInfo.Name must match in-memory value")
 }

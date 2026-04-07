@@ -20,7 +20,7 @@ import (
 // PersistentVolumes to build a BlockNodeState.
 // It depends only on injectable helm/kube factories and a cluster probe.
 type blockNodeChecker struct {
-	Base
+	sm            state.Manager
 	newHelm       func() (HelmManager, error)
 	newKube       func() (KubeClient, error)
 	clusterExists ClusterProbe
@@ -36,38 +36,11 @@ func NewBlockNodeChecker(
 	clusterExists ClusterProbe,
 ) (Checker[state.BlockNodeState], error) {
 	return &blockNodeChecker{
-		Base: Base{
-			sm: sm,
-		},
+		sm:            sm,
 		newHelm:       newHelm,
 		newKube:       newKube,
 		clusterExists: clusterExists,
 	}, nil
-}
-
-// FlushState first refreshes the state from disk to get the latest BlockNodeState,
-// then compares the existing BlockNodeState with the new one. If they are equal,
-// no write is performed. If they differ, the new BlockNodeState is persisted to disk.
-// This pattern of refreshing before writing is necessary to prevent overwriting
-// concurrent updates to other parts of the state by separate reality checkers.
-func (b *blockNodeChecker) FlushState(st state.BlockNodeState) error {
-	if err := b.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return ErrFlushError.Wrap(err, "failed to refresh state")
-	}
-
-	existing := b.sm.State().BlockNodeState
-	if existing.Equal(st) {
-		logx.As().Debug().Msg("BlockNodeState is unchanged, skipping flush")
-		return nil
-	}
-
-	fullState := b.sm.State()
-	fullState.BlockNodeState = st
-	if err := b.sm.Set(fullState).FlushState(); err != nil {
-		return ErrFlushError.Wrap(err, "failed to persist state with refreshed BlockNodeState")
-	}
-
-	return nil
 }
 
 func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeState, error) {
@@ -125,10 +98,6 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 
 	if err := b.populateStorageFromPVs(pvs, re.Namespace, &bn.Storage); err != nil {
-		return bn, err
-	}
-
-	if err = b.FlushState(bn); err != nil {
 		return bn, err
 	}
 

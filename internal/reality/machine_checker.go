@@ -18,7 +18,7 @@ import (
 // It depends only on a state.Manager (to read the latest persisted software state)
 // and optional path overrides for sandbox bin / state directories.
 type machineChecker struct {
-	Base
+	sm                 state.Manager
 	sandboxBinDir      string
 	stateDir           string
 	softwareInstallers map[string]software.Software
@@ -38,35 +38,11 @@ func NewMachineChecker(sm state.Manager, sandboxBinDir, stateDir string) (Checke
 	}
 
 	return &machineChecker{
-		Base:               Base{sm: sm},
+		sm:                 sm,
 		sandboxBinDir:      sandboxBinDir,
 		stateDir:           stateDir,
 		softwareInstallers: softwareInstallers,
 	}, nil
-}
-
-// FlushState first refreshes the state from disk to get the latest MachineState,
-// then compares the existing MachineState with the new one. If they are equal,
-// no write is performed. If they differ, the new MachineState is persisted to disk.
-// This pattern of refreshing before writing is necessary to prevent overwriting
-// concurrent updates to other parts of the state by separate reality checkers.
-func (m *machineChecker) FlushState(st state.MachineState) error {
-	if err := m.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return ErrFlushError.Wrap(err, "failed to refresh state")
-	}
-
-	existing := m.sm.State().MachineState
-	if existing.Equal(st) {
-		return nil
-	}
-
-	fullState := m.sm.State()
-	fullState.MachineState = st
-	if err := m.sm.Set(fullState).FlushState(); err != nil {
-		return ErrFlushError.Wrap(err, "failed to persist state with refreshed MachineState")
-	}
-
-	return nil
 }
 
 // RefreshState collects current host software and hardware state.
@@ -84,10 +60,6 @@ func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, er
 	ms.Software = m.refreshSoftwareState()
 	ms.Hardware = m.refreshHardwareState()
 	ms.LastSync = htime.Now()
-
-	if err := m.FlushState(ms); err != nil {
-		return ms, err
-	}
 
 	return ms, nil
 }

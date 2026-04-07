@@ -27,7 +27,6 @@ type mockBlockNodeChecker struct {
 	calls int
 }
 
-func (m *mockBlockNodeChecker) FlushState(_ state.BlockNodeState) error { return nil }
 func (m *mockBlockNodeChecker) RefreshState(_ context.Context) (state.BlockNodeState, error) {
 	m.calls++
 	return m.state, m.err
