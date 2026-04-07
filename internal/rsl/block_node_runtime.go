@@ -506,11 +506,8 @@ func NewBlockNodeRuntimeResolver(
 		return nil, errorx.IllegalState.Wrap(err, "failed to create storage resolver")
 	}
 
-	// Seed sources in lowest-to-highest precedence order so that higher-priority
-	// sources correctly override lower ones from the start.
+	// initialize values from different sources that are available now
 	br.WithConfig(cfg)
-
-	// Seed StrategyState from the initial persisted state.
 	br.WithState(blockNodeState)
 
 	return br, nil

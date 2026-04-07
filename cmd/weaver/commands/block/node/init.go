@@ -53,10 +53,12 @@ func initializeDependencies() error {
 		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
 	}
 
-	// Seed the full precedence chain for block-node resolution (lowest → highest priority):
-	//   WithDefaults → WithConfig → WithEnv → (WithState already seeded in constructor)
-	// WithUserInputs and WithIntent are called per-command in the BLL layer.
+	// Set values from other sources (other than config and state) as required
+	// The order of initialization doesn't make any difference since each value can have its own value resolver to
+	// set the correct precedence (e.g. env vars can override defaults, but not user inputs).
+	logx.As().Debug().Any("defaults_config", config.DefaultsConfig()).Msg("Setting defaults")
 	runtime.BlockNodeRuntime.WithDefaults(config.DefaultsConfig())
+	logx.As().Debug().Any("env_config", config.EnvConfig()).Msg("Setting env config")
 	runtime.BlockNodeRuntime.WithEnv(config.EnvConfig())
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.
