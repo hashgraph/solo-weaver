@@ -43,7 +43,7 @@ type baseInstaller struct {
 	software             *ArtifactMetadata
 	versionToBeInstalled string
 	fileManager          fsx.Manager
-	machineRuntime       MachineRuntime
+	machineRuntime       MachineRuntime // optional, if it is not passed, it would perform disk check directly
 	softwareState        *state.SoftwareState
 
 	// These function fields allow for installer-specific overrides of the verification logic while still

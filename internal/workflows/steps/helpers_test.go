@@ -6,7 +6,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -25,14 +24,6 @@ func TestRunCmd_Error(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to execute bash command")
 }
 
-// prepareStateManager creates a state.Manager for use in unit tests.
-func prepareStateManager(t *testing.T) state.Manager {
-	t.Helper()
-	sm, err := state.NewStateManager()
-	require.NoError(t, err, "failed to create state manager for test")
-	return sm
-}
-
 type SetupLevel int
 
 const (
@@ -47,7 +38,6 @@ const (
 // SetupPrerequisitesToLevel sets up all the required components before cluster initialization
 func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	t.Helper()
-	sm := prepareStateManager(t)
 
 	// Setup home directory structure
 	step, err := SetupHomeDirectoryStructure(models.Paths()).Build()
@@ -134,7 +124,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	require.NoError(t, report.Error, "Failed to setup bind mounts")
 
 	// preflight & basic setup
-	step, err = SetupKubectl(sm).Build()
+	step, err = SetupKubectl(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup kubectl")
@@ -144,7 +134,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup kubelet
-	step, err = SetupKubelet(sm).Build()
+	step, err = SetupKubelet(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup kubelet")
@@ -160,7 +150,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup CRI-O
-	step, err = SetupCrio(sm).Build()
+	step, err = SetupCrio(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup CRI-O")
@@ -180,7 +170,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup Kubeadm
-	step, err = SetupKubeadm(sm).Build()
+	step, err = SetupKubeadm(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup Kubeadm")
@@ -196,7 +186,7 @@ func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	}
 
 	// Setup Cilium
-	step, err = SetupCilium(sm).Build()
+	step, err = SetupCilium(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup Cilium")
