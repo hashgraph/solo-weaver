@@ -30,6 +30,7 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagNodeAgentProxyAddr, "proxy", "", "Teleport proxy address (required, e.g., proxy.example.com or proxy.example.com:443)")
 
 	nodeCmd.AddCommand(installCmd)
+	nodeCmd.AddCommand(uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

@@ -24,3 +24,9 @@ func NewTeleportClusterAgentInstallWorkflow() *automa.WorkflowBuilder {
 func NewTeleportClusterAgentUninstallWorkflow() *automa.WorkflowBuilder {
 	return steps.TeardownTeleportClusterAgent()
 }
+
+// NewTeleportNodeAgentUninstallWorkflow creates a workflow to uninstall the Teleport node agent.
+// sm is the shared Manager used to track uninstallation progress.
+func NewTeleportNodeAgentUninstallWorkflow(sm state.Manager) *automa.WorkflowBuilder {
+	return steps.TeardownTeleportNodeAgent(sm)
+}
