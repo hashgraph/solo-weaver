@@ -39,7 +39,8 @@ func Setup() (*SetupResult, error) {
 	}
 
 	currentState := sm.State()
-	logx.As().Info().Str("state_file", currentState.StateFile).Any("currentState", currentState).Msg("Current state")
+	logx.As().Info().Str("state_file", currentState.StateFile).Msg("Current state")
+	logx.As().Debug().Any("currentState", currentState).Msg("Current state details")
 
 	realityChecker, err := reality.NewCheckers(sm)
 	if err != nil {
