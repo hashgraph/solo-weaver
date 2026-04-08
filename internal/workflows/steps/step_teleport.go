@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	SetupTeleportStepId           = "setup-teleport"
-	InstallTeleportStepId         = "install-teleport"
-	CreateTeleportNamespaceStepId = "create-teleport-namespace"
-	IsTeleportReadyStepId         = "is-teleport-ready"
+	SetupTeleportStepId              = "setup-teleport"
+	TeardownTeleportStepId           = "teardown-teleport-cluster-agent"
+	InstallTeleportStepId            = "install-teleport"
+	UninstallTeleportKubeAgentStepId = "uninstall-teleport-kube-agent"
+	CreateTeleportNamespaceStepId    = "create-teleport-namespace"
+	IsTeleportReadyStepId            = "is-teleport-ready"
 )
 
 // SetupTeleportNodeAgent returns a workflow builder that sets up the Teleport node agent.
@@ -72,6 +74,66 @@ func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Teleport cluster agent setup successfully")
+		})
+}
+
+// TeardownTeleportClusterAgent creates a workflow to uninstall the Teleport Kubernetes cluster agent.
+// It detects whether the Helm release is installed and removes it if present.
+func TeardownTeleportClusterAgent() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId(TeardownTeleportStepId).
+		Steps(
+			uninstallTeleportKubeAgent(),
+		).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Tearing down Teleport cluster agent")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to teardown Teleport cluster agent")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Teleport cluster agent torn down successfully")
+		})
+}
+
+// uninstallTeleportKubeAgent removes the Teleport Kubernetes agent Helm release.
+func uninstallTeleportKubeAgent() automa.Builder {
+	return automa.NewStepBuilder().WithId(UninstallTeleportKubeAgentStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			l := logx.As()
+			hm, err := helm.NewManager(helm.WithLogger(*l))
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta := map[string]string{}
+			isInstalled, err := hm.IsInstalled(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if !isInstalled {
+				l.Info().Msg("Teleport cluster agent is not installed, skipping uninstallation")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			err = hm.UninstallChart(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			meta["uninstalled"] = "true"
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Teleport cluster agent")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Teleport cluster agent")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Teleport cluster agent uninstalled successfully")
 		})
 }
 
