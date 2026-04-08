@@ -47,6 +47,19 @@ func (c *ClusterRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.Cl
 	return c
 }
 
+// WithDefaults is a no-op stub satisfying the Resolver interface.
+// ClusterRuntimeResolver has no field-level EffectiveValue resolvers yet.
+func (c *ClusterRuntimeResolver) WithDefaults(_ models.Config) Resolver[state.ClusterState, models.ClusterInputs] {
+	return c
+}
+
+// WithEnv is a no-op stub satisfying the Resolver interface.
+// ClusterRuntimeResolver has no field-level EffectiveValue resolvers yet,
+// so env var injection is not applicable.
+func (c *ClusterRuntimeResolver) WithEnv(_ models.Config) Resolver[state.ClusterState, models.ClusterInputs] {
+	return c
+}
+
 func (c *ClusterRuntimeResolver) WithState(st state.ClusterState) Resolver[state.ClusterState, models.ClusterInputs] {
 	c.mu.Lock()
 	c.state = &st

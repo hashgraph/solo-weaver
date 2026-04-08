@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package rsl
 
 import (
@@ -15,49 +17,224 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
-// BlockNodeRuntimeResolver manages the current state of block-node related information,
-// including configuration, user inputs, and reality-checked state.
+// ── Custom resolver types ─────────────────────────────────────────────────────
+
+// validatedStringResolver errors when a deployed state value is empty.
+// Used for fields that must be non-empty when a release is deployed
+// (namespace, release name, chart name).
+type validatedStringResolver struct {
+	fieldName string
+}
+
+func (r *validatedStringResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Value[string]) (*automa.EffectiveValue[string], error) {
+	for _, st := range []automa.EffectiveStrategy{StrategyReality, StrategyState} {
+		if v, ok := sources[st]; ok {
+			if v.Val() == "" {
+				return nil, errorx.IllegalState.New(
+					"block node runtime state is inconsistent: deployed release cannot have empty %s", r.fieldName)
+			}
+			return automa.NewEffectiveValue(v, st)
+		}
+	}
+	for _, st := range []automa.EffectiveStrategy{StrategyUserInput, StrategyEnv, StrategyConfig, StrategyDefault} {
+		if v, ok := sources[st]; ok {
+			return automa.NewEffectiveValue(v, st)
+		}
+	}
+	return automa.NewEffective("", StrategyZero)
+}
+
+// chartRefResolver soft-falls through on an empty deployed ChartRef (logs a warning
+// instead of erroring) then falls back to user input or config.
+type chartRefResolver struct{}
+
+func (r *chartRefResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Value[string]) (*automa.EffectiveValue[string], error) {
+	for _, st := range []automa.EffectiveStrategy{StrategyReality, StrategyState} {
+		if v, ok := sources[st]; ok {
+			if v.Val() != "" {
+				return automa.NewEffectiveValue(v, st)
+			}
+			logx.As().Warn().
+				Str("strategy", StrategyName(st)).
+				Msg("deployed release has empty chart ref; falling back to user input or config")
+		}
+	}
+	for _, st := range []automa.EffectiveStrategy{StrategyUserInput, StrategyEnv, StrategyConfig, StrategyDefault} {
+		if v, ok := sources[st]; ok {
+			return automa.NewEffectiveValue(v, st)
+		}
+	}
+	return automa.NewEffective("", StrategyZero)
+}
+
+// chartVersionResolver is intent-aware.
+//   - Upgrade:     UserInput > Reality > State > Config > Default
+//     (requires a deployed release; errors if none)
+//   - Non-upgrade: Reality/State is authoritative when deployed (locked, non-empty);
+//     falls back to UserInput > Config > Default when not deployed.
 //
-// Resolution strategy (highest -> lowest precedence):
-// 1. Current state (automa.StrategyCurrent)
-//   - If `br.state != nil` and `br.state.ReleaseInfo.Status == release.StatusDeployed`,
-//     the resolver returns the value from `br.state`.
-//   - For string fields the deployed state is validated to be non-empty; an empty value
-//     for a deployed release results in an `errorx.IllegalState` error.
+// It closes over **models.Intent so that WithIntent updates are always visible
+// without needing to rebuild the resolver.
+type chartVersionResolver struct {
+	intent **models.Intent
+}
+
+func (r *chartVersionResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Value[string]) (*automa.EffectiveValue[string], error) {
+	if r.intent == nil || *r.intent == nil {
+		return nil, errorx.IllegalState.New("intent is not set in block node runtime resolver")
+	}
+	intent := **r.intent
+
+	stateDeployed := false
+	for _, st := range []automa.EffectiveStrategy{StrategyReality, StrategyState} {
+		if _, ok := sources[st]; ok {
+			stateDeployed = true
+			break
+		}
+	}
+
+	if intent.Action == models.ActionUpgrade {
+		if !stateDeployed {
+			return nil, errorx.IllegalState.New(
+				"block node is not deployed; cannot perform upgrade").
+				WithProperty(models.ErrPropertyResolution,
+					"upgrade action requires a currently deployed block node release")
+		}
+		// Upgrade: UserInput can override the deployed version.
+		for _, st := range []automa.EffectiveStrategy{StrategyUserInput, StrategyReality, StrategyState, StrategyConfig, StrategyDefault} {
+			if v, ok := sources[st]; ok {
+				return automa.NewEffectiveValue(v, st)
+			}
+		}
+		return nil, errorx.IllegalState.New("no chart version available for upgrade")
+	}
+
+	// Non-upgrade: deployed version is authoritative.
+	for _, st := range []automa.EffectiveStrategy{StrategyReality, StrategyState} {
+		if v, ok := sources[st]; ok {
+			if v.Val() == "" {
+				return nil, errorx.IllegalState.New(
+					"block node runtime state is inconsistent: deployed release cannot have empty chart version")
+			}
+			return automa.NewEffectiveValue(v, st)
+		}
+	}
+
+	// Not deployed — fall back normally.
+	for _, st := range []automa.EffectiveStrategy{StrategyUserInput, StrategyEnv, StrategyConfig, StrategyDefault} {
+		if v, ok := sources[st]; ok {
+			return automa.NewEffectiveValue(v, st)
+		}
+	}
+	return automa.NewEffective("", StrategyZero)
+}
+
+// storageResolver merges storage fields from all sources using the same
+// MergeFrom cascade as the main-branch imperative Storage() method:
 //
-// 2. User inputs (automa.StrategyUserInput)
-//   - If no valid deployed current state is available and `br.inputs != nil` (and for
-//     strings the input is non-empty), the resolver returns the user-provided value.
+//  1. User input (highest priority for any field the operator set)
+//  2. Reality / State (fills gaps; validated when deployed)
+//  3. Config → Default (fills any remaining empty fields)
 //
-// 3. Config defaults (automa.StrategyConfig)
-//   - If neither current state nor user inputs supply a value, the resolver returns
-//     the config default value.
+// Strategy reflects the highest-priority source that contributed any field.
+type storageResolver struct{}
+
+func (r *storageResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Value[models.BlockNodeStorage]) (*automa.EffectiveValue[models.BlockNodeStorage], error) {
+	var storage models.BlockNodeStorage
+	strategy := StrategyZero
+
+	// 1. Start with user input — operator-supplied fields win over everything.
+	if uv, ok := sources[StrategyUserInput]; ok {
+		userStorage := uv.Val()
+		if !userStorage.IsEmpty() {
+			storage = userStorage
+			strategy = StrategyUserInput
+		}
+	}
+
+	// 2. Fill gaps from reality / state (whichever is present).
+	//    Validate the deployed storage before merging to catch corrupt state.
+	for _, st := range []automa.EffectiveStrategy{StrategyReality, StrategyState} {
+		if sv, ok := sources[st]; ok {
+			stateStorage := sv.Val()
+			if err := stateStorage.Validate(); err != nil {
+				return nil, errorx.IllegalState.Wrap(err, "block node runtime state is inconsistent")
+			}
+			storage.MergeFrom(stateStorage)
+			if strategy == StrategyZero {
+				strategy = st
+			}
+			break
+		}
+	}
+
+	// 3. Fill any remaining gaps from config, then default.
+	for _, st := range []automa.EffectiveStrategy{StrategyConfig, StrategyDefault} {
+		if cv, ok := sources[st]; ok {
+			storage.MergeFrom(cv.Val())
+		}
+	}
+
+	if strategy == StrategyZero {
+		// No user input and nothing deployed — pick the highest-priority lower
+		// source that actually contributed a non-empty value.
+		for _, st := range []automa.EffectiveStrategy{StrategyConfig, StrategyDefault} {
+			if cv, ok := sources[st]; ok {
+				v := cv.Val() // copy needed: IsEmpty() has a pointer receiver
+				if !v.IsEmpty() {
+					strategy = st
+					break
+				}
+			}
+		}
+	}
+
+	sv, err := automa.NewValue(storage)
+	if err != nil {
+		return nil, err
+	}
+	return automa.NewEffectiveValue(sv, strategy)
+}
+
+// ── BlockNodeRuntimeResolver ──────────────────────────────────────────────────
+
+// BlockNodeRuntimeResolver manages the current state of block-node related information.
 //
-// Notes:
-//   - Returned values are `*automa.EffectiveValue[T]` carrying the chosen value and the
-//     strategy indicating its source.
-//   - Structured types (e.g. `models.BlockNodeStorage`) follow the same precedence but do
-//     not perform non-empty string validation.
-//   - Helper methods `WithUserInputs`, `WithConfig`, and `WithState` set the resolver's
-//     sources so resolution uses those values.
-//   - The resolver relies on the runtime base for reality checking, last-sync extraction,
-//     cloning and default state construction.
+// Each resolvable field owns an *EffectiveValueResolver[T] that holds all value
+// sources in a map keyed by strategy.  Resolution precedence (highest → lowest):
+//
+//	StrategyReality   – live cluster (from RefreshState)
+//	StrategyState     – persisted state on disk (from WithState)
+//	StrategyUserInput – CLI flags (from WithUserInputs)
+//	StrategyEnv       – environment variables (set externally via SetSource)
+//	StrategyConfig    – config file (from WithConfig)
+//	StrategyDefault   – hardcoded deps.* constants (seeded at construction)
+//	StrategyZero      – zero value (ultimate fallback)
 type BlockNodeRuntimeResolver struct {
 	mu              sync.Mutex
-	cfg             *models.Config
-	state           *state.BlockNodeState
+	state           *state.BlockNodeState // raw snapshot for CurrentState() and staleness checks
 	refreshInterval time.Duration
 	realityChecker  reality.Checker[state.BlockNodeState]
+	intent          *models.Intent
 
-	inputs *models.BlockNodeInputs
-	intent *models.Intent
+	// Per-field effective values — sources are kept up-to-date by With* / RefreshState.
+	namespace    *EffectiveValue[string]
+	releaseName  *EffectiveValue[string]
+	chartName    *EffectiveValue[string]
+	chartRef     *EffectiveValue[string]
+	chartVersion *EffectiveValue[string]
+	storage      *EffectiveValue[models.BlockNodeStorage]
 }
+
+// ── Builder / source-setter methods ──────────────────────────────────────────
 
 func (b *BlockNodeRuntimeResolver) WithIntent(intent models.Intent) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	b.intent = &intent
+	// Intent affects chartVersion resolution — invalidate so next Resolve() sees the new intent.
+	b.chartVersion.Invalidate()
 	return b
 }
 
@@ -65,7 +242,17 @@ func (b *BlockNodeRuntimeResolver) WithUserInputs(inputs models.BlockNodeInputs)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.inputs = &inputs
+	setOrClearString(b.namespace, StrategyUserInput, inputs.Namespace)
+	setOrClearString(b.releaseName, StrategyUserInput, inputs.Release)
+	setOrClearString(b.chartName, StrategyUserInput, inputs.ChartName)
+	setOrClearString(b.chartRef, StrategyUserInput, inputs.Chart)
+	setOrClearString(b.chartVersion, StrategyUserInput, inputs.ChartVersion)
+
+	if err := inputs.Storage.Validate(); err == nil {
+		_ = b.storage.SetSource(StrategyUserInput, inputs.Storage)
+	} else {
+		b.storage.ClearSource(StrategyUserInput)
+	}
 	return b
 }
 
@@ -73,293 +260,194 @@ func (b *BlockNodeRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.cfg = &cfg
+	// Use setOrClearString so that a field absent from config.yaml (empty string)
+	// does NOT register a StrategyConfig source.  Without this guard an empty
+	// StrategyConfig entry would shadow a StrategyDefault entry in the resolver's
+	// presence-only check (if v, ok := sources[st]; ok), causing defaults to be
+	// silently ignored whenever a field is missing from the config file.
+	setOrClearString(b.namespace, StrategyConfig, cfg.BlockNode.Namespace)
+	setOrClearString(b.releaseName, StrategyConfig, cfg.BlockNode.Release)
+	setOrClearString(b.chartName, StrategyConfig, cfg.BlockNode.ChartName)
+	setOrClearString(b.chartRef, StrategyConfig, cfg.BlockNode.Chart)
+	setOrClearString(b.chartVersion, StrategyConfig, cfg.BlockNode.ChartVersion)
+
+	configStorage := cfg.BlockNode.Storage
+	if !configStorage.IsEmpty() {
+		_ = b.storage.SetSource(StrategyConfig, configStorage)
+	} else {
+		b.storage.ClearSource(StrategyConfig)
+	}
 	return b
 }
 
 func (b *BlockNodeRuntimeResolver) WithState(st state.BlockNodeState) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	b.state = &st
-	b.mu.Unlock()
+	b.setStateSources(st, StrategyState)
+	return b
+}
+
+// WithDefaults registers hardcoded compile-time constants as StrategyDefault sources —
+// the lowest-priority fallback in the resolution chain. cfg should be the result of
+// config.DefaultsConfig() (i.e. values sourced exclusively from the deps package).
+//
+// Zero-value fields in cfg are not registered so they don't shadow a higher-priority
+// source with an empty string.
+func (b *BlockNodeRuntimeResolver) WithDefaults(cfg models.Config) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	setOrClearString(b.namespace, StrategyDefault, cfg.BlockNode.Namespace)
+	setOrClearString(b.releaseName, StrategyDefault, cfg.BlockNode.Release)
+	setOrClearString(b.chartName, StrategyDefault, cfg.BlockNode.ChartName)
+	setOrClearString(b.chartRef, StrategyDefault, cfg.BlockNode.Chart)
+	setOrClearString(b.chartVersion, StrategyDefault, cfg.BlockNode.ChartVersion)
+
+	defaultStorage := cfg.BlockNode.Storage
+	if !defaultStorage.IsEmpty() {
+		_ = b.storage.SetSource(StrategyDefault, defaultStorage)
+	} else {
+		b.storage.ClearSource(StrategyDefault)
+	}
 
 	return b
 }
 
-func (b *BlockNodeRuntimeResolver) Namespace() (*automa.EffectiveValue[string], error) {
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.Namespace == "" {
-			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty namespace")
-		}
-
-		return automa.NewEffective[string](
-			b.state.ReleaseInfo.Namespace,
-			automa.StrategyCurrent,
-		)
-	}
-
-	if b.inputs != nil && b.inputs.Namespace != "" {
-		return automa.NewEffective[string](
-			b.inputs.Namespace,
-			automa.StrategyUserInput,
-		)
-	}
-
-	return automa.NewEffective[string](
-		b.cfg.BlockNode.Namespace,
-		automa.StrategyConfig,
-	)
-}
-
-func (b *BlockNodeRuntimeResolver) Storage() (*automa.EffectiveValue[models.BlockNodeStorage], error) {
-	// Merge storage fields from all sources. Priority (highest → lowest):
-	//   1. User inputs (CLI flags)
-	//   2. Current state (for example, PV hostPaths, and it may also preserve BasePath)
-	//   3. Config file
-	// MergeFrom fills empty fields without overwriting existing ones, so we
-	// apply sources from highest to lowest priority.
-
-	var storage models.BlockNodeStorage
-	strategy := automa.StrategyConfig
-
-	// Start with user inputs (highest priority for fields that are set).
-	if b.inputs != nil && !b.inputs.Storage.IsEmpty() {
-		storage = b.inputs.Storage
-		strategy = automa.StrategyUserInput
-	}
-
-	// Fill gaps from current state (PV paths, sizes).
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		storage.MergeFrom(b.state.Storage)
-		if strategy == automa.StrategyConfig {
-			strategy = automa.StrategyCurrent
-		}
-	}
-
-	// Fill remaining gaps from config.
-	storage.MergeFrom(b.cfg.BlockNode.Storage)
-
-	return automa.NewEffective[models.BlockNodeStorage](
-		storage,
-		strategy,
-	)
-}
-
-func (b *BlockNodeRuntimeResolver) ReleaseName() (*automa.EffectiveValue[string], error) {
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.Name == "" {
-			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty release name")
-		}
-
-		return automa.NewEffective[string](
-			b.state.ReleaseInfo.Name,
-			automa.StrategyCurrent,
-		)
-	}
-
-	if b.inputs != nil && b.inputs.Release != "" {
-		return automa.NewEffective[string](
-			b.inputs.Release,
-			automa.StrategyUserInput,
-		)
-	}
-
-	return automa.NewEffective[string](
-		b.cfg.BlockNode.Release,
-		automa.StrategyConfig,
-	)
-}
-
-func (b *BlockNodeRuntimeResolver) ChartName() (*automa.EffectiveValue[string], error) {
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.ChartName == "" {
-			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty chart name")
-		}
-
-		return automa.NewEffective[string](
-			b.state.ReleaseInfo.ChartName,
-			automa.StrategyCurrent,
-		)
-	}
-
-	if b.inputs != nil && b.inputs.ChartName != "" {
-		return automa.NewEffective[string](
-			b.inputs.ChartName,
-			automa.StrategyUserInput,
-		)
-	}
-
-	return automa.NewEffective[string](
-		b.cfg.BlockNode.ChartName,
-		automa.StrategyConfig,
-	)
-}
-
-func (b *BlockNodeRuntimeResolver) ChartRef() (*automa.EffectiveValue[string], error) {
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.ChartRef != "" {
-			return automa.NewEffective[string](
-				b.state.ReleaseInfo.ChartRef,
-				automa.StrategyCurrent,
-			)
-		}
-
-		logx.As().Warn().
-			Any("releaseInfo", b.state.ReleaseInfo).
-			Any("input", b.inputs).
-			Any("config", b.cfg.BlockNode).
-			Msg("Block node runtime state is inconsistent: deployed release has empty chart ref; falling back to user input or config")
-
-	}
-
-	if b.inputs != nil && b.inputs.Chart != "" {
-		return automa.NewEffective[string](
-			b.inputs.Chart,
-			automa.StrategyUserInput,
-		)
-	}
-
-	return automa.NewEffective[string](
-		b.cfg.BlockNode.Chart,
-		automa.StrategyConfig,
-	)
-}
-
-// ChartVersion resolves the effective chart version for the block node based on the following precedence:
-// 1. If the current state indicates a deployed release and the intent is an upgrade, the resolver checks for a
-// user-provided chart version in the inputs. If provided, this takes precedence.
-// 2. If no user input is provided for the chart version during an upgrade intent, but the current deployed state has
-// a version, that version is used next.
-// 3. If neither of the above provide a chart version during an upgrade intent, the resolver falls back to the config
-// default.
-// 4. For non-upgrade intents, if the current state indicates a deployed release, the chart version from the deployed
-// state is used and cannot be overridden by user input or config.
-// 5. If there is no deployed release, but user input provides a chart version, that is used next.
-// 6. Finally, if none of the above sources provide a chart version, the resolver returns the config default.
+// WithEnv registers env-var-sourced values as StrategyEnv sources, giving them
+// the correct precedence: above StrategyConfig (config file) but below
+// StrategyUserInput (CLI flags).
 //
-// This resolution strategy ensures that during an upgrade, user input can specify a new chart version, but if not provided,
-// the system retains the currently deployed version. For non-upgrade actions, the deployed version is authoritative if
-// it exists, preventing unintended changes to the chart version.
-func (b *BlockNodeRuntimeResolver) ChartVersion() (*automa.EffectiveValue[string], error) {
-	// During an upgrade intent, the effective chart version is determined with the following precedence:
-	// 1. User input: if the user provided a chart version in the inputs, that takes precedence.
-	// 2. Current state version: if the current deployed state has a version, use that next.
-	// 3. Config default: if neither of the above provide a version, fall back to the config default.
-	if b.intent == nil {
-		return nil, errorx.IllegalState.New("intent is not set in block node runtime resolver")
+// cfg should be the result of config.EnvConfig() — a models.Config populated
+// exclusively from SOLO_PROVISIONER_* environment variables, with zero values for
+// fields that have no matching env var.  Zero values are not registered as sources
+// so they don't shadow the config file.
+func (b *BlockNodeRuntimeResolver) WithEnv(cfg models.Config) Resolver[state.BlockNodeState, models.BlockNodeInputs] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	setOrClearString(b.namespace, StrategyEnv, cfg.BlockNode.Namespace)
+	setOrClearString(b.releaseName, StrategyEnv, cfg.BlockNode.Release)
+	setOrClearString(b.chartName, StrategyEnv, cfg.BlockNode.ChartName)
+	setOrClearString(b.chartRef, StrategyEnv, cfg.BlockNode.Chart)
+	setOrClearString(b.chartVersion, StrategyEnv, cfg.BlockNode.ChartVersion)
+
+	envStorage := cfg.BlockNode.Storage
+	if !envStorage.IsEmpty() {
+		_ = b.storage.SetSource(StrategyEnv, envStorage)
+	} else {
+		b.storage.ClearSource(StrategyEnv)
 	}
 
-	if b.intent.Action == models.ActionUpgrade {
-		if b.state == nil || b.state.ReleaseInfo.Status != release.StatusDeployed {
-			return nil, errorx.IllegalState.New(
-				"block node is not deployed; cannot perform upgrade").
-				WithProperty(models.ErrPropertyResolution,
-					"upgrade action requires a currently deployed block node release")
-		}
-
-		if b.inputs.ChartVersion != "" {
-			return automa.NewEffective[string](
-				b.inputs.ChartVersion,
-				automa.StrategyUserInput,
-			)
-		}
-
-		if b.state.ReleaseInfo.ChartVersion != "" {
-			return automa.NewEffective[string](
-				b.state.ReleaseInfo.ChartVersion,
-				automa.StrategyCurrent,
-			)
-		}
-
-		return automa.NewEffective[string](
-			b.cfg.BlockNode.ChartVersion,
-			automa.StrategyConfig,
-		)
-	}
-
-	// For non-upgrade intents, the chart version must come from the currently deployed release; user input and config cannot override it.
-	if b.state != nil && b.state.ReleaseInfo.Status == release.StatusDeployed {
-		if b.state.ReleaseInfo.ChartVersion == "" {
-			return nil, errorx.IllegalState.
-				New("block node runtime state is inconsistent: deployed release cannot have empty chart version")
-		}
-
-		return automa.NewEffective[string](
-			b.state.ReleaseInfo.ChartVersion,
-			automa.StrategyCurrent,
-		)
-	}
-
-	// If there is no deployed release, but user input provides a chart version, that is used next.
-	if b.inputs != nil && b.inputs.ChartVersion != "" {
-		return automa.NewEffective[string](
-			b.inputs.ChartVersion,
-			automa.StrategyUserInput,
-		)
-	}
-
-	// Finally, if none of the above sources provide a chart version, the resolver returns the config default.
-	return automa.NewEffective[string](
-		b.cfg.BlockNode.ChartVersion,
-		automa.StrategyConfig,
-	)
+	return b
 }
+
+// setStateSources pushes state values into the per-field resolvers under the
+// given strategy tier (StrategyState or StrategyReality).
+// Must be called with b.mu held.
+func (b *BlockNodeRuntimeResolver) setStateSources(st state.BlockNodeState, strategy automa.EffectiveStrategy) {
+	if st.ReleaseInfo.Status != release.StatusDeployed {
+		b.namespace.ClearSource(strategy)
+		b.releaseName.ClearSource(strategy)
+		b.chartName.ClearSource(strategy)
+		b.chartRef.ClearSource(strategy)
+		b.chartVersion.ClearSource(strategy)
+		b.storage.ClearSource(strategy)
+		return
+	}
+
+	_ = b.namespace.SetSource(strategy, st.ReleaseInfo.Namespace)
+	_ = b.releaseName.SetSource(strategy, st.ReleaseInfo.Name)
+	_ = b.chartName.SetSource(strategy, st.ReleaseInfo.ChartName)
+	_ = b.chartRef.SetSource(strategy, st.ReleaseInfo.ChartRef)
+	_ = b.chartVersion.SetSource(strategy, st.ReleaseInfo.ChartVersion)
+	_ = b.storage.SetSource(strategy, st.Storage)
+}
+
+// ── Field accessor methods ────────────────────────────────────────────────────
+
+// Namespace returns the effective namespace resolver.
+// The resolver carries all source layers; call Get().Val() for the winning value
+// or the source-specific Val methods (StateVal, UserInputVal, …) to inspect layers.
+func (b *BlockNodeRuntimeResolver) Namespace() (*EffectiveValue[string], error) {
+	if _, err := b.namespace.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.namespace, nil
+}
+
+func (b *BlockNodeRuntimeResolver) ReleaseName() (*EffectiveValue[string], error) {
+	if _, err := b.releaseName.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.releaseName, nil
+}
+
+func (b *BlockNodeRuntimeResolver) ChartName() (*EffectiveValue[string], error) {
+	if _, err := b.chartName.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.chartName, nil
+}
+
+func (b *BlockNodeRuntimeResolver) ChartRef() (*EffectiveValue[string], error) {
+	if _, err := b.chartRef.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.chartRef, nil
+}
+
+func (b *BlockNodeRuntimeResolver) ChartVersion() (*EffectiveValue[string], error) {
+	if _, err := b.chartVersion.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.chartVersion, nil
+}
+
+func (b *BlockNodeRuntimeResolver) Storage() (*EffectiveValue[models.BlockNodeStorage], error) {
+	if _, err := b.storage.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.storage, nil
+}
+
+// ── State refresh ─────────────────────────────────────────────────────────────
 
 func (b *BlockNodeRuntimeResolver) RefreshState(ctx context.Context, force bool) error {
 	logx.As().Debug().Msg("Refreshing block node state using reality checker")
 
-	var err error
-	var oldState *state.BlockNodeState
-	if b.state != nil {
-		oldState, err = b.state.Clone()
-		if err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to clone block node state for refresh")
-		}
-	}
-
 	now := htime.Now()
 	if !force {
 		b.mu.Lock()
-		if b.state != nil {
-			if now.Sub(b.state.LastSync) < b.refreshInterval {
-				b.mu.Unlock()
-				logx.As().Debug().
-					Time("lastSync", b.state.LastSync.Time).
-					Dur("refreshInterval", b.refreshInterval).
-					Dur("timeSinceLastSync", now.Sub(b.state.LastSync)).
-					Msg("Block node state is fresh; skipping refresh")
-				return nil
-			}
+		if b.state != nil && now.Sub(b.state.LastSync) < b.refreshInterval {
+			b.mu.Unlock()
+			logx.As().Debug().
+				Time("lastSync", b.state.LastSync.Time).
+				Dur("refreshInterval", b.refreshInterval).
+				Dur("timeSinceLastSync", now.Sub(b.state.LastSync)).
+				Msg("Block node state is fresh; skipping refresh")
+			return nil
 		}
 		b.mu.Unlock()
 	}
 
-	// Fetch the latest state directly from the reality checker
 	st, err := b.realityChecker.RefreshState(ctx)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to refresh block node state")
 	}
+	st.LastSync = now
 
-	// Replace the current state under lock.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.state = &st
-	b.state.LastSync = now
-
-	// Preserve ChartRef across refresh if it was not set in reality but exists in the old state.
-	if oldState != nil && b.state != nil {
-		if b.state.ReleaseInfo.Status == release.StatusDeployed && b.state.ReleaseInfo.ChartRef == "" && oldState.ReleaseInfo.ChartRef != "" {
-			logx.As().Debug().Msg("Preserving ChartRef from old state across refresh since reality checker did not provide it for deployed release")
-			b.state.ReleaseInfo.ChartRef = oldState.ReleaseInfo.ChartRef
-		}
-	}
+	// Reality sources take precedence over State sources; the chartRefResolver
+	// handles an empty reality ChartRef by warning and falling through to
+	// StrategyState (which retains the previously known ChartRef).
+	b.setStateSources(st, StrategyReality)
 
 	logx.As().Debug().Any("state", b.state).Msg("Refreshed block node state using reality checker")
-
 	return nil
-
 }
 
 func (b *BlockNodeRuntimeResolver) CurrentState() (state.BlockNodeState, error) {
@@ -367,12 +455,12 @@ func (b *BlockNodeRuntimeResolver) CurrentState() (state.BlockNodeState, error) 
 	defer b.mu.Unlock()
 
 	if b.state == nil {
-		return state.NewBlockNodeState(), errorx.IllegalState.New("cluster state is not initialized")
+		return state.NewBlockNodeState(), errorx.IllegalState.New("block node state is not initialized")
 	}
-
-	logx.As().Debug().Any("state", b.state).Msg("Reading current block node state")
 	return *b.state, nil
 }
+
+// ── Constructor ───────────────────────────────────────────────────────────────
 
 func NewBlockNodeRuntimeResolver(
 	cfg models.Config,
@@ -381,11 +469,57 @@ func NewBlockNodeRuntimeResolver(
 	refreshInterval time.Duration,
 ) (Resolver[state.BlockNodeState, models.BlockNodeInputs], error) {
 	br := &BlockNodeRuntimeResolver{
-		cfg:             &cfg,
 		state:           &blockNodeState,
-		realityChecker:  realityChecker,
 		refreshInterval: refreshInterval,
+		realityChecker:  realityChecker,
 	}
 
+	var err error
+
+	br.namespace, err = NewEffectiveValue[string](&validatedStringResolver{fieldName: "namespace"})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create namespace resolver")
+	}
+
+	br.releaseName, err = NewEffectiveValue[string](&validatedStringResolver{fieldName: "release name"})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create release name resolver")
+	}
+
+	br.chartName, err = NewEffectiveValue[string](&validatedStringResolver{fieldName: "chart name"})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create chart name resolver")
+	}
+
+	br.chartRef, err = NewEffectiveValue[string](&chartRefResolver{})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create chart ref resolver")
+	}
+
+	br.chartVersion, err = NewEffectiveValue[string](&chartVersionResolver{intent: &br.intent})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create chart version resolver")
+	}
+
+	br.storage, err = NewEffectiveValue[models.BlockNodeStorage](&storageResolver{})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create storage resolver")
+	}
+
+	// initialize values from different sources that are available now
+	br.WithConfig(cfg)
+	br.WithState(blockNodeState)
+
 	return br, nil
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// setOrClearString sets StrategyUserInput if val is non-empty, clears it otherwise.
+func setOrClearString(r *EffectiveValue[string], strategy automa.EffectiveStrategy, val string) {
+	if val != "" {
+		_ = r.SetSource(strategy, val)
+	} else {
+		r.ClearSource(strategy)
+	}
 }

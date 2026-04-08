@@ -40,50 +40,48 @@ func resolveBlocknodeEffectiveInputs(
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node release name: %v", err)
 	}
-	logx.As().Debug().Str("releaseName", effReleaseName.Get().Val()).
-		Str("strategy", effReleaseName.Strategy().String()).
+	logx.As().Debug().
+		Any("releaseName", effReleaseName).
 		Msg("Determined effective block node release name")
 
 	effNamespace, err := runtime.Namespace()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node namespace: %v", err)
 	}
-	logx.As().Debug().Str("namespace", effNamespace.Get().Val()).
-		Str("strategy", effNamespace.Strategy().String()).
+	logx.As().Debug().
+		Any("namespace", effNamespace).
 		Msg("Determined effective block node namespace")
 
 	effChartName, err := runtime.ChartName()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart name: %v", err)
 	}
-	logx.As().Debug().Str("chartName", effChartName.Get().Val()).
-		Str("strategy", effChartName.Strategy().String()).
+	logx.As().Debug().
+		Any("chartName", effChartName).
 		Msg("Determined effective block node chart name")
 
 	effChartRepo, err := runtime.ChartRef()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart repo: %v", err)
 	}
-	logx.As().Debug().Str("chartRepo", effChartRepo.Get().Val()).
-		Str("strategy", effChartRepo.Strategy().String()).
+	logx.As().Debug().
+		Any("chartRepo", effChartRepo).
 		Msg("Determined effective block node chart repo")
 
 	effChartVersion, err := runtime.ChartVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node chart version: %v", err)
 	}
-	logx.As().Debug().Str("chartVersion", effChartVersion.Get().Val()).
-		Str("strategy", effChartVersion.Strategy().String()).
+	logx.As().Debug().
+		Any("chartVersion", effChartVersion).
 		Msg("Determined effective block node chart version")
 
 	effStorage, err := runtime.Storage()
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to resolve block node storage: %v", err)
 	}
-
 	logx.As().Debug().
-		Any("storage", effChartVersion.Get().Val()).
-		Str("strategy", effChartVersion.Strategy().String()).
+		Any("storage", effStorage).
 		Msg("Determined effective block node storage")
 
 	effectiveInputs := models.UserInputs[models.BlockNodeInputs]{
