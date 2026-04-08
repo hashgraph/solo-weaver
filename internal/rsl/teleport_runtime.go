@@ -42,10 +42,20 @@ func (t *TeleportRuntimeResolver) WithUserInputs(inputs models.TeleportNodeInput
 	return t
 }
 
+func (t *TeleportRuntimeResolver) WithDefaults(cfg models.Config) Resolver[state.TeleportState, models.TeleportNodeInputs] {
+	// Teleport doesn't need defaults resolution — no-op
+	return t
+}
+
 func (t *TeleportRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.TeleportState, models.TeleportNodeInputs] {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.cfg = &cfg
+	return t
+}
+
+func (t *TeleportRuntimeResolver) WithEnv(cfg models.Config) Resolver[state.TeleportState, models.TeleportNodeInputs] {
+	// Teleport doesn't need env-based resolution — no-op
 	return t
 }
 

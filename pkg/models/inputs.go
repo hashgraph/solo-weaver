@@ -13,6 +13,22 @@ type UserInputs[T any] struct {
 	Custom T
 }
 
+// Redacted returns a copy of UserInputs with sensitive fields masked.
+// If the Custom type implements Redactable, its Redacted() method is called.
+// Otherwise the inputs are returned as-is.
+func (u UserInputs[T]) Redacted() UserInputs[T] {
+	if r, ok := any(u.Custom).(Redactable[T]); ok {
+		u.Custom = r.Redacted()
+	}
+	return u
+}
+
+// Redactable is implemented by input types that contain sensitive fields
+// (e.g. tokens, passwords) to provide a safe-to-log copy.
+type Redactable[T any] interface {
+	Redacted() T
+}
+
 // WorkflowExecutionOptions defines options for setting up various components of the cluster
 type WorkflowExecutionOptions struct {
 	ExecutionMode automa.TypeMode
@@ -205,6 +221,15 @@ type TeleportNodeInputs struct {
 
 func (c *TeleportNodeInputs) Validate() error {
 	return nil
+}
+
+// Redacted returns a copy with the Token masked.
+func (c TeleportNodeInputs) Redacted() TeleportNodeInputs {
+	r := c
+	if r.Token != "" {
+		r.Token = "***"
+	}
+	return r
 }
 
 type TeleportClusterInputs struct {

@@ -120,8 +120,8 @@ func (h *BaseHandler[T]) HandleIntent(
 
 	logx.As().Info().
 		Any("intent", intent).
-		Any("inputs", inputs).
-		Any("effectiveInputs", effectiveInputs).
+		Any("inputs", inputs.Redacted()).
+		Any("effectiveInputs", effectiveInputs.Redacted()).
 		Msgf("Running %s workflow for intent %q", intent.Target, intent.Action)
 
 	report := wf.Execute(ctx)
