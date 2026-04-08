@@ -931,7 +931,29 @@ tasks:
         echo "Connecting to VM at $VM_IP..."
         env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
         ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
-  
+
+  vm:ssh:proxy:
+    desc: "SSH into the running VM with cache proxy tunnels (HTTP proxy, registry mirror, Go proxy)"
+    silent: true
+    interactive: true
+    deps:
+      - "vm:start"
+      - "proxy:start"
+    cmds:
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+
+        echo "Connecting to VM at $VM_IP with proxy tunnels..."
+        echo "  - HTTP/HTTPS proxy:  localhost:3128 → macOS Squid"
+        echo "  - Registry mirror:   localhost:5050 → macOS registry cache"
+        echo "  - Go module proxy:   localhost:8081 → macOS goproxy"
+        env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
+            -R 3128:localhost:3128 \
+            -R 5050:localhost:5050 \
+            -R 8081:localhost:8081 \
+            -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
+
   vm:test:unit:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
     deps:

@@ -12,6 +12,41 @@ import (
 	"github.com/joomcode/errorx"
 )
 
+// DefaultNoProxy is the default value for NO_PROXY, covering localhost and
+// private/cluster-local networks commonly used in Kubernetes environments.
+const DefaultNoProxy = "localhost,127.0.0.1,::1,.local,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+// ProxyConfig represents the `proxy` configuration block.
+// When enabled, weaver routes all network traffic through the configured proxy
+// and optionally installs a CRI-O container registry proxy for image caching.
+type ProxyConfig struct {
+	Enabled                bool   `yaml:"enabled" json:"enabled"`
+	URL                    string `yaml:"url" json:"url"`                                       // Proxy address as host:port (e.g. "127.0.0.1:3128")
+	NoProxy                string `yaml:"noProxy" json:"noProxy"`                               // Comma-separated bypass list; defaults to DefaultNoProxy if empty
+	SSLCertFile            string `yaml:"sslCertFile" json:"sslCertFile"`                       // CA certificate bundle for TLS verification
+	ContainerRegistryProxy string `yaml:"containerRegistryProxy" json:"containerRegistryProxy"` // Registry pull-through cache as host:port (e.g. "localhost:5050")
+}
+
+// Validate validates proxy configuration fields.
+func (c *ProxyConfig) Validate() error {
+	if c.URL != "" {
+		if err := sanity.ValidateHostPort(c.URL); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid proxy url: %s", c.URL)
+		}
+	}
+	if c.SSLCertFile != "" {
+		if _, err := sanity.SanitizePath(c.SSLCertFile); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid proxy sslCertFile: %s", c.SSLCertFile)
+		}
+	}
+	if c.ContainerRegistryProxy != "" {
+		if err := sanity.ValidateHostPort(c.ContainerRegistryProxy); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid proxy containerRegistryProxy: %s", c.ContainerRegistryProxy)
+		}
+	}
+	return nil
+}
+
 // Config holds the global configuration for the application.
 type Config struct {
 	Profile   string             `yaml:"profile" json:"profile"` // Deployment profile (local, perfnet, testnet, mainnet)
@@ -19,6 +54,7 @@ type Config struct {
 	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
 	Alloy     AlloyConfig        `yaml:"alloy" json:"alloy"`
 	Teleport  TeleportConfig     `yaml:"teleport" json:"teleport"`
+	Proxy     ProxyConfig        `yaml:"proxy" json:"proxy"`
 }
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.
@@ -177,6 +213,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Teleport.Validate(); err != nil {
+		return err
+	}
+	if err := c.Proxy.Validate(); err != nil {
 		return err
 	}
 	return nil

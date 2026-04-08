@@ -189,3 +189,13 @@ func OverrideTeleportConfig(overrides models.TeleportConfig) {
 		globalConfig.Teleport.NodeAgentProxyAddr = overrides.NodeAgentProxyAddr
 	}
 }
+
+// SetProxy updates the global proxy configuration.
+func SetProxy(cfg models.ProxyConfig) {
+	globalConfig.Proxy = cfg
+}
+
+// IsProxyEnabled returns whether proxy mode is currently active.
+func IsProxyEnabled() bool {
+	return globalConfig.Proxy.Enabled
+}
