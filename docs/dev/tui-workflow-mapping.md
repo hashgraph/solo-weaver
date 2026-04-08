@@ -218,6 +218,46 @@ Source: `internal/workflows/blocknode.go`, `internal/workflows/cluster.go`,
 
 ---
 
+## Concrete example: teleport workflows
+
+### Teleport node agent install
+
+```
+setup-teleport-node-agent                ← Phase (PhaseStart/PhaseCompletion)
+├── install-teleport-node-agent          ← Step (download, extract, install binaries)
+├── configure-teleport-node-agent        ← Step (teleport configure, patch service, symlinks)
+└── setup-systemd-service-teleport       ← Step (enable + start systemd service)
+```
+
+### Teleport node agent uninstall
+
+```
+teardown-teleport-node-agent             ← Phase (PhaseStart/PhaseCompletion)
+├── teardown-systemd-service-teleport    ← Step (stop + disable systemd service)
+├── unconfigure-teleport-node-agent      ← Step (remove config, symlinks)
+└── uninstall-teleport-node-agent        ← Step (remove binaries)
+```
+
+### Teleport cluster agent install
+
+```
+setup-teleport                           ← Phase (PhaseStart/PhaseCompletion)
+├── create-teleport-namespace            ← Step (kubectl apply namespace)
+├── install-teleport                     ← Step (helm install teleport-kube-agent)
+└── is-teleport-ready                    ← Step (wait for pods ready)
+```
+
+### Teleport cluster agent uninstall
+
+```
+teardown-teleport-cluster-agent          ← Phase (PhaseStart/PhaseCompletion)
+└── uninstall-teleport-kube-agent        ← Step (helm uninstall, skip if not installed)
+```
+
+Source: `internal/workflows/teleport.go`, `internal/workflows/steps/step_teleport.go`.
+
+---
+
 ## Authoring guide
 
 ### Creating a Phase
