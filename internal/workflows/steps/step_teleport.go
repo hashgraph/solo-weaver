@@ -22,15 +22,15 @@ import (
 )
 
 const (
-	SetupTeleportStepId                  = "setup-teleport"
-	TeardownTeleportClusterAgentStepId   = "teardown-teleport-cluster-agent"
-	TeardownTeleportNodeAgentStepId      = "teardown-teleport-node-agent"
-	InstallTeleportStepId                = "install-teleport"
-	UninstallTeleportKubeAgentStepId     = "uninstall-teleport-kube-agent"
-	UninstallTeleportNodeAgentStepId     = "uninstall-teleport-node-agent"
-	UnconfigureTeleportNodeAgentStepId   = "unconfigure-teleport-node-agent"
-	CreateTeleportNamespaceStepId        = "create-teleport-namespace"
-	IsTeleportReadyStepId                = "is-teleport-ready"
+	SetupTeleportStepId                = "setup-teleport"
+	TeardownTeleportClusterAgentStepId = "teardown-teleport-cluster-agent"
+	TeardownTeleportNodeAgentStepId    = "teardown-teleport-node-agent"
+	InstallTeleportStepId              = "install-teleport"
+	UninstallTeleportKubeAgentStepId   = "uninstall-teleport-kube-agent"
+	UninstallTeleportNodeAgentStepId   = "uninstall-teleport-node-agent"
+	UnconfigureTeleportNodeAgentStepId = "unconfigure-teleport-node-agent"
+	CreateTeleportNamespaceStepId      = "create-teleport-namespace"
+	IsTeleportReadyStepId              = "is-teleport-ready"
 )
 
 // SetupTeleportNodeAgent returns a workflow builder that sets up the Teleport node agent.

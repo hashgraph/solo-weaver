@@ -60,6 +60,7 @@ type StateRecord struct {
 	MachineState     MachineState    `yaml:"machineState" json:"machineState"`
 	ClusterState     ClusterState    `yaml:"clusterState" json:"clusterState"`
 	BlockNodeState   BlockNodeState  `yaml:"blockNodeState" json:"blockNodeState"`
+	TeleportState    TeleportState   `yaml:"teleportState" json:"teleportState"`
 	LastAction       ActionHistory   `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
 }
 
@@ -78,6 +79,7 @@ func (s State) Hashable() StateRecord {
 	r.MachineState.LastSync = htime.Time{}
 	r.ClusterState.LastSync = htime.Time{}
 	r.BlockNodeState.LastSync = htime.Time{}
+	r.TeleportState.LastSync = htime.Time{}
 
 	// Software map — copy before mutation to avoid aliasing the original
 	if len(r.MachineState.Software) > 0 {
@@ -184,6 +186,28 @@ type ClusterState struct {
 	models.ClusterInfo
 	Created  bool       `yaml:"created" json:"created"`                       // whether the cluster was created by the provisioner
 	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+}
+
+// TeleportState represents the persisted state of Teleport agents.
+type TeleportState struct {
+	NodeAgent    TeleportNodeAgentState    `yaml:"nodeAgent" json:"nodeAgent"`
+	ClusterAgent TeleportClusterAgentState `yaml:"clusterAgent" json:"clusterAgent"`
+	LastSync     htime.Time                `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
+}
+
+// TeleportNodeAgentState represents the persisted state of the Teleport node agent (binary-based).
+type TeleportNodeAgentState struct {
+	Installed  bool   `yaml:"installed" json:"installed"`
+	Configured bool   `yaml:"configured" json:"configured"`
+	Version    string `yaml:"version,omitempty" json:"version,omitempty"`
+}
+
+// TeleportClusterAgentState represents the persisted state of the Teleport cluster agent (Helm-based).
+type TeleportClusterAgentState struct {
+	Installed    bool   `yaml:"installed" json:"installed"`
+	Release      string `yaml:"release,omitempty" json:"release,omitempty"`
+	Namespace    string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	ChartVersion string `yaml:"chartVersion,omitempty" json:"chartVersion,omitempty"`
 }
 
 func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {

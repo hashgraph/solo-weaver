@@ -197,3 +197,26 @@ func (c *MachineInputs) Validate() error {
 
 	return nil
 }
+
+type TeleportNodeInputs struct {
+	Token     string
+	ProxyAddr string
+}
+
+func (c *TeleportNodeInputs) Validate() error {
+	return nil
+}
+
+type TeleportClusterInputs struct {
+	Version    string
+	ValuesFile string
+}
+
+func (c *TeleportClusterInputs) Validate() error {
+	if c.ValuesFile != "" {
+		if _, err := sanity.ValidateInputFile(c.ValuesFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}

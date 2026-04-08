@@ -3,9 +3,10 @@
 package cluster
 
 import (
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -14,13 +15,34 @@ var uninstallCmd = &cobra.Command{
 	Short: "Uninstall Teleport Kubernetes cluster agent",
 	Long:  "Uninstall the Teleport Kubernetes cluster agent and remove its Helm release",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logx.As().Debug().
-			Strs("args", args).
-			Msg("Uninstalling Teleport cluster agent")
+		if err := initializeDependencies(); err != nil {
+			return err
+		}
 
-		wb := workflows.NewTeleportClusterAgentUninstallWorkflow()
+		intent := models.Intent{
+			Action: models.ActionUninstall,
+			Target: models.TargetTeleportCluster,
+		}
 
-		common.RunWorkflowBuilder(cmd.Context(), wb)
+		inputs := &models.UserInputs[models.TeleportClusterInputs]{
+			Common: models.CommonInputs{
+				ExecutionOptions: models.WorkflowExecutionOptions{
+					ExecutionMode: automa.StopOnError,
+					RollbackMode:  automa.ContinueOnError,
+				},
+			},
+		}
+
+		handler, err := teleportHandler.ForClusterAction(intent.Action)
+		if err != nil {
+			return err
+		}
+
+		logx.As().Debug().Msg("Uninstalling Teleport cluster agent")
+
+		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		})
 
 		logx.As().Info().Msg("Successfully uninstalled Teleport cluster agent")
 		return nil

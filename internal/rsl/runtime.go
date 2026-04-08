@@ -21,6 +21,7 @@ type RuntimeResolver struct {
 	BlockNodeRuntime Resolver[state.BlockNodeState, models.BlockNodeInputs]
 	ClusterRuntime   Resolver[state.ClusterState, models.ClusterInputs]
 	MachineRuntime   Resolver[state.MachineState, models.MachineInputs]
+	TeleportRuntime  Resolver[state.TeleportState, models.TeleportNodeInputs]
 }
 
 // NewRuntimeResolver creates a RuntimeResolver by constructing each runtime from the supplied
@@ -47,11 +48,17 @@ func NewRuntimeResolver(
 		return nil, errorx.IllegalState.Wrap(err, "failed to initialise machine runtime")
 	}
 
+	teleportRuntime, err := NewTeleportRuntimeResolver(cfg, currentState.TeleportState, realityChecker.Teleport, refreshInterval)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to initialise teleport runtime")
+	}
+
 	return &RuntimeResolver{
 		sm:               sm,
 		ClusterRuntime:   clusterRuntime,
 		BlockNodeRuntime: blockNodeRuntime,
 		MachineRuntime:   machineRuntime,
+		TeleportRuntime:  teleportRuntime,
 	}, nil
 }
 
@@ -92,6 +99,16 @@ func (r *RuntimeResolver) Refresh(ctx context.Context, force bool) (state.State,
 		logx.As().Debug().Msg("Machine runtime is not initialized; skipping refresh")
 	}
 
+	if r.TeleportRuntime != nil {
+		ctx4, cancel4 := context.WithTimeout(ctx, DefaultRefreshTimeout)
+		defer cancel4()
+		if err := r.TeleportRuntime.RefreshState(ctx4, force); err != nil {
+			return state.State{}, errorx.IllegalState.New("failed to refresh teleport state: %v", err)
+		}
+	} else {
+		logx.As().Debug().Msg("Teleport runtime is not initialized; skipping refresh")
+	}
+
 	return r.CurrentState()
 }
 
@@ -117,9 +134,15 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 		return state.State{}, errorx.IllegalState.New("failed to read machine state: %v", err)
 	}
 
+	teleportState, err := r.TeleportRuntime.CurrentState()
+	if err != nil {
+		return state.State{}, errorx.IllegalState.New("failed to read teleport state: %v", err)
+	}
+
 	currentState.ClusterState = clusterState
 	currentState.BlockNodeState = blockNodeState
 	currentState.MachineState = machineState
+	currentState.TeleportState = teleportState
 
 	logx.As().Debug().Any("currentState", currentState).Msg("Composed current state from all runtimes")
 	return currentState, nil

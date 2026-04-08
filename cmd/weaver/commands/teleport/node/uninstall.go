@@ -3,11 +3,10 @@
 package node
 
 import (
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/joomcode/errorx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -16,22 +15,34 @@ var uninstallCmd = &cobra.Command{
 	Short: "Uninstall Teleport node agent",
 	Long:  "Uninstall the Teleport node agent, stopping the systemd service and removing binaries and configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logx.As().Debug().
-			Strs("args", args).
-			Msg("Uninstalling Teleport node agent")
+		if err := initializeDependencies(); err != nil {
+			return err
+		}
 
-		sm, err := state.NewStateManager()
+		intent := models.Intent{
+			Action: models.ActionUninstall,
+			Target: models.TargetTeleportNode,
+		}
+
+		inputs := &models.UserInputs[models.TeleportNodeInputs]{
+			Common: models.CommonInputs{
+				ExecutionOptions: models.WorkflowExecutionOptions{
+					ExecutionMode: automa.StopOnError,
+					RollbackMode:  automa.ContinueOnError,
+				},
+			},
+		}
+
+		handler, err := teleportHandler.ForNodeAction(intent.Action)
 		if err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to initialise state manager")
+			return err
 		}
 
-		if err = sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-			return errorx.IllegalState.Wrap(err, "failed to refresh state from disk")
-		}
+		logx.As().Debug().Msg("Uninstalling Teleport node agent")
 
-		wb := workflows.NewTeleportNodeAgentUninstallWorkflow(sm)
-
-		common.RunWorkflowBuilder(cmd.Context(), wb)
+		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		})
 
 		logx.As().Info().Msg("Successfully uninstalled Teleport node agent")
 		return nil

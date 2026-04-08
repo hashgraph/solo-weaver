@@ -38,15 +38,20 @@ import (
 //	}
 type BaseHandler[T any] struct {
 	Runtime *rsl.RuntimeResolver
+	Target  models.TargetType // expected target for intent validation
 }
 
 // NewBaseHandler validates the required dependencies and returns a
 // populated BaseHandler.  All fields are required; any nil returns an error.
-func NewBaseHandler[T any](reg *rsl.RuntimeResolver) (BaseHandler[T], error) {
+func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target ...models.TargetType) (BaseHandler[T], error) {
 	if reg == nil {
 		return BaseHandler[T]{}, errorx.IllegalArgument.New("RuntimeResolver cannot be nil")
 	}
-	return BaseHandler[T]{Runtime: reg}, nil
+	t := models.TargetBlockNode // default for backward compatibility
+	if len(target) > 0 {
+		t = target[0]
+	}
+	return BaseHandler[T]{Runtime: reg, Target: t}, nil
 }
 
 func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.UserInputs[T], target models.TargetType) error {
@@ -84,7 +89,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	callback func(full *state.State, effInputs models.UserInputs[T]) error, // optional callback for applying additional mutations to the full state
 ) (*automa.Report, error) {
 	// ── 1. Validate intent and inputs ───────────────────────────────────────────────
-	err := h.ValidateIntent(intent, inputs, models.TargetBlockNode)
+	err := h.ValidateIntent(intent, inputs, h.Target)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +122,7 @@ func (h *BaseHandler[T]) HandleIntent(
 		Any("intent", intent).
 		Any("inputs", inputs).
 		Any("effectiveInputs", effectiveInputs).
-		Msgf("Running block node workflow for intent %q", intent.Action)
+		Msgf("Running %s workflow for intent %q", intent.Target, intent.Action)
 
 	report := wf.Execute(ctx)
 
