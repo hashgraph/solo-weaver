@@ -199,7 +199,7 @@ func (c *MachineInputs) Validate() error {
 }
 
 type TeleportNodeInputs struct {
-	Token     string
+	Token     string `json:"-" yaml:"-"`
 	ProxyAddr string
 }
 
@@ -214,9 +214,11 @@ type TeleportClusterInputs struct {
 
 func (c *TeleportClusterInputs) Validate() error {
 	if c.ValuesFile != "" {
-		if _, err := sanity.ValidateInputFile(c.ValuesFile); err != nil {
+		sanitizedPath, err := sanity.ValidateInputFile(c.ValuesFile)
+		if err != nil {
 			return err
 		}
+		c.ValuesFile = sanitizedPath
 	}
 	return nil
 }

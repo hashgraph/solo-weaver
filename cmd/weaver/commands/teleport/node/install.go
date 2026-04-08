@@ -48,7 +48,6 @@ var installCmd = &cobra.Command{
 				},
 			},
 			Custom: models.TeleportNodeInputs{
-				Token:     flagNodeAgentToken,
 				ProxyAddr: flagNodeAgentProxyAddr,
 			},
 		}
