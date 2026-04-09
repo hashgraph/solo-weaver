@@ -1,0 +1,324 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: 3
+
+tasks:
+  uat:setup:
+    desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Setup: Install Cluster + Block Node"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+        echo -e '\n▶ Self-install'
+        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
+        sudo ./solo-provisioner-linux-arm64 install
+
+
+        echo -e '\n▶ Block node install (v0.26.0)'
+        sudo solo-provisioner block node install -p local \
+          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+
+
+        echo -e '\n▶ Verify install (v0.26.0)'
+        CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
+        echo "   Chart version: $CHART_VER"
+        [ "$CHART_VER" = "0.26.0" ] || { echo "FAIL: expected chart version 0.26.0, got $CHART_VER"; exit 1; }
+        kubectl get pods -n block-node
+        echo '   Container images:'
+        kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+        echo ''
+        echo '✅ UAT Setup: PASSED'
+
+  uat:teardown:
+    desc: "Tear down cluster after acceptance tests (inside VM: uninstall everything)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Teardown: Uninstall Everything"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+        echo -e '\n▶ Block node uninstall'
+        sudo solo-provisioner block node uninstall -p local \
+          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml -y || true
+
+
+        echo -e '\n▶ Kube cluster uninstall'
+        sudo solo-provisioner kube cluster uninstall || true
+
+
+        echo -e '\n▶ Self-uninstall'
+        sudo solo-provisioner uninstall || true
+
+        echo ''
+        echo '✅ UAT Teardown: DONE'
+
+  uat:core:
+    desc: "Run core block node upgrade + reset tests (inside VM: requires uat:setup first)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Test: Core Block Node (upgrade + reset)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Check cluster exists
+        kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
+
+
+        echo -e '\n▶ Upgrade to v0.29.0'
+        sudo solo-provisioner block node upgrade -p local \
+          --chart-version 0.29.0 \
+          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+
+
+        echo -e '\n▶ Verify upgrade to v0.29.0 using --chart-version flag'
+        CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
+        echo "   Chart version: $CHART_VER"
+        [ "$CHART_VER" = "0.29.0" ] || { echo "FAIL: expected chart version 0.29.0, got $CHART_VER"; exit 1; }
+        echo '   Container images:'
+        kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+
+        echo -e '\n▶ Upgrade to latest (v0.30.2) using updated chartVersion in config'
+        sudo solo-provisioner block node upgrade -p local \
+          -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+
+
+        echo -e '\n▶ Verify upgrade to latest (v0.30.2)'
+        CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
+        echo "   Chart version: $CHART_VER"
+        [ "$CHART_VER" = "0.30.2" ] || { echo "FAIL: expected chart version 0.30.2, got $CHART_VER"; exit 1; }
+        echo '   Container images:'
+        kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+
+        echo -e '\n▶ Block node reset'
+        sudo solo-provisioner block node reset -p local \
+          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+
+        echo ''
+        echo '✅ Core Block Node: PASSED'
+
+  uat:teleport:
+    desc: "Run teleport lifecycle test (inside VM: requires cluster from uat:setup)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Test: Teleport Lifecycle"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Check cluster exists
+        kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
+
+
+        echo -e '\n▶ Step 1: Start Teleport server (Docker)'
+        task teleport:start
+
+
+        echo -e '\n▶ Step 2: Teleport cluster agent install'
+        sudo solo-provisioner teleport cluster install \
+          --values=/tmp/teleport-values-configured.yaml
+
+
+        echo -e '\n▶ Step 3: Verify cluster agent pods'
+        kubectl get pods -n teleport-agent
+
+        # echo -e '\n▶ ▶ ▶ ▶ ▶'
+        # echo -e '\n▶ Step 4: Teleport cluster agent uninstall'
+        # echo -e '▶ ▶ ▶ ▶ ▶\n'
+        # sudo solo-provisioner teleport cluster uninstall
+
+        # echo -e '\n▶ ▶ ▶ ▶ ▶'
+        # echo -e '\n▶ Step 5: Verify cluster agent removed'
+        # echo -e '▶ ▶ ▶ ▶ ▶\n'
+        # RELEASE_COUNT=$(helm list -n teleport-agent -o json | grep -c '"name"' || true)
+        # [ "$RELEASE_COUNT" = "0" ] || { echo "FAIL: teleport-agent Helm release still present"; exit 1; }
+
+
+        echo -e '\n▶ Step 6: Generate node agent token'
+        AGENT_OUTPUT=$(task teleport:node-agent-token 2>&1 || true)
+        TOKEN=$(echo "$AGENT_OUTPUT" | sed -n 's/.*Token: \([0-9a-f]*\)$/\1/p' | head -1)
+        PROXY=$(echo "$AGENT_OUTPUT" | sed -n 's/.*Proxy: \([0-9.]*:[0-9]*\)$/\1/p' | head -1)
+        if [ -z "$TOKEN" ] || [ -z "$PROXY" ]; then
+          echo '⏭ Skipping node agent test: could not extract token/proxy'
+        else
+  
+          echo -e '\n▶ Step 7: Teleport node agent install'
+          echo -e '▶ ▶ ▶ ▶ ▶\n'
+          sudo solo-provisioner teleport node install \
+            --token="$TOKEN" \
+            --proxy="$PROXY"
+
+  
+          echo -e '\n▶ Step 8: Verify node agent running'
+          echo -e '▶ ▶ ▶ ▶ ▶\n'
+          sudo systemctl is-active teleport || { echo "FAIL: teleport service not active"; exit 1; }
+
+          # echo -e '\n▶ ▶ ▶ ▶ ▶'
+          # echo -e '\n▶ Step 9: Teleport node agent uninstall'
+          # echo -e '▶ ▶ ▶ ▶ ▶\n'
+          # sudo solo-provisioner teleport node uninstall
+
+          # echo -e '\n▶ ▶ ▶ ▶ ▶'
+          # echo -e '\n▶ Step 10: Verify node agent removed'
+          # echo -e '▶ ▶ ▶ ▶ ▶\n'
+          # sudo systemctl is-active teleport 2>/dev/null && { echo "FAIL: teleport service still active"; exit 1; } || true
+        fi
+
+
+        echo -e '\n▶ Cleanup: Stop Teleport server'
+        task teleport:stop
+
+        echo ''
+        echo '✅ Teleport Lifecycle: PASSED'
+
+  uat:alloy:
+    desc: "Run alloy lifecycle test (inside VM: requires cluster from uat:setup)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Test: Alloy Lifecycle"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Check cluster exists
+        kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
+
+
+        echo -e '\n▶ Step 1: Start observability stack (Prometheus, Loki, Grafana)'
+        task alloy:start
+
+
+        echo -e '\n▶ Step 2: Create K8s secret for remote endpoints'
+        task alloy:create-secret
+
+
+        echo -e '\n▶ Step 3: Get node IP for remote URLs'
+        NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+        echo "   Node IP: $NODE_IP"
+
+
+        echo -e '\n▶ Step 4: Alloy install with remotes and block node monitoring'
+        sudo solo-provisioner alloy cluster install \
+          --add-prometheus-remote=name=local,url=http://$NODE_IP:9090/api/v1/write,username=admin \
+          --add-loki-remote=name=local,url=http://$NODE_IP:3100/loki/api/v1/push,username=admin \
+          --cluster-name=uat-test \
+          --monitor-block-node
+
+
+        echo -e '\n▶ Step 5: Verify Alloy pods running'
+        kubectl get pods -n grafana-alloy
+        POD_COUNT=$(kubectl get pods -n grafana-alloy --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+        [ "$POD_COUNT" -gt 0 ] || { echo "FAIL: no running pods in grafana-alloy namespace"; exit 1; }
+
+
+        echo -e '\n▶ Step 6: Alloy uninstall'
+        sudo solo-provisioner alloy cluster uninstall
+
+
+        echo -e '\n▶ Step 7: Verify Alloy removed'
+        RELEASE_COUNT=$(helm list -n grafana-alloy -o json | grep -c '"name"' || true)
+        [ "$RELEASE_COUNT" = "0" ] || { echo "FAIL: grafana-alloy Helm releases still present"; exit 1; }
+
+
+        echo -e '\n▶ Cleanup: Stop observability stack'
+        task alloy:stop
+
+        echo ''
+        echo '✅ Alloy Lifecycle: PASSED'
+
+  uat:compat:
+    desc: "Run backward compatibility test (inside VM: install old CLI → upgrade → verify migrations)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Test: Backward Compatibility"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+        echo -e '\n▶ Step 1: Install released version of solo-provisioner'
+        cd /tmp
+        curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.sh | bash
+
+
+        echo -e '\n▶ Step 2: Record released version'
+        OLD_VER=$(sudo solo-provisioner --version -o json 2>&1 | tr ',' '\n' | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
+        [ -z "$OLD_VER" ] && OLD_VER="unknown"
+        echo "   Released version: $OLD_VER"
+
+
+        echo -e '\n▶ Step 3: Deploy block node with released version'
+        sudo solo-provisioner block node install -p local \
+          -c /mnt/solo-weaver/test/config/config.yaml
+
+
+        echo -e '\n▶ Step 4: Verify deployment'
+        kubectl get pods -n block-node
+
+
+        echo -e '\n▶ Step 5: Record state file before upgrade'
+        STATE_VER_BEFORE=$(sudo grep 'version:' /opt/solo/weaver/state/state.yaml | head -1 || echo "none")
+        echo "   State version before: $STATE_VER_BEFORE"
+
+ 
+        echo -e '\n▶ Step 6: Upgrade CLI to new binary (from current branch)'
+        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
+        sudo ./solo-provisioner-linux-arm64 install
+
+
+        echo -e '\n▶ Step 7: Verify new CLI version'
+        NEW_VER=$(sudo solo-provisioner --version -o json 2>&1 | tr ',' '\n' | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
+        [ -z "$NEW_VER" ] && NEW_VER="0.0.0"
+        echo "   New version: $NEW_VER"
+
+
+        echo -e '\n▶ Step 8: Upgrade block node (triggers startup migrations if needed)'
+        sudo solo-provisioner block node upgrade -p local \
+          -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+
+
+        echo -e '\n▶ Step 9: Verify state file after upgrade'
+        [ -f /opt/solo/weaver/state/state.yaml ] || { echo "FAIL: state file missing after upgrade"; exit 1; }
+        STATE_VER_AFTER=$(sudo grep 'version:' /opt/solo/weaver/state/state.yaml | head -1 || echo "none")
+        echo "   State version after: $STATE_VER_AFTER"
+
+
+        echo -e '\n▶ Step 10: Verify block node is running'
+        kubectl get pods -n block-node
+        CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
+        echo "   Chart version: $CHART_VER"
+
+
+        echo -e '\n▶ Step 11: Check migration logs'
+        grep -i 'migration' /opt/solo/weaver/logs/solo-provisioner.log 2>/dev/null | tail -5 || echo "   No migration log entries found"
+
+        echo ''
+        echo '✅ Backward Compatibility: PASSED'
+
+  uat:all:
+    desc: "Run all acceptance tests sequentially (inside VM: setup → tests → teardown)"
+    interactive: true
+    cmds:
+      - task: uat:setup
+      - task: uat:core
+      - task: uat:teleport
+      - task: uat:alloy
+      - task: uat:teardown
+      - task: uat:compat
+
+

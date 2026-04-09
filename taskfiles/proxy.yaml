@@ -1,0 +1,191 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: 3
+
+tasks:
+  proxy:start:
+    desc: "Start cache proxy infrastructure (HTTP/HTTPS proxy, container registry mirror, Go proxy)"
+    dir: test/cache-proxy
+    cmds:
+      - |
+        echo "Starting cache proxy infrastructure..."
+        
+        # Check if required ports are already bound
+        bound_count=0
+        REQUIRED_PORTS=(3128 8081 5050)
+        
+        # Gather listening ports with available tool (ss -> netstat -> lsof)
+        LISTENING_PORTS=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print $9}' | sed -E 's/.*[:.]([0-9]+)$/\1/' | grep -E '^[0-9]+$' || true)
+        
+        # Count how many required ports are present in LISTENING_PORTS
+        for p in "${REQUIRED_PORTS[@]}"; do
+          if printf '%s\n' "$LISTENING_PORTS" | grep -x -q "$p"; then
+            echo "Port $p is already bound"
+            bound_count=$((bound_count+1))
+          fi
+        done
+        
+        if [ "$bound_count" -eq "${#REQUIRED_PORTS[@]}" ]; then
+          echo "All required ports (${REQUIRED_PORTS[*]}) are bound — skipping cache proxy start"
+          exit 0
+        fi
+        
+        if [ "$bound_count" -ne "0" ]; then
+          echo "Some required ports are bound — ensure proxy is active, skipping cache proxy start"
+          exit 0
+        fi
+        
+        if docker compose ps | grep -q "solo-weaver-cache-proxy.*Up"; then
+          echo "Cache proxy is already running"
+        else
+          docker compose up -d
+          echo "Waiting for services to be ready..."
+          sleep 5
+          echo ""
+          echo "✓ Cache infrastructure started successfully!"
+          echo ""
+          echo "Services running:"
+          echo "  • HTTP/HTTPS Proxy:    http://localhost:3128 (Squid with SSL MITM)"
+          echo "  • Container Registry:  http://localhost:5050 (mirrors registry.k8s.io)"
+          echo "  • Go Module Proxy:     http://localhost:8081"
+          echo ""
+          echo "To use the proxies, set these environment variables:"
+          echo "  export HTTP_PROXY=http://localhost:3128"
+          echo "  export HTTPS_PROXY=http://localhost:3128"
+          echo "  export GOPROXY=http://localhost:8081"
+          echo ""
+          echo "⚠️  For HTTPS caching, install the CA certificate on your VMs:"
+          echo "  task proxy:install-ca-cert"
+          echo ""
+          echo "For CRI-O registry mirror, the registries.conf is installed during test setup."
+        fi
+  
+  proxy:install-ca-cert:
+    desc: "Install MITM proxy CA certificate in VM for HTTPS caching"
+    deps:
+      - proxy:start
+      - vm:start
+    cmds:
+      - cmd: |
+          VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+          CA_CERT_PATH="test/cache-proxy/ca-cert.pem"
+          
+          echo "Installing Squid MITM proxy CA certificate in VM..."
+          
+          # Extract CA certificate from Squid container if not already cached
+          if [[ ! -f "$CA_CERT_PATH" ]]; then
+            echo "CA certificate not found at $CA_CERT_PATH"
+            echo "Extracting CA certificate from Squid proxy container..."
+            docker cp solo-weaver-cache-proxy:/etc/squid/certs/ca-cert.pem "$CA_CERT_PATH"
+            echo "✓ CA certificate extracted to $CA_CERT_PATH"
+          fi
+          
+          # Show certificate details
+          echo "Certificate details:"
+          openssl x509 -in "$CA_CERT_PATH" -noout -subject -dates | head -3
+          
+          # Copy to VM
+          echo "Copying CA certificate to VM..."
+          scp -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
+            "$CA_CERT_PATH" {{.VM_USER}}@$VM_IP:/tmp/solo-weaver-ca.crt
+          
+          # Install in VM
+          echo "Installing certificate in VM..."
+          ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
+            "sudo cp /tmp/solo-weaver-ca.crt /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+             sudo chmod 644 /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+             sudo update-ca-certificates --fresh && \
+             echo 'Verifying CA certificate was added to bundle...' && \
+             if grep -q 'Solo Weaver Cache Proxy CA' /etc/ssl/certs/ca-certificates.crt; then \
+               echo '✓ CA certificate verified in bundle'; \
+             else \
+               echo '⚠ Warning: CA certificate not found in bundle'; \
+             fi"
+          
+          echo ""
+          echo "✅ Squid MITM CA certificate installed successfully!"
+          echo ""
+          echo "The VM can now use the Squid proxy for HTTPS caching with SSL interception."
+          echo "Run: task vm:test:integration"
+  
+  proxy:rebuild:
+    desc: "Rebuild and restart the cache proxy (after code changes)"
+    dir: test/cache-proxy
+    cmds:
+      - |
+        echo "Rebuilding cache proxy (forcing fresh build)..."
+        
+        # Remove cached CA certificate since we're regenerating it
+        rm -f ca-cert.pem ca-key.pem || true
+        echo "✓ Removed cached CA certificates"
+        
+        docker compose down -v || true
+        docker rmi -f $(docker images -q cache-proxy-cache-proxy 2>/dev/null) 2>/dev/null || true
+        docker compose build --no-cache
+        docker compose up -d
+        sleep 2
+        echo ""
+        echo "✅ Proxy rebuilt and restarted with new CA certificate"
+        echo ""
+        echo "Checking status..."
+        docker compose ps
+        echo ""
+        echo "Recent logs:"
+        docker compose logs --tail=5
+        echo ""
+        echo "⚠️  IMPORTANT: New CA certificate generated!"
+        echo "   Run 'task proxy:install-ca-cert' to install in VM"
+        echo "   Or run 'task vm:test:integration' which will install it automatically"
+  
+  proxy:stop:
+    desc: "Stop the cache proxy server"
+    dir: test/cache-proxy
+    cmds:
+      - docker compose down
+  
+  proxy:status:
+    desc: "Show cache proxy status and statistics"
+    dir: test/cache-proxy
+    cmds:
+      - |
+        echo "Cache Proxy Status:"
+        echo "==================="
+        docker compose ps
+        echo ""
+        if docker ps | grep -q solo-weaver-cache-proxy; then
+          echo "Cache sizes:"
+          docker exec solo-weaver-cache-proxy du -sh /var/cache/squid 2>/dev/null | awk '{print "  HTTP/HTTPS cache (Squid): " $1}'
+          docker exec solo-weaver-registry-mirror du -sh /var/lib/registry 2>/dev/null | awk '{print "  Registry: " $1}' || true
+          docker exec solo-weaver-goproxy du -sh /go 2>/dev/null | awk '{print "  Go modules: " $1}' || true
+        
+          echo ""
+          echo "Large-object cache stats (>1MB):"
+          if docker exec solo-weaver-cache-proxy test -f /var/log/squid/access.log 2>/dev/null; then
+            LOGCMD="docker exec solo-weaver-cache-proxy sh -c"
+        
+            # field 5 = bytes sent to client
+            TOTAL=$($LOGCMD "awk '\$5 >= 1000000 && \$4 ~ /TCP_/ {c++} END {print c+0}' /var/log/squid/access.log" || echo 0)
+            HITS=$($LOGCMD "awk '\$5 >= 1000000 && \$4 ~ /(TCP_HIT|TCP_MEM_HIT|TCP_REFRESH_HIT|TCP_REFRESH_UNMODIFIED|TCP_IMS_HIT)/ {c++} END {print c+0}' /var/log/squid/access.log" || echo 0)
+            MISSES=$($LOGCMD "awk '\$5 >= 1000000 && \$4 ~ /(TCP_MISS|TCP_CLIENT_REFRESH_MISS|TCP_SWAPFAIL_MISS)/ {c++} END {print c+0}' /var/log/squid/access.log" || echo 0)
+        
+            echo "  Total large responses: $TOTAL"
+            echo "  Large hits:   $HITS"
+            echo "  Large misses: $MISSES"
+        
+            if [ "$TOTAL" -gt 0 ]; then
+              HIT_RATE=$(echo "scale=2; ($HITS * 100) / $TOTAL" | bc)
+              echo "  Large-object hit rate: ${HIT_RATE}%"
+            fi
+          else
+            echo "  No access log yet"
+          fi
+        
+          echo ""
+          echo "Recent activity (last 10 requests):"
+          docker exec solo-weaver-cache-proxy tail -10 /var/log/squid/access.log 2>/dev/null | awk '{print "  " $4 " " $7}' || echo "  No activity yet"
+        
+        else
+          echo "Cache proxy is not running"
+          echo "Start it with: task proxy:start"
+        fi
+

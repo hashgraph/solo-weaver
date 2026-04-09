@@ -1,0 +1,433 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: 3
+
+tasks:
+  #   - vm:alloy:start (VM-based development)
+  #   - CI/CD workflows (GitHub Actions, GitLab CI, etc.)
+  #   - Local Kind/k3d Kubernetes clusters
+
+  vault:start:
+    desc: "Start Vault and initialize with development secrets"
+    dir: test/alloy
+    cmds:
+      - |
+        echo "🚀 Starting Vault..."
+        docker compose up -d vault
+      - |
+        echo "⏳ Initializing Vault with secrets..."
+        ./init-vault.sh
+      - |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Vault started and configured!"
+        echo ""
+        echo "🔐 Vault UI:  http://localhost:8200"
+        echo "🔑 Token:     devtoken"
+        echo "👤 ESO User:  eso-user / eso-password"
+        echo ""
+        echo "📦 Secrets created for cluster: vm-cluster"
+        echo "   • secret/grafana/alloy/vm-cluster/prometheus"
+        echo "   • secret/grafana/alloy/vm-cluster/loki"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  vault:stop:
+    desc: "Stop Vault container"
+    dir: test/alloy
+    cmds:
+      - docker compose stop vault
+
+  vault:clean:
+    desc: "Stop Vault and remove all data"
+    dir: test/alloy
+    cmds:
+      - docker compose down vault
+      - docker volume rm solo-weaver-vault-data 2>/dev/null || true
+
+  vault:setup-secret-store:
+    desc: "Configure ClusterSecretStore to connect ESO to Vault (auto-detects node IP)"
+    dir: test/alloy
+    cmds:
+      - |
+        echo "🔧 Configuring ClusterSecretStore for kubeadm cluster..."
+        
+        # Check if External Secrets Operator is installed
+        echo "📋 Checking for External Secrets Operator..."
+        if ! kubectl get crd clustersecretstores.external-secrets.io &>/dev/null; then
+          echo "❌ Error: External Secrets Operator CRDs not found!"
+          echo ""
+          echo "Install Alloy first (minimal mode installs ESO without requiring secrets):"
+          echo "  sudo solo-provisioner alloy cluster install --cluster-name=vm-cluster"
+          echo ""
+          echo "Then run this task again to configure Vault connection."
+          exit 1
+        fi
+        echo "✓ External Secrets Operator CRDs found"
+        
+        # Check if ESO pods are running
+        if ! kubectl get pods -n external-secrets &>/dev/null; then
+          echo "⚠️  Warning: external-secrets namespace not found"
+          echo "ESO may not be fully installed yet"
+        else
+          POD_COUNT=$(kubectl get pods -n external-secrets --no-headers 2>/dev/null | wc -l)
+          echo "✓ Found $POD_COUNT ESO pod(s) in external-secrets namespace"
+        fi
+        
+        # Get the node's internal IP (works for kubeadm)
+        NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+        
+        if [ -z "$NODE_IP" ]; then
+          echo "❌ Error: Could not determine node IP from Kubernetes"
+          echo "Trying alternative method..."
+          NODE_IP=$(ip route get 1 | awk '{print $7; exit}')
+        fi
+        
+        if [ -z "$NODE_IP" ]; then
+          echo "❌ Error: Could not determine node IP"
+          exit 1
+        fi
+        
+        echo "✓ Detected node IP: $NODE_IP"
+        echo "✓ Vault URL will be: http://$NODE_IP:8200"
+        
+        # Create temporary file with IP replaced
+        TEMP_FILE=$(mktemp)
+        sed "s|REPLACE_WITH_NODE_IP|http://$NODE_IP:8200|g" cluster-secret-store-local.yaml > "$TEMP_FILE"
+        
+        # Apply the configured manifest
+        echo "📝 Applying ClusterSecretStore..."
+        kubectl apply -f "$TEMP_FILE"
+        
+        # Cleanup
+        rm -f "$TEMP_FILE"
+        
+        echo ""
+        echo "⏳ Waiting for ClusterSecretStore to be ready..."
+        sleep 3
+        
+        # Check status
+        STATUS=$(kubectl get clustersecretstore vault-secret-store -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+        
+        if [ "$STATUS" = "True" ]; then
+          echo "✅ ClusterSecretStore is ready!"
+        else
+          echo "⚠️  ClusterSecretStore status: $STATUS"
+          echo ""
+          echo "Checking details:"
+          kubectl describe clustersecretstore vault-secret-store | tail -20
+        fi
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ ClusterSecretStore configured!"
+        echo ""
+        echo "📋 Configuration:"
+        echo "   Vault URL: http://$NODE_IP:8200"
+        echo "   ESO User:  eso-user"
+        echo ""
+        echo "📝 Secrets should now sync automatically."
+        echo "   Check Alloy pods: kubectl get pods -n grafana-alloy"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  alloy:start:
+    desc: "Start Alloy stack (Prometheus, Loki, Grafana) for local development"
+    dir: test/alloy
+    cmds:
+      - docker compose up -d prometheus loki grafana
+      - |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Alloy stack started!"
+        echo ""
+        echo "🌐 Services:"
+        echo "   • Prometheus: http://localhost:9090"
+        echo "   • Loki:       http://localhost:3100"
+        echo "   • Grafana:    http://localhost:3000"
+        echo ""
+        echo "📝 Next step: Create K8s secret for Alloy passwords"
+        echo "   task alloy:create-secret"
+        echo ""
+        echo "💡 Optionally start Vault for ESO-based secret sync:"
+        echo "   task vault:start"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  alloy:start-with-vault:
+    desc: "Start full Alloy stack with Vault (Prometheus, Loki, Grafana, Vault)"
+    dir: test/alloy
+    deps: [vault:start]
+    cmds:
+      - docker compose up -d prometheus loki grafana
+      - |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Alloy stack started with Vault!"
+        echo ""
+        echo "🌐 Services:"
+        echo "   • Vault:      http://localhost:8200 (token: devtoken)"
+        echo "   • Prometheus: http://localhost:9090"
+        echo "   • Loki:       http://localhost:3100"
+        echo "   • Grafana:    http://localhost:3000"
+        echo ""
+        echo "🔐 Vault has been initialized with development secrets"
+        echo ""
+        echo "📝 Next step: Configure ESO ClusterSecretStore"
+        echo "   task vault:setup-secret-store"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  alloy:stop:
+    desc: "Stop Alloy stack"
+    dir: test/alloy
+    cmds:
+      - docker compose down
+
+  alloy:clean:
+    desc: "Stop and remove all Alloy data (volumes)"
+    dir: test/alloy
+    cmds:
+      - docker compose down -v
+      - echo "✅ Alloy stack stopped and data removed"
+
+  alloy:logs:
+    desc: "Show logs from Alloy stack"
+    dir: test/alloy
+    cmds:
+      - docker compose logs -f
+
+  alloy:status:
+    desc: "Show Alloy stack status"
+    dir: test/alloy
+    cmds:
+      - |
+        echo "Alloy Stack Status:"
+        echo "==================="
+        docker compose ps
+        echo ""
+        if docker ps | grep -q solo-weaver-prometheus; then
+          echo "Service URLs:"
+          echo "  • Prometheus: http://localhost:9090"
+          echo "  • Loki:       http://localhost:3100"
+          echo "  • Grafana:    http://localhost:3000"
+        else
+          echo "Alloy stack is not running"
+          echo "Start it with: task alloy:start"
+          echo ""
+          echo "💡 For VM-based development, use: task vm:alloy:start"
+        fi
+
+  alloy:create-secret:
+    desc: "Create K8s secret 'grafana-alloy-secrets' with dev passwords for local testing"
+    vars:
+      CLUSTER_NAME: '{{.CLUSTER_NAME | default "vm-cluster"}}'
+    cmds:
+      - |
+        echo "🔐 Creating K8s secret for Alloy (local dev)..."
+        
+        # Create the namespace if it doesn't exist
+        kubectl create namespace grafana-alloy --dry-run=client -o yaml | kubectl apply -f -
+
+        # Create/update the secret with dev passwords
+        # Key naming convention: PROMETHEUS_PASSWORD_<REMOTE_NAME>, LOKI_PASSWORD_<REMOTE_NAME>
+        # The remote name must match the name= value in --add-prometheus-remote / --add-loki-remote
+        kubectl create secret generic grafana-alloy-secrets \
+          --namespace=grafana-alloy \
+          --from-literal=PROMETHEUS_PASSWORD_LOCAL=dev-password \
+          --from-literal=LOKI_PASSWORD_LOCAL=dev-password \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Secret 'grafana-alloy-secrets' created in namespace 'grafana-alloy'"
+        echo ""
+        echo "📦 Keys (convention: {PROMETHEUS|LOKI}_PASSWORD_{REMOTE_NAME}):"
+        echo "   • PROMETHEUS_PASSWORD_LOCAL"
+        echo "   • LOKI_PASSWORD_LOCAL"
+        echo ""
+        echo "📋 Next step: install Alloy with remotes:"
+        echo "   NODE_IP=\$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type==\"InternalIP\")].address}')"
+        echo "   sudo solo-provisioner alloy cluster install \\"
+        echo "     --cluster-name={{.CLUSTER_NAME}} \\"
+        echo "     --add-prometheus-remote=name=local,url=http://\$NODE_IP:9090/api/v1/write,username=admin \\"
+        echo "     --add-loki-remote=name=local,url=http://\$NODE_IP:3100/loki/api/v1/push,username=admin \\"
+        echo "     --monitor-block-node"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  alloy:delete-secret:
+    desc: "Delete K8s secret 'grafana-alloy-secrets'"
+    cmds:
+      - |
+        echo "🧹 Deleting K8s secret..."
+        kubectl delete secret grafana-alloy-secrets -n grafana-alloy --ignore-not-found
+        echo "✅ Secret deleted"
+
+  # ===========================
+  # VM Docker & Alloy Setup
+  # ===========================
+
+  vm:install-docker:
+    desc: "Install Docker in the VM (Debian/Ubuntu)"
+    deps: [vm:start]
+    cmds:
+      - |
+        echo "🔧 Installing Docker in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP 'bash -s' <<'ENDSSH'
+        set -euo pipefail
+        
+        echo "📦 Checking if Docker is already installed..."
+        if command -v docker &> /dev/null; then
+          echo "✅ Docker is already installed"
+          docker --version
+          exit 0
+        fi
+        
+        echo "📥 Installing Docker..."
+        
+        # Update package index
+        sudo apt-get update
+        
+        # Install prerequisites
+        sudo apt-get install -y \
+          ca-certificates \
+          curl \
+          gnupg \
+          lsb-release
+        
+        # Add Docker's official GPG key
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        
+        # Set up the repository
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') \
+          $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        
+        # Install Docker Engine
+        sudo apt-get update
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        
+        # Add current user to docker group
+        sudo usermod -aG docker $USER
+        
+        # Start and enable Docker
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        
+        echo "✅ Docker installed successfully!"
+        docker --version
+        docker compose version
+        
+        echo ""
+        echo "⚠️  Note: You may need to log out and back in for group changes to take effect"
+        echo "   Or run: newgrp docker"
+        ENDSSH
+
+  vm:alloy:start:
+    desc: "Set up Alloy stack in the VM"
+    deps: [vm:install-docker]
+    cmds:
+      - |
+        echo "🚀 Setting up Alloy stack in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        echo "🔧 Starting Alloy stack in VM..."
+        # Task is already installed in the VM and /mnt/solo-weaver is already synced
+        # So we can just use 'task alloy:start' directly!
+        # Use sudo newgrp to ensure docker group permissions are active
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:start'"
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ Alloy stack setup complete!"
+        echo ""
+        echo "📋 Next steps:"
+        echo "   1. SSH into VM: task vm:ssh"
+        echo "   2. Create K8s secret: task alloy:create-secret"
+        echo "   3. Install Alloy with remotes (see test/alloy/README.md)"
+        echo ""
+        echo "💡 To access from your Mac, use SSH port forwarding:"
+        echo "   task vm:alloy-forward"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  vm:alloy:stop:
+    desc: "Stop Alloy stack in the VM"
+    cmds:
+      - |
+        echo "🛑 Stopping Alloy stack in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:stop'"
+        echo "✅ Alloy stack stopped"
+
+  vm:alloy:clean:
+    desc: "Stop and remove all Alloy data in the VM"
+    cmds:
+      - |
+        echo "🧹 Cleaning Alloy stack in VM..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
+          "cd /mnt/solo-weaver && sudo -u {{.VM_USER}} newgrp docker -c 'task alloy:clean'"
+        echo "✅ Alloy stack cleaned"
+
+  vm:alloy-forward:
+    desc: "Forward Alloy ports from VM to Mac (Vault:8200, Prometheus:9090, Loki:3100, Grafana:3000)"
+    cmds:
+      - |
+        echo "🔌 Setting up port forwarding for Alloy stack..."
+        {{.GET_VM_IP}}
+        VM_IP=$(get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🌐 Forwarding ports from VM to your Mac:"
+        echo "   • Vault:      localhost:8200 → VM:8200"
+        echo "   • Prometheus: localhost:9090 → VM:9090"
+        echo "   • Loki:       localhost:3100 → VM:3100"
+        echo "   • Grafana:    localhost:3000 → VM:3000"
+        echo ""
+        echo "📊 Access in your browser:"
+        echo "   • http://localhost:8200 (Vault UI, token: devtoken)"
+        echo "   • http://localhost:9090 (Prometheus)"
+        echo "   • http://localhost:3000 (Grafana)"
+        echo ""
+        echo "⚠️  Press Ctrl+C to stop port forwarding"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
+          -L 8200:localhost:8200 \
+          -L 9090:localhost:9090 \
+          -L 3100:localhost:3100 \
+          -L 3000:localhost:3000 \
+          -L 12345:localhost:12345 \
+          {{.VM_USER}}@$VM_IP \
+          'echo "✅ Port forwarding active. Press Ctrl+C to stop..." && tail -f /dev/null'
+

@@ -1,0 +1,233 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: 3
+
+tasks:
+  test:
+    cmds:
+      - task: "test:unit"
+  
+  test:unit:
+    deps:
+      - "generate"
+      - "mocks"
+    cmds:
+      # Using go-testreport v0.3.2
+      - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
+      - "go test -race -cover -json -tags='!integration' ./internal/... ./pkg/... ./cmd/... | go-testreport -output unit-test-report.md -vars 'Title:Unit Test Report'"
+  
+  test:unit:verbose:
+    desc: "Run unit tests with verbose console output"
+    deps:
+      - "generate"
+      - "mocks"
+    cmds:
+      - "go test -v -race -cover -tags='!integration' ./internal/... ./pkg/... ./cmd/..."
+  
+  test:integration:verbose:
+    desc: "Run integration tests with verbose console output. Use TEST_NAME to run a specific test, e.g., task test:integration:verbose TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'"
+    cmds:
+      - |
+        set -e  # Fail fast - stop on first error
+        start=$(date +%s)
+        
+        {{if .TEST_NAME}}
+        # Run specific test
+        echo "Running integration test '{{.TEST_NAME}}'..."
+        go test -p 1 -v -tags='integration,cluster_setup,require_cluster' -run {{.TEST_NAME}} ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+
+        {{else}}
+
+        
+        # Phase 1: Run general integration tests
+        echo ""
+        echo "=============================================="
+        echo "Phase 1: Running general integration tests"
+        echo "=============================================="
+        go test -p 1 -v -race -cover -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m -failfast
+
+        # Phase 2: Setup cluster
+        echo ""
+        echo "=============================================="
+        echo "Phase 2: Setting up cluster (cluster_setup)"
+        echo "=============================================="
+        go test -p 1 -v -tags='cluster_setup' -run '^Test_ClusterSetup$' ./internal/workflows/... -timeout 60m -failfast
+        
+        # Phase 3: Run tests that require a cluster
+        # Tests are prefixed with TestWithCluster_ for easy filtering
+        echo ""
+        echo "=============================================="
+        echo "Phase 3: Running cluster-dependent tests (require_cluster)"
+        echo "=============================================="
+        go test -p 1 -v -tags='require_cluster' -run '^TestWithCluster_' ./internal/... -timeout 60m -failfast
+        
+        # Phase 4: Teardown cluster
+        echo ""
+        echo "=============================================="
+        echo "Phase 4: Tearing down cluster (cluster_setup)"
+        echo "=============================================="
+        go test -p 1 -v -tags='cluster_setup' -run '^Test_ClusterTeardown$' ./internal/workflows/... -timeout 60m -failfast
+
+        {{end}}
+        
+        end=$(date +%s)
+        elapsed=$(( end - start ))
+        
+        hrs=$(( elapsed / 3600 ))
+        mins=$(( (elapsed % 3600) / 60 ))
+        secs=$(( elapsed % 60 ))
+        
+        {{if .TEST_NAME}}
+        printf "\n=== Integration test '{{.TEST_NAME}}' finished in %02d:%02d:%02d ===\n" \
+          "$hrs" "$mins" "$secs"
+        {{else}}
+        printf "\n=== Integration tests finished in %02d:%02d:%02d ===\n" \
+          "$hrs" "$mins" "$secs"
+        {{end}}
+
+  test:coverage:
+    desc: "Run test coverage analysis. Use TEST_PATHS and TEST_REGEX to filter tests. For example: task test:coverage TEST_PATHS=./pkg/software/..."
+    vars:
+      TEST_PATHS: '{{.TEST_PATHS | default "./internal/... ./pkg/... ./cmd/..."}}'
+      TEST_REGEX: '{{.TEST_REGEX | default "."}}'
+    cmds:
+      - "go install github.com/vladopajic/go-test-coverage/v2@7003e902e787e60375e1ce3ae5b85b19313dbff2"
+      - "go test -p 1 -tags='integration' -race -cover -json {{.TEST_PATHS}} -run '{{.TEST_REGEX}}' -coverprofile=./cover.out -covermode=atomic -coverpkg=./... -timeout 60m"
+      - "go-test-coverage --config=./.testcoverage.yml"
+  
+  test:integration:
+    desc: "Run integration tests (includes cluster_test.go)"
+    deps:
+      - "generate"
+    cmds:
+      # Using go-testreport v0.3.2
+      - "go install github.com/becheran/go-testreport@90efc1ce13c872f23d6bc8a069527c26288b8f9c"
+      - "go test -p 1 -race -cover -json -tags='integration' ./internal/... ./pkg/... ./cmd/... -timeout 60m > integration-test.json"
+      - "go-testreport -input integration-test.json -output integration-test-report.md -vars 'Title:Integration Test Report'"
+  
+
+  vm:test:unit:
+    desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
+    deps:
+      - "vm:start"
+    cmds:
+      - cmd: |
+          VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+          
+          echo "Running unit tests with verbose output in UTM VM at $VM_IP..."
+          
+          # Check if VM is accessible
+          if ! ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=10 {{.VM_USER}}@$VM_IP "echo 'VM is accessible'" 2>/dev/null; then
+            echo "Error: Cannot connect to VM at $VM_IP. Please ensure the VM is running with 'task vm:start'."
+            exit 1
+          fi
+          
+          # Install dependencies and run tests on the VM with verbose output
+          ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP "
+            source /etc/profile.d/go.sh 2>/dev/null || true
+            cd /mnt/solo-weaver && sudo -E PATH=\"\$PATH\" task test:unit:verbose
+          "
+  
+  vm:test:integration:
+    desc: "Run all integration tests in a UTM VM with cache proxies (useful for testing system-level functionality). Use TEST_NAME to run a specific test, e.g., task vm:test:integration TEST_NAME='^Test_InitializeCluster_Fresh_Integration$'"
+    deps:
+      - vm:start
+    cmds:
+      - cmd: |
+          VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+          
+          echo "Running integration tests with verbose output in UTM VM at $VM_IP..."
+          
+          # Install dependencies and run tests on the VM with verbose output
+          ssh -i {{.SSH_PRIVATE_KEY}} \
+              {{.SSH_OPTS}} \
+              -o ExitOnForwardFailure=yes \
+              -o ServerAliveInterval=60 \
+              -o ServerAliveCountMax=3 \
+              -R 3128:localhost:3128 \
+              -R 8081:localhost:8081 \
+              -R 5050:localhost:5050 \
+              {{.VM_USER}}@$VM_IP "
+            source /etc/profile.d/go.sh 2>/dev/null || true
+            cd /mnt/solo-weaver &&
+            echo 'Using cache infrastructure via SSH tunnels:' &&
+            echo '  - HTTP/HTTPS proxy at localhost:3128 (Squid with SSL MITM - binaries, packages)' &&
+            echo '  - Go module proxy at localhost:8081 (Go dependencies)' &&
+            echo '  - Registry mirror at localhost:5050 (container images)' &&
+            echo '' &&
+            echo 'Verifying SSH tunnels are active...' &&
+            netstat -tln | grep -E ':(3128|8081|5050)' || echo 'WARNING: Some tunnels may not be active yet' &&
+            echo '' &&
+            echo 'Testing proxy connectivity...' &&
+            timeout 5 nc -zv localhost 3128 2>&1 && echo '✓ Squid proxy (3128) is reachable' || echo '✗ Squid proxy (3128) is NOT reachable' &&
+            timeout 5 nc -zv localhost 8081 2>&1 && echo '✓ Go proxy (8081) is reachable' || echo '✗ Go proxy (8081) is NOT reachable' &&
+            timeout 5 nc -zv localhost 5050 2>&1 && echo '✓ Registry mirror (5050) is reachable' || echo '✗ Registry mirror (5050) is NOT reachable' &&
+            echo '' &&
+            export HTTP_PROXY=http://localhost:3128
+            export HTTPS_PROXY=http://localhost:3128
+            export NO_PROXY=localhost,127.0.0.1,::1,.local,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+            export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+            export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+            export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+            export GODEBUG=http2debug=0
+            export GOPROXY=http://localhost:8081,https://proxy.golang.org,direct
+            export GOSUMDB=sum.golang.org
+            echo 'Environment variables set:' &&
+            echo '  HTTP_PROXY='\$HTTP_PROXY &&
+            echo '  HTTPS_PROXY='\$HTTPS_PROXY &&
+            echo '  NO_PROXY='\$NO_PROXY &&
+            echo '  SSL_CERT_FILE='\$SSL_CERT_FILE &&
+            echo '  GOPROXY='\$GOPROXY &&
+            echo '' &&
+            sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,SSL_CERT_FILE,CURL_CA_BUNDLE,REQUESTS_CA_BUNDLE,GOPROXY,GOSUMDB,GODEBUG,GOPATH,PATH \
+              task test:integration:verbose TEST_NAME={{.TEST_NAME}}
+          "
+  
+  vm:status:
+    desc: "Show status of all VMs"
+    cmds:
+      - |
+        echo "VM Status:"
+        echo "=========="
+        echo "Current VM_OS_TYPE: {{.VM_OS_TYPE}}"
+        echo "Current VM_NAME: {{.VM_NAME}}"
+        echo ""
+        echo "All UTM VMs:"
+        utmctl list 2>/dev/null || echo "UTM not available or no VMs found"
+  
+  vm:clean:
+    desc: "Stop and delete the working VM instance"
+    cmds:
+      - task: vm:stop
+      - |
+        echo "Deleting working VM '{{.VM_NAME}}'..."
+        
+        if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
+          utmctl delete "{{.VM_NAME}}"
+          echo "✓ Working VM deleted successfully!"
+        else
+          echo "Working VM not found or already deleted."
+        fi
+  
+  vm:recreate:golden:
+    desc: "Re-download the golden VM image"
+    cmds:
+      - task: vm:delete:golden
+      - task: vm:setup
+  
+  vm:delete:golden:
+    desc: "Delete the golden VM"
+    cmds:
+      - |
+        echo "Deleting golden VM..."
+        
+        if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
+          echo "Found golden VM, deleting..."
+          utmctl stop "{{.VM_GOLDEN_NAME}}" 2>/dev/null || true
+          sleep 2
+          utmctl delete "{{.VM_GOLDEN_NAME}}"
+          echo "✓ Golden VM deleted successfully!"
+        else
+          echo "Golden VM not found or already deleted."
+        fi
+  
