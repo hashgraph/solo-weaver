@@ -100,8 +100,11 @@ func (r *chartVersionResolver) Resolve(sources map[automa.EffectiveStrategy]auto
 				WithProperty(models.ErrPropertyResolution,
 					"upgrade action requires a currently deployed block node release")
 		}
-		// Upgrade: UserInput can override the deployed version.
-		for _, st := range []automa.EffectiveStrategy{StrategyUserInput, StrategyReality, StrategyState, StrategyConfig, StrategyDefault} {
+		// Upgrade: UserInput (CLI flag) has highest priority, then Config (desired
+		// target version from config file), then Reality/State (deployed version),
+		// then Default. Config must come before Reality so that specifying a version
+		// in the config file is sufficient to trigger an upgrade without a CLI flag.
+		for _, st := range []automa.EffectiveStrategy{StrategyUserInput, StrategyConfig, StrategyReality, StrategyState, StrategyDefault} {
 			if v, ok := sources[st]; ok {
 				return automa.NewEffectiveValue(v, st)
 			}
