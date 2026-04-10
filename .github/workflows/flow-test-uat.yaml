@@ -7,15 +7,16 @@ on:
       uat-scenario:
         description: "UAT scenario to run"
         required: true
-        default: "all"
+        default: "lifecycle"
         type: choice
         options:
+          - lifecycle
+          - compat
           - all
           - setup
           - core
           - teleport
           - alloy
-          - compat
           - teardown
       vm-os:
         description: "VM OS to test"

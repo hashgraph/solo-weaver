@@ -5,10 +5,10 @@ on:
   workflow_call:
     inputs:
       uat-scenario:
-        description: "UAT scenario to run (setup, core, teleport, alloy, compat, teardown, all)"
+        description: "UAT scenario to run (lifecycle, compat, setup, core, teardown, teleport, alloy, all)"
         type: string
         required: false
-        default: "all"
+        default: "lifecycle"
       vm-os:
         description: "VM OS (debian or ubuntu)"
         type: string

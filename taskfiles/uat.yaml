@@ -15,7 +15,19 @@ tasks:
 
 
         echo -e '\n▶ Self-install'
-        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        UNAME_ARCH=$(uname -m)
+        case "$UNAME_ARCH" in
+          x86_64)
+            ARCH=amd64
+            ;;
+          aarch64)
+            ARCH=arm64
+            ;;
+          *)
+            echo "FAIL: unsupported architecture '$UNAME_ARCH'. Supported architectures are: x86_64, aarch64."
+            exit 1
+            ;;
+        esac
         cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
         sudo ./solo-provisioner-linux-${ARCH} install
 
@@ -124,23 +136,9 @@ tasks:
         kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
 
 
-        # Install Docker if not present (needed for Teleport server container)
-        if ! command -v docker >/dev/null 2>&1; then
-          echo -e '\n▶ Installing Docker...'
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq docker.io
-          # Install compose plugin from Docker's official repo if not available
-          if ! docker compose version >/dev/null 2>&1; then
-            sudo mkdir -p /usr/local/lib/docker/cli-plugins
-            COMPOSE_VER=$(curl -sL https://api.github.com/repos/docker/compose/releases/latest | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
-            sudo curl -SL "https://github.com/docker/compose/releases/download/v${COMPOSE_VER}/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
-            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-          fi
-          sudo systemctl enable --now docker
-          sudo usermod -aG docker "$(whoami)" || true
-          echo "   Docker $(docker --version) installed"
-          echo "   Compose $(docker compose version) installed"
-        fi
+        # Docker + docker compose required for Teleport server container
+        command -v docker >/dev/null 2>&1 || { echo "FAIL: Docker not found. Install docker.io first."; exit 1; }
+        docker compose version >/dev/null 2>&1 || { echo "FAIL: Docker Compose v2 plugin not found. Install docker-compose-plugin first."; exit 1; }
 
         echo -e '\n▶ Step 1: Start Teleport server (Docker)'
         task teleport:start
@@ -217,23 +215,9 @@ tasks:
         kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
 
 
-        # Install Docker if not present (needed for observability stack containers)
-        if ! command -v docker >/dev/null 2>&1; then
-          echo -e '\n▶ Installing Docker...'
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq docker.io
-          # Install compose plugin from Docker's official repo if not available
-          if ! docker compose version >/dev/null 2>&1; then
-            sudo mkdir -p /usr/local/lib/docker/cli-plugins
-            COMPOSE_VER=$(curl -sL https://api.github.com/repos/docker/compose/releases/latest | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
-            sudo curl -SL "https://github.com/docker/compose/releases/download/v${COMPOSE_VER}/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
-            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-          fi
-          sudo systemctl enable --now docker
-          sudo usermod -aG docker "$(whoami)" || true
-          echo "   Docker $(docker --version) installed"
-          echo "   Compose $(docker compose version) installed"
-        fi
+        # Docker + docker compose required for observability stack containers
+        command -v docker >/dev/null 2>&1 || { echo "FAIL: Docker not found. Install docker.io + docker-compose-plugin first."; exit 1; }
+        docker compose version >/dev/null 2>&1 || { echo "FAIL: Docker Compose plugin not found. Install docker-compose-plugin first."; exit 1; }
 
         echo -e '\n▶ Step 1: Start observability stack (Prometheus, Loki, Grafana)'
         task alloy:start
@@ -287,22 +271,6 @@ tasks:
         echo "  UAT Test: Backward Compatibility"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-
-        # Clean up Docker/containerd if present — they interfere with CRI-O on kubeadm init
-        if command -v docker >/dev/null 2>&1; then
-          echo -e '\n▶ Stopping Docker/containerd to avoid CRI-O conflict...'
-          sudo systemctl stop docker.service docker.socket containerd.service 2>/dev/null || true
-          sudo systemctl disable docker.service docker.socket containerd.service 2>/dev/null || true
-          echo '   Docker/containerd stopped'
-        fi
-
-        # Clean up any leftover kubeadm state from previous runs
-        if command -v kubeadm >/dev/null 2>&1 || [ -f /opt/solo/weaver/sandbox/bin/kubeadm ]; then
-          echo -e '\n▶ Cleaning up leftover kubeadm state...'
-          sudo /opt/solo/weaver/sandbox/bin/kubeadm reset -f 2>/dev/null || sudo kubeadm reset -f 2>/dev/null || true
-          sudo rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /root/.kube 2>/dev/null || true
-          echo '   Kubeadm state cleaned'
-        fi
 
         echo -e '\n▶ Step 1: Install released version of solo-provisioner'
         cd /tmp
@@ -364,8 +332,16 @@ tasks:
         echo ''
         echo '✅ Backward Compatibility: PASSED'
 
+  uat:lifecycle:
+    desc: "Run core lifecycle test (inside VM: setup → core upgrades → teardown)"
+    interactive: true
+    cmds:
+      - task: uat:setup
+      - task: uat:core
+      - task: uat:teardown
+
   uat:all:
-    desc: "Run all acceptance tests sequentially (inside VM: setup → tests → teardown)"
+    desc: "Run all acceptance tests (inside VM: lifecycle + teleport + alloy + compat). Requires Docker."
     interactive: true
     cmds:
       - task: uat:setup
