@@ -15,8 +15,9 @@ tasks:
 
 
         echo -e '\n▶ Self-install'
-        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
-        sudo ./solo-provisioner-linux-arm64 install
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
+        sudo ./solo-provisioner-linux-${ARCH} install
 
 
         echo -e '\n▶ Block node install (v0.26.0)'
@@ -123,6 +124,24 @@ tasks:
         kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
 
 
+        # Install Docker if not present (needed for Teleport server container)
+        if ! command -v docker >/dev/null 2>&1; then
+          echo -e '\n▶ Installing Docker...'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq docker.io
+          # Install compose plugin from Docker's official repo if not available
+          if ! docker compose version >/dev/null 2>&1; then
+            sudo mkdir -p /usr/local/lib/docker/cli-plugins
+            COMPOSE_VER=$(curl -sL https://api.github.com/repos/docker/compose/releases/latest | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
+            sudo curl -SL "https://github.com/docker/compose/releases/download/v${COMPOSE_VER}/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
+            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
+          sudo systemctl enable --now docker
+          sudo usermod -aG docker "$(whoami)" || true
+          echo "   Docker $(docker --version) installed"
+          echo "   Compose $(docker compose version) installed"
+        fi
+
         echo -e '\n▶ Step 1: Start Teleport server (Docker)'
         task teleport:start
 
@@ -198,6 +217,24 @@ tasks:
         kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
 
 
+        # Install Docker if not present (needed for observability stack containers)
+        if ! command -v docker >/dev/null 2>&1; then
+          echo -e '\n▶ Installing Docker...'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq docker.io
+          # Install compose plugin from Docker's official repo if not available
+          if ! docker compose version >/dev/null 2>&1; then
+            sudo mkdir -p /usr/local/lib/docker/cli-plugins
+            COMPOSE_VER=$(curl -sL https://api.github.com/repos/docker/compose/releases/latest | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
+            sudo curl -SL "https://github.com/docker/compose/releases/download/v${COMPOSE_VER}/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
+            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
+          sudo systemctl enable --now docker
+          sudo usermod -aG docker "$(whoami)" || true
+          echo "   Docker $(docker --version) installed"
+          echo "   Compose $(docker compose version) installed"
+        fi
+
         echo -e '\n▶ Step 1: Start observability stack (Prometheus, Loki, Grafana)'
         task alloy:start
 
@@ -251,6 +288,22 @@ tasks:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 
+        # Clean up Docker/containerd if present — they interfere with CRI-O on kubeadm init
+        if command -v docker >/dev/null 2>&1; then
+          echo -e '\n▶ Stopping Docker/containerd to avoid CRI-O conflict...'
+          sudo systemctl stop docker.service docker.socket containerd.service 2>/dev/null || true
+          sudo systemctl disable docker.service docker.socket containerd.service 2>/dev/null || true
+          echo '   Docker/containerd stopped'
+        fi
+
+        # Clean up any leftover kubeadm state from previous runs
+        if command -v kubeadm >/dev/null 2>&1 || [ -f /opt/solo/weaver/sandbox/bin/kubeadm ]; then
+          echo -e '\n▶ Cleaning up leftover kubeadm state...'
+          sudo /opt/solo/weaver/sandbox/bin/kubeadm reset -f 2>/dev/null || sudo kubeadm reset -f 2>/dev/null || true
+          sudo rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /root/.kube 2>/dev/null || true
+          echo '   Kubeadm state cleaned'
+        fi
+
         echo -e '\n▶ Step 1: Install released version of solo-provisioner'
         cd /tmp
         curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.sh | bash
@@ -277,8 +330,9 @@ tasks:
 
  
         echo -e '\n▶ Step 6: Upgrade CLI to new binary (from current branch)'
-        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
-        sudo ./solo-provisioner-linux-arm64 install
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
+        sudo ./solo-provisioner-linux-${ARCH} install
 
 
         echo -e '\n▶ Step 7: Verify new CLI version'

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Test UAT"
+on:
+  workflow_dispatch:
+    inputs:
+      uat-scenario:
+        description: "UAT scenario to run"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - setup
+          - core
+          - teleport
+          - alloy
+          - compat
+          - teardown
+      vm-os:
+        description: "VM OS to test"
+        required: true
+        default: "debian"
+        type: choice
+        options:
+          - debian
+          - ubuntu
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  test-uat:
+    name: Test UAT (${{ inputs.vm-os }} / ${{ inputs.uat-scenario }})
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    with:
+      custom-job-label: "Test UAT (${{ inputs.vm-os }} / ${{ inputs.uat-scenario }})"
+      vm-os: ${{ inputs.vm-os }}
+      uat-scenario: ${{ inputs.uat-scenario }}

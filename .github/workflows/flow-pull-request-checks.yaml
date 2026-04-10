@@ -33,11 +33,21 @@ jobs:
     with:
       custom-job-label: Standard
 
+  uat-tests:
+    name: UAT Tests
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    needs:
+      - build
+    with:
+      custom-job-label: Standard
+      vm-os: debian
+
   integration-tests:
     name: Integration Tests
     uses: ./.github/workflows/zxc-integration-test.yaml
     needs:
       - build
+      - uat-tests
     with:
       custom-job-label: Standard
       vm-os: debian
