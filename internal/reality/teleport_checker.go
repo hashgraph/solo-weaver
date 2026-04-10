@@ -16,7 +16,7 @@ import (
 // teleportChecker probes the Teleport node agent (binary) and cluster agent (Helm)
 // to build a TeleportState.
 type teleportChecker struct {
-	Base
+	sm            state.Manager
 	newHelm       func() (HelmManager, error)
 	clusterExists ClusterProbe
 }
@@ -28,24 +28,10 @@ func NewTeleportChecker(
 	clusterExists ClusterProbe,
 ) (Checker[state.TeleportState], error) {
 	return &teleportChecker{
-		Base:          Base{sm: sm},
+		sm:            sm,
 		newHelm:       newHelm,
 		clusterExists: clusterExists,
 	}, nil
-}
-
-func (t *teleportChecker) FlushState(st state.TeleportState) error {
-	if err := t.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return ErrFlushError.Wrap(err, "failed to refresh state")
-	}
-
-	fullState := t.sm.State()
-	fullState.TeleportState = st
-	if err := t.sm.Set(fullState).FlushState(); err != nil {
-		return ErrFlushError.Wrap(err, "failed to persist state with refreshed TeleportState")
-	}
-
-	return nil
 }
 
 func (t *teleportChecker) RefreshState(ctx context.Context) (state.TeleportState, error) {
@@ -73,7 +59,7 @@ func (t *teleportChecker) RefreshState(ctx context.Context) (state.TeleportState
 }
 
 func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState, error) {
-	installer, err := software.NewTeleportNodeAgentInstaller(software.WithStateManager(t.sm))
+	installer, err := software.NewTeleportNodeAgentInstaller()
 	if err != nil {
 		return state.TeleportNodeAgentState{}, err
 	}

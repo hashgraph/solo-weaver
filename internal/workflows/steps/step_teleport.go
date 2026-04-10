@@ -104,6 +104,17 @@ func uninstallTeleportKubeAgent() automa.Builder {
 	return automa.NewStepBuilder().WithId(UninstallTeleportKubeAgentStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
+
+			clusterExists, err := kube.ClusterExists()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if !clusterExists {
+				l.Info().Msg("Kubernetes cluster is not reachable, skipping Teleport cluster agent uninstallation")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
 			hm, err := helm.NewManager(helm.WithLogger(*l))
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
@@ -142,9 +153,9 @@ func uninstallTeleportKubeAgent() automa.Builder {
 
 // TeardownTeleportNodeAgent creates a workflow to uninstall the Teleport node agent.
 // It stops the systemd service, removes configuration, and uninstalls binaries (reverse of install).
-func TeardownTeleportNodeAgent(sm state.Manager) *automa.WorkflowBuilder {
+func TeardownTeleportNodeAgent(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	cfg := config.Get().Teleport
-	provider := newTeleportInstallerProvider(cfg, sm)
+	provider := newTeleportInstallerProvider(cfg, mr)
 
 	return automa.NewWorkflowBuilder().WithId(TeardownTeleportNodeAgentStepId).
 		Steps(

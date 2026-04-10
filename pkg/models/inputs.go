@@ -19,6 +19,8 @@ type UserInputs[T any] struct {
 func (u UserInputs[T]) Redacted() UserInputs[T] {
 	if r, ok := any(u.Custom).(Redactable[T]); ok {
 		u.Custom = r.Redacted()
+	} else if r, ok := any(&u.Custom).(Redactable[T]); ok {
+		u.Custom = r.Redacted()
 	}
 	return u
 }
@@ -243,7 +245,9 @@ func (c *TeleportClusterInputs) Validate() error {
 		if err != nil {
 			return err
 		}
-		c.ValuesFile = sanitizedPath
+		if sanitizedPath != c.ValuesFile {
+			return errorx.IllegalArgument.New("invalid values file path: %s", c.ValuesFile)
+		}
 	}
 	return nil
 }

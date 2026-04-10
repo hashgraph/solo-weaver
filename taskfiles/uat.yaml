@@ -152,16 +152,16 @@ tasks:
         echo -e '\n▶ Step 3: Verify cluster agent pods'
         kubectl get pods -n teleport-agent
 
-        # echo -e '\n▶ ▶ ▶ ▶ ▶'
-        # echo -e '\n▶ Step 4: Teleport cluster agent uninstall'
-        # echo -e '▶ ▶ ▶ ▶ ▶\n'
-        # sudo solo-provisioner teleport cluster uninstall
+        echo -e '\n▶ ▶ ▶ ▶ ▶'
+        echo -e '\n▶ Step 4: Teleport cluster agent uninstall'
+        echo -e '▶ ▶ ▶ ▶ ▶\n'
+        sudo solo-provisioner teleport cluster uninstall
 
-        # echo -e '\n▶ ▶ ▶ ▶ ▶'
-        # echo -e '\n▶ Step 5: Verify cluster agent removed'
-        # echo -e '▶ ▶ ▶ ▶ ▶\n'
-        # RELEASE_COUNT=$(helm list -n teleport-agent -o json | grep -c '"name"' || true)
-        # [ "$RELEASE_COUNT" = "0" ] || { echo "FAIL: teleport-agent Helm release still present"; exit 1; }
+        echo -e '\n▶ ▶ ▶ ▶ ▶'
+        echo -e '\n▶ Step 5: Verify cluster agent removed'
+        echo -e '▶ ▶ ▶ ▶ ▶\n'
+        RELEASE_COUNT=$(helm list -n teleport-agent -o json | grep -c '"name"' || true)
+        [ "$RELEASE_COUNT" = "0" ] || { echo "FAIL: teleport-agent Helm release still present"; exit 1; }
 
 
         echo -e '\n▶ Step 6: Generate node agent token'
@@ -183,15 +183,15 @@ tasks:
           echo -e '▶ ▶ ▶ ▶ ▶\n'
           sudo systemctl is-active teleport || { echo "FAIL: teleport service not active"; exit 1; }
 
-          # echo -e '\n▶ ▶ ▶ ▶ ▶'
-          # echo -e '\n▶ Step 9: Teleport node agent uninstall'
-          # echo -e '▶ ▶ ▶ ▶ ▶\n'
-          # sudo solo-provisioner teleport node uninstall
+          echo -e '\n▶ ▶ ▶ ▶ ▶'
+          echo -e '\n▶ Step 9: Teleport node agent uninstall'
+          echo -e '▶ ▶ ▶ ▶ ▶\n'
+          sudo solo-provisioner teleport node uninstall
 
-          # echo -e '\n▶ ▶ ▶ ▶ ▶'
-          # echo -e '\n▶ Step 10: Verify node agent removed'
-          # echo -e '▶ ▶ ▶ ▶ ▶\n'
-          # sudo systemctl is-active teleport 2>/dev/null && { echo "FAIL: teleport service still active"; exit 1; } || true
+          echo -e '\n▶ ▶ ▶ ▶ ▶'
+          echo -e '\n▶ Step 10: Verify node agent removed'
+          echo -e '▶ ▶ ▶ ▶ ▶\n'
+          sudo systemctl is-active teleport 2>/dev/null && { echo "FAIL: teleport service still active"; exit 1; } || true
         fi
 
 

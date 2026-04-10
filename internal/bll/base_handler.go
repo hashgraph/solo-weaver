@@ -43,15 +43,11 @@ type BaseHandler[T any] struct {
 
 // NewBaseHandler validates the required dependencies and returns a
 // populated BaseHandler.  All fields are required; any nil returns an error.
-func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target ...models.TargetType) (BaseHandler[T], error) {
+func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target models.TargetType) (BaseHandler[T], error) {
 	if reg == nil {
 		return BaseHandler[T]{}, errorx.IllegalArgument.New("RuntimeResolver cannot be nil")
 	}
-	t := models.TargetBlockNode // default for backward compatibility
-	if len(target) > 0 {
-		t = target[0]
-	}
-	return BaseHandler[T]{Runtime: reg, Target: t}, nil
+	return BaseHandler[T]{Runtime: reg, Target: target}, nil
 }
 
 func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.UserInputs[T], target models.TargetType) error {

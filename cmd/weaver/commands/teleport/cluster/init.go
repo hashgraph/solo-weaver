@@ -20,7 +20,7 @@ func initializeDependencies() error {
 		return errorx.IllegalState.Wrap(err, "invalid configuration")
 	}
 
-	logx.As().Debug().Any("config", conf).Msg("Loaded configuration")
+	logx.As().Debug().Msg("Loaded configuration")
 
 	sm, err := state.NewStateManager()
 	if err != nil {

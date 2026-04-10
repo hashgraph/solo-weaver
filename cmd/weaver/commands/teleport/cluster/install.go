@@ -46,11 +46,21 @@ var installCmd = &cobra.Command{
 			Target: models.TargetTeleportCluster,
 		}
 
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return err
+		}
+
+		rollbackMode := automa.ContinueOnError
+		if flagRollbackOnError {
+			rollbackMode = automa.RollbackOnError
+		}
+
 		inputs := &models.UserInputs[models.TeleportClusterInputs]{
 			Common: models.CommonInputs{
 				ExecutionOptions: models.WorkflowExecutionOptions{
-					ExecutionMode: automa.StopOnError,
-					RollbackMode:  automa.ContinueOnError,
+					ExecutionMode: execMode,
+					RollbackMode:  rollbackMode,
 				},
 			},
 			Custom: models.TeleportClusterInputs{

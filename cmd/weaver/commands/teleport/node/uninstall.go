@@ -10,12 +10,48 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func init() {
+	common.FlagStopOnError().SetVar(uninstallCmd, &flagStopOnError, false)
+	common.FlagContinueOnError().SetVar(uninstallCmd, &flagContinueOnError, false)
+	common.FlagRollbackOnError().SetVar(uninstallCmd, &flagRollbackOnError, false)
+	uninstallCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
+}
+
+func getUninstallExecutionOptions() (models.WorkflowExecutionOptions, error) {
+	switch {
+	case flagRollbackOnError:
+		return models.WorkflowExecutionOptions{
+			ExecutionMode: automa.StopOnError,
+			RollbackMode:  automa.RollbackOnError,
+		}, nil
+	case flagContinueOnError:
+		return models.WorkflowExecutionOptions{
+			ExecutionMode: automa.ContinueOnError,
+			RollbackMode:  automa.ContinueOnError,
+		}, nil
+	default:
+		return models.WorkflowExecutionOptions{
+			ExecutionMode: automa.StopOnError,
+			RollbackMode:  automa.ContinueOnError,
+		}, nil
+	}
+}
+
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall Teleport node agent",
 	Long:  "Uninstall the Teleport node agent, stopping the systemd service and removing binaries and configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := initializeDependencies(); err != nil {
+			return err
+		}
+
+		executionOptions, err := getUninstallExecutionOptions()
+		if err != nil {
 			return err
 		}
 
@@ -26,10 +62,7 @@ var uninstallCmd = &cobra.Command{
 
 		inputs := &models.UserInputs[models.TeleportNodeInputs]{
 			Common: models.CommonInputs{
-				ExecutionOptions: models.WorkflowExecutionOptions{
-					ExecutionMode: automa.StopOnError,
-					RollbackMode:  automa.ContinueOnError,
-				},
+				ExecutionOptions: executionOptions,
 			},
 		}
 

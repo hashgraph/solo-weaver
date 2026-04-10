@@ -30,7 +30,7 @@ type Handlers struct {
 func NewHandlerFactory(
 	runtime *rsl.RuntimeResolver,
 ) (*Handlers, error) {
-	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime)
+	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime, models.TargetBlockNode)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}

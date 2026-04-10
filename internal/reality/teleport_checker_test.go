@@ -105,30 +105,3 @@ func TestTeleportChecker_HelmReleaseAbsent_ClusterAgentNotInstalled(t *testing.T
 
 	assert.False(t, ts.ClusterAgent.Installed, "ClusterAgent should not be installed when no Helm release")
 }
-
-func TestTeleportChecker_FlushState_PersistsToDisk(t *testing.T) {
-	sm := newTeleportTestStateManager(t)
-
-	clusterExists := func() (bool, error) { return false, nil }
-	newHelm := func() (reality.HelmManager, error) {
-		return &fakeHelmManager{}, nil
-	}
-
-	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
-	require.NoError(t, err)
-
-	ts, err := checker.RefreshState(context.Background())
-	require.NoError(t, err)
-
-	err = checker.FlushState(ts)
-	require.NoError(t, err)
-
-	// Re-read from a fresh state manager
-	sm2, err := state.NewStateManager(state.WithStateFile(sm.State().StateFile))
-	require.NoError(t, err)
-	require.NoError(t, sm2.Refresh())
-
-	persisted := sm2.State().TeleportState
-	assert.Equal(t, ts.ClusterAgent.Installed, persisted.ClusterAgent.Installed)
-	assert.False(t, persisted.LastSync.IsZero(), "LastSync should be set after flush")
-}
