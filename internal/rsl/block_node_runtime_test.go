@@ -440,16 +440,16 @@ func TestBlockNodeRuntimeResolver_ChartVersion_Upgrade_Deployed_UserInputWins(t 
 	assert.Equal(t, StrategyUserInput, cv.Strategy())
 }
 
-func TestBlockNodeRuntimeResolver_ChartVersion_Upgrade_Deployed_NoUserInput_FallsToState(t *testing.T) {
-	r := newTestResolver(fullConfig(), deployedState()) // state version = 0.29.0
+func TestBlockNodeRuntimeResolver_ChartVersion_Upgrade_Deployed_NoUserInput_FallsToConfig(t *testing.T) {
+	r := newTestResolver(fullConfig(), deployedState()) // state version = 0.29.0, config version = 1.0.0
 	r.WithDefaults(testDefaultsConfig())
 	r.WithIntent(models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode})
-	// no user input for chartVersion
+	// no user input for chartVersion — config version should be preferred over deployed
 
 	cv, err := r.ChartVersion()
 	require.NoError(t, err)
-	assert.Equal(t, "0.29.0", cv.Get().Val(), "upgrade without user input falls back to deployed version")
-	assert.Equal(t, StrategyState, cv.Strategy())
+	assert.Equal(t, "1.0.0", cv.Get().Val(), "upgrade without user input uses config version over deployed version")
+	assert.Equal(t, StrategyConfig, cv.Strategy())
 }
 
 func TestBlockNodeRuntimeResolver_ChartVersion_Intent_SwitchInvalidatesCache(t *testing.T) {

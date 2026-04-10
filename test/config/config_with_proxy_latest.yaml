@@ -1,0 +1,16 @@
+log:
+  level: debug
+  consoleLogging: true
+  fileLogging: false
+blockNode:
+  namespace: "block-node"
+  release: "block-node"
+  chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+  version: "0.30.2"
+  storage:
+    basePath: "/mnt/fast-storage"
+proxy:
+  enabled: true
+  url: "127.0.0.1:3128"
+  sslCertFile: "/etc/ssl/certs/ca-certificates.crt"
+  containerRegistryProxy: "localhost:5050"

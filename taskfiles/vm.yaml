@@ -1,0 +1,547 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: 3
+
+tasks:
+  vm:debug:
+    desc: "Show available VM debug commands"
+    cmds:
+      - |
+        echo "🐛 VM Debug environment ready!"
+        echo ""
+        echo "Available debug commands:"
+        echo "  task debug:vm:test -- [package]   # Debug tests on the VM (package required)"
+        echo "  task debug:vm:app -- [args...]    # Debug weaver application on the VM"
+        echo ""
+  
+  vm:debug:test:
+    desc: "Start remote test debug server on the VM (specify package with -- ./pkg/name)"
+    dir: scripts
+    deps:
+      - "vm:start"
+    cmds:
+      - "./debug-vm-run.sh test {{.CLI_ARGS}}"
+  
+  vm:debug:app:
+    desc: "Start remote application debug server on the VM (pass args with -- after command)"
+    dir: scripts
+    deps:
+      - "vm:start"
+    cmds:
+      - "./debug-vm-run.sh app {{.CLI_ARGS}}"
+  
+  vm:targets:
+    desc: "Show available VM OS targets and create VMs for specific OS types"
+    cmds:
+      - |
+        echo "🎯 VM OS Targets"
+        echo "================"
+        echo ""
+        echo "Available OS types:"
+        echo "  • debian  - Debian Linux"
+        echo "  • ubuntu  - Ubuntu 22.04"
+        echo ""
+        echo "Current VM_OS_TYPE: {{.VM_OS_TYPE}}"
+        echo "Current VM_NAME: {{.VM_NAME}}"
+        echo "Current VM_GOLDEN_NAME: {{.VM_GOLDEN_NAME}}"
+        echo ""
+        echo "Usage examples:"
+        echo "  task vm:setup VM_OS_TYPE=debian      # Setup Debian VM"
+        echo "  task vm:setup VM_OS_TYPE=ubuntu      # Setup Ubuntu 22.04 VM"
+        echo "  task vm:start VM_OS_TYPE=debian      # Start Debian VM"
+        echo "  task vm:start VM_OS_TYPE=ubuntu      # Start Ubuntu VM"
+        echo "  task vm:reset VM_OS_TYPE=ubuntu      # Reset Ubuntu VM"
+        echo ""
+        echo "You can also set VM_OS_TYPE in your environment:"
+        echo "  export VM_OS_TYPE=ubuntu"
+        echo "  task vm:start"
+        echo ""
+        echo "To configure golden image URLs per OS type, set:"
+        echo "  VM_GOLDEN_IMAGE_URL_DEBIAN=<url>"
+        echo "  VM_GOLDEN_IMAGE_URL_UBUNTU=<url>"
+  
+  vm:ip:
+    cmds:
+      - "{{.GET_VM_IP}} echo $(get_vm_ip)"
+  
+  # VM Management Tasks
+  vm:install:
+    desc: "Install UTM and rsync if not already installed"
+    cmds:
+      - |
+        if ! command -v brew >/dev/null 2>&1; then
+          echo "Error: Homebrew is required to install UTM and rsync"
+          echo "Please install Homebrew first: https://brew.sh"
+          exit 1
+        fi
+        
+        if ! command -v utmctl >/dev/null 2>&1; then
+          echo "Installing UTM via Homebrew..."
+          brew install --cask utm
+        else
+          echo "UTM is already installed"
+        fi
+        
+        if ! command -v rsync >/dev/null 2>&1; then
+          echo "Installing rsync via Homebrew..."
+          brew install rsync
+        else
+          echo "rsync is already installed"
+        fi
+  
+  vm:setup:
+    desc: "Download and setup the pre-built golden VM image"
+    deps:
+      - vm:install
+    cmds:
+      - task: vm:download:golden
+  
+  vm:download:golden:
+    desc: "Download pre-built golden VM image from URL. Use FORCE to force re-downloading, e.g., task vm:download:golden FORCE=true"
+    env:
+      FORCE: '{{.FORCE | default "false"}}'
+    cmds:
+      - |
+        echo "Checking if golden VM already exists..."
+        echo "VM OS Type: {{.VM_OS_TYPE}}"
+        echo "VM Golden Name: {{.VM_GOLDEN_NAME}}"
+        echo "UTM VMs Directory: {{.UTM_VMS_DIR}}"
+        echo 'Force Download: {{ eq .FORCE "true" }}'
+        
+        if [ "{{.FORCE}}" = "true" ]; then
+         echo "Force flag is set, re-downloading golden VM image..."
+        else
+          # Check if the golden VM already exists
+          if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
+            echo "✓ Golden VM already exists, skipping download."
+            exit 0
+          fi
+        
+          # if the .utm file exists in UTM_VMS_DIR, skip download
+          echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+          if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
+            echo "✓ Golden VM already exists in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+            echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory ('open -a UTM')."
+            exit 1 # non zero would stop further steps
+          else
+            echo "✓ No existing golden VM found, proceeding to download."
+          fi
+        fi
+        
+        # Determine which golden image URL to use based on OS type
+        GOLDEN_IMAGE_URL=""
+        case "{{.VM_OS_TYPE}}" in
+          debian)
+            GOLDEN_IMAGE_URL="{{.VM_GOLDEN_IMAGE_URL_DEBIAN}}"
+            ;;
+          ubuntu)
+            GOLDEN_IMAGE_URL="{{.VM_GOLDEN_IMAGE_URL_UBUNTU}}"
+            ;;
+          *)
+            echo "❌ Unknown VM_OS_TYPE: {{.VM_OS_TYPE}}"
+            echo "Supported types: debian, ubuntu"
+            exit 1
+            ;;
+        esac
+        
+        if [ -z "$GOLDEN_IMAGE_URL" ]; then
+          echo "❌ No golden image URL configured for {{.VM_OS_TYPE}}"
+          echo "Please set VM_GOLDEN_IMAGE_URL_{{.VM_OS_TYPE | upper}} or VM_GOLDEN_IMAGE_URL"
+          echo "Example: VM_GOLDEN_IMAGE_URL_UBUNTU=https://example.com/ubuntu-22.04.utm"
+          exit 1
+        fi
+        
+        echo "Golden VM not found, downloading {{.VM_OS_TYPE}} image from $GOLDEN_IMAGE_URL..."
+        
+        # Create temporary directory for download
+        TEMP_DIR=$(mktemp -d)
+        
+        # Clean up
+        cleanup() { rm -rf "$TEMP_DIR"; }
+        trap cleanup EXIT
+        
+        echo "Downloading to temporary directory: $TEMP_DIR"
+        
+        TMP_FILE="$TEMP_DIR/download.tar.gz"
+        
+        # Download the golden image
+        if ! curl -fL -o "$TMP_FILE" "$GOLDEN_IMAGE_URL"; then
+          echo "❌ Failed to download the golden VM image from $GOLDEN_IMAGE_URL"
+          echo "Please check the URL and try again or download the image manually and import it manually."
+          rm -rf "$TEMP_DIR"
+          exit 0
+        fi
+        
+        tar -xzf "$TMP_FILE" -C "$TEMP_DIR"
+        UTM_PATH=$(find "$TEMP_DIR" -maxdepth 3 \( -type d -name '*.utm' -o -type f -name '*.utm' \) -print -quit || true)
+        if [ -z "$UTM_PATH" ]; then
+          echo "❌ No .utm entry found inside $GOLDEN_IMAGE_URL"
+          exit 1
+        fi
+        
+        # Normalize to a known path for the rest of the script
+        mv "$UTM_PATH" "$TEMP_DIR/golden-image.utm"
+        echo "✓ Downloaded and prepared golden image at $TEMP_DIR/golden-image.utm"
+        
+        # Copy the VM to UTM directory and rename
+        cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+        
+        echo "✓ Golden VM downloaded successfully and placed in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+        echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory ('open -a UTM')."
+        exit 1 # non zero would stop further steps
+  
+  vm:reset:
+    desc: "Clone the golden VM to create a working instance with passwordless SSH"
+    deps:
+      - vm:setup
+      - proxy:start
+    cmds:
+      - |
+        # Generate SSH key if it doesn't exist
+        if [ ! -f "{{.SSH_PRIVATE_KEY}}" ]; then
+          echo "Generating SSH key for VM access..."
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f {{.SSH_PRIVATE_KEY}} -N ""
+          echo "✓ SSH key generated at {{.SSH_PRIVATE_KEY}}"
+        fi
+        
+        echo "Cloning golden VM to working instance..."
+        
+        # Check if golden VM exists
+        if ! utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
+          echo "Error: Golden VM '{{.VM_GOLDEN_NAME}}' not found. Run 'task vm:setup' first."
+          echo "If you have downloaded the golden VM image manually, please import it manually."
+          exit 1
+        fi
+        
+        # Stop the golden VM if it's running (required for cloning)
+        echo "Ensuring golden VM is stopped for cloning..."
+        utmctl stop "{{.VM_GOLDEN_NAME}}" 2>/dev/null || true
+        sleep 2
+        
+        # Stop and delete existing working VM if it exists
+        if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
+          echo "Stopping and removing existing working VM..."
+          utmctl stop "{{.VM_NAME}}" 2>/dev/null || true
+          sleep 2
+          utmctl delete "{{.VM_NAME}}" 2>/dev/null || true
+          sleep 1
+        fi
+        
+        # Clone the golden VM
+        echo "Cloning '{{.VM_GOLDEN_NAME}}' to '{{.VM_NAME}}'..."
+        utmctl clone "{{.VM_GOLDEN_NAME}}" --name "{{.VM_NAME}}"
+        
+        echo "✓ VM cloned. Now starting it for initial configuration..."
+      - task: vm:start
+      - task: vm:configure:ssh
+      - task: proxy:install-ca-cert
+      - task: vm:alloy:start
+      - cmd: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ VM reset complete with full development environment!"
+          echo ""
+          echo "Configured:"
+          echo "  ✅ SSH access with passwordless login"
+          echo "  ✅ MITM proxy with CA certificate"
+          echo "  ✅ Docker installed and configured"
+          echo "  ✅ Alloy stack (Prometheus, Loki, Grafana)"
+          echo ""
+          echo "Ready for Block Node deployment:"
+          echo "  task vm:ssh"
+          echo "  sudo solo-provisioner block node install -p local -c /mnt/solo-weaver/test/config/config.yaml"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  vm:start:
+    desc: "Start the working VM instance"
+    deps:
+      - vm:ensure-exists
+    cmds:
+      - utmctl start --hide "{{.VM_NAME}}"
+      - |
+        echo "Waiting for VM to boot (checking every 5 seconds)..."
+        
+        # Poll for VM to be ready with timeout
+        MAX_ATTEMPTS=24  # 24 * 5 seconds = 2 minutes max wait
+        ATTEMPT=0
+
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          ATTEMPT=$((ATTEMPT + 1))
+
+          # Check if VM is running
+          if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
+            echo "✓ VM is running, checking if network is ready..."
+
+            VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+            if [ -n "$VM_IP" ]; then
+              echo "✓ VM started successfully and network is ready at $VM_IP!"
+              break
+            else
+              echo "VM is running but network not ready yet (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+            fi
+          else
+            echo "VM is starting... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+          fi
+
+          if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+            sleep 5
+          fi
+        done
+
+        # Final check
+        if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+          echo "⚠️  VM may not be fully ready after 2 minutes, but continuing..."
+        fi
+      - task: vm:ssh:port-forward
+  
+  vm:ssh:port-forward:
+    desc: "Forward port 2222 to 22 on the VM for debugging purposes"
+    internal: true
+    cmds:
+      - |
+        # Check if VM is configured with SSH (check if SSH key works)
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        if ! ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=5 -o PasswordAuthentication=no -o PubkeyAuthentication=yes {{.VM_USER}}@$VM_IP "echo 'SSH test successful'" >/dev/null 2>&1; then
+          echo "SSH key authentication failed. VM may not be configured yet."
+          exit 0
+        fi
+        
+        echo "Setting up SSH port forwarding..."
+        echo "Checking if port 2222 is available..."
+        if command lsof -t -i :2222 >/dev/null 2>&1; then
+          echo "Port 2222 is in use, killing existing SSH connection..."
+          lsof -nP -t -iTCP:2222 -sTCP:LISTEN | xargs -r kill || true
+          sleep 1
+        else
+          echo "✓ Port 2222 is available"
+        fi
+        # Forward port 2222 to 22 on the VM
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
+        echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
+  
+  vm:configure:
+    internal: true
+    desc: "Configure the VM with SSH, sudo, and mounts (full configuration)"
+    cmds:
+      - task: vm:configure:ssh
+      - task: vm:configure:tools
+  
+  vm:configure:ssh:
+    internal: true
+    desc: "Configure SSH access, sudo, and mounts (runs before proxy setup)"
+    cmds:
+      - |
+        echo "Configuring SSH access for user {{.VM_USER}}..."
+        PUBLIC_KEY=$(cat {{.SSH_PUBLIC_KEY}})
+        
+        echo "DEBUG: Public key length: ${#PUBLIC_KEY} characters"
+        echo "DEBUG: Configuring SSH keys via utmctl exec..."
+        
+        # Configure SSH for the provisioner user using utmctl exec
+        # Create directory structure
+        echo "Creating .ssh directory..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "mkdir -p /home/{{.VM_USER}}/.ssh && chmod 700 /home/{{.VM_USER}}/.ssh"
+        
+        # Write the key using printf which handles special characters well
+        echo "Writing authorized_keys file..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "printf '%s\\n' \"$PUBLIC_KEY\" > /home/{{.VM_USER}}/.ssh/authorized_keys && chmod 600 /home/{{.VM_USER}}/.ssh/authorized_keys && chown -R {{.VM_USER}}:{{.VM_USER}} /home/{{.VM_USER}}/.ssh"
+        
+        echo "✓ SSH key configured for user {{.VM_USER}}"
+        
+        # Ensure SSH service is installed and running
+        echo "Ensuring SSH server is installed..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "command -v sshd >/dev/null 2>&1 || apt-get update -qq && apt-get install -y openssh-server" 2>&1 || echo "SSH server check completed"
+        
+        echo "Configuring passwordless sudo for {{.VM_USER}} via utmctl (as root)..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "echo '{{.VM_USER}} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/{{.VM_USER}} && chmod 440 /etc/sudoers.d/{{.VM_USER}} && echo '✓ Passwordless sudo configured for {{.VM_USER}}'" 2>&1
+        
+        echo "Ensuring SSH service is enabled and running..."
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true" 2>&1
+        utmctl exec "{{.VM_NAME}}" --cmd /bin/bash -c "systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || service ssh start 2>/dev/null || service sshd start 2>/dev/null || /etc/init.d/ssh start 2>/dev/null || true" 2>&1
+      
+      - |
+        echo "Waiting for SSH service to be ready..."
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not get VM IP address. VM may not have network configured."
+          exit 1
+        fi
+        
+        echo "VM IP: $VM_IP"
+        echo "Attempting SSH connection to {{.VM_USER}}@$VM_IP..."
+        
+        MAX_SSH_ATTEMPTS=10
+        SSH_ATTEMPT=0
+        while [ $SSH_ATTEMPT -lt $MAX_SSH_ATTEMPTS ]; do
+          SSH_ATTEMPT=$((SSH_ATTEMPT + 1))
+
+          echo -n "Attempt $SSH_ATTEMPT/$MAX_SSH_ATTEMPTS: "
+
+          if ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=3 -o BatchMode=yes {{.VM_USER}}@$VM_IP "echo 'SSH ready'" >/dev/null 2>&1; then
+            echo "✓ SSH is ready!"
+            break
+          fi
+
+          echo "Connection failed, retrying..."
+
+          sleep 3
+        done
+
+        if [ $SSH_ATTEMPT -eq $MAX_SSH_ATTEMPTS ]; then
+          echo ""
+          echo "❌ SSH is not responding after $MAX_SSH_ATTEMPTS attempts"
+          echo ""
+          exit 1
+        fi
+      - |
+        echo "Configuring SSH for root user and system settings..."
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        PUBLIC_KEY=$(cat {{.SSH_PUBLIC_KEY}})
+        
+        # Now use SSH as provisioner with sudo to configure root and system
+        # Passwordless sudo was already configured via utmctl exec
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 {{.VM_USER}}@$VM_IP "
+          set -e
+        
+          echo 'Verifying sudo is available...'
+          if ! command -v sudo >/dev/null 2>&1; then
+            echo '❌ sudo not found. Cannot proceed with configuration.'
+            exit 1
+          fi
+        
+          echo 'Verifying passwordless sudo is configured...'
+          sudo -n true 2>/dev/null || {
+            echo '⚠️  Passwordless sudo not working, but continuing...'
+          }
+        
+          echo 'Creating weaver user and group with ID 2500...'
+          if ! getent group weaver >/dev/null 2>&1; then
+            sudo groupadd -g 2500 weaver
+            echo '✓ Created weaver group with GID 2500'
+          else
+            echo 'weaver group already exists'
+          fi
+        
+          if ! id -u weaver >/dev/null 2>&1; then
+            sudo useradd -u 2500 -g 2500 -m -s /bin/bash weaver
+            echo '✓ Created weaver user with UID 2500'
+          else
+            echo 'weaver user already exists'
+          fi
+        
+          echo 'Configuring SSH key for root user...'
+          sudo mkdir -p /root/.ssh
+          sudo chmod 700 /root/.ssh
+          echo \"$PUBLIC_KEY\" | sudo tee /root/.ssh/authorized_keys >/dev/null
+          sudo chmod 600 /root/.ssh/authorized_keys
+          echo '✓ SSH key configured for user root'
+        
+          echo 'Configuring SSH daemon to allow root login with keys...'
+          sudo sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
+          sudo systemctl restart sshd || sudo systemctl restart ssh
+          echo '✓ SSH daemon configured for root login with keys'
+        
+          echo 'Mounting shared directory...'
+          sudo mkdir -p /mnt/solo-weaver
+          if ! grep -q '/mnt/solo-weaver' /etc/fstab; then
+            echo 'share   /mnt/solo-weaver   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | sudo tee -a /etc/fstab >/dev/null
+          fi
+          sudo mount -a || true
+        
+          # Try to set ownership and permissions to the VM user (best effort)
+        
+          echo "✓ Shared directory mounted at /mnt/solo-weaver"
+        "
+  
+  vm:configure:tools:
+    internal: true
+    desc: "Install development tools (Git, Task, Go, Delve) - runs after proxy tunnels are set up"
+    cmds:
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        echo "Installing development tools (Git, Task, Go, Delve, rsync) via SSH at $VM_IP..."
+        
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 {{.VM_USER}}@$VM_IP "
+          set -e
+          echo 'Installing git, curl, rsync, and build tools...'
+          sudo apt-get update -qq
+          sudo apt-get install -y git curl rsync build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
+        
+          # Install Task
+          if ! command -v task >/dev/null 2>&1; then
+            echo 'Installing Task...'
+            curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | sudo -E bash
+            sudo apt-get update -qq
+            sudo apt-get install -y task
+          else
+            echo 'Task already installed, skipping...'
+          fi
+        
+          cd /mnt/solo-weaver
+          task install:go
+        
+          echo '✓ Development tools installed successfully!'
+        "
+  
+  vm:ensure-exists:
+    desc: "Ensure the working VM exists, creating it if necessary"
+    internal: true
+    cmds:
+      - echo "VM '{{.VM_NAME}}' not found, creating it from golden image..."
+      - task: vm:reset
+    status:
+      - utmctl status "{{.VM_NAME}}" >/dev/null 2>&1
+  
+  vm:stop:
+    desc: "Stop the working VM instance"
+    cmds:
+      - |
+        echo "Stopping VM '{{.VM_NAME}}'..."
+        
+        if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
+          utmctl stop "{{.VM_NAME}}"
+          echo "✓ VM stopped successfully!"
+        else
+          echo "VM '{{.VM_NAME}}' not found or already stopped."
+        fi
+  
+  vm:ssh:
+    desc: "SSH into the running VM"
+    silent: true
+    interactive: true
+    deps:
+      - "vm:start"
+    cmds:
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        
+        echo "Connecting to VM at $VM_IP..."
+        env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
+
+  vm:ssh:proxy:
+    desc: "SSH into the running VM with cache proxy tunnels (HTTP proxy, registry mirror, Go proxy)"
+    silent: true
+    interactive: true
+    deps:
+      - "vm:start"
+      - "proxy:start"
+    cmds:
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+
+        echo "Connecting to VM at $VM_IP with proxy tunnels..."
+        echo "  - HTTP/HTTPS proxy:  localhost:3128 → macOS Squid"
+        echo "  - Registry mirror:   localhost:5050 → macOS registry cache"
+        echo "  - Go module proxy:   localhost:8081 → macOS goproxy"
+        env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
+            -R 3128:localhost:3128 \
+            -R 5050:localhost:5050 \
+            -R 8081:localhost:8081 \
+            -t {{.VM_USER}}@$VM_IP "cd /mnt/solo-weaver 2>/dev/null || true; exec \$SHELL -l"
+
