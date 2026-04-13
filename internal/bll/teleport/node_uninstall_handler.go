@@ -17,13 +17,14 @@ import (
 // NodeUninstallHandler handles the ActionUninstall intent for the teleport node agent.
 type NodeUninstallHandler struct {
 	bll.BaseHandler[models.TeleportNodeInputs]
+	runtime *rsl.TeleportRuntimeResolver
 }
 
 func (h *NodeUninstallHandler) PrepareEffectiveInputs(
-	_ models.Intent,
+	intent models.Intent,
 	inputs models.UserInputs[models.TeleportNodeInputs],
 ) (*models.UserInputs[models.TeleportNodeInputs], error) {
-	return &inputs, nil
+	return resolveTeleportNodeEffectiveInputs(h.runtime, intent, inputs)
 }
 
 func (h *NodeUninstallHandler) BuildWorkflow(
@@ -45,6 +46,6 @@ func (h *NodeUninstallHandler) HandleIntent(
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, nil)
 }
 
-func NewNodeUninstallHandler(base bll.BaseHandler[models.TeleportNodeInputs]) *NodeUninstallHandler {
-	return &NodeUninstallHandler{BaseHandler: base}
+func NewNodeUninstallHandler(base bll.BaseHandler[models.TeleportNodeInputs], runtime *rsl.TeleportRuntimeResolver) *NodeUninstallHandler {
+	return &NodeUninstallHandler{BaseHandler: base, runtime: runtime}
 }

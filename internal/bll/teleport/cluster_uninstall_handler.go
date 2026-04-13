@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -15,13 +16,14 @@ import (
 // ClusterUninstallHandler handles the ActionUninstall intent for the teleport cluster agent.
 type ClusterUninstallHandler struct {
 	bll.BaseHandler[models.TeleportClusterInputs]
+	runtime *rsl.TeleportRuntimeResolver
 }
 
 func (h *ClusterUninstallHandler) PrepareEffectiveInputs(
-	_ models.Intent,
+	intent models.Intent,
 	inputs models.UserInputs[models.TeleportClusterInputs],
 ) (*models.UserInputs[models.TeleportClusterInputs], error) {
-	return &inputs, nil
+	return resolveTeleportClusterEffectiveInputs(h.runtime, intent, inputs)
 }
 
 func (h *ClusterUninstallHandler) BuildWorkflow(
@@ -39,6 +41,6 @@ func (h *ClusterUninstallHandler) HandleIntent(
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, nil)
 }
 
-func NewClusterUninstallHandler(base bll.BaseHandler[models.TeleportClusterInputs]) *ClusterUninstallHandler {
-	return &ClusterUninstallHandler{BaseHandler: base}
+func NewClusterUninstallHandler(base bll.BaseHandler[models.TeleportClusterInputs], runtime *rsl.TeleportRuntimeResolver) *ClusterUninstallHandler {
+	return &ClusterUninstallHandler{BaseHandler: base, runtime: runtime}
 }

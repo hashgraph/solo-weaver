@@ -41,6 +41,13 @@ func initializeDependencies() error {
 		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
 	}
 
+	defaults := config.DefaultsConfig()
+	envVals := config.EnvConfig()
+	logx.As().Debug().Any("defaults_config", defaults).Msg("Setting teleport defaults")
+	runtime.TeleportRuntime.WithDefaults(defaults)
+	logx.As().Debug().Any("env_config", envVals).Msg("Setting teleport env config")
+	runtime.TeleportRuntime.WithEnv(envVals)
+
 	teleportHandler, err = blltp.NewHandlerFactory(sm, runtime)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise teleport intent handler")

@@ -154,6 +154,12 @@ func EnvConfig() models.Config {
 				PluginsSize:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_PLUGINSSIZE"),
 			},
 		},
+		Teleport: models.TeleportConfig{
+			Version:            os.Getenv("SOLO_PROVISIONER_TELEPORT_VERSION"),
+			ValuesFile:         os.Getenv("SOLO_PROVISIONER_TELEPORT_VALUESFILE"),
+			NodeAgentToken:     os.Getenv("SOLO_PROVISIONER_TELEPORT_NODEAGENTTOKEN"),
+			NodeAgentProxyAddr: os.Getenv("SOLO_PROVISIONER_TELEPORT_NODEAGENTPROXYADDR"),
+		},
 	}
 }
 

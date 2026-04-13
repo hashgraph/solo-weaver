@@ -17,13 +17,14 @@ import (
 // NodeInstallHandler handles the ActionInstall intent for the teleport node agent.
 type NodeInstallHandler struct {
 	bll.BaseHandler[models.TeleportNodeInputs]
+	runtime *rsl.TeleportRuntimeResolver
 }
 
 func (h *NodeInstallHandler) PrepareEffectiveInputs(
-	_ models.Intent,
+	intent models.Intent,
 	inputs models.UserInputs[models.TeleportNodeInputs],
 ) (*models.UserInputs[models.TeleportNodeInputs], error) {
-	return &inputs, nil
+	return resolveTeleportNodeEffectiveInputs(h.runtime, intent, inputs)
 }
 
 func (h *NodeInstallHandler) BuildWorkflow(
@@ -45,6 +46,6 @@ func (h *NodeInstallHandler) HandleIntent(
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, nil)
 }
 
-func NewNodeInstallHandler(base bll.BaseHandler[models.TeleportNodeInputs]) *NodeInstallHandler {
-	return &NodeInstallHandler{BaseHandler: base}
+func NewNodeInstallHandler(base bll.BaseHandler[models.TeleportNodeInputs], runtime *rsl.TeleportRuntimeResolver) *NodeInstallHandler {
+	return &NodeInstallHandler{BaseHandler: base, runtime: runtime}
 }

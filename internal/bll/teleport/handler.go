@@ -39,6 +39,11 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver.TeleportRuntime cannot be nil")
 	}
 
+	tr, ok := runtime.TeleportRuntime.(*rsl.TeleportRuntimeResolver)
+	if !ok {
+		return nil, errorx.IllegalArgument.New("expected TeleportRuntime to be *rsl.TeleportRuntimeResolver but got %T", runtime.TeleportRuntime)
+	}
+
 	nodeBase, err := bll.NewBaseHandler[models.TeleportNodeInputs](runtime, models.TargetTeleportNode)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create node BaseHandler: %v", err)
@@ -50,10 +55,10 @@ func NewHandlerFactory(
 	}
 
 	return &HandlerRegistry{
-		nodeInstall:      NewNodeInstallHandler(nodeBase),
-		nodeUninstall:    NewNodeUninstallHandler(nodeBase),
-		clusterInstall:   NewClusterInstallHandler(clusterBase),
-		clusterUninstall: NewClusterUninstallHandler(clusterBase),
+		nodeInstall:      NewNodeInstallHandler(nodeBase, tr),
+		nodeUninstall:    NewNodeUninstallHandler(nodeBase, tr),
+		clusterInstall:   NewClusterInstallHandler(clusterBase, tr),
+		clusterUninstall: NewClusterUninstallHandler(clusterBase, tr),
 	}, nil
 }
 
