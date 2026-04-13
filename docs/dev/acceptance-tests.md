@@ -8,13 +8,16 @@ on macOS.
 
 **From inside the VM** (after `task vm:ssh:proxy`):
 ```bash
+task uat:lifecycle  # Core lifecycle: setup → core upgrades → teardown (CI-friendly, no Docker)
+task uat:compat     # Backward compatibility (standalone, installs released version first)
+task uat:all        # Everything: lifecycle + teleport + alloy + compat (requires Docker)
+
+# Individual steps (for debugging or manual runs):
 task uat:setup      # Install cluster + block node (v0.26.0)
 task uat:core       # Block node upgrades + reset (requires setup)
-task uat:teleport   # Teleport install/uninstall (requires setup, starts Teleport server)
-task uat:alloy      # Alloy install/uninstall (requires setup, starts observability stack)
+task uat:teleport   # Teleport install/uninstall (requires setup + Docker)
+task uat:alloy      # Alloy install/uninstall (requires setup + Docker)
 task uat:teardown   # Uninstall everything
-task uat:compat     # Backward compatibility (standalone, installs released version first)
-task uat:all        # setup → core → teleport → alloy → teardown
 ```
 
 These tasks are designed to run inside any Linux VM — both the local UTM VM

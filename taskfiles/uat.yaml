@@ -15,8 +15,21 @@ tasks:
 
 
         echo -e '\n▶ Self-install'
-        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
-        sudo ./solo-provisioner-linux-arm64 install
+        UNAME_ARCH=$(uname -m)
+        case "$UNAME_ARCH" in
+          x86_64)
+            ARCH=amd64
+            ;;
+          aarch64)
+            ARCH=arm64
+            ;;
+          *)
+            echo "FAIL: unsupported architecture '$UNAME_ARCH'. Supported architectures are: x86_64, aarch64."
+            exit 1
+            ;;
+        esac
+        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
+        sudo ./solo-provisioner-linux-${ARCH} install
 
 
         echo -e '\n▶ Block node install (v0.26.0)'
@@ -123,6 +136,10 @@ tasks:
         kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
 
 
+        # Docker + docker compose required for Teleport server container
+        command -v docker >/dev/null 2>&1 || { echo "FAIL: Docker not found. Install docker.io first."; exit 1; }
+        docker compose version >/dev/null 2>&1 || { echo "FAIL: Docker Compose v2 plugin not found. Install docker-compose-plugin first."; exit 1; }
+
         echo -e '\n▶ Step 1: Start Teleport server (Docker)'
         task teleport:start
 
@@ -197,6 +214,10 @@ tasks:
         # Check cluster exists
         kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
 
+
+        # Docker + docker compose required for observability stack containers
+        command -v docker >/dev/null 2>&1 || { echo "FAIL: Docker not found. Install docker.io + docker-compose-plugin first."; exit 1; }
+        docker compose version >/dev/null 2>&1 || { echo "FAIL: Docker Compose plugin not found. Install docker-compose-plugin first."; exit 1; }
 
         echo -e '\n▶ Step 1: Start observability stack (Prometheus, Loki, Grafana)'
         task alloy:start
@@ -277,8 +298,9 @@ tasks:
 
  
         echo -e '\n▶ Step 6: Upgrade CLI to new binary (from current branch)'
-        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
-        sudo ./solo-provisioner-linux-arm64 install
+        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
+        sudo ./solo-provisioner-linux-${ARCH} install
 
 
         echo -e '\n▶ Step 7: Verify new CLI version'
@@ -310,8 +332,16 @@ tasks:
         echo ''
         echo '✅ Backward Compatibility: PASSED'
 
+  uat:lifecycle:
+    desc: "Run core lifecycle test (inside VM: setup → core upgrades → teardown)"
+    interactive: true
+    cmds:
+      - task: uat:setup
+      - task: uat:core
+      - task: uat:teardown
+
   uat:all:
-    desc: "Run all acceptance tests sequentially (inside VM: setup → tests → teardown)"
+    desc: "Run all acceptance tests (inside VM: lifecycle + teleport + alloy + compat). Requires Docker."
     interactive: true
     cmds:
       - task: uat:setup

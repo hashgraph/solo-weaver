@@ -33,11 +33,33 @@ jobs:
     with:
       custom-job-label: Standard
 
+  uat-compat:
+    name: UAT Backward Compatibility
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    needs:
+      - build
+    with:
+      custom-job-label: UAT Compat
+      uat-scenario: compat
+      vm-os: debian
+
+  uat-core:
+    name: UAT Core Lifecycle
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    needs:
+      - build
+      - uat-compat
+    with:
+      custom-job-label: UAT Core
+      uat-scenario: lifecycle
+      vm-os: debian
+
   integration-tests:
     name: Integration Tests
     uses: ./.github/workflows/zxc-integration-test.yaml
     needs:
       - build
+      - uat-core
     with:
       custom-job-label: Standard
       vm-os: debian
