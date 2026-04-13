@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -182,7 +184,6 @@ func newTestInstallerWithScenario(t *testing.T, scenario TestScenario) *baseInst
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Match newBaseInstaller() defaults
@@ -197,14 +198,6 @@ func calculateSHA256(data []byte) string {
 	hash := sha256.New()
 	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
-}
-
-// prepareStateManager creates a state.Manager for use in unit tests.
-func prepareStateManager(t *testing.T) state.Manager {
-	t.Helper()
-	sm, err := state.NewStateManager()
-	require.NoError(t, err, "failed to create state manager for test")
-	return sm
 }
 
 // Test scenarios using table-driven tests
@@ -598,7 +591,6 @@ func newTestInstaller(t *testing.T) *baseInstaller {
 		software:             item.withPlatform("test-os", "test-arch"),
 		fileManager:          fsxManager,
 		versionToBeInstalled: "1.0.0",
-		stateManager:         prepareStateManager(t),
 	}
 }
 
@@ -857,7 +849,6 @@ func Test_BaseInstaller_Uninstall_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -994,7 +985,6 @@ func Test_BaseInstaller_Uninstall_NoDownloadFolder(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox bin directory with a binary
@@ -1103,7 +1093,6 @@ func Test_BaseInstaller_Uninstall_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1199,7 +1188,6 @@ func Test_BaseInstaller_Uninstall_SymlinkPointsToOurBinary(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1274,7 +1262,6 @@ func Test_BaseInstaller_RestoreConfiguration_Success(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1345,7 +1332,6 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkPointsToOtherBinary(t *testi
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1427,7 +1413,6 @@ func Test_BaseInstaller_RestoreConfiguration_MultipleBinaries(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1517,7 +1502,6 @@ func Test_BaseInstaller_RestoreConfiguration_SymlinkError(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure
@@ -1585,7 +1569,6 @@ func Test_BaseInstaller_RestoreConfiguration_VersionNotFound(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "2.0.0", // Version not in metadata
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	//
@@ -1628,7 +1611,6 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 		software:             software,
 		versionToBeInstalled: "1.0.0",
 		fileManager:          fsxManager,
-		stateManager:         prepareStateManager(t),
 	}
 
 	// Create sandbox directory structure but no symlinks
@@ -1655,4 +1637,112 @@ func Test_BaseInstaller_RestoreConfiguration_NoSymlinks(t *testing.T) {
 	// Verify sandbox binary still exists
 	_, err = os.Stat(sandboxBinary)
 	require.NoError(t, err, "Sandbox binary should still exist")
+}
+
+// ── MachineRuntime fast-path tests ───────────────────────────────────────────
+
+// fakeMachineRuntime is a test double for the MachineRuntime interface.
+// It records how many times SoftwareState is called so tests can assert
+// whether the fast-path was taken (call count > 0) or disk was hit (call count == 0).
+type fakeMachineRuntime struct {
+	sw    state.SoftwareState
+	ok    bool
+	calls atomic.Int32
+}
+
+func (f *fakeMachineRuntime) SoftwareState(_ string) (state.SoftwareState, bool) {
+	f.calls.Add(1)
+	return f.sw, f.ok
+}
+
+// newMinimalInstaller returns the smallest valid baseInstaller for fast-path testing —
+// no archives, binaries, or configs so VerifyInstallation falls back gracefully.
+func newMinimalInstaller(mr MachineRuntime) *baseInstaller {
+	fsxMgr, _ := fsx.NewManager()
+	bi := &baseInstaller{
+		software:             (&ArtifactMetadata{Name: "test-tool"}).withPlatform("linux", "amd64"),
+		fileManager:          fsxMgr,
+		versionToBeInstalled: "1.0.0",
+		machineRuntime:       mr,
+	}
+	bi.verifyInstalled = bi.verifySandboxBinaries
+	bi.verifyConfigured = bi.verifySandboxConfigs
+	return bi
+}
+
+// Test_CheckInstallation_FastPath_InstalledAndConfigured verifies that when MachineRuntime
+// returns a synced state (ok=true), IsInstalled/IsConfigured read from RSL without touching disk.
+func Test_CheckInstallation_FastPath_InstalledAndConfigured(t *testing.T) {
+	mr := &fakeMachineRuntime{
+		sw: state.SoftwareState{Name: "test-tool", Installed: true, Configured: true},
+		ok: true,
+	}
+	bi := newMinimalInstaller(mr)
+
+	installed, err := bi.IsInstalled()
+	require.NoError(t, err)
+	assert.True(t, installed, "should report installed from RSL state")
+
+	configured, err := bi.IsConfigured()
+	require.NoError(t, err)
+	assert.True(t, configured, "should report configured from RSL state")
+
+	// SoftwareState was called exactly once — the result was cached in softwareState
+	// so subsequent calls do not re-query the runtime.
+	assert.Equal(t, int32(1), mr.calls.Load(), "runtime should be queried once then cached")
+}
+
+// Test_CheckInstallation_FastPath_NotInstalled verifies that RSL can report a component
+// as present-but-not-installed, and that value is honoured without disk I/O.
+func Test_CheckInstallation_FastPath_NotInstalled(t *testing.T) {
+	mr := &fakeMachineRuntime{
+		sw: state.SoftwareState{Name: "test-tool", Installed: false, Configured: false},
+		ok: true,
+	}
+	bi := newMinimalInstaller(mr)
+
+	installed, err := bi.IsInstalled()
+	require.NoError(t, err)
+	assert.False(t, installed, "RSL reports not installed")
+	assert.Equal(t, int32(1), mr.calls.Load())
+}
+
+// Test_CheckInstallation_FallbackToDisk_WhenRSLNotReady verifies that when MachineRuntime
+// returns ok=false (RSL not yet synced), checkInstallation falls through to disk verification.
+func Test_CheckInstallation_FallbackToDisk_WhenRSLNotReady(t *testing.T) {
+	mr := &fakeMachineRuntime{ok: false} // RSL not initialised yet
+	bi := newMinimalInstaller(mr)
+
+	// No binaries installed in the test environment — disk check returns not-installed, no error.
+	installed, err := bi.IsInstalled()
+	require.NoError(t, err)
+	assert.False(t, installed, "disk fallback should report not installed in test env")
+	assert.Equal(t, int32(1), mr.calls.Load(), "runtime was still queried once before falling through")
+}
+
+// Test_CheckInstallation_FallbackToDisk_WhenNilRuntime verifies that a nil MachineRuntime
+// (standalone CLI mode) falls through to disk verification without panicking.
+func Test_CheckInstallation_FallbackToDisk_WhenNilRuntime(t *testing.T) {
+	bi := newMinimalInstaller(nil)
+
+	installed, err := bi.IsInstalled()
+	require.NoError(t, err)
+	assert.False(t, installed, "disk fallback should report not installed in test env")
+}
+
+// Test_CheckInstallation_StateIsCached verifies that softwareState is populated on the
+// first call and reused on subsequent calls — the runtime is not queried again.
+func Test_CheckInstallation_StateIsCached(t *testing.T) {
+	mr := &fakeMachineRuntime{
+		sw: state.SoftwareState{Name: "test-tool", Installed: true, Configured: true},
+		ok: true,
+	}
+	bi := newMinimalInstaller(mr)
+
+	for i := 0; i < 5; i++ {
+		_, _ = bi.IsInstalled()
+		_, _ = bi.IsConfigured()
+	}
+
+	assert.Equal(t, int32(1), mr.calls.Load(), "runtime should only be consulted once; subsequent calls use cached state")
 }

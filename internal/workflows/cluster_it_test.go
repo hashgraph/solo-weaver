@@ -35,11 +35,9 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,14 +46,7 @@ import (
 func Test_ClusterSetup(t *testing.T) {
 	testutil.Reset(t)
 
-	sm, err := state.NewStateManager()
-	require.NoError(t, err)
-
-	if err = sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		require.NoError(t, err, "failed to refresh state manager")
-	}
-
-	installWf, err := InstallClusterWorkflow(models.NodeTypeBlock, models.ProfileLocal, false, sm).
+	installWf, err := InstallClusterWorkflow(models.NodeTypeBlock, models.ProfileLocal, false, nil).
 		WithExecutionMode(automa.StopOnError).
 		Build()
 	require.NoError(t, err)

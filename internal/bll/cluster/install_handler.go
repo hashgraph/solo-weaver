@@ -10,12 +10,13 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 type InstallHandler struct {
 	base    bll.BaseHandler[models.ClusterInputs]
 	runtime *rsl.ClusterRuntimeResolver
-	sm      state.Manager
+	mr      software.MachineRuntime
 }
 
 func (h *InstallHandler) PrepareEffectiveInputs(
@@ -44,6 +45,6 @@ func (h *InstallHandler) HandleIntent(
 func NewInstallHandler(
 	base bll.BaseHandler[models.ClusterInputs],
 	runtime *rsl.ClusterRuntimeResolver,
-	sm state.Manager) *InstallHandler {
-	return &InstallHandler{base: base, runtime: runtime, sm: sm}
+	mr software.MachineRuntime) *InstallHandler {
+	return &InstallHandler{base: base, runtime: runtime, mr: mr}
 }

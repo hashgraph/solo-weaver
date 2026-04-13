@@ -6,9 +6,6 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/reality"
-	"github.com/hashgraph/solo-weaver/internal/rsl"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
@@ -20,50 +17,28 @@ import (
 
 // blockNodeHandler is the per-command instance of blocknode.Handler, wired in
 // initializeDependencies. It replaces the old package-level bll singleton.
-var blockNodeHandler *blocknode.HandlerRegistry
+var blockNodeHandler *blocknode.Handlers
 
 func initializeDependencies() error {
-	conf := config.Get()
-	if err := conf.Validate(); err != nil {
-		return errorx.IllegalState.Wrap(err, "invalid configuration")
-	}
-
-	logx.As().Debug().Any("config", conf).Msg("Loaded configuration")
-
-	sm, err := state.NewStateManager()
+	sr, err := common.Setup()
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create state manager")
-	}
-
-	if err = sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return errorx.IllegalState.Wrap(err, "failed to refresh state")
-	}
-
-	currentState := sm.State()
-	logx.As().Info().Str("state_file", currentState.StateFile).Any("currentState", currentState).Msg("Current state")
-
-	realityChecker, err := reality.NewCheckers(sm)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create reality checker")
-	}
-
-	// Build the rsl.RuntimeResolver — single call that constructs cluster + block-node runtimes.
-	runtime, err := rsl.NewRuntimeResolver(conf, sm, realityChecker, rsl.DefaultRefreshInterval)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to initialise rsl registry")
+		return err
 	}
 
 	// Set values from other sources (other than config and state) as required
 	// The order of initialization doesn't make any difference since each value can have its own value resolver to
 	// set the correct precedence (e.g. env vars can override defaults, but not user inputs).
+	defaults := config.DefaultsConfig()
+	envVals := config.EnvConfig()
 	logx.As().Debug().Any("defaults_config", config.DefaultsConfig()).Msg("Setting defaults")
-	runtime.BlockNodeRuntime.WithDefaults(config.DefaultsConfig())
+	sr.Runtime.BlockNodeRuntime.WithDefaults(defaults)
+	sr.Runtime.MachineRuntime.WithDefaults(defaults)
 	logx.As().Debug().Any("env_config", config.EnvConfig()).Msg("Setting env config")
-	runtime.BlockNodeRuntime.WithEnv(config.EnvConfig())
+	sr.Runtime.BlockNodeRuntime.WithEnv(envVals)
+	sr.Runtime.MachineRuntime.WithEnv(envVals)
 
 	// Build the BLL handler, injecting the registry instead of relying on singletons.
-	// sm satisfies both state.Reader and state.Writer — pass it for both roles.
-	blockNodeHandler, err = blocknode.NewHandlerFactory(sm, runtime)
+	blockNodeHandler, err = blocknode.NewHandlerFactory(sr.Runtime)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to initialise block-node intent handler")
 	}

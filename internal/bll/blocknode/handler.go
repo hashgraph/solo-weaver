@@ -13,35 +13,30 @@ package blocknode
 import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
-// HandlerRegistry is the private struct that holds all per-action handlers for block-node intents.
-type HandlerRegistry struct {
+// Handlers is the private struct that holds all per-action handlers for block-node intents.
+type Handlers struct {
 	install   *InstallHandler
 	upgrade   *UpgradeHandler
 	reset     *ResetHandler
 	uninstall *UninstallHandler
 }
 
-// NewHandlerFactory validates dependencies and returns a HandlerRegistry with all handlers initialized.
+// NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
 // All dependencies are required; any nil returns an error.
 func NewHandlerFactory(
-	sm state.Manager,
 	runtime *rsl.RuntimeResolver,
-) (*HandlerRegistry, error) {
+) (*Handlers, error) {
 	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}
-	if sm == nil {
-		return nil, errorx.IllegalArgument.New("state.Manager cannot be nil")
-	}
 
 	if runtime == nil {
-		return nil, errorx.IllegalArgument.New("rsl.RuntimeResolver cannot be nil")
+		return nil, errorx.IllegalArgument.New("RuntimeResolver cannot be nil")
 	}
 
 	if runtime.BlockNodeRuntime == nil {
@@ -53,7 +48,12 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("expected BlockNodeRuntime to be *rsl.BlockNodeRuntimeResolver but got %T", runtime.BlockNodeRuntime)
 	}
 
-	installHandler, err := NewInstallHandler(base, bnr, sm)
+	mr, ok := runtime.MachineRuntime.(*rsl.MachineRuntimeResolver)
+	if !ok {
+		return nil, errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", runtime.MachineRuntime)
+	}
+
+	installHandler, err := NewInstallHandler(base, bnr, mr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create InstallHandler: %v", err)
 	}
@@ -73,7 +73,7 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("failed to create UninstallHandler: %v", err)
 	}
 
-	h := &HandlerRegistry{
+	h := &Handlers{
 		install:   installHandler,
 		upgrade:   upgradeHandler,
 		reset:     resetHandler,
@@ -84,7 +84,7 @@ func NewHandlerFactory(
 }
 
 // ForAction returns the appropriate IntentHandler for the given action, or an error if the action is unsupported.
-func (h *HandlerRegistry) ForAction(
+func (h *Handlers) ForAction(
 	action models.ActionType,
 ) (bll.IntentHandler[models.BlockNodeInputs], error) {
 	switch action {

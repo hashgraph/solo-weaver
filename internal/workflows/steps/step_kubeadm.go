@@ -12,18 +12,17 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 const kubectlGetNodesCmd = "/usr/local/bin/kubectl get nodes"
 
-func SetupKubeadm(sm state.Manager) *automa.WorkflowBuilder {
+func SetupKubeadm(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").
 		Steps(
-			installKubeadm(software.NewKubeadmInstaller, sm),
-			configureKubeadm(software.NewKubeadmInstaller, sm),
+			installKubeadm(software.NewKubeadmInstaller, mr),
+			configureKubeadm(software.NewKubeadmInstaller, mr),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up kubeadm")
@@ -37,14 +36,14 @@ func SetupKubeadm(sm state.Manager) *automa.WorkflowBuilder {
 		})
 }
 
-func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
+func installKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), mr software.MachineRuntime) automa.Builder {
 	return automa.NewStepBuilder().WithId("install-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepDetail(ctx, stp, "installing kubeadm...")
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -95,7 +94,7 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 				return automa.SkippedReport(stp, automa.WithDetail("kubeadm was not installed by this step, skipping rollback"))
 			}
 
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -111,14 +110,14 @@ func installKubeadm(provider func(opts ...software.InstallerOption) (software.So
 		})
 }
 
-func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), sm state.Manager) automa.Builder {
+func configureKubeadm(provider func(opts ...software.InstallerOption) (software.Software, error), mr software.MachineRuntime) automa.Builder {
 	return automa.NewStepBuilder().WithId("configure-kubeadm").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepDetail(ctx, stp, "configuring kubeadm...")
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
@@ -156,7 +155,7 @@ func configureKubeadm(provider func(opts ...software.InstallerOption) (software.
 				return automa.SkippedReport(stp, automa.WithDetail("kubeadm was not configured by this step, skipping rollback"))
 			}
 
-			installer, err := provider(software.WithStateManager(sm))
+			installer, err := provider(software.WithMachineRuntime(mr))
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(err))
