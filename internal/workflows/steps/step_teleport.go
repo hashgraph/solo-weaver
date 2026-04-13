@@ -11,7 +11,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
@@ -32,13 +31,13 @@ const (
 // SetupTeleportNodeAgent returns a workflow builder that sets up the Teleport node agent.
 // This provides SSH access to the node via Teleport with full session recording.
 // Used by 'solo-provisioner teleport node install' command.
-func SetupTeleportNodeAgent(sm state.Manager) *automa.WorkflowBuilder {
+func SetupTeleportNodeAgent(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	cfg := config.Get().Teleport
 
 	return automa.NewWorkflowBuilder().WithId("setup-teleport-node-agent").
 		Steps(
-			installTeleportNodeAgent(newTeleportInstallerProvider(cfg, sm)),
-			configureTeleportNodeAgent(newTeleportInstallerProvider(cfg, sm)),
+			installTeleportNodeAgent(newTeleportInstallerProvider(cfg, mr)),
+			configureTeleportNodeAgent(newTeleportInstallerProvider(cfg, mr)),
 			SetupSystemdService(software.TeleportServiceName),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -80,13 +79,13 @@ func SetupTeleportClusterAgent() *automa.WorkflowBuilder {
 type teleportInstallerProvider func(opts ...software.InstallerOption) (software.Software, error)
 
 // newTeleportInstallerProvider creates a provider function that includes the teleport configuration
-func newTeleportInstallerProvider(cfg models.TeleportConfig, sm state.Manager) teleportInstallerProvider {
+func newTeleportInstallerProvider(cfg models.TeleportConfig, mr software.MachineRuntime) teleportInstallerProvider {
 	return func(opts ...software.InstallerOption) (software.Software, error) {
 		configOpts := &software.TeleportNodeAgentConfigureOptions{
 			ProxyAddr: cfg.NodeAgentProxyAddr,
 			JoinToken: cfg.NodeAgentToken,
 		}
-		return software.NewTeleportNodeAgentInstallerWithConfig(configOpts, append(opts, software.WithStateManager(sm))...)
+		return software.NewTeleportNodeAgentInstallerWithConfig(configOpts, append(opts, software.WithMachineRuntime(mr))...)
 	}
 }
 

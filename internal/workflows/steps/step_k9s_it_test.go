@@ -30,7 +30,7 @@ func Test_StepK9s_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).Build()
+	step, err := SetupK9s(nil).Build()
 
 	//
 	// Then
@@ -68,7 +68,7 @@ func Test_StepK9s_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	testutil.CleanUpTempDir(t)
 
-	step, err := SetupK9s(mustStateWriter(t)).Build()
+	step, err := SetupK9s(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -78,7 +78,7 @@ func Test_StepK9s_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err = SetupK9s(mustStateWriter(t)).Build()
+	step, err = SetupK9s(nil).Build()
 
 	//
 	// Then
@@ -110,7 +110,7 @@ func Test_StepK9s_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupK9s(nil).WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -179,7 +179,7 @@ func Test_StepK9s_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupK9s(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -237,7 +237,7 @@ func Test_StepK9s_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupK9s(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -295,7 +295,7 @@ func Test_StepK9s_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupK9s(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -362,7 +362,7 @@ func Test_StepK9s_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupK9s(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -429,7 +429,7 @@ func Test_StepK9s_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupK9s(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupK9s(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//

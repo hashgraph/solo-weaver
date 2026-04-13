@@ -31,7 +31,7 @@ func Test_StepCrio_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).Build()
+	step, err := SetupCrio(nil).Build()
 
 	//
 	// Then
@@ -72,7 +72,7 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).Build()
+	step, err := SetupCrio(nil).Build()
 
 	//
 	// Then
@@ -86,7 +86,7 @@ func Test_StepCrio_AlreadyInstalled_Integration(t *testing.T) {
 	//
 	// And When (rerun)
 	//
-	step, err = SetupCrio(mustStateWriter(t)).Build()
+	step, err = SetupCrio(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -115,7 +115,7 @@ func Test_StepCrio_Rollback_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCrio(nil).WithExecutionMode(automa.RollbackOnError).Build()
 
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
@@ -239,7 +239,7 @@ func Test_StepCrio_Rollback_Setup_DownloadFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCrio(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -297,7 +297,7 @@ func Test_StepCrio_Rollback_Setup_ExtractFailed(t *testing.T) {
 	//
 	// When - Execute (should fail at extraction)
 	//
-	step, err := SetupCrio(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCrio(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 
@@ -355,7 +355,7 @@ func Test_StepCrio_Rollback_Setup_InstallFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCrio(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -418,7 +418,7 @@ func Test_StepCrio_Rollback_Setup_CleanupFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCrio(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -484,7 +484,7 @@ func Test_StepCrio_Rollback_ConfigurationFailed(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).WithExecutionMode(automa.RollbackOnError).Build()
+	step, err := SetupCrio(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
 
 	//
@@ -542,7 +542,7 @@ func Test_StepCrio_ServiceConfiguration_Fresh_Integration(t *testing.T) {
 	//
 	// When
 	//
-	step, err := SetupCrio(mustStateWriter(t)).Build()
+	step, err := SetupCrio(nil).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -581,7 +581,7 @@ func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing
 	testutil.Reset(t)
 
 	// First run to configure crio
-	step, err := SetupCrio(mustStateWriter(t)).Build()
+	step, err := SetupCrio(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
@@ -589,7 +589,7 @@ func Test_StepCrio_ServiceConfiguration_AlreadyConfigured_Integration(t *testing
 	//
 	// When - Run again
 	//
-	step, err = SetupCrio(mustStateWriter(t)).Build()
+	step, err = SetupCrio(nil).Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())
 
@@ -621,7 +621,7 @@ func Test_StepCrio_ServiceConfiguration_RestoreConfiguration_Integration(t *test
 	testutil.Reset(t)
 
 	// Install and configure crio
-	step, err := SetupCrio(mustStateWriter(t)).Build()
+	step, err := SetupCrio(nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)

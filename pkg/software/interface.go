@@ -7,6 +7,13 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 )
 
+// MachineRuntime is the subset of rsl.MachineRuntimeResolver used by software installers
+// to look up effective state for a named component without a direct dependency on internal/rsl.
+// *rsl.MachineRuntimeResolver satisfies this interface.
+type MachineRuntime interface {
+	SoftwareState(name string) (state.SoftwareState, bool)
+}
+
 type Package interface {
 	Name() string
 

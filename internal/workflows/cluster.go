@@ -6,7 +6,6 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
-	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -22,18 +21,18 @@ func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
 }
 
 // InstallClusterWorkflow creates a workflow to set up a kubernetes cluster.
-func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool, sm state.Manager) *automa.WorkflowBuilder {
+func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
 		Steps(
 			NodeSetupWorkflow(nodeType, profile, skipHardwareChecks),
-			kubernetesSetupWorkflow(sm),
+			kubernetesSetupWorkflow(mr),
 		)
 }
 
 // kubernetesSetupWorkflow installs and configures Kubernetes components.
 // Rendered as the "Kubernetes Setup" phase in the TUI.
-func kubernetesSetupWorkflow(sm state.Manager) *automa.WorkflowBuilder {
+func kubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("kubernetes-setup").
 		Steps(
@@ -43,25 +42,25 @@ func kubernetesSetupWorkflow(sm state.Manager) *automa.WorkflowBuilder {
 			steps.SetupBindMounts(),
 
 			// kubelet
-			steps.SetupKubelet(sm),
+			steps.SetupKubelet(mr),
 			steps.SetupSystemdService(software.KubeletServiceName),
 
 			// setup cli tools
-			steps.SetupKubectl(sm),
-			steps.SetupHelm(sm), // required by MetalLB setup, so we install it earlier
-			steps.SetupK9s(sm),
+			steps.SetupKubectl(mr),
+			steps.SetupHelm(mr), // required by MetalLB setup, so we install it earlier
+			steps.SetupK9s(mr),
 
 			// CRI-O
-			steps.SetupCrio(sm),
+			steps.SetupCrio(mr),
 			steps.SetupSystemdService(software.CrioServiceName),
 
 			// kubeadm
-			steps.SetupKubeadm(sm),
+			steps.SetupKubeadm(mr),
 
 			// init cluster
 			steps.InitializeCluster(),
 
-			steps.SetupCilium(sm),
+			steps.SetupCilium(mr),
 			steps.StartCilium(),
 
 			steps.SetupMetalLB(),

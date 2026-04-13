@@ -14,6 +14,17 @@ import (
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
+// MachineRuntimeResolver manages the current machine state (software and hardware) for
+// the local host. Unlike BlockNodeRuntimeResolver, it does not perform per-field
+// EffectiveValue resolution across multiple sources (env vars, config file, user inputs,
+// persisted state, reality). Machine state has a single authoritative source — the
+// reality checker — so the resolver simply stores the latest snapshot returned by that
+// checker and exposes it for direct reads.
+//
+// The With* methods (WithIntent, WithUserInputs, WithConfig, WithDefaults, WithEnv) are
+// implemented as required by the Resolver interface but are no-ops here; they exist only
+// to satisfy the generic contract shared with BlockNodeRuntimeResolver and
+// ClusterRuntimeResolver.
 type MachineRuntimeResolver struct {
 	mu              sync.Mutex
 	cfg             *models.Config
@@ -25,28 +36,28 @@ type MachineRuntimeResolver struct {
 	inputs *models.MachineInputs
 }
 
-func (c *MachineRuntimeResolver) WithIntent(intent models.Intent) Resolver[state.MachineState, models.MachineInputs] {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (m *MachineRuntimeResolver) WithIntent(intent models.Intent) Resolver[state.MachineState, models.MachineInputs] {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	c.intent = &intent
-	return c
+	m.intent = &intent
+	return m
 }
 
-func (c *MachineRuntimeResolver) WithUserInputs(inputs models.MachineInputs) Resolver[state.MachineState, models.MachineInputs] {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (m *MachineRuntimeResolver) WithUserInputs(inputs models.MachineInputs) Resolver[state.MachineState, models.MachineInputs] {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	c.inputs = &inputs
-	return c
+	m.inputs = &inputs
+	return m
 }
 
-func (c *MachineRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.MachineState, models.MachineInputs] {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (m *MachineRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.MachineState, models.MachineInputs] {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	c.cfg = &cfg
-	return c
+	m.cfg = &cfg
+	return m
 }
 
 // WithDefaults is a no-op stub satisfying the Resolver interface.
@@ -62,12 +73,12 @@ func (m *MachineRuntimeResolver) WithEnv(_ models.Config) Resolver[state.Machine
 	return m
 }
 
-func (c *MachineRuntimeResolver) WithState(st state.MachineState) Resolver[state.MachineState, models.MachineInputs] {
-	c.mu.Lock()
-	c.state = &st
-	c.mu.Unlock()
+func (m *MachineRuntimeResolver) WithState(st state.MachineState) Resolver[state.MachineState, models.MachineInputs] {
+	m.mu.Lock()
+	m.state = &st
+	m.mu.Unlock()
 
-	return c
+	return m
 }
 
 // RefreshState refreshes the current machine state from the reality checker, using the
@@ -95,6 +106,30 @@ func (m *MachineRuntimeResolver) RefreshState(ctx context.Context, force bool) e
 	defer m.mu.Unlock()
 	m.state = &st
 	return nil
+}
+
+// SoftwareState looks up the named component in the most recent machine state snapshot.
+// Returns (zero, false) when the snapshot has not yet been synced (nil state or zero LastSync),
+// signalling the caller to fall back to disk verification.
+// Returns (zero, false) when the component is absent from the snapshot (unrecognised name).
+// Returns (sw, true) when the snapshot is available and the component is present.
+func (m *MachineRuntimeResolver) SoftwareState(name string) (state.SoftwareState, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state == nil || m.state.LastSync.IsZero() {
+		return state.SoftwareState{}, false
+	}
+
+	sw, ok := m.state.Software[name]
+	if !ok {
+		return state.SoftwareState{}, false
+	}
+
+	if sw.Name == "" {
+		sw.Name = name
+	}
+
+	return sw, true
 }
 
 func (m *MachineRuntimeResolver) CurrentState() (state.MachineState, error) {
