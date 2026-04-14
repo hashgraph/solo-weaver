@@ -3,9 +3,9 @@
 package cluster
 
 import (
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -18,49 +18,70 @@ var installCmd = &cobra.Command{
 	Short: "Install Teleport Kubernetes cluster agent",
 	Long:  "Install the Teleport Kubernetes cluster agent for secure kubectl access and audit logging",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Values file is required for cluster agent installation
 		if flagValuesFile == "" {
 			return errorx.IllegalArgument.New("--values flag is required for cluster agent installation")
 		}
 
-		// Validate the values file path
 		validatedValuesFile, err := sanity.ValidateInputFile(flagValuesFile)
 		if err != nil {
 			return err
 		}
 
-		// Apply Teleport configuration overrides
-		teleportOverrides := models.TeleportConfig{
+		config.OverrideTeleportConfig(models.TeleportConfig{
 			Version:    flagVersion,
 			ValuesFile: validatedValuesFile,
-		}
-		config.OverrideTeleportConfig(teleportOverrides)
+		})
 
-		// Validate the configuration
 		cfg := config.Get()
 		if err := cfg.Teleport.ValidateClusterAgent(); err != nil {
 			return err
 		}
 
-		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
-		if err != nil {
-			return errorx.Decorate(err, "failed to determine execution mode")
+		if err := initializeDependencies(); err != nil {
+			return err
 		}
 
-		opts := workflows.DefaultWorkflowExecutionOptions()
-		opts.ExecutionMode = execMode
+		intent := models.Intent{
+			Action: models.ActionInstall,
+			Target: models.TargetTeleportCluster,
+		}
+
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return err
+		}
+
+		rollbackMode := automa.ContinueOnError
+		if flagRollbackOnError {
+			rollbackMode = automa.RollbackOnError
+		}
+
+		inputs := &models.UserInputs[models.TeleportClusterInputs]{
+			Common: models.CommonInputs{
+				ExecutionOptions: models.WorkflowExecutionOptions{
+					ExecutionMode: execMode,
+					RollbackMode:  rollbackMode,
+				},
+			},
+			Custom: models.TeleportClusterInputs{
+				Version:    flagVersion,
+				ValuesFile: validatedValuesFile,
+			},
+		}
+
+		handler, err := teleportHandler.ForClusterAction(intent.Action)
+		if err != nil {
+			return err
+		}
 
 		logx.As().Debug().
-			Strs("args", args).
 			Str("valuesFile", validatedValuesFile).
 			Str("version", flagVersion).
-			Any("opts", opts).
 			Msg("Installing Teleport cluster agent")
 
-		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewTeleportClusterAgentInstallWorkflow(), opts)
-
-		common.RunWorkflowBuilder(cmd.Context(), wb)
+		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		})
 
 		logx.As().Info().Msg("Successfully installed Teleport cluster agent")
 		return nil

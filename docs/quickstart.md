@@ -324,6 +324,22 @@ sudo solo-provisioner teleport cluster install \
 |------|-------------|
 | `--version` | Teleport Helm chart version |
 
+#### Uninstall Node Agent
+
+Remove the Teleport node agent, stopping the systemd service and cleaning up binaries and configuration:
+
+```bash
+sudo solo-provisioner teleport node uninstall
+```
+
+#### Uninstall Cluster Agent
+
+Remove the Teleport Kubernetes cluster agent Helm release:
+
+```bash
+sudo solo-provisioner teleport cluster uninstall
+```
+
 ---
 
 ### Alloy Commands
@@ -669,6 +685,10 @@ kubectl get pods -n block-node
 ### Clean Teardown
 
 ```bash
+# Remove Teleport agents (if installed)
+sudo solo-provisioner teleport cluster uninstall
+sudo solo-provisioner teleport node uninstall
+
 # Remove Alloy monitoring
 sudo solo-provisioner alloy cluster uninstall
 
@@ -758,7 +778,9 @@ sudo solo-provisioner kube cluster uninstall
 
 # TELEPORT
 sudo solo-provisioner teleport node install    --token=<token> --proxy=<addr>
+sudo solo-provisioner teleport node uninstall
 sudo solo-provisioner teleport cluster install --values=<file>
+sudo solo-provisioner teleport cluster uninstall
 
 # ALLOY
 sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-name=<name>]

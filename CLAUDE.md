@@ -83,8 +83,10 @@ solo-provisioner
 ├── kube cluster         # Kubernetes cluster (install, uninstall)
 ├── block node           # Block node lifecycle (check, init, install, upgrade, reset, uninstall)
 ├── teleport             # Teleport integration
-│   ├── node install     #   Node-level teleport agent
-│   └── cluster install  #   Cluster-level teleport agent
+│   ├── node install     #   Install node-level teleport agent (SSH access)
+│   ├── node uninstall   #   Uninstall node-level teleport agent
+│   ├── cluster install  #   Install cluster-level teleport agent (kubectl access)
+│   └── cluster uninstall#   Uninstall cluster-level teleport agent
 ├── alloy cluster        # Alloy observability cluster (install, uninstall)
 └── version              # Print version information
 ```
@@ -101,15 +103,15 @@ Key packages:
 - `internal/state/` — Application state management (cluster state, software state, atomic writes)
 - `internal/blocknode/` — Block node provisioning logic and storage migrations
 - `internal/kube/` — Kubernetes client and admin operations
-- `internal/bll/` — Business logic layer with subpackages: `bll/blocknode/` (install, upgrade, reset, uninstall handlers), `bll/cluster/` (cluster install handler)
-- `internal/reality/` — Hardware detection/validation (machine, cluster, block node checkers)
+- `internal/bll/` — Business logic layer with subpackages: `bll/blocknode/` (install, upgrade, reset, uninstall handlers), `bll/cluster/` (cluster install handler), `bll/teleport/` (node and cluster agent install/uninstall handlers)
+- `internal/reality/` — Hardware detection/validation (machine, cluster, block node, teleport checkers)
 - `internal/alloy/` — Grafana Alloy observability configuration and rendering
 - `internal/doctor/` — Error handling, diagnostics, and styled CLI output
 - `internal/mount/` — Linux-only mount operations (build-tagged `linux`)
 - `internal/network/` — Network configuration
 - `internal/nio/` — Network I/O utilities (stdout/stderr wrappers)
 - `internal/paths/` — Path management utilities
-- `internal/rsl/` — Runtime specification layer (machine, cluster, block node runtimes)
+- `internal/rsl/` — Runtime specification layer (machine, cluster, block node, teleport runtimes)
 - `internal/sysctl/` — System control parameter management
 - `internal/templates/` — Embedded template files (alloy, block-node, cilium, crio, kubeadm, metallb, sysctl, teleport)
 - `internal/tomlx/` — TOML extension utilities

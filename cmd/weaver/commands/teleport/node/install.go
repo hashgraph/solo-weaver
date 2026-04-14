@@ -3,10 +3,9 @@
 package node
 
 import (
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/rsl"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -18,52 +17,53 @@ var installCmd = &cobra.Command{
 	Short: "Install Teleport node agent for SSH access",
 	Long:  "Install the Teleport node agent on the host machine for secure SSH access via Teleport",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Token is required for node agent installation
 		if flagNodeAgentToken == "" {
 			return errorx.IllegalArgument.New("--token flag is required for node agent installation")
 		}
 
-		// Apply Teleport configuration overrides
-		teleportOverrides := models.TeleportConfig{
+		config.OverrideTeleportConfig(models.TeleportConfig{
 			NodeAgentToken:     flagNodeAgentToken,
 			NodeAgentProxyAddr: flagNodeAgentProxyAddr,
-		}
-		config.OverrideTeleportConfig(teleportOverrides)
+		})
 
-		// Validate the configuration
 		cfg := config.Get()
 		if err := cfg.Teleport.ValidateNodeAgent(); err != nil {
 			return err
 		}
 
-		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
-		if err != nil {
-			return errorx.Decorate(err, "failed to determine execution mode")
+		if err := initializeDependencies(); err != nil {
+			return err
 		}
 
-		opts := workflows.DefaultWorkflowExecutionOptions()
-		opts.ExecutionMode = execMode
+		intent := models.Intent{
+			Action: models.ActionInstall,
+			Target: models.TargetTeleportNode,
+		}
 
-		logx.As().Debug().
-			Strs("args", args).
-			Str("proxyAddr", flagNodeAgentProxyAddr).
-			Any("opts", opts).
-			Msg("Installing Teleport node agent")
+		inputs := &models.UserInputs[models.TeleportNodeInputs]{
+			Common: models.CommonInputs{
+				ExecutionOptions: models.WorkflowExecutionOptions{
+					ExecutionMode: automa.StopOnError,
+					RollbackMode:  automa.ContinueOnError,
+				},
+			},
+			Custom: models.TeleportNodeInputs{
+				ProxyAddr: flagNodeAgentProxyAddr,
+			},
+		}
 
-		sr, err := common.Setup()
+		handler, err := teleportHandler.ForNodeAction(intent.Action)
 		if err != nil {
 			return err
 		}
 
-		mr, ok := sr.Runtime.MachineRuntime.(*rsl.MachineRuntimeResolver)
-		if !ok {
-			return errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", sr.Runtime.MachineRuntime)
-		}
+		logx.As().Debug().
+			Str("proxyAddr", flagNodeAgentProxyAddr).
+			Msg("Installing Teleport node agent")
 
-		wb := workflows.WithWorkflowExecutionMode(
-			workflows.NewTeleportNodeAgentInstallWorkflow(mr), opts)
-
-		common.RunWorkflowBuilder(cmd.Context(), wb)
+		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		})
 
 		logx.As().Info().Msg("Successfully installed Teleport node agent")
 		return nil

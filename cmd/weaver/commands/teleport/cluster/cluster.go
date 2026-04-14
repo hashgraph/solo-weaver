@@ -33,6 +33,7 @@ func init() {
 	clusterCmd.PersistentFlags().StringVar(&flagValuesFile, "values", "", "Path to Teleport Helm values file (required)")
 
 	clusterCmd.AddCommand(installCmd)
+	clusterCmd.AddCommand(uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

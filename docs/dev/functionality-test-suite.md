@@ -124,6 +124,12 @@
 - [ ] **TC-TP-NI-002** — `teleport node install` requires `--token` flag; missing flag returns an error.
 - [ ] **TC-TP-NI-003** — State manager is initialised and refreshed correctly before the workflow runs.
 
+### 4.4 Teleport Node Uninstall
+
+- [ ] **TC-TP-NU-001** — As a node operator, when I run `teleport node uninstall`, it detects the existing setup and uninstalls if required.
+- [ ] **TC-TP-NU-002** — When the node agent is not installed, `teleport node uninstall` skips gracefully without error.
+- [ ] **TC-TP-NU-003** — After uninstall, TeleportState is persisted to disk with `nodeAgent.installed: false`.
+
 ---
 
 ## 5. Effective Value Resolution — RSL (🧮)

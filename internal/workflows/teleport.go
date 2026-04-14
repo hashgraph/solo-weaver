@@ -19,3 +19,14 @@ func NewTeleportNodeAgentInstallWorkflow(mr software.MachineRuntime) *automa.Wor
 func NewTeleportClusterAgentInstallWorkflow() *automa.WorkflowBuilder {
 	return steps.SetupTeleportClusterAgent()
 }
+
+// NewTeleportClusterAgentUninstallWorkflow creates a workflow to uninstall the Teleport Kubernetes cluster agent.
+func NewTeleportClusterAgentUninstallWorkflow() *automa.WorkflowBuilder {
+	return steps.TeardownTeleportClusterAgent()
+}
+
+// NewTeleportNodeAgentUninstallWorkflow creates a workflow to uninstall the Teleport node agent.
+// mr provides software state needed by the installer.
+func NewTeleportNodeAgentUninstallWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
+	return steps.TeardownTeleportNodeAgent(mr)
+}

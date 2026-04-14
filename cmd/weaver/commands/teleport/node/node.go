@@ -20,16 +20,16 @@ var (
 		Use:   "node",
 		Short: "Manage Teleport node agent for SSH access",
 		Long:  "Manage Teleport node agent for SSH access to the host machine",
-		RunE:  common.DefaultRunE, // ensure we have a default action to make it runnable
+		RunE:  common.DefaultRunE,
 	}
 )
 
 func init() {
-	// Node agent configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagNodeAgentToken, "token", "", "Join token for Teleport node agent SSH access (required)")
 	nodeCmd.PersistentFlags().StringVar(&flagNodeAgentProxyAddr, "proxy", "", "Teleport proxy address (required, e.g., proxy.example.com or proxy.example.com:443)")
 
 	nodeCmd.AddCommand(installCmd)
+	nodeCmd.AddCommand(uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

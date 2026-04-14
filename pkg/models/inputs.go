@@ -13,6 +13,24 @@ type UserInputs[T any] struct {
 	Custom T
 }
 
+// Redacted returns a copy of UserInputs with sensitive fields masked.
+// If the Custom type implements Redactable, its Redacted() method is called.
+// Otherwise the inputs are returned as-is.
+func (u UserInputs[T]) Redacted() UserInputs[T] {
+	if r, ok := any(u.Custom).(Redactable[T]); ok {
+		u.Custom = r.Redacted()
+	} else if r, ok := any(&u.Custom).(Redactable[T]); ok {
+		u.Custom = r.Redacted()
+	}
+	return u
+}
+
+// Redactable is implemented by input types that contain sensitive fields
+// (e.g. tokens, passwords) to provide a safe-to-log copy.
+type Redactable[T any] interface {
+	Redacted() T
+}
+
 // WorkflowExecutionOptions defines options for setting up various components of the cluster
 type WorkflowExecutionOptions struct {
 	ExecutionMode automa.TypeMode
@@ -195,5 +213,41 @@ func (c *MachineInputs) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+type TeleportNodeInputs struct {
+	Token     string `json:"-" yaml:"-"`
+	ProxyAddr string
+}
+
+func (c *TeleportNodeInputs) Validate() error {
+	return nil
+}
+
+// Redacted returns a copy with the Token masked.
+func (c TeleportNodeInputs) Redacted() TeleportNodeInputs {
+	r := c
+	if r.Token != "" {
+		r.Token = "***"
+	}
+	return r
+}
+
+type TeleportClusterInputs struct {
+	Version    string
+	ValuesFile string
+}
+
+func (c *TeleportClusterInputs) Validate() error {
+	if c.ValuesFile != "" {
+		sanitizedPath, err := sanity.ValidateInputFile(c.ValuesFile)
+		if err != nil {
+			return err
+		}
+		if sanitizedPath != c.ValuesFile {
+			return errorx.IllegalArgument.New("invalid values file path: %s", c.ValuesFile)
+		}
+	}
 	return nil
 }

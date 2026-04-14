@@ -24,6 +24,7 @@ type Checkers struct {
 	Cluster   Checker[state.ClusterState]
 	Machine   Checker[state.MachineState]
 	BlockNode Checker[state.BlockNodeState]
+	Teleport  Checker[state.TeleportState]
 }
 
 // ---------------------------------------------------------------------------
@@ -114,9 +115,15 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create block node checker")
 	}
 
+	teleport, err := NewTeleportChecker(cc.sm, cc.newHelm, cc.clusterExists)
+	if err != nil {
+		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create teleport checker")
+	}
+
 	return Checkers{
 		Cluster:   cluster,
 		Machine:   machine,
 		BlockNode: blocknode,
+		Teleport:  teleport,
 	}, nil
 }

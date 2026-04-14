@@ -69,14 +69,20 @@ const (
 
 	// TargetOperator represents solo-operator component
 	TargetOperator TargetType = "operator"
+
+	// TargetTeleportNode represents the Teleport node agent (SSH access)
+	TargetTeleportNode TargetType = "teleport-node"
+
+	// TargetTeleportCluster represents the Teleport Kubernetes cluster agent
+	TargetTeleportCluster TargetType = "teleport-cluster"
 )
 
 // allowedOperations maps each action to the valid target types it can be performed on.
 var allowedOperations = map[ActionType][]TargetType{
 	ActionSetup:     {TargetMachine, TargetSystem, TargetCluster},
 	ActionReset:     {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
-	ActionInstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
-	ActionUninstall: {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionInstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
+	ActionUninstall: {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
 	ActionUpgrade:   {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionMigrate:   {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 }

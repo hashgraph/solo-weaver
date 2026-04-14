@@ -417,6 +417,195 @@ made by `WithIntent` are visible to the selector without rebuilding it.
 
 ---
 
+## `TeleportRuntimeResolver`
+
+The teleport runtime resolver follows the same per-field `EffectiveValue[T]`
+pattern as `BlockNodeRuntimeResolver`, managing six fields across two concerns:
+the **node agent** (host-level SSH access) and the **cluster agent** (kubectl
+access via Helm).
+
+### Fields
+
+| Field | Scope | Selector | Sources |
+|---|---|---|---|
+| `token` | Node agent | `DefaultSelector` | UserInput, Env, Config |
+| `proxyAddr` | Node agent | `DefaultSelector` | UserInput, Env, Config |
+| `version` | Cluster agent | `DefaultSelector` | Reality, State, UserInput, Env, Config, Default |
+| `valuesFile` | Cluster agent | `DefaultSelector` | UserInput, Env, Config |
+| `namespace` | Cluster agent | `DefaultSelector` | Reality, State, Default |
+| `releaseName` | Cluster agent | `DefaultSelector` | Reality, State, Default |
+
+All fields use `DefaultSelector[string]` — there are no intent-aware or
+validation selectors, unlike blocknode's `chartVersionResolver` and
+`validatedStringResolver`.
+
+### Resolution Chains
+
+```
+Token:       UserInput (--token)  →  Env  →  Config  →  Zero
+ProxyAddr:   UserInput (--proxy-addr)  →  Env  →  Config  →  Zero
+Version:     Reality  →  State  →  UserInput  →  Env  →  Config  →  Default (deps.TELEPORT_VERSION)  →  Zero
+ValuesFile:  UserInput (--values-file)  →  Env  →  Config  →  Zero
+Namespace:   Reality  →  State  →  Default (deps.TELEPORT_NAMESPACE)  →  Zero
+ReleaseName: Reality  →  State  →  Default (deps.TELEPORT_RELEASE)  →  Zero
+```
+
+### Design: Token and ProxyAddr Never Enter State/Reality
+
+The node agent token is a sensitive join credential.  It must not be persisted
+to `state.yaml` or returned by reality checkers.  Similarly, `proxyAddr` is a
+configuration-time value with no representation in the installed agent's
+observable state.
+
+Their resolution chain is therefore shorter:
+
+```
+UserInput → Env → Config → Zero
+```
+
+If none of those sources provide a value, the field resolves to an empty string
+and validation at the command layer (`--token flag is required`) catches it.
+
+### Design: Two Input Types, One Resolver
+
+The `Resolver[S, I]` interface is typed as `Resolver[TeleportState,
+TeleportNodeInputs]`.  This means the generic `WithUserInputs(I)` method
+handles node agent fields (token, proxyAddr).
+
+Cluster agent inputs (`TeleportClusterInputs`: version, valuesFile) are
+registered via the concrete method:
+
+```go
+func (t *TeleportRuntimeResolver) WithClusterInputs(inputs models.TeleportClusterInputs) *TeleportRuntimeResolver
+```
+
+Cluster handlers must type-assert to `*TeleportRuntimeResolver` to access it.
+This is consistent with how blocknode handlers type-assert to
+`*BlockNodeRuntimeResolver`.
+
+### State Sources from Cluster Agent
+
+When the teleport cluster agent is installed (detected via Helm by the reality
+checker), the deployed state populates `StrategyState` / `StrategyReality` for
+cluster fields:
+
+```go
+// setStateSources — called from WithState and RefreshState
+if st.ClusterAgent.Installed {
+    version     ← st.ClusterAgent.ChartVersion
+    namespace   ← st.ClusterAgent.Namespace
+    releaseName ← st.ClusterAgent.Release
+}
+```
+
+When not installed, those sources are cleared so resolution falls through to
+lower-priority layers.
+
+### Builder API
+
+| Method | Source registered | Notes |
+|---|---|---|
+| `WithDefaults(cfg)` | `StrategyDefault` | version from `deps.TELEPORT_VERSION`; namespace/releaseName seeded in constructor |
+| `WithConfig(cfg)` | `StrategyConfig` | all 4 fields from `cfg.Teleport` |
+| `WithEnv(cfg)` | `StrategyEnv` | all 4 fields from env vars |
+| `WithUserInputs(inputs)` | `StrategyUserInput` | token, proxyAddr (node agent) |
+| `WithClusterInputs(inputs)` | `StrategyUserInput` | version, valuesFile (cluster agent) |
+| `WithState(st)` | `StrategyState` | cluster fields only (see above) |
+| `WithIntent(intent)` | (no source) | stored for future use |
+
+### Initialization Order
+
+```go
+// In NewTeleportRuntimeResolver:
+tr.namespace.SetSource(StrategyDefault, deps.TELEPORT_NAMESPACE)
+tr.releaseName.SetSource(StrategyDefault, deps.TELEPORT_RELEASE)
+tr.WithConfig(cfg)           // StrategyConfig
+tr.WithState(teleportState)  // StrategyState (cleared if not deployed)
+
+// Called from cmd/weaver/commands/teleport/{node,cluster}/init.go:
+runtime.TeleportRuntime.WithDefaults(config.DefaultsConfig()) // StrategyDefault (version)
+runtime.TeleportRuntime.WithEnv(config.EnvConfig())           // StrategyEnv
+```
+
+### Environment Variables
+
+| Field | Env var |
+|---|---|
+| Version | `SOLO_PROVISIONER_TELEPORT_VERSION` |
+| ValuesFile | `SOLO_PROVISIONER_TELEPORT_VALUESFILE` |
+| NodeAgentToken | `SOLO_PROVISIONER_TELEPORT_NODEAGENTTOKEN` |
+| NodeAgentProxyAddr | `SOLO_PROVISIONER_TELEPORT_NODEAGENTPROXYADDR` |
+
+### End-to-End: `token` during `teleport node install`
+
+```
+CLI parses --token my-token --proxy-addr proxy.example.com:443
+         │
+         ▼
+cmd/teleport/node/init.go
+  NewTeleportRuntimeResolver(cfg, state, checker, interval)
+    └── namespace/releaseName seeded from deps constants (StrategyDefault)
+    └── WithConfig(cfg)          → StrategyConfig for all 4 config fields
+    └── WithState(state)         → cluster fields if installed; cleared if not
+  WithDefaults(DefaultsConfig()) → StrategyDefault for version
+  WithEnv(EnvConfig())           → StrategyEnv for all 4 env vars
+         │
+         ▼
+bll/teleport.Handler.HandleIntent
+  Step 1: validate intent and inputs
+  Step 2: runtime.Refresh(ctx, true)  (TeleportRuntime.RefreshState)
+  Step 3: PrepareEffectiveInputs
+    └── resolveTeleportNodeEffectiveInputs(runtime, intent, inputs)
+          runtime.WithIntent(intent).WithUserInputs(inputs.Custom)
+            └── StrategyUserInput: token="my-token", proxyAddr="proxy.example.com:443"
+          runtime.Token() → Resolve():
+            Reality?    absent (token never stored) → skip
+            State?      absent (token never stored) → skip
+            UserInput?  "my-token" → WIN
+          runtime.ProxyAddr() → Resolve():
+            UserInput?  "proxy.example.com:443" → WIN
+         │
+         ▼
+Workflow steps use resolved token and proxyAddr for agent configuration.
+```
+
+### End-to-End: `version` during `teleport cluster install`
+
+```
+CLI does NOT pass --version (relies on config/defaults)
+         │
+         ▼
+cmd/teleport/cluster/init.go
+  NewTeleportRuntimeResolver(cfg, state, checker, interval)
+    └── WithConfig(cfg) → StrategyConfig: version="" (not in config.yaml) → cleared
+    └── WithState(state) → cluster not installed → cleared
+  WithDefaults(DefaultsConfig()) → StrategyDefault: version="18.6.4"
+  WithEnv(EnvConfig()) → StrategyEnv: version="" → cleared
+         │
+         ▼
+bll/teleport.ClusterInstallHandler.PrepareEffectiveInputs
+  └── resolveTeleportClusterEffectiveInputs(runtime, intent, inputs)
+        runtime.WithClusterInputs(inputs.Custom)
+          └── StrategyUserInput: version="" → cleared
+        runtime.Version() → Resolve():
+          Reality?    absent → skip
+          State?      absent → skip
+          UserInput?  absent → skip
+          Env?        absent → skip
+          Config?     absent → skip
+          Default?    "18.6.4" → WIN
+         │
+         ▼
+Workflow steps deploy Helm chart version 18.6.4.
+
+After workflow completes:
+  runtime.Refresh(ctx, force=true) ← reality re-queried
+  └── StrategyReality: version="18.6.4", namespace="teleport-agent", release="teleport-agent"
+  Next resolution of Version() → Reality wins (18.6.4)
+```
+
+---
+
 ## Adding a New Scalar Field
 
 1. **`pkg/models`** — add to `BlockNodeConfig` and `BlockNodeInputs`.
