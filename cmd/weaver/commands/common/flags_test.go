@@ -255,6 +255,15 @@ func TestGetExecutionMode_MutuallyExclusiveFlags_ReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestFlagStopOnError_DefaultIsFalse guards against the default being flipped back to
+// true. FlagStopOnError must default to false so that GetExecutionMode does not see
+// multiple flags as "set" when the user only passes --continue-on-error or
+// --rollback-on-error. The stop-on-error behaviour when no flag is explicitly provided
+// is handled by GetExecutionMode's else-branch, not by this flag's default value.
+func TestFlagStopOnError_DefaultIsFalse(t *testing.T) {
+	require.False(t, FlagStopOnError().Default)
+}
+
 func TestFlagCloneIndependent(t *testing.T) {
 	orig := FlagConfig()
 	clone := orig.Clone()
@@ -373,4 +382,28 @@ func TestDetectShortNameCollisions_PersistentOnNonRoot(t *testing.T) {
 
 	found := DetectShortNameCollisions(root)
 	require.True(t, found, "should detect collision between persistent and local flags on non-root command")
+}
+
+// TestDetectShortNameCollisions_NoPersistentDoubleCount verifies that a persistent
+// flag with a shortname is NOT reported as a collision with itself after
+// MarkFlagsMutuallyExclusive is called. Cobra's MarkFlagsMutuallyExclusive calls
+// mergePersistentFlags() internally, which merges own persistent flags into
+// cmd.Flags(). Without the guard in DetectShortNameCollisions the same flag would
+// be visited twice (once via cmd.Flags(), once via cmd.PersistentFlags()) producing
+// a false shortname collision.
+func TestDetectShortNameCollisions_NoPersistentDoubleCount(t *testing.T) {
+	root := &cobra.Command{Use: "root"}
+	child := &cobra.Command{Use: "child"}
+	root.AddCommand(child)
+
+	var v bool
+	fp := FlagDefinition[bool]{Name: "myflag", ShortName: "m", Description: "a flag", Default: false}
+	fp.SetVarP(child, &v, false)
+
+	// MarkFlagsMutuallyExclusive internally calls mergePersistentFlags(), causing
+	// the persistent flag to appear in both child.Flags() and child.PersistentFlags().
+	child.MarkFlagsMutuallyExclusive("myflag")
+
+	found := DetectShortNameCollisions(root)
+	require.False(t, found, "persistent flag merged into cmd.Flags() must not be counted as a shortname collision with itself")
 }

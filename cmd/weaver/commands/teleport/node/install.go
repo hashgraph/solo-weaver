@@ -40,11 +40,21 @@ var installCmd = &cobra.Command{
 			Target: models.TargetTeleportNode,
 		}
 
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return err
+		}
+
+		rollbackMode := automa.ContinueOnError
+		if flagRollbackOnError {
+			rollbackMode = automa.RollbackOnError
+		}
+
 		inputs := &models.UserInputs[models.TeleportNodeInputs]{
 			Common: models.CommonInputs{
 				ExecutionOptions: models.WorkflowExecutionOptions{
-					ExecutionMode: automa.StopOnError,
-					RollbackMode:  automa.ContinueOnError,
+					ExecutionMode: execMode,
+					RollbackMode:  rollbackMode,
 				},
 			},
 			Custom: models.TeleportNodeInputs{
@@ -74,4 +84,9 @@ func init() {
 	common.FlagStopOnError().SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError().SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError().SetVarP(installCmd, &flagContinueOnError, false)
+	installCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
 }

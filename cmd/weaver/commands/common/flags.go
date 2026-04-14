@@ -375,8 +375,27 @@ func DetectShortNameCollisions(root *cobra.Command) bool {
 		// Collect this command's own flags (local + persistent)
 		own := map[string]string{}
 
+		// Build a set of own persistent flag names first.
+		// cobra's MarkFlagsMutuallyExclusive calls mergePersistentFlags() internally,
+		// which merges a command's own persistent flags into cmd.Flags(). Without this
+		// guard, a persistent flag (e.g. --node-type/-n) would be visited twice —
+		// once by cmd.Flags() and once by cmd.PersistentFlags() — producing a false
+		// shortname collision.
+		// NOTE: do NOT use LocalNonPersistentFlags() here — it calls LocalFlags() →
+		// mergePersistentFlags(), which panics when a parent persistent flag has the
+		// same shortname as a child local flag (the exact collision we want to detect).
+		persistentNames := map[string]struct{}{}
+		cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+			persistentNames[f.Name] = struct{}{}
+		})
+
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
 			if f.Shorthand == "" {
+				return
+			}
+			// Skip flags covered by the PersistentFlags pass below to avoid
+			// double-counting after mergePersistentFlags() has been called.
+			if _, isPersistent := persistentNames[f.Name]; isPersistent {
 				return
 			}
 			key := cmd.Name() + ":" + f.Name

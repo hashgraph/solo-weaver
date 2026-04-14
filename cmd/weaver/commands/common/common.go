@@ -61,8 +61,8 @@ func FlagStopOnError() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
 		Name:        "stop-on-error",
 		ShortName:   "",
-		Description: "Stop execution on first error",
-		Default:     true,
+		Description: "Stop execution on first error (default behaviour when no execution-mode flag is set)",
+		Default:     false,
 	}
 }
 

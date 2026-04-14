@@ -82,4 +82,9 @@ func init() {
 	common.FlagStopOnError().SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError().SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError().SetVarP(installCmd, &flagContinueOnError, false)
+	installCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
 }
