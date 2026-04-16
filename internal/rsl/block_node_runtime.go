@@ -199,6 +199,25 @@ func (r *storageResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Va
 	return automa.NewEffectiveValue(sv, strategy)
 }
 
+// retentionResolver prioritises operator intent (UserInput, Config) over
+// deployed values (Reality, State) so that operators can change retention
+// thresholds on subsequent install/upgrade runs. Empty values are silently
+// skipped — retention thresholds are not required.
+type retentionResolver struct{}
+
+func (r *retentionResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Value[string]) (*automa.EffectiveValue[string], error) {
+	for _, st := range []automa.EffectiveStrategy{
+		StrategyUserInput, StrategyEnv, StrategyConfig,
+		StrategyReality, StrategyState,
+		StrategyDefault,
+	} {
+		if v, ok := sources[st]; ok && v.Val() != "" {
+			return automa.NewEffectiveValue(v, st)
+		}
+	}
+	return automa.NewEffective("", StrategyZero)
+}
+
 // ── BlockNodeRuntimeResolver ──────────────────────────────────────────────────
 
 // BlockNodeRuntimeResolver manages the current state of block-node related information.
@@ -215,18 +234,20 @@ func (r *storageResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Va
 //	StrategyZero      – zero value (ultimate fallback)
 type BlockNodeRuntimeResolver struct {
 	mu              sync.Mutex
-	state           *state.BlockNodeState // raw snapshot for CurrentState() and staleness checks
+	state           *state.BlockNodeState
 	refreshInterval time.Duration
 	realityChecker  reality.Checker[state.BlockNodeState]
 	intent          *models.Intent
 
 	// Per-field effective values — sources are kept up-to-date by With* / RefreshState.
-	namespace    *EffectiveValue[string]
-	releaseName  *EffectiveValue[string]
-	chartName    *EffectiveValue[string]
-	chartRef     *EffectiveValue[string]
-	chartVersion *EffectiveValue[string]
-	storage      *EffectiveValue[models.BlockNodeStorage]
+	namespace         *EffectiveValue[string]
+	releaseName       *EffectiveValue[string]
+	chartName         *EffectiveValue[string]
+	chartRef          *EffectiveValue[string]
+	chartVersion      *EffectiveValue[string]
+	storage           *EffectiveValue[models.BlockNodeStorage]
+	historicRetention *EffectiveValue[string]
+	recentRetention   *EffectiveValue[string]
 }
 
 // ── Builder / source-setter methods ──────────────────────────────────────────
@@ -250,6 +271,8 @@ func (b *BlockNodeRuntimeResolver) WithUserInputs(inputs models.BlockNodeInputs)
 	setOrClearString(b.chartName, StrategyUserInput, inputs.ChartName)
 	setOrClearString(b.chartRef, StrategyUserInput, inputs.Chart)
 	setOrClearString(b.chartVersion, StrategyUserInput, inputs.ChartVersion)
+	setOrClearString(b.historicRetention, StrategyUserInput, inputs.HistoricRetention)
+	setOrClearString(b.recentRetention, StrategyUserInput, inputs.RecentRetention)
 
 	if err := inputs.Storage.Validate(); err == nil {
 		_ = b.storage.SetSource(StrategyUserInput, inputs.Storage)
@@ -273,6 +296,8 @@ func (b *BlockNodeRuntimeResolver) WithConfig(cfg models.Config) Resolver[state.
 	setOrClearString(b.chartName, StrategyConfig, cfg.BlockNode.ChartName)
 	setOrClearString(b.chartRef, StrategyConfig, cfg.BlockNode.Chart)
 	setOrClearString(b.chartVersion, StrategyConfig, cfg.BlockNode.ChartVersion)
+	setOrClearString(b.historicRetention, StrategyConfig, cfg.BlockNode.HistoricRetention)
+	setOrClearString(b.recentRetention, StrategyConfig, cfg.BlockNode.RecentRetention)
 
 	configStorage := cfg.BlockNode.Storage
 	if !configStorage.IsEmpty() {
@@ -307,6 +332,8 @@ func (b *BlockNodeRuntimeResolver) WithDefaults(cfg models.Config) Resolver[stat
 	setOrClearString(b.chartName, StrategyDefault, cfg.BlockNode.ChartName)
 	setOrClearString(b.chartRef, StrategyDefault, cfg.BlockNode.Chart)
 	setOrClearString(b.chartVersion, StrategyDefault, cfg.BlockNode.ChartVersion)
+	setOrClearString(b.historicRetention, StrategyDefault, cfg.BlockNode.HistoricRetention)
+	setOrClearString(b.recentRetention, StrategyDefault, cfg.BlockNode.RecentRetention)
 
 	defaultStorage := cfg.BlockNode.Storage
 	if !defaultStorage.IsEmpty() {
@@ -335,6 +362,8 @@ func (b *BlockNodeRuntimeResolver) WithEnv(cfg models.Config) Resolver[state.Blo
 	setOrClearString(b.chartName, StrategyEnv, cfg.BlockNode.ChartName)
 	setOrClearString(b.chartRef, StrategyEnv, cfg.BlockNode.Chart)
 	setOrClearString(b.chartVersion, StrategyEnv, cfg.BlockNode.ChartVersion)
+	setOrClearString(b.historicRetention, StrategyEnv, cfg.BlockNode.HistoricRetention)
+	setOrClearString(b.recentRetention, StrategyEnv, cfg.BlockNode.RecentRetention)
 
 	envStorage := cfg.BlockNode.Storage
 	if !envStorage.IsEmpty() {
@@ -357,6 +386,8 @@ func (b *BlockNodeRuntimeResolver) setStateSources(st state.BlockNodeState, stra
 		b.chartRef.ClearSource(strategy)
 		b.chartVersion.ClearSource(strategy)
 		b.storage.ClearSource(strategy)
+		b.historicRetention.ClearSource(strategy)
+		b.recentRetention.ClearSource(strategy)
 		return
 	}
 
@@ -366,6 +397,8 @@ func (b *BlockNodeRuntimeResolver) setStateSources(st state.BlockNodeState, stra
 	_ = b.chartRef.SetSource(strategy, st.ReleaseInfo.ChartRef)
 	_ = b.chartVersion.SetSource(strategy, st.ReleaseInfo.ChartVersion)
 	_ = b.storage.SetSource(strategy, st.Storage)
+	setOrClearString(b.historicRetention, strategy, st.HistoricRetention)
+	setOrClearString(b.recentRetention, strategy, st.RecentRetention)
 }
 
 // ── Field accessor methods ────────────────────────────────────────────────────
@@ -413,6 +446,22 @@ func (b *BlockNodeRuntimeResolver) Storage() (*EffectiveValue[models.BlockNodeSt
 		return nil, err
 	}
 	return b.storage, nil
+}
+
+// HistoricRetention returns the effective historic block retention threshold resolver.
+func (b *BlockNodeRuntimeResolver) HistoricRetention() (*EffectiveValue[string], error) {
+	if _, err := b.historicRetention.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.historicRetention, nil
+}
+
+// RecentRetention returns the effective recent block retention threshold resolver.
+func (b *BlockNodeRuntimeResolver) RecentRetention() (*EffectiveValue[string], error) {
+	if _, err := b.recentRetention.Resolve(); err != nil {
+		return nil, err
+	}
+	return b.recentRetention, nil
 }
 
 // ── State refresh ─────────────────────────────────────────────────────────────
@@ -507,6 +556,16 @@ func NewBlockNodeRuntimeResolver(
 	br.storage, err = NewEffectiveValue[models.BlockNodeStorage](&storageResolver{})
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to create storage resolver")
+	}
+
+	br.historicRetention, err = NewEffectiveValue[string](&retentionResolver{})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create historic retention resolver")
+	}
+
+	br.recentRetention, err = NewEffectiveValue[string](&retentionResolver{})
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to create recent retention resolver")
 	}
 
 	// initialize values from different sources that are available now

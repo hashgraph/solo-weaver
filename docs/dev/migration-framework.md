@@ -46,7 +46,7 @@ internal/workflows/
 
 | Scope | Constant | When it runs |
 |---|---|---|
-| `"startup"` | `migration.ScopeStartup` | Before every CLI command, in `RunGlobalChecks` |
+| `"startup"` | `migration.ScopeStartup` | Before every CLI command, in `RunPersistentPreRun` |
 | `"block-node"` | `blocknode.ComponentBlockNode` | Explicitly during block node upgrade workflow |
 
 ## Core Components
@@ -209,7 +209,7 @@ No `InitMigrations()` to update. The migration runs automatically on the next CL
 
 ## Startup Migration Runner
 
-`RunStartupMigrations()` (called from `RunGlobalChecks` before every command) drives a single ordered pass over all `"startup"`-scoped migrations:
+`RunStartupMigrations()` (called from `RunPersistentPreRun` before every command) drives a single ordered pass over all `"startup"`-scoped migrations:
 
 1. Reads the provisioner version last written to disk via `state.ReadProvisionerVersionFromDisk()` — this is the *installed* CLI version.
 2. Gets the *current* CLI version from `version.Number()`.

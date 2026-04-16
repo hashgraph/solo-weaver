@@ -62,7 +62,7 @@
 - [ ] **TC-BN-INS-004** — `--force` flag bypasses the "already installed" guard and re-runs the install workflow.
 - [ ] **TC-BN-INS-005** — After a successful install, the state is flushed to disk with `BlockNodeState.ReleaseInfo.Status = deployed`.
 - [ ] **TC-BN-INS-006** — After a successful install, `ActionHistory` is persisted with `intent.action = install`, `intent.target = blocknode`.
-- [ ] **TC-BN-INS-007** — The `injectChartRef()` callback correctly writes `ChartRef` into `BlockNodeState.ReleaseInfo.ChartRef` after workflow execution.
+- [ ] **TC-BN-INS-007** — The `patchBlockNodeChartRef()` callback correctly writes `ChartRef` into `BlockNodeState.ReleaseInfo.ChartRef` after workflow execution. Profile is persisted by `BaseHandler.FlushState` via `ProfileExtractor`.
 - [ ] **TC-BN-INS-008** — Storage `basePath` is resolved from config when not provided by the user.
 
 ### 2.2 Block Node Upgrade
@@ -277,12 +277,17 @@
 - [ ] **TC-BLL-CLH-002** — `ForAction(ActionInstall)` returns the install handler.
 - [ ] **TC-BLL-CLH-003** — `ForAction()` returns an error for unsupported actions (upgrade, uninstall not yet implemented).
 
-### 8.4 ChartRef Injection Callback
+### 8.4 State Patching Callback
 
-- [ ] **TC-BLL-CR-001** — `injectChartRef()` sets `ChartRef` in `BlockNodeState.ReleaseInfo` when the release is deployed and user provided a chart reference.
-- [ ] **TC-BLL-CR-002** — `injectChartRef()` is a no-op when the release is not deployed.
-- [ ] **TC-BLL-CR-003** — `injectChartRef()` is a no-op when the user did not provide a chart reference.
-- [ ] **TC-BLL-CR-004** — `injectChartRef()` also injects storage `basePath` if provided.
+- [ ] **TC-BLL-CR-001** — `patchBlockNodeChartRef()` sets `ChartRef` in `BlockNodeState.ReleaseInfo` when the release is deployed and user provided a chart reference.
+- [ ] **TC-BLL-CR-002** — `patchBlockNodeChartRef()` is a no-op for `ChartRef` when the release is not deployed.
+- [ ] **TC-BLL-CR-003** — `patchBlockNodeChartRef()` is a no-op for `ChartRef` when the user did not provide a chart reference.
+
+### 8.5 Profile Persistence (BaseHandler.FlushState)
+
+- [ ] **TC-BLL-PF-001** — `BaseHandler.FlushState` persists the profile into `MachineState.Profile` when `ProfileExtractor` returns a non-empty string.
+- [ ] **TC-BLL-PF-002** — `BaseHandler.FlushState` does not overwrite `MachineState.Profile` when `ProfileExtractor` returns an empty string.
+- [ ] **TC-BLL-PF-003** — `BaseHandler.FlushState` does not write a profile when `ProfileExtractor` is nil (e.g. teleport handlers).
 
 ---
 

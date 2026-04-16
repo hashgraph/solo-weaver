@@ -699,6 +699,13 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 		}
 	}
 
+	// Apply effective retention thresholds (resolved from CLI flags, config, state, or defaults)
+	// into blockNode.config when non-empty.
+	valuesContent, err = m.injectRetentionConfig(valuesContent)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to inject retention config into values file")
+	}
+
 	// Write temporary copy to weaver's temp directory
 	valuesFilePath := path.Join(models.Paths().TempDir, "block-node-values.yaml")
 	if err = oslib.WriteFile(valuesFilePath, valuesContent, models.DefaultFilePerm); err != nil {
@@ -788,6 +795,60 @@ func (m *Manager) injectPersistenceOverrides(valuesContent []byte) ([]byte, erro
 	result, err := yaml.Marshal(vals)
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to marshal values YAML after persistence override")
+	}
+
+	return result, nil
+}
+
+// injectRetentionConfig injects FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD and
+// FILES_RECENT_BLOCK_RETENTION_THRESHOLD into the blockNode.config map when the
+// effective retention values are non-empty (resolved from CLI flags, config file,
+// persisted state, or defaults). If both values are empty, the values content is
+// returned unchanged.
+func (m *Manager) injectRetentionConfig(valuesContent []byte) ([]byte, error) {
+	historic := m.blockNodeInputs.HistoricRetention
+	recent := m.blockNodeInputs.RecentRetention
+
+	// Nothing to inject — return as-is.
+	if historic == "" && recent == "" {
+		return valuesContent, nil
+	}
+
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for retention config injection")
+	}
+
+	// Navigate to blockNode.config, creating the path if needed.
+	blockNode, ok := vals["blockNode"].(map[string]interface{})
+	if !ok {
+		blockNode = make(map[string]interface{})
+		vals["blockNode"] = blockNode
+	}
+
+	configMap, ok := blockNode["config"].(map[string]interface{})
+	if !ok {
+		configMap = make(map[string]interface{})
+		blockNode["config"] = configMap
+	}
+
+	if historic != "" {
+		logx.As().Info().
+			Str("FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD", historic).
+			Msg("Applying historic block retention threshold to block node config")
+		configMap["FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD"] = historic
+	}
+
+	if recent != "" {
+		logx.As().Info().
+			Str("FILES_RECENT_BLOCK_RETENTION_THRESHOLD", recent).
+			Msg("Applying recent block retention threshold to block node config")
+		configMap["FILES_RECENT_BLOCK_RETENTION_THRESHOLD"] = recent
+	}
+
+	result, err := yaml.Marshal(vals)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to marshal values YAML after retention config injection")
 	}
 
 	return result, nil

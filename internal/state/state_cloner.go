@@ -86,6 +86,7 @@ func (h *HelmReleaseInfo) Clone() (*HelmReleaseInfo, error) {
 // Clone creates a deep copy of MachineState
 func (m *MachineState) Clone() (*MachineState, error) {
 	clone := MachineState{
+		Profile:  m.Profile,
 		LastSync: m.LastSync,
 	}
 	if m.Software != nil {

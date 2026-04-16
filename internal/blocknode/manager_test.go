@@ -678,3 +678,144 @@ func TestGetStoragePaths_V0281_IncludesBothOptionalStorages(t *testing.T) {
 	assert.Equal(t, "/mnt/base/verification", optionalPaths[0])
 	assert.Equal(t, "/mnt/base/plugins", optionalPaths[1])
 }
+
+// TestInjectRetentionConfig_BothValues tests that both retention thresholds are injected.
+func TestInjectRetentionConfig_BothValues(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			HistoricRetention: "500000",
+			RecentRetention:   "48000",
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config:
+    BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"
+`)
+
+	result, err := manager.injectRetentionConfig(input)
+	require.NoError(t, err)
+
+	resultStr := string(result)
+	assert.Contains(t, resultStr, "FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "500000")
+	assert.Contains(t, resultStr, "FILES_RECENT_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "48000")
+	// Original key should be preserved
+	assert.Contains(t, resultStr, "BLOCK_NODE_EARLIEST_MANAGED_BLOCK")
+}
+
+// TestInjectRetentionConfig_OnlyHistoric tests that only historic retention is injected.
+func TestInjectRetentionConfig_OnlyHistoric(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			HistoricRetention: "1000000",
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config:
+    BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"
+`)
+
+	result, err := manager.injectRetentionConfig(input)
+	require.NoError(t, err)
+
+	resultStr := string(result)
+	assert.Contains(t, resultStr, "FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "1000000")
+	assert.NotContains(t, resultStr, "FILES_RECENT_BLOCK_RETENTION_THRESHOLD")
+}
+
+// TestInjectRetentionConfig_OnlyRecent tests that only recent retention is injected.
+func TestInjectRetentionConfig_OnlyRecent(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			RecentRetention: "48000",
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config:
+    BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"
+`)
+
+	result, err := manager.injectRetentionConfig(input)
+	require.NoError(t, err)
+
+	resultStr := string(result)
+	assert.NotContains(t, resultStr, "FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "FILES_RECENT_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "48000")
+}
+
+// TestInjectRetentionConfig_NoRetention tests that nothing is injected when no retention is set.
+func TestInjectRetentionConfig_NoRetention(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{},
+		logger:          testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config:
+    BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"
+`)
+
+	result, err := manager.injectRetentionConfig(input)
+	require.NoError(t, err)
+
+	// Should be returned as-is (byte-identical)
+	assert.Equal(t, input, result)
+}
+
+// TestInjectRetentionConfig_CreatesConfigSection tests injection when blockNode.config is absent.
+func TestInjectRetentionConfig_CreatesConfigSection(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			HistoricRetention: "0",
+			RecentRetention:   "96000",
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: LoadBalancer
+`)
+
+	result, err := manager.injectRetentionConfig(input)
+	require.NoError(t, err)
+
+	resultStr := string(result)
+	assert.Contains(t, resultStr, "FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "FILES_RECENT_BLOCK_RETENTION_THRESHOLD")
+	assert.Contains(t, resultStr, "blockNode")
+}
+
+// TestInjectRetentionConfig_OverridesExistingValues tests that existing retention values are overridden.
+func TestInjectRetentionConfig_OverridesExistingValues(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			HistoricRetention: "250000",
+			RecentRetention:   "50000",
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config:
+    FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD: "0"
+    FILES_RECENT_BLOCK_RETENTION_THRESHOLD: "96000"
+`)
+
+	result, err := manager.injectRetentionConfig(input)
+	require.NoError(t, err)
+
+	resultStr := string(result)
+	assert.Contains(t, resultStr, "250000")
+	assert.Contains(t, resultStr, "50000")
+	assert.NotContains(t, resultStr, `"0"`)
+	assert.NotContains(t, resultStr, `"96000"`)
+}

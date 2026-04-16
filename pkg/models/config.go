@@ -223,12 +223,14 @@ func (c Config) Validate() error {
 
 // BlockNodeConfig represents the `blockNode` configuration block.
 type BlockNodeConfig struct {
-	Namespace    string           `yaml:"namespace" json:"namespace"`
-	Release      string           `yaml:"release" json:"release"`
-	Chart        string           `yaml:"chart" json:"chart"`
-	ChartVersion string           `yaml:"version" json:"version" mapstructure:"version"`
-	ChartName    string           `yaml:"chartName" json:"chartName"`
-	Storage      BlockNodeStorage `yaml:"storage" json:"storage"`
+	Namespace         string           `yaml:"namespace" json:"namespace"`
+	Release           string           `yaml:"release" json:"release"`
+	Chart             string           `yaml:"chart" json:"chart"`
+	ChartVersion      string           `yaml:"version" json:"version" mapstructure:"version"`
+	ChartName         string           `yaml:"chartName" json:"chartName"`
+	Storage           BlockNodeStorage `yaml:"storage" json:"storage"`
+	HistoricRetention string           `yaml:"historicRetention,omitempty" json:"historicRetention,omitempty"`
+	RecentRetention   string           `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
 }
 
 // AlloyRemoteConfig represents a single remote endpoint for metrics or logs.

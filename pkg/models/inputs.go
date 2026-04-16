@@ -3,6 +3,8 @@
 package models
 
 import (
+	"strconv"
+
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -43,6 +45,15 @@ type CommonInputs struct {
 	ExecutionOptions WorkflowExecutionOptions
 }
 
+// Default retention thresholds for block node plugins.
+// These match the Hiero Block Node defaults:
+//   - Historic: 0 means no/unlimited retention (keep all historic blocks)
+//   - Recent: 96000 blocks preserved on disk before deleting older files
+const (
+	DefaultHistoricRetention = "0"
+	DefaultRecentRetention   = "96000"
+)
+
 type BlockNodeInputs struct {
 	Profile            string
 	Namespace          string
@@ -55,6 +66,8 @@ type BlockNodeInputs struct {
 	ReuseValues        bool
 	ResetStorage       bool
 	SkipHardwareChecks bool
+	HistoricRetention  string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
+	RecentRetention    string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
 }
 
 type ClusterInputs struct {
@@ -122,8 +135,8 @@ func (c *BlockNodeInputs) Validate() error {
 			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)
 		}
 
-		// check profile must be one of AllProfiles()
-		if sanity.Contains[string](c.Profile, AllProfiles()) == false {
+		// check profile must be one of SupportedProfiles()
+		if sanity.Contains[string](c.Profile, SupportedProfiles()) == false {
 			return errorx.IllegalArgument.New("invalid profile: %s", c.Profile)
 		}
 	}
@@ -183,6 +196,20 @@ func (c *BlockNodeInputs) Validate() error {
 		}
 	}
 
+	// Validate retention thresholds (must be non-negative integers when set)
+	if c.HistoricRetention != "" {
+		n, err := strconv.ParseInt(c.HistoricRetention, 10, 64)
+		if err != nil || n < 0 {
+			return errorx.IllegalArgument.New("invalid historic retention threshold: %s (must be a non-negative integer)", c.HistoricRetention)
+		}
+	}
+	if c.RecentRetention != "" {
+		n, err := strconv.ParseInt(c.RecentRetention, 10, 64)
+		if err != nil || n < 0 {
+			return errorx.IllegalArgument.New("invalid recent retention threshold: %s (must be a non-negative integer)", c.RecentRetention)
+		}
+	}
+
 	return nil
 }
 
@@ -192,8 +219,8 @@ func (c *ClusterInputs) Validate() error {
 			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)
 		}
 
-		// check profile must be one of AllProfiles()
-		if sanity.Contains[string](c.Profile, AllProfiles()) == false {
+		// check profile must be one of SupportedProfiles()
+		if sanity.Contains[string](c.Profile, SupportedProfiles()) == false {
 			return errorx.IllegalArgument.New("invalid profile: %s", c.Profile)
 		}
 	}
@@ -207,8 +234,8 @@ func (c *MachineInputs) Validate() error {
 			return errorx.IllegalArgument.Wrap(err, "invalid profile: %s", c.Profile)
 		}
 
-		// check profile must be one of AllProfiles()
-		if sanity.Contains[string](c.Profile, AllProfiles()) == false {
+		// check profile must be one of SupportedProfiles()
+		if sanity.Contains[string](c.Profile, SupportedProfiles()) == false {
 			return errorx.IllegalArgument.New("invalid profile: %s", c.Profile)
 		}
 	}

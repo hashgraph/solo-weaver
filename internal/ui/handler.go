@@ -21,6 +21,7 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 	// insidePhase tracks whether we are currently inside a named phase.
 	// Local to this handler instance so state doesn't leak across runs.
 	insidePhase := false
+	headerPrinted := false
 
 	// stepIndent returns the indentation for a step line based on whether
 	// we're inside a phase.
@@ -34,6 +35,12 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 	return &notify.Handler{
 		PhaseStart: func(ctx context.Context, stp automa.Step, msg string, args ...interface{}) {
 			name := fmt.Sprintf(msg, args...)
+			// Print the "Progress" section header once, before the first phase.
+			if !headerPrinted {
+				program.Println("")
+				program.Println(sectionHeaderStyle.Render("Progress"))
+				headerPrinted = true
+			}
 			// Print the running phase header permanently above the TUI.
 			if VerboseLevel >= 1 && name != "" {
 				if insidePhase {

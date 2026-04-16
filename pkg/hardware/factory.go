@@ -14,11 +14,6 @@ func SupportedNodeTypes() []string {
 	return []string{models.NodeTypeBlock, models.NodeTypeConsensus}
 }
 
-// SupportedProfiles returns all supported deployment profiles
-func SupportedProfiles() []string {
-	return []string{models.ProfileLocal, models.ProfilePerfnet, models.ProfileTestnet, models.ProfilePreviewnet, models.ProfileMainnet}
-}
-
 // IsValidNodeType checks if the given node type is supported
 func IsValidNodeType(nodeType string) bool {
 	normalized := strings.ToLower(nodeType)
@@ -33,7 +28,7 @@ func IsValidNodeType(nodeType string) bool {
 // IsValidProfile checks if the given profile is supported
 func IsValidProfile(profile string) bool {
 	normalized := strings.ToLower(profile)
-	for _, supported := range SupportedProfiles() {
+	for _, supported := range models.SupportedProfiles() {
 		if normalized == supported {
 			return true
 		}
@@ -56,7 +51,7 @@ func CreateNodeSpec(nodeType string, profile string, hostProfile HostProfile) (S
 
 	// Validate profile
 	if !IsValidProfile(normalizedProfile) {
-		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v", profile, SupportedProfiles())
+		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v", profile, models.SupportedProfiles())
 	}
 
 	// Use the new unified node spec that looks up requirements from the registry
