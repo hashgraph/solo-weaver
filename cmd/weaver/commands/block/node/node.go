@@ -51,6 +51,11 @@ func init() {
 	common.FlagStopOnError().SetVarP(nodeCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError().SetVarP(nodeCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError().SetVarP(nodeCmd, &flagContinueOnError, false)
+	nodeCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
 
 	// Helm chart configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")

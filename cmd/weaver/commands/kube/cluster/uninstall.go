@@ -40,4 +40,9 @@ func init() {
 	common.FlagStopOnError().SetVarP(uninstallCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError().SetVarP(uninstallCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError().SetVarP(uninstallCmd, &flagContinueOnError, false)
+	uninstallCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
 }
