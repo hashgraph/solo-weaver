@@ -371,4 +371,3 @@ func (m *Manager) GetStoragePaths() (archivePath, livePath, logPath string, opti
 
 	return archivePath, livePath, logPath, optionalPaths, nil
 }
-
