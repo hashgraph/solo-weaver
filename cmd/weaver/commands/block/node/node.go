@@ -61,7 +61,6 @@ func init() {
 	)
 
 	// Helm chart configuration flags
-	nodeCmd.PersistentFlags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	nodeCmd.PersistentFlags().StringVar(&flagChartRepo, "chart-repo", "", "Helm chart repository URL")
 	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "", "Kubernetes namespace for block node")
 	nodeCmd.PersistentFlags().StringVar(&flagReleaseName, "release-name", "", "Helm release name")
@@ -88,7 +87,7 @@ func init() {
 	// LoadBalancer / MetalLB annotation flag
 	nodeCmd.PersistentFlags().BoolVar(&flagLoadBalancerEnabled, "load-balancer-enabled", true, "Inject MetalLB address-pool annotation into the block node service (disable for environments without MetalLB)")
 
-	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd, uninstallCmd)
+	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

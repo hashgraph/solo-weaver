@@ -129,8 +129,20 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Run text-input prompts for optional flags (namespace, release, chart version, retention thresholds).
-	inputPrompts := prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
+	// Run text-input prompts. Reconfigure uses a tailored set that omits
+	// immutable fields (namespace, release-name, chart-version) and adds
+	// storage path prompts instead.
+	var inputPrompts []prompt.InputPrompt
+	if cmd.Name() == "reconfigure" {
+		inputPrompts = prompt.BlockNodeReconfigureInputPrompts(
+			defaults,
+			&flagBasePath, &flagArchivePath, &flagLivePath, &flagLogPath,
+			&flagVerificationPath, &flagPluginsPath,
+			&flagHistoricRetention, &flagRecentRetention,
+		)
+	} else {
+		inputPrompts = prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
+	}
 	if err := prompt.RunInputPrompts(cmd, inputPrompts, cv); err != nil {
 		return err
 	}
@@ -209,6 +221,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			ValuesFile:          validatedValuesFile,
 			ReuseValues:         !flagNoReuseValues,
 			ResetStorage:        flagWithReset,
+			NoRestart:           flagNoRestart,
 			SkipHardwareChecks:  parentFlags.SkipHardwareChecks,
 			LoadBalancerEnabled: flagLoadBalancerEnabled,
 			HistoricRetention:   flagHistoricRetention,

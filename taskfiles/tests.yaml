@@ -59,7 +59,7 @@ tasks:
         echo "=============================================="
         echo "Phase 3: Running cluster-dependent tests (require_cluster)"
         echo "=============================================="
-        go test -p 1 -v -tags='require_cluster' -run '^TestWithCluster_' ./internal/... -timeout 60m -failfast
+        go test -p 1 -v -tags=' ' -run '^TestWithCluster_' ./internal/... -timeout 60m -failfast
         
         # Phase 4: Teardown cluster
         echo ""

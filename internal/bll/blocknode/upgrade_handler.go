@@ -74,7 +74,9 @@ func (h *UpgradeHandler) BuildWorkflow(
 	if desiredVer.LessThan(currentVer) {
 		return nil, errorx.IllegalArgument.New(
 			"block node chart version cannot be downgraded from %q to %q",
-			currentVer, desiredVer)
+			currentVer, desiredVer).
+			WithProperty(models.ErrPropertyResolution,
+				"version downgrade is not supported; use 'weaver block node reconfigure' to re-apply configuration at the current version")
 	}
 	if desiredVer.Equal(currentVer) && !inputs.Common.Force {
 		return nil, errorx.IllegalArgument.New(

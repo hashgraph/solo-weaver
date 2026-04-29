@@ -52,5 +52,6 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
+	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
 }

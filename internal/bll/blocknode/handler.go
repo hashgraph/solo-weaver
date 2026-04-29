@@ -19,10 +19,11 @@ import (
 
 // Handlers is the private struct that holds all per-action handlers for block-node intents.
 type Handlers struct {
-	install   *InstallHandler
-	upgrade   *UpgradeHandler
-	reset     *ResetHandler
-	uninstall *UninstallHandler
+	install     *InstallHandler
+	upgrade     *UpgradeHandler
+	reconfigure *ReconfigureHandler
+	reset       *ResetHandler
+	uninstall   *UninstallHandler
 }
 
 // NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
@@ -65,6 +66,11 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("failed to create UpgradeHandler: %v", err)
 	}
 
+	reconfigureHandler, err := NewReconfigureHandler(base, bnr)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create ReconfigureHandler: %v", err)
+	}
+
 	resetHandler, err := NewResetHandler(base, bnr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create ResetHandler: %v", err)
@@ -76,10 +82,11 @@ func NewHandlerFactory(
 	}
 
 	h := &Handlers{
-		install:   installHandler,
-		upgrade:   upgradeHandler,
-		reset:     resetHandler,
-		uninstall: uninstallHandler,
+		install:     installHandler,
+		upgrade:     upgradeHandler,
+		reconfigure: reconfigureHandler,
+		reset:       resetHandler,
+		uninstall:   uninstallHandler,
 	}
 
 	return h, nil
@@ -94,6 +101,8 @@ func (h *Handlers) ForAction(
 		return h.install, nil
 	case models.ActionUpgrade:
 		return h.upgrade, nil
+	case models.ActionReconfigure:
+		return h.reconfigure, nil
 	case models.ActionReset:
 		return h.reset, nil
 	case models.ActionUninstall:

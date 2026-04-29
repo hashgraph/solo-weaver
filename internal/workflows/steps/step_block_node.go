@@ -27,6 +27,7 @@ const (
 	ClearBlockNodeStorageStepId      = "clear-block-node-storage"
 	ScaleUpBlockNodeStepId           = "scale-up-block-node"
 	WaitForBlockNodeTerminatedStepId = "wait-for-block-node-terminated"
+	RolloutRestartBlockNodeStepId    = "rollout-restart-block-node"
 )
 
 // SetupBlockNode sets up the block node on the cluster
@@ -609,5 +610,31 @@ func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node StatefulSet scaled up successfully")
+		})
+}
+
+// RolloutRestartBlockNode restarts the block node pod by scaling the StatefulSet
+// down to 0, waiting for termination, scaling back up to 1, and waiting for readiness.
+// This reuses the existing ScaleStatefulSet infrastructure and guarantees the pod
+// picks up any configuration changes (including ConfigMap-only updates) that Helm
+// did not propagate via a pod-spec diff.
+func RolloutRestartBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider(inputs)
+
+	return automa.NewWorkflowBuilder().WithId(RolloutRestartBlockNodeStepId).Steps(
+		scaleDownBlockNode(managerProvider),
+		waitForBlockNodeTerminated(managerProvider),
+		scaleUpBlockNode(managerProvider),
+		waitForBlockNode(managerProvider),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Restarting Block Node pod")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to restart Block Node pod")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node pod restarted successfully")
 		})
 }

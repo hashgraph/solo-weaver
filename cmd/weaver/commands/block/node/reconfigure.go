@@ -11,13 +11,12 @@ import (
 )
 
 var (
-	flagNoReuseValues bool
-	flagWithReset     bool
+	flagNoRestart bool
 
-	upgradeCmd = &cobra.Command{
-		Use:   "upgrade",
-		Short: "Upgrade a Hedera Block Node",
-		Long:  "Upgrade an existing Hedera Block Node deployment with new configuration",
+	reconfigureCmd = &cobra.Command{
+		Use:   "reconfigure",
+		Short: "Reconfigure a Hedera Block Node",
+		Long:  "Re-apply configuration to an existing Hedera Block Node deployment without changing its chart version",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inputs, err := prepareBlocknodeInputs(cmd, args)
 			if err != nil {
@@ -30,33 +29,35 @@ var (
 			}
 
 			intent := models.Intent{
-				Action: models.ActionUpgrade,
+				Action: models.ActionReconfigure,
 				Target: models.TargetBlockNode,
 			}
 
 			logx.As().Debug().
 				Any("intent", intent).
 				Any("inputs", inputs).
-				Msg("Uninstalling Hedera Block Node")
+				Msg("Reconfiguring Hedera Block Node")
 
 			handler, err := blockNodeHandler.ForAction(intent.Action)
 			if err != nil {
 				return err
 			}
 
-			common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			if err := common.RunWorkflowE(cmd.Context(), func() (*automa.Report, error) {
 				return handler.HandleIntent(cmd.Context(), intent, *inputs)
-			})
+			}); err != nil {
+				return err
+			}
 
-			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")
+			logx.As().Info().Msg("Successfully reconfigured Hedera Block Node")
 			return nil
 		},
 	}
 )
 
 func init() {
-	upgradeCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
-	common.FlagWithStorageReset().SetVarP(upgradeCmd, &flagWithReset, false)
-	common.FlagValuesFile().SetVarP(upgradeCmd, &flagValuesFile, false)
-	common.FlagNoReuseValues().SetVarP(upgradeCmd, &flagNoReuseValues, false)
+	common.FlagWithStorageReset().SetVarP(reconfigureCmd, &flagWithReset, false)
+	common.FlagValuesFile().SetVarP(reconfigureCmd, &flagValuesFile, false)
+	common.FlagNoReuseValues().SetVarP(reconfigureCmd, &flagNoReuseValues, false)
+	common.FlagNoRestart().SetVar(reconfigureCmd, &flagNoRestart, false)
 }

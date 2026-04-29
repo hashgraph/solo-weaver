@@ -146,12 +146,60 @@ nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, u
 | `cmd/weaver/commands/block/node/reconfigure.go` | **NEW** |
 | `cmd/weaver/commands/block/node/node.go` | Register `reconfigureCmd` |
 
-## Branch
-
-```bash
-git checkout 00477-fix-<complete-branch-name>
-git checkout -b 00450-feat-block-node-reconfigure
-```
 
 Commit convention: `feat(block-node): implement reconfigure command`
+
+---
+
+## Addendum: Pod restart guarantee after reconfigure
+
+### Problem
+
+`helm upgrade` only restarts a StatefulSet pod when the **pod template spec** changes
+(e.g. a new env-var, updated image, resource limit). If the chart stores configuration
+exclusively in a ConfigMap — and the pod template carries no `checksum/config` annotation
+— Helm will update the ConfigMap but leave the running pod unchanged. The pod then
+continues with the stale in-memory config until it is manually restarted.
+
+### Solution: `RolloutRestartBlockNode` step
+
+A new `RolloutRestartBlockNode` workflow builder was added. It composes the **existing**
+`scaleDownBlockNode`, `waitForBlockNodeTerminated`, `scaleUpBlockNode`, and `waitForBlockNode`
+steps — reusing already-tested infrastructure without introducing any new Kubernetes API
+methods. For a single-replica StatefulSet this is semantically identical to
+`kubectl rollout restart`: the pod is terminated and recreated, picking up all pending
+configuration changes including ConfigMap-only updates.
+
+### Three workflow branches in `ReconfigureHandler.BuildWorkflow`
+
+| Flags | Workflow ID | Steps |
+|-------|-------------|-------|
+| `--with-reset` | `block-node-reconfigure-with-reset` | `PurgeBlockNodeStorage` → `UpgradeBlockNode` |
+| *(default)* | `block-node-reconfigure` | `UpgradeBlockNode` → `RolloutRestartBlockNode` |
+| `--no-restart` | `block-node-reconfigure-no-restart` | `UpgradeBlockNode` |
+
+**Why `--with-reset` skips the rollout-restart:** `PurgeBlockNodeStorage` scales the
+StatefulSet down to 0; `UpgradeBlockNode` (helm upgrade) scales it back up. That
+scale-up is already a full pod restart — adding a rollout-restart afterwards would force
+a second restart cycle and roughly double the pod downtime with no benefit.
+
+### New flag: `--no-restart`
+
+Registered on `reconfigure` only (not `upgrade`). Default is `false` (restart enabled).
+
+```
+--no-restart    Skip the rollout-restart of the block node pod after reconfiguring
+                (use when the chart guarantees pod-spec changes trigger restarts automatically)
+```
+
+### Changed files (addendum)
+
+| File | Change |
+|------|--------|
+| `pkg/models/inputs.go` | Add `NoRestart bool` to `BlockNodeInputs` |
+| `cmd/weaver/commands/common/common.go` | Add `FlagNoRestart()` factory |
+| `internal/workflows/steps/step_block_node.go` | Add `RolloutRestartBlockNodeStepId` and `RolloutRestartBlockNode` (composes existing scale-down/wait/scale-up/wait steps) |
+| `internal/bll/blocknode/reconfigure_handler.go` | Three-branch `BuildWorkflow` (with-reset / default / no-restart) |
+| `cmd/weaver/commands/block/node/reconfigure.go` | Declare `flagNoRestart`, register `--no-restart` flag |
+| `cmd/weaver/commands/block/node/init.go` | Propagate `flagNoRestart → inputs.Custom.NoRestart` |
 

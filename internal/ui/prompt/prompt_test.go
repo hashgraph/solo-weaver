@@ -263,3 +263,37 @@ func TestResolveEffective(t *testing.T) {
 		})
 	}
 }
+
+// TestRunInputPrompts_SkipsUnregisteredFlag verifies that RunInputPrompts does not
+// add a field to the form when the flag is not registered on the command.
+// This is the guard that prevents "chart-version" from appearing in the
+// interactive prompt when running "block node reconfigure".
+func TestRunInputPrompts_SkipsUnregisteredFlag(t *testing.T) {
+	// cmd has no flags registered.
+	cmd := &cobra.Command{Use: "reconfigure"}
+
+	var target string
+	prompts := []InputPrompt{
+		{
+			FlagName:       "chart-version",
+			Title:          "Chart Version",
+			EffectiveValue: "0.30.2",
+			Target:         &target,
+		},
+	}
+
+	cv := NewChosenValues()
+	// RunInputPrompts must return nil without touching target or cv,
+	// because "chart-version" is not registered on cmd.
+	if err := RunInputPrompts(cmd, prompts, cv); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cv.pairs) != 0 {
+		t.Fatalf("expected 0 chosen values, got %d — chart-version should have been skipped", len(cv.pairs))
+	}
+	// target must not have been pre-filled with the effective value.
+	if target != "" {
+		t.Fatalf("expected target to be empty, got %q — effective value must not be applied for skipped flags", target)
+	}
+}
