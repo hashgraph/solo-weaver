@@ -11,11 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > These rules apply every time code is changed in this repository.
 
 1. **After every code change**, run `task lint` to auto-format the code before considering the work done.
-2. **Every commit** must use a [Conventional Commits](https://www.conventionalcommits.org/) subject line (e.g. `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`) and be created with both `-s` (sign-off) and `-S` (GPG sign) flags:
+2. **Every commit** must use a [Conventional Commits](https://www.conventionalcommits.org/) subject line (e.g. `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`) and be created with both `-s` (sign-off) and `-S` (GPG sign) flags. Keep messages short — **subject line only, no body**:
    ```bash
    git commit -sS -m "type(scope): short description"
-   # or for multiline messages:
-   git commit -sS -F /tmp/commit-msg.txt
    ```
 3. **Before creating a new commit**, check whether the change logically belongs to an existing unpushed commit on the branch (`git log --oneline origin/<base>..HEAD`). If it does, amend that commit instead of adding a new one:
    ```bash
