@@ -84,7 +84,14 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagHistoricRetention, "historic-retention", "", "Historic block retention threshold (0 = unlimited, default: 0)")
 	nodeCmd.PersistentFlags().StringVar(&flagRecentRetention, "recent-retention", "", "Recent block retention threshold (default: 96000)")
 
-	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd, uninstallCmd)
+	// Load balancer configuration flags
+	nodeCmd.PersistentFlags().BoolVar(&flagLoadBalancerEnabled, "load-balancer-enabled", true, "Enable MetalLB address-pool annotation on the block node service (set to false for clusters without MetalLB)")
+
+	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, uninstallCmd)
+	// chart-version is inherited from nodeCmd but has no effect on reconfigure — hide it
+	if f := reconfigureCmd.InheritedFlags().Lookup("chart-version"); f != nil {
+		f.Hidden = true
+	}
 }
 
 func GetCmd() *cobra.Command {

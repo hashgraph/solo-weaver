@@ -146,12 +146,6 @@ nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, u
 | `cmd/weaver/commands/block/node/reconfigure.go` | **NEW** |
 | `cmd/weaver/commands/block/node/node.go` | Register `reconfigureCmd` |
 
-## Branch
-
-```bash
-git checkout 00477-fix-<complete-branch-name>
-git checkout -b 00450-feat-block-node-reconfigure
-```
 
 Commit convention: `feat(block-node): implement reconfigure command`
 

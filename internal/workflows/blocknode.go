@@ -35,6 +35,20 @@ func NewBlockNodeUpgradeWorkflow(inputs models.BlockNodeInputs, withReset bool) 
 	)
 }
 
+// NewBlockNodeReconfigureWorkflow creates a reconfigure workflow for a block node
+// (same chart version, new values applied).
+func NewBlockNodeReconfigureWorkflow(inputs models.BlockNodeInputs, withReset bool) *automa.WorkflowBuilder {
+	if withReset {
+		return automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").Steps(
+			steps.PurgeBlockNodeStorage(inputs),
+			steps.UpgradeBlockNode(inputs),
+		)
+	}
+	return automa.NewWorkflowBuilder().WithId("block-node-reconfigure").Steps(
+		steps.UpgradeBlockNode(inputs),
+	)
+}
+
 // NewBlockNodeResetWorkflow creates a reset workflow for block node
 func NewBlockNodeResetWorkflow(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("block-node-reset").Steps(
