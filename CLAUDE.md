@@ -10,14 +10,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > These rules apply every time code is changed in this repository.
 
+0. **When starting a new PR**, automatically:
+   1. Fetch and check out the latest `main`: `git fetch origin && git checkout main && git pull origin main`
+   2. Create and switch to a new branch named `<issue_number>-<short-description>` where `<issue_number>` is **zero-padded to 5 digits** (e.g. issue 123 → `00123-fix-block-node-crash`): `git checkout -b <issue_number>-<short-description>`
+   - Ask the user for the GitHub issue number and a short description (kebab-case) if they haven't provided them.
+
 1. **After every code change**, run `task lint` to auto-format the code before considering the work done.
-2. **Every commit** must use a [Conventional Commits](https://www.conventionalcommits.org/) subject line (e.g. `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`) and be created with both `-s` (sign-off) and `-S` (GPG sign) flags:
+2. **After finishing implementation**, generate a review guide at `docs/claude/reviews/<issue_number>-<short-description>.md` (e.g. `docs/claude/reviews/00477-fix-metallb-annotation-on-upgrade.md`) that includes:
+   - A short summary of the problem and solution
+   - A table of changed files with a one-line description each
+   - A code review checklist (one bullet per key invariant to verify)
+   - Commands to run unit and integration tests for the changed code
+   - Step-by-step manual UAT instructions (with expected output snippets)
+3. **Every commit** must use a [Conventional Commits](https://www.conventionalcommits.org/) subject line (e.g. `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`) and be created with both `-s` (sign-off) and `-S` (GPG sign) flags:
    ```bash
    git commit -sS -m "type(scope): short description"
    # or for multiline messages:
    git commit -sS -F /tmp/commit-msg.txt
    ```
-3. **Before creating a new commit**, check whether the change logically belongs to an existing unpushed commit on the branch (`git log --oneline origin/<base>..HEAD`). If it does, amend that commit instead of adding a new one:
+4. **Before creating a new commit**, check whether the change logically belongs to an existing unpushed commit on the branch (`git log --oneline origin/<base>..HEAD`). If it does, amend that commit instead of adding a new one:
    ```bash
    git add <files>
    git commit --amend -sS --no-edit   # keep message, or drop --no-edit to reword

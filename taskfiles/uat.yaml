@@ -101,6 +101,11 @@ tasks:
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
 
+        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.29.0'
+        ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
+        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.29.0 upgrade, got: '$ANNOTATION'"; exit 1; }
+        echo "   metallb.io/address-pool: $ANNOTATION ✓"
+
 
         echo -e '\n▶ Upgrade to latest (v0.30.2) using updated chartVersion in config'
         sudo solo-provisioner block node upgrade -p local \
@@ -113,6 +118,11 @@ tasks:
         [ "$CHART_VER" = "0.30.2" ] || { echo "FAIL: expected chart version 0.30.2, got $CHART_VER"; exit 1; }
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.30.2'
+        ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
+        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.30.2 upgrade, got: '$ANNOTATION'"; exit 1; }
+        echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 
         echo -e '\n▶ Block node reset'

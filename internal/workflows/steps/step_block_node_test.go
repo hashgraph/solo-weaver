@@ -71,7 +71,7 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 6, "Expected 6 substeps: storage, namespace, PVs, install, annotate, wait")
+	require.Len(t, report.StepReports, 5, "Expected 5 substeps: storage, namespace, PVs, install, wait")
 
 	// Verify storage setup step
 	storageReport := report.StepReports[0]
@@ -97,14 +97,8 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 	require.Equal(t, "true", installReport.Metadata[InstalledByThisStep])
 
-	// Verify service annotation step
-	annotateReport := report.StepReports[4]
-	require.Equal(t, AnnotateBlockNodeServiceStepId, annotateReport.Id)
-	require.Equal(t, automa.StatusSuccess, annotateReport.Status)
-	require.Equal(t, "true", annotateReport.Metadata[ConfiguredByThisStep])
-
 	// Verify wait step
-	waitReport := report.StepReports[5]
+	waitReport := report.StepReports[4]
 	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
 }
@@ -145,7 +139,7 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 6, "Expected 6 substeps: storage, namespace, PVs, install, annotate, wait")
+	require.Len(t, report.StepReports, 5, "Expected 5 substeps: storage, namespace, PVs, install, wait")
 
 	// Verify storage setup step
 	storageReport := report.StepReports[0]
@@ -171,14 +165,8 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 	require.Equal(t, "true", installReport.Metadata[InstalledByThisStep])
 
-	// Verify service annotation step
-	annotateReport := report.StepReports[4]
-	require.Equal(t, AnnotateBlockNodeServiceStepId, annotateReport.Id)
-	require.Equal(t, automa.StatusSuccess, annotateReport.Status)
-	require.Equal(t, "true", annotateReport.Metadata[ConfiguredByThisStep])
-
 	// Verify wait step
-	waitReport := report.StepReports[5]
+	waitReport := report.StepReports[4]
 	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
 }
@@ -212,7 +200,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps still complete successfully
-	require.Len(t, report.StepReports, 6, "Expected 6 substeps: storage, namespace, PVs, install, annotate, wait")
+	require.Len(t, report.StepReports, 5, "Expected 5 substeps: storage, namespace, PVs, install, wait")
 
 	// All steps should succeed (idempotent)
 	for _, stepReport := range report.StepReports {

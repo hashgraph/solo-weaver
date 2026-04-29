@@ -3,6 +3,7 @@
 package blocknode
 
 import (
+	"fmt"
 	oslib "os"
 	"path"
 
@@ -44,6 +45,13 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	valuesContent, err = m.injectRetentionConfig(valuesContent)
 	if err != nil {
 		return "", errorx.InternalError.Wrap(err, "failed to inject retention config into values file")
+	}
+
+	// Inject MetalLB service annotation into Helm values when LoadBalancerEnabled is set so that
+	// the annotation is managed natively by Helm across install and upgrade.
+	valuesContent, err = m.injectServiceAnnotations(valuesContent)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to inject service annotations into values file")
 	}
 
 	// Write temporary copy to weaver's temp directory.
@@ -255,6 +263,57 @@ func (m *Manager) injectRetentionConfig(valuesContent []byte) ([]byte, error) {
 	result, err := yaml.Marshal(vals)
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to marshal values YAML after retention config injection")
+	}
+
+	return result, nil
+}
+
+// injectServiceAnnotations merges the MetalLB address-pool annotation into service.annotations
+// in the Helm values when LoadBalancerEnabled is true. This ensures the annotation is managed
+// natively by Helm across install and upgrade without requiring a post-deploy kubectl patch.
+//
+// When the operator's values file already contains metallb.io/address-pool (e.g. pointing at a
+// custom pool), that value is left untouched — weaver never clobbers an explicitly set annotation.
+// When LoadBalancerEnabled is false the values are returned unchanged.
+func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error) {
+	if !m.blockNodeInputs.LoadBalancerEnabled {
+		return valuesContent, nil
+	}
+
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for service annotation injection")
+	}
+
+	// Navigate to service.annotations, creating the path if needed.
+	service, ok := vals["service"].(map[string]interface{})
+	if !ok {
+		service = make(map[string]interface{})
+		vals["service"] = service
+	}
+
+	annotations, ok := service["annotations"].(map[string]interface{})
+	if !ok {
+		annotations = make(map[string]interface{})
+	}
+
+	const annotationKey = "metallb.io/address-pool"
+	if existing, alreadySet := annotations[annotationKey]; alreadySet {
+		// Operator has explicitly set this annotation — leave it untouched.
+		logx.As().Debug().
+			Str(annotationKey, fmt.Sprintf("%v", existing)).
+			Msg("metallb.io/address-pool already set in values file; skipping injection")
+		return valuesContent, nil
+	}
+
+	annotations[annotationKey] = "public-address-pool"
+	service["annotations"] = annotations
+
+	logx.As().Info().Msg("Injecting MetalLB address-pool annotation into service.annotations")
+
+	result, err := yaml.Marshal(vals)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to marshal values YAML after service annotation injection")
 	}
 
 	return result, nil
