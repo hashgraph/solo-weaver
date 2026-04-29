@@ -28,7 +28,9 @@ const StateFileName = "state.yaml"
 //	lastSync: "2026-03-17T..."
 //	state:
 //	  version: v2
-//	  machineState: ...
+//	  machineState:
+//	    profile: mainnet
+//	    ...
 //	  clusterState: ...
 //	  blockNodeState: ...
 //
@@ -118,6 +120,7 @@ type ProvisionerInfo struct {
 }
 
 type MachineState struct {
+	Profile  string                   `yaml:"profile,omitempty" json:"profile,omitempty"` // deployment profile (e.g. "mainnet", "testnet", "local")
 	Software map[string]SoftwareState `yaml:"software" json:"software"`
 	Hardware map[string]HardwareState `yaml:"hardware" json:"hardware"`                     // e.g. CPU, RAM, Disk info
 	LastSync htime.Time               `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
@@ -142,9 +145,11 @@ type HardwareState struct {
 }
 
 type BlockNodeState struct {
-	ReleaseInfo HelmReleaseInfo         `yaml:",inline" json:",inline"`
-	Storage     models.BlockNodeStorage `yaml:"storage" json:"storage"`
-	LastSync    htime.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	ReleaseInfo       HelmReleaseInfo         `yaml:",inline" json:",inline"`
+	Storage           models.BlockNodeStorage `yaml:"storage" json:"storage"`
+	HistoricRetention string                  `yaml:"historicRetention,omitempty" json:"historicRetention,omitempty"`
+	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
+	LastSync          htime.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.

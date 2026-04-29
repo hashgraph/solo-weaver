@@ -295,6 +295,31 @@ func (fp FlagDefinition[T]) MarkRequiredP(cmd *cobra.Command, v bool) error {
 	return nil
 }
 
+// CountFlagDefinition defines a count-style persistent flag (e.g. -V -V → 2).
+// It is separate from FlagDefinition[int] because pflag registers count flags with
+// type "count" and requires CountVarP/GetCount rather than IntVarP/GetInt.
+type CountFlagDefinition struct {
+	Name        string
+	ShortName   string
+	Description string
+}
+
+// SetVarP registers the flag as a persistent count flag on the given command.
+func (f CountFlagDefinition) SetVarP(cmd *cobra.Command, p *int) {
+	cmd.PersistentFlags().CountVarP(p, f.Name, f.ShortName, f.Description)
+}
+
+// Value reads the current count value from the command's merged flag set.
+func (f CountFlagDefinition) Value(cmd *cobra.Command, args []string) (int, error) {
+	if args == nil {
+		args = []string{}
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		return 0, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
+	}
+	return cmd.Flags().GetCount(f.Name)
+}
+
 // GetExecutionMode determines the execution mode based on the provided flags.
 // It ensures that only one of the flags is set; otherwise, it returns an error.
 // The precedence is as follows:

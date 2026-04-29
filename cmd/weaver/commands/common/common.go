@@ -88,7 +88,7 @@ func FlagProfile() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "profile",
 		ShortName:   "p",
-		Description: fmt.Sprintf("Deployment profiles %s", models.AllProfiles()),
+		Description: fmt.Sprintf("Deployment profiles %s", models.SupportedProfiles()),
 		Default:     "",
 	}
 }
@@ -161,5 +161,22 @@ func FlagLogLevel() FlagDefinition[string] {
 		ShortName:   "",
 		Description: "Set log level (debug, info, warn, error)",
 		Default:     "",
+	}
+}
+
+func FlagNonInteractive() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "non-interactive",
+		ShortName:   "",
+		Description: "Disable TUI and output raw logs (for CI/pipelines)",
+		Default:     false,
+	}
+}
+
+func FlagVerbose() CountFlagDefinition {
+	return CountFlagDefinition{
+		Name:        "verbose",
+		ShortName:   "V",
+		Description: "Show expanded step-by-step output",
 	}
 }

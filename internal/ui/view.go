@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -27,11 +28,21 @@ var (
 	errorDetailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	subDetailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // greyed out
 
-	summaryPassedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	summarySkippedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	summaryFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	summaryLabelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	summaryPassedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	summaryFailedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	summaryLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+
+	sectionHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 )
+
+// PrintSectionHeader prints a bold section header to stderr.
+// It is a no-op when the TUI is bypassed (non-interactive / not a TTY).
+func PrintSectionHeader(title string) {
+	if IsUnformatted() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", sectionHeaderStyle.Render(title))
+}
 
 // ── View ─────────────────────────────────────────────────────────────────
 
@@ -41,11 +52,9 @@ var (
 //	1 (-V) — all steps visible with transient detail text
 func (m Model) View() string {
 	var b strings.Builder
-	if VerboseLevel < 1 {
-		b.WriteString("\n")
-	}
 
 	prevAnimating := false
+
 	for _, ph := range m.phases {
 		// At level 1+, completed phases were already printed above the TUI
 		// via program.Println in the handler — only show running phases.
@@ -270,7 +279,7 @@ func RenderVersionHeader() string {
 	if len(commit) > 8 {
 		commit = commit[:8]
 	}
-	return fmt.Sprintf("%s %s %s %s\n\n",
+	return fmt.Sprintf("%s %s %s %s\n",
 		versionNameStyle.Render("solo-provisioner"),
 		versionValueStyle.Render(info.Number),
 		versionDetailStyle.Render("("+commit+")"),
@@ -286,27 +295,15 @@ func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, repo
 		return ""
 	}
 
-	passed, skipped, failed := countStatuses(report)
-
 	var b strings.Builder
 	b.WriteString("\n  ─────────────────────────────────────────────────\n")
 
-	// Build a human-friendly summary line
-	if failed == 0 && skipped == 0 {
-		b.WriteString(fmt.Sprintf("  %s\n", summaryPassedStyle.Render("Completed successfully")))
+	if report.Error != nil {
+		b.WriteString(fmt.Sprintf("  %s\n", summaryFailedStyle.Render("Completed with errors")))
 	} else {
-		var parts []string
-		if passed > 0 {
-			parts = append(parts, summaryPassedStyle.Render(fmt.Sprintf("%d passed", passed)))
-		}
-		if skipped > 0 {
-			parts = append(parts, summarySkippedStyle.Render(fmt.Sprintf("%d skipped", skipped)))
-		}
-		if failed > 0 {
-			parts = append(parts, summaryFailedStyle.Render(fmt.Sprintf("%d failed", failed)))
-		}
-		b.WriteString(fmt.Sprintf("  %s %s\n", summaryLabelStyle.Render("Summary:"), strings.Join(parts, ", ")))
+		b.WriteString(fmt.Sprintf("  %s\n", summaryPassedStyle.Render("Completed successfully")))
 	}
+
 	b.WriteString(fmt.Sprintf("  %s %s\n", summaryLabelStyle.Render("Duration:"), durationStyle.Render(totalDuration.Round(time.Millisecond).String())))
 	if reportPath != "" {
 		b.WriteString(fmt.Sprintf("  %s %s\n", summaryLabelStyle.Render("Report:"), reportPath))
@@ -317,27 +314,6 @@ func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, repo
 	b.WriteString("  ─────────────────────────────────────────────────\n")
 
 	return b.String()
-}
-
-func countStatuses(report *automa.Report) (passed, skipped, failed int) {
-	for _, sr := range report.StepReports {
-		if sr == nil {
-			continue
-		}
-		switch sr.Status {
-		case automa.StatusSuccess:
-			passed++
-		case automa.StatusSkipped:
-			skipped++
-		case automa.StatusFailed:
-			failed++
-		}
-		p, s, f := countStatuses(sr)
-		passed += p
-		skipped += s
-		failed += f
-	}
-	return
 }
 
 func formatDuration(d time.Duration) string {

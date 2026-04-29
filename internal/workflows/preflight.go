@@ -16,6 +16,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -45,7 +46,7 @@ func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-							profile, hardware.SupportedProfiles())))
+							profile, models.SupportedProfiles())))
 			}
 
 			logx.As().Info().Msgf("node type: %s, profile: %s", nodeType, profile)

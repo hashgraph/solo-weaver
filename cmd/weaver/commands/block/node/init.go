@@ -3,9 +3,13 @@
 package node
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
@@ -47,6 +51,10 @@ func initializeDependencies() error {
 }
 
 func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, flags *BlockNodeFlags) error {
+	return extractBlockNodeParentFlagsWithOpts(cmd, args, flags, true)
+}
+
+func extractBlockNodeParentFlagsWithOpts(cmd *cobra.Command, args []string, flags *BlockNodeFlags, requireProfile bool) error {
 	// extract root-level flags and the profile flag
 	if err := common.ExtractRootFlags(cmd, args, &flags.RootFlags); err != nil {
 		return err
@@ -59,25 +67,98 @@ func extractBlockNodeParentFlags(cmd *cobra.Command, args []string, flags *Block
 	}
 
 	// validate profile — extraction is done, validation is the caller's responsibility
-	if flags.Profile == "" {
+	if requireProfile && flags.Profile == "" {
 		return errorx.IllegalArgument.New("profile flag is required")
 	}
 
-	if !hardware.IsValidProfile(flags.Profile) {
+	if flags.Profile != "" && !hardware.IsValidProfile(flags.Profile) {
 		return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-			flags.Profile, hardware.SupportedProfiles())
+			flags.Profile, models.SupportedProfiles())
 	}
 
 	return nil
 }
 
+// promptForMissingFlags runs interactive prompts for any required block node
+// flags that were not supplied on the command line. It writes prompted values
+// back into the Cobra flag set and the package-level flag variables so that
+// downstream extraction and validation sees them.
+//
+// Prompts are skipped when:
+//   - --force/-y is set
+//   - --non-interactive is set
+//   - stdout is not a TTY
+//   - the command is "uninstall" (infers values from existing state/config)
+func promptForMissingFlags(cmd *cobra.Command, args []string) error {
+	// Destructive commands that operate on an existing deployment should not
+	// prompt — they infer everything from the current state/config.
+	if cmd.Name() == "uninstall" {
+		return nil
+	}
+
+	var rootFlags common.RootFlags
+	_ = common.ExtractRootFlags(cmd, args, &rootFlags) // best-effort to get Force
+
+	if !prompt.ShouldPrompt(rootFlags.Force) {
+		return nil
+	}
+
+	cv := prompt.NewChosenValues()
+
+	// Read all prompt-relevant fields from the on-disk state file in one pass.
+	defaults, err := state.ReadPromptDefaultsFromDisk()
+	if err != nil {
+		logx.As().Debug().Err(err).Msg("Could not read prompt defaults from state file; using config/defaults only")
+	}
+
+	// profileTarget is a local copy that the prompt writes to; after the prompt
+	// completes we propagate it into Cobra's persistent flag set so that
+	// common.FlagProfile().Value(cmd, args) returns the prompted value.
+	var profileTarget string
+	selectPrompts := prompt.BlockNodeSelectPrompts(defaults, &profileTarget)
+	if err := prompt.RunSelectPrompts(cmd, selectPrompts, cv); err != nil {
+		return err
+	}
+
+	// Propagate the prompted profile value into Cobra's inherited persistent
+	// flag set so extractBlockNodeParentFlags sees it.
+	if profileTarget != "" {
+		if f := cmd.InheritedFlags().Lookup("profile"); f != nil && !f.Changed {
+			_ = f.Value.Set(profileTarget)
+			f.Changed = true
+		}
+	}
+
+	// Run text-input prompts for optional flags (namespace, release, chart version, retention thresholds).
+	inputPrompts := prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
+	if err := prompt.RunInputPrompts(cmd, inputPrompts, cv); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+	cv.Print("Selected Inputs")
+
+	return nil
+}
+
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
+// When running interactively (TTY, no --force, no --non-interactive), it presents
+// huh prompts for any required flags that were not supplied on the command line.
 func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlockNodeInputs], error) {
 	var err error
 
+	// ── Interactive prompts ──────────────────────────────────────────────
+	// Run prompts for missing flags before extracting/validating them.
+	if err = promptForMissingFlags(cmd, args); err != nil {
+		return nil, err
+	}
+
+	// ── Extract & validate flags ─────────────────────────────────────────
 	// extract shared flags set in the parent commands
 	var parentFlags BlockNodeFlags
-	err = extractBlockNodeParentFlags(cmd, args, &parentFlags)
+	// Uninstall infers profile from existing state/config, so it is not required on the CLI.
+	requireProfile := cmd.Name() != "uninstall"
+	err = extractBlockNodeParentFlagsWithOpts(cmd, args, &parentFlags, requireProfile)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +210,8 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			ReuseValues:        !flagNoReuseValues,
 			ResetStorage:       flagWithReset,
 			SkipHardwareChecks: parentFlags.SkipHardwareChecks,
+			HistoricRetention:  flagHistoricRetention,
+			RecentRetention:    flagRecentRetention,
 		},
 	}
 

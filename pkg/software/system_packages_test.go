@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build integration
+
 package software
 
 import (
 	"os"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -12,18 +13,6 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/stretchr/testify/require"
 )
-
-func requireLinux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("only runs on Linux")
-	}
-}
-
-func requireRoot(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("requires root privileges")
-	}
-}
 
 // Distribution detection helpers for testing
 type Distribution string

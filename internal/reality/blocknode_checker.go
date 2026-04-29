@@ -4,6 +4,7 @@ package reality
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/automa-saga/logx"
@@ -85,6 +86,8 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 		Storage:  models.BlockNodeStorage{},
 		LastSync: now,
 	}
+
+	b.populateRetentionFromHelmValues(re.Config, &bn)
 
 	// PersistentVolumes are cluster-scoped; pass empty namespace.
 	k8s, err := b.newKube()
@@ -212,4 +215,66 @@ func (b *blockNodeChecker) populateStorageFromPVs(
 	}
 
 	return nil
+}
+
+// populateRetentionFromHelmValues extracts FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD
+// and FILES_RECENT_BLOCK_RETENTION_THRESHOLD from the Helm release's computed
+// values (blockNode.config.*) and writes them into the BlockNodeState.
+// Values may be stored as strings or numeric types depending on how the YAML was
+// originally specified; both forms are accepted and converted to string.
+// Missing or empty values are silently ignored.
+func (b *blockNodeChecker) populateRetentionFromHelmValues(config map[string]interface{}, bn *state.BlockNodeState) {
+	if config == nil || bn == nil {
+		return
+	}
+
+	blockNode, ok := config["blockNode"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	chartConfig, ok := blockNode["config"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	if v := helmValueToString(chartConfig["FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD"]); v != "" {
+		bn.HistoricRetention = v
+		logx.As().Debug().Str("historicRetention", v).Msg("Extracted historic block retention threshold from Helm values")
+	}
+
+	if v := helmValueToString(chartConfig["FILES_RECENT_BLOCK_RETENTION_THRESHOLD"]); v != "" {
+		bn.RecentRetention = v
+		logx.As().Debug().Str("recentRetention", v).Msg("Extracted recent block retention threshold from Helm values")
+	}
+}
+
+// helmValueToString converts a Helm config value to its string representation.
+// Helm's release.Config commonly stores YAML numeric scalars as float64 or
+// int/int64, so this helper accepts those types in addition to plain strings.
+// Non-whole float64 values are treated as invalid (retention thresholds must be
+// non-negative integers) and return "" with a warning log.
+// Returns "" for nil or unsupported types.
+func helmValueToString(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case int:
+		return fmt.Sprintf("%d", val)
+	case int64:
+		return fmt.Sprintf("%d", val)
+	case float64:
+		// YAML numeric scalars are often decoded as float64;
+		// only accept whole numbers — fractional values are invalid for
+		// retention thresholds and would fail downstream validation.
+		if val == float64(int64(val)) {
+			return fmt.Sprintf("%d", int64(val))
+		}
+		logx.As().Warn().
+			Float64("value", val).
+			Msg("Ignoring non-integer retention threshold from Helm values; expected a whole number")
+		return ""
+	default:
+		return ""
+	}
 }

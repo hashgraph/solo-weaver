@@ -16,7 +16,7 @@ var selfInstallCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		common.RunWorkflowBuilder(cmd.Context(), workflows.NewSelfInstallWorkflow())
 
-		// RunGlobalChecks (and therefore RunStartupMigrations) is skipped for
+		// RunPersistentPreRun (and therefore RunStartupMigrations) is skipped for
 		// the install command, so we invoke it explicitly here. This ensures
 		// startup-scoped migrations such as LegacyBinaryMigration run even when
 		// the user is installing or re-installing.

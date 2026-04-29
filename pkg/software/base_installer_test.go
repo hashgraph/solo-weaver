@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -198,6 +199,18 @@ func calculateSHA256(data []byte) string {
 	hash := sha256.New()
 	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func requireLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only runs on Linux")
+	}
+}
+
+func requireRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root privileges")
+	}
 }
 
 // Test scenarios using table-driven tests

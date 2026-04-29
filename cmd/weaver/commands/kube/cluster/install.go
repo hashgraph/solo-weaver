@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -35,7 +36,7 @@ var installCmd = &cobra.Command{
 
 		if !hardware.IsValidProfile(flagProfile) {
 			return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-				flagProfile, hardware.SupportedProfiles())
+				flagProfile, models.SupportedProfiles())
 		}
 
 		// Set the profile in the global config so other components can access it

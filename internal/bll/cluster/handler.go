@@ -18,7 +18,9 @@ type HandlerFactory struct {
 func NewHandlerFactory(
 	runtime *rsl.RuntimeResolver,
 ) (*HandlerFactory, error) {
-	base, err := bll.NewBaseHandler[models.ClusterInputs](runtime, models.TargetCluster)
+	base, err := bll.NewBaseHandler[models.ClusterInputs](runtime, models.TargetCluster,
+		bll.WithProfileExtractor(func(i models.ClusterInputs) string { return i.Profile }),
+	)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}

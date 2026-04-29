@@ -59,7 +59,7 @@ func (h *ResetHandler) HandleIntent(
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
 	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, injectChartRef())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeChartRef())
 }
 
 func NewResetHandler(base bll.BaseHandler[models.BlockNodeInputs], runtimeState *rsl.BlockNodeRuntimeResolver) (*ResetHandler, error) {

@@ -4,6 +4,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/alloy"
@@ -26,10 +27,10 @@ import (
 )
 
 // examples:
-// ./weaver block node check --profile=local
-// ./weaver block node setup --config ./config.yaml --profile=mainnet
-// ./weaver consensus node check --profile=testnet
-// ./weaver consensus node setup --config ./config.yaml --profile=perfnet
+// ./solo-provisioner block node check --profile=local
+// ./solo-provisioner block node install --config ./config.yaml --profile=mainnet
+// ./solo-provisioner consensus node check --profile=testnet
+// ./solo-provisioner consensus node setup --config ./config.yaml --profile=perfnet
 
 // rootCmd represents the base command when called without any subcommands
 var (
@@ -46,7 +47,7 @@ var (
 		Short: "A user friendly tool to provision Hedera network components",
 		Long:  "Solo Provisioner - A user friendly tool to provision Hedera network components",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return common.RunGlobalChecks(cmd, args)
+			return common.RunPersistentPreRun(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
@@ -68,10 +69,9 @@ func init() {
 	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
 
 	// Verbose output flag — -V enables expanded step-by-step output
-	rootCmd.PersistentFlags().CountVarP(&ui.VerboseLevel, "verbose", "V", "Show expanded step-by-step output")
+	common.FlagVerbose().SetVarP(rootCmd, &ui.VerboseLevel)
 
-	// --non-interactive disables the TUI and outputs raw zerolog (for CI/pipelines)
-	rootCmd.PersistentFlags().BoolVar(&ui.NonInteractive, "non-interactive", false, "Disable TUI and output raw logs (for CI/pipelines)")
+	common.FlagNonInteractive().SetVarP(rootCmd, &ui.NonInteractive, false)
 
 	// Hardware checks override flag - hidden to discourage casual use
 	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
@@ -107,7 +107,7 @@ func init() {
 // from an older version, all applicable migrations run in the correct sequence.
 //
 // Scopes:
-//   - migration.ScopeStartup ("startup"):    runs before every command in RunGlobalChecks.
+//   - migration.ScopeStartup ("startup"):    runs before every command in RunPersistentPreRun.
 //   - migration.ScopeBlockNode ("block-node"): runs explicitly during block node upgrades.
 func RegisterMigrations() {
 	// ── Startup migrations (run before every CLI invocation) ─────────────────
@@ -128,6 +128,7 @@ func Execute(ctx context.Context) error {
 
 	cobra.OnInitialize(func() {
 		initConfig(ctx)
+		fmt.Print(ui.RenderVersionHeader())
 	})
 
 	// execute the root command

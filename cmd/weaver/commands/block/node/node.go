@@ -15,22 +15,24 @@ var (
 	flagRollbackOnError bool
 	flagContinueOnError bool
 
-	flagValuesFile       string
-	flagChartVersion     string
-	flagChartRepo        string
-	flagNamespace        string
-	flagReleaseName      string
-	flagBasePath         string
-	flagArchivePath      string
-	flagLivePath         string
-	flagLogPath          string
-	flagVerificationPath string
-	flagPluginsPath      string
-	flagLiveSize         string
-	flagArchiveSize      string
-	flagLogSize          string
-	flagVerificationSize string
-	flagPluginsSize      string
+	flagValuesFile        string
+	flagChartVersion      string
+	flagChartRepo         string
+	flagNamespace         string
+	flagReleaseName       string
+	flagBasePath          string
+	flagArchivePath       string
+	flagLivePath          string
+	flagLogPath           string
+	flagVerificationPath  string
+	flagPluginsPath       string
+	flagLiveSize          string
+	flagArchiveSize       string
+	flagLogSize           string
+	flagVerificationSize  string
+	flagPluginsSize       string
+	flagHistoricRetention string
+	flagRecentRetention   string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -77,6 +79,10 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagLogSize, "log-size", "", "Size for log storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagVerificationSize, "verification-size", "", "Size for verification storage PV/PVC (e.g., 5Gi, 10Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagPluginsSize, "plugins-size", "", "Size for plugins storage PV/PVC (e.g., 5Gi, 10Gi)")
+
+	// Block retention configuration flags
+	nodeCmd.PersistentFlags().StringVar(&flagHistoricRetention, "historic-retention", "", "Historic block retention threshold (0 = unlimited, default: 0)")
+	nodeCmd.PersistentFlags().StringVar(&flagRecentRetention, "recent-retention", "", "Recent block retention threshold (default: 96000)")
 
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd, uninstallCmd)
 }

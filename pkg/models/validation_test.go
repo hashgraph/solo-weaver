@@ -708,3 +708,101 @@ func TestAlloyConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestBlockNodeInputs_RetentionValidation tests the validation of retention threshold fields.
+func TestBlockNodeInputs_RetentionValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		inputs      BlockNodeInputs
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "empty_retention_values_are_valid",
+			inputs:      BlockNodeInputs{},
+			expectError: false,
+		},
+		{
+			name: "valid_historic_retention_zero",
+			inputs: BlockNodeInputs{
+				HistoricRetention: "0",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_historic_retention_positive",
+			inputs: BlockNodeInputs{
+				HistoricRetention: "500000",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_recent_retention",
+			inputs: BlockNodeInputs{
+				RecentRetention: "96000",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid_both_retention_values",
+			inputs: BlockNodeInputs{
+				HistoricRetention: "500000",
+				RecentRetention:   "48000",
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid_historic_retention_negative",
+			inputs: BlockNodeInputs{
+				HistoricRetention: "-1",
+			},
+			expectError: true,
+			errorMsg:    "invalid historic retention threshold",
+		},
+		{
+			name: "invalid_historic_retention_non_numeric",
+			inputs: BlockNodeInputs{
+				HistoricRetention: "abc",
+			},
+			expectError: true,
+			errorMsg:    "invalid historic retention threshold",
+		},
+		{
+			name: "invalid_recent_retention_negative",
+			inputs: BlockNodeInputs{
+				RecentRetention: "-100",
+			},
+			expectError: true,
+			errorMsg:    "invalid recent retention threshold",
+		},
+		{
+			name: "invalid_recent_retention_non_numeric",
+			inputs: BlockNodeInputs{
+				RecentRetention: "not-a-number",
+			},
+			expectError: true,
+			errorMsg:    "invalid recent retention threshold",
+		},
+		{
+			name: "invalid_recent_retention_float",
+			inputs: BlockNodeInputs{
+				RecentRetention: "96.5",
+			},
+			expectError: true,
+			errorMsg:    "invalid recent retention threshold",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.inputs.Validate()
+
+			if tt.expectError {
+				require.Error(t, err, "Expected validation error")
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				require.NoError(t, err, "Expected no validation error")
+			}
+		})
+	}
+}

@@ -11,9 +11,13 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-// injectChartRef saves the user-supplied chart reference into the runtime state.
-func injectChartRef() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+// patchBlockNodeChartRef saves the user-supplied chart reference into the runtime state.
+// The chart reference cannot be recovered from the Helm release, so it is injected by the BLL layer.
+//
+// Profile persistence is handled centrally by BaseHandler.FlushState via ProfileExtractor.
+func patchBlockNodeChartRef() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil
 		}
@@ -84,17 +88,35 @@ func resolveBlocknodeEffectiveInputs(
 		Any("storage", effStorage).
 		Msg("Determined effective block node storage")
 
+	effHistoricRetention, err := runtime.HistoricRetention()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to resolve block node historic retention: %v", err)
+	}
+	logx.As().Debug().
+		Any("historicRetention", effHistoricRetention).
+		Msg("Determined effective block node historic retention")
+
+	effRecentRetention, err := runtime.RecentRetention()
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to resolve block node recent retention: %v", err)
+	}
+	logx.As().Debug().
+		Any("recentRetention", effRecentRetention).
+		Msg("Determined effective block node recent retention")
+
 	effectiveInputs := models.UserInputs[models.BlockNodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlockNodeInputs{
 			// Resolved via resolver
-			Profile:      inputs.Custom.Profile,
-			Release:      effReleaseName.Get().Val(),
-			Namespace:    effNamespace.Get().Val(),
-			ChartName:    effChartName.Get().Val(),
-			Chart:        effChartRepo.Get().Val(),
-			ChartVersion: effChartVersion.Get().Val(),
-			Storage:      effStorage.Get().Val(),
+			Profile:           inputs.Custom.Profile,
+			Release:           effReleaseName.Get().Val(),
+			Namespace:         effNamespace.Get().Val(),
+			ChartName:         effChartName.Get().Val(),
+			Chart:             effChartRepo.Get().Val(),
+			ChartVersion:      effChartVersion.Get().Val(),
+			Storage:           effStorage.Get().Val(),
+			HistoricRetention: effHistoricRetention.Get().Val(),
+			RecentRetention:   effRecentRetention.Get().Val(),
 			// Passed through from user input (no resolution)
 			ValuesFile:         inputs.Custom.ValuesFile,
 			ReuseValues:        inputs.Custom.ReuseValues,

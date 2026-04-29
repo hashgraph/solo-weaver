@@ -166,16 +166,14 @@ func handleWorkflowResult(ctx context.Context, report *automa.Report) {
 	}
 }
 
-// RunGlobalChecks runs global pre-run checks before executing any command.
-// It performs unless the command has the annotation "requireGlobalChecks" set to "false".
-// Uses quiet execution — no summary or report is printed.
-func RunGlobalChecks(cmd *cobra.Command, args []string) error {
+// RunPersistentPreRun is the body of the root PersistentPreRunE hook.
+// It runs before every command and is responsible for:
+//  1. Verifying the weaver installation (skipped for commands that opt out via SkipGlobalChecks).
+//  2. Running any pending startup migrations.
+func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 	if cmd == nil {
 		return nil
 	}
-
-	// Print version header before anything else when verbose.
-	fmt.Print(ui.RenderVersionHeader())
 
 	if !RequireGlobalChecks(cmd) {
 		return nil

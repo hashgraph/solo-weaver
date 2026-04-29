@@ -13,7 +13,7 @@ import (
 )
 
 var globalConfig = models.Config{
-	Profile: models.ProfileLocal,
+	Profile: "",
 	Log: logx.LoggingConfig{
 		Level:          "Debug",
 		ConsoleLogging: true,
@@ -107,10 +107,12 @@ func SetProfile(profile string) {
 func DefaultsConfig() models.Config {
 	return models.Config{
 		BlockNode: models.BlockNodeConfig{
-			Namespace:    deps.BLOCK_NODE_NAMESPACE,
-			Release:      deps.BLOCK_NODE_RELEASE,
-			Chart:        deps.BLOCK_NODE_CHART,
-			ChartVersion: deps.BLOCK_NODE_VERSION,
+			Namespace:         deps.BLOCK_NODE_NAMESPACE,
+			Release:           deps.BLOCK_NODE_RELEASE,
+			Chart:             deps.BLOCK_NODE_CHART,
+			ChartVersion:      deps.BLOCK_NODE_VERSION,
+			HistoricRetention: models.DefaultHistoricRetention,
+			RecentRetention:   models.DefaultRecentRetention,
 			Storage: models.BlockNodeStorage{
 				BasePath: deps.BLOCK_NODE_STORAGE_BASE_PATH,
 			},
@@ -135,11 +137,13 @@ func DefaultsConfig() models.Config {
 func EnvConfig() models.Config {
 	return models.Config{
 		BlockNode: models.BlockNodeConfig{
-			Namespace:    os.Getenv("SOLO_PROVISIONER_BLOCKNODE_NAMESPACE"),
-			Release:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_RELEASE"),
-			Chart:        os.Getenv("SOLO_PROVISIONER_BLOCKNODE_CHART"),
-			ChartVersion: os.Getenv("SOLO_PROVISIONER_BLOCKNODE_VERSION"),
-			ChartName:    os.Getenv("SOLO_PROVISIONER_BLOCKNODE_CHARTNAME"),
+			Namespace:         os.Getenv("SOLO_PROVISIONER_BLOCKNODE_NAMESPACE"),
+			Release:           os.Getenv("SOLO_PROVISIONER_BLOCKNODE_RELEASE"),
+			Chart:             os.Getenv("SOLO_PROVISIONER_BLOCKNODE_CHART"),
+			ChartVersion:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_VERSION"),
+			ChartName:         os.Getenv("SOLO_PROVISIONER_BLOCKNODE_CHARTNAME"),
+			HistoricRetention: os.Getenv("SOLO_PROVISIONER_BLOCKNODE_HISTORICRETENTION"),
+			RecentRetention:   os.Getenv("SOLO_PROVISIONER_BLOCKNODE_RECENTRETENTION"),
 			Storage: models.BlockNodeStorage{
 				BasePath:         os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_BASEPATH"),
 				ArchivePath:      os.Getenv("SOLO_PROVISIONER_BLOCKNODE_STORAGE_ARCHIVEPATH"),

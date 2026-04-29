@@ -11,12 +11,16 @@ const (
 	ProfileMainnet    = "mainnet"
 )
 
-func AllProfiles() []string {
+// SupportedProfiles returns all supported deployment profiles ordered by
+// environment criticality (production → development). This ordering is
+// also used by TUI select prompts, so changing it affects how options
+// are displayed to the user.
+func SupportedProfiles() []string {
 	return []string{
-		ProfileLocal,
-		ProfilePerfnet,
+		ProfileMainnet,
 		ProfileTestnet,
 		ProfilePreviewnet,
-		ProfileMainnet,
+		ProfilePerfnet,
+		ProfileLocal,
 	}
 }

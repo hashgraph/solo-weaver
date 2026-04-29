@@ -37,17 +37,35 @@ import (
 //	    uninstall *BlockNodeUninstallHandler
 //	}
 type BaseHandler[T any] struct {
-	Runtime *rsl.RuntimeResolver
-	Target  models.TargetType // expected target for intent validation
+	Runtime          *rsl.RuntimeResolver
+	Target           models.TargetType // expected target for intent validation
+	ProfileExtractor func(T) string    // optional; extracts profile from custom inputs (nil for handlers without profile)
+}
+
+// BaseHandlerOption is a functional option for configuring a BaseHandler.
+type BaseHandlerOption[T any] func(*BaseHandler[T])
+
+// WithProfileExtractor returns a BaseHandlerOption that sets the profile extractor function.
+// The extractor is called during FlushState to persist the deployment profile into
+// MachineState.Profile.  Handlers whose input types carry no profile (e.g. teleport)
+// should omit this option — the extractor defaults to nil, and no profile is written.
+func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
+	return func(h *BaseHandler[T]) {
+		h.ProfileExtractor = fn
+	}
 }
 
 // NewBaseHandler validates the required dependencies and returns a
 // populated BaseHandler.  All fields are required; any nil returns an error.
-func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target models.TargetType) (BaseHandler[T], error) {
+func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target models.TargetType, opts ...BaseHandlerOption[T]) (BaseHandler[T], error) {
 	if reg == nil {
 		return BaseHandler[T]{}, errorx.IllegalArgument.New("RuntimeResolver cannot be nil")
 	}
-	return BaseHandler[T]{Runtime: reg, Target: target}, nil
+	h := BaseHandler[T]{Runtime: reg, Target: target}
+	for _, opt := range opts {
+		opt(&h)
+	}
+	return h, nil
 }
 
 func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.UserInputs[T], target models.TargetType) error {
@@ -152,6 +170,16 @@ func (h *BaseHandler[T]) FlushState(
 	fullState, err := h.Runtime.Refresh(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
+	}
+
+	// Persist the deployment profile when the handler carries one.
+	// This is done before the per-action callback so that callback logic can
+	// read/override the profile if needed.
+	if h.ProfileExtractor != nil && effectiveInputs != nil {
+		if profile := h.ProfileExtractor(effectiveInputs.Custom); profile != "" {
+			fullState.MachineState.Profile = profile
+			logx.As().Debug().Str("profile", profile).Msg("Persisted deployment profile into state")
+		}
 	}
 
 	if callback != nil {

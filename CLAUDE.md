@@ -6,6 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **solo-weaver** (binary: `solo-provisioner`) is a Go-based CLI for automating Kubernetes deployment of Hedera network components (block nodes, alloy clusters). It helps node operators migrate from traditional deployment to containerized infrastructure.
 
+## Workflow Reminders
+
+> These rules apply every time code is changed in this repository.
+
+1. **After every code change**, run `task lint` to auto-format the code before considering the work done.
+2. **Every commit** must use a [Conventional Commits](https://www.conventionalcommits.org/) subject line (e.g. `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`) and be created with both `-s` (sign-off) and `-S` (GPG sign) flags:
+   ```bash
+   git commit -sS -m "type(scope): short description"
+   # or for multiline messages:
+   git commit -sS -F /tmp/commit-msg.txt
+   ```
+3. **Before creating a new commit**, check whether the change logically belongs to an existing unpushed commit on the branch (`git log --oneline origin/<base>..HEAD`). If it does, amend that commit instead of adding a new one:
+   ```bash
+   git add <files>
+   git commit --amend -sS --no-edit   # keep message, or drop --no-edit to reword
+   # if the target is not HEAD, use interactive rebase:
+   git rebase -i origin/<base>        # mark the target commit as 'edit', then amend
+   ```
+
 ## Build & Development Commands
 
 This project uses [Task](https://taskfile.dev) as the build system. All commands run via `task`.
@@ -88,17 +107,18 @@ solo-provisioner
 │   ├── cluster install  #   Install cluster-level teleport agent (kubectl access)
 │   └── cluster uninstall#   Uninstall cluster-level teleport agent
 ├── alloy cluster        # Alloy observability cluster (install, uninstall)
-└── version              # Print version information
+├── version              # Print version information
+└── (demo)               # TUI demo command (dev/debug use only)
 ```
 
-Root persistent flags: `--config`, `--output`, `--version`/`-v`, `--log-level`, `--force`, `--skip-hardware-checks` (hidden).
+Root persistent flags: `--config`, `--output`, `--version`/`-v`, `--log-level`, `--force`, `--skip-hardware-checks` (hidden), `--verbose`/`-V` (expanded step-by-step TUI output), `--non-interactive`.
 
 Command-specific flags (on `block`, `kube`): `--profile`. Error control flags (on workflow commands like `block node`): `--stop-on-error`, `--rollback-on-error`, `--continue-on-error`.
 
 ### Business Logic (`internal/`)
 
 Key packages:
-- `internal/workflows/` — Multi-phase orchestration (preflight → setup → deploy → verify) using the [automa](https://github.com/automa-saga/automa) framework. Workflow steps live in `internal/workflows/steps/`.
+- `internal/workflows/` — Multi-phase orchestration (preflight → setup → deploy → verify) using the [automa](https://github.com/automa-saga/automa) framework. Workflow steps live in `internal/workflows/steps/`. Notification helpers live in `internal/workflows/notify/`.
 - `internal/migration/` — Scoped migration framework (startup migrations run before every CLI invocation; block-node migrations run during upgrades). See `docs/dev/migration-framework.md`.
 - `internal/state/` — Application state management (cluster state, software state, atomic writes)
 - `internal/blocknode/` — Block node provisioning logic and storage migrations
@@ -111,10 +131,12 @@ Key packages:
 - `internal/network/` — Network configuration
 - `internal/nio/` — Network I/O utilities (stdout/stderr wrappers)
 - `internal/paths/` — Path management utilities
+- `internal/proxy/` — HTTP proxy activation from configuration (sets env vars for downstream tools)
 - `internal/rsl/` — Runtime specification layer (machine, cluster, block node, teleport runtimes)
 - `internal/sysctl/` — System control parameter management
-- `internal/templates/` — Embedded template files (alloy, block-node, cilium, crio, kubeadm, metallb, sysctl, teleport)
+- `internal/templates/` — Embedded template files (alloy, block-node, cilium, crio, health, kubeadm, metallb, sysctl, teleport)
 - `internal/tomlx/` — TOML extension utilities
+- `internal/ui/` — TUI rendering: verbose/non-interactive modes, console logging suppression, prompts (`ui/prompt/`), message models, and output capture (unix/windows)
 - `internal/version/` — Version file management (VERSION, COMMIT)
 
 ### Public Packages (`pkg/`)
@@ -151,9 +173,14 @@ Uses `github.com/automa-saga/logx` (zerolog-based). Trace IDs are initialized in
 Detailed framework docs live in `docs/dev/`:
 - `migration-framework.md` — Migration system design and usage
 - `functionality-test-suite.md` — Testing approach and patterns
+- `acceptance-tests.md` — Acceptance/UAT test patterns
 - `golden-image.md` — VM golden image setup
 - `hidden-flags.md` — Undocumented/hidden flags reference
 - `effective-value-resolution.md` — Flag and config value resolution
+- `label_profiles.md` — Deployment profile label conventions
+- `proxy.md` — HTTP proxy configuration and activation
+- `tui-output.md` — TUI output modes and formatting
+- `tui-workflow-mapping.md` — Mapping of workflow steps to TUI messages
 
 ## Key Conventions
 
