@@ -115,6 +115,25 @@ tasks:
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
 
 
+        echo -e '\n▶ Upgrade with --load-balancer-enabled=false and verify MetalLB annotation is removed'
+        sudo solo-provisioner block node upgrade -p local \
+          --load-balancer-enabled=false \
+          -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+        ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}' 2>/dev/null || true)
+        echo "   metallb.io/address-pool annotation: '${ANNOTATION}'"
+        [ -z "${ANNOTATION}" ] || { echo "FAIL: expected metallb.io/address-pool annotation to be absent, got '${ANNOTATION}'"; exit 1; }
+        echo '   ✓ MetalLB annotation successfully removed'
+
+        echo -e '\n▶ Upgrade with --load-balancer-enabled=true and verify MetalLB annotation is restored'
+        sudo solo-provisioner block node upgrade -p local \
+          --load-balancer-enabled=true \
+          -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+        ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}' 2>/dev/null || true)
+        echo "   metallb.io/address-pool annotation: '${ANNOTATION}'"
+        [ "${ANNOTATION}" = "public-address-pool" ] || { echo "FAIL: expected metallb.io/address-pool=public-address-pool, got '${ANNOTATION}'"; exit 1; }
+        echo '   ✓ MetalLB annotation successfully restored'
+
+
         echo -e '\n▶ Block node reset'
         sudo solo-provisioner block node reset -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy.yaml

@@ -162,6 +162,32 @@ func (m *Manager) AnnotateService(ctx context.Context) error {
 	return nil
 }
 
+// ReconcileServiceAnnotation manages the MetalLB address-pool annotation on the block node
+// service based on the LoadBalancerEnabled input flag.
+//
+//   - When LoadBalancerEnabled is true the annotation "metallb.io/address-pool: public-address-pool"
+//     is added (or left if it already exists — kubectl merge semantics).
+//   - When LoadBalancerEnabled is false the annotation is explicitly removed. This is required
+//     for the upgrade path: the annotation was originally applied via kubectl so it lives outside
+//     Helm state and is not cleaned up by a helm upgrade alone.
+func (m *Manager) ReconcileServiceAnnotation(ctx context.Context) error {
+	resourceName := m.blockNodeInputs.Release + ResourceNameSuffix
+	const annotationKey = "metallb.io/address-pool"
+
+	if m.blockNodeInputs.LoadBalancerEnabled {
+		annotations := map[string]string{annotationKey: "public-address-pool"}
+		if err := m.kubeClient.AnnotateResource(ctx, kube.KindService, m.blockNodeInputs.Namespace, resourceName, annotations); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", resourceName)
+		}
+		return nil
+	}
+
+	if err := m.kubeClient.RemoveAnnotations(ctx, kube.KindService, m.blockNodeInputs.Namespace, resourceName, []string{annotationKey}); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to remove MetalLB annotation from service: %s", resourceName)
+	}
+	return nil
+}
+
 // GetTargetVersion returns the configured target version for block node.
 func (m *Manager) GetTargetVersion() string {
 	return m.blockNodeInputs.ChartVersion

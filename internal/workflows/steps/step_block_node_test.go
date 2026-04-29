@@ -22,11 +22,12 @@ import (
 // matching what the production CLI would provide.
 func newTestBlockNodeInputs(profile string) models.BlockNodeInputs {
 	return models.BlockNodeInputs{
-		Profile:      profile,
-		Namespace:    deps.BLOCK_NODE_NAMESPACE,
-		Release:      deps.BLOCK_NODE_RELEASE,
-		Chart:        deps.BLOCK_NODE_CHART,
-		ChartVersion: deps.BLOCK_NODE_VERSION,
+		Profile:             profile,
+		Namespace:           deps.BLOCK_NODE_NAMESPACE,
+		Release:             deps.BLOCK_NODE_RELEASE,
+		Chart:               deps.BLOCK_NODE_CHART,
+		ChartVersion:        deps.BLOCK_NODE_VERSION,
+		LoadBalancerEnabled: true,
 		Storage: models.BlockNodeStorage{
 			BasePath: deps.BLOCK_NODE_STORAGE_BASE_PATH,
 		},
@@ -300,4 +301,71 @@ func TestResetBlockNode_Success(t *testing.T) {
 	waitReadyReport := report.StepReports[4]
 	require.Equal(t, WaitForBlockNodeStepId, waitReadyReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReadyReport.Status)
+}
+
+// TestUpgradeBlockNode_AnnotationReconciled verifies that upgrading with
+// --load-balancer-enabled=false removes the MetalLB annotation that was set
+// during a prior install with --load-balancer-enabled=true.
+func TestUpgradeBlockNode_AnnotationReconciled(t *testing.T) {
+	hostProfile := hardware.GetHostProfile()
+	totalMemoryGB := hostProfile.GetTotalMemoryGB()
+	if totalMemoryGB < 16 {
+		t.Skipf("Skipping test: Block node requires at least 16GB memory, but system has only %dGB", totalMemoryGB)
+	}
+
+	//
+	// Given — install with LoadBalancerEnabled=true
+	//
+
+	testutil.Reset(t)
+	SetupPrerequisitesToLevel(t, SetupMetalLBLevel)
+
+	installInputs := newTestBlockNodeInputs(models.ProfileLocal) // LoadBalancerEnabled: true
+	installWb := SetupBlockNode(installInputs)
+	require.NotNil(t, installWb)
+	installWorkflow, err := installWb.Build()
+	require.NoError(t, err)
+	installReport := installWorkflow.Execute(context.Background())
+	require.NoError(t, installReport.Error, "Block node must be installed before upgrade test")
+	require.Equal(t, automa.StatusSuccess, installReport.Status)
+
+	//
+	// When — upgrade with LoadBalancerEnabled=false
+	//
+
+	upgradeInputs := newTestBlockNodeInputs(models.ProfileLocal)
+	upgradeInputs.LoadBalancerEnabled = false
+	upgradeInputs.ReuseValues = true
+
+	upgradeWb := UpgradeBlockNode(upgradeInputs)
+	require.NotNil(t, upgradeWb)
+
+	upgradeWorkflow, err := upgradeWb.Build()
+	require.NoError(t, err)
+	require.NotNil(t, upgradeWorkflow)
+
+	upgradeReport := upgradeWorkflow.Execute(context.Background())
+
+	//
+	// Then
+	//
+
+	require.NoError(t, upgradeReport.Error)
+	require.Equal(t, automa.StatusSuccess, upgradeReport.Status)
+
+	// Upgrade workflow must include: upgrade, annotate, wait (3 substeps)
+	require.Len(t, upgradeReport.StepReports, 3, "Expected 3 substeps: upgrade, annotate, wait")
+
+	upgradeStepReport := upgradeReport.StepReports[0]
+	require.Equal(t, UpgradeBlockNodeStepId, upgradeStepReport.Id)
+	require.Equal(t, automa.StatusSuccess, upgradeStepReport.Status)
+
+	annotateStepReport := upgradeReport.StepReports[1]
+	require.Equal(t, AnnotateBlockNodeServiceStepId, annotateStepReport.Id)
+	require.Equal(t, automa.StatusSuccess, annotateStepReport.Status)
+	require.Equal(t, "true", annotateStepReport.Metadata[ConfiguredByThisStep])
+
+	waitStepReport := upgradeReport.StepReports[2]
+	require.Equal(t, WaitForBlockNodeStepId, waitStepReport.Id)
+	require.Equal(t, automa.StatusSuccess, waitStepReport.Status)
 }

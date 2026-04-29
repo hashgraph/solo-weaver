@@ -39,7 +39,7 @@ func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		createBlockNodeNamespace(blockNodeManagerProvider),
 		createBlockNodePVs(blockNodeManagerProvider),
 		installBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
-		annotateBlockNodeService(blockNodeManagerProvider),
+		annotateBlockNodeService(inputs, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -278,8 +278,10 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 		})
 }
 
-// annotateBlockNodeService annotates the block node service with MetalLB address pool
-func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) automa.Builder {
+// annotateBlockNodeService reconciles the MetalLB address-pool annotation on the block node
+// service. When LoadBalancerEnabled is true the annotation is added; when false it is removed.
+// This step runs on both install and upgrade so that toggling the flag is always reflected.
+func annotateBlockNodeService(inputs models.BlockNodeInputs, getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(AnnotateBlockNodeServiceStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
@@ -289,7 +291,7 @@ func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) aut
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.AnnotateService(ctx); err != nil {
+			if err := manager.ReconcileServiceAnnotation(ctx); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -299,14 +301,22 @@ func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) aut
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Annotating Block Node service")
+			if inputs.LoadBalancerEnabled {
+				notify.As().StepStart(ctx, stp, "Annotating Block Node service with MetalLB address pool")
+			} else {
+				notify.As().StepStart(ctx, stp, "Removing MetalLB annotation from Block Node service")
+			}
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to annotate Block Node service")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to reconcile Block Node service annotation")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node service annotated successfully")
+			if inputs.LoadBalancerEnabled {
+				notify.As().StepCompletion(ctx, stp, rpt, "Block Node service annotated successfully")
+			} else {
+				notify.As().StepCompletion(ctx, stp, rpt, "MetalLB annotation removed from Block Node service")
+			}
 		})
 }
 
@@ -346,6 +356,7 @@ func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
 		upgradeBlockNode(inputs, blockNodeManagerProvider),
+		annotateBlockNodeService(inputs, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

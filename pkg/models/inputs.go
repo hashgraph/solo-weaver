@@ -68,6 +68,10 @@ type BlockNodeInputs struct {
 	SkipHardwareChecks bool
 	HistoricRetention  string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
 	RecentRetention    string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
+	// LoadBalancerEnabled controls whether the MetalLB address-pool annotation is injected
+	// into the Helm values for the block node service. Set to false when MetalLB is not
+	// available (e.g. local/dev clusters). Defaults to true.
+	LoadBalancerEnabled bool
 }
 
 type ClusterInputs struct {

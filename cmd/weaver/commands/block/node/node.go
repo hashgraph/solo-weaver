@@ -15,24 +15,25 @@ var (
 	flagRollbackOnError bool
 	flagContinueOnError bool
 
-	flagValuesFile        string
-	flagChartVersion      string
-	flagChartRepo         string
-	flagNamespace         string
-	flagReleaseName       string
-	flagBasePath          string
-	flagArchivePath       string
-	flagLivePath          string
-	flagLogPath           string
-	flagVerificationPath  string
-	flagPluginsPath       string
-	flagLiveSize          string
-	flagArchiveSize       string
-	flagLogSize           string
-	flagVerificationSize  string
-	flagPluginsSize       string
-	flagHistoricRetention string
-	flagRecentRetention   string
+	flagValuesFile          string
+	flagChartVersion        string
+	flagChartRepo           string
+	flagNamespace           string
+	flagReleaseName         string
+	flagBasePath            string
+	flagArchivePath         string
+	flagLivePath            string
+	flagLogPath             string
+	flagVerificationPath    string
+	flagPluginsPath         string
+	flagLiveSize            string
+	flagArchiveSize         string
+	flagLogSize             string
+	flagVerificationSize    string
+	flagPluginsSize         string
+	flagHistoricRetention   string
+	flagRecentRetention     string
+	flagLoadBalancerEnabled bool
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -83,6 +84,9 @@ func init() {
 	// Block retention configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagHistoricRetention, "historic-retention", "", "Historic block retention threshold (0 = unlimited, default: 0)")
 	nodeCmd.PersistentFlags().StringVar(&flagRecentRetention, "recent-retention", "", "Recent block retention threshold (default: 96000)")
+
+	// Load balancer configuration flags
+	nodeCmd.PersistentFlags().BoolVar(&flagLoadBalancerEnabled, "load-balancer-enabled", true, "Enable MetalLB address-pool annotation on the block node service (set to false for clusters without MetalLB)")
 
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, resetCmd, uninstallCmd)
 }

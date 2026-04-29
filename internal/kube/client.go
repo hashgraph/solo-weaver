@@ -5,6 +5,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -1196,6 +1197,44 @@ func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namesp
 	_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to annotate %s: %s/%s", kind, namespace, name)
+	}
+
+	return nil
+}
+
+// RemoveAnnotations removes the specified annotation keys from a resource using a JSON merge patch.
+// Keys that do not exist on the resource are silently ignored.
+func (c *Client) RemoveAnnotations(ctx context.Context, kind ResourceKind, namespace, name string, keys []string) error {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
+
+	var dr dynamic.ResourceInterface
+	if namespace != "" {
+		dr = c.Dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(gvr)
+	}
+
+	// Build a JSON merge patch that sets each key to null, which removes it.
+	annotations := make(map[string]interface{}, len(keys))
+	for _, k := range keys {
+		annotations[k] = nil
+	}
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": annotations,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to build annotation removal patch")
+	}
+
+	_, err = dr.Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to remove annotations from %s: %s/%s", kind, namespace, name)
 	}
 
 	return nil
