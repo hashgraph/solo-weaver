@@ -18,6 +18,8 @@ const (
 	SetupBlockNodeStorageStepId      = "setup-block-node-storage"
 	CreateBlockNodeNamespaceStepId   = "create-block-node-namespace"
 	CreateBlockNodePVsStepId         = "create-block-node-pvs"
+	DeleteBlockNodePVsStepId         = "delete-block-node-pvs"
+	RecreateBlockNodeStorageStepId   = "recreate-block-node-storage"
 	InstallBlockNodeStepId           = "install-block-node"
 	UpgradeBlockNodeStepId           = "upgrade-block-node"
 	WaitForBlockNodeStepId           = "wait-for-block-node"
@@ -164,7 +166,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.DeletePersistentVolumes(ctx, models.Paths().TempDir); err != nil {
+			if err := manager.DeleteAllPersistentVolumes(ctx); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -636,5 +638,53 @@ func RolloutRestartBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuil
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node pod restarted successfully")
+		})
+}
+
+// deleteBlockNodePVs deletes all known block-node PVs and PVCs by name.
+func deleteBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(DeleteBlockNodePVsStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if err := manager.DeleteAllPersistentVolumes(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Deleting Block Node PVs and PVCs")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete Block Node PVs and PVCs")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node PVs and PVCs deleted")
+		})
+}
+
+// RecreateBlockNodeStorage deletes existing PVs/PVCs, creates storage directories at the
+// new paths, then creates fresh PVs/PVCs bound to those directories.
+// It is used in the reconfigure --with-reset workflow to apply storage path changes.
+func RecreateBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider(inputs)
+
+	return automa.NewWorkflowBuilder().WithId(RecreateBlockNodeStorageStepId).Steps(
+		deleteBlockNodePVs(managerProvider),
+		setupBlockNodeStorage(managerProvider),
+		createBlockNodePVs(managerProvider),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Recreating Block Node storage")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to recreate Block Node storage")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node storage recreated successfully")
 		})
 }

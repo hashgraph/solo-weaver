@@ -4,6 +4,7 @@ package blocknode
 
 import (
 	"github.com/automa-saga/logx"
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -11,21 +12,32 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-// patchBlockNodeChartRef saves the user-supplied chart reference into the runtime state.
-// The chart reference cannot be recovered from the Helm release, so it is injected by the BLL layer.
+// patchBlockNodeState persists fields that cannot be recovered from the Helm
+// release or PersistentVolumes into the runtime state before flushing to disk.
+//
+//   - ChartRef: the OCI / repo reference is not stored in Helm release metadata.
+//   - Storage.BasePath: a weaver concept; Kubernetes only knows the individual PV
+//     hostPaths that the reality checker reads back. Without this patch, BasePath
+//     is lost after every FlushState → Refresh cycle, and the next interactive
+//     prompt would re-fill the PV-derived individual paths instead of the
+//     operator-chosen base path.
 //
 // Profile persistence is handled centrally by BaseHandler.FlushState via ProfileExtractor.
-func patchBlockNodeChartRef() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
-
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil
 		}
-		if effectiveInputs.Custom.Chart == "" {
-			logx.As().Debug().Msg("User did not provide a chart reference; skipping injection into runtime state")
-			return nil
+		if effectiveInputs.Custom.Chart != "" {
+			logx.As().Debug().Str("chartRef", effectiveInputs.Custom.Chart).
+				Msg("Persisted block node chart ref into runtime state")
+			st.BlockNodeState.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
 		}
-		st.BlockNodeState.ReleaseInfo.ChartRef = effectiveInputs.Custom.Chart
+		if effectiveInputs.Custom.Storage.BasePath != "" {
+			logx.As().Debug().Str("basePath", effectiveInputs.Custom.Storage.BasePath).
+				Msg("Persisted block node storage base path into runtime state")
+			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
+		}
 		return nil
 	}
 }
@@ -136,4 +148,40 @@ func resolveBlocknodeEffectiveInputs(
 		Msg("Determined effective user inputs for block node")
 
 	return &effectiveInputs, nil
+}
+
+// storagePathsChanged returns true when the requested storage configuration differs
+// from the currently deployed one. Both sides are resolved through a Manager so that
+// base-path expansion and sanitization are applied consistently before comparing.
+func storagePathsChanged(deployed models.BlockNodeStorage, requested models.BlockNodeInputs) (bool, error) {
+	deployedInputs := requested
+	deployedInputs.Storage = deployed
+
+	deployedMgr, err := bnpkg.NewManager(deployedInputs)
+	if err != nil {
+		return false, err
+	}
+	dArchive, dLive, dLog, dOpt, err := deployedMgr.GetStoragePaths()
+	if err != nil {
+		return false, err
+	}
+
+	requestedMgr, err := bnpkg.NewManager(requested)
+	if err != nil {
+		return false, err
+	}
+	rArchive, rLive, rLog, rOpt, err := requestedMgr.GetStoragePaths()
+	if err != nil {
+		return false, err
+	}
+
+	if dArchive != rArchive || dLive != rLive || dLog != rLog {
+		return true, nil
+	}
+	for i := range rOpt {
+		if i >= len(dOpt) || dOpt[i] != rOpt[i] {
+			return true, nil
+		}
+	}
+	return false, nil
 }

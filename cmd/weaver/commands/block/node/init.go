@@ -130,20 +130,31 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run text-input prompts. Reconfigure uses a tailored set that omits
-	// immutable fields (namespace, release-name, chart-version) and adds
-	// storage path prompts instead.
+	// immutable fields (namespace, release-name, chart-version). Storage path
+	// prompts are handled separately by RunStoragePathPrompts below.
 	var inputPrompts []prompt.InputPrompt
 	if cmd.Name() == "reconfigure" {
 		inputPrompts = prompt.BlockNodeReconfigureInputPrompts(
 			defaults,
-			&flagBasePath, &flagArchivePath, &flagLivePath, &flagLogPath,
-			&flagVerificationPath, &flagPluginsPath,
 			&flagHistoricRetention, &flagRecentRetention,
 		)
 	} else {
 		inputPrompts = prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
 	}
 	if err := prompt.RunInputPrompts(cmd, inputPrompts, cv); err != nil {
+		return err
+	}
+
+	// Storage path prompts: two-pass (mode select → conditional path inputs).
+	// Applied to all block node commands that configure storage (install, upgrade, reconfigure).
+	if err := prompt.RunStoragePathPrompts(cmd, defaults, prompt.StoragePathTargets{
+		BasePath:         &flagBasePath,
+		ArchivePath:      &flagArchivePath,
+		LivePath:         &flagLivePath,
+		LogPath:          &flagLogPath,
+		VerificationPath: &flagVerificationPath,
+		PluginsPath:      &flagPluginsPath,
+	}, cv); err != nil {
 		return err
 	}
 

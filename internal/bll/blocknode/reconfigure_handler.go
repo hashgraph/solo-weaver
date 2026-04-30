@@ -56,20 +56,42 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	ins := inputs.Custom
 	var wb *automa.WorkflowBuilder
 	if ins.ResetStorage {
-		// PurgeBlockNodeStorage scales down, clears storage, and UpgradeBlockNode
-		// scales back up via helm — the pod restart is implicit; no extra restart needed.
+		// Purge data at the currently deployed paths: build a copy of ins that
+		// carries the *old* storage configuration so that ResetStorage clears the
+		// directories that actually exist on disk. Namespace and release are the
+		// same in both old and new inputs, so ScaleStatefulSet / WaitForPodsTerminated
+		// are unaffected.
+		oldIns := ins
+		oldIns.Storage = currentState.BlockNodeState.Storage
+
+		// After purging old dirs, recreate PVs/PVCs and create new directories at
+		// the new paths, then upgrade the chart.
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
-			Steps(steps.PurgeBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))
-	} else if ins.NoRestart {
-		// Opt-out: apply new values via helm but skip the rollout-restart.
-		// Use when the chart already guarantees pod-spec changes trigger restarts.
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").
-			Steps(steps.UpgradeBlockNode(ins))
+			Steps(steps.PurgeBlockNodeStorage(oldIns), steps.RecreateBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))
 	} else {
-		// Default: apply new values then trigger a rolling restart so ConfigMap-only
-		// changes are picked up by the running pod.
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").
-			Steps(steps.UpgradeBlockNode(ins), steps.RolloutRestartBlockNode(ins))
+		// For non-reset reconfigures, storage path changes require --with-reset because
+		// existing PVs/PVCs cannot be mutated in-place; block with a clear error.
+		changed, err := storagePathsChanged(currentState.BlockNodeState.Storage, ins)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to compare storage paths")
+		}
+		if changed {
+			return nil, errorx.IllegalArgument.New(
+				"storage paths have changed; PVs/PVCs cannot be updated without clearing existing data").
+				WithProperty(models.ErrPropertyResolution,
+					"re-run with --with-reset to delete existing PVs/PVCs and recreate them at the new paths")
+		}
+
+		if ins.NoRestart {
+			// Opt-out: apply new values via helm but skip the rollout-restart.
+			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").
+				Steps(steps.UpgradeBlockNode(ins))
+		} else {
+			// Default: apply new values then trigger a rolling restart so ConfigMap-only
+			// changes are picked up by the running pod.
+			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").
+				Steps(steps.UpgradeBlockNode(ins), steps.RolloutRestartBlockNode(ins))
+		}
 	}
 	return wb, nil
 }
@@ -80,7 +102,7 @@ func (h *ReconfigureHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeChartRef())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeState())
 }
 
 // NewReconfigureHandler creates a new ReconfigureHandler.
