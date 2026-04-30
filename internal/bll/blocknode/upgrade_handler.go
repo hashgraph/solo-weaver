@@ -74,7 +74,9 @@ func (h *UpgradeHandler) BuildWorkflow(
 	if desiredVer.LessThan(currentVer) {
 		return nil, errorx.IllegalArgument.New(
 			"block node chart version cannot be downgraded from %q to %q",
-			currentVer, desiredVer)
+			currentVer, desiredVer).
+			WithProperty(models.ErrPropertyResolution,
+				"version downgrade is not supported; use 'weaver block node reconfigure' to re-apply configuration at the current version")
 	}
 	if desiredVer.Equal(currentVer) && !inputs.Common.Force {
 		return nil, errorx.IllegalArgument.New(
@@ -104,8 +106,7 @@ func (h *UpgradeHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeChartRef())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeState())
 }
 
 func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs],

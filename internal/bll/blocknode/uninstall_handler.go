@@ -62,8 +62,7 @@ func (h *UninstallHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	// Delegate to the shared handler which orchestrates all block-node intents.
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeChartRef())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeState())
 }
 
 func NewUninstallHandler(base bll.BaseHandler[models.BlockNodeInputs],

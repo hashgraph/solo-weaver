@@ -73,6 +73,14 @@ type PromptDefaultsDoc struct {
 			ChartVersion      string `yaml:"version"`
 			HistoricRetention string `yaml:"historicRetention"`
 			RecentRetention   string `yaml:"recentRetention"`
+			Storage           struct {
+				BasePath         string `yaml:"basePath"`
+				ArchivePath      string `yaml:"archivePath"`
+				LivePath         string `yaml:"livePath"`
+				LogPath          string `yaml:"logPath"`
+				VerificationPath string `yaml:"verificationPath"`
+				PluginsPath      string `yaml:"pluginsPath"`
+			} `yaml:"storage"`
 		} `yaml:"blockNodeState"`
 	} `yaml:"state"`
 }
@@ -103,6 +111,7 @@ type BlockNodeSummary struct {
 	ChartVersion      string
 	HistoricRetention string
 	RecentRetention   string
+	Storage           models.BlockNodeStorage
 }
 
 // PromptDefaults holds all prompt-relevant fields extracted from the on-disk
@@ -137,6 +146,14 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 			ChartVersion:      bn.ChartVersion,
 			HistoricRetention: bn.HistoricRetention,
 			RecentRetention:   bn.RecentRetention,
+			Storage: models.BlockNodeStorage{
+				BasePath:         bn.Storage.BasePath,
+				ArchivePath:      bn.Storage.ArchivePath,
+				LivePath:         bn.Storage.LivePath,
+				LogPath:          bn.Storage.LogPath,
+				VerificationPath: bn.Storage.VerificationPath,
+				PluginsPath:      bn.Storage.PluginsPath,
+			},
 		},
 	}, nil
 }

@@ -122,6 +122,68 @@ func RunWorkflowBuilder(ctx context.Context, b automa.Builder) {
 	})
 }
 
+// RunWorkflowE is like RunWorkflow but propagates errors back to the caller
+// instead of calling os.Exit via doctor.CheckErr. Use this inside cobra RunE
+// handlers where the error must be returned so tests and callers can inspect it.
+func RunWorkflowE(ctx context.Context, fn func() (*automa.Report, error)) error {
+	if ui.IsUnformatted() {
+		report, err := fn()
+		if err != nil {
+			return err
+		}
+		handleWorkflowResult(ctx, report)
+		return nil
+	}
+
+	// TUI path — same structure as RunWorkflow but returns errors instead of
+	// calling doctor.CheckErr / os.Exit.
+	origStdout, restoreStdout := ui.CaptureOutput()
+
+	m := ui.NewModel()
+	program := tea.NewProgram(m, tea.WithOutput(origStdout))
+
+	prevHandler := *notify.As()
+	notify.SetDefault(ui.NewTUIHandler(program))
+	defer notify.SetDefault(&prevHandler)
+
+	ui.SuppressConsoleLogging(ensureLogConfig(), program)
+
+	origLogOutput := log.Writer()
+	log.SetOutput(io.Discard)
+
+	reportCh := make(chan *automa.Report, 1)
+	go func() {
+		report, err := fn()
+		reportCh <- report
+		program.Send(ui.WorkflowDoneMsg{Report: report, Err: err})
+	}()
+
+	finalModel, tuiErr := program.Run()
+
+	restoreStdout()
+	log.SetOutput(origLogOutput)
+	ui.SuppressConsoleLogging(ensureLogConfig())
+
+	if tuiErr != nil {
+		fmt.Printf("TUI error: %v\n", tuiErr)
+		report := <-reportCh
+		handleWorkflowResult(ctx, report)
+		return nil
+	}
+
+	result, ok := finalModel.(ui.Model)
+	if !ok {
+		return fmt.Errorf("unexpected TUI model type")
+	}
+
+	if result.Err() != nil {
+		return result.Err()
+	}
+
+	handleWorkflowResult(ctx, result.Report())
+	return nil
+}
+
 // CheckWorkflowReport checks for errors, saves the YAML report, and prints a
 // compact summary. Exported for commands that handle reports outside RunWorkflow
 // (e.g. block node install/upgrade/reset).

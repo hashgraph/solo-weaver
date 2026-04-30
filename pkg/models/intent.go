@@ -37,6 +37,9 @@ const (
 
 	// ActionMigrate migrates the application or component to a different environment or configuration
 	ActionMigrate ActionType = "migrate"
+
+	// ActionReconfigure re-applies configuration to an already-deployed component without changing its version.
+	ActionReconfigure ActionType = "reconfigure"
 )
 
 type TargetType string
@@ -79,12 +82,13 @@ const (
 
 // allowedOperations maps each action to the valid target types it can be performed on.
 var allowedOperations = map[ActionType][]TargetType{
-	ActionSetup:     {TargetMachine, TargetSystem, TargetCluster},
-	ActionReset:     {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
-	ActionInstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
-	ActionUninstall: {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
-	ActionUpgrade:   {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
-	ActionMigrate:   {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionSetup:       {TargetMachine, TargetSystem, TargetCluster},
+	ActionReset:       {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
+	ActionInstall:     {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
+	ActionUninstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
+	ActionUpgrade:     {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionMigrate:     {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionReconfigure: {TargetBlockNode},
 }
 
 // Intent defines the desired action to be performed given certain parameters and configuration.

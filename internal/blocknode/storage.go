@@ -64,21 +64,24 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	includePlugins := false
 	verificationPath := ""
 	pluginsPath := ""
-	verificationSize := m.blockNodeInputs.Storage.VerificationSize
-	pluginsSize := m.blockNodeInputs.Storage.PluginsSize
+	verificationSize := ""
+	pluginsSize := ""
 
-	for i, os := range applicable {
-		switch os.Name {
+	for i, optStor := range applicable {
+		p := ""
+		if i < len(optionalPaths) {
+			p = optionalPaths[i]
+		}
+		s := optStor.GetSize(&m.blockNodeInputs.Storage)
+		switch optStor.Name {
 		case "verification":
 			includeVerification = true
-			if i < len(optionalPaths) {
-				verificationPath = optionalPaths[i]
-			}
+			verificationPath = p
+			verificationSize = s
 		case "plugins":
 			includePlugins = true
-			if i < len(optionalPaths) {
-				pluginsPath = optionalPaths[i]
-			}
+			pluginsPath = p
+			pluginsSize = s
 		}
 	}
 
@@ -158,10 +161,36 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	return nil
 }
 
-// DeletePersistentVolumes deletes PVs and PVCs
-func (m *Manager) DeletePersistentVolumes(ctx context.Context, tempDir string) error {
-	configFilePath := path.Join(tempDir, "block-node-storage-config.yaml")
-	return m.kubeClient.DeleteManifest(ctx, configFilePath)
+// DeleteAllPersistentVolumes deletes all known block-node PVs and PVCs by name.
+// It does not depend on a previously-written manifest file, making it safe to call
+// even when the tempDir has been cleared or was never written.
+// Missing resources are silently ignored.
+func (m *Manager) DeleteAllPersistentVolumes(ctx context.Context) error {
+	ns := m.blockNodeInputs.Namespace
+
+	corePVCNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
+	corePVNames := []string{"live-storage-pv", "archive-storage-pv", "logging-storage-pv"}
+
+	for _, optStor := range GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion) {
+		corePVCNames = append(corePVCNames, optStor.PVCName)
+		corePVNames = append(corePVNames, optStor.PVName)
+	}
+
+	for _, pvcName := range corePVCNames {
+		m.logger.Info().Str("pvc", pvcName).Msg("Deleting PVC")
+		if err := m.kubeClient.DeletePVC(ctx, ns, pvcName); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to delete PVC %s", pvcName)
+		}
+	}
+
+	for _, pvName := range corePVNames {
+		m.logger.Info().Str("pv", pvName).Msg("Deleting PV")
+		if err := m.kubeClient.DeletePV(ctx, pvName); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to delete PV %s", pvName)
+		}
+	}
+
+	return nil
 }
 
 // CreateOptionalStorage creates a single optional PV/PVC using the unified template.

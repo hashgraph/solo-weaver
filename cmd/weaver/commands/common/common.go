@@ -128,6 +128,15 @@ func FlagNoReuseValues() FlagDefinition[bool] {
 	}
 }
 
+func FlagNoRestart() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "no-restart",
+		ShortName:   "",
+		Description: "Skip the rollout-restart of the block node pod after reconfiguring (use when the chart guarantees pod-spec changes trigger restarts automatically)",
+		Default:     false,
+	}
+}
+
 // FlagSkipHardwareChecks is a hidden persistent flag registered on the root command.
 // When set, it skips CPU, memory, and storage validation in NewNodeSafetyCheckWorkflow
 // (see internal/workflows/preflight.go). Privilege, user, and host profile checks

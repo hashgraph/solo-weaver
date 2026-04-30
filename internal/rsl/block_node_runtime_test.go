@@ -606,6 +606,159 @@ func TestStorageResolver_CorruptDeployedStorage_Errors(t *testing.T) {
 	require.Error(t, err, "corrupt deployed storage must produce an error")
 }
 
+// ── Base-path mode guard (storageResolver) ────────────────────────────────────
+//
+// When the operator provides a BasePath (with no individual paths), lower-priority
+// sources such as state or config must not fill the individual path fields back in.
+// This allows the operator to switch from "individual paths" mode to "base-path"
+// mode via the reconfigure prompt or CLI flags.
+
+func TestStorageResolver_UserBasePath_BlocksStateIndividualPaths(t *testing.T) {
+	// State has individual paths (no base-path); user provides only BasePath.
+	// The resolver must NOT merge state's individual paths.
+	stateWithIndividualPaths := state.BlockNodeState{
+		ReleaseInfo: state.HelmReleaseInfo{
+			Name:         "block-node",
+			Namespace:    "block-node-ns",
+			ChartVersion: "0.30.0",
+			ChartName:    "block-node-server",
+			ChartRef:     "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+			Status:       release.StatusDeployed,
+		},
+		Storage: models.BlockNodeStorage{
+			ArchivePath:      "/old/archive",
+			LivePath:         "/old/live",
+			LogPath:          "/old/logs",
+			VerificationPath: "/old/verify",
+			PluginsPath:      "/old/plugins",
+		},
+	}
+
+	r := newTestResolver(models.Config{}, stateWithIndividualPaths)
+	r.WithDefaults(testDefaultsConfig())
+	r.WithIntent(installIntent)
+	r.WithUserInputs(models.BlockNodeInputs{
+		Namespace: "ns", Release: "rel", Chart: "oci://c", ChartVersion: "0.30.0",
+		Storage: models.BlockNodeStorage{BasePath: "/new/base"},
+	})
+
+	st, err := r.Storage()
+	require.NoError(t, err)
+
+	got := st.Get().Val()
+	assert.Equal(t, "/new/base", got.BasePath, "user BasePath must be preserved")
+	assert.Empty(t, got.ArchivePath, "state ArchivePath must not be merged when BasePath is set")
+	assert.Empty(t, got.LivePath, "state LivePath must not be merged when BasePath is set")
+	assert.Empty(t, got.LogPath, "state LogPath must not be merged when BasePath is set")
+	assert.Empty(t, got.VerificationPath, "state VerificationPath must not be merged when BasePath is set")
+	assert.Empty(t, got.PluginsPath, "state PluginsPath must not be merged when BasePath is set")
+	assert.Equal(t, StrategyUserInput, st.Strategy())
+}
+
+func TestStorageResolver_UserBasePath_BlocksConfigAndDefaultIndividualPaths(t *testing.T) {
+	// Config and default both have individual paths; user provides only BasePath.
+	// The resolver must NOT merge individual paths from config or default.
+	cfgWithPaths := models.Config{
+		BlockNode: models.BlockNodeConfig{
+			Storage: models.BlockNodeStorage{
+				ArchivePath: "/cfg/archive",
+				LivePath:    "/cfg/live",
+			},
+		},
+	}
+	defaultsWithPaths := models.Config{
+		BlockNode: models.BlockNodeConfig{
+			Storage: models.BlockNodeStorage{
+				BasePath:    "/def/base",
+				ArchivePath: "/def/archive",
+			},
+		},
+	}
+
+	r := newTestResolver(cfgWithPaths, state.NewBlockNodeState())
+	r.WithDefaults(defaultsWithPaths)
+	r.WithIntent(installIntent)
+	r.WithUserInputs(models.BlockNodeInputs{
+		Namespace: "ns", Release: "rel", Chart: "oci://c", ChartVersion: "0.30.0",
+		Storage: models.BlockNodeStorage{BasePath: "/user/base"},
+	})
+
+	st, err := r.Storage()
+	require.NoError(t, err)
+
+	got := st.Get().Val()
+	assert.Equal(t, "/user/base", got.BasePath)
+	assert.Empty(t, got.ArchivePath, "config ArchivePath must not be merged when user BasePath is set")
+	assert.Empty(t, got.LivePath, "config LivePath must not be merged when user BasePath is set")
+}
+
+func TestStorageResolver_UserBasePath_SizeFieldsStillMergedFromState(t *testing.T) {
+	// Even in base-path mode, size fields from state must still be merged
+	// so existing PVC capacity is preserved unless explicitly overridden.
+	stateWithSizes := state.BlockNodeState{
+		ReleaseInfo: state.HelmReleaseInfo{
+			Name: "block-node", Namespace: "ns", ChartVersion: "0.30.0",
+			ChartName: "block-node-server",
+			ChartRef:  "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+			Status:    release.StatusDeployed,
+		},
+		Storage: models.BlockNodeStorage{
+			ArchivePath: "/old/archive",
+			LivePath:    "/old/live",
+			LogPath:     "/old/logs",
+			LiveSize:    "50Gi",
+			ArchiveSize: "100Gi",
+		},
+	}
+
+	r := newTestResolver(models.Config{}, stateWithSizes)
+	r.WithDefaults(testDefaultsConfig())
+	r.WithIntent(installIntent)
+	r.WithUserInputs(models.BlockNodeInputs{
+		Namespace: "ns", Release: "rel", Chart: "oci://c", ChartVersion: "0.30.0",
+		Storage: models.BlockNodeStorage{BasePath: "/new/base"},
+	})
+
+	st, err := r.Storage()
+	require.NoError(t, err)
+
+	got := st.Get().Val()
+	assert.Equal(t, "/new/base", got.BasePath)
+	assert.Empty(t, got.ArchivePath, "individual paths must not be merged")
+	assert.Empty(t, got.LivePath, "individual paths must not be merged")
+	assert.Equal(t, "50Gi", got.LiveSize, "LiveSize from state must still be merged")
+	assert.Equal(t, "100Gi", got.ArchiveSize, "ArchiveSize from state must still be merged")
+}
+
+func TestStorageResolver_UserIndividualPaths_StateBasePath_BasePathFillsGap(t *testing.T) {
+	// User provides only ArchivePath; state has BasePath.
+	// BasePath from state must still fill the gap (no base-path guard active at this point).
+	stateWithBase := state.BlockNodeState{
+		ReleaseInfo: state.HelmReleaseInfo{
+			Name: "block-node", Namespace: "ns", ChartVersion: "0.30.0",
+			ChartName: "block-node-server",
+			ChartRef:  "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server",
+			Status:    release.StatusDeployed,
+		},
+		Storage: models.BlockNodeStorage{BasePath: "/state/base"},
+	}
+
+	r := newTestResolver(models.Config{}, stateWithBase)
+	r.WithDefaults(testDefaultsConfig())
+	r.WithIntent(installIntent)
+	r.WithUserInputs(models.BlockNodeInputs{
+		Namespace: "ns", Release: "rel", Chart: "oci://c", ChartVersion: "0.30.0",
+		Storage: models.BlockNodeStorage{ArchivePath: "/user/archive"},
+	})
+
+	st, err := r.Storage()
+	require.NoError(t, err)
+
+	got := st.Get().Val()
+	assert.Equal(t, "/user/archive", got.ArchivePath, "user ArchivePath wins")
+	assert.Equal(t, "/state/base", got.BasePath, "state BasePath fills gap when user has no BasePath")
+}
+
 // ── RefreshState ──────────────────────────────────────────────────────────────
 
 func TestBlockNodeRuntimeResolver_RefreshState_AlwaysStale_CallsChecker(t *testing.T) {

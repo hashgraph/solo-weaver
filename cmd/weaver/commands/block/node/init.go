@@ -129,9 +129,32 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Run text-input prompts for optional flags (namespace, release, chart version, retention thresholds).
-	inputPrompts := prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
+	// Run text-input prompts. Reconfigure uses a tailored set that omits
+	// immutable fields (namespace, release-name, chart-version). Storage path
+	// prompts are handled separately by RunStoragePathPrompts below.
+	var inputPrompts []prompt.InputPrompt
+	if cmd.Name() == "reconfigure" {
+		inputPrompts = prompt.BlockNodeReconfigureInputPrompts(
+			defaults,
+			&flagHistoricRetention, &flagRecentRetention,
+		)
+	} else {
+		inputPrompts = prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
+	}
 	if err := prompt.RunInputPrompts(cmd, inputPrompts, cv); err != nil {
+		return err
+	}
+
+	// Storage path prompts: two-pass (mode select → conditional path inputs).
+	// Applied to all block node commands that configure storage (install, upgrade, reconfigure).
+	if err := prompt.RunStoragePathPrompts(cmd, defaults, prompt.StoragePathTargets{
+		BasePath:         &flagBasePath,
+		ArchivePath:      &flagArchivePath,
+		LivePath:         &flagLivePath,
+		LogPath:          &flagLogPath,
+		VerificationPath: &flagVerificationPath,
+		PluginsPath:      &flagPluginsPath,
+	}, cv); err != nil {
 		return err
 	}
 
@@ -209,6 +232,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			ValuesFile:          validatedValuesFile,
 			ReuseValues:         !flagNoReuseValues,
 			ResetStorage:        flagWithReset,
+			NoRestart:           flagNoRestart,
 			SkipHardwareChecks:  parentFlags.SkipHardwareChecks,
 			LoadBalancerEnabled: flagLoadBalancerEnabled,
 			HistoricRetention:   flagHistoricRetention,

@@ -43,6 +43,7 @@ func resetFlags(cmd *cobra.Command) {
 	flagLogPath = ""
 	flagValuesFile = ""
 	flagNoReuseValues = false
+	flagNoRestart = false
 
 	if cmd != nil {
 		cmd.ResetFlags()

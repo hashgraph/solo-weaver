@@ -36,6 +36,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    git rebase -i origin/<base>        # mark the target commit as 'edit', then amend
    ```
 
+## Writing Markdown Files
+
+**Never use shell heredocs to write `.md` files.** The terminal mangles backticks, special characters, and indented content inside heredocs, producing corrupt output.
+
+Instead, always write markdown via a temporary Python script placed under `/tmp` so it is never accidentally committed:
+
+```bash
+# 1. Create the script with the tool (create_file), writing to /tmp/write_<name>.py
+# 2. Execute it:
+python3 /tmp/write_<name>.py
+```
+
+Template for the script:
+
+```python
+lines = [
+    "# Heading\n",
+    "\n",
+    "Normal paragraph.\n",
+    "\n",
+    "```bash\n",
+    "some command\n",
+    "```\n",
+]
+with open("/path/to/file.md", "w") as f:
+    f.writelines(lines)
+print("done")
+```
+
+Use a `lines` list of strings (each ending with `\n`) rather than a single triple-quoted string — this avoids any escaping issues with backticks or backslashes inside the content.
+
+> **Always use `/tmp/write_<name>.py` as the script path** — never write the `.py` helper inside the repository tree, where it could be staged and committed by mistake.
+
 ## Build & Development Commands
 
 This project uses [Task](https://taskfile.dev) as the build system. All commands run via `task`.
