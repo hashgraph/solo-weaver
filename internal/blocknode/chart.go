@@ -150,18 +150,6 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 	return nil
 }
 
-// AnnotateService annotates the block node service with MetalLB address pool
-func (m *Manager) AnnotateService(ctx context.Context) error {
-	resourceName := m.blockNodeInputs.Release + ResourceNameSuffix
-	annotations := map[string]string{
-		"metallb.io/address-pool": "public-address-pool",
-	}
-	if err := m.kubeClient.AnnotateResource(ctx, kube.KindService, m.blockNodeInputs.Namespace, resourceName, annotations); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to annotate service: %s", resourceName)
-	}
-	return nil
-}
-
 // GetTargetVersion returns the configured target version for block node.
 func (m *Manager) GetTargetVersion() string {
 	return m.blockNodeInputs.ChartVersion

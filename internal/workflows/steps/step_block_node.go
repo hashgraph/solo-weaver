@@ -20,7 +20,6 @@ const (
 	CreateBlockNodePVsStepId         = "create-block-node-pvs"
 	InstallBlockNodeStepId           = "install-block-node"
 	UpgradeBlockNodeStepId           = "upgrade-block-node"
-	AnnotateBlockNodeServiceStepId   = "annotate-block-node-service"
 	WaitForBlockNodeStepId           = "wait-for-block-node"
 	ResetBlockNodeStepId             = "reset-block-node"
 	PurgeBlockNodeStorageStepId      = "purge-block-node-storage"
@@ -39,7 +38,6 @@ func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		createBlockNodeNamespace(blockNodeManagerProvider),
 		createBlockNodePVs(blockNodeManagerProvider),
 		installBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
-		annotateBlockNodeService(blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -275,38 +273,6 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node installed successfully")
-		})
-}
-
-// annotateBlockNodeService annotates the block node service with MetalLB address pool
-func annotateBlockNodeService(getManager func() (*blocknode.Manager, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId(AnnotateBlockNodeServiceStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			meta := map[string]string{}
-
-			manager, err := getManager()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			if err := manager.AnnotateService(ctx); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			meta[ConfiguredByThisStep] = "true"
-			stp.State().Local().Set(ConfiguredByThisStep, true)
-
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Annotating Block Node service")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to annotate Block Node service")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node service annotated successfully")
 		})
 }
 

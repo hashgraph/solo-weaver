@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // testLogger returns a no-op logger for testing
@@ -818,4 +819,136 @@ func TestInjectRetentionConfig_OverridesExistingValues(t *testing.T) {
 	assert.Contains(t, resultStr, "50000")
 	assert.NotContains(t, resultStr, `"0"`)
 	assert.NotContains(t, resultStr, `"96000"`)
+}
+
+// ── injectServiceAnnotations ──────────────────────────────────────────────────
+
+// TestInjectServiceAnnotations_Disabled tests that nothing is injected when LoadBalancerEnabled is false.
+func TestInjectServiceAnnotations_Disabled(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: false,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config: {}
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	// Content must be returned byte-identical — nothing was parsed or rewritten.
+	assert.Equal(t, input, result)
+	assert.NotContains(t, string(result), "metallb.io/address-pool")
+}
+
+// TestInjectServiceAnnotations_InjectsWhenAbsent tests that the annotation is injected
+// when LoadBalancerEnabled is true and no annotation is present in the values file.
+func TestInjectServiceAnnotations_InjectsWhenAbsent(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`blockNode:
+  config: {}
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	resultStr := string(result)
+	assert.Contains(t, resultStr, "metallb.io/address-pool")
+	assert.Contains(t, resultStr, "public-address-pool")
+}
+
+// TestInjectServiceAnnotations_CreatesServiceAndAnnotationsPath tests that the service and
+// annotations keys are created from scratch when absent.
+func TestInjectServiceAnnotations_CreatesServiceAndAnnotationsPath(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	// Minimal values file with no service section at all.
+	input := []byte(`blockNode:
+  config: {}
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+
+	service, ok := vals["service"].(map[string]interface{})
+	require.True(t, ok, "service key should be created")
+
+	annotations, ok := service["annotations"].(map[string]interface{})
+	require.True(t, ok, "service.annotations key should be created")
+
+	assert.Equal(t, "public-address-pool", annotations["metallb.io/address-pool"])
+}
+
+// TestInjectServiceAnnotations_PreservesExistingAnnotation tests that a pre-existing
+// metallb.io/address-pool value in the operator's values file is not clobbered.
+func TestInjectServiceAnnotations_PreservesExistingAnnotation(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  annotations:
+    metallb.io/address-pool: my-custom-pool
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	// The returned bytes must be identical to the input — no rewrite occurred.
+	assert.Equal(t, input, result)
+	assert.Contains(t, string(result), "my-custom-pool")
+	assert.NotContains(t, string(result), "public-address-pool")
+}
+
+// TestInjectServiceAnnotations_PreservesOtherAnnotations tests that sibling annotations
+// in the operator's values file are left untouched when the metallb key is absent.
+func TestInjectServiceAnnotations_PreservesOtherAnnotations(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: LoadBalancer
+  annotations:
+    custom.io/tag: my-tag
+    another.io/key: some-value
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+
+	service := vals["service"].(map[string]interface{})
+	annotations := service["annotations"].(map[string]interface{})
+
+	// MetalLB annotation injected.
+	assert.Equal(t, "public-address-pool", annotations["metallb.io/address-pool"])
+	// Sibling annotations preserved.
+	assert.Equal(t, "my-tag", annotations["custom.io/tag"])
+	assert.Equal(t, "some-value", annotations["another.io/key"])
 }

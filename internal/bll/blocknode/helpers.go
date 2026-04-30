@@ -118,10 +118,11 @@ func resolveBlocknodeEffectiveInputs(
 			HistoricRetention: effHistoricRetention.Get().Val(),
 			RecentRetention:   effRecentRetention.Get().Val(),
 			// Passed through from user input (no resolution)
-			ValuesFile:         inputs.Custom.ValuesFile,
-			ReuseValues:        inputs.Custom.ReuseValues,
-			SkipHardwareChecks: inputs.Custom.SkipHardwareChecks,
-			ResetStorage:       inputs.Custom.ResetStorage,
+			ValuesFile:          inputs.Custom.ValuesFile,
+			ReuseValues:         inputs.Custom.ReuseValues,
+			SkipHardwareChecks:  inputs.Custom.SkipHardwareChecks,
+			ResetStorage:        inputs.Custom.ResetStorage,
+			LoadBalancerEnabled: inputs.Custom.LoadBalancerEnabled,
 		},
 	}
 

@@ -55,19 +55,20 @@ const (
 )
 
 type BlockNodeInputs struct {
-	Profile            string
-	Namespace          string
-	Release            string // Helm release name
-	Chart              string // Helm chart reference: OCI, URL, or repo/chart
-	ChartName          string
-	ChartVersion       string
-	Storage            BlockNodeStorage
-	ValuesFile         string
-	ReuseValues        bool
-	ResetStorage       bool
-	SkipHardwareChecks bool
-	HistoricRetention  string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
-	RecentRetention    string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
+	Profile             string
+	Namespace           string
+	Release             string // Helm release name
+	Chart               string // Helm chart reference: OCI, URL, or repo/chart
+	ChartName           string
+	ChartVersion        string
+	Storage             BlockNodeStorage
+	ValuesFile          string
+	ReuseValues         bool
+	ResetStorage        bool
+	SkipHardwareChecks  bool
+	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values
+	HistoricRetention   string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
+	RecentRetention     string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
 }
 
 type ClusterInputs struct {
