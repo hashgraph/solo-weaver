@@ -51,6 +51,13 @@ state:
     version: "0.8.1"
     historicRetention: "500"
     recentRetention: "12000"
+    storage:
+      basePath: /mnt/data
+      archivePath: /mnt/archive
+      livePath: /mnt/live
+      logPath: /mnt/log
+      verificationPath: /mnt/verification
+      pluginsPath: /mnt/plugins
 `)
 	var doc PromptDefaultsDoc
 	if err := unmarshalStateDoc(data, &doc); err != nil {
@@ -75,6 +82,24 @@ state:
 	}
 	if bn.RecentRetention != "12000" {
 		t.Errorf("expected RecentRetention '12000', got %q", bn.RecentRetention)
+	}
+	if bn.Storage.BasePath != "/mnt/data" {
+		t.Errorf("expected Storage.BasePath '/mnt/data', got %q", bn.Storage.BasePath)
+	}
+	if bn.Storage.ArchivePath != "/mnt/archive" {
+		t.Errorf("expected Storage.ArchivePath '/mnt/archive', got %q", bn.Storage.ArchivePath)
+	}
+	if bn.Storage.LivePath != "/mnt/live" {
+		t.Errorf("expected Storage.LivePath '/mnt/live', got %q", bn.Storage.LivePath)
+	}
+	if bn.Storage.LogPath != "/mnt/log" {
+		t.Errorf("expected Storage.LogPath '/mnt/log', got %q", bn.Storage.LogPath)
+	}
+	if bn.Storage.VerificationPath != "/mnt/verification" {
+		t.Errorf("expected Storage.VerificationPath '/mnt/verification', got %q", bn.Storage.VerificationPath)
+	}
+	if bn.Storage.PluginsPath != "/mnt/plugins" {
+		t.Errorf("expected Storage.PluginsPath '/mnt/plugins', got %q", bn.Storage.PluginsPath)
 	}
 }
 

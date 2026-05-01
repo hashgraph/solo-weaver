@@ -65,6 +65,7 @@ type BlockNodeInputs struct {
 	ValuesFile          string
 	ReuseValues         bool
 	ResetStorage        bool
+	NoRestart           bool // When true, skip the rollout-restart step after reconfigure
 	SkipHardwareChecks  bool
 	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values
 	HistoricRetention   string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)

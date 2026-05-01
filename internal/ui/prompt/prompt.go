@@ -236,6 +236,11 @@ func RunInputPrompts(cmd *cobra.Command, prompts []InputPrompt, cv *ChosenValues
 			continue
 		}
 
+		// Skip prompts for flags not registered on this command (neither local nor inherited).
+		if cmd.Flag(p.FlagName) == nil && cmd.InheritedFlags().Lookup(p.FlagName) == nil {
+			continue
+		}
+
 		// Pre-fill the effective value.
 		if p.EffectiveValue != "" {
 			*p.Target = p.EffectiveValue

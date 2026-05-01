@@ -85,24 +85,37 @@ func (b *BlockNodeStorage) IsEmpty() bool {
 
 // MergeFrom copies non-empty fields from other into b, filling gaps without
 // overwriting fields already set in b.
+//
+// Individual path fields (ArchivePath, LivePath, LogPath, VerificationPath,
+// PluginsPath) are only merged when b has no BasePath at call time. When b
+// already carries a BasePath, those fields are intentionally empty — they will
+// be derived from BasePath at resolution time — so lower-priority individual
+// paths must not fill them in. BasePath itself and all size fields are always
+// merged regardless.
 func (b *BlockNodeStorage) MergeFrom(other BlockNodeStorage) {
-	if strings.TrimSpace(b.BasePath) == "" && strings.TrimSpace(other.BasePath) != "" {
+	// Snapshot before any mutation: a pre-existing BasePath means the receiver
+	// is in "base-path mode" and individual paths should remain empty.
+	receiverHasBasePath := strings.TrimSpace(b.BasePath) != ""
+
+	if !receiverHasBasePath && strings.TrimSpace(other.BasePath) != "" {
 		b.BasePath = other.BasePath
 	}
-	if strings.TrimSpace(b.ArchivePath) == "" && strings.TrimSpace(other.ArchivePath) != "" {
-		b.ArchivePath = other.ArchivePath
-	}
-	if strings.TrimSpace(b.LivePath) == "" && strings.TrimSpace(other.LivePath) != "" {
-		b.LivePath = other.LivePath
-	}
-	if strings.TrimSpace(b.LogPath) == "" && strings.TrimSpace(other.LogPath) != "" {
-		b.LogPath = other.LogPath
-	}
-	if strings.TrimSpace(b.VerificationPath) == "" && strings.TrimSpace(other.VerificationPath) != "" {
-		b.VerificationPath = other.VerificationPath
-	}
-	if strings.TrimSpace(b.PluginsPath) == "" && strings.TrimSpace(other.PluginsPath) != "" {
-		b.PluginsPath = other.PluginsPath
+	if !receiverHasBasePath {
+		if strings.TrimSpace(b.ArchivePath) == "" && strings.TrimSpace(other.ArchivePath) != "" {
+			b.ArchivePath = other.ArchivePath
+		}
+		if strings.TrimSpace(b.LivePath) == "" && strings.TrimSpace(other.LivePath) != "" {
+			b.LivePath = other.LivePath
+		}
+		if strings.TrimSpace(b.LogPath) == "" && strings.TrimSpace(other.LogPath) != "" {
+			b.LogPath = other.LogPath
+		}
+		if strings.TrimSpace(b.VerificationPath) == "" && strings.TrimSpace(other.VerificationPath) != "" {
+			b.VerificationPath = other.VerificationPath
+		}
+		if strings.TrimSpace(b.PluginsPath) == "" && strings.TrimSpace(other.PluginsPath) != "" {
+			b.PluginsPath = other.PluginsPath
+		}
 	}
 	if strings.TrimSpace(b.LiveSize) == "" && strings.TrimSpace(other.LiveSize) != "" {
 		b.LiveSize = other.LiveSize

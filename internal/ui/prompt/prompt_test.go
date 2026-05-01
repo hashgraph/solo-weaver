@@ -263,3 +263,172 @@ func TestResolveEffective(t *testing.T) {
 		})
 	}
 }
+
+// TestRunStoragePathPrompts_SkipsWhenBasePathFlagSet verifies that RunStoragePathPrompts
+// returns immediately without running any prompt when --base-path is already set on the CLI.
+func TestRunStoragePathPrompts_SkipsWhenBasePathFlagSet(t *testing.T) {
+	parent := &cobra.Command{Use: "node"}
+	child := &cobra.Command{Use: "reconfigure", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
+	parent.AddCommand(child)
+
+	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath string
+	parent.PersistentFlags().StringVar(&basePath, "base-path", "", "")
+	parent.PersistentFlags().StringVar(&archivePath, "archive-path", "", "")
+	parent.PersistentFlags().StringVar(&livePath, "live-path", "", "")
+	parent.PersistentFlags().StringVar(&logPath, "log-path", "", "")
+	parent.PersistentFlags().StringVar(&verificationPath, "verification-path", "", "")
+	parent.PersistentFlags().StringVar(&pluginsPath, "plugins-path", "", "")
+	_ = child.ParseFlags([]string{})
+
+	// Simulate --base-path provided on CLI.
+	_ = parent.PersistentFlags().Set("base-path", "/data")
+
+	targets := StoragePathTargets{
+		BasePath:         &basePath,
+		ArchivePath:      &archivePath,
+		LivePath:         &livePath,
+		LogPath:          &logPath,
+		VerificationPath: &verificationPath,
+		PluginsPath:      &pluginsPath,
+	}
+	cv := NewChosenValues()
+	if err := RunStoragePathPrompts(child, state.PromptDefaults{}, targets, cv); err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(cv.pairs) != 0 {
+		t.Fatalf("expected 0 chosen values (skipped), got %d", len(cv.pairs))
+	}
+}
+
+// TestRunStoragePathPrompts_SkipsWhenIndividualFlagSet verifies that RunStoragePathPrompts
+// returns immediately when any individual path flag (e.g. --archive-path) is already set.
+func TestRunStoragePathPrompts_SkipsWhenIndividualFlagSet(t *testing.T) {
+	parent := &cobra.Command{Use: "node"}
+	child := &cobra.Command{Use: "install", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
+	parent.AddCommand(child)
+
+	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath string
+	parent.PersistentFlags().StringVar(&basePath, "base-path", "", "")
+	parent.PersistentFlags().StringVar(&archivePath, "archive-path", "", "")
+	parent.PersistentFlags().StringVar(&livePath, "live-path", "", "")
+	parent.PersistentFlags().StringVar(&logPath, "log-path", "", "")
+	parent.PersistentFlags().StringVar(&verificationPath, "verification-path", "", "")
+	parent.PersistentFlags().StringVar(&pluginsPath, "plugins-path", "", "")
+	_ = child.ParseFlags([]string{})
+
+	// Simulate --archive-path provided on CLI.
+	_ = parent.PersistentFlags().Set("archive-path", "/archive")
+
+	targets := StoragePathTargets{
+		BasePath:         &basePath,
+		ArchivePath:      &archivePath,
+		LivePath:         &livePath,
+		LogPath:          &logPath,
+		VerificationPath: &verificationPath,
+		PluginsPath:      &pluginsPath,
+	}
+	cv := NewChosenValues()
+	if err := RunStoragePathPrompts(child, state.PromptDefaults{}, targets, cv); err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(cv.pairs) != 0 {
+		t.Fatalf("expected 0 chosen values (skipped), got %d", len(cv.pairs))
+	}
+}
+
+// TestBlockNodeReconfigureInputPrompts_ReturnsRetentionPromptsOnly verifies the
+// simplified signature — only returns historic-retention and recent-retention.
+func TestBlockNodeReconfigureInputPrompts_ReturnsRetentionPromptsOnly(t *testing.T) {
+	var histRet, recRet string
+	prompts := BlockNodeReconfigureInputPrompts(state.PromptDefaults{}, &histRet, &recRet)
+
+	if len(prompts) != 2 {
+		t.Fatalf("expected 2 input prompts, got %d", len(prompts))
+	}
+
+	names := map[string]bool{}
+	for _, p := range prompts {
+		names[p.FlagName] = true
+	}
+	for _, expected := range []string{"historic-retention", "recent-retention"} {
+		if !names[expected] {
+			t.Fatalf("expected prompt for flag %q, not found", expected)
+		}
+	}
+
+	// Storage path flags must NOT be present.
+	for _, unexpected := range []string{"base-path", "archive-path", "live-path", "log-path", "verification-path", "plugins-path"} {
+		if names[unexpected] {
+			t.Fatalf("unexpected prompt for flag %q — storage paths must be handled by RunStoragePathPrompts", unexpected)
+		}
+	}
+}
+
+// TestRunInputPrompts_SkipsUnregisteredFlag verifies that RunInputPrompts does not
+// add a field to the form when the flag is not registered on the command.
+// This is the guard that prevents "chart-version" from appearing in the
+// interactive prompt when running "block node reconfigure".
+func TestRunInputPrompts_SkipsUnregisteredFlag(t *testing.T) {
+	// cmd has no flags registered.
+	cmd := &cobra.Command{Use: "reconfigure"}
+
+	var target string
+	prompts := []InputPrompt{
+		{
+			FlagName:       "chart-version",
+			Title:          "Chart Version",
+			EffectiveValue: "0.30.2",
+			Target:         &target,
+		},
+	}
+
+	cv := NewChosenValues()
+	// RunInputPrompts must return nil without touching target or cv,
+	// because "chart-version" is not registered on cmd.
+	if err := RunInputPrompts(cmd, prompts, cv); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cv.pairs) != 0 {
+		t.Fatalf("expected 0 chosen values, got %d — chart-version should have been skipped", len(cv.pairs))
+	}
+	// target must not have been pre-filled with the effective value.
+	if target != "" {
+		t.Fatalf("expected target to be empty, got %q — effective value must not be applied for skipped flags", target)
+	}
+}
+
+func TestValidateRequiredPath(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"/mnt/fast-storage/archive", false},
+		{"/data/live", false},
+		{"", true},       // empty must be rejected
+		{"../etc", true}, // path traversal rejected by SanitizePath
+	}
+	for _, tt := range tests {
+		err := validateRequiredPath(tt.input)
+		if tt.wantErr && err == nil {
+			t.Errorf("validateRequiredPath(%q) expected error, got nil", tt.input)
+		}
+		if !tt.wantErr && err != nil {
+			t.Errorf("validateRequiredPath(%q) unexpected error: %v", tt.input, err)
+		}
+	}
+}
+
+func TestArchivePathInputPrompt_RequiredValidation(t *testing.T) {
+	var target string
+	// required=true: empty value must be rejected.
+	p := archivePathInputPrompt("", &target, true)
+	if err := p.Validate(""); err == nil {
+		t.Fatal("expected validation error for empty path in required mode, got nil")
+	}
+	// required=false: empty value must be allowed.
+	p = archivePathInputPrompt("", &target, false)
+	if err := p.Validate(""); err != nil {
+		t.Fatalf("expected no validation error for empty path in optional mode, got: %v", err)
+	}
+}

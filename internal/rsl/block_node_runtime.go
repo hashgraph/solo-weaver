@@ -140,6 +140,8 @@ func (r *chartVersionResolver) Resolve(sources map[automa.EffectiveStrategy]auto
 //  3. Config → Default (fills any remaining empty fields)
 //
 // Strategy reflects the highest-priority source that contributed any field.
+// MergeFrom respects base-path mode: when the receiver already has a BasePath,
+// individual path fields from lower-priority sources are not merged in.
 type storageResolver struct{}
 
 func (r *storageResolver) Resolve(sources map[automa.EffectiveStrategy]automa.Value[models.BlockNodeStorage]) (*automa.EffectiveValue[models.BlockNodeStorage], error) {
