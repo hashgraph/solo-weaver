@@ -29,7 +29,9 @@ var uninstallCmd = &cobra.Command{
 			Msg("Uninstalling Kubernetes Cluster")
 
 		wb := workflows.WithWorkflowExecutionMode(workflows.UninstallClusterWorkflow(), opts)
-		common.RunWorkflowBuilder(cmd.Context(), wb)
+		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
+			return err
+		}
 
 		logx.As().Info().Msg("Successfully uninstalled Kubernetes Cluster")
 		return nil

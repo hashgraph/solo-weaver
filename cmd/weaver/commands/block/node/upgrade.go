@@ -44,9 +44,11 @@ var (
 				return err
 			}
 
-			common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 				return handler.HandleIntent(cmd.Context(), intent, *inputs)
-			})
+			}); err != nil {
+				return err
+			}
 
 			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")
 			return nil
@@ -55,6 +57,7 @@ var (
 )
 
 func init() {
+	upgradeCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagWithStorageReset().SetVarP(upgradeCmd, &flagWithReset, false)
 	common.FlagValuesFile().SetVarP(upgradeCmd, &flagValuesFile, false)
 	common.FlagNoReuseValues().SetVarP(upgradeCmd, &flagNoReuseValues, false)

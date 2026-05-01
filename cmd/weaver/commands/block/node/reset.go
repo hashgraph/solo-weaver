@@ -49,9 +49,11 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 			return err
 		}
 
-		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 			return handler.HandleIntent(cmd.Context(), intent, *inputs)
-		})
+		}); err != nil {
+			return err
+		}
 
 		logx.As().Info().Msg("Successfully reset Hedera Block Node")
 		return nil
