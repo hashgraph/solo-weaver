@@ -44,14 +44,15 @@ func ensureLogConfig() logx.LoggingConfig {
 
 // RunWorkflow executes a workflow function and renders progress via Bubble Tea
 // with spinners and status icons, or raw zerolog output when --non-interactive is set.
-func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) {
+// It returns the first error encountered (workflow execution error or step failure)
+// so cobra RunE handlers can propagate it to the top-level error handler in main.go.
+func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) error {
 	if ui.IsUnformatted() {
 		report, err := fn()
 		if err != nil {
-			doctor.CheckErr(ctx, err)
+			return err
 		}
-		handleWorkflowResult(ctx, report)
-		return
+		return finalizeWorkflowReport(report)
 	}
 
 	// Capture os.Stdout BEFORE creating the program so third-party libs
@@ -84,36 +85,34 @@ func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) {
 		program.Send(ui.WorkflowDoneMsg{Report: report, Err: err})
 	}()
 
-	finalModel, err := program.Run()
+	finalModel, tuiErr := program.Run()
 
 	// Restore stdout, log, and detach the TUI log hook before printing the summary.
 	restoreStdout()
 	log.SetOutput(origLogOutput)
 	ui.SuppressConsoleLogging(ensureLogConfig())
 
-	if err != nil {
-		fmt.Printf("TUI error: %v\n", err)
-		report := <-reportCh
-		handleWorkflowResult(ctx, report)
-		return
+	if tuiErr != nil {
+		fmt.Printf("TUI error: %v\n", tuiErr)
+		return finalizeWorkflowReport(<-reportCh)
 	}
 
 	result, ok := finalModel.(ui.Model)
 	if !ok {
-		doctor.CheckErr(ctx, fmt.Errorf("unexpected TUI model type"))
+		return fmt.Errorf("unexpected TUI model type")
 	}
 
 	if result.Err() != nil {
-		doctor.CheckErr(ctx, result.Err())
+		return result.Err()
 	}
 
-	handleWorkflowResult(ctx, result.Report())
+	return finalizeWorkflowReport(result.Report())
 }
 
 // RunWorkflowBuilder is a convenience wrapper that builds an automa workflow
 // and runs it via RunWorkflow.
-func RunWorkflowBuilder(ctx context.Context, b automa.Builder) {
-	RunWorkflow(ctx, func() (*automa.Report, error) {
+func RunWorkflowBuilder(ctx context.Context, b automa.Builder) error {
+	return RunWorkflow(ctx, func() (*automa.Report, error) {
 		step, err := b.Build()
 		if err != nil {
 			return nil, err
@@ -122,27 +121,24 @@ func RunWorkflowBuilder(ctx context.Context, b automa.Builder) {
 	})
 }
 
-// CheckWorkflowReport checks for errors, saves the YAML report, and prints a
-// compact summary. Exported for commands that handle reports outside RunWorkflow
-// (e.g. block node install/upgrade/reset).
-func CheckWorkflowReport(ctx context.Context, report *automa.Report) {
-	handleWorkflowResult(ctx, report)
-}
-
-// handleWorkflowResult checks the report for errors, saves the YAML report to
-// disk, and prints a compact summary to stdout.
-func handleWorkflowResult(ctx context.Context, report *automa.Report) {
+// finalizeWorkflowReport saves the YAML report to disk, prints a compact
+// summary, and returns the deepest failure error in the report tree. Returning
+// the deepest error (rather than the immediate top-level step error) preserves
+// errorx properties such as ErrPropertyResolution: when a sub-workflow step
+// fails, automa sets the parent's step-report Error to a fresh
+// "workflow X completed with N step failures" wrapper that does NOT preserve
+// the leaf error's properties. Walking the StepReports tree to the leaf keeps
+// the user-facing resolution panel intact.
+func finalizeWorkflowReport(report *automa.Report) error {
 	if report == nil {
-		return
+		return nil
 	}
 
-	// Save the full YAML report to a file (always)
 	logCfg := ensureLogConfig()
 	timestamp := time.Now().Format("20060102_150405")
 	reportPath := path.Join(logCfg.Directory, fmt.Sprintf("setup_report_%s.yaml", timestamp))
 	steps.PrintWorkflowReport(report, reportPath)
 
-	// Print compact summary to stdout (after TUI has quit, safe to write)
 	totalDuration := report.EndTime.Sub(report.StartTime)
 	logPath := path.Join(logCfg.Directory, logCfg.Filename)
 	fmt.Print(ui.RenderSummaryTable(report, totalDuration, reportPath, logPath))
@@ -152,18 +148,34 @@ func handleWorkflowResult(ctx context.Context, report *automa.Report) {
 		Str("log_path", logPath).
 		Msg("Workflow report is saved")
 
-	// Check for errors and run diagnostics (may call os.Exit)
-	if report.Error != nil {
-		doctor.CheckReportErr(ctx, report)
+	if err := deepestFailureError(report); err != nil {
+		return err
 	}
+	return report.Error
+}
 
-	if len(report.StepReports) > 0 {
-		for _, stepReport := range report.StepReports {
-			if stepReport.Status == automa.StatusFailed {
-				doctor.CheckReportErr(ctx, stepReport)
-			}
-		}
+// deepestFailureError descends through nested StepReports to return the
+// leaf-level failed step's Error. Mirrors doctor.GetInstructionsFromReport's
+// recursion so that errorx properties attached on a deeply nested step
+// (e.g. preflight superuser check, weaver installation check) are not masked
+// by automa's workflow-level "completed with N failures" wrapper.
+func deepestFailureError(r *automa.Report) error {
+	if r == nil {
+		return nil
 	}
+	for _, sr := range r.StepReports {
+		if sr == nil || sr.Status != automa.StatusFailed {
+			continue
+		}
+		if deeper := deepestFailureError(sr); deeper != nil {
+			return deeper
+		}
+		if sr.Error != nil {
+			return sr.Error
+		}
+		return fmt.Errorf("step %q failed", sr.Id)
+	}
+	return nil
 }
 
 // RunPersistentPreRun is the body of the root PersistentPreRunE hook.

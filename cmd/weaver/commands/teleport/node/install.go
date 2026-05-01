@@ -71,9 +71,11 @@ var installCmd = &cobra.Command{
 			Str("proxyAddr", flagNodeAgentProxyAddr).
 			Msg("Installing Teleport node agent")
 
-		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 			return handler.HandleIntent(cmd.Context(), intent, *inputs)
-		})
+		}); err != nil {
+			return err
+		}
 
 		logx.As().Info().Msg("Successfully installed Teleport node agent")
 		return nil

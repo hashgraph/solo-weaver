@@ -41,9 +41,11 @@ var uninstallCmd = &cobra.Command{
 			return err
 		}
 
-		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 			return handler.HandleIntent(cmd.Context(), intent, *inputs)
-		})
+		}); err != nil {
+			return err
+		}
 
 		logx.As().Info().Msg("Successfully uninstalled Hedera Block Node")
 

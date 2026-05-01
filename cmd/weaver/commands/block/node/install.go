@@ -41,9 +41,11 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 			return handler.HandleIntent(cmd.Context(), intent, *inputs)
-		})
+		}); err != nil {
+			return err
+		}
 
 		logx.As().Info().Msg("Successfully installed Hedera Block Node")
 
@@ -52,5 +54,6 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
+	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
 }
