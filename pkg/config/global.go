@@ -77,6 +77,7 @@ func Initialize(path string) error {
 			return errorx.IllegalFormat.Wrap(err, "failed to parse configuration (check for unknown fields)").
 				WithProperty(errorx.PropertyPayload(), path)
 		}
+
 	}
 
 	return nil

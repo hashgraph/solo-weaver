@@ -5,6 +5,9 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
+	"strconv"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/alloy"
@@ -167,6 +170,31 @@ func initConfig(ctx context.Context) {
 	}
 	if logConfig.Filename == "" {
 		logConfig.Filename = "solo-provisioner.log"
+	}
+	// Ensure the log directory exists with setgid + weaver group before lumberjack touches
+	// it. On first run the directory does not yet exist; MkdirAll creates it, then chown+chmod
+	// give it the right ownership so that files created inside (including the log file below
+	// and any future lumberjack rotations) inherit the weaver group via setgid.
+	svcGID, gidErr := strconv.Atoi(config.WeaverGroupId())
+	if mkdirErr := os.MkdirAll(logConfig.Directory, models.DefaultDirOrExecPerm); mkdirErr == nil && gidErr == nil {
+		_ = os.Chown(logConfig.Directory, 0, svcGID)
+		_ = os.Chmod(logConfig.Directory, models.DefaultStorageDirPerm)
+	}
+
+	// Pre-create the log file with group-readable mode (0640) before lumberjack claims it.
+	// Lumberjack hardcodes 0600 on first creation; opening an existing file uses O_APPEND
+	// which preserves the existing mode. Because the directory now has setgid, the newly
+	// created file inherits the weaver group automatically.
+	// For files that already exist with wrong ownership (created before the setgid fix),
+	// fix their group and mode explicitly.
+	logFilePath := path.Join(logConfig.Directory, logConfig.Filename)
+	if _, statErr := os.Stat(logFilePath); os.IsNotExist(statErr) {
+		if f, createErr := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY, 0o640); createErr == nil {
+			_ = f.Close()
+		}
+	} else if statErr == nil && gidErr == nil {
+		_ = os.Chown(logFilePath, 0, svcGID)
+		_ = os.Chmod(logFilePath, 0o640)
 	}
 	if logConfig.MaxSize == 0 {
 		logConfig.MaxSize = 50 // 50 MB

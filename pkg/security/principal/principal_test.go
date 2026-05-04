@@ -87,3 +87,9 @@ func (ms *mockProvider) EnumerateGroups(m Manager) ([]Group, error) {
 		},
 	}, nil
 }
+
+func (ms *mockProvider) WriteGroupEntry(_ string, _ int) error          { return nil }
+func (ms *mockProvider) WriteGroupShadowEntry(_ string) error           { return nil }
+func (ms *mockProvider) WriteUserEntry(_ string, _ int, _ string) error { return nil }
+func (ms *mockProvider) WriteUserShadowEntry(_ string) error            { return nil }
+func (ms *mockProvider) AddMemberToGroup(_ string, _ string) error      { return nil }

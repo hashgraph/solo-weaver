@@ -40,6 +40,48 @@ func TestRemove(t *testing.T) {
 	Remove(path)
 }
 
+func TestAtomicWriteFile_WritesContentAndPermissions(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	dst := filepath.Join(tmp, "output")
+	payload := []byte("hello atomic")
+
+	require.NoError(t, AtomicWriteFile(dst, payload, 0o440))
+
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Equal(t, payload, got)
+
+	info, err := os.Stat(dst)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o440), info.Mode().Perm())
+}
+
+func TestAtomicWriteFile_NoTempFileLeft_OnSuccess(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	dst := filepath.Join(tmp, "output")
+
+	require.NoError(t, AtomicWriteFile(dst, []byte("x"), 0o644))
+
+	entries, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "only the final file should remain after a successful write")
+}
+
+func TestAtomicWriteFile_OverwritesExistingFile(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	dst := filepath.Join(tmp, "output")
+	require.NoError(t, os.WriteFile(dst, []byte("old"), 0o644))
+
+	require.NoError(t, AtomicWriteFile(dst, []byte("new"), 0o644))
+
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Equal(t, []byte("new"), got)
+}
+
 func TestRemoveAll(t *testing.T) {
 	tmpdir, err := ioutil.TempDir("", "testdir")
 	if err != nil {

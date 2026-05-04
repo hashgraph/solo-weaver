@@ -63,10 +63,18 @@ func (h *InstallHandler) BuildWorkflow(
 	var wb *automa.WorkflowBuilder
 	if currentState.ClusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
-			Steps(steps.SetupBlockNode(ins))
+			Steps(
+				steps.EnsureWeaverOwnerStep(),
+				steps.SetupBlockNode(ins),
+			)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(
+				// EnsureWeaverOwnerStep must run before InstallClusterWorkflow, which
+				// includes a preflight check that validates weaver:2500 already exists.
+				// Running it here makes block-node install self-sufficient even when
+				// solo-provisioner install was skipped or used an older binary.
+				steps.EnsureWeaverOwnerStep(),
 				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks, h.mr),
 				steps.SetupBlockNode(ins),
 			)

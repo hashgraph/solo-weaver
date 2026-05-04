@@ -35,6 +35,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    # if the target is not HEAD, use interactive rebase:
    git rebase -i origin/<base>        # mark the target commit as 'edit', then amend
    ```
+5. **Before committing or pushing**, always show the full commit message and the list of files to be committed/pushed, and wait for explicit user approval before proceeding.
 
 ## Writing Markdown Files
 

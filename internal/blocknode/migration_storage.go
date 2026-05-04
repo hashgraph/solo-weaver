@@ -23,6 +23,7 @@ import (
 	"context"
 
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -80,8 +81,12 @@ func (m *StorageMigration) Execute(ctx context.Context, mctx *migration.Context)
 		if err := manager.fsManager.CreateDirectory(storagePath, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create %s storage directory", m.storage.Name)
 		}
-		if err := manager.fsManager.WritePermissions(storagePath, models.DefaultDirOrExecPerm, true); err != nil {
+		if err := manager.fsManager.WritePermissions(storagePath, models.DefaultStorageDirPerm, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to set permissions on %s storage", m.storage.Name)
+		}
+
+		if err := manager.fsManager.WriteOwnerByName(storagePath, config.HederaUserName(), config.HederaGroupName(), true); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to set ownership on %s storage", m.storage.Name)
 		}
 	}
 

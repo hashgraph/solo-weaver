@@ -74,26 +74,6 @@ func setupMockPrincipalManager(t *testing.T, ctrl *gomock.Controller) principal.
 	return pm
 }
 
-func setupMockPrincipalManagerForHedera(t *testing.T, ctrl *gomock.Controller) principal.Manager {
-	pm := principal.NewMockManager(ctrl)
-	assert := testify.New(t)
-
-	currentUser, err := user.Current()
-	assert.NoError(err)
-
-	mockUser := principal.NewMockUser(ctrl)
-	grp := principal.NewMockGroup(ctrl)
-	mockUser.EXPECT().Uid().Return(currentUser.Uid).AnyTimes()
-	mockUser.EXPECT().Name().Return(currentUser.Name).AnyTimes()
-	grp.EXPECT().Gid().Return(currentUser.Gid).AnyTimes()
-	mockUser.EXPECT().PrimaryGroup().Return(grp).AnyTimes()
-
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(mockUser, nil).AnyTimes()
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName()).Return(grp, nil).AnyTimes()
-
-	return pm
-}
-
 func TestNewManager(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -702,7 +682,7 @@ func TestUnixManager_WriteOwnerRecursivelyBadGroup(t *testing.T) {
 func TestUnixManager_ReadFile(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	pm := setupMockPrincipalManagerForHedera(t, ctrl)
+	pm := setupMockPrincipalManager(t, ctrl)
 
 	// Simplify repetitive testify by avoiding the need to repeat the testing.T argument.
 	assert, manager := setupTest(t, pm)
@@ -712,10 +692,9 @@ func TestUnixManager_ReadFile(t *testing.T) {
 	err := manager.WriteFile(tmpFile, payload)
 	assert.NoError(err)
 
-	fileInfo, exists, err := manager.PathExists(tmpFile)
+	_, exists, err := manager.PathExists(tmpFile)
 	assert.NoError(err)
 	assert.True(exists)
-	assert.Equal(security.ACLFilePerms, fileInfo.Mode().Perm())
 
 	_, err = manager.ReadFile(tmpFile, 1)
 	assert.Error(err)
@@ -733,7 +712,7 @@ func TestUnixManager_ReadFile_Failures(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	pm := setupMockPrincipalManagerForHedera(t, ctrl)
+	pm := setupMockPrincipalManager(t, ctrl)
 	assert, manager := setupTest(t, pm)
 	tmpFile := filepath.Join(t.TempDir(), "test")
 	payload := []byte("test")
@@ -782,26 +761,11 @@ func TestUnixManager_WriteFile_Failures(t *testing.T) {
 
 	pm := principal.NewMockManager(ctrl)
 	assert, manager := setupTest(t, pm)
-	tmpFile := filepath.Join(t.TempDir(), "test")
 	payload := []byte("test")
 
 	// fail to write to an invalid path
 	invalidDir := filepath.Join(filepath.Dir(t.TempDir()), "/INVALID/test")
 	err := manager.WriteFile(invalidDir, payload)
-	assert.Error(err)
-
-	// fail on getting usr
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(nil, errorx.IllegalState.New("mock error"))
-	assert, manager = setupTest(t, pm)
-	err = manager.WriteFile(tmpFile, payload)
-	assert.Error(err)
-
-	// fail on getting grp
-	usr := principal.NewMockUser(ctrl)
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(usr, nil)
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName()).Return(nil, errorx.IllegalState.New("mock error"))
-	assert, manager = setupTest(t, pm)
-	err = manager.WriteFile(tmpFile, payload)
 	assert.Error(err)
 }
 

@@ -283,50 +283,55 @@ tasks:
         echo "   Released version: $OLD_VER"
 
 
-        echo -e '\n▶ Step 3: Deploy block node with released version'
+        echo -e '\n▶ Step 3: Create provisioner system accounts'
+        sudo groupadd -g 2500 weaver 2>/dev/null || true
+        sudo useradd -r -u 2500 -g 2500 -m -d /home/weaver -s /usr/sbin/nologin weaver 2>/dev/null || true
+
+
+        echo -e '\n▶ Step 4: Deploy block node with released version'
         sudo solo-provisioner block node install -p local \
           -c /mnt/solo-weaver/test/config/config.yaml
 
 
-        echo -e '\n▶ Step 4: Verify deployment'
+        echo -e '\n▶ Step 5: Verify deployment'
         kubectl get pods -n block-node
 
 
-        echo -e '\n▶ Step 5: Record state file before upgrade'
+        echo -e '\n▶ Step 6: Record state file before upgrade'
         STATE_VER_BEFORE=$(sudo grep 'version:' /opt/solo/weaver/state/state.yaml | head -1 || echo "none")
         echo "   State version before: $STATE_VER_BEFORE"
 
- 
-        echo -e '\n▶ Step 6: Upgrade CLI to new binary (from current branch)'
+
+        echo -e '\n▶ Step 7: Upgrade CLI to new binary (from current branch)'
         ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
         cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
         sudo ./solo-provisioner-linux-${ARCH} install
 
 
-        echo -e '\n▶ Step 7: Verify new CLI version'
+        echo -e '\n▶ Step 8: Verify new CLI version'
         NEW_VER=$(sudo solo-provisioner --version -o json 2>&1 | tr ',' '\n' | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
         [ -z "$NEW_VER" ] && NEW_VER="0.0.0"
         echo "   New version: $NEW_VER"
 
 
-        echo -e '\n▶ Step 8: Upgrade block node (triggers startup migrations if needed)'
+        echo -e '\n▶ Step 9: Upgrade block node (triggers startup migrations if needed)'
         sudo solo-provisioner block node upgrade -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 
 
-        echo -e '\n▶ Step 9: Verify state file after upgrade'
+        echo -e '\n▶ Step 10: Verify state file after upgrade'
         [ -f /opt/solo/weaver/state/state.yaml ] || { echo "FAIL: state file missing after upgrade"; exit 1; }
         STATE_VER_AFTER=$(sudo grep 'version:' /opt/solo/weaver/state/state.yaml | head -1 || echo "none")
         echo "   State version after: $STATE_VER_AFTER"
 
 
-        echo -e '\n▶ Step 10: Verify block node is running'
+        echo -e '\n▶ Step 11: Verify block node is running'
         kubectl get pods -n block-node
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
 
 
-        echo -e '\n▶ Step 11: Check migration logs'
+        echo -e '\n▶ Step 12: Check migration logs'
         grep -i 'migration' /opt/solo/weaver/logs/solo-provisioner.log 2>/dev/null | tail -5 || echo "   No migration log entries found"
 
         echo ''

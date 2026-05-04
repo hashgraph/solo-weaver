@@ -15,8 +15,10 @@
 //  3. Write + Sync — flush data and metadata to the storage device before rename.
 //  4. Close — release the file descriptor before rename (required on Windows;
 //     harmless and correct on POSIX).
-//  5. Rename — atomically replace the target path.
-//  6. Cleanup on failure — remove the temp file if any step fails.
+//  5. Chmod — apply final permissions to the temp file before rename so the target
+//     is never transiently visible with incorrect permissions.
+//  6. Rename — atomically replace the target path.
+//  7. Cleanup on failure — remove the temp file if any step fails.
 
 package state
 
@@ -58,6 +60,12 @@ func atomicWriteFile(path string, data []byte) error {
 	}
 	// Close explicitly before rename: required on Windows, recommended on POSIX.
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// Group-readable so the weaver service daemon (non-root) can read its own state.
+	// Applied to the temp file before rename so the target is never transiently
+	// visible with the wrong permissions.
+	if err := os.Chmod(tmpPath, 0o640); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

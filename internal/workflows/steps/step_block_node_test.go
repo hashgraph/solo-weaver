@@ -71,34 +71,39 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 5, "Expected 5 substeps: storage, namespace, PVs, install, wait")
+	require.Len(t, report.StepReports, 6, "Expected 6 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait")
+
+	// Verify hedera owner step
+	hederaReport := report.StepReports[0]
+	require.Equal(t, "ensure-hedera-owner", hederaReport.Id)
+	require.Equal(t, automa.StatusSuccess, hederaReport.Status)
 
 	// Verify storage setup step
-	storageReport := report.StepReports[0]
+	storageReport := report.StepReports[1]
 	require.Equal(t, SetupBlockNodeStorageStepId, storageReport.Id)
 	require.Equal(t, automa.StatusSuccess, storageReport.Status)
 	require.Equal(t, "true", storageReport.Metadata[ConfiguredByThisStep])
 
 	// Verify namespace creation step
-	namespaceReport := report.StepReports[1]
+	namespaceReport := report.StepReports[2]
 	require.Equal(t, CreateBlockNodeNamespaceStepId, namespaceReport.Id)
 	require.Equal(t, automa.StatusSuccess, namespaceReport.Status)
 	require.Equal(t, "true", namespaceReport.Metadata[ConfiguredByThisStep])
 
 	// Verify PVs creation step
-	pvsReport := report.StepReports[2]
+	pvsReport := report.StepReports[3]
 	require.Equal(t, CreateBlockNodePVsStepId, pvsReport.Id)
 	require.Equal(t, automa.StatusSuccess, pvsReport.Status)
 	require.Equal(t, "true", pvsReport.Metadata[ConfiguredByThisStep])
 
 	// Verify helm chart installation step
-	installReport := report.StepReports[3]
+	installReport := report.StepReports[4]
 	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 	require.Equal(t, "true", installReport.Metadata[InstalledByThisStep])
 
 	// Verify wait step
-	waitReport := report.StepReports[4]
+	waitReport := report.StepReports[5]
 	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
 }
@@ -139,34 +144,39 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 5, "Expected 5 substeps: storage, namespace, PVs, install, wait")
+	require.Len(t, report.StepReports, 6, "Expected 6 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait")
+
+	// Verify hedera owner step
+	hederaReport := report.StepReports[0]
+	require.Equal(t, "ensure-hedera-owner", hederaReport.Id)
+	require.Equal(t, automa.StatusSuccess, hederaReport.Status)
 
 	// Verify storage setup step
-	storageReport := report.StepReports[0]
+	storageReport := report.StepReports[1]
 	require.Equal(t, SetupBlockNodeStorageStepId, storageReport.Id)
 	require.Equal(t, automa.StatusSuccess, storageReport.Status)
 	require.Equal(t, "true", storageReport.Metadata[ConfiguredByThisStep])
 
 	// Verify namespace creation step
-	namespaceReport := report.StepReports[1]
+	namespaceReport := report.StepReports[2]
 	require.Equal(t, CreateBlockNodeNamespaceStepId, namespaceReport.Id)
 	require.Equal(t, automa.StatusSuccess, namespaceReport.Status)
 	require.Equal(t, "true", namespaceReport.Metadata[ConfiguredByThisStep])
 
 	// Verify PVs creation step
-	pvsReport := report.StepReports[2]
+	pvsReport := report.StepReports[3]
 	require.Equal(t, CreateBlockNodePVsStepId, pvsReport.Id)
 	require.Equal(t, automa.StatusSuccess, pvsReport.Status)
 	require.Equal(t, "true", pvsReport.Metadata[ConfiguredByThisStep])
 
 	// Verify helm chart installation step
-	installReport := report.StepReports[3]
+	installReport := report.StepReports[4]
 	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 	require.Equal(t, "true", installReport.Metadata[InstalledByThisStep])
 
 	// Verify wait step
-	waitReport := report.StepReports[4]
+	waitReport := report.StepReports[5]
 	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
 }
@@ -200,7 +210,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps still complete successfully
-	require.Len(t, report.StepReports, 5, "Expected 5 substeps: storage, namespace, PVs, install, wait")
+	require.Len(t, report.StepReports, 6, "Expected 6 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait")
 
 	// All steps should succeed (idempotent)
 	for _, stepReport := range report.StepReports {
@@ -208,7 +218,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	}
 
 	// Verify helm chart installation step reports already installed
-	installReport := report.StepReports[3]
+	installReport := report.StepReports[4]
 	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
 	require.Equal(t, "true", installReport.Metadata[AlreadyInstalled], "Block node should already be installed")
 }

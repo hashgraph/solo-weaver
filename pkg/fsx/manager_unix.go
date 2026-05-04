@@ -14,7 +14,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hashgraph/solo-weaver/pkg/security"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 )
@@ -341,6 +340,9 @@ func (m *unixManager) ReadPermissions(path string) (fs.FileMode, error) {
 	return fileInfo.Mode().Perm(), nil
 }
 
+// WriteOwner sets the owner and group of path and, when recursive, every entry
+// beneath it. Symbolic links are re-owned via Lchown (the link itself, not its
+// target); the recursive walk applies the same rule per entry.
 func (m *unixManager) WriteOwner(path string, user principal.User, group principal.Group, recursive bool) error {
 	uid, err := strconv.Atoi(user.Uid())
 	if err != nil {
@@ -388,6 +390,24 @@ func (m *unixManager) WriteOwner(path string, user principal.User, group princip
 	}
 
 	return nil
+}
+
+func (m *unixManager) WriteOwnerByName(path string, userName string, groupName string, recursive bool) error {
+	user, err := m.pm.LookupUserByName(userName)
+	if err != nil {
+		return errorx.IllegalArgument.
+			New("failed to retrieve user %q", userName).
+			WithUnderlyingErrors(err)
+	}
+
+	group, err := m.pm.LookupGroupByName(groupName)
+	if err != nil {
+		return errorx.IllegalArgument.
+			New("failed to retrieve group %q", groupName).
+			WithUnderlyingErrors(err)
+	}
+
+	return m.WriteOwner(path, user, group, recursive)
 }
 
 // WritePermissions updates the permissions of the given path.
@@ -460,38 +480,6 @@ func (m *unixManager) ReadFile(path string, maxFileSize int64) ([]byte, error) {
 	return buffer, nil
 }
 
-func (m *unixManager) setupAccessForServiceUser(path string) error {
-	user, err := m.pm.LookupUserByName(security.ServiceAccountUserName())
-	if err != nil {
-		return errorx.IllegalArgument.
-			New("failed to retrieve user %q", security.ServiceAccountUserName()).
-			WithUnderlyingErrors(err)
-	}
-
-	group, err := m.pm.LookupGroupByName(security.ServiceAccountGroupName())
-	if err != nil {
-		return errorx.IllegalArgument.
-			New("failed to retrieve group %q", security.ServiceAccountGroupName()).
-			WithUnderlyingErrors(err)
-	}
-
-	err = m.WriteOwner(path, user, group, false)
-	if err != nil {
-		return errorx.IllegalArgument.
-			New("failed to set file owner (%s) and group(%s) to path: %q", user.Name(), group.Name(), path).
-			WithUnderlyingErrors(err)
-	}
-
-	err = m.WritePermissions(path, security.ACLFilePerms, false)
-	if err != nil {
-		return errorx.IllegalArgument.
-			New("failed to set file permissions to %q", path).
-			WithUnderlyingErrors(err)
-	}
-
-	return nil
-}
-
 func (m *unixManager) WriteFile(path string, payload []byte) error {
 	file, err := os.Create(path)
 	if err != nil {
@@ -510,8 +498,11 @@ func (m *unixManager) WriteFile(path string, payload []byte) error {
 			WithUnderlyingErrors(err)
 	}
 
-	// set file permission
-	return m.setupAccessForServiceUser(path)
+	return nil
+}
+
+func (m *unixManager) AtomicWriteFile(path string, payload []byte, perm fs.FileMode) error {
+	return AtomicWriteFile(path, payload, perm)
 }
 
 func (m *unixManager) AppendToFile(path string, payload []byte) error {

@@ -5,7 +5,9 @@ package fsx
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/joomcode/errorx"
@@ -53,4 +55,54 @@ func RemoveAll(path string) {
 	if err != nil && !os.IsNotExist(err) {
 		fmt.Printf("ERROR: %+v\n", errorx.Decorate(err, "failed to remove all at path %q", path))
 	}
+}
+
+// AtomicWriteFile writes payload to path using a write-to-temp-then-rename strategy,
+// ensuring readers never observe a partially-written file. The temp file is created in
+// the same directory as path (guaranteeing a same-filesystem rename). perm is applied
+// to the temp file before the rename so the final file is never visible with incorrect
+// permissions. On any failure the temp file is removed before returning.
+func AtomicWriteFile(path string, payload []byte, perm fs.FileMode) error {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	tmp, err := os.CreateTemp(dir, "."+base+".tmp.*")
+	if err != nil {
+		return FileWriteError.New("failed to create temp file in %s", dir).WithUnderlyingErrors(err)
+	}
+	tmpPath := tmp.Name()
+	success := false
+	defer func() {
+		_ = tmp.Close()
+		if !success {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	n, err := tmp.Write(payload)
+	if err != nil {
+		return FileWriteError.New("failed to write temp file %s", tmpPath).WithUnderlyingErrors(err)
+	}
+	if n != len(payload) {
+		return FileWriteError.New("short write to temp file %s: wrote %d of %d bytes", tmpPath, n, len(payload))
+	}
+
+	if err := tmp.Sync(); err != nil {
+		return FileWriteError.New("failed to sync temp file %s", tmpPath).WithUnderlyingErrors(err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		return FileWriteError.New("failed to close temp file %s", tmpPath).WithUnderlyingErrors(err)
+	}
+
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return FileWriteError.New("failed to set permissions on temp file %s", tmpPath).WithUnderlyingErrors(err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return FileWriteError.New("failed to rename %s to %s", tmpPath, path).WithUnderlyingErrors(err)
+	}
+
+	success = true
+	return nil
 }
