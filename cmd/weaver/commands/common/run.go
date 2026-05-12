@@ -141,7 +141,8 @@ func finalizeWorkflowReport(report *automa.Report) error {
 
 	totalDuration := report.EndTime.Sub(report.StartTime)
 	logPath := path.Join(logCfg.Directory, logCfg.Filename)
-	fmt.Print(ui.RenderSummaryTable(report, totalDuration, reportPath, logPath))
+	daemonLogPath := path.Join(logCfg.Directory, "solo-provisioner-daemon.log")
+	fmt.Print(ui.RenderSummaryTable(report, totalDuration, reportPath, logPath, daemonLogPath))
 
 	logx.As().Info().
 		Str("report_path", reportPath).

@@ -302,7 +302,12 @@ func InstallWeaverServiceStep() *automa.StepBuilder {
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to enable service %s", weaverServiceName)))
 			}
 
-			logx.As().Info().Str("path", serviceDstPath).Msg("Solo Provisioner service installed and enabled")
+			if err := pkgos.RestartService(ctx, weaverServiceName); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to start service %s", weaverServiceName)))
+			}
+
+			logx.As().Info().Str("path", serviceDstPath).Msg("Solo Provisioner service installed, enabled, and started")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

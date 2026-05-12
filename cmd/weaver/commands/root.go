@@ -94,6 +94,7 @@ func init() {
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(version.Cmd())
+	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
 
 	if common.DetectShortNameCollisions(rootCmd) {
@@ -169,7 +170,11 @@ func initConfig(ctx context.Context) {
 		logConfig.Directory = models.Paths().LogsDir
 	}
 	if logConfig.Filename == "" {
-		logConfig.Filename = "solo-provisioner.log"
+		if len(os.Args) > 1 && os.Args[1] == "daemon" {
+			logConfig.Filename = "solo-provisioner-daemon.log"
+		} else {
+			logConfig.Filename = "solo-provisioner.log"
+		}
 	}
 	// Ensure the log directory exists with setgid + weaver group before lumberjack touches
 	// it. On first run the directory does not yet exist; MkdirAll creates it, then chown+chmod
