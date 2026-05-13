@@ -11,7 +11,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/security"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -74,7 +74,8 @@ func CheckPrivilegesStep() automa.Builder {
 					automa.WithError(errorx.IllegalState.Wrap(err, "failed to get current user")))
 			}
 
-			if current.Uid != "0" {
+			weaverUID := config.WeaverUserId()
+			if current.Uid != "0" && current.Uid != weaverUID {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						errorx.IllegalState.New("requires superuser privilege").
@@ -105,10 +106,10 @@ func CheckWeaverUserStep() automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			weaverUsername := security.ServiceAccountUserName()
-			weaverUserId := security.ServiceAccountUserId()
-			weaverGroupName := security.ServiceAccountGroupName()
-			weaverGroupId := security.ServiceAccountGroupId()
+			weaverUsername := config.WeaverUserName()
+			weaverUserId := config.WeaverUserId()
+			weaverGroupName := config.WeaverGroupName()
+			weaverGroupId := config.WeaverGroupId()
 
 			// Check if user exists
 			weaverUser, userErr := user.Lookup(weaverUsername)
@@ -177,28 +178,17 @@ func CheckWeaverUserStep() automa.Builder {
 				meta["group_exists"] = fmt.Sprintf("%t", groupExists)
 
 				if !userExists && !groupExists {
-					instructions = fmt.Sprintf("The user '%s' and group '%s' do not exist.\n\n", weaverUsername, weaverGroupName)
-					instructions += "Please create them with the following commands:\n\n"
-					instructions += fmt.Sprintf("  sudo groupadd -g %s %s\n", weaverGroupId, weaverGroupName)
-					instructions += fmt.Sprintf("  sudo useradd -u %s -g %s -m -s /bin/bash %s\n\n", weaverUserId, weaverGroupId, weaverUsername)
-					instructions += "These commands will:\n"
-					instructions += fmt.Sprintf("  • Create group '%s' with GID %s\n", weaverGroupName, weaverGroupId)
-					instructions += fmt.Sprintf("  • Create user '%s' with UID %s\n", weaverUsername, weaverUserId)
-					instructions += "  • Create a home directory (-m)\n"
-					instructions += "  • Set bash as the default shell"
+					instructions = fmt.Sprintf("The weaver service account ('%s'/'%s') has not been provisioned on this host.\n", weaverUsername, weaverGroupName)
+					instructions += "Run the installer to set it up:\n\n"
+					instructions += "  sudo solo-provisioner install"
 				} else if !userExists {
-					instructions = fmt.Sprintf("The user '%s' does not exist.\n\n", weaverUsername)
-					instructions += "Please create it with the following command:\n\n"
-					instructions += fmt.Sprintf("  sudo useradd -u %s -g %s -m -s /bin/bash %s\n\n", weaverUserId, weaverGroupId, weaverUsername)
-					instructions += "This will create the user with:\n"
-					instructions += fmt.Sprintf("  • UID: %s\n", weaverUserId)
-					instructions += fmt.Sprintf("  • Primary group: %s (GID %s)\n", weaverGroupName, weaverGroupId)
-					instructions += "  • Home directory with bash shell"
+					instructions = fmt.Sprintf("The weaver user '%s' does not exist.\n", weaverUsername)
+					instructions += "The service account is provisioned by the installer — run:\n\n"
+					instructions += "  sudo solo-provisioner install"
 				} else {
-					instructions = fmt.Sprintf("The provisioner group '%s' does not exist.\n\n", weaverGroupName)
-					instructions += "Please create it with the following command:\n\n"
-					instructions += fmt.Sprintf("  sudo groupadd -g %s %s\n\n", weaverGroupId, weaverGroupName)
-					instructions += fmt.Sprintf("This will create the group with GID %s.", weaverGroupId)
+					instructions = fmt.Sprintf("The weaver group '%s' does not exist.\n", weaverGroupName)
+					instructions += "The service account is provisioned by the installer — run:\n\n"
+					instructions += "  sudo solo-provisioner install"
 				}
 
 				meta["instructions"] = instructions
@@ -217,7 +207,9 @@ func CheckWeaverUserStep() automa.Builder {
 					automa.WithMetadata(meta))
 			}
 
-			// Both user and group exist with correct IDs
+			// Both weaver user and group exist with correct IDs.
+			// hedera:2000 is no longer validated here — EnsureHederaOwnerStep auto-creates
+			// it as the first step of any block-node workflow that requires it.
 			meta["user_exists"] = "true"
 			meta["group_exists"] = "true"
 			meta["user_id"] = weaverUserId

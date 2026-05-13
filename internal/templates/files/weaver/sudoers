@@ -1,0 +1,3 @@
+# Solo-provisioner: allow weaver to run privileged commands without a password
+weaver ALL=(root) NOPASSWD: /usr/bin/helm, /usr/bin/kubectl, /usr/sbin/kubeadm, \
+  /bin/systemctl, /usr/bin/systemctl, /bin/mkdir

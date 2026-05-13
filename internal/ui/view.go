@@ -289,8 +289,8 @@ func RenderVersionHeader() string {
 // ── Summary ──────────────────────────────────────────────────────────────
 
 // RenderSummaryTable produces a compact summary for use after the TUI quits
-// or in line handler mode. reportPath and logPath are included if non-empty.
-func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, reportPath string, logPath string) string {
+// or in line handler mode. reportPath, logPath, and daemonLogPath are included if non-empty.
+func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, reportPath string, logPath string, daemonLogPath string) string {
 	if report == nil {
 		return ""
 	}
@@ -310,6 +310,9 @@ func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, repo
 	}
 	if logPath != "" {
 		b.WriteString(fmt.Sprintf("  %s %s\n", summaryLabelStyle.Render("Log:"), logPath))
+	}
+	if daemonLogPath != "" {
+		b.WriteString(fmt.Sprintf("  %s %s\n", summaryLabelStyle.Render("Daemon log:"), daemonLogPath))
 	}
 	b.WriteString("  ─────────────────────────────────────────────────\n")
 

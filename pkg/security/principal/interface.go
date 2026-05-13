@@ -17,9 +17,10 @@ type Manager interface {
 	GroupExistsByName(groupName string) bool
 	// CreateUser creates a user with the given username.  The UID will be automatically generated.
 	CreateUser(userName string) (User, error)
-	// CreateUserWithId creates a user with the given username and predefined UID.
+	// CreateUserWithId creates a user with the given username, predefined UID, and home directory.
+	// Pass homeDir="" or "/" for service accounts that do not need a dedicated home directory.
 	// On windows, the uid parameter is ignored; therefore, this method would be synonymous with the CreateUser method.
-	CreateUserWithId(userName string, uid int) (User, error)
+	CreateUserWithId(userName string, uid int, homeDir string) (User, error)
 	// CreateGroup creates a group with the given group name.  The GID will be automatically generated.
 	CreateGroup(groupName string) (Group, error)
 	// CreateGroupWithId creates a group with the given group name and predefined GID.
@@ -33,6 +34,9 @@ type Manager interface {
 	LookupGroupByName(groupName string) (Group, error)
 	// LookupGroupById provided the group id returns the group object or an error. If the group does not exist, an error is returned.
 	LookupGroupById(gid string) (Group, error)
+	// AddUserToGroup adds userName as a supplementary member of groupName.
+	// Idempotent: returns nil if the user is already a member.
+	AddUserToGroup(userName, groupName string) error
 	// Refresh refreshes the user and group cache.
 	Refresh() error
 }
@@ -45,6 +49,22 @@ type Provider interface {
 	EnumerateUsers(m Manager) ([]User, error)
 	// EnumerateGroups queries the underlying operating system registry for all groups.
 	EnumerateGroups(m Manager) ([]Group, error)
+	// WriteGroupEntry appends a new group entry to the OS group database.
+	WriteGroupEntry(name string, gid int) error
+	// WriteGroupShadowEntry appends a new group shadow entry to the OS group shadow database.
+	// This is a best-effort operation; implementations may return nil on platforms that do not support shadow files.
+	WriteGroupShadowEntry(name string) error
+	// WriteUserEntry appends a new user entry to the OS user database.
+	// For system users, the primary GID is expected to equal the UID; the caller must create the group first.
+	// homeDir specifies the user's home directory field in /etc/passwd (use "/" for pure service accounts).
+	WriteUserEntry(name string, uid int, homeDir string) error
+	// WriteUserShadowEntry appends a new user shadow entry to the OS user shadow database.
+	// This is a best-effort operation; implementations may return nil on platforms that do not support shadow files.
+	WriteUserShadowEntry(name string) error
+	// AddMemberToGroup appends memberName to the comma-separated members field of groupName
+	// in the OS group database, using an exclusive flock for atomicity.
+	// Idempotent: if memberName is already listed, returns nil.
+	AddMemberToGroup(groupName, memberName string) error
 }
 
 // User is an operating system agnostic representation of a local or directory service connected user principal.

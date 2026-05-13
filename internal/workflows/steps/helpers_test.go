@@ -39,10 +39,16 @@ const (
 func SetupPrerequisitesToLevel(t *testing.T, level SetupLevel) {
 	t.Helper()
 
-	// Setup home directory structure
-	step, err := SetupHomeDirectoryStructure(models.Paths()).Build()
+	// Ensure weaver service account exists before any chown calls
+	step, err := EnsureWeaverOwnerStep().Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
+	require.NoError(t, report.Error, "Failed to ensure weaver service account")
+
+	// Setup home directory structure
+	step, err = SetupHomeDirectoryStructure(models.Paths()).Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
 	require.NoError(t, report.Error, "Failed to setup home directory structure")
 
 	// Refresh system package index

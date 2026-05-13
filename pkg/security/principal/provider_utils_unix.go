@@ -7,9 +7,11 @@ package principal
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type lineReader[E unixUser | unixGroup] func(index int, line string) (*E, error)
@@ -156,6 +158,30 @@ func displayNameFromGecos(gecos string) string {
 	}
 
 	return strings.TrimSpace(parts[0])
+}
+
+func appendToFile(path, line string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+	_, err = fmt.Fprint(f, line)
+	return err
+}
+
+func appendToFileIfExists(path, line string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	return appendToFile(path, line)
 }
 
 func parseMembers(members string) []string {

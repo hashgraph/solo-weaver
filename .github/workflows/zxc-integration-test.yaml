@@ -179,8 +179,6 @@ jobs:
           bootcmd:
             - systemctl disable systemd-networkd-wait-online.service || true
             - systemctl mask systemd-networkd-wait-online.service || true
-            - groupadd -g 2500 weaver || true
-            - useradd -u 2500 -g 2500 -m -s /bin/bash weaver || true
 
           packages:
             - openssh-server

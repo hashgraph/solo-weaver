@@ -43,26 +43,6 @@ func (m *defaultManager) GroupExistsByName(groupName string) bool {
 	return err == nil
 }
 
-func (m *defaultManager) CreateUser(userName string) (User, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m *defaultManager) CreateUserWithId(userName string, uid int) (User, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m *defaultManager) CreateGroup(groupName string) (Group, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m *defaultManager) CreateGroupWithId(groupName string, gid int) (Group, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (m *defaultManager) LookupUserByName(userName string) (User, error) {
 	if !m.initialized() {
 		err := m.Refresh()

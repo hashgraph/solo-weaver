@@ -315,8 +315,12 @@ tasks:
         else
           echo "✓ Port 2222 is available"
         fi
-        # Forward port 2222 to 22 on the VM
-        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=30 -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP
+        # Forward port 2222 to 22 on the VM.
+        # timeout(1) caps the total time including the SSH handshake phase, which
+        # ConnectTimeout alone does not cover once the TCP connection is established.
+        timeout 10 ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
+          -o ConnectTimeout=10 -o ServerAliveInterval=3 -o ServerAliveCountMax=2 \
+          -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP || true
         echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
   
   vm:configure:
@@ -414,21 +418,6 @@ tasks:
           sudo -n true 2>/dev/null || {
             echo '⚠️  Passwordless sudo not working, but continuing...'
           }
-        
-          echo 'Creating weaver user and group with ID 2500...'
-          if ! getent group weaver >/dev/null 2>&1; then
-            sudo groupadd -g 2500 weaver
-            echo '✓ Created weaver group with GID 2500'
-          else
-            echo 'weaver group already exists'
-          fi
-        
-          if ! id -u weaver >/dev/null 2>&1; then
-            sudo useradd -u 2500 -g 2500 -m -s /bin/bash weaver
-            echo '✓ Created weaver user with UID 2500'
-          else
-            echo 'weaver user already exists'
-          fi
         
           echo 'Configuring SSH key for root user...'
           sudo mkdir -p /root/.ssh

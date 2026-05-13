@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -44,8 +45,12 @@ func (m *Manager) SetupStorage(ctx context.Context) error {
 			return errorx.IllegalState.Wrap(err, "failed to create directory: %s", dirPath)
 		}
 
-		if err := m.fsManager.WritePermissions(dirPath, models.DefaultDirOrExecPerm, true); err != nil {
+		if err := m.fsManager.WritePermissions(dirPath, models.DefaultStorageDirPerm, true); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to set permissions on: %s", dirPath)
+		}
+
+		if err := m.fsManager.WriteOwnerByName(dirPath, config.HederaUserName(), config.HederaGroupName(), true); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to set ownership on: %s", dirPath)
 		}
 	}
 

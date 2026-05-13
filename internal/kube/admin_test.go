@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 )
@@ -18,223 +17,71 @@ import (
 func TestKubeConfigManager_Configure(t *testing.T) {
 	tests := []struct {
 		name          string
-		customKubeDir string
 		setupMocks    func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager)
 		expectError   bool
 		errorContains string
 	}{
 		{
-			name:          "success - configures kubeconfig successfully",
-			customKubeDir: "",
+			name: "success - configures kubeconfig for root only (weaver not provisioned)",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Expect root directory operations
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
 				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(nil)
-
-				// Expect root user/group lookup and ownership setting
 				mockRootUser := principal.NewMockUser(ctrl)
 				mockRootGroup := principal.NewMockGroup(ctrl)
 				pm.EXPECT().LookupUserByName("root").Return(mockRootUser, nil)
 				pm.EXPECT().LookupGroupByName("root").Return(mockRootGroup, nil)
 				fm.EXPECT().WriteOwner("/root/.kube", mockRootUser, mockRootGroup, true).Return(nil)
+				// weaver not yet provisioned — configureWeaverKubeConfig skips gracefully
+				pm.EXPECT().LookupUserByName("weaver").Return(nil, principal.NewUserNotFoundError(nil, "weaver", ""))
 			},
 			expectError: false,
 		},
 		{
-			name:          "error - lookup user fails",
-			customKubeDir: "",
+			name: "error - weaver user lookup fails with non-not-found error",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(nil, errors.New("user not found"))
+				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(nil)
+				mockRootUser := principal.NewMockUser(ctrl)
+				mockRootGroup := principal.NewMockGroup(ctrl)
+				pm.EXPECT().LookupUserByName("root").Return(mockRootUser, nil)
+				pm.EXPECT().LookupGroupByName("root").Return(mockRootGroup, nil)
+				fm.EXPECT().WriteOwner("/root/.kube", mockRootUser, mockRootGroup, true).Return(nil)
+				pm.EXPECT().LookupUserByName("weaver").Return(nil, errors.New("permission denied reading identity DB"))
 			},
 			expectError:   true,
 			errorContains: "failed to lookup weaver user",
 		},
 		{
-			name:          "error - lookup group fails",
-			customKubeDir: "",
+			name: "success - configures kubeconfig for root and weaver",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(nil, errors.New("group not found"))
-			},
-			expectError:   true,
-			errorContains: "failed to lookup weaver group",
-		},
-		{
-			name:          "error - create directory fails",
-			customKubeDir: "",
-			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(errors.New("permission denied"))
-			},
-			expectError:   true,
-			errorContains: "failed to create",
-		},
-		{
-			name:          "error - copy file fails",
-			customKubeDir: "",
-			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(errors.New("source file not found"))
-			},
-			expectError:   true,
-			errorContains: "failed to copy kubeconfig file",
-		},
-		{
-			name:          "error - write owner fails",
-			customKubeDir: "",
-			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(errors.New("chown failed"))
-			},
-			expectError:   true,
-			errorContains: "failed to set ownership",
-		},
-		{
-			name:          "success - with custom kubeDir",
-			customKubeDir: "/custom/kube/path",
-			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				customKubeDir := "/custom/kube/path"
-
-				fm.EXPECT().CreateDirectory(customKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(customKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(customKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Expect root directory operations
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
 				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(nil)
-
-				// Expect root user/group lookup and ownership setting
 				mockRootUser := principal.NewMockUser(ctrl)
 				mockRootGroup := principal.NewMockGroup(ctrl)
 				pm.EXPECT().LookupUserByName("root").Return(mockRootUser, nil)
 				pm.EXPECT().LookupGroupByName("root").Return(mockRootGroup, nil)
 				fm.EXPECT().WriteOwner("/root/.kube", mockRootUser, mockRootGroup, true).Return(nil)
+				mockWeaverUser := principal.NewMockUser(ctrl)
+				mockWeaverGroup := principal.NewMockGroup(ctrl)
+				pm.EXPECT().LookupUserByName("weaver").Return(mockWeaverUser, nil)
+				pm.EXPECT().LookupGroupByName("weaver").Return(mockWeaverGroup, nil)
+				fm.EXPECT().CreateDirectory("/home/weaver/.kube", false).Return(nil)
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/home/weaver/.kube/config", true).Return(nil)
+				fm.EXPECT().WriteOwner("/home/weaver/.kube", mockWeaverUser, mockWeaverGroup, true).Return(nil)
 			},
 			expectError: false,
 		},
 		{
-			name:          "error - create root directory fails",
-			customKubeDir: "",
+			name: "error - create root directory fails",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Root directory creation fails
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(errors.New("permission denied"))
 			},
 			expectError:   true,
 			errorContains: "failed to create /root/.kube directory",
 		},
 		{
-			name:          "error - copy to root directory fails",
-			customKubeDir: "",
+			name: "error - copy to root directory fails",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Root directory operations
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
 				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(errors.New("disk full"))
 			},
@@ -242,64 +89,20 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			errorContains: "failed to copy kubeconfig file",
 		},
 		{
-			name:          "error - root user lookup fails",
-			customKubeDir: "",
+			name: "error - root user lookup fails",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Root directory operations
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
 				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(nil)
-
-				// Root user lookup fails
 				pm.EXPECT().LookupUserByName("root").Return(nil, errors.New("root user not found"))
 			},
 			expectError:   true,
 			errorContains: "failed to lookup root user",
 		},
 		{
-			name:          "error - root group lookup fails",
-			customKubeDir: "",
+			name: "error - root group lookup fails",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Root directory operations
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
 				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(nil)
-
-				// Root user lookup succeeds, but group lookup fails
 				mockRootUser := principal.NewMockUser(ctrl)
 				pm.EXPECT().LookupUserByName("root").Return(mockRootUser, nil)
 				pm.EXPECT().LookupGroupByName("root").Return(nil, errors.New("root group not found"))
@@ -308,32 +111,10 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			errorContains: "failed to lookup root group",
 		},
 		{
-			name:          "error - root WriteOwner fails",
-			customKubeDir: "",
+			name: "error - root WriteOwner fails",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				svcAcc := config.ServiceAccount()
-
-				mockUser := principal.NewMockUser(ctrl)
-				mockUser.EXPECT().HomeDir().Return("/home/weaver").AnyTimes()
-
-				mockGroup := principal.NewMockGroup(ctrl)
-
-				pm.EXPECT().LookupUserByName(svcAcc.UserName).Return(mockUser, nil)
-				pm.EXPECT().LookupGroupByName(svcAcc.GroupName).Return(mockGroup, nil)
-
-				expectedKubeDir := path.Join("/home/weaver", ".kube")
-				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
-
-				expectedConfigDest := path.Join(expectedKubeDir, "config")
-				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
-
-				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
-
-				// Root directory operations
 				fm.EXPECT().CreateDirectory("/root/.kube", false).Return(nil)
 				fm.EXPECT().CopyFile(kubeConfigSourcePath, "/root/.kube/config", true).Return(nil)
-
-				// Root user/group lookup succeeds, but WriteOwner fails
 				mockRootUser := principal.NewMockUser(ctrl)
 				mockRootGroup := principal.NewMockGroup(ctrl)
 				pm.EXPECT().LookupUserByName("root").Return(mockRootUser, nil)
@@ -353,8 +134,7 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 			mockFsxManager := fsx.NewMockManager(ctrl)
 			mockPrincipalManager := principal.NewMockManager(ctrl)
 
-			// Ensure SUDO_USER is not set for these tests to avoid unexpected behavior
-			// from configureCurrentUserKubeConfig()
+			// Ensure SUDO_USER is not set so configureCurrentUserKubeConfig skips.
 			originalSudoUser := os.Getenv("SUDO_USER")
 			_ = os.Unsetenv("SUDO_USER")
 			defer func() {
@@ -363,23 +143,15 @@ func TestKubeConfigManager_Configure(t *testing.T) {
 				}
 			}()
 
-			// Setup mocks
 			tt.setupMocks(ctrl, mockFsxManager, mockPrincipalManager)
 
-			// Create manager with mocked dependencies
 			mgr := KubeConfigManager{
 				fsManager:        mockFsxManager,
 				principalManager: mockPrincipalManager,
 			}
 
-			if tt.customKubeDir != "" {
-				mgr.SetKubeDir(tt.customKubeDir)
-			}
-
-			// Call Configure
 			err := mgr.Configure()
 
-			// Verify results
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("expected error but got nil")

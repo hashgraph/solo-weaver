@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/security"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -49,8 +49,8 @@ func newTestFileManager(t *testing.T) fsx.Manager {
 	mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
 
 	pm := principal.NewMockManager(ctrl)
-	pm.EXPECT().LookupUserByName(security.ServiceAccountUserName()).Return(mockUser, nil).AnyTimes()
-	pm.EXPECT().LookupGroupByName(security.ServiceAccountGroupName()).Return(mockGroup, nil).AnyTimes()
+	pm.EXPECT().LookupUserByName(config.WeaverUserName()).Return(mockUser, nil).AnyTimes()
+	pm.EXPECT().LookupGroupByName(config.WeaverGroupName()).Return(mockGroup, nil).AnyTimes()
 
 	fm, err := fsx.NewManager(fsx.WithPrincipalManager(pm))
 	if err != nil {

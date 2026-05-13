@@ -37,6 +37,7 @@ func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
+		EnsureHederaOwnerStep(),
 		setupBlockNodeStorage(blockNodeManagerProvider),
 		createBlockNodeNamespace(blockNodeManagerProvider),
 		createBlockNodePVs(blockNodeManagerProvider),
@@ -314,6 +315,7 @@ func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
+		EnsureHederaOwnerStep(),
 		upgradeBlockNode(inputs, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
 	).

@@ -70,8 +70,11 @@ type Manager interface {
 	ReadOwner(path string) (principal.User, principal.Group, error)
 	// ReadPermissions returns the permissions of the file at the given path.
 	ReadPermissions(path string) (fs.FileMode, error)
-	// WriteOwner sets the owner and group of the file at the given path.
+	// WriteOwner sets the owner and group of path.
+	// If path is a symbolic link, the link itself is re-owned via Lchown (not the target).
 	WriteOwner(path string, user principal.User, group principal.Group, recursive bool) error
+	// WriteOwnerByName looks up the user and group by name and sets ownership of the file at path.
+	WriteOwnerByName(path string, userName string, groupName string, recursive bool) error
 	// WritePermissions sets the permissions of the file at the given path.
 	WritePermissions(path string, perms fs.FileMode, recursive bool) error
 	// ReadFile reads whole file as long as it's size is less than the maxFileSize argument.
@@ -84,6 +87,13 @@ type Manager interface {
 	//
 	// Caller should ensure payload is not too big such that ReadFile cannot read it because of the file size limit.
 	WriteFile(path string, payload []byte) error
+
+	// AtomicWriteFile writes payload to path using a write-to-temp-then-rename strategy,
+	// ensuring readers never observe a partially-written file. The temp file is created
+	// in the same directory as path (guaranteeing a same-filesystem rename). perm is
+	// applied to the temp file before the rename so the final file is never visible with
+	// incorrect permissions.
+	AtomicWriteFile(path string, payload []byte, perm fs.FileMode) error
 
 	// AppendToFile appends payload to a file. If the file does not exist, it will be created.
 	AppendToFile(path string, payload []byte) error

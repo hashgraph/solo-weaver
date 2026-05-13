@@ -63,10 +63,22 @@ func (h *InstallHandler) BuildWorkflow(
 	var wb *automa.WorkflowBuilder
 	if currentState.ClusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
-			Steps(steps.SetupBlockNode(ins))
+			Steps(
+				// Backwards-compat guard: older released binaries did not create
+				// weaver:2500 during self-install, so the account may be absent on
+				// machines upgraded from an old binary. The global pre-run check only
+				// verifies the binary exists, not the user account. This step is
+				// idempotent and safe to repeat on up-to-date installations.
+				steps.EnsureWeaverOwnerStep(),
+				steps.SetupBlockNode(ins),
+			)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(
+				// Same backwards-compat guard as above: ensure weaver:2500 exists
+				// before InstallClusterWorkflow's preflight check validates it.
+				// Older binaries did not create this account during self-install.
+				steps.EnsureWeaverOwnerStep(),
 				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks, h.mr),
 				steps.SetupBlockNode(ins),
 			)

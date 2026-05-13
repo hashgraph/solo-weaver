@@ -8,12 +8,16 @@ Below is a quickstart guide to get you up and running with Solo Weaver.
 
 - Unix operating system (Tested on: Debian 13.1.0, Ubuntu 22.04)
 - `curl` installed
+> **Note:** No system users need to be pre-created. The `weaver:2500` service account is
+> created automatically during `solo-provisioner install`. The `hedera:2000` user and group
+> (used for node storage ownership — block node, consensus node, and similar workloads) are
+> created automatically when the relevant `node install` command is first run.
 
 ## Install
 
 - Run the single-line installer:
 
-```
+```bash
 curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.sh | bash
 ```
 

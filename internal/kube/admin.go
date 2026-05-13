@@ -49,70 +49,19 @@ func (m *KubeConfigManager) SetKubeDir(dir string) {
 	m.kubeDir = dir
 }
 
-// Configure copies the kubeconfig file to the user's home directory, to /root/.kube,
-// and to the current user's directory. This allows kubectl to be used without
+// Configure copies the kubeconfig file to /root/.kube, the current sudo user's home,
+// and the weaver service account's home. This allows kubectl to be used without
 // requiring root privileges and ensures the config is available for all relevant users.
 func (m *KubeConfigManager) Configure() error {
-	// Install kubeconfig for the weaver user
-	if err := m.configureWeaverKubeConfig(); err != nil {
-		return err
-	}
-
-	// Install kubeconfig for the root user
 	if err := m.configureRootKubeConfig(); err != nil {
 		return err
 	}
-
-	// Install kubeconfig for the current user (if running with sudo)
 	if err := m.configureCurrentUserKubeConfig(); err != nil {
 		return err
 	}
-
-	return nil
-}
-
-// configureWeaverKubeConfig installs kubeconfig in the weaver user's home directory
-// with proper ownership settings.
-func (m *KubeConfigManager) configureWeaverKubeConfig() error {
-	// Get the weaver service account
-	svcAcc := config.ServiceAccount()
-
-	// Lookup weaver user and group
-	usr, err := m.principalManager.LookupUserByName(svcAcc.UserName)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to lookup weaver user: %s", svcAcc.UserName)
+	if err := m.configureWeaverKubeConfig(); err != nil {
+		return err
 	}
-
-	grp, err := m.principalManager.LookupGroupByName(svcAcc.GroupName)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to lookup weaver group: %s", svcAcc.GroupName)
-	}
-
-	// Determine kubeconfig directory
-	kubeDir := m.kubeDir
-	if kubeDir == "" {
-		kubeDir = path.Join(usr.HomeDir(), ".kube")
-	}
-
-	// Create .kube directory
-	err = m.fsManager.CreateDirectory(kubeDir, false)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create %s directory", kubeDir)
-	}
-
-	// Copy kubeconfig file
-	kubeConfigDest := path.Join(kubeDir, "config")
-	err = m.fsManager.CopyFile(kubeConfigSourcePath, kubeConfigDest, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to copy kubeconfig file %q to %q", kubeConfigSourcePath, kubeConfigDest)
-	}
-
-	// Set proper ownership
-	err = m.fsManager.WriteOwner(kubeDir, usr, grp, true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to set ownership of .kube directory: %q", kubeDir)
-	}
-
 	return nil
 }
 
@@ -147,6 +96,45 @@ func (m *KubeConfigManager) configureRootKubeConfig() error {
 	err = m.fsManager.WriteOwner(rootKubeDir, rootUser, rootGroup, true)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to set ownership of root .kube directory: %q", rootKubeDir)
+	}
+
+	return nil
+}
+
+// configureWeaverKubeConfig installs kubeconfig in the weaver service account's home directory.
+// Uses config.WeaverHomeDir() directly rather than user.HomeDir() so it works correctly on
+// existing hosts where /etc/passwd still records home=/ from an older install.
+// Skips gracefully if the weaver user has not been provisioned yet.
+func (m *KubeConfigManager) configureWeaverKubeConfig() error {
+	weaverUser, err := m.principalManager.LookupUserByName(config.WeaverUserName())
+	if err != nil {
+		if !errorx.IsOfType(err, principal.UserNotFoundError) {
+			return errorx.IllegalState.Wrap(err, "failed to lookup weaver user")
+		}
+		return nil
+	}
+
+	weaverGroup, err := m.principalManager.LookupGroupByName(config.WeaverGroupName())
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to lookup weaver group")
+	}
+
+	kubeDir := m.kubeDir
+	if kubeDir == "" {
+		kubeDir = path.Join(config.WeaverHomeDir(), ".kube")
+	}
+
+	if err := m.fsManager.CreateDirectory(kubeDir, false); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s directory", kubeDir)
+	}
+
+	destPath := path.Join(kubeDir, "config")
+	if err := m.fsManager.CopyFile(kubeConfigSourcePath, destPath, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to copy kubeconfig to %s", destPath)
+	}
+
+	if err := m.fsManager.WriteOwner(kubeDir, weaverUser, weaverGroup, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to set ownership of %s", kubeDir)
 	}
 
 	return nil
