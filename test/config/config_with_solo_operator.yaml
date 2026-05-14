@@ -1,0 +1,6 @@
+log:
+  level: debug
+  consoleLogging: true
+  fileLogging: false
+soloOperator:
+  enabled: true
