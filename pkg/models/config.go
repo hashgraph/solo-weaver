@@ -47,14 +47,22 @@ func (c *ProxyConfig) Validate() error {
 	return nil
 }
 
+// SoloOperatorConfig represents the `soloOperator` configuration block.
+// When enabled, weaver installs and health-checks the solo-operator on cluster setup.
+// Disabled by default so existing production systems are not affected until opted in.
+type SoloOperatorConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
 // Config holds the global configuration for the application.
 type Config struct {
-	Profile   string             `yaml:"profile" json:"profile"` // Deployment profile (local, perfnet, testnet, mainnet)
-	Log       logx.LoggingConfig `yaml:"log" json:"log"`
-	BlockNode BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
-	Alloy     AlloyConfig        `yaml:"alloy" json:"alloy"`
-	Teleport  TeleportConfig     `yaml:"teleport" json:"teleport"`
-	Proxy     ProxyConfig        `yaml:"proxy" json:"proxy"`
+	Profile      string             `yaml:"profile" json:"profile"` // Deployment profile (local, perfnet, testnet, mainnet)
+	Log          logx.LoggingConfig `yaml:"log" json:"log"`
+	BlockNode    BlockNodeConfig    `yaml:"blockNode" json:"blockNode"`
+	Alloy        AlloyConfig        `yaml:"alloy" json:"alloy"`
+	Teleport     TeleportConfig     `yaml:"teleport" json:"teleport"`
+	Proxy        ProxyConfig        `yaml:"proxy" json:"proxy"`
+	SoloOperator SoloOperatorConfig `yaml:"soloOperator" json:"soloOperator"`
 }
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.

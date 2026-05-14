@@ -56,4 +56,10 @@ const (
 	EXTERNAL_SECRETS_CHART     = "external-secrets/external-secrets"
 	EXTERNAL_SECRETS_VERSION   = "0.20.2"
 	EXTERNAL_SECRETS_REPO      = "https://charts.external-secrets.io"
+
+	// Solo Operator
+	SOLO_OPERATOR_NAMESPACE = "solo-operator"
+	SOLO_OPERATOR_RELEASE   = "solo-operator"
+	SOLO_OPERATOR_CHART     = "oci://ghcr.io/hashgraph/charts/solo-operator"
+	SOLO_OPERATOR_VERSION   = "0.3.1"
 )

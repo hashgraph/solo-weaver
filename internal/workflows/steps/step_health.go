@@ -10,6 +10,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 )
 
 const (
@@ -46,6 +47,10 @@ var clusterPods = []string{
 	"metallb-system/metallb-speaker-",
 }
 
+var soloOperatorPods = []string{
+	"solo-operator/solo-operator-controller-manager-",
+}
+
 // list of critical cluster services to check for presence
 // Format: namespace/service-name
 var clusterServices = []string{
@@ -64,6 +69,10 @@ var clusterNamespaces = []string{
 	"kube-system",
 	"cilium-secrets",
 	"metallb-system",
+}
+
+var soloOperatorNamespaces = []string{
+	"solo-operator",
 }
 
 // list of critical cluster config maps to check for presence
@@ -108,15 +117,33 @@ var clusterCRDs = []string{
 	"servicel2statuses.metallb.io",
 }
 
+var soloOperatorCRDs = []string{
+	"consensuscapsules.operator.solo.hedera.com",
+	"envoyproxies.operator.solo.hedera.com",
+	"haproxycapsules.operator.solo.hedera.com",
+	"helmcapsules.operator.solo.hedera.com",
+	"networkoperations.operator.solo.hedera.com",
+	"orbits.operator.solo.hedera.com",
+}
+
 // CheckClusterHealth performs a series of checks to ensure the cluster is healthy and operational
 func CheckClusterHealth() *automa.WorkflowBuilder {
+	namespaces := append([]string(nil), clusterNamespaces...)
+	crds := append([]string(nil), clusterCRDs...)
+	pods := append([]string(nil), clusterPods...)
+
+	if config.Get().SoloOperator.Enabled {
+		namespaces = append(namespaces, soloOperatorNamespaces...)
+		crds = append(crds, soloOperatorCRDs...)
+		pods = append(pods, soloOperatorPods...)
+	}
 
 	return automa.NewWorkflowBuilder().WithId("check-cluster-health").Steps(
 		CheckClusterNodesReady(CheckClusterNodesStepId, kube.ClientFromContext),
-		CheckClusterNamespaces(CheckClusterNamespacesStepId, clusterNamespaces, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterNamespaces(CheckClusterNamespacesStepId, namespaces, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
 		CheckClusterConfigMaps(CheckClusterConfigMapsStepId, clusterConfigMaps, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
-		CheckClusterCRDs(CheckClusterCRDsStepId, clusterCRDs, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
-		CheckClusterPodsReady(CheckClusterPodsStepId, clusterPods, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterCRDs(CheckClusterCRDsStepId, crds, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
+		CheckClusterPodsReady(CheckClusterPodsStepId, pods, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
 		CheckClusterServices(CheckClusterServicesStepId, clusterServices, defaultClusterResourceCheckTimeout, kube.ClientFromContext),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
