@@ -130,22 +130,25 @@ func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
 	require.Error(t, err, "Should return error for non-existent software")
 }
 
-// Test_Config_GetLatestVersion_Integration tests getting the latest version from actual artifacts
-func Test_Config_GetLatestVersion_Integration(t *testing.T) {
+// Test_Config_GetDefaultVersion_Integration tests getting the default version from actual artifacts
+func Test_Config_GetDefaultVersion_Integration(t *testing.T) {
 	config, err := LoadArtifactConfig()
 	require.NoError(t, err)
 
-	// Test each artifact can return a latest version
+	// Test each artifact declares an explicit default that resolves correctly
 	for _, artifact := range config.Artifact {
 		t.Run(artifact.Name, func(t *testing.T) {
-			latest, err := artifact.GetLatestVersion()
-			require.NoError(t, err, "Should be able to get latest version for %s", artifact.Name)
-			require.NotEmpty(t, latest, "Latest version should not be empty for %s", artifact.Name)
+			require.NotEmpty(t, artifact.Default,
+				"Artifact %s must declare an explicit default version", artifact.Name)
 
-			// Verify the latest version exists in the versions map
-			_, exists := artifact.Versions[Version(latest)]
-			require.True(t, exists, "Latest version %s should exist in versions map for %s",
-				latest, artifact.Name)
+			defaultVersion, err := artifact.GetDefaultVersion()
+			require.NoError(t, err, "Should be able to get default version for %s", artifact.Name)
+			require.NotEmpty(t, defaultVersion, "Default version should not be empty for %s", artifact.Name)
+
+			// Verify the default version exists in the versions map
+			_, exists := artifact.Versions[Version(defaultVersion)]
+			require.True(t, exists, "Default version %s should exist in versions map for %s",
+				defaultVersion, artifact.Name)
 		})
 	}
 }
@@ -158,16 +161,16 @@ func Test_Config_GetChecksum_Integration(t *testing.T) {
 	// Test a few artifacts if they exist
 	for _, artifact := range config.Artifact {
 		t.Run(artifact.Name, func(t *testing.T) {
-			// Get the latest version
-			latest, err := artifact.GetLatestVersion()
+			// Get the default version
+			defaultVersion, err := artifact.GetDefaultVersion()
 			if err != nil {
-				t.Skipf("Skipping %s: cannot get latest version", artifact.Name)
+				t.Skipf("Skipping %s: cannot get default version", artifact.Name)
 				return
 			}
 
-			versionInfo, exists := artifact.Versions[Version(latest)]
+			versionInfo, exists := artifact.Versions[Version(defaultVersion)]
 			if !exists {
-				t.Skipf("Skipping %s: version %s not found", artifact.Name, latest)
+				t.Skipf("Skipping %s: version %s not found", artifact.Name, defaultVersion)
 				return
 			}
 
@@ -203,10 +206,10 @@ func Test_Config_GetDownloadURL_Integration(t *testing.T) {
 
 	for _, artifact := range config.Artifact {
 		t.Run(artifact.Name, func(t *testing.T) {
-			// Get the latest version
-			latest, err := artifact.GetLatestVersion()
+			// Get the default version
+			defaultVersion, err := artifact.GetDefaultVersion()
 			if err != nil {
-				t.Skipf("Skipping %s: cannot get latest version", artifact.Name)
+				t.Skipf("Skipping %s: cannot get default version", artifact.Name)
 				return
 			}
 
@@ -214,9 +217,9 @@ func Test_Config_GetDownloadURL_Integration(t *testing.T) {
 			platformArtifact := artifact.withPlatform("linux", "amd64")
 
 			// Get version info
-			versionInfo, exists := platformArtifact.Versions[Version(latest)]
+			versionInfo, exists := platformArtifact.Versions[Version(defaultVersion)]
 			if !exists {
-				t.Skipf("Skipping %s: version %s not found", artifact.Name, latest)
+				t.Skipf("Skipping %s: version %s not found", artifact.Name, defaultVersion)
 				return
 			}
 
@@ -234,7 +237,7 @@ func Test_Config_GetDownloadURL_Integration(t *testing.T) {
 			// Execute template to get actual URL
 			platform := platformArtifact.getPlatform()
 			data := TemplateData{
-				VERSION: latest,
+				VERSION: defaultVersion,
 				OS:      platform.os,
 				ARCH:    platform.arch,
 			}
@@ -246,7 +249,7 @@ func Test_Config_GetDownloadURL_Integration(t *testing.T) {
 				require.NotEmpty(t, url, "Download URL should not be empty")
 				require.Contains(t, url, "http", "Download URL should contain http")
 				// Verify version was substituted
-				require.Contains(t, url, latest, "Download URL should contain version %s", latest)
+				require.Contains(t, url, defaultVersion, "Download URL should contain version %s", defaultVersion)
 			}
 		})
 	}
@@ -259,17 +262,17 @@ func Test_Config_GetBinaries_Integration(t *testing.T) {
 
 	for _, artifact := range config.Artifact {
 		t.Run(artifact.Name, func(t *testing.T) {
-			// Get the latest version
-			latest, err := artifact.GetLatestVersion()
+			// Get the default version
+			defaultVersion, err := artifact.GetDefaultVersion()
 			if err != nil {
-				t.Skipf("Skipping %s: cannot get latest version", artifact.Name)
+				t.Skipf("Skipping %s: cannot get default version", artifact.Name)
 				return
 			}
 
 			// Get version info
-			versionInfo, exists := artifact.Versions[Version(latest)]
+			versionInfo, exists := artifact.Versions[Version(defaultVersion)]
 			if !exists {
-				t.Skipf("Skipping %s: version %s not found", artifact.Name, latest)
+				t.Skipf("Skipping %s: version %s not found", artifact.Name, defaultVersion)
 				return
 			}
 

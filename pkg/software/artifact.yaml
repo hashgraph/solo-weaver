@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # This file contains the list of software artifacts with their download URLs,
-# versions, and checksums for verification.
+# versions, and checksums for verification. Each artifact declares an
+# explicit `default:` version — the version installed when no other is
+# requested. Adding a new entry under `versions:` does not change the
+# default; that requires updating the `default:` field.
 artifact:
   
 - name: cri-o
   url: 'https://storage.googleapis.com/cri-o/artifacts/cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+  default: "1.33.4"
   versions:
     1.33.4:
       archives:
@@ -84,6 +88,7 @@ artifact:
               checksum: 'adcd45619f1f57eb38f8596bf65def237c53fb00b9f42b963f8a1556bb0918bb'
 
 - name: kubelet
+  default: "1.33.4"
   versions:
     1.33.4:
       binaries:
@@ -105,6 +110,7 @@ artifact:
 - name: kubeadm
   url:
   filename: 'kubeadm'
+  default: "1.33.4"
   versions:
     1.33.4:
       binaries:
@@ -124,6 +130,7 @@ artifact:
           checksum: 'aafd152fa9ef8a2b2dde2b643ffb2a8694412bdfef0ff46afdca775a2d31d13d25bd2ff69d29bf3112d17d2d929b0aa7cf519c8b41058102a0cead4e66be1415'
 
 - name: kubectl
+  default: "1.33.4"
   versions:
     1.33.4:
       binaries:
@@ -138,6 +145,7 @@ artifact:
               checksum: 'f76edb18df3e807ae664c2b3833e210f29ba2fe5ff53624f0787b47989dfc00d71da43c208a06b4f548f857893f19003e34523cb09bf588f81b3f06610b13337' # from https://dl.k8s.io/release/v1.33.4/bin/linux/arm64/kubectl.sha512
 
 - name: helm
+  default: "3.18.6"
   versions:
     3.18.6:
       archives:
@@ -162,6 +170,7 @@ artifact:
               checksum: 'c7550b38b3b7c9df31f7052432b5eb45e0cfec7238310de0133789598c2449e4'
 
 - name: k9s
+  default: "0.50.9"
   versions:
     0.50.9:
       archives:
@@ -186,6 +195,7 @@ artifact:
               checksum: '26bcae69dd653838db00a0e777aa52e87877c325a06ad6f625857604c02e9efc'
 
 - name: cilium
+  default: "0.18.7"
   versions:
     0.18.7:
       archives:
@@ -210,6 +220,7 @@ artifact:
               checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'
 
 - name: teleport
+  default: "18.6.4"
   versions:
     18.6.4:
       archives:
