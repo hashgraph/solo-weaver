@@ -3,33 +3,38 @@
 version: 3
 
 tasks:
-  uat:setup:
-    desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
+  uat:bootstrap:
+    desc: "Bootstrap VM: self-install the solo-provisioner binary only"
     interactive: true
     cmds:
       - |
         set -e
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "  UAT Setup: Install Cluster + Block Node"
+        echo "  UAT Bootstrap: Self-install Binary"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-
-        echo -e '\n▶ Self-install'
         UNAME_ARCH=$(uname -m)
         case "$UNAME_ARCH" in
-          x86_64)
-            ARCH=amd64
-            ;;
-          aarch64)
-            ARCH=arm64
-            ;;
-          *)
-            echo "FAIL: unsupported architecture '$UNAME_ARCH'. Supported architectures are: x86_64, aarch64."
-            exit 1
-            ;;
+          x86_64)  ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+          *) echo "FAIL: unsupported architecture '$UNAME_ARCH'."; exit 1 ;;
         esac
         cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-${ARCH} .
         sudo ./solo-provisioner-linux-${ARCH} install
+
+        echo ''
+        echo '✅ UAT Bootstrap: PASSED'
+
+  uat:setup:
+    desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
+    interactive: true
+    cmds:
+      - task: uat:bootstrap
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Setup: Install Block Node"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 
         echo -e '\n▶ Block node install (v0.26.0)'
@@ -337,6 +342,64 @@ tasks:
         echo ''
         echo '✅ Backward Compatibility: PASSED'
 
+  uat:solo-operator:
+    desc: "Run solo-operator lifecycle test (inside VM: requires cluster from uat:setup with soloOperator.enabled)"
+    interactive: true
+    cmds:
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Test: solo-operator Lifecycle"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Ensure solo-provisioner binary is installed; Step 1 handles cluster setup
+        command -v solo-provisioner > /dev/null 2>&1 || task uat:bootstrap
+
+        echo -e '\n▶ Step 1: Install cluster with soloOperator.enabled=true'
+        sudo solo-provisioner kube cluster install -p local --node-type=block\
+          -c /mnt/solo-weaver/test/config/config_with_solo_operator.yaml
+
+
+        echo -e '\n▶ Step 2: Verify solo-operator Helm release is deployed'
+        RELEASE_STATUS=$(helm list -n solo-operator -o json | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' | head -1)
+        echo "   Release status: $RELEASE_STATUS"
+        [ "$RELEASE_STATUS" = "deployed" ] || { echo "FAIL: expected status=deployed, got '$RELEASE_STATUS'"; exit 1; }
+
+
+        echo -e '\n▶ Step 3: Verify controller-manager pod is running'
+        kubectl wait --for=condition=Ready pod \
+          -l app.kubernetes.io/name=solo-operator \
+          -n solo-operator \
+          --timeout=120s
+        kubectl get pods -n solo-operator
+
+
+        echo -e '\n▶ Step 4: Verify CRDs are installed'
+        for CRD in \
+          consensuscapsules.operator.solo.hedera.com \
+          envoyproxies.operator.solo.hedera.com \
+          haproxycapsules.operator.solo.hedera.com \
+          helmcapsules.operator.solo.hedera.com \
+          networkoperations.operator.solo.hedera.com \
+          orbits.operator.solo.hedera.com; do
+          kubectl get crd "$CRD" > /dev/null 2>&1 || { echo "FAIL: CRD $CRD not found"; exit 1; }
+          echo "   $CRD ✓"
+        done
+
+
+        echo -e '\n▶ Step 5: Re-run install to verify idempotency'
+        sudo solo-provisioner kube cluster install -p local --node-type=block \
+          -c /mnt/solo-weaver/test/config/config_with_solo_operator.yaml
+        echo "   Idempotent re-run completed successfully"
+
+
+        echo -e '\n▶ Step 6: Verify cluster health check includes solo-operator'
+        kubectl get ns solo-operator > /dev/null 2>&1 || { echo "FAIL: solo-operator namespace missing"; exit 1; }
+        echo "   solo-operator namespace present ✓"
+
+        echo ''
+        echo '✅ solo-operator Lifecycle: PASSED'
+
   uat:lifecycle:
     desc: "Run core lifecycle test (inside VM: setup → core upgrades → teardown)"
     interactive: true
@@ -351,6 +414,7 @@ tasks:
     cmds:
       - task: uat:setup
       - task: uat:core
+      - task: uat:solo-operator
       - task: uat:teleport
       - task: uat:alloy
       - task: uat:teardown

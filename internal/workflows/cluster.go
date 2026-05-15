@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -33,41 +34,48 @@ func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks 
 // kubernetesSetupWorkflow installs and configures Kubernetes components.
 // Rendered as the "Kubernetes Setup" phase in the TUI.
 func kubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
+	wfSteps := []automa.Builder{
+		// setup env for k8s
+		steps.DisableSwap(),
+		steps.ConfigureSysctlForKubernetes(),
+		steps.SetupBindMounts(),
+
+		// kubelet
+		steps.SetupKubelet(mr),
+		steps.SetupSystemdService(software.KubeletServiceName),
+
+		// setup cli tools
+		steps.SetupKubectl(mr),
+		steps.SetupHelm(mr), // required by MetalLB setup, so we install it earlier
+		steps.SetupK9s(mr),
+
+		// CRI-O
+		steps.SetupCrio(mr),
+		steps.SetupSystemdService(software.CrioServiceName),
+
+		// kubeadm
+		steps.SetupKubeadm(mr),
+
+		// init cluster
+		steps.InitializeCluster(),
+
+		steps.SetupCilium(mr),
+		steps.StartCilium(),
+
+		steps.SetupMetalLB(),
+
+		steps.DeployMetricsServer(nil),
+	}
+
+	if config.Get().SoloOperator.Enabled {
+		wfSteps = append(wfSteps, steps.InstallSoloOperator())
+	}
+
+	wfSteps = append(wfSteps, steps.CheckClusterHealth())
+
 	return automa.NewWorkflowBuilder().
 		WithId("kubernetes-setup").
-		Steps(
-			// setup env for k8s
-			steps.DisableSwap(),
-			steps.ConfigureSysctlForKubernetes(),
-			steps.SetupBindMounts(),
-
-			// kubelet
-			steps.SetupKubelet(mr),
-			steps.SetupSystemdService(software.KubeletServiceName),
-
-			// setup cli tools
-			steps.SetupKubectl(mr),
-			steps.SetupHelm(mr), // required by MetalLB setup, so we install it earlier
-			steps.SetupK9s(mr),
-
-			// CRI-O
-			steps.SetupCrio(mr),
-			steps.SetupSystemdService(software.CrioServiceName),
-
-			// kubeadm
-			steps.SetupKubeadm(mr),
-
-			// init cluster
-			steps.InitializeCluster(),
-
-			steps.SetupCilium(mr),
-			steps.StartCilium(),
-
-			steps.SetupMetalLB(),
-
-			steps.DeployMetricsServer(nil),
-			steps.CheckClusterHealth(),
-		).
+		Steps(wfSteps...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Kubernetes Setup")
 			return ctx, nil
