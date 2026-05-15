@@ -33,6 +33,8 @@ var (
 	flagPluginsSize         string
 	flagHistoricRetention   string
 	flagRecentRetention     string
+	flagPluginPreset        string
+	flagPlugins             string
 	flagLoadBalancerEnabled bool
 
 	nodeCmd = &cobra.Command{
@@ -83,6 +85,10 @@ func init() {
 	// Block retention configuration flags
 	nodeCmd.PersistentFlags().StringVar(&flagHistoricRetention, "historic-retention", "", "Historic block retention threshold (0 = unlimited, default: 0)")
 	nodeCmd.PersistentFlags().StringVar(&flagRecentRetention, "recent-retention", "", "Recent block retention threshold (default: 96000)")
+
+	// Plugin configuration flags
+	nodeCmd.PersistentFlags().StringVar(&flagPluginPreset, "plugin-preset", "", "Plugin preset to deploy (tier1-lfh, tier1-rfh, or custom); prompts interactively when omitted")
+	nodeCmd.PersistentFlags().StringVar(&flagPlugins, "plugins", "", "Comma-separated plugin list; overrides --plugin-preset when set")
 
 	// LoadBalancer / MetalLB annotation flag
 	nodeCmd.PersistentFlags().BoolVar(&flagLoadBalancerEnabled, "load-balancer-enabled", true, "Inject MetalLB address-pool annotation into the block node service (disable for environments without MetalLB)")

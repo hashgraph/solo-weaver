@@ -149,6 +149,8 @@ type BlockNodeState struct {
 	Storage           models.BlockNodeStorage `yaml:"storage" json:"storage"`
 	HistoricRetention string                  `yaml:"historicRetention,omitempty" json:"historicRetention,omitempty"`
 	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
+	PluginPreset      string                  `yaml:"pluginPreset,omitempty" json:"pluginPreset,omitempty"`
+	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
 	LastSync          htime.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 

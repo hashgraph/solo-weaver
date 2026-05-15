@@ -73,6 +73,8 @@ type PromptDefaultsDoc struct {
 			ChartVersion      string `yaml:"version"`
 			HistoricRetention string `yaml:"historicRetention"`
 			RecentRetention   string `yaml:"recentRetention"`
+			PluginPreset      string `yaml:"pluginPreset"`
+			PluginList        string `yaml:"pluginList"`
 			Storage           struct {
 				BasePath         string `yaml:"basePath"`
 				ArchivePath      string `yaml:"archivePath"`
@@ -111,6 +113,8 @@ type BlockNodeSummary struct {
 	ChartVersion      string
 	HistoricRetention string
 	RecentRetention   string
+	PluginPreset      string
+	PluginList        string
 	Storage           models.BlockNodeStorage
 }
 
@@ -146,6 +150,8 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 			ChartVersion:      bn.ChartVersion,
 			HistoricRetention: bn.HistoricRetention,
 			RecentRetention:   bn.RecentRetention,
+			PluginPreset:      bn.PluginPreset,
+			PluginList:        bn.PluginList,
 			Storage: models.BlockNodeStorage{
 				BasePath:         bn.Storage.BasePath,
 				ArchivePath:      bn.Storage.ArchivePath,

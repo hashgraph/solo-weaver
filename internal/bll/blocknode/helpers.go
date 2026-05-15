@@ -38,6 +38,12 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 				Msg("Persisted block node storage base path into runtime state")
 			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
 		}
+		if effectiveInputs.Custom.PluginPreset != "" {
+			logx.As().Debug().Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
+				Msg("Persisted block node plugin preset into runtime state")
+			st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
+			st.BlockNodeState.PluginList = effectiveInputs.Custom.PluginList
+		}
 		return nil
 	}
 }
@@ -136,6 +142,8 @@ func resolveBlocknodeEffectiveInputs(
 			ResetStorage:        inputs.Custom.ResetStorage,
 			NoRestart:           inputs.Custom.NoRestart,
 			LoadBalancerEnabled: inputs.Custom.LoadBalancerEnabled,
+			PluginPreset:        inputs.Custom.PluginPreset,
+			PluginList:          inputs.Custom.PluginList,
 		},
 	}
 

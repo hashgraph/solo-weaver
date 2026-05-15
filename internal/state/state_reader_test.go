@@ -51,6 +51,8 @@ state:
     version: "0.8.1"
     historicRetention: "500"
     recentRetention: "12000"
+    pluginPreset: "tier1-lfh"
+    pluginList: "facility-messaging,health"
     storage:
       basePath: /mnt/data
       archivePath: /mnt/archive
@@ -82,6 +84,12 @@ state:
 	}
 	if bn.RecentRetention != "12000" {
 		t.Errorf("expected RecentRetention '12000', got %q", bn.RecentRetention)
+	}
+	if bn.PluginPreset != "tier1-lfh" {
+		t.Errorf("expected PluginPreset 'tier1-lfh', got %q", bn.PluginPreset)
+	}
+	if bn.PluginList != "facility-messaging,health" {
+		t.Errorf("expected PluginList 'facility-messaging,health', got %q", bn.PluginList)
 	}
 	if bn.Storage.BasePath != "/mnt/data" {
 		t.Errorf("expected Storage.BasePath '/mnt/data', got %q", bn.Storage.BasePath)

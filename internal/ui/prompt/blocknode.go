@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
@@ -415,6 +416,106 @@ func BlockNodeReconfigureInputPrompts(
 		historicRetentionInputPrompt(resolveEffective(defaults.BlockNode.HistoricRetention, cfg.BlockNode.HistoricRetention, models.DefaultHistoricRetention), flagHistoricRetention),
 		recentRetentionInputPrompt(resolveEffective(defaults.BlockNode.RecentRetention, cfg.BlockNode.RecentRetention, models.DefaultRecentRetention), flagRecentRetention),
 	}
+}
+
+// RunPluginPresetPrompts presents a two-pass interactive plugin preset prompt.
+//
+// Pass 1 — preset select: asks which preset to deploy, pre-selecting the last
+// used preset read from the on-disk state file.
+//
+// Pass 2 — custom plugin multi-select (conditional): when the operator selects
+// the Custom preset, a multi-select is shown listing all known block-node
+// plugins. The resulting selection is joined as a comma-separated string and
+// written to *flagPlugins.
+//
+// The function is a no-op when either flag was already supplied on the command
+// line — the caller's values are respected as-is.
+//
+// Parameters:
+//   - cmd:             the Cobra command (used for flag-changed detection)
+//   - defaults:        prompt defaults read from the on-disk state file
+//   - flagPluginPreset: pointer to the --plugin-preset flag variable
+//   - flagPlugins:     pointer to the --plugins flag variable
+//   - cv:              chosen-values collector for summary printing
+func RunPluginPresetPrompts(
+	cmd *cobra.Command,
+	defaults state.PromptDefaults,
+	flagPluginPreset *string,
+	flagPlugins *string,
+	cv *ChosenValues,
+) error {
+	// If the operator already supplied --plugins, no prompting is needed.
+	if flagWasSet(cmd, "plugins") {
+		return nil
+	}
+	// If the operator already supplied --plugin-preset, no prompting is needed.
+	if flagWasSet(cmd, "plugin-preset") {
+		return nil
+	}
+
+	// ── Pass 1: preset selection ───────────────────────────────────────────────
+	effectivePreset := resolveEffective(defaults.BlockNode.PluginPreset, "", blocknode.PresetTier1LFH)
+	*flagPluginPreset = effectivePreset
+
+	var options []huh.Option[string]
+	for _, id := range blocknode.AvailablePresets() {
+		options = append(options, huh.NewOption(blocknode.PresetLabel(id), id))
+	}
+
+	presetField := huh.NewSelect[string]().
+		Key("plugin-preset").
+		Title("Block Node Plugin Preset").
+		Description("Select the plugin set to deploy with this block node").
+		Options(options...).
+		Value(flagPluginPreset)
+
+	presetForm := huh.NewForm(huh.NewGroup(presetField)).
+		WithTheme(SoloTheme()).
+		WithShowHelp(true)
+
+	if err := presetForm.Run(); err != nil {
+		return wrapFormError(err)
+	}
+
+	cv.add("Plugin Preset", blocknode.PresetLabel(*flagPluginPreset))
+
+	// ── Pass 2: custom multi-select (only when Custom was chosen) ─────────────
+	if *flagPluginPreset != blocknode.PresetCustom {
+		return nil
+	}
+
+	// Pre-select the plugins from the last-used custom list (if any).
+	var preSelected []string
+	if defaults.BlockNode.PluginList != "" {
+		preSelected = strings.Split(defaults.BlockNode.PluginList, ",")
+	}
+
+	var selectedPlugins []string = preSelected
+
+	var pluginOptions []huh.Option[string]
+	for _, p := range blocknode.AllBlockNodePlugins {
+		pluginOptions = append(pluginOptions, huh.NewOption(p, p))
+	}
+
+	customField := huh.NewMultiSelect[string]().
+		Key("plugins").
+		Title("Select Plugins").
+		Description("Choose the individual plugins to install").
+		Options(pluginOptions...).
+		Value(&selectedPlugins)
+
+	customForm := huh.NewForm(huh.NewGroup(customField)).
+		WithTheme(SoloTheme()).
+		WithShowHelp(true)
+
+	if err := customForm.Run(); err != nil {
+		return wrapFormError(err)
+	}
+
+	*flagPlugins = strings.Join(selectedPlugins, ",")
+	cv.add("Custom Plugins", *flagPlugins)
+
+	return nil
 }
 
 // resolveEffective returns the first non-empty value from the priority chain:
