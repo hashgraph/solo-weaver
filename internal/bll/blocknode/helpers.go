@@ -42,6 +42,10 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 			logx.As().Debug().Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
 				Msg("Persisted block node plugin preset into runtime state")
 			st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
+		}
+		if effectiveInputs.Custom.PluginList != "" {
+			logx.As().Debug().Str("pluginList", effectiveInputs.Custom.PluginList).
+				Msg("Persisted block node plugin list into runtime state")
 			st.BlockNodeState.PluginList = effectiveInputs.Custom.PluginList
 		}
 		return nil

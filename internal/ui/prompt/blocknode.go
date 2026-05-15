@@ -484,25 +484,55 @@ func RunPluginPresetPrompts(
 		return nil
 	}
 
-	// Pre-select the plugins from the last-used custom list (if any).
-	var preSelected []string
-	if defaults.BlockNode.PluginList != "" {
-		preSelected = strings.Split(defaults.BlockNode.PluginList, ",")
-	}
-
-	var selectedPlugins []string = preSelected
-
+	// Pre-select the plugins from the last-used custom list (if any),
+	// but filter out any entries that no longer exist in the current
+	// available plugin list so the UI does not silently drop them.
+	validPlugins := make(map[string]struct{}, len(blocknode.AllBlockNodePlugins))
 	var pluginOptions []huh.Option[string]
 	for _, p := range blocknode.AllBlockNodePlugins {
+		validPlugins[p] = struct{}{}
 		pluginOptions = append(pluginOptions, huh.NewOption(p, p))
+	}
+
+	var preSelected []string
+	var unknownPlugins []string
+	if defaults.BlockNode.PluginList != "" {
+		for _, plugin := range strings.Split(defaults.BlockNode.PluginList, ",") {
+			plugin = strings.TrimSpace(plugin)
+			if plugin == "" {
+				continue
+			}
+			if _, ok := validPlugins[plugin]; ok {
+				preSelected = append(preSelected, plugin)
+				continue
+			}
+			unknownPlugins = append(unknownPlugins, plugin)
+		}
+	}
+
+	selectedPlugins := preSelected
+
+	description := "Choose the individual plugins to install"
+	if len(unknownPlugins) > 0 {
+		description = fmt.Sprintf(
+			"%s\nWarning: previously saved plugins are no longer available and were not pre-selected: %s",
+			description,
+			strings.Join(unknownPlugins, ", "),
+		)
 	}
 
 	customField := huh.NewMultiSelect[string]().
 		Key("plugins").
 		Title("Select Plugins").
-		Description("Choose the individual plugins to install").
+		Description(description).
 		Options(pluginOptions...).
-		Value(&selectedPlugins)
+		Value(&selectedPlugins).
+		Validate(func(selected []string) error {
+			if len(selected) == 0 {
+				return fmt.Errorf("at least one plugin must be selected for the Custom preset")
+			}
+			return nil
+		})
 
 	customForm := huh.NewForm(huh.NewGroup(customField)).
 		WithTheme(SoloTheme()).

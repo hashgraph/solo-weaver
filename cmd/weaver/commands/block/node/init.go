@@ -215,11 +215,19 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	// When only --plugin-preset is set, look up its canonical list.
 	pluginPreset := flagPluginPreset
 	pluginList := flagPlugins
+	if f := cmd.Flag("plugins"); f != nil && f.Changed {
+		if err := models.ValidatePluginList(flagPlugins); err != nil {
+			return nil, errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
+		}
+	}
 	if pluginList == "" && bnpkg.IsKnownPreset(pluginPreset) {
 		pluginList = bnpkg.PluginListForPreset(pluginPreset)
 	}
 	if pluginList != "" && pluginPreset == "" {
-		pluginPreset = models.PluginPresetCustom
+		pluginPreset = bnpkg.PresetCustom
+	}
+	if pluginPreset == bnpkg.PresetCustom && pluginList == "" {
+		return nil, fmt.Errorf("--plugins is required when --plugin-preset=%s", bnpkg.PresetCustom)
 	}
 
 	inputs := &models.UserInputs[models.BlockNodeInputs]{

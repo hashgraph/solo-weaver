@@ -55,14 +55,6 @@ const (
 	DefaultRecentRetention   = "96000"
 )
 
-// DefaultPluginPreset is used when no preset is specified. An empty string means
-// the chart's built-in default plugin list is left unchanged.
-const DefaultPluginPreset = ""
-
-// PluginPresetCustom is the preset ID used when the operator supplies a
-// manual plugin list via --plugins or the TUI multi-select.
-const PluginPresetCustom = "custom"
-
 type BlockNodeInputs struct {
 	Profile             string
 	Namespace           string
