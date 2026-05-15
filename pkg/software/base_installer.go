@@ -91,7 +91,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 	}
 
 	if bi.versionToBeInstalled == "" {
-		bi.versionToBeInstalled, err = item.GetLatestVersion()
+		bi.versionToBeInstalled, err = item.GetDefaultVersion()
 		if err != nil {
 			return nil, err
 		}

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_Config_GetLatestVersion(t *testing.T) {
+func Test_Config_GetDefaultVersion(t *testing.T) {
 	tests := []struct {
 		name     string
 		item     ArtifactMetadata
@@ -17,9 +17,10 @@ func Test_Config_GetLatestVersion(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name: "single versionToBeInstalled",
+			name: "default points to existing version",
 			item: ArtifactMetadata{
-				Name: "test-software",
+				Name:    "test-software",
+				Default: "1.0.0",
 				Versions: map[Version]VersionDetails{
 					"1.0.0": {},
 				},
@@ -28,9 +29,10 @@ func Test_Config_GetLatestVersion(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "multiple versions - semantic ordering",
+			name: "default selects one entry among many - not the highest semver",
 			item: ArtifactMetadata{
-				Name: "test-software",
+				Name:    "test-software",
+				Default: "1.1.0",
 				Versions: map[Version]VersionDetails{
 					"1.0.0":  {},
 					"1.1.0":  {},
@@ -39,13 +41,14 @@ func Test_Config_GetLatestVersion(t *testing.T) {
 					"1.10.0": {},
 				},
 			},
-			expected: "2.0.0",
+			expected: "1.1.0",
 			wantErr:  false,
 		},
 		{
-			name: "versions with patch releases",
+			name: "default selects the highest semver when explicitly set",
 			item: ArtifactMetadata{
-				Name: "test-software",
+				Name:    "test-software",
+				Default: "1.34.0",
 				Versions: map[Version]VersionDetails{
 					"1.33.4": {},
 					"1.33.5": {},
@@ -57,7 +60,30 @@ func Test_Config_GetLatestVersion(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "no versions available",
+			name: "missing default returns error",
+			item: ArtifactMetadata{
+				Name: "test-software",
+				Versions: map[Version]VersionDetails{
+					"1.0.0": {},
+				},
+			},
+			expected: "",
+			wantErr:  true,
+		},
+		{
+			name: "default pointing to unknown version returns error",
+			item: ArtifactMetadata{
+				Name:    "test-software",
+				Default: "9.9.9",
+				Versions: map[Version]VersionDetails{
+					"1.0.0": {},
+				},
+			},
+			expected: "",
+			wantErr:  true,
+		},
+		{
+			name: "no versions and no default returns error",
 			item: ArtifactMetadata{
 				Name:     "test-software",
 				Versions: map[Version]VersionDetails{},
@@ -66,84 +92,23 @@ func Test_Config_GetLatestVersion(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name: "versions with non-semantic format should return error",
+			name: "default with non-semver version string is returned as-is",
 			item: ArtifactMetadata{
-				Name: "test-software",
+				Name:    "test-software",
+				Default: "stable",
 				Versions: map[Version]VersionDetails{
-					"latest": {},
 					"stable": {},
-					"v1.0.0": {},
-					"z":      {},
 					"1.0.0":  {},
-					"0.0.0":  {},
-					"v0.1.0": {},
 				},
 			},
-			expected: "",
-			wantErr:  true,
-		},
-		{
-			name: "mixed semantic and non-semantic versions should return error",
-			item: ArtifactMetadata{
-				Name: "test-software",
-				Versions: map[Version]VersionDetails{
-					"1.0.0":  {},
-					"2.0.0":  {},
-					"latest": {},
-				},
-			},
-			expected: "",
-			wantErr:  true,
-		},
-		{
-			name: "all semantic versions should work correctly",
-			item: ArtifactMetadata{
-				Name: "test-software",
-				Versions: map[Version]VersionDetails{
-					"1.0.0":  {},
-					"1.1.0":  {},
-					"2.0.0":  {},
-					"1.10.0": {},
-				},
-			},
-			expected: "2.0.0",
-			wantErr:  false,
-		},
-		{
-			name: "versions with prereleases",
-			item: ArtifactMetadata{
-				Name: "test-software",
-				Versions: map[Version]VersionDetails{
-					"1.0.0-alpha.1": {},
-					"1.0.0-alpha.2": {},
-					"1.0.0-alpha.3": {},
-					"1.0.0-beta.1":  {},
-					"1.0.0-beta.2":  {},
-					"1.0.0-beta.3":  {},
-				},
-			},
-			expected: "1.0.0-beta.3",
-			wantErr:  false,
-		},
-		{
-			name: "versions with and without v prefix",
-			item: ArtifactMetadata{
-				Name: "test-software",
-				Versions: map[Version]VersionDetails{
-					"v1.0.0": {},
-					"1.0.0":  {},
-					"v2.0.0": {},
-					"2.1.0":  {},
-				},
-			},
-			expected: "2.1.0",
+			expected: "stable",
 			wantErr:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.item.GetLatestVersion()
+			result, err := tt.item.GetDefaultVersion()
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -164,7 +129,8 @@ func Test_Config_VersionSelection(t *testing.T) {
 
 	// Create a mock software item with multiple versions to test versionToBeInstalled selection
 	mockSoftwareItem := &ArtifactMetadata{
-		Name: "cri-o",
+		Name:    "cri-o",
+		Default: "1.27.0",
 		Versions: map[Version]VersionDetails{
 			"1.25.0": {
 				Binaries: []BinaryDetail{
@@ -248,10 +214,10 @@ func Test_Config_VersionSelection(t *testing.T) {
 		},
 	}
 
-	// Test that GetLatestVersion returns the expected latest versionToBeInstalled
-	latestVersion, err := mockSoftwareItem.GetLatestVersion()
-	require.NoError(t, err, "GetLatestVersion should not return an error")
-	assert.Equal(t, "1.27.0", latestVersion, "GetLatestVersion should return 1.27.0 as the latest versionToBeInstalled")
+	// Test that GetDefaultVersion returns the declared default
+	defaultVersion, err := mockSoftwareItem.GetDefaultVersion()
+	require.NoError(t, err, "GetDefaultVersion should not return an error")
+	assert.Equal(t, "1.27.0", defaultVersion, "GetDefaultVersion should return the declared default 1.27.0")
 
 	//
 	// When
@@ -264,7 +230,7 @@ func Test_Config_VersionSelection(t *testing.T) {
 	// Create the baseInstaller with mock data for testing
 	baseInstaller := &baseInstaller{
 		software:             testSoftware,
-		versionToBeInstalled: latestVersion,
+		versionToBeInstalled: defaultVersion,
 	}
 
 	//
@@ -285,13 +251,15 @@ func Test_Config_VersionSelection(t *testing.T) {
 	require.NotEmpty(t, checksum, "Checksum for the selected versionToBeInstalled should not be empty")
 	assert.Equal(t, "yzx567", checksum.Value, "Should return the correct checksum for darwin/arm64")
 
-	// Verify that the installer uses the latest versionToBeInstalled
-	assert.Equal(t, "1.27.0", baseInstaller.Version(), "Installer should use the latest versionToBeInstalled (1.27.0)")
+	// Verify that the installer uses the declared default
+	assert.Equal(t, "1.27.0", baseInstaller.Version(), "Installer should use the declared default (1.27.0)")
 
-	// Additional verification: ensure the versionToBeInstalled selection is semantic, not alphabetical
-	// Test with a versionToBeInstalled that would be "latest" alphabetically but not semantically
-	mockItemWithNonSemanticOrder := &ArtifactMetadata{
-		Name: "cri-o",
+	// Additional verification: default selection is explicit and not derived from semver ordering.
+	// 1.9.0 is alphabetically later than 1.10.0 but semantically earlier; we set Default to the
+	// older 1.9.0 to confirm the explicit default wins regardless of either ordering.
+	mockItemWithExplicitDefault := &ArtifactMetadata{
+		Name:    "cri-o",
+		Default: "1.9.0",
 		Versions: map[Version]VersionDetails{
 			"1.9.0": {
 				Binaries: []BinaryDetail{
@@ -320,9 +288,9 @@ func Test_Config_VersionSelection(t *testing.T) {
 		},
 	}
 
-	semanticLatest, err := mockItemWithNonSemanticOrder.GetLatestVersion()
+	explicitDefault, err := mockItemWithExplicitDefault.GetDefaultVersion()
 	require.NoError(t, err)
-	assert.Equal(t, "1.10.0", semanticLatest, "Should choose 1.10.0 over 1.9.0 (semantic ordering, not alphabetical)")
+	assert.Equal(t, "1.9.0", explicitDefault, "Should return the declared default 1.9.0 even though 1.10.0 is the higher semver")
 }
 
 func Test_Config_GetChecksum(t *testing.T) {

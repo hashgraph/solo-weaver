@@ -63,6 +63,7 @@ type ArtifactCollection struct {
 // with its versions which including archives, binaries and configuration files
 type ArtifactMetadata struct {
 	Name     string                     `yaml:"name"`
+	Default  Version                    `yaml:"default"`
 	Versions map[Version]VersionDetails `yaml:"versions"`
 	platform *platformProvider
 }
@@ -282,62 +283,18 @@ func executeTemplate(templateStr string, data TemplateData) (string, error) {
 	return buf.String(), nil
 }
 
-// GetLatestVersion returns the latest versionToBeInstalled available for this software item
-// Only supports semantic versions - returns error for non-semantic versionToBeInstalled formats
-func (si *ArtifactMetadata) GetLatestVersion() (string, error) {
-	if len(si.Versions) == 0 {
-		return "", NewVersionNotFoundError(si.Name, "any")
+// GetDefaultVersion returns the explicit default version declared for this
+// software item. The default is read from the artifact's `default:` field;
+// it must point to a version present in the `versions:` map. Returns an
+// error when `default:` is unset or names an unknown version.
+func (si *ArtifactMetadata) GetDefaultVersion() (string, error) {
+	if si.Default == "" {
+		return "", fmt.Errorf("artifact %s has no default version declared", si.Name)
 	}
-
-	// If there's only one versionToBeInstalled, return it if it's valid semantic versionToBeInstalled
-	if len(si.Versions) == 1 {
-		for version := range si.Versions {
-			versionStr := string(version)
-			if !isValidVersion(versionStr) {
-				return "", fmt.Errorf("versionToBeInstalled %s for software %s is not in semantic versionToBeInstalled format", versionStr, si.Name)
-			}
-			return versionStr, nil
-		}
+	if _, ok := si.Versions[si.Default]; !ok {
+		return "", NewVersionNotFoundError(si.Name, string(si.Default))
 	}
-
-	// Collect and validate all versionToBeInstalled strings
-	versions := make([]string, 0, len(si.Versions))
-
-	for version := range si.Versions {
-		versionStr := string(version)
-		if !isValidVersion(versionStr) {
-			return "", fmt.Errorf("versionToBeInstalled %s for software %s is not in semantic versionToBeInstalled format", versionStr, si.Name)
-		}
-		versions = append(versions, versionStr)
-	}
-
-	// Sort versions using semantic versionToBeInstalled comparison
-	sort.Slice(versions, func(i, j int) bool {
-		// Use the semantic versionToBeInstalled comparator for sorting
-		result, err := compareVersions(versions[i], versions[j])
-		if err != nil {
-			// This shouldn't happen since we validated versions above, but handle gracefully
-			return false
-		}
-		return result
-	})
-
-	// Return the first (latest) versionToBeInstalled
-	return versions[0], nil
-}
-
-func compareVersions(version1, version2 string) (bool, error) {
-	v1, err1 := semver.NewSemver(version1)
-	v2, err2 := semver.NewSemver(version2)
-
-	if err1 != nil {
-		return false, fmt.Errorf("invalid semantic versionToBeInstalled format: %s", version1)
-	}
-	if err2 != nil {
-		return false, fmt.Errorf("invalid semantic versionToBeInstalled format: %s", version2)
-	}
-
-	return v1.GreaterThan(v2), nil
+	return string(si.Default), nil
 }
 
 func isValidVersion(version string) bool {
