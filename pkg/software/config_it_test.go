@@ -8,19 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test_Config_LoadArtifactYAML is an integration test that verifies the artifact.yaml file
-// can be loaded and parsed correctly into the ArtifactCollection structure
-func Test_Config_LoadArtifactYAML(t *testing.T) {
-	// Load the actual artifact.yaml file
-	config, err := LoadArtifactConfig()
-	require.NoError(t, err, "Should be able to load artifact.yaml")
+// Test_Config_LoadInfrastructureCatalogYAML is an integration test that verifies the
+// embedded infrastructure-catalog.yaml file can be loaded and parsed correctly into
+// the InfrastructureCatalog structure.
+func Test_Config_LoadInfrastructureCatalogYAML(t *testing.T) {
+	config, err := LoadInfrastructureCatalog()
+	require.NoError(t, err, "Should be able to load infrastructure-catalog.yaml")
 	require.NotNil(t, config, "Config should not be nil")
 
 	// Verify that we have artifacts defined
-	require.NotEmpty(t, config.Artifact, "Should have at least one artifact defined")
+	require.NotEmpty(t, config.Host, "Should have at least one artifact defined")
 
 	// Test each artifact in the configuration
-	for _, artifact := range config.Artifact {
+	for _, artifact := range config.Host {
 		t.Run("Artifact_"+artifact.Name, func(t *testing.T) {
 			// Verify basic fields
 			require.NotEmpty(t, artifact.Name, "Artifact name should not be empty")
@@ -111,13 +111,13 @@ func Test_Config_LoadArtifactYAML(t *testing.T) {
 	}
 }
 
-// Test_Config_GetSoftwareByName_Integration tests retrieving actual software from artifact.yaml
+// Test_Config_GetSoftwareByName_Integration tests retrieving actual software from infrastructure-catalog.yaml
 func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
-	config, err := LoadArtifactConfig()
+	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
-	// Test that we can find cri-o (which should be in the artifact.yaml based on the sample)
-	crioSoftware, err := config.GetArtifactByName("cri-o")
+	// Test that we can find cri-o (which is shipped under host: in infrastructure-catalog.yaml)
+	crioSoftware, err := config.GetHostArtifact("cri-o")
 	if err == nil {
 		// If cri-o exists, validate it
 		require.NotNil(t, crioSoftware)
@@ -126,17 +126,17 @@ func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
 	}
 
 	// Test non-existent software
-	_, err = config.GetArtifactByName("non-existent-software")
+	_, err = config.GetHostArtifact("non-existent-software")
 	require.Error(t, err, "Should return error for non-existent software")
 }
 
 // Test_Config_GetDefaultVersion_Integration tests getting the default version from actual artifacts
 func Test_Config_GetDefaultVersion_Integration(t *testing.T) {
-	config, err := LoadArtifactConfig()
+	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
 	// Test each artifact declares an explicit default that resolves correctly
-	for _, artifact := range config.Artifact {
+	for _, artifact := range config.Host {
 		t.Run(artifact.Name, func(t *testing.T) {
 			require.NotEmpty(t, artifact.Default,
 				"Artifact %s must declare an explicit default version", artifact.Name)
@@ -155,11 +155,11 @@ func Test_Config_GetDefaultVersion_Integration(t *testing.T) {
 
 // Test_Config_GetChecksum_Integration tests getting checksums from actual artifacts
 func Test_Config_GetChecksum_Integration(t *testing.T) {
-	config, err := LoadArtifactConfig()
+	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
 	// Test a few artifacts if they exist
-	for _, artifact := range config.Artifact {
+	for _, artifact := range config.Host {
 		t.Run(artifact.Name, func(t *testing.T) {
 			// Get the default version
 			defaultVersion, err := artifact.GetDefaultVersion()
@@ -201,10 +201,10 @@ func Test_Config_GetChecksum_Integration(t *testing.T) {
 
 // Test_Config_GetDownloadURL_Integration tests getting download URLs from actual artifacts
 func Test_Config_GetDownloadURL_Integration(t *testing.T) {
-	config, err := LoadArtifactConfig()
+	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
-	for _, artifact := range config.Artifact {
+	for _, artifact := range config.Host {
 		t.Run(artifact.Name, func(t *testing.T) {
 			// Get the default version
 			defaultVersion, err := artifact.GetDefaultVersion()
@@ -257,10 +257,10 @@ func Test_Config_GetDownloadURL_Integration(t *testing.T) {
 
 // Test_Config_GetBinaries_Integration tests getting binaries from actual artifacts
 func Test_Config_GetBinaries_Integration(t *testing.T) {
-	config, err := LoadArtifactConfig()
+	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
-	for _, artifact := range config.Artifact {
+	for _, artifact := range config.Host {
 		t.Run(artifact.Name, func(t *testing.T) {
 			// Get the default version
 			defaultVersion, err := artifact.GetDefaultVersion()
@@ -293,18 +293,76 @@ func Test_Config_GetBinaries_Integration(t *testing.T) {
 	}
 }
 
-// Test_Config_VersionsAreSemanticVersions verifies all versions in artifact.yaml use semantic versioning
+// Test_Config_VersionsAreSemanticVersions verifies that every version declared
+// under `host:` and `cluster:` uses semantic versioning.
 func Test_Config_VersionsAreSemanticVersions(t *testing.T) {
-	config, err := LoadArtifactConfig()
+	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
-	for _, artifact := range config.Artifact {
-		t.Run(artifact.Name, func(t *testing.T) {
+	for _, artifact := range config.Host {
+		t.Run("host_"+artifact.Name, func(t *testing.T) {
 			for version := range artifact.Versions {
 				versionStr := string(version)
 				require.True(t, isValidVersion(versionStr),
-					"Version %s for artifact %s should be a valid semantic version",
+					"Version %s for host artifact %s should be a valid semantic version",
 					versionStr, artifact.Name)
+			}
+		})
+	}
+
+	for _, chart := range config.Cluster {
+		t.Run("cluster_"+chart.Name, func(t *testing.T) {
+			for version := range chart.Versions {
+				versionStr := string(version)
+				require.True(t, isValidVersion(versionStr),
+					"Version %s for cluster chart %s should be a valid semantic version",
+					versionStr, chart.Name)
+			}
+		})
+	}
+}
+
+// Test_Config_ClusterSection_Integration verifies the cluster section of the
+// embedded catalog: every expected chart is present, every entry declares the
+// fields enforced by the schema, and every version carries a non-empty
+// algorithm/checksum.
+func Test_Config_ClusterSection_Integration(t *testing.T) {
+	config, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+	require.NotEmpty(t, config.Cluster, "cluster section must not be empty")
+
+	expectedCharts := map[string]struct {
+		chartType ChartType
+		version   string
+	}{
+		"alloy":                    {ChartTypeClassic, "1.4.0"},
+		"teleport-cluster-agent":   {ChartTypeClassic, "18.6.4"},
+		"metallb":                  {ChartTypeClassic, "0.15.2"},
+		"metrics-server":           {ChartTypeClassic, "3.13.0"},
+		"external-secrets":         {ChartTypeClassic, "0.20.2"},
+		"node-exporter":            {ChartTypeOCI, "4.5.19"},
+		"prometheus-operator-crds": {ChartTypeOCI, "24.0.1"},
+	}
+
+	for name, expected := range expectedCharts {
+		t.Run(name, func(t *testing.T) {
+			chart, err := config.GetClusterComponent(name)
+			require.NoError(t, err, "chart %s should be present in catalog", name)
+			require.Equal(t, expected.chartType, chart.Type, "type mismatch for %s", name)
+			require.NotEmpty(t, chart.Chart, "chart reference must not be empty for %s", name)
+			if expected.chartType == ChartTypeClassic {
+				require.NotEmpty(t, chart.Repo, "classic chart %s must declare a repo", name)
+			} else {
+				require.Empty(t, chart.Repo, "oci chart %s must not declare a repo", name)
+			}
+			defaultVersion, err := chart.GetDefaultVersion()
+			require.NoError(t, err, "default version should resolve for %s", name)
+			require.Equal(t, expected.version, defaultVersion, "default version mismatch for %s", name)
+			for version, details := range chart.Versions {
+				require.NotEmpty(t, details.Algorithm,
+					"chart %s version %s: algorithm must not be empty", name, version)
+				require.NotEmpty(t, details.Value,
+					"chart %s version %s: checksum must not be empty", name, version)
 			}
 		})
 	}

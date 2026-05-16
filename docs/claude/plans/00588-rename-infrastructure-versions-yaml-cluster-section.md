@@ -1,7 +1,29 @@
-# Phase 2 (#588) — Rename to `infrastructure-versions.yaml`; add `host:` + `cluster:` sections with Helm chart entries
+# Phase 2 (#588) — Rename to `infrastructure-catalog.yaml`; add `host:` + `cluster:` sections with Helm chart entries
+
+> **Status:** Shipped as PR #592. Final naming and helper choices differ
+> slightly from this plan — see
+> [`docs/claude/reviews/00588-rename-infrastructure-versions-yaml-cluster-section.md`](../reviews/00588-rename-infrastructure-versions-yaml-cluster-section.md)
+> for what actually landed. Notable divergences:
+>
+> - The embedded catalog file ships as `infrastructure-catalog.yaml`
+>   (not `infrastructure-versions.yaml`). The `versions` filename is
+>   reserved for the CN release package's
+>   `manifests/infrastructure-versions.yaml` audit manifest (minimal
+>   `name`+`version` schema, declarative). A future hidden CLI flag
+>   (`--override-component <name>=<version>` +
+>   `--confirm-untested-combination`) will additionally allow overriding
+>   a single component's version, but only among the versions the
+>   catalog already declares. See `docs/dev/chart-checksums.md` ("Future
+>   overrides") for the planned design.
+> - The container type is named `InfrastructureCatalog` (not
+>   `ComponentCatalog`).
+> - Per-version integrity reuses the existing `Checksum` struct rather
+>   than introducing a new type.
+> - The checksum helper is a Go program exposed as `task chart-checksums`
+>   (under `scripts/`, not `hack/`).
 
 > **Suggested title for GH issue:**
-> `refactor(software): rename artifact.yaml to infrastructure-versions.yaml and add cluster: section with infra Helm charts`
+> `refactor(software): rename artifact.yaml to infrastructure-catalog.yaml and add cluster: section with infra Helm charts`
 >
 > **Related phases:** #587 (`default:` field for binary catalog) · #588 (this) · #589 (wire Helm steps + retire `deps.go` versions)
 
