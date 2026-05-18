@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -158,6 +159,11 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Plugin preset prompt: two-pass (preset select → conditional custom multi-select).
+	if err := prompt.RunPluginPresetPrompts(cmd, defaults, &flagPluginPreset, &flagPlugins, cv); err != nil {
+		return err
+	}
+
 	_, _ = fmt.Fprintln(cmd.ErrOrStderr())
 	cv.Print("Selected Inputs")
 
@@ -204,6 +210,26 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
 
+	// Resolve the effective plugin list.
+	// --plugins overrides --plugin-preset when both are set.
+	// When only --plugin-preset is set, look up its canonical list.
+	pluginPreset := flagPluginPreset
+	pluginList := flagPlugins
+	if f := cmd.Flag("plugins"); f != nil && f.Changed {
+		if err := models.ValidatePluginList(flagPlugins); err != nil {
+			return nil, errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
+		}
+	}
+	if pluginList == "" && bnpkg.IsKnownPreset(pluginPreset) {
+		pluginList = bnpkg.PluginListForPreset(pluginPreset)
+	}
+	if pluginList != "" && pluginPreset == "" {
+		pluginPreset = bnpkg.PresetCustom
+	}
+	if pluginPreset == bnpkg.PresetCustom && pluginList == "" {
+		return nil, fmt.Errorf("--plugins is required when --plugin-preset=%s", bnpkg.PresetCustom)
+	}
+
 	inputs := &models.UserInputs[models.BlockNodeInputs]{
 		Common: models.CommonInputs{
 			Force:            parentFlags.Force,
@@ -237,6 +263,8 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			LoadBalancerEnabled: flagLoadBalancerEnabled,
 			HistoricRetention:   flagHistoricRetention,
 			RecentRetention:     flagRecentRetention,
+			PluginPreset:        pluginPreset,
+			PluginList:          pluginList,
 		},
 	}
 

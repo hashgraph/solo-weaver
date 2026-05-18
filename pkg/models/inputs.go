@@ -4,6 +4,7 @@ package models
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -70,6 +71,8 @@ type BlockNodeInputs struct {
 	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values
 	HistoricRetention   string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
 	RecentRetention     string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
+	PluginPreset        string // preset ID (e.g. "tier1-lfh") or "custom"; empty = chart default
+	PluginList          string // resolved comma-separated plugin list injected into plugins.names
 }
 
 type ClusterInputs struct {
@@ -212,6 +215,30 @@ func (c *BlockNodeInputs) Validate() error {
 		}
 	}
 
+	// Validate plugin list format when set: comma-separated, no surrounding whitespace per entry.
+	if c.PluginList != "" {
+		if err := ValidatePluginList(c.PluginList); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ValidatePluginList returns an error when s is not a valid comma-separated
+// plugin list (non-empty, no surrounding whitespace per entry, no empty tokens).
+func ValidatePluginList(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("plugin list cannot be empty")
+	}
+	for _, entry := range strings.Split(s, ",") {
+		if entry != strings.TrimSpace(entry) {
+			return errorx.IllegalArgument.New("plugin list entry %q must not have surrounding whitespace", entry)
+		}
+		if entry == "" {
+			return errorx.IllegalArgument.New("plugin list must not contain empty entries")
+		}
+	}
 	return nil
 }
 

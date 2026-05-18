@@ -44,6 +44,7 @@ These flags are available for all commands:
 | `--config` | `-c` | Path to configuration file | None |
 | `--profile` | `-p` | Deployment profile | Required for most commands |
 | `--output` | `-o` | Output format (yaml\|json) | `yaml` |
+| `--non-interactive` | — | Disable TUI and output raw logs; useful for CI/pipelines | `false` |
 | `--version` | `-v` | Show version | - |
 | `--help` | `-h` | Show help | - |
 
@@ -147,6 +148,13 @@ sudo solo-provisioner block node install \
 | `--archive-size` | Archive storage size |
 | `--verification-size` | Verification storage size |
 | `--log-size` | Log storage size |
+| `--plugin-preset` | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); prompts interactively when omitted |
+| `--plugins` | Comma-separated plugin list; overrides `--plugin-preset` when set |
+| `--plugins-size` | PV/PVC size for plugins storage (e.g., `5Gi`, `10Gi`) |
+| `--plugins-path` | Path for plugins storage |
+| `--historic-retention` | Historic block retention threshold (`0` = unlimited) |
+| `--recent-retention` | Recent block retention threshold (default: `96000`) |
+| `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`) |
 
 #### Upgrade Block Node
 
@@ -217,6 +225,59 @@ sudo solo-provisioner block node upgrade \
   --values=/path/to/new-values.yaml \
   --with-reset
 ```
+
+#### Reconfigure Block Node
+
+Re-apply configuration to an existing Block Node deployment without changing its chart version:
+
+```bash
+# Reconfigure with updated values file
+sudo solo-provisioner block node reconfigure \
+  --profile=mainnet \
+  --values=/path/to/updated-values.yaml
+
+# Reconfigure without reusing previous Helm values
+sudo solo-provisioner block node reconfigure \
+  --profile=mainnet \
+  --values=/path/to/values.yaml \
+  --no-reuse-values
+
+# Reconfigure and skip the pod rollout-restart
+sudo solo-provisioner block node reconfigure \
+  --profile=mainnet \
+  --values=/path/to/values.yaml \
+  --no-restart
+```
+
+**Additional Flags**:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--no-reuse-values` | Don't reuse previous release values | `false` |
+| `--no-restart` | Skip rollout-restart of the block node pod after reconfiguring | `false` |
+| `--with-reset` | Reset storage (clear all data) before reconfiguring | `false` |
+
+#### Uninstall Block Node
+
+Remove the Hedera Block Node Helm release:
+
+```bash
+# Basic uninstall
+sudo solo-provisioner block node uninstall --profile=mainnet
+
+# Uninstall and clear all storage data
+sudo solo-provisioner block node uninstall \
+  --profile=mainnet \
+  --with-reset
+```
+
+**Additional Flags**:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--with-reset` | Reset storage (clear all data) before uninstalling | `false` |
+
+> **Warning**: Uninstalling removes the Helm release. Use `--with-reset` to also clear all block data from disk.
 
 ---
 
@@ -771,10 +832,12 @@ log:
 sudo ./solo-provisioner install
 
 # BLOCK NODE
-sudo solo-provisioner block node check   --profile=<profile>
-sudo solo-provisioner block node install --profile=<profile> [--values=<file>]
-sudo solo-provisioner block node upgrade --profile=<profile> [--values=<file>] [--with-reset]
-sudo solo-provisioner block node reset   --profile=<profile>
+sudo solo-provisioner block node check       --profile=<profile>
+sudo solo-provisioner block node install     --profile=<profile> [--values=<file>] [--plugin-preset=<preset>]
+sudo solo-provisioner block node upgrade     --profile=<profile> [--values=<file>] [--with-reset]
+sudo solo-provisioner block node reconfigure --profile=<profile> [--values=<file>] [--no-restart]
+sudo solo-provisioner block node reset       --profile=<profile>
+sudo solo-provisioner block node uninstall   --profile=<profile> [--with-reset]
 
 # KUBERNETES
 sudo solo-provisioner kube cluster install   --profile=<profile> --node-type=block

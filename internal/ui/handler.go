@@ -32,15 +32,19 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 		return "  "
 	}
 
+	printProgressHeader := func() {
+		if !headerPrinted {
+			program.Println("")
+			program.Println(sectionHeaderStyle.Render("Progress"))
+			headerPrinted = true
+		}
+	}
+
 	return &notify.Handler{
 		PhaseStart: func(ctx context.Context, stp automa.Step, msg string, args ...interface{}) {
 			name := fmt.Sprintf(msg, args...)
 			// Print the "Progress" section header once, before the first phase.
-			if !headerPrinted {
-				program.Println("")
-				program.Println(sectionHeaderStyle.Render("Progress"))
-				headerPrinted = true
-			}
+			printProgressHeader()
 			// Print the running phase header permanently above the TUI.
 			if VerboseLevel >= 1 && name != "" {
 				if insidePhase {
@@ -84,6 +88,7 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 		StepCompletion: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
 			name := fmt.Sprintf(msg, args...)
 			dur := report.Duration()
+			printProgressHeader()
 			// Print the completed step line above the TUI at level 1+.
 			if VerboseLevel >= 1 {
 				icon := completionIcon(report.Status)
@@ -99,6 +104,7 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 			if report.Error != nil {
 				errMsg = report.Error.Error()
 			}
+			printProgressHeader()
 			if VerboseLevel >= 1 {
 				indent := stepIndent()
 				program.Println(fmt.Sprintf("%s%s %s", indent, failedIcon, stepNameStyle.Render(name)))

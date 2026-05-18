@@ -47,6 +47,12 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 		return "", errorx.InternalError.Wrap(err, "failed to inject retention config into values file")
 	}
 
+	// Inject resolved plugin list into plugins.names when set.
+	valuesContent, err = m.injectPluginsConfig(valuesContent)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to inject plugins config into values file")
+	}
+
 	// Inject MetalLB service annotation into Helm values when LoadBalancerEnabled is set so that
 	// the annotation is managed natively by Helm across install and upgrade.
 	valuesContent, err = m.injectServiceAnnotations(valuesContent)
@@ -263,6 +269,42 @@ func (m *Manager) injectRetentionConfig(valuesContent []byte) ([]byte, error) {
 	result, err := yaml.Marshal(vals)
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to marshal values YAML after retention config injection")
+	}
+
+	return result, nil
+}
+
+// injectPluginsConfig injects the resolved plugin list into plugins.names in the Helm values
+// when PluginList is non-empty. If PluginList is empty the values content is returned unchanged,
+// leaving the chart's built-in default plugin list intact.
+func (m *Manager) injectPluginsConfig(valuesContent []byte) ([]byte, error) {
+	pluginList := m.blockNodeInputs.PluginList
+	if pluginList == "" {
+		return valuesContent, nil
+	}
+
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for plugins config injection")
+	}
+
+	// Navigate to plugins, creating the path if needed.
+	plugins, ok := vals["plugins"].(map[string]interface{})
+	if !ok {
+		plugins = make(map[string]interface{})
+		vals["plugins"] = plugins
+	}
+
+	logx.As().Info().
+		Str("preset", m.blockNodeInputs.PluginPreset).
+		Str("plugins_names", pluginList).
+		Msg("Applying plugin list to block node config")
+
+	plugins["names"] = pluginList
+
+	result, err := yaml.Marshal(vals)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to marshal values YAML after plugins config injection")
 	}
 
 	return result, nil
