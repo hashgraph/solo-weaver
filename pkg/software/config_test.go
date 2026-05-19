@@ -1153,11 +1153,13 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 		{
 			name: "valid classic chart",
 			chart: ChartMetadata{
-				Name:    "alloy",
-				Type:    ChartTypeClassic,
-				Repo:    "https://grafana.github.io/helm-charts",
-				Chart:   "grafana/alloy",
-				Default: "1.4.0",
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "1.4.0",
 				Versions: map[Version]Checksum{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
@@ -1166,10 +1168,12 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 		{
 			name: "valid oci chart",
 			chart: ChartMetadata{
-				Name:    "node-exporter",
-				Type:    ChartTypeOCI,
-				Chart:   "oci://registry-1.docker.io/bitnamicharts/node-exporter",
-				Default: "4.5.19",
+				Name:      "node-exporter",
+				Type:      ChartTypeOCI,
+				Chart:     "oci://registry-1.docker.io/bitnamicharts/node-exporter",
+				Namespace: "monitoring",
+				Release:   "node-exporter",
+				Default:   "4.5.19",
 				Versions: map[Version]Checksum{
 					"4.5.19": {Algorithm: "sha256", Value: "def"},
 				},
@@ -1242,13 +1246,45 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 			expectedErr: "missing chart reference",
 		},
 		{
-			name: "default pointing to unknown version",
+			name: "missing namespace",
 			chart: ChartMetadata{
 				Name:    "alloy",
 				Type:    ChartTypeClassic,
 				Repo:    "https://grafana.github.io/helm-charts",
 				Chart:   "grafana/alloy",
-				Default: "9.9.9",
+				Release: "alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "missing namespace",
+		},
+		{
+			name: "missing release",
+			chart: ChartMetadata{
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Default:   "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "missing release",
+		},
+		{
+			name: "default pointing to unknown version",
+			chart: ChartMetadata{
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "9.9.9",
 				Versions: map[Version]Checksum{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
@@ -1258,11 +1294,13 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 		{
 			name: "version with empty algorithm",
 			chart: ChartMetadata{
-				Name:    "alloy",
-				Type:    ChartTypeClassic,
-				Repo:    "https://grafana.github.io/helm-charts",
-				Chart:   "grafana/alloy",
-				Default: "1.4.0",
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "1.4.0",
 				Versions: map[Version]Checksum{
 					"1.4.0": {Algorithm: "", Value: "abc"},
 				},
@@ -1272,11 +1310,13 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 		{
 			name: "version with empty checksum",
 			chart: ChartMetadata{
-				Name:    "alloy",
-				Type:    ChartTypeClassic,
-				Repo:    "https://grafana.github.io/helm-charts",
-				Chart:   "grafana/alloy",
-				Default: "1.4.0",
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "1.4.0",
 				Versions: map[Version]Checksum{
 					"1.4.0": {Algorithm: "sha256", Value: ""},
 				},
@@ -1298,22 +1338,26 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 		{
 			name: "no versions declared",
 			chart: ChartMetadata{
-				Name:    "alloy",
-				Type:    ChartTypeClassic,
-				Repo:    "https://grafana.github.io/helm-charts",
-				Chart:   "grafana/alloy",
-				Default: "1.4.0",
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "1.4.0",
 			},
 			expectedErr: "no versions declared",
 		},
 		{
 			name: "per-version checksum error surfaces before bad default",
 			chart: ChartMetadata{
-				Name:    "alloy",
-				Type:    ChartTypeClassic,
-				Repo:    "https://grafana.github.io/helm-charts",
-				Chart:   "grafana/alloy",
-				Default: "9.9.9", // also bogus, but checksum error wins
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "9.9.9", // also bogus, but checksum error wins
 				Versions: map[Version]Checksum{
 					"1.4.0": {Algorithm: "", Value: "abc"},
 				},
@@ -1328,11 +1372,13 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 			// the error message is stable.
 			name: "deterministic: alphabetically first malformed version is reported",
 			chart: ChartMetadata{
-				Name:    "alloy",
-				Type:    ChartTypeClassic,
-				Repo:    "https://grafana.github.io/helm-charts",
-				Chart:   "grafana/alloy",
-				Default: "1.4.0",
+				Name:      "alloy",
+				Type:      ChartTypeClassic,
+				Repo:      "https://grafana.github.io/helm-charts",
+				Chart:     "grafana/alloy",
+				Namespace: "alloy",
+				Release:   "alloy",
+				Default:   "1.4.0",
 				Versions: map[Version]Checksum{
 					"1.4.0": {Algorithm: "", Value: "abc"},
 					"2.0.0": {Algorithm: "", Value: "def"},
@@ -1375,11 +1421,13 @@ func Test_Config_InfrastructureCatalog_validate(t *testing.T) {
 				},
 				Cluster: []ChartMetadata{
 					{
-						Name:    "alloy",
-						Type:    ChartTypeClassic,
-						Repo:    "https://grafana.github.io/helm-charts",
-						Chart:   "grafana/alloy",
-						Default: "1.4.0",
+						Name:      "alloy",
+						Type:      ChartTypeClassic,
+						Repo:      "https://grafana.github.io/helm-charts",
+						Chart:     "grafana/alloy",
+						Namespace: "alloy",
+						Release:   "alloy",
+						Default:   "1.4.0",
 						Versions: map[Version]Checksum{
 							"1.4.0": {Algorithm: "sha256", Value: "abc"},
 						},
