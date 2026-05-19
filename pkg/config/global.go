@@ -12,6 +12,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+// The Teleport default version is intentionally left empty here. The install
+// step (internal/workflows/steps/step_teleport.go) consults the infrastructure
+// catalog whenever cfg.Version is empty, so the catalog remains the single
+// source of truth. Hard-coding a catalog lookup at this layer would create an
+// import cycle: pkg/config is imported by many packages that pkg/software
+// also reaches into transitively (e.g. internal/proxy).
+
 var globalConfig = models.Config{
 	Profile: "",
 	Log: logx.LoggingConfig{
@@ -43,7 +50,7 @@ var globalConfig = models.Config{
 		ClusterName:        "",
 	},
 	Teleport: models.TeleportConfig{
-		Version:    deps.TELEPORT_VERSION,
+		Version:    "",
 		ValuesFile: "",
 	},
 }
@@ -119,7 +126,7 @@ func DefaultsConfig() models.Config {
 			},
 		},
 		Teleport: models.TeleportConfig{
-			Version: deps.TELEPORT_VERSION,
+			Version: "",
 		},
 	}
 }
