@@ -477,7 +477,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(spec.Release, spec.Repo, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

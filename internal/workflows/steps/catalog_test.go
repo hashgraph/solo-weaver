@@ -3,6 +3,7 @@
 package steps
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -42,8 +43,17 @@ func Test_resolveCatalogChart_AllStepNames(t *testing.T) {
 			switch spec.Type {
 			case software.ChartTypeClassic:
 				assert.NotEmpty(t, spec.Repo, "classic charts must declare a repo")
+				// RepoAlias is what AddRepo registers the repo under and
+				// must match the prefix of the chartRef so `helm pull
+				// <alias>/<name>` resolves. A drift between the two would
+				// surface at install time as "repo X not found".
+				require.NotEmpty(t, spec.RepoAlias, "classic charts must derive a repo alias")
+				prefix, _, ok := strings.Cut(spec.Chart, "/")
+				require.True(t, ok, "classic chartRef must be <alias>/<chart>")
+				assert.Equal(t, prefix, spec.RepoAlias)
 			case software.ChartTypeOCI:
 				assert.Empty(t, spec.Repo, "oci charts must not declare a separate repo")
+				assert.Empty(t, spec.RepoAlias, "oci charts have no repo alias")
 			default:
 				t.Fatalf("unexpected chart type %q", spec.Type)
 			}

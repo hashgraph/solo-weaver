@@ -5,6 +5,7 @@ package steps
 import (
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -47,6 +48,7 @@ type helmChartSpec struct {
 	Algorithm string             // checksum algorithm (currently always sha256)
 	Checksum  string             // expected checksum value (hex, no prefix)
 	Repo      string             // classic-only repository URL; empty for OCI
+	RepoAlias string             // classic-only Helm repo alias derived from chartRef; empty for OCI
 	Namespace string             // Kubernetes namespace to install into
 	Release   string             // Helm release name
 	Type      software.ChartType // classic vs oci, to gate repo-add side-effects
@@ -96,8 +98,24 @@ func resolveCatalogChart(name string) (*helmChartSpec, error) {
 		Algorithm: sum.Algorithm,
 		Checksum:  sum.Value,
 		Repo:      meta.Repo,
+		RepoAlias: classicRepoAlias(meta),
 		Namespace: meta.Namespace,
 		Release:   meta.Release,
 		Type:      meta.Type,
 	}, nil
+}
+
+// classicRepoAlias derives the Helm repo alias from the chart reference for
+// classic charts. Helm's classic-repo chartRef is "<alias>/<chartName>", and
+// the alias must match a previously-registered repo for `helm pull` to
+// resolve the URL. Returns "" for OCI charts since AddRepo is not used on
+// that path.
+func classicRepoAlias(meta *software.ChartMetadata) string {
+	if meta.Type != software.ChartTypeClassic {
+		return ""
+	}
+	if i := strings.Index(meta.Chart, "/"); i > 0 {
+		return meta.Chart[:i]
+	}
+	return ""
 }
