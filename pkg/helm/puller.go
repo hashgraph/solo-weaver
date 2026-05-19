@@ -38,7 +38,16 @@ const sha256Algorithm = "sha256"
 // destDir is created on demand (mode 0o755). The caller decides where the
 // pulled .tgz lives — workflow steps point at <WeaverPaths.DownloadsDir>/charts;
 // unit tests can pass `t.TempDir()`.
+//
+// Context cancellation: ctx is accepted for API symmetry with the rest of
+// helm.Manager but is not propagated into the pull itself. Neither
+// action.Pull.Run nor registry.Client.Pull accept a context in the Helm SDK
+// version we vendor, so an in-flight pull cannot be cancelled — the call
+// runs to completion (success or timeout) regardless of ctx. Workflow steps
+// remain cancellable between catalog lookups and the pull call, but a slow
+// pull will block until the underlying HTTP transport's own deadlines fire.
 func (h *helmManager) PullAndVerify(ctx context.Context, destDir, chartRef, version, algorithm, expectedChecksum string) (string, error) {
+	_ = ctx // intentionally unused; see context-cancellation note above
 	if algorithm != sha256Algorithm {
 		return "", errorx.IllegalArgument.New(
 			"unsupported checksum algorithm %q for chart %q (only %q is supported)",
@@ -55,7 +64,7 @@ func (h *helmManager) PullAndVerify(ctx context.Context, destDir, chartRef, vers
 	}
 
 	if registry.IsOCI(chartRef) {
-		return h.pullAndVerifyOCI(ctx, destDir, chartRef, version, expectedChecksum)
+		return h.pullAndVerifyOCI(destDir, chartRef, version, expectedChecksum)
 	}
 	return h.pullAndVerifyClassic(destDir, chartRef, version, expectedChecksum)
 }
@@ -117,7 +126,7 @@ func (h *helmManager) pullAndVerifyClassic(destDir, chartRef, version, expected 
 // manifest digest from PullResult.Manifest.Digest (which is reported by
 // `helm pull` as the "Digest: sha256:..." line). The chart layer bytes are
 // then written to disk so callers can pass the local path to InstallChart.
-func (h *helmManager) pullAndVerifyOCI(_ context.Context, destDir, chartRef, version, expected string) (string, error) {
+func (h *helmManager) pullAndVerifyOCI(destDir, chartRef, version, expected string) (string, error) {
 	settings := h.WithNamespace("")
 
 	registryClient, err := newRegistryClient(settings)

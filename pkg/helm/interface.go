@@ -31,6 +31,13 @@ type Manager interface {
 	// path points at the local .tgz so callers can hand it to InstallChart /
 	// UpgradeChart / DeployChart without a second pull. algorithm currently
 	// must be "sha256"; any other value is a configuration error.
+	//
+	// ctx is accepted for API symmetry but is not propagated into the pull:
+	// the Helm SDK version we vendor exposes no context-aware Pull entrypoint
+	// (neither action.Pull.Run nor registry.Client.Pull take a context). An
+	// in-flight pull therefore runs to completion regardless of cancellation;
+	// a slow pull will block the step until the underlying HTTP transport's
+	// own deadlines fire.
 	PullAndVerify(ctx context.Context, destDir, chartRef, version, algorithm, expectedChecksum string) (string, error)
 
 	// InstallChart installs a Helm chart with the given options
