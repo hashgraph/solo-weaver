@@ -139,7 +139,7 @@ func runRepeatableStringFlagTest(t *testing.T, persistent bool) {
 	require.NoError(t, err)
 
 	// Two separate --flag occurrences, each containing commas inside the value.
-	// StringSlice semantics would shred these into 6 elements; StringArray
+	// StringSlice semantics would shred these into 4 elements; StringArray
 	// keeps them as 2.
 	if persistent {
 		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "name=alpha,url=https://a.example.com"))
