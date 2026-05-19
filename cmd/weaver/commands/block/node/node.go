@@ -63,35 +63,35 @@ func init() {
 	)
 
 	// Helm chart configuration flags
-	nodeCmd.PersistentFlags().StringVar(&flagChartRepo, "chart-repo", "", "Helm chart repository URL")
-	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "", "Kubernetes namespace for block node")
-	nodeCmd.PersistentFlags().StringVar(&flagReleaseName, "release-name", "", "Helm release name")
+	common.FlagChartRepo().SetVarP(nodeCmd, &flagChartRepo, false)
+	common.FlagNamespace().SetVarP(nodeCmd, &flagNamespace, false)
+	common.FlagReleaseName().SetVarP(nodeCmd, &flagReleaseName, false)
 
 	// Storage path configuration flags
-	nodeCmd.PersistentFlags().StringVar(&flagBasePath, "base-path", "", "Base path for all storage (used when individual paths are not specified)")
-	nodeCmd.PersistentFlags().StringVar(&flagArchivePath, "archive-path", "", "Path for archive storage")
-	nodeCmd.PersistentFlags().StringVar(&flagLivePath, "live-path", "", "Path for live storage")
-	nodeCmd.PersistentFlags().StringVar(&flagLogPath, "log-path", "", "Path for log storage")
-	nodeCmd.PersistentFlags().StringVar(&flagVerificationPath, "verification-path", "", "Path for verification storage")
-	nodeCmd.PersistentFlags().StringVar(&flagPluginsPath, "plugins-path", "", "Path for plugins storage")
+	common.FlagBasePath().SetVarP(nodeCmd, &flagBasePath, false)
+	common.FlagArchivePath().SetVarP(nodeCmd, &flagArchivePath, false)
+	common.FlagLivePath().SetVarP(nodeCmd, &flagLivePath, false)
+	common.FlagLogPath().SetVarP(nodeCmd, &flagLogPath, false)
+	common.FlagVerificationPath().SetVarP(nodeCmd, &flagVerificationPath, false)
+	common.FlagPluginsPath().SetVarP(nodeCmd, &flagPluginsPath, false)
 
 	// Storage size configuration flags
-	nodeCmd.PersistentFlags().StringVar(&flagLiveSize, "live-size", "", "Size for live storage PV/PVC (e.g., 5Gi, 10Gi)")
-	nodeCmd.PersistentFlags().StringVar(&flagArchiveSize, "archive-size", "", "Size for archive storage PV/PVC (e.g., 5Gi, 10Gi)")
-	nodeCmd.PersistentFlags().StringVar(&flagLogSize, "log-size", "", "Size for log storage PV/PVC (e.g., 5Gi, 10Gi)")
-	nodeCmd.PersistentFlags().StringVar(&flagVerificationSize, "verification-size", "", "Size for verification storage PV/PVC (e.g., 5Gi, 10Gi)")
-	nodeCmd.PersistentFlags().StringVar(&flagPluginsSize, "plugins-size", "", "Size for plugins storage PV/PVC (e.g., 5Gi, 10Gi)")
+	common.FlagLiveSize().SetVarP(nodeCmd, &flagLiveSize, false)
+	common.FlagArchiveSize().SetVarP(nodeCmd, &flagArchiveSize, false)
+	common.FlagLogSize().SetVarP(nodeCmd, &flagLogSize, false)
+	common.FlagVerificationSize().SetVarP(nodeCmd, &flagVerificationSize, false)
+	common.FlagPluginsSize().SetVarP(nodeCmd, &flagPluginsSize, false)
 
 	// Block retention configuration flags
-	nodeCmd.PersistentFlags().StringVar(&flagHistoricRetention, "historic-retention", "", "Historic block retention threshold (0 = unlimited, default: 0)")
-	nodeCmd.PersistentFlags().StringVar(&flagRecentRetention, "recent-retention", "", "Recent block retention threshold (default: 96000)")
+	common.FlagHistoricRetention().SetVarP(nodeCmd, &flagHistoricRetention, false)
+	common.FlagRecentRetention().SetVarP(nodeCmd, &flagRecentRetention, false)
 
 	// Plugin configuration flags
-	nodeCmd.PersistentFlags().StringVar(&flagPluginPreset, "plugin-preset", "", "Plugin preset to deploy (tier1-lfh, tier1-rfh, or custom); prompts interactively when omitted")
-	nodeCmd.PersistentFlags().StringVar(&flagPlugins, "plugins", "", "Comma-separated plugin list; overrides --plugin-preset when set")
+	common.FlagPluginPreset().SetVarP(nodeCmd, &flagPluginPreset, false)
+	common.FlagPlugins().SetVarP(nodeCmd, &flagPlugins, false)
 
 	// LoadBalancer / MetalLB annotation flag
-	nodeCmd.PersistentFlags().BoolVar(&flagLoadBalancerEnabled, "load-balancer-enabled", true, "Inject MetalLB address-pool annotation into the block node service (disable for environments without MetalLB)")
+	common.FlagLoadBalancerEnabled().SetVarP(nodeCmd, &flagLoadBalancerEnabled, false)
 
 	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, uninstallCmd)
 }

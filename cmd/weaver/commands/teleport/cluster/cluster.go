@@ -3,10 +3,7 @@
 package cluster
 
 import (
-	"fmt"
-
 	"github.com/hashgraph/solo-weaver/cmd/weaver/commands/common"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/spf13/cobra"
 )
 
@@ -29,8 +26,8 @@ var (
 
 func init() {
 	// Cluster agent configuration flags
-	clusterCmd.PersistentFlags().StringVar(&flagVersion, "version", "", fmt.Sprintf("Teleport Helm chart version (default: %s)", deps.TELEPORT_VERSION))
-	clusterCmd.PersistentFlags().StringVar(&flagValuesFile, "values", "", "Path to Teleport Helm values file (required)")
+	common.FlagTeleportVersion().SetVarP(clusterCmd, &flagVersion, false)
+	common.FlagTeleportValuesFile().SetVarP(clusterCmd, &flagValuesFile, false)
 
 	clusterCmd.AddCommand(installCmd)
 	clusterCmd.AddCommand(uninstallCmd)
