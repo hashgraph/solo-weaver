@@ -292,6 +292,7 @@ tasks:
       - mockgen -source=pkg/fsx/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/fsx -package fsx > pkg/fsx/mocks_generated.go
       - mockgen -source=pkg/software/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
       - mockgen -source=pkg/kernel/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
+      - mockgen -source=pkg/helm/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/helm -package helm > pkg/helm/mocks_generated.go
   
   # Remote debug tasks for Docker container debugging
   debug:container:

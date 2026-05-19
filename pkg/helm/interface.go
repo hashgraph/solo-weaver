@@ -23,6 +23,16 @@ type Manager interface {
 	// AddRepo adds a Helm chart repository with the given options and updates it.
 	AddRepo(name, url string, o RepoAddOptions) (*repo.ChartRepository, error)
 
+	// PullAndVerify pulls a Helm chart into destDir and verifies its integrity
+	// against the expected checksum recorded in the infrastructure catalog.
+	// destDir is created on demand. For classic charts (chartRef without an
+	// "oci://" scheme) the local .tgz is SHA256-hashed; for OCI charts the
+	// manifest digest reported by the registry client is compared. The returned
+	// path points at the local .tgz so callers can hand it to InstallChart /
+	// UpgradeChart / DeployChart without a second pull. algorithm currently
+	// must be "sha256"; any other value is a configuration error.
+	PullAndVerify(ctx context.Context, destDir, chartRef, version, algorithm, expectedChecksum string) (string, error)
+
 	// InstallChart installs a Helm chart with the given options
 	InstallChart(ctx context.Context, releaseName, chartRef, chartVersion, namespace string, o InstallChartOptions) (*release.Release, error)
 
