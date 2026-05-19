@@ -64,12 +64,12 @@ var _ Software = (*baseInstaller)(nil)
 // struct to install and configure the .conf and .service files.
 // Packages other than software, such as internal/workflows, should use the Software interface instead.
 func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstaller, error) {
-	config, err := LoadArtifactConfig()
+	catalog, err := LoadInfrastructureCatalog()
 	if err != nil {
 		return nil, NewConfigLoadError(err)
 	}
 
-	item, err := config.GetArtifactByName(softwareName)
+	item, err := catalog.GetHostArtifact(softwareName)
 	if err != nil {
 		return nil, err
 	}

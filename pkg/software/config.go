@@ -14,8 +14,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed artifact.yaml
-var artifactConfigFS embed.FS
+//go:embed infrastructure-catalog.yaml
+var infrastructureCatalogFS embed.FS
+
+// ChartType identifies how a Helm chart is distributed.
+type ChartType string
+
+const (
+	ChartTypeClassic ChartType = "classic"
+	ChartTypeOCI     ChartType = "oci"
+)
 
 // Semantic types + enums
 
@@ -54,9 +62,41 @@ func (si *ArtifactMetadata) getPlatform() platformProvider {
 	return *si.platform
 }
 
-// ArtifactCollection represents the root configuration structure
-type ArtifactCollection struct {
-	Artifact []ArtifactMetadata `yaml:"artifact"`
+// InfrastructureCatalog is the root structure of the embedded
+// infrastructure-catalog.yaml file shipped inside the solo-provisioner
+// binary. It groups infrastructure components by where they run: `host:`
+// for binaries installed on the host, `cluster:` for Helm charts
+// installed into Kubernetes. The catalog's `default:` field is the
+// single source of truth for which version of each component gets
+// installed at runtime.
+//
+// A separate file named `manifests/infrastructure-versions.yaml`
+// (shipped inside the CN release package, minimal `name`+`version`
+// schema) acts as a declarative audit list that the provisioner
+// cross-checks against this catalog at apply time — it does not direct
+// version selection. The intentional filename split (`-catalog` vs
+// `-versions`) avoids any suggestion that the two are interchangeable.
+// A hidden emergency CLI flag (`--override-component <name>=<version>`,
+// guarded by `--confirm-untested-combination`) will additionally allow
+// overriding a single component's version, but only among versions the
+// catalog already declares. See docs/dev/chart-checksums.md
+// ("Future overrides") for details.
+type InfrastructureCatalog struct {
+	Host    []ArtifactMetadata `yaml:"host"`
+	Cluster []ChartMetadata    `yaml:"cluster"`
+}
+
+// ChartMetadata describes a Helm chart entry under `cluster:`. A chart has
+// a single artifact per version; integrity is verified against the SHA256
+// of the .tgz (classic) or the OCI manifest digest (oci), recorded as a
+// Checksum value.
+type ChartMetadata struct {
+	Name     string               `yaml:"name"`
+	Type     ChartType            `yaml:"type"`
+	Repo     string               `yaml:"repo,omitempty"`
+	Chart    string               `yaml:"chart"`
+	Default  Version              `yaml:"default"`
+	Versions map[Version]Checksum `yaml:"versions"`
 }
 
 // ArtifactMetadata represents a single software artifact  configuration
@@ -234,38 +274,151 @@ type TemplateData struct {
 	ARCH    string
 }
 
-// LoadArtifactConfig loads and parses the artifact.yaml configuration
-func LoadArtifactConfig() (*ArtifactCollection, error) {
-	data, err := artifactConfigFS.ReadFile("artifact.yaml")
+// LoadInfrastructureCatalog loads, parses, and validates the embedded
+// infrastructure-catalog.yaml configuration.
+func LoadInfrastructureCatalog() (*InfrastructureCatalog, error) {
+	data, err := infrastructureCatalogFS.ReadFile("infrastructure-catalog.yaml")
 	if err != nil {
 		return nil, NewConfigLoadError(err)
 	}
 
-	var config ArtifactCollection
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	var catalog InfrastructureCatalog
+	if err := yaml.Unmarshal(data, &catalog); err != nil {
 		return nil, NewConfigLoadError(err)
 	}
 
-	return &config, nil
+	if err := catalog.validate(); err != nil {
+		return nil, NewConfigLoadError(err)
+	}
+
+	return &catalog, nil
 }
 
-// GetArtifactByName finds a artifact item by name
-func (sc *ArtifactCollection) GetArtifactByName(name string) (*ArtifactMetadata, error) {
-	for i, item := range sc.Artifact {
+// GetHostArtifact finds a host artifact entry by name.
+func (c *InfrastructureCatalog) GetHostArtifact(name string) (*ArtifactMetadata, error) {
+	for i, item := range c.Host {
 		if item.Name == name {
-			return &sc.Artifact[i], nil
+			return &c.Host[i], nil
 		}
 	}
 	return nil, NewSoftwareNotFoundError(name)
 }
 
-// Names returns the names of all managed software artifacts.
-func (sc *ArtifactCollection) Names() []string {
-	names := make([]string, 0, len(sc.Artifact))
-	for _, item := range sc.Artifact {
+// GetClusterComponent finds a cluster Helm chart entry by name.
+func (c *InfrastructureCatalog) GetClusterComponent(name string) (*ChartMetadata, error) {
+	for i, item := range c.Cluster {
+		if item.Name == name {
+			return &c.Cluster[i], nil
+		}
+	}
+	return nil, NewSoftwareNotFoundError(name)
+}
+
+// HostNames returns the names of all host artifacts in the catalog.
+func (c *InfrastructureCatalog) HostNames() []string {
+	names := make([]string, 0, len(c.Host))
+	for _, item := range c.Host {
 		names = append(names, item.Name)
 	}
 	return names
+}
+
+// ClusterNames returns the names of all cluster components in the catalog.
+func (c *InfrastructureCatalog) ClusterNames() []string {
+	names := make([]string, 0, len(c.Cluster))
+	for _, item := range c.Cluster {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+// validate enforces the catalog schema invariants documented in
+// infrastructure-catalog.yaml: every entry must declare an explicit default
+// that resolves to a known version, cluster entries must declare a valid
+// type, classic entries must carry a repo (and oci entries must not), and
+// every chart version must have a non-empty algorithm and checksum.
+func (c *InfrastructureCatalog) validate() error {
+	for i := range c.Host {
+		host := &c.Host[i]
+		if _, err := host.GetDefaultVersion(); err != nil {
+			return fmt.Errorf("host[%s]: %w", host.Name, err)
+		}
+	}
+	for i := range c.Cluster {
+		chart := &c.Cluster[i]
+		if err := chart.validate(); err != nil {
+			return fmt.Errorf("cluster[%s]: %w", chart.Name, err)
+		}
+	}
+	return nil
+}
+
+// validate enforces ChartMetadata invariants. It is called by
+// InfrastructureCatalog.validate() at load time so callers never observe a
+// malformed chart entry.
+//
+// Checks are ordered from most fundamental to most derived: the type/repo
+// shape comes first, then the chart reference, then per-version integrity
+// records, and finally the default resolution. This keeps validation
+// deterministic and ensures malformed structural fields are rejected before
+// derived semantic checks such as resolving the default version.
+func (cm *ChartMetadata) validate() error {
+	switch cm.Type {
+	case ChartTypeClassic:
+		if cm.Repo == "" {
+			return fmt.Errorf("classic chart must declare a repo")
+		}
+	case ChartTypeOCI:
+		if cm.Repo != "" {
+			return fmt.Errorf("oci chart must not declare a repo (repo is encoded in the chart reference)")
+		}
+	case "":
+		return fmt.Errorf("missing type (must be %q or %q)", ChartTypeClassic, ChartTypeOCI)
+	default:
+		return fmt.Errorf("unknown type %q (must be %q or %q)", cm.Type, ChartTypeClassic, ChartTypeOCI)
+	}
+	if cm.Chart == "" {
+		return fmt.Errorf("missing chart reference")
+	}
+	if len(cm.Versions) == 0 {
+		return fmt.Errorf("no versions declared")
+	}
+	// Iterate over versions in a stable, alphabetical order so that when
+	// more than one version is malformed the error message always names
+	// the same one (Go map iteration order is randomized). Mirrors the
+	// convention used by VersionDetails.GetArchives/Binaries/Configs.
+	versions := make([]Version, 0, len(cm.Versions))
+	for v := range cm.Versions {
+		versions = append(versions, v)
+	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
+	for _, version := range versions {
+		details := cm.Versions[version]
+		if details.Algorithm == "" {
+			return fmt.Errorf("version %s: empty algorithm", version)
+		}
+		if details.Value == "" {
+			return fmt.Errorf("version %s: empty checksum", version)
+		}
+	}
+	if _, err := cm.GetDefaultVersion(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetDefaultVersion returns the explicit default version declared for this
+// chart. The default is read from the chart's `default:` field; it must point
+// to a version present in the `versions:` map. Returns an error when
+// `default:` is unset or names an unknown version.
+func (cm *ChartMetadata) GetDefaultVersion() (string, error) {
+	if cm.Default == "" {
+		return "", fmt.Errorf("chart %s has no default version declared", cm.Name)
+	}
+	if _, ok := cm.Versions[cm.Default]; !ok {
+		return "", NewVersionNotFoundError(cm.Name, string(cm.Default))
+	}
+	return string(cm.Default), nil
 }
 
 // executeTemplate executes a template string with the given data

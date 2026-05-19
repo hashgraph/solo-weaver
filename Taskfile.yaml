@@ -61,6 +61,11 @@ tasks:
   vendor:
     cmds:
       - "go mod vendor"
+
+  chart-checksums:
+    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Requires 'helm' on PATH."
+    cmds:
+      - "go run ./scripts/chart-checksums"
   
   lint:
     cmds:

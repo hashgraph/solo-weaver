@@ -973,9 +973,9 @@ func Test_Config_GetConfigByName(t *testing.T) {
 	}
 }
 
-func Test_Config_SoftwareCollection_GetSoftwareByName(t *testing.T) {
-	collection := &ArtifactCollection{
-		Artifact: []ArtifactMetadata{
+func Test_Config_InfrastructureCatalog_GetHostArtifact(t *testing.T) {
+	catalog := &InfrastructureCatalog{
+		Host: []ArtifactMetadata{
 			{
 				Name: "software1",
 			},
@@ -1006,7 +1006,7 @@ func Test_Config_SoftwareCollection_GetSoftwareByName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := collection.GetArtifactByName(tt.softwareName)
+			result, err := catalog.GetHostArtifact(tt.softwareName)
 
 			if tt.expectedErr {
 				assert.Error(t, err)
@@ -1018,6 +1018,427 @@ func Test_Config_SoftwareCollection_GetSoftwareByName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_Config_InfrastructureCatalog_GetClusterComponent(t *testing.T) {
+	catalog := &InfrastructureCatalog{
+		Cluster: []ChartMetadata{
+			{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			{
+				Name:    "node-exporter",
+				Type:    ChartTypeOCI,
+				Chart:   "oci://registry-1.docker.io/bitnamicharts/node-exporter",
+				Default: "4.5.19",
+				Versions: map[Version]Checksum{
+					"4.5.19": {Algorithm: "sha256", Value: "def"},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		componentKey string
+		expectedErr  bool
+		expectedName string
+	}{
+		{
+			name:         "classic chart found",
+			componentKey: "alloy",
+			expectedErr:  false,
+			expectedName: "alloy",
+		},
+		{
+			name:         "oci chart found",
+			componentKey: "node-exporter",
+			expectedErr:  false,
+			expectedName: "node-exporter",
+		},
+		{
+			name:         "chart not found",
+			componentKey: "nonexistent",
+			expectedErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := catalog.GetClusterComponent(tt.componentKey)
+
+			if tt.expectedErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.expectedName, result.Name)
+			}
+		})
+	}
+}
+
+func Test_Config_ChartMetadata_GetDefaultVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		chart    ChartMetadata
+		expected string
+		wantErr  bool
+	}{
+		{
+			name: "default points to existing version",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expected: "1.4.0",
+		},
+		{
+			name: "missing default returns error",
+			chart: ChartMetadata{
+				Name: "alloy",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "default pointing to unknown version returns error",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Default: "9.9.9",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.chart.GetDefaultVersion()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Empty(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func Test_Config_ChartMetadata_validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		chart       ChartMetadata
+		expectedErr string
+	}{
+		{
+			name: "valid classic chart",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+		},
+		{
+			name: "valid oci chart",
+			chart: ChartMetadata{
+				Name:    "node-exporter",
+				Type:    ChartTypeOCI,
+				Chart:   "oci://registry-1.docker.io/bitnamicharts/node-exporter",
+				Default: "4.5.19",
+				Versions: map[Version]Checksum{
+					"4.5.19": {Algorithm: "sha256", Value: "def"},
+				},
+			},
+		},
+		{
+			name: "missing type",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "missing type",
+		},
+		{
+			name: "unknown type",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartType("ftp"),
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "unknown type",
+		},
+		{
+			name: "classic without repo",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "classic chart must declare a repo",
+		},
+		{
+			name: "oci with repo",
+			chart: ChartMetadata{
+				Name:    "node-exporter",
+				Type:    ChartTypeOCI,
+				Repo:    "https://example.com",
+				Chart:   "oci://registry-1.docker.io/bitnamicharts/node-exporter",
+				Default: "4.5.19",
+				Versions: map[Version]Checksum{
+					"4.5.19": {Algorithm: "sha256", Value: "def"},
+				},
+			},
+			expectedErr: "oci chart must not declare a repo",
+		},
+		{
+			name: "missing chart reference",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "missing chart reference",
+		},
+		{
+			name: "default pointing to unknown version",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "9.9.9",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "not found",
+		},
+		{
+			name: "version with empty algorithm",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "", Value: "abc"},
+				},
+			},
+			expectedErr: "empty algorithm",
+		},
+		{
+			name: "version with empty checksum",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: ""},
+				},
+			},
+			expectedErr: "empty checksum",
+		},
+		{
+			name: "missing both chart reference and default surfaces chart error first",
+			chart: ChartMetadata{
+				Name: "alloy",
+				Type: ChartTypeClassic,
+				Repo: "https://grafana.github.io/helm-charts",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "sha256", Value: "abc"},
+				},
+			},
+			expectedErr: "missing chart reference",
+		},
+		{
+			name: "no versions declared",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+			},
+			expectedErr: "no versions declared",
+		},
+		{
+			name: "per-version checksum error surfaces before bad default",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "9.9.9", // also bogus, but checksum error wins
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "", Value: "abc"},
+				},
+			},
+			expectedErr: "empty algorithm",
+		},
+		{
+			// Pins the deterministic-iteration contract: when multiple
+			// versions are malformed, the validator must always report
+			// the alphabetically smallest one, regardless of Go's map
+			// iteration order. Re-run with `go test -count=N` to confirm
+			// the error message is stable.
+			name: "deterministic: alphabetically first malformed version is reported",
+			chart: ChartMetadata{
+				Name:    "alloy",
+				Type:    ChartTypeClassic,
+				Repo:    "https://grafana.github.io/helm-charts",
+				Chart:   "grafana/alloy",
+				Default: "1.4.0",
+				Versions: map[Version]Checksum{
+					"1.4.0": {Algorithm: "", Value: "abc"},
+					"2.0.0": {Algorithm: "", Value: "def"},
+				},
+			},
+			expectedErr: "version 1.4.0: empty algorithm",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.chart.validate()
+			if tt.expectedErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErr)
+			}
+		})
+	}
+}
+
+func Test_Config_InfrastructureCatalog_validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		catalog     InfrastructureCatalog
+		expectedErr string
+	}{
+		{
+			name: "valid catalog",
+			catalog: InfrastructureCatalog{
+				Host: []ArtifactMetadata{
+					{
+						Name:    "kubectl",
+						Default: "1.33.4",
+						Versions: map[Version]VersionDetails{
+							"1.33.4": {},
+						},
+					},
+				},
+				Cluster: []ChartMetadata{
+					{
+						Name:    "alloy",
+						Type:    ChartTypeClassic,
+						Repo:    "https://grafana.github.io/helm-charts",
+						Chart:   "grafana/alloy",
+						Default: "1.4.0",
+						Versions: map[Version]Checksum{
+							"1.4.0": {Algorithm: "sha256", Value: "abc"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "host entry missing default",
+			catalog: InfrastructureCatalog{
+				Host: []ArtifactMetadata{
+					{
+						Name: "kubectl",
+						Versions: map[Version]VersionDetails{
+							"1.33.4": {},
+						},
+					},
+				},
+			},
+			expectedErr: "host[kubectl]",
+		},
+		{
+			name: "cluster entry invalid",
+			catalog: InfrastructureCatalog{
+				Cluster: []ChartMetadata{
+					{
+						Name:    "alloy",
+						Type:    ChartTypeClassic,
+						Chart:   "grafana/alloy",
+						Default: "1.4.0",
+						Versions: map[Version]Checksum{
+							"1.4.0": {Algorithm: "sha256", Value: "abc"},
+						},
+					},
+				},
+			},
+			expectedErr: "cluster[alloy]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.catalog.validate()
+			if tt.expectedErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErr)
+			}
+		})
+	}
+}
+
+func Test_Config_LoadInfrastructureCatalog(t *testing.T) {
+	catalog, err := LoadInfrastructureCatalog()
+	require.NoError(t, err, "embedded infrastructure-catalog.yaml must load")
+	require.NotNil(t, catalog)
+	require.NotEmpty(t, catalog.Host, "host section must not be empty")
+	require.NotEmpty(t, catalog.Cluster, "cluster section must not be empty")
 }
 
 func Test_Config_TemplateExecution(t *testing.T) {
