@@ -1489,6 +1489,29 @@ func Test_Config_LoadInfrastructureCatalog(t *testing.T) {
 	require.NotEmpty(t, catalog.Cluster, "cluster section must not be empty")
 }
 
+// Test_Config_LoadInfrastructureCatalog_Cached pins the sync.Once cache
+// behaviour: repeated calls return the same pointer, and ResetCatalogCacheForTest
+// forces a fresh load. Together these allow tests that mutate package-level
+// state to remain isolated.
+func Test_Config_LoadInfrastructureCatalog_Cached(t *testing.T) {
+	t.Cleanup(ResetCatalogCacheForTest)
+
+	first, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+	require.NotNil(t, first)
+
+	second, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+	require.Same(t, first, second, "cached call must return the same pointer")
+
+	ResetCatalogCacheForTest()
+
+	third, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+	require.NotNil(t, third)
+	require.NotSame(t, first, third, "after reset, a fresh catalog instance must be returned")
+}
+
 func Test_Config_TemplateExecution(t *testing.T) {
 	tests := []struct {
 		name         string

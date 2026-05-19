@@ -285,6 +285,18 @@ var (
 	loadCatalogOnce  sync.Once
 )
 
+// ResetCatalogCacheForTest clears the cached catalog so the next
+// LoadInfrastructureCatalog call re-reads, re-parses, and re-validates the
+// embedded YAML. Intended for tests that exercise load-failure paths or
+// swap in alternative embedded data; not safe to call concurrently with
+// LoadInfrastructureCatalog. The name is deliberately verbose so it stands
+// out at call sites — production code must never invoke this.
+func ResetCatalogCacheForTest() {
+	cachedCatalog = nil
+	cachedCatalogErr = nil
+	loadCatalogOnce = sync.Once{}
+}
+
 // LoadInfrastructureCatalog loads, parses, and validates the embedded
 // infrastructure-catalog.yaml configuration. The result is cached for the
 // lifetime of the process — the catalog is embedded in the binary and
