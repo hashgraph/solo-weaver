@@ -8,7 +8,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 )
 
@@ -17,16 +16,17 @@ const (
 )
 
 func InstallSoloOperator() automa.Builder {
+	spec := chartSpec("solo-operator")
 	return automa.NewStepBuilder().WithId(InstallSoloOperatorStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(deps.SOLO_OPERATOR_RELEASE, deps.SOLO_OPERATOR_NAMESPACE)
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -37,12 +37,17 @@ func InstallSoloOperator() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
+			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
 			_, err = hm.DeployChart(
 				ctx,
-				deps.SOLO_OPERATOR_RELEASE,
-				deps.SOLO_OPERATOR_CHART,
-				deps.SOLO_OPERATOR_VERSION,
-				deps.SOLO_OPERATOR_NAMESPACE,
+				spec.Release,
+				localChart,
+				"",
+				spec.Namespace,
 				helm.DeployChartOptions{
 					CreateNamespace: true,
 					Atomic:          true,
@@ -63,14 +68,12 @@ func InstallSoloOperator() automa.Builder {
 			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
-
-			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(deps.SOLO_OPERATOR_RELEASE, deps.SOLO_OPERATOR_NAMESPACE)
+			err = hm.UninstallChart(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

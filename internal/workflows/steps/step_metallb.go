@@ -6,12 +6,10 @@ import (
 	"context"
 	"os"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -56,18 +54,19 @@ func SetupMetalLB() *automa.WorkflowBuilder {
 }
 
 func installMetalLB() automa.Builder {
+	spec := chartSpec("metallb")
 	return automa.NewStepBuilder().WithId(InstallMetalLBStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			logx.As().Info().Str("step_id", stp.Id()).Str("software", "metallb").Str("version", deps.METALLB_VERSION).Msgf("metallb version: %s", deps.METALLB_VERSION)
-
 			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			l.Info().Str("step_id", stp.Id()).Str("software", "metallb").Str("version", spec.Version).Msgf("metallb version: %s", spec.Version)
+
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(deps.METALLB_RELEASE, deps.METALLB_NAMESPACE)
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -78,23 +77,22 @@ func installMetalLB() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(deps.METALLB_RELEASE, deps.METALLB_REPO, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(spec.Release, spec.Repo, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// if chartVersion doesn't start with "v", prepend it
-			chartVersion := deps.METALLB_VERSION
-			if !strings.HasPrefix(chartVersion, "v") {
-				chartVersion = "v" + chartVersion
+			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			_, err = hm.InstallChart(
 				ctx,
-				deps.METALLB_RELEASE,
-				deps.METALLB_CHART,
-				chartVersion,
-				deps.METALLB_NAMESPACE,
+				spec.Release,
+				localChart,
+				"",
+				spec.Namespace,
 				helm.InstallChartOptions{
 					ValueOpts: &values.Options{
 						Values: []string{"speaker.frr.enabled=false"},
@@ -119,13 +117,12 @@ func installMetalLB() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(deps.METALLB_RELEASE, deps.METALLB_NAMESPACE)
+			err = hm.UninstallChart(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -225,6 +222,7 @@ func deployMetalLBConfig(configFilePath string) automa.Builder {
 }
 
 func isMetalLBPodsReady() automa.Builder {
+	spec := chartSpec("metallb")
 	return automa.NewStepBuilder().WithId(IsMetalLBReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := kube.NewClient()
@@ -234,7 +232,7 @@ func isMetalLBPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for metallb pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, deps.METALLB_NAMESPACE, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "metallb"})
+			err = k.WaitForResources(ctx, kube.KindPod, spec.Namespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "metallb"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

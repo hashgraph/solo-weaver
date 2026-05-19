@@ -14,7 +14,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -101,6 +100,7 @@ func TeardownTeleportClusterAgent() *automa.WorkflowBuilder {
 
 // uninstallTeleportKubeAgent removes the Teleport Kubernetes agent Helm release.
 func uninstallTeleportKubeAgent() automa.Builder {
+	spec := chartSpec("teleport-cluster-agent")
 	return automa.NewStepBuilder().WithId(UninstallTeleportKubeAgentStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
@@ -115,13 +115,13 @@ func uninstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -131,7 +131,7 @@ func uninstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			err = hm.UninstallChart(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
+			err = hm.UninstallChart(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -410,6 +410,7 @@ func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Build
 }
 
 func CreateTeleportNamespace() automa.Builder {
+	spec := chartSpec("teleport-cluster-agent")
 	return automa.NewStepBuilder().WithId(CreateTeleportNamespaceStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := kube.NewClient()
@@ -420,7 +421,7 @@ func CreateTeleportNamespace() automa.Builder {
 			// Create namespace manifest using template
 			namespaceManifestPath := path.Join(models.Paths().TempDir, "teleport-namespace.yaml")
 			namespaceManifest, err := templates.Render("files/teleport/namespace.yaml", map[string]string{
-				"Namespace": deps.TELEPORT_NAMESPACE,
+				"Namespace": spec.Namespace,
 			})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
@@ -453,18 +454,19 @@ func CreateTeleportNamespace() automa.Builder {
 }
 
 func InstallTeleportKubeAgent() automa.Builder {
+	spec := chartSpec("teleport-cluster-agent")
 	return automa.NewStepBuilder().WithId(InstallTeleportStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Teleport
 
 			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -475,25 +477,45 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo("teleport", deps.TELEPORT_REPO, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(spec.Release, spec.Repo, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Determine chart version
+			// Determine chart version: explicit --version flag overrides the catalog default.
+			// Per-component version overrides remain a legacy carve-out for teleport
+			// (see issue #589 "Out of scope: removing the teleport --version flag").
 			chartVersion := cfg.Version
+			expectedChecksum := spec.Checksum
 			if chartVersion == "" {
-				chartVersion = deps.TELEPORT_VERSION
+				chartVersion = spec.Version
+			} else if chartVersion != spec.Version {
+				// Operator pinned a non-catalog version; we cannot verify integrity
+				// because the catalog only records checksums for declared versions.
+				expectedChecksum = ""
 			}
 
 			l.Info().Str("path", cfg.ValuesFile).Msg("Using Teleport values file")
 
+			var chartRef string
+			if expectedChecksum != "" {
+				localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, chartVersion, spec.Algorithm, expectedChecksum)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+				chartRef = localChart
+				chartVersion = ""
+			} else {
+				chartRef = spec.Chart
+				l.Warn().Str("version", chartVersion).Msg("Skipping chart integrity verification for operator-pinned Teleport version (not in catalog)")
+			}
+
 			_, err = hm.InstallChart(
 				ctx,
-				deps.TELEPORT_RELEASE,
-				deps.TELEPORT_CHART,
+				spec.Release,
+				chartRef,
 				chartVersion,
-				deps.TELEPORT_NAMESPACE,
+				spec.Namespace,
 				helm.InstallChartOptions{
 					ValueOpts: &values.Options{
 						ValueFiles: []string{cfg.ValuesFile},
@@ -518,13 +540,12 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(deps.TELEPORT_RELEASE, deps.TELEPORT_NAMESPACE)
+			err = hm.UninstallChart(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -544,6 +565,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 }
 
 func IsTeleportPodsReady() automa.Builder {
+	spec := chartSpec("teleport-cluster-agent")
 	return automa.NewStepBuilder().WithId(IsTeleportReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 
@@ -554,7 +576,7 @@ func IsTeleportPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for teleport pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, deps.TELEPORT_NAMESPACE, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "teleport-agent"})
+			err = k.WaitForResources(ctx, kube.KindPod, spec.Namespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "teleport-agent"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
