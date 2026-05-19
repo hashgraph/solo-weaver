@@ -75,12 +75,6 @@ func (fp FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
 			return zero, err
 		}
 		return any(v).(T), nil
-	case []string:
-		v, err := flags.GetStringSlice(fp.Name)
-		if err != nil {
-			return zero, err
-		}
-		return any(v).(T), nil
 	case time.Duration:
 		v, err := flags.GetDuration(fp.Name)
 		if err != nil {
@@ -156,6 +150,16 @@ func (fp FlagDefinition[T]) ValueOwnPersistent(cmd *cobra.Command, args []string
 func (fp FlagDefinition[T]) SetVarP(cmd *cobra.Command, p *T, required bool) {
 	if err := fp.varP(cmd, p, required); err != nil {
 		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+	}
+}
+
+// SetVarPHidden registers the flag as a persistent flag and marks it hidden so
+// it does not appear in --help. Useful for deprecated or internal-only flags
+// that must still be accepted on the command line.
+func (fp FlagDefinition[T]) SetVarPHidden(cmd *cobra.Command, p *T, required bool) {
+	fp.SetVarP(cmd, p, required)
+	if err := cmd.PersistentFlags().MarkHidden(fp.Name); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to mark flag %s as hidden", fp.Name)
 	}
 }
 
@@ -245,19 +249,6 @@ func (fp FlagDefinition[T]) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command,
 		}
 		flags.Uint64VarP(pu64, fp.Name, fp.ShortName, def, fp.Description)
 
-	case []string:
-		var def []string
-		if any(fp.Default) != nil {
-			def = any(fp.Default).([]string)
-		} else {
-			def = []string{}
-		}
-		pss, ok := any(p).(*[]string)
-		if !ok {
-			return errorx.IllegalArgument.New("expected *[]string for flag %s", fp.Name)
-		}
-		flags.StringSliceVarP(pss, fp.Name, fp.ShortName, def, fp.Description)
-
 	case time.Duration:
 		def := any(fp.Default).(time.Duration)
 		pd, ok := any(p).(*time.Duration)
@@ -292,6 +283,262 @@ func (fp FlagDefinition[T]) MarkRequiredP(cmd *cobra.Command, v bool) error {
 		}
 	}
 
+	return nil
+}
+
+// CommaSplitStringsFlagDefinition defines a []string flag whose values are
+// comma-split at parse time: --items a,b,c yields []string{"a", "b", "c"}.
+// Backed by pflag's StringSliceVarP / GetStringSlice. Use this when each value
+// is a simple token with no embedded commas.
+//
+// For values that themselves contain commas (e.g. a structured spec like
+// "name=x,url=y"), use RepeatableStringFlagDefinition instead.
+type CommaSplitStringsFlagDefinition struct {
+	Name        string
+	ShortName   string
+	Description string
+	Default     []string
+}
+
+// Clone returns an independent copy of the descriptor.
+func (fp CommaSplitStringsFlagDefinition) Clone() CommaSplitStringsFlagDefinition {
+	return CommaSplitStringsFlagDefinition{
+		Name:        fp.Name,
+		ShortName:   fp.ShortName,
+		Description: fp.Description,
+		Default:     append([]string(nil), fp.Default...),
+	}
+}
+
+func (fp CommaSplitStringsFlagDefinition) valueFrom(flags *pflag.FlagSet) ([]string, error) {
+	return flags.GetStringSlice(fp.Name)
+}
+
+// Value mirrors FlagDefinition[T].Value: local → own persistent → inherited persistent.
+func (fp CommaSplitStringsFlagDefinition) Value(cmd *cobra.Command, args []string) ([]string, error) {
+	if cmd == nil {
+		return nil, errorx.IllegalArgument.New("command cannot be nil")
+	}
+	if args == nil {
+		args = []string{}
+	}
+	if val, err := fp.ValueLocal(cmd, args); err == nil {
+		return val, nil
+	}
+	if val, err := fp.ValueOwnPersistent(cmd, args); err == nil {
+		return val, nil
+	}
+	return nil, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
+}
+
+func (fp CommaSplitStringsFlagDefinition) ValueLocal(cmd *cobra.Command, args []string) ([]string, error) {
+	if args == nil {
+		args = []string{}
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
+	}
+	return fp.valueFrom(cmd.Flags())
+}
+
+func (fp CommaSplitStringsFlagDefinition) ValueOwnPersistent(cmd *cobra.Command, args []string) ([]string, error) {
+	if args == nil {
+		args = []string{}
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
+	}
+	return fp.valueFrom(cmd.PersistentFlags())
+}
+
+func (fp CommaSplitStringsFlagDefinition) SetVarP(cmd *cobra.Command, p *[]string, required bool) {
+	if err := fp.varP(cmd, p, required); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+	}
+}
+
+func (fp CommaSplitStringsFlagDefinition) SetVarPHidden(cmd *cobra.Command, p *[]string, required bool) {
+	fp.SetVarP(cmd, p, required)
+	if err := cmd.PersistentFlags().MarkHidden(fp.Name); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to mark flag %s as hidden", fp.Name)
+	}
+}
+
+func (fp CommaSplitStringsFlagDefinition) SetVar(cmd *cobra.Command, p *[]string, required bool) {
+	if err := fp.varNP(cmd, p, required); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+	}
+}
+
+func (fp CommaSplitStringsFlagDefinition) varP(cmd *cobra.Command, p *[]string, required bool) error {
+	if err := fp.setFlagVar(cmd.PersistentFlags(), cmd, p); err != nil {
+		return err
+	}
+	return fp.MarkRequiredP(cmd, required)
+}
+
+func (fp CommaSplitStringsFlagDefinition) varNP(cmd *cobra.Command, p *[]string, required bool) error {
+	if err := fp.setFlagVar(cmd.Flags(), cmd, p); err != nil {
+		return err
+	}
+	return fp.MarkRequired(cmd, required)
+}
+
+func (fp CommaSplitStringsFlagDefinition) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command, p *[]string) error {
+	if p == nil {
+		return errorx.IllegalArgument.New("pointer for flag %s is nil", fp.Name)
+	}
+	if cmd == nil {
+		return errorx.IllegalArgument.New("command for flag %s is nil", fp.Name)
+	}
+	def := fp.Default
+	if def == nil {
+		def = []string{}
+	}
+	flags.StringSliceVarP(p, fp.Name, fp.ShortName, def, fp.Description)
+	return nil
+}
+
+func (fp CommaSplitStringsFlagDefinition) MarkRequired(cmd *cobra.Command, v bool) error {
+	if v {
+		if err := cmd.MarkFlagRequired(fp.Name); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to mark flag %s as required", fp.Name)
+		}
+	}
+	return nil
+}
+
+func (fp CommaSplitStringsFlagDefinition) MarkRequiredP(cmd *cobra.Command, v bool) error {
+	if v {
+		if err := cmd.MarkPersistentFlagRequired(fp.Name); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to mark persistent flag %s as required", fp.Name)
+		}
+	}
+	return nil
+}
+
+// RepeatableStringFlagDefinition defines a []string flag whose values are
+// collected from repeated --flag occurrences without comma-splitting: each
+// --item v contributes one element verbatim, so values that themselves contain
+// commas (e.g. structured specs like "name=x,url=y") are preserved.
+// Backed by pflag's StringArrayVarP / GetStringArray.
+type RepeatableStringFlagDefinition struct {
+	Name        string
+	ShortName   string
+	Description string
+	Default     []string
+}
+
+// Clone returns an independent copy of the descriptor.
+func (fp RepeatableStringFlagDefinition) Clone() RepeatableStringFlagDefinition {
+	return RepeatableStringFlagDefinition{
+		Name:        fp.Name,
+		ShortName:   fp.ShortName,
+		Description: fp.Description,
+		Default:     append([]string(nil), fp.Default...),
+	}
+}
+
+func (fp RepeatableStringFlagDefinition) valueFrom(flags *pflag.FlagSet) ([]string, error) {
+	return flags.GetStringArray(fp.Name)
+}
+
+// Value mirrors FlagDefinition[T].Value: local → own persistent → inherited persistent.
+func (fp RepeatableStringFlagDefinition) Value(cmd *cobra.Command, args []string) ([]string, error) {
+	if cmd == nil {
+		return nil, errorx.IllegalArgument.New("command cannot be nil")
+	}
+	if args == nil {
+		args = []string{}
+	}
+	if val, err := fp.ValueLocal(cmd, args); err == nil {
+		return val, nil
+	}
+	if val, err := fp.ValueOwnPersistent(cmd, args); err == nil {
+		return val, nil
+	}
+	return nil, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
+}
+
+func (fp RepeatableStringFlagDefinition) ValueLocal(cmd *cobra.Command, args []string) ([]string, error) {
+	if args == nil {
+		args = []string{}
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
+	}
+	return fp.valueFrom(cmd.Flags())
+}
+
+func (fp RepeatableStringFlagDefinition) ValueOwnPersistent(cmd *cobra.Command, args []string) ([]string, error) {
+	if args == nil {
+		args = []string{}
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to parse flags for command %s", cmd.Name())
+	}
+	return fp.valueFrom(cmd.PersistentFlags())
+}
+
+func (fp RepeatableStringFlagDefinition) SetVarP(cmd *cobra.Command, p *[]string, required bool) {
+	if err := fp.varP(cmd, p, required); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+	}
+}
+
+func (fp RepeatableStringFlagDefinition) SetVarPHidden(cmd *cobra.Command, p *[]string, required bool) {
+	fp.SetVarP(cmd, p, required)
+	if err := cmd.PersistentFlags().MarkHidden(fp.Name); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to mark flag %s as hidden", fp.Name)
+	}
+}
+
+func (fp RepeatableStringFlagDefinition) SetVar(cmd *cobra.Command, p *[]string, required bool) {
+	if err := fp.varNP(cmd, p, required); err != nil {
+		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+	}
+}
+
+func (fp RepeatableStringFlagDefinition) varP(cmd *cobra.Command, p *[]string, required bool) error {
+	if err := fp.setFlagVar(cmd.PersistentFlags(), cmd, p); err != nil {
+		return err
+	}
+	return fp.MarkRequiredP(cmd, required)
+}
+
+func (fp RepeatableStringFlagDefinition) varNP(cmd *cobra.Command, p *[]string, required bool) error {
+	if err := fp.setFlagVar(cmd.Flags(), cmd, p); err != nil {
+		return err
+	}
+	return fp.MarkRequired(cmd, required)
+}
+
+func (fp RepeatableStringFlagDefinition) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command, p *[]string) error {
+	if p == nil {
+		return errorx.IllegalArgument.New("pointer for flag %s is nil", fp.Name)
+	}
+	if cmd == nil {
+		return errorx.IllegalArgument.New("command for flag %s is nil", fp.Name)
+	}
+	flags.StringArrayVarP(p, fp.Name, fp.ShortName, fp.Default, fp.Description)
+	return nil
+}
+
+func (fp RepeatableStringFlagDefinition) MarkRequired(cmd *cobra.Command, v bool) error {
+	if v {
+		if err := cmd.MarkFlagRequired(fp.Name); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to mark flag %s as required", fp.Name)
+		}
+	}
+	return nil
+}
+
+func (fp RepeatableStringFlagDefinition) MarkRequiredP(cmd *cobra.Command, v bool) error {
+	if v {
+		if err := cmd.MarkPersistentFlagRequired(fp.Name); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to mark persistent flag %s as required", fp.Name)
+		}
+	}
 	return nil
 }
 

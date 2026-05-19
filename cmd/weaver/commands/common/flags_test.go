@@ -98,8 +98,8 @@ func runIntFlagTest(t *testing.T, persistent bool) {
 	}
 }
 
-func runStringSliceFlagTest(t *testing.T, persistent bool) {
-	fp := FlagDefinition[[]string]{Name: "items", ShortName: "i", Description: "items", Default: []string{}}
+func runCommaSplitStringsFlagTest(t *testing.T, persistent bool) {
+	fp := CommaSplitStringsFlagDefinition{Name: "items", ShortName: "i", Description: "items", Default: []string{}}
 	var v []string
 	cmd := &cobra.Command{}
 	var err error
@@ -121,6 +121,40 @@ func runStringSliceFlagTest(t *testing.T, persistent bool) {
 		require.NoError(t, err)
 		require.Equal(t, []string{"a", "b", "c"}, got)
 	}
+}
+
+// runRepeatableStringFlagTest asserts that values containing commas survive
+// across two --flag occurrences — the whole reason RepeatableStringFlagDefinition
+// exists alongside CommaSplitStringsFlagDefinition.
+func runRepeatableStringFlagTest(t *testing.T, persistent bool) {
+	fp := RepeatableStringFlagDefinition{Name: "remote", ShortName: "r", Description: "remote spec", Default: nil}
+	var v []string
+	cmd := &cobra.Command{}
+	var err error
+	if persistent {
+		err = fp.varP(cmd, &v, false)
+	} else {
+		err = fp.varNP(cmd, &v, false)
+	}
+	require.NoError(t, err)
+
+	// Two separate --flag occurrences, each containing commas inside the value.
+	// StringSlice semantics would shred these into 6 elements; StringArray
+	// keeps them as 2.
+	if persistent {
+		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "name=alpha,url=https://a.example.com"))
+		require.NoError(t, cmd.PersistentFlags().Set(fp.Name, "name=beta,url=https://b.example.com"))
+	} else {
+		require.NoError(t, cmd.Flags().Set(fp.Name, "name=alpha,url=https://a.example.com"))
+		require.NoError(t, cmd.Flags().Set(fp.Name, "name=beta,url=https://b.example.com"))
+	}
+
+	got, err := fp.Value(cmd, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"name=alpha,url=https://a.example.com",
+		"name=beta,url=https://b.example.com",
+	}, got)
 }
 
 func runDurationFlagTest(t *testing.T, persistent bool) {
@@ -157,7 +191,8 @@ func TestFlags_PersistentAndNonPersistent(t *testing.T) {
 		t.Run(name+"/string", func(t *testing.T) { runStringFlagTest(t, persistent) })
 		t.Run(name+"/bool", func(t *testing.T) { runBoolFlagTest(t, persistent) })
 		t.Run(name+"/int", func(t *testing.T) { runIntFlagTest(t, persistent) })
-		t.Run(name+"/stringslice", func(t *testing.T) { runStringSliceFlagTest(t, persistent) })
+		t.Run(name+"/comma-split-strings", func(t *testing.T) { runCommaSplitStringsFlagTest(t, persistent) })
+		t.Run(name+"/repeatable-string", func(t *testing.T) { runRepeatableStringFlagTest(t, persistent) })
 		t.Run(name+"/duration", func(t *testing.T) { runDurationFlagTest(t, persistent) })
 	}
 }
@@ -187,6 +222,30 @@ func TestVarP_RequiredFlag_IsMarked(t *testing.T) {
 	ann, ok := f.Annotations[cobra.BashCompOneRequiredFlag]
 	require.Equal(t, true, ok, "persistent flag should have required annotation")
 	require.Contains(t, ann, "true", "persistent flag required annotation should be 'true'")
+}
+
+func TestSetVarPHidden_MarksFlagHidden(t *testing.T) {
+	fp := FlagDefinition[string]{Name: "deprecated-thing", ShortName: "", Description: "kept for compat", Default: ""}
+	var v string
+	cmd := &cobra.Command{Use: "cmd"}
+
+	fp.SetVarPHidden(cmd, &v, false)
+
+	f := cmd.PersistentFlags().Lookup(fp.Name)
+	require.NotNil(t, f, "flag must be registered")
+	require.True(t, f.Hidden, "flag must be marked Hidden")
+}
+
+func TestSetVarPHidden_RepeatableStringMarksFlagHidden(t *testing.T) {
+	fp := RepeatableStringFlagDefinition{Name: "deprecated-remote", ShortName: "", Description: "kept for compat"}
+	var v []string
+	cmd := &cobra.Command{Use: "cmd"}
+
+	fp.SetVarPHidden(cmd, &v, false)
+
+	f := cmd.PersistentFlags().Lookup(fp.Name)
+	require.NotNil(t, f, "flag must be registered")
+	require.True(t, f.Hidden, "flag must be marked Hidden")
 }
 
 func TestValue_CheckPersistentFlagInParentCommand(t *testing.T) {
