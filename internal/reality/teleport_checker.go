@@ -7,7 +7,6 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -93,8 +92,9 @@ func (t *teleportChecker) refreshClusterAgentState() (state.TeleportClusterAgent
 		return state.TeleportClusterAgentState{}, errorx.IllegalState.Wrap(err, "failed to list helm releases")
 	}
 
+	teleportChart := software.MustGetClusterComponent("teleport-cluster-agent")
 	for _, rel := range releases {
-		if rel.Name == deps.TELEPORT_RELEASE && rel.Namespace == deps.TELEPORT_NAMESPACE {
+		if rel.Name == teleportChart.Release && rel.Namespace == teleportChart.Namespace {
 			return state.TeleportClusterAgentState{
 				Installed:    true,
 				Release:      rel.Name,

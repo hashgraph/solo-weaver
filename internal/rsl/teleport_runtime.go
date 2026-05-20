@@ -11,8 +11,8 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -275,10 +275,11 @@ func NewTeleportRuntimeResolver(
 		return nil, errorx.IllegalState.Wrap(err, "failed to create releaseName resolver")
 	}
 
-	// Seed namespace and releaseName defaults from deps constants
-	// (these are not user-configurable via config or CLI)
-	setOrClearString(tr.namespace, StrategyDefault, deps.TELEPORT_NAMESPACE)
-	setOrClearString(tr.releaseName, StrategyDefault, deps.TELEPORT_RELEASE)
+	// Seed namespace and releaseName defaults from the infrastructure catalog
+	// (these are not user-configurable via config or CLI).
+	teleportChart := software.MustGetClusterComponent("teleport-cluster-agent")
+	setOrClearString(tr.namespace, StrategyDefault, teleportChart.Namespace)
+	setOrClearString(tr.releaseName, StrategyDefault, teleportChart.Release)
 
 	// Initialize sources from config and state
 	tr.WithConfig(cfg)

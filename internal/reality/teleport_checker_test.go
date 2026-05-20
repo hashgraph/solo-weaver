@@ -9,12 +9,16 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/release"
 )
+
+func teleportCatalogChart() *software.ChartMetadata {
+	return software.MustGetClusterComponent("teleport-cluster-agent")
+}
 
 // fakeHelmManager implements reality.HelmManager for testing.
 type fakeHelmManager struct {
@@ -61,12 +65,13 @@ func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) 
 	sm := newTeleportTestStateManager(t)
 
 	clusterExists := func() (bool, error) { return true, nil }
+	teleport := teleportCatalogChart()
 	newHelm := func() (reality.HelmManager, error) {
 		return &fakeHelmManager{
 			releases: []*release.Release{
 				{
-					Name:      deps.TELEPORT_RELEASE,
-					Namespace: deps.TELEPORT_NAMESPACE,
+					Name:      teleport.Release,
+					Namespace: teleport.Namespace,
 					Chart: &chart.Chart{
 						Metadata: &chart.Metadata{
 							Version: "18.6.4",
@@ -84,8 +89,8 @@ func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.True(t, ts.ClusterAgent.Installed, "ClusterAgent should be installed when Helm release is present")
-	assert.Equal(t, deps.TELEPORT_RELEASE, ts.ClusterAgent.Release)
-	assert.Equal(t, deps.TELEPORT_NAMESPACE, ts.ClusterAgent.Namespace)
+	assert.Equal(t, teleport.Release, ts.ClusterAgent.Release)
+	assert.Equal(t, teleport.Namespace, ts.ClusterAgent.Namespace)
 	assert.Equal(t, "18.6.4", ts.ClusterAgent.ChartVersion)
 }
 

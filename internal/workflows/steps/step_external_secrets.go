@@ -10,7 +10,6 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
@@ -40,16 +39,17 @@ func SetupExternalSecrets() *automa.WorkflowBuilder {
 }
 
 func installExternalSecrets() automa.Builder {
+	spec := chartSpec("external-secrets")
 	return automa.NewStepBuilder().WithId(InstallExternalSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(deps.EXTERNAL_SECRETS_RELEASE, deps.EXTERNAL_SECRETS_NAMESPACE)
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -60,7 +60,12 @@ func installExternalSecrets() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo("external-secrets", deps.EXTERNAL_SECRETS_REPO, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -72,10 +77,10 @@ func installExternalSecrets() automa.Builder {
 
 			_, err = hm.InstallChart(
 				ctx,
-				deps.EXTERNAL_SECRETS_RELEASE,
-				deps.EXTERNAL_SECRETS_CHART,
-				deps.EXTERNAL_SECRETS_VERSION,
-				deps.EXTERNAL_SECRETS_NAMESPACE,
+				spec.Release,
+				localChart,
+				"",
+				spec.Namespace,
 				helm.InstallChartOptions{
 					ValueOpts: &values.Options{
 						Values: helmValues,
@@ -100,13 +105,12 @@ func installExternalSecrets() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(deps.EXTERNAL_SECRETS_RELEASE, deps.EXTERNAL_SECRETS_NAMESPACE)
+			err = hm.UninstallChart(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -126,6 +130,7 @@ func installExternalSecrets() automa.Builder {
 }
 
 func isExternalSecretsReady() automa.Builder {
+	spec := chartSpec("external-secrets")
 	return automa.NewStepBuilder().WithId(IsExternalSecretsReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := kube.NewClient()
@@ -135,7 +140,7 @@ func isExternalSecretsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// Wait for external-secrets pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, deps.EXTERNAL_SECRETS_NAMESPACE, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "external-secrets"})
+			err = k.WaitForResources(ctx, kube.KindPod, spec.Namespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "external-secrets"})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

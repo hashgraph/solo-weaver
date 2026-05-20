@@ -4,12 +4,10 @@ package steps
 
 import (
 	"context"
-	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
@@ -40,16 +38,17 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 		}
 	}
 
+	spec := chartSpec("metrics-server")
 	return automa.NewStepBuilder().WithId("enable-metrics-server").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(deps.METRICS_SERVER_RELEASE, deps.METRICS_SERVER_NAMESPACE)
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -60,23 +59,22 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(deps.METRICS_SERVER_RELEASE, deps.METRICS_SERVER_REPO, helm.RepoAddOptions{})
+			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// if chartVersion doesn't start with "v", prepend it
-			chartVersion := deps.METRICS_SERVER_VERSION
-			if !strings.HasPrefix(chartVersion, "v") {
-				chartVersion = "v" + chartVersion
+			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			_, err = hm.InstallChart(
 				ctx,
-				deps.METRICS_SERVER_RELEASE,
-				deps.METRICS_SERVER_CHART,
-				chartVersion,
-				deps.METRICS_SERVER_NAMESPACE,
+				spec.Release,
+				localChart,
+				"",
+				spec.Namespace,
 				helm.InstallChartOptions{
 					ValueOpts:       valueOptions,
 					CreateNamespace: true,
@@ -99,13 +97,12 @@ func installMetricsServer(valueOptions *values.Options) *automa.StepBuilder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			l := logx.As()
-			hm, err := helm.NewManager(helm.WithLogger(*l))
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(deps.METRICS_SERVER_RELEASE, deps.METRICS_SERVER_NAMESPACE)
+			err = hm.UninstallChart(spec.Release, spec.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

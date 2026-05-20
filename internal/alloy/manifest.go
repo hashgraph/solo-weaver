@@ -6,8 +6,15 @@ import (
 	"sort"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
+
+// alloyNamespace returns the namespace Alloy deploys into, as recorded in
+// the infrastructure catalog. The catalog is embedded and validated, so a
+// missing entry would be a build-time programming error.
+func alloyNamespace() string {
+	return software.MustGetClusterComponent("alloy").Namespace
+}
 
 // ConfigMapTemplateData holds data for the ConfigMap template.
 type ConfigMapTemplateData struct {
@@ -45,7 +52,7 @@ func ConfigMapManifest(modules []ModuleConfig) (string, error) {
 
 	data := ConfigMapTemplateData{
 		ConfigMapName: ConfigMapName,
-		Namespace:     deps.ALLOY_NAMESPACE,
+		Namespace:     alloyNamespace(),
 		Modules:       templateModules,
 	}
 
@@ -107,7 +114,7 @@ type NamespaceTemplateData struct {
 // Uses the namespace.yaml template file.
 func NamespaceManifest() (string, error) {
 	data := NamespaceTemplateData{
-		Namespace: deps.ALLOY_NAMESPACE,
+		Namespace: alloyNamespace(),
 	}
 
 	return templates.Render("files/alloy/namespace.yaml", data)

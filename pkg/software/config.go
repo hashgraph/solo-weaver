@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
+	"sync"
 	"text/template"
 
 	"github.com/hashgraph/solo-weaver/pkg/semver"
@@ -89,14 +90,18 @@ type InfrastructureCatalog struct {
 // ChartMetadata describes a Helm chart entry under `cluster:`. A chart has
 // a single artifact per version; integrity is verified against the SHA256
 // of the .tgz (classic) or the OCI manifest digest (oci), recorded as a
-// Checksum value.
+// Checksum value. Namespace and Release describe the installation topology
+// — the Kubernetes namespace the chart deploys into and the Helm release
+// name used to track it.
 type ChartMetadata struct {
-	Name     string               `yaml:"name"`
-	Type     ChartType            `yaml:"type"`
-	Repo     string               `yaml:"repo,omitempty"`
-	Chart    string               `yaml:"chart"`
-	Default  Version              `yaml:"default"`
-	Versions map[Version]Checksum `yaml:"versions"`
+	Name      string               `yaml:"name"`
+	Type      ChartType            `yaml:"type"`
+	Repo      string               `yaml:"repo,omitempty"`
+	Chart     string               `yaml:"chart"`
+	Namespace string               `yaml:"namespace"`
+	Release   string               `yaml:"release"`
+	Default   Version              `yaml:"default"`
+	Versions  map[Version]Checksum `yaml:"versions"`
 }
 
 // ArtifactMetadata represents a single software artifact  configuration
@@ -274,24 +279,50 @@ type TemplateData struct {
 	ARCH    string
 }
 
+var (
+	cachedCatalog    *InfrastructureCatalog
+	cachedCatalogErr error
+	loadCatalogOnce  sync.Once
+)
+
+// ResetCatalogCacheForTest clears the cached catalog so the next
+// LoadInfrastructureCatalog call re-reads, re-parses, and re-validates the
+// embedded YAML. Intended for tests that exercise load-failure paths or
+// swap in alternative embedded data; not safe to call concurrently with
+// LoadInfrastructureCatalog. The name is deliberately verbose so it stands
+// out at call sites — production code must never invoke this.
+func ResetCatalogCacheForTest() {
+	cachedCatalog = nil
+	cachedCatalogErr = nil
+	loadCatalogOnce = sync.Once{}
+}
+
 // LoadInfrastructureCatalog loads, parses, and validates the embedded
-// infrastructure-catalog.yaml configuration.
+// infrastructure-catalog.yaml configuration. The result is cached for the
+// lifetime of the process — the catalog is embedded in the binary and
+// immutable, so callers must not mutate the returned value.
 func LoadInfrastructureCatalog() (*InfrastructureCatalog, error) {
-	data, err := infrastructureCatalogFS.ReadFile("infrastructure-catalog.yaml")
-	if err != nil {
-		return nil, NewConfigLoadError(err)
-	}
+	loadCatalogOnce.Do(func() {
+		data, err := infrastructureCatalogFS.ReadFile("infrastructure-catalog.yaml")
+		if err != nil {
+			cachedCatalogErr = NewConfigLoadError(err)
+			return
+		}
 
-	var catalog InfrastructureCatalog
-	if err := yaml.Unmarshal(data, &catalog); err != nil {
-		return nil, NewConfigLoadError(err)
-	}
+		var catalog InfrastructureCatalog
+		if err := yaml.Unmarshal(data, &catalog); err != nil {
+			cachedCatalogErr = NewConfigLoadError(err)
+			return
+		}
 
-	if err := catalog.validate(); err != nil {
-		return nil, NewConfigLoadError(err)
-	}
+		if err := catalog.validate(); err != nil {
+			cachedCatalogErr = NewConfigLoadError(err)
+			return
+		}
 
-	return &catalog, nil
+		cachedCatalog = &catalog
+	})
+	return cachedCatalog, cachedCatalogErr
 }
 
 // GetHostArtifact finds a host artifact entry by name.
@@ -312,6 +343,25 @@ func (c *InfrastructureCatalog) GetClusterComponent(name string) (*ChartMetadata
 		}
 	}
 	return nil, NewSoftwareNotFoundError(name)
+}
+
+// MustGetClusterComponent returns the named cluster chart from the embedded
+// catalog. It panics if the catalog cannot be loaded or the chart is not
+// present — both conditions are impossible at runtime because the catalog
+// is embedded into the binary and validated at load time. Callers that
+// reference catalog entries by literal name (steps, RSL defaults, manifest
+// rendering) use this to avoid threading uninteresting errors through every
+// call site.
+func MustGetClusterComponent(name string) *ChartMetadata {
+	catalog, err := LoadInfrastructureCatalog()
+	if err != nil {
+		panic(fmt.Sprintf("infrastructure catalog: %v", err))
+	}
+	chart, err := catalog.GetClusterComponent(name)
+	if err != nil {
+		panic(fmt.Sprintf("infrastructure catalog: %v", err))
+	}
+	return chart
 }
 
 // HostNames returns the names of all host artifacts in the catalog.
@@ -379,6 +429,12 @@ func (cm *ChartMetadata) validate() error {
 	}
 	if cm.Chart == "" {
 		return fmt.Errorf("missing chart reference")
+	}
+	if cm.Namespace == "" {
+		return fmt.Errorf("missing namespace")
+	}
+	if cm.Release == "" {
+		return fmt.Errorf("missing release")
 	}
 	if len(cm.Versions) == 0 {
 		return fmt.Errorf("no versions declared")

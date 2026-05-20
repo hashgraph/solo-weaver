@@ -307,6 +307,8 @@ cluster:
   type: classic
   repo: 'https://grafana.github.io/helm-charts'
   chart: 'grafana/alloy'
+  namespace: 'grafana-alloy'
+  release: 'grafana-alloy'
   default: "1.4.0"
   versions:
     1.4.0:
@@ -317,6 +319,8 @@ cluster:
   type: classic
   repo: 'https://charts.releases.teleport.dev'
   chart: 'teleport/teleport-kube-agent'
+  namespace: 'teleport-agent'
+  release: 'teleport-agent'
   default: "18.6.4"
   versions:
     18.6.4:
@@ -327,6 +331,8 @@ cluster:
   type: classic
   repo: 'https://metallb.github.io/metallb'
   chart: 'metallb/metallb'
+  namespace: 'metallb-system'
+  release: 'metallb'
   default: "0.15.2"
   versions:
     0.15.2:
@@ -337,6 +343,8 @@ cluster:
   type: classic
   repo: 'https://kubernetes-sigs.github.io/metrics-server'
   chart: 'metrics-server/metrics-server'
+  namespace: 'kube-system'
+  release: 'metrics-server'
   default: "3.13.0"
   versions:
     3.13.0:
@@ -347,6 +355,8 @@ cluster:
   type: classic
   repo: 'https://charts.external-secrets.io'
   chart: 'external-secrets/external-secrets'
+  namespace: 'external-secrets'
+  release: 'external-secrets'
   default: "0.20.2"
   versions:
     0.20.2:
@@ -356,6 +366,8 @@ cluster:
 - name: node-exporter
   type: oci
   chart: 'oci://registry-1.docker.io/bitnamicharts/node-exporter'
+  namespace: 'node-exporter'
+  release: 'node-exporter'
   default: "4.5.19"
   versions:
     4.5.19:
@@ -365,8 +377,21 @@ cluster:
 - name: prometheus-operator-crds
   type: oci
   chart: 'oci://ghcr.io/prometheus-community/charts/prometheus-operator-crds'
+  namespace: 'grafana-alloy'
+  release: 'prometheus-operator-crds'
   default: "24.0.1"
   versions:
     24.0.1:
       algorithm: 'sha256'
       checksum: 'e940c5ce899ec16aa6d868ecf49e2c21193728bef3a0a453b29e05e2d1601288'
+
+- name: solo-operator
+  type: oci
+  chart: 'oci://ghcr.io/hashgraph/charts/solo-operator'
+  namespace: 'solo-operator'
+  release: 'solo-operator'
+  default: "0.3.1"
+  versions:
+    0.3.1:
+      algorithm: 'sha256'
+      checksum: 'b77cb63d456e472d5ae8e1759e85fd6e4fbdeae12398b20f9df97d54f036a73a'
