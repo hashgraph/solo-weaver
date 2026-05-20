@@ -2,8 +2,8 @@
 
 > **Issues:** https://github.com/hashgraph/solo-weaver/issues/514 and https://github.com/hashgraph/solo-weaver/issues/515
 > **Epic:** #498 — Two-Binary Build Layout
-> **Branch:** 00514-cli-main-entry-point
-> **Base:** origin/main @ 484a0aa
+> **Story branch:** `00514-cli-main-entry-point`
+> **Epic branch (PR base):** `feature/00498-two-binary-build-layout` (branched from `origin/main` @ `7b410a5`)
 > **PR closes:** #514, #515
 
 ## Summary
@@ -13,14 +13,16 @@ Land the directory layout and entry points for both binaries under epic #498 in 
 1. **#514 — CLI rename.** Move `cmd/weaver/` → `cmd/cli/` so the `solo-provisioner` binary is built from a path that matches its role. The Cobra tree, subcommands, and binary name are unchanged — only file locations and the Go import paths under `cmd/weaver/...` move.
 2. **#515 — Daemon split.** Create `cmd/daemon/main.go` with its own minimal Cobra root command, producing a separate `solo-provisioner-daemon` binary. Remove the `daemon` subcommand from the CLI's Cobra tree and unregister `daemonCmd` from the CLI root. This is where the attack-surface constraint (each binary contains only what it needs) is actually enforced.
 
-This is the first PR in epic #498's four-story arc:
+This is the first PR in epic #498's four-story arc. Story-body quotes (verbatim from each issue) so scope boundaries are pinned down:
 
-| # | Story | Status |
-|---|---|---|
-| #514 | `cmd/cli/main.go` for `solo-provisioner` | **this PR** |
-| #515 | `cmd/daemon/main.go` for `solo-provisioner-daemon` (own Cobra root) | **this PR** |
-| #516 | Taskfile build targets for both binaries per platform | follow-up |
-| #517 | CI/CD to publish both binaries in the same release | follow-up |
+| # | Story | Body excerpt | Status |
+|---|---|---|---|
+| #514 | `cmd/cli/main.go` for `solo-provisioner` | "Create `cmd/cli/main.go` as the entry point for the `solo-provisioner` CLI binary, wiring up the existing Cobra command tree." | **this PR** |
+| #515 | `cmd/daemon/main.go` for `solo-provisioner-daemon` | "Create `cmd/daemon/main.go` as the entry point for the `solo-provisioner-daemon` binary with its own Cobra root command." | **this PR** |
+| #516 | Taskfile build targets for both binaries per platform | "Update `Taskfile.yaml` so build targets produce both `solo-provisioner` and `solo-provisioner-daemon` binaries for all target platforms (linux/amd64, linux/arm64)." | follow-up |
+| #517 | CI/CD to publish both binaries in the same release | "Update CI/CD pipeline to publish both `solo-provisioner` and `solo-provisioner-daemon` as **named artifacts** in the same GitHub release tag." | follow-up |
+
+The framing matters: #516 wants **build targets** (plural) producing both binaries — i.e., parallel, independent target families, not a single aggregate target. #517 wants **named artifacts**, not a `bin/*` glob — i.e., the release config explicitly lists each binary by name. This shape preserves the option to release them independently later (different versions, different tags) without restructuring the pipeline again.
 
 ### Design constraints
 
@@ -29,10 +31,10 @@ Setting the design contract for the epic so the work doesn't drift from it:
 1. **Two binaries, not one — required for safe upgrades.** The daemon must be replaceable independently of the CLI.
 2. **Each binary includes only the object code needed for its own features.** Attack-surface minimization: the daemon binary must not bundle CLI-only packages, and vice versa.
 3. **Layout is symmetric: `cmd/cli/main.go` and `cmd/daemon/main.go`.** Same repo, same code base, two compiled executables.
-4. **Same build and release process** — one Task pipeline, one GitHub release tag (#516/#517).
-5. **CLI ↔ daemon comms via a unix socket** (future, beyond this epic). Not in scope, but it's why the daemon needs to exist as a separate long-running process.
+4. **Independent build and release per binary.** Each binary gets its own Taskfile target family (`build:cli:*` and `build:daemon:*` — #516) and is published as its own named release artifact (#517). They may share the same release tag today, but the design preserves the option to ship them at different cadences, different versions, or different tags later — no further pipeline restructure required.
+5. **Daemon is a long-running process; CLI is one-shot.** The daemon survives across CLI invocations; the CLI talks to it (or merely co-exists with it) at runtime. The specific runtime contract between them — IPC mechanism, message format, compatibility/protocol versioning — is a future concern, out of scope for this epic.
 
-This PR addresses constraint #3 fully (both `cmd/cli/` and `cmd/daemon/` exist at the end) and constraint #2 (the daemon binary will not import any `cmd/cli/...` package). Constraints #1, #4, and #5 are about release/upgrade pipelines and IPC — out of scope here.
+This PR addresses constraint #3 fully (both `cmd/cli/` and `cmd/daemon/` exist at the end) and constraint #2 (the daemon binary will not import any `cmd/cli/...` package). Constraints #1, #4, and #5 are about release/upgrade pipelines and runtime — out of scope here.
 
 ## Problem
 
@@ -60,8 +62,9 @@ Current state:
 | Does the daemon share any of `cmd/cli/commands/common`? | **No.** Importing that package would pull in TUI + workflow engine — explicit violation of the attack-surface constraint. The daemon has its own root with no `PersistentPreRunE`, so it doesn't need `SkipGlobalChecks` at all. Other helpers (`FlagConfig`, `FlagLogLevel`, `FlagVersion`) are tiny — duplicate the few flag descriptors needed, or factor into a tiny `internal/cmdflags/` package if duplication exceeds ~30 LOC. |
 | Where does the daemon's bootstrap (config + log + proxy init) live? | Duplicate the ~30 lines needed from `cmd/cli/commands/root.go:initConfig` into `cmd/daemon/main.go`. The CLI's `initConfig` does too much TUI-aware work to share cleanly. A future refactor can extract a shared bootstrap helper if maintenance pain shows up. |
 | Daemon's log filename? | `solo-provisioner-daemon.log`, set directly by `cmd/daemon/main.go`. The CLI's `os.Args[1] == "daemon"` branch (`cmd/cli/commands/root.go:173-178`) becomes dead code and gets removed. |
+| Touch the `daemon` Cobra subcommand? | **Yes — this is the heart of #515.** Delete `cmd/cli/commands/daemon.go`, remove `rootCmd.AddCommand(daemonCmd)` from `cmd/cli/commands/root.go:97`, and move the signal-handling `RunE` body to `cmd/daemon/main.go`. After this PR, `solo-provisioner daemon` returns "unknown command"; the daemon runs only as the standalone `solo-provisioner-daemon` binary. This is the change that physically enforces attack-surface constraint #2. |
 | Touch `cmd/weaver-shim/`? | No. Empty stub; unrelated cleanup. |
-| Daemon build target in Taskfile? | Minimum-viable: add a parallel `build:daemon`/`hash:daemon:*`/`sign:daemon:*` set so the daemon entry is actually buildable for review. **Do not** wire the daemon into the top-level `task build` aggregator — that aggregation belongs to #516. CI keeps building only the CLI until #516 lands. |
+| Daemon build target in Taskfile? | Add a parallel `build:daemon`/`hash:daemon:*`/`sign:daemon:*` task family so the daemon entry is buildable for review. These task families are the **target design** (matching #516's "build targets" plural), not a stopgap. **Do not** touch the existing top-level `build`/`hash`/`sign` aggregators or rename `build:weaver:*` to `build:cli:*` — both are explicit #516 concerns (target restructure across the Taskfile). CI keeps building only the CLI until #516 lands. |
 | Update `CLAUDE.md`? | Yes — update the "CLI Layer" path reference and add a one-line note about the daemon binary's location. |
 | Binary name change? | No. CLI stays `solo-provisioner`; daemon is `solo-provisioner-daemon`. Both match the epic's naming. |
 
@@ -89,11 +92,11 @@ Current state:
 - [ ] In `cmd/cli/commands/root.go`:
   - Remove `rootCmd.AddCommand(daemonCmd)` (currently line 97).
   - Replace the conditional log-filename block (`os.Args[1] == "daemon"`) with a flat `logConfig.Filename = "solo-provisioner.log"`.
-- [ ] Add Taskfile targets for the daemon binary, mirroring the existing `build:weaver`/`hash:weaver`/`sign:weaver` family:
+- [ ] Add a parallel Taskfile target family for the daemon, mirroring `build:weaver:*`/`hash:weaver:*`/`sign:weaver:*` in shape:
   - `build:daemon` (and `build:daemon:all` / `build:daemon:all:os` / `build:daemon:all:arch` internals) producing `bin/solo-provisioner-daemon-{OS}-{ARCH}` from `./cmd/daemon`.
   - `hash:daemon:*` producing `solo-provisioner-daemon-{OS}-{ARCH}.sha256`.
-  - `sign:daemon:*` producing matching `.asc` files.
-  - **Do not** modify the top-level `build`, `hash`, or `sign` aggregator tasks. Daemon targets are explicit-invocation only in this PR; aggregation is #516.
+  - `sign:daemon:*` producing matching `.asc` files for both the binary and its `.sha256`.
+  - **Do not** modify the top-level `build`/`hash`/`sign` aggregators, do **not** rename `build:weaver:*` to `build:cli:*`, and do **not** touch `.releaserc`. The Taskfile target-name unification and the release-config artifact-naming work are explicit #516/#517 concerns. CI keeps building only the CLI until #516 lands.
 - [ ] Verify `grep -rn "hashgraph/solo-weaver/cmd/cli" cmd/daemon/` returns nothing — the daemon binary must not depend on any `cmd/cli/...` package.
 
 ### Part C — Docs
@@ -104,7 +107,7 @@ Current state:
 
 - Multi-target Taskfile aggregation (top-level `task build` producing both binaries) — #516.
 - CI/CD release pipeline updates so both binaries land in the same GitHub Release — #517.
-- The CLI ↔ daemon unix-socket IPC protocol and protocol-version constant — future epic.
+- The CLI ↔ daemon runtime contract (IPC mechanism, message format, protocol versioning) — future epic.
 - Deleting `cmd/weaver-shim/` — unrelated cleanup.
 - Updating historical plan/review docs under `docs/claude/{plans,reviews}/*.md` that mention old `cmd/weaver/...` paths.
 - Any change to CLI subcommand logic, flags, or behavior (other than removing the daemon subcommand).
@@ -140,7 +143,7 @@ Current state:
 
 - **Risk — silent import-path miss.** A single un-rewritten `cmd/weaver/` import would fail `go build`; mitigated by the sanity grep + clean rebuild.
 - **Risk — daemon pulls in TUI deps via a non-obvious transitive import.** Mitigated by the `go list -deps` check in the test plan. If it surfaces, the fix is to relocate the offending package, not to special-case the daemon.
-- **Risk — release pipeline starts publishing the daemon prematurely.** Mitigated by leaving the top-level `task build` aggregator untouched. The release pipeline calls `task hash → task build → build:weaver:all`, so only the CLI is in `bin/*` until #516 lands.
+- **Risk — release pipeline starts publishing the daemon prematurely.** Mitigated by leaving the top-level `task build` aggregator and `.releaserc` untouched. The release pipeline calls `task hash → task build → build:weaver:all`, so only the CLI is in `bin/*` until #516 lands; even if a daemon binary did sneak into `bin/`, `.releaserc`'s `bin/*` glob and the eventual #517 named-artifact list together govern what actually gets attached to the release.
 - **Risk — `cmd/weaver-shim/` (empty stub) breaks `go vet ./...` or `go test ./...` because the package has no Go files.** Mitigated: it has `package main` declared, which keeps it valid; leave it alone.
 - **Risk — conflict with parallel work on the same files.** Low — the rename touches ~50 files but the changes are mechanical and self-contained. Coordinate by landing this first.
 - **Rollback:** Revert the merge commit. The change is mechanical, self-contained, and does not modify state on disk for existing installs.
@@ -149,7 +152,7 @@ Current state:
 
 - Issues: #514 (CLI entry), #515 (daemon entry)
 - Epic: #498 — Two-Binary Build Layout
-- Sibling stories not in this PR: #516 (Taskfile aggregation), #517 (CI/CD release)
+- Sibling stories not in this PR: #516 (Taskfile build targets for both binaries; #516 owns the `build:weaver:*` → `build:cli:*` rename and any aggregator restructure), #517 (CI/CD publishing both binaries as named release artifacts; #517 owns `.releaserc` asset-list changes and the release workflow update)
 - Current code:
   - `cmd/weaver/main.go:13-20`
   - `cmd/weaver/commands/root.go:48-62`, `root.go:90-98`, `root.go:173-178`
