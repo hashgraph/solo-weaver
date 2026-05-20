@@ -29,16 +29,18 @@ import (
 const KeyRequireGlobalChecks = "requireGlobalChecks"
 
 // ensureLogConfig returns the log configuration with file logging enabled
-// and sensible defaults for directory and filename.
+// and a directory default. The CLI's log filename is hardcoded — not
+// config-overridable — so it stays distinct from the daemon's log file
+// ("solo-provisioner-daemon.log") and the summary table's logPath always
+// reflects where the CLI actually writes. See the matching hardcode in
+// cmd/cli/commands/root.go's initConfig.
 func ensureLogConfig() logx.LoggingConfig {
 	cfg := pkgconfig.Get().Log
 	cfg.FileLogging = true
 	if cfg.Directory == "" {
 		cfg.Directory = models.Paths().LogsDir
 	}
-	if cfg.Filename == "" {
-		cfg.Filename = "solo-provisioner.log"
-	}
+	cfg.Filename = "solo-provisioner.log"
 	return cfg
 }
 

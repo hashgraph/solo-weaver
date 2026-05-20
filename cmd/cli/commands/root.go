@@ -168,9 +168,12 @@ func initConfig(ctx context.Context) {
 	if logConfig.Directory == "" {
 		logConfig.Directory = models.Paths().LogsDir
 	}
-	if logConfig.Filename == "" {
-		logConfig.Filename = "solo-provisioner.log"
-	}
+	// Hardcoded, not config-overridable: keeps the CLI's log file distinct from
+	// the daemon's (cmd/daemon writes to "solo-provisioner-daemon.log"), avoids
+	// any chance of CLI + daemon interleaving into a shared file when both run on
+	// the same host, and keeps the summary table's logPath in sync with where
+	// the CLI actually writes (see ensureLogConfig in cmd/cli/commands/common/run.go).
+	logConfig.Filename = "solo-provisioner.log"
 	// Ensure the log directory exists with setgid + weaver group before lumberjack touches
 	// it. On first run the directory does not yet exist; MkdirAll creates it, then chown+chmod
 	// give it the right ownership so that files created inside (including the log file below
