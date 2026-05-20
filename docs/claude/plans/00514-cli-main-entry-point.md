@@ -3,7 +3,7 @@
 > **Issues:** https://github.com/hashgraph/solo-weaver/issues/514 and https://github.com/hashgraph/solo-weaver/issues/515
 > **Epic:** #498 — Two-Binary Build Layout
 > **Story branch:** `00514-cli-main-entry-point`
-> **Epic branch (PR base):** `feature/00498-two-binary-build-layout` (branched from `origin/main` @ `7b410a5`)
+> **Epic branch (PR base):** `00498-feat-two-binary-build-layout` (branched from `origin/main` @ `7b410a5`)
 > **PR closes:** #514, #515
 
 ## Summary
