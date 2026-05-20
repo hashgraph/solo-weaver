@@ -81,9 +81,10 @@ func initConfig(ctx context.Context) {
 	if logConfig.Directory == "" {
 		logConfig.Directory = models.Paths().LogsDir
 	}
-	if logConfig.Filename == "" {
-		logConfig.Filename = "solo-provisioner-daemon.log"
-	}
+	// Hardcoded, not config-overridable: the CLI's summary table directs operators
+	// to "solo-provisioner-daemon.log" (see cmd/cli/commands/common/run.go), and
+	// the CLI + daemon share the same config file but must not share a log file.
+	logConfig.Filename = "solo-provisioner-daemon.log"
 
 	// Ensure the log directory exists with setgid + weaver group so files
 	// created inside inherit the weaver group automatically.
