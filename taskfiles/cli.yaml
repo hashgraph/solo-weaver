@@ -112,14 +112,24 @@ tasks:
       - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}
 
   run:cli:
+    desc: "Build the CLI for the host OS/ARCH and run it. Args after -- are passed through via .CLI_ARGS."
     deps:
-      - "build"
+      - "generate"
+      - task: "build:cli"
+        vars:
+          GOOS: "{{OS}}"
+          GOARCH: "{{ARCH}}"
     cmds:
       - "bin/solo-provisioner-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
 
   run:cli:skipdl:
+    desc: "Same as run:cli with _LOG_LEVEL=Debug (skip-download dev loop)."
     deps:
-      - "build"
+      - "generate"
+      - task: "build:cli"
+        vars:
+          GOOS: "{{OS}}"
+          GOARCH: "{{ARCH}}"
     env:
       _LOG_LEVEL: "Debug"
     cmds:
