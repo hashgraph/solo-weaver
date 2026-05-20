@@ -64,7 +64,7 @@ Current state:
 | Daemon's log filename? | `solo-provisioner-daemon.log`, set directly by `cmd/daemon/main.go`. The CLI's `os.Args[1] == "daemon"` branch (`cmd/cli/commands/root.go:173-178`) becomes dead code and gets removed. |
 | Touch the `daemon` Cobra subcommand? | **Yes — this is the heart of #515.** Delete `cmd/cli/commands/daemon.go`, remove `rootCmd.AddCommand(daemonCmd)` from `cmd/cli/commands/root.go:97`, and move the signal-handling `RunE` body to `cmd/daemon/main.go`. After this PR, `solo-provisioner daemon` returns "unknown command"; the daemon runs only as the standalone `solo-provisioner-daemon` binary. This is the change that physically enforces attack-surface constraint #2. |
 | Touch `cmd/weaver-shim/`? | No. Empty stub; unrelated cleanup. |
-| Daemon build target in Taskfile? | Add a parallel `build:daemon`/`hash:daemon:*`/`sign:daemon:*` task family so the daemon entry is buildable for review. These task families are the **target design** (matching #516's "build targets" plural), not a stopgap. **Do not** touch the existing top-level `build`/`hash`/`sign` aggregators or rename `build:weaver:*` to `build:cli:*` — both are explicit #516 concerns (target restructure across the Taskfile). CI keeps building only the CLI until #516 lands. |
+| Daemon build target in Taskfile? | Extract both binaries' build/hash/sign families into `taskfiles/cli.yaml` and `taskfiles/daemon.yaml` (matching the repo's existing `taskfiles/*.yaml` include pattern used for `alloy`, `teleport`, `proxy`, `tests`, etc.). Rename `build:weaver:*`/`hash:weaver:*`/`sign:weaver:*` → `build:cli:*`/`hash:cli:*`/`sign:cli:*` for symmetry with the new `build:daemon:*` family. Top-level `build`/`hash`/`sign` aggregators are retargeted to call `:cli:all`. Top-level aggregators continue to build only the CLI; daemon is built via explicit `task build:daemon`. Wiring the daemon into the top-level aggregator is deferred to #516. |
 | Update `CLAUDE.md`? | Yes — update the "CLI Layer" path reference and add a one-line note about the daemon binary's location. |
 | Binary name change? | No. CLI stays `solo-provisioner`; daemon is `solo-provisioner-daemon`. Both match the epic's naming. |
 
@@ -92,11 +92,11 @@ Current state:
 - [ ] In `cmd/cli/commands/root.go`:
   - Remove `rootCmd.AddCommand(daemonCmd)` (currently line 97).
   - Replace the conditional log-filename block (`os.Args[1] == "daemon"`) with a flat `logConfig.Filename = "solo-provisioner.log"`.
-- [ ] Add a parallel Taskfile target family for the daemon, mirroring `build:weaver:*`/`hash:weaver:*`/`sign:weaver:*` in shape:
-  - `build:daemon` (and `build:daemon:all` / `build:daemon:all:os` / `build:daemon:all:arch` internals) producing `bin/solo-provisioner-daemon-{OS}-{ARCH}` from `./cmd/daemon`.
-  - `hash:daemon:*` producing `solo-provisioner-daemon-{OS}-{ARCH}.sha256`.
-  - `sign:daemon:*` producing matching `.asc` files for both the binary and its `.sha256`.
-  - **Do not** modify the top-level `build`/`hash`/`sign` aggregators, do **not** rename `build:weaver:*` to `build:cli:*`, and do **not** touch `.releaserc`. The Taskfile target-name unification and the release-config artifact-naming work are explicit #516/#517 concerns. CI keeps building only the CLI until #516 lands.
+- [ ] Extract both binaries' build/hash/sign families into the repo's existing `taskfiles/*.yaml` include pattern:
+  - `taskfiles/cli.yaml` — `build:cli`/`hash:cli:*`/`sign:cli:*`/`run:cli`/`run:cli:skipdl` (renamed from the existing `*:weaver:*` family; `run:cli` also fixes a pre-existing stale `bin/weaver-*` path that should always have been `bin/solo-provisioner-*`).
+  - `taskfiles/daemon.yaml` — `build:daemon`/`hash:daemon:*`/`sign:daemon:*` producing `bin/solo-provisioner-daemon-{OS}-{ARCH}` from `./cmd/daemon`.
+  - Root `Taskfile.yaml` — add `includes:` entries for both with `flatten: true`; retarget the top-level `build`/`hash`/`sign` aggregators to call `:cli:all`. The top-level aggregators continue to build only the CLI; daemon is built via explicit `task build:daemon`. Wiring the daemon into the top-level aggregator is deferred to #516; `.releaserc` named-artifact changes are deferred to #517.
+- [ ] Update `.github/workflows/zxc-uat-test.yaml` to call `task build:cli` (the renamed task), since it currently calls `task build:weaver` directly.
 - [ ] Verify `grep -rn "hashgraph/solo-weaver/cmd/cli" cmd/daemon/` returns nothing — the daemon binary must not depend on any `cmd/cli/...` package.
 
 ### Part C — Docs
@@ -117,7 +117,7 @@ Current state:
 
 - [ ] Lint: `task lint:check` passes.
 - [ ] License: `task license:check` passes (preserved SPDX headers on moved files; new SPDX header on `cmd/daemon/main.go`).
-- [ ] Build CLI: `task build:weaver GOOS=linux GOARCH=amd64` still produces `bin/solo-provisioner-linux-amd64`.
+- [ ] Build CLI: `task build:cli GOOS=linux GOARCH=amd64` produces `bin/solo-provisioner-linux-amd64`.
 - [ ] Build daemon: `task build:daemon GOOS=linux GOARCH=amd64` produces `bin/solo-provisioner-daemon-linux-amd64`.
 - [ ] Unit (macOS-safe): `go test -race -tags='!integration' ./cmd/cli/... ./cmd/daemon/...` — relocated `root_test.go` runs green; any new daemon tests run green.
 - [ ] Unit (full, in UTM VM): `task vm:test:unit` passes.
@@ -143,7 +143,7 @@ Current state:
 
 - **Risk — silent import-path miss.** A single un-rewritten `cmd/weaver/` import would fail `go build`; mitigated by the sanity grep + clean rebuild.
 - **Risk — daemon pulls in TUI deps via a non-obvious transitive import.** Mitigated by the `go list -deps` check in the test plan. If it surfaces, the fix is to relocate the offending package, not to special-case the daemon.
-- **Risk — release pipeline starts publishing the daemon prematurely.** Mitigated by leaving the top-level `task build` aggregator and `.releaserc` untouched. The release pipeline calls `task hash → task build → build:weaver:all`, so only the CLI is in `bin/*` until #516 lands; even if a daemon binary did sneak into `bin/`, `.releaserc`'s `bin/*` glob and the eventual #517 named-artifact list together govern what actually gets attached to the release.
+- **Risk — release pipeline starts publishing the daemon prematurely.** Mitigated by leaving the top-level `task build` aggregator and `.releaserc` untouched (other than retargeting `build:weaver:all` → `build:cli:all` to follow the rename). The release pipeline calls `task hash → task build → build:cli:all`, so only the CLI is in `bin/*` until #516 lands; even if a daemon binary did sneak into `bin/`, `.releaserc`'s `bin/*` glob and the eventual #517 named-artifact list together govern what actually gets attached to the release.
 - **Risk — `cmd/weaver-shim/` (empty stub) breaks `go vet ./...` or `go test ./...` because the package has no Go files.** Mitigated: it has `package main` declared, which keeps it valid; leave it alone.
 - **Risk — conflict with parallel work on the same files.** Low — the rename touches ~50 files but the changes are mechanical and self-contained. Coordinate by landing this first.
 - **Rollback:** Revert the merge commit. The change is mechanical, self-contained, and does not modify state on disk for existing installs.
@@ -152,7 +152,7 @@ Current state:
 
 - Issues: #514 (CLI entry), #515 (daemon entry)
 - Epic: #498 — Two-Binary Build Layout
-- Sibling stories not in this PR: #516 (Taskfile build targets for both binaries; #516 owns the `build:weaver:*` → `build:cli:*` rename and any aggregator restructure), #517 (CI/CD publishing both binaries as named release artifacts; #517 owns `.releaserc` asset-list changes and the release workflow update)
+- Sibling stories not in this PR: #516 (wires the daemon into the top-level `task build`/`hash`/`sign` aggregators so a single `task build` produces both binaries — the per-binary task families and the `build:weaver:* → build:cli:*` rename land in this PR; only the aggregator wiring is #516's job), #517 (CI/CD publishing both binaries as named release artifacts; owns `.releaserc` asset-list changes and the release workflow update)
 - Current code:
   - `cmd/weaver/main.go:13-20`
   - `cmd/weaver/commands/root.go:48-62`, `root.go:90-98`, `root.go:173-178`

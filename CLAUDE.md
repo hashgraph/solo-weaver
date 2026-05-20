@@ -76,7 +76,7 @@ This project uses [Task](https://taskfile.dev) as the build system. All commands
 
 ```bash
 # Build for current platform
-task build:weaver GOOS=linux GOARCH=amd64
+task build:cli GOOS=linux GOARCH=amd64
 
 # Build all platforms
 task build
@@ -136,9 +136,9 @@ task vm:test:integration TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'
 
 ## Architecture
 
-### CLI Layer (`cmd/weaver/`)
+### CLI Layer (`cmd/cli/`)
 
-Entry point is `cmd/weaver/main.go`. Commands use [Cobra](https://github.com/spf13/cobra) organized hierarchically:
+Entry point is `cmd/cli/main.go`, producing the `solo-provisioner` binary. Commands use [Cobra](https://github.com/spf13/cobra) organized hierarchically:
 
 ```
 solo-provisioner
@@ -159,6 +159,10 @@ solo-provisioner
 Root persistent flags: `--config`, `--output`, `--version`/`-v`, `--log-level`, `--force`, `--skip-hardware-checks` (hidden), `--verbose`/`-V` (expanded step-by-step TUI output), `--non-interactive`.
 
 Command-specific flags (on `block`, `kube`): `--profile`. Error control flags (on workflow commands like `block node`): `--stop-on-error`, `--rollback-on-error`, `--continue-on-error`.
+
+### Daemon Layer (`cmd/daemon/`)
+
+Entry point is `cmd/daemon/main.go`, producing the standalone `solo-provisioner-daemon` binary. The daemon is a long-running process started by the `solo-provisioner-daemon.service` systemd unit; it has its own minimal Cobra root (no shared `commands/` subtree with the CLI) and intentionally does **not** import any package under `cmd/cli/`. Logs to `solo-provisioner-daemon.log`. Persistent flags: `--config`, `--log-level`, `--version`/`-v`, `--output`/`-o`.
 
 ### Business Logic (`internal/`)
 

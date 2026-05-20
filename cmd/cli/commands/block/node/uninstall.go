@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package node
+
+import (
+	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/spf13/cobra"
+)
+
+var uninstallCmd = &cobra.Command{
+	Use:     "uninstall",
+	Aliases: []string{"setup"}, // deprecated, will be removed soon
+	Short:   "Uninstall Hedera Block Node",
+	Long:    "Uninstall Hedera Block Node",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		inputs, err := prepareBlocknodeInputs(cmd, args)
+		if err != nil {
+			return err
+		}
+
+		err = initializeDependencies()
+		if err != nil {
+			return err
+		}
+
+		intent := models.Intent{
+			Action: models.ActionUninstall,
+			Target: models.TargetBlockNode,
+		}
+
+		logx.As().Info().
+			Any("intent", intent).
+			Any("inputs", inputs).
+			Msg("Uninstalling Hedera Block Node")
+
+		handler, err := blockNodeHandler.ForAction(intent.Action)
+		if err != nil {
+			return err
+		}
+
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return handler.HandleIntent(cmd.Context(), intent, *inputs)
+		}); err != nil {
+			return err
+		}
+
+		logx.As().Info().Msg("Successfully uninstalled Hedera Block Node")
+
+		return nil
+	},
+}
+
+func init() {
+	common.FlagWithStorageReset().SetVarP(uninstallCmd, &flagWithReset, false)
+}
