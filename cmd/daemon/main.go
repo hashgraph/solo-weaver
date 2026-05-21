@@ -12,6 +12,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/google/uuid"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/pkg/config"
@@ -38,16 +39,14 @@ var (
 
 			logx.As().Info().Msg("Solo Provisioner daemon started")
 
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
+			defer stop()
 
-			select {
-			case sig := <-sigChan:
-				logx.As().Info().Str("signal", sig.String()).Msg("Solo Provisioner daemon shutting down")
-			case <-cmd.Context().Done():
-				logx.As().Info().Msg("Solo Provisioner daemon context cancelled")
+			if err := daemon.New(models.Paths()).Run(ctx); err != nil {
+				return errorx.InternalError.Wrap(err, "daemon error")
 			}
 
+			logx.As().Info().Msg("Solo Provisioner daemon stopped")
 			return nil
 		},
 	}
