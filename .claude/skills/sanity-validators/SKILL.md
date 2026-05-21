@@ -113,13 +113,14 @@ persisted fields, also add a validation pass at the load boundary.
 `ValidateUsername` (and any future validator that permits `.`) rejects `..` as
 a substring before iterating characters. Don't reorder these.
 
-### 5. Shell metachars are a strict superset of what the charset rejects
+### 5. Shell metachars are a separate, smaller gate than the full charset check
 
-`shellMetachars = [;&|$\x60<>(){}[\]*?~]` is intentionally a separate gate so
+`shellMetachars = [;&|$\x60<>(){}[\]*?~]` is intentionally checked separately so
 the error message can distinguish "contains shell metacharacter" from "contains
-invalid character". Both produce safe behavior; only the error text differs. Do
-not collapse them into a single regex unless you also change the error
-messages.
+invalid character". This set is narrower than what the per-validator charset
+rejects: many non-shell characters are still invalid there. Both checks produce
+safe behavior; this split only affects error specificity. Do not collapse them
+into a single regex unless you also change the error messages.
 
 ---
 
