@@ -39,7 +39,7 @@ type defaultOperations struct{}
 func NewModule(name string) (Module, error) {
 	// Validate module name to prevent command injection
 	// Kernel module names should only contain alphanumeric, underscore, and hyphen
-	sanitized, err := sanity.ModuleName(name)
+	sanitized, err := sanity.SanitizeModuleName(name)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New(errInvalidModuleName, name, err)
 	}
@@ -123,7 +123,7 @@ var _ moduleOperations = (*defaultOperations)(nil)
 
 func (ops *defaultOperations) load(name string) error {
 	// Validate module name before passing to modprobe to prevent command injection
-	sanitized, err := sanity.ModuleName(name)
+	sanitized, err := sanity.SanitizeModuleName(name)
 	if err != nil {
 		return errorx.IllegalArgument.New(errInvalidModuleName, name, err)
 	}
@@ -136,7 +136,7 @@ func (ops *defaultOperations) load(name string) error {
 
 func (ops *defaultOperations) unload(name string) error {
 	// Validate module name before passing to modprobe to prevent command injection
-	sanitized, err := sanity.ModuleName(name)
+	sanitized, err := sanity.SanitizeModuleName(name)
 	if err != nil {
 		return errorx.IllegalArgument.New(errInvalidModuleName, name, err)
 	}
