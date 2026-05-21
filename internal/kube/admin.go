@@ -155,23 +155,21 @@ func (m *KubeConfigManager) configureCurrentUserKubeConfig() error {
 		return nil
 	}
 
-	// Validate and sanitize the SUDO_USER environment variable
-	// This is critical as environment variables can be manipulated by attackers
-	sanitizedUsername, err := sanity.Username(sudoUser)
-	if err != nil {
+	// Reject SUDO_USER values that would be unsafe to pass downstream. Env vars
+	// can be manipulated by attackers so this gate must run before any use of
+	// sudoUser in NSS lookups or path construction.
+	if err := sanity.ValidateUsername(sudoUser); err != nil {
 		return errorx.IllegalState.Wrap(err, "invalid SUDO_USER environment variable: %s", sudoUser)
 	}
 
-	// Lookup the sudo user using the sanitized username
-	currentUser, err := m.principalManager.LookupUserByName(sanitizedUsername)
+	currentUser, err := m.principalManager.LookupUserByName(sudoUser)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to lookup current user: %s", sanitizedUsername)
+		return errorx.IllegalState.Wrap(err, "failed to lookup current user: %s", sudoUser)
 	}
 
-	// Get the user's primary group
 	currentGroup := currentUser.PrimaryGroup()
 	if currentGroup == nil {
-		return errorx.IllegalState.New("current user %s has no primary group", sanitizedUsername)
+		return errorx.IllegalState.New("current user %s has no primary group", sudoUser)
 	}
 
 	// Determine kubeconfig directory using the validated user's home directory

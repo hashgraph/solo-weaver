@@ -14,7 +14,9 @@ import (
 )
 
 var (
-	ErrInvalidFilename = errorx.IllegalArgument.New("invalid filename")
+	// ErrInvalidName is returned by Sanitize* helpers when the input contains
+	// no valid characters and would otherwise sanitize to an empty string.
+	ErrInvalidName = errorx.IllegalArgument.New("invalid name")
 )
 
 // Security validation patterns for paths
@@ -73,33 +75,45 @@ func filterValidIdentifierChars(s string) (string, int) {
 // In addition to the identifier set (alphanumeric, underscore, hyphen), it
 // allows '.' because POSIX/Linux usernames commonly use the firstname.lastname
 // convention (e.g. via SSSD/AD-joined hosts). The '..' traversal sequence is
-// still rejected upstream in Username().
+// still rejected upstream in ValidateUsername().
 func isValidUsernameChar(b byte) bool {
 	return isValidIdentifierChar(b) || b == '.'
 }
 
-// filterValidUsernameChars filters a string to contain only valid username characters
-// Returns the filtered string and the count of valid characters
-func filterValidUsernameChars(s string) (string, int) {
-	sb := []byte(s)
-	j := 0
-	for _, b := range sb {
-		if isValidUsernameChar(b) {
-			sb[j] = b
-			j++
-		}
-	}
-	return string(sb[:j]), j
-}
-
-// Identifier validates and sanitizes a string to be a safe identifier.
-// It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens.
-// This is useful for validating module names, filenames, usernames, and other identifiers.
-// Returns an error if the identifier is empty or contains no valid characters after sanitization.
-func Identifier(s string) (string, error) {
+// SanitizeIdentifier strips any non-identifier characters from s and returns
+// the cleaned form. Identifier characters are alphanumerics, underscore, and
+// hyphen ([A-Za-z0-9_-]). Returns ErrInvalidName when no valid characters
+// remain. Use ValidateIdentifier when callers must reject (rather than rewrite)
+// inputs containing invalid characters.
+func SanitizeIdentifier(s string) (string, error) {
 	sanitized, count := filterValidIdentifierChars(s)
 	if count == 0 {
-		return "", ErrInvalidFilename
+		return "", ErrInvalidName
+	}
+	return sanitized, nil
+}
+
+// SanitizeFilename strips any non-filename characters from s and returns the
+// cleaned form. Today the character set matches SanitizeIdentifier; the
+// function is kept distinct so future relaxation (e.g. to permit '.' in real
+// filenames) can diverge without touching identifier or kernel-module callers.
+func SanitizeFilename(s string) (string, error) {
+	sanitized, count := filterValidIdentifierChars(s)
+	if count == 0 {
+		return "", ErrInvalidName
+	}
+	return sanitized, nil
+}
+
+// SanitizeModuleName strips any non-module-name characters from s and returns
+// the cleaned form. Today the character set matches SanitizeIdentifier; the
+// function is kept distinct so future tightening (e.g. to drop '-' since the
+// Linux kernel module convention is '_') can diverge without touching
+// identifier or filename callers.
+func SanitizeModuleName(s string) (string, error) {
+	sanitized, count := filterValidIdentifierChars(s)
+	if count == 0 {
+		return "", ErrInvalidName
 	}
 	return sanitized, nil
 }
@@ -218,59 +232,44 @@ func ValidateHostPort(s string) error {
 	return nil
 }
 
-// Filename is an alias for Identifier
-func Filename(s string) (string, error) {
-	return Identifier(s)
-}
-
-// ModuleName is an alias for Identifier
-func ModuleName(s string) (string, error) {
-	return Identifier(s)
-}
-
-// Username validates and sanitizes a username string to prevent security vulnerabilities.
+// ValidateUsername rejects any username string that would be unsafe to pass
+// downstream to OS / shell / Helm operations.
 //
-// This function is particularly important when dealing with environment variables like SUDO_USER
-// that could be manipulated by attackers. It ensures that the username:
-//  1. Is not empty (precondition check)
-//  2. Contains only alphanumeric characters (a-z, A-Z, 0-9), underscores, hyphens, and dots
-//  3. Does not contain path traversal sequences (e.g., "..", "/")
-//  4. Does not contain shell metacharacters or special characters
-//  5. Contains at least one valid character after sanitization
+// It is particularly important for environment variables like SUDO_USER, which
+// can be manipulated by attackers. ValidateUsername errors if the input:
+//  1. Is empty
+//  2. Contains a path-traversal sequence ("..")
+//  3. Contains shell metacharacters
+//  4. Contains any character outside the username set
+//     ([A-Za-z0-9_.-] — alphanumerics, underscore, hyphen, dot)
 //
-// Dots are permitted to support common firstname.lastname Linux account conventions
-// (e.g. SSSD/AD-joined hosts). Path traversal via ".." is still rejected.
+// Dots are permitted to support common firstname.lastname Linux account
+// conventions (e.g. via SSSD/AD-joined hosts); ".." is still rejected.
 //
-// Returns the sanitized username, or an error if the username is invalid or unsafe.
-func Username(s string) (string, error) {
+// Returns nil when the input is safe; the caller can then use s as-is.
+func ValidateUsername(s string) error {
 	if s == "" {
-		return "", errorx.IllegalArgument.New("username cannot be empty")
+		return errorx.IllegalArgument.New("username cannot be empty")
 	}
 
 	// Check for path traversal attempts
 	if strings.Contains(s, "..") {
-		return "", errorx.IllegalArgument.New("username contains path traversal sequences: %s", s)
+		return errorx.IllegalArgument.New("username contains path traversal sequences: %s", s)
 	}
 
 	// Check for shell metacharacters
 	if shellMetachars.MatchString(s) {
-		return "", errorx.IllegalArgument.New("username contains shell metacharacters: %s", s)
+		return errorx.IllegalArgument.New("username contains shell metacharacters: %s", s)
 	}
 
-	// Sanitize: only allow alphanumeric, underscore, hyphen, and dot
-	sanitized, count := filterValidUsernameChars(s)
-
-	if count == 0 {
-		return "", errorx.IllegalArgument.New("username contains no valid characters")
+	// Every byte must be a valid username character
+	for i := 0; i < len(s); i++ {
+		if !isValidUsernameChar(s[i]) {
+			return errorx.IllegalArgument.New("username contains invalid characters: %s", s)
+		}
 	}
 
-	// Verify the sanitized version matches the original
-	// This ensures no characters were removed during sanitization
-	if sanitized != s {
-		return "", errorx.IllegalArgument.New("username contains invalid characters: %s", s)
-	}
-
-	return sanitized, nil
+	return nil
 }
 
 // SanitizePath validates and sanitizes the given path according to strict security rules.
