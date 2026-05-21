@@ -373,4 +373,7 @@ docs/playbooks/production/dir-structure.txt
 integration-test-report.md
 integration-test.json
 .aiassistant
-.claude
+# Ignore per-user Claude Code config (settings.local.json, transient state),
+# but allow project-level shared skills under .claude/skills/ to be committed.
+.claude/*
+!.claude/skills/

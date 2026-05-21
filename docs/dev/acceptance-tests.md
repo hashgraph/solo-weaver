@@ -27,7 +27,7 @@ These tasks are designed to run inside any Linux VM — both the local UTM VM
 
 - UTM VM set up (`task vm:start`)
 - Cache proxy running (`task proxy:start`)
-- Binary built (`task build:weaver GOOS=linux GOARCH=arm64`)
+- Binary built (`task build:cli GOOS=linux GOARCH=arm64`)
 
 ## A. Core Block Node Lifecycle
 
@@ -38,7 +38,7 @@ Tests the primary user journey: install → upgrade → reset → uninstall.
 ```bash
 # On macOS:
 task vm:reset                              # Clean VM state
-task build:weaver GOOS=linux GOARCH=arm64  # Build latest binary
+task build:cli GOOS=linux GOARCH=arm64     # Build latest binary
 task proxy:start                           # Ensure proxy is running
 task vm:ssh:proxy                          # SSH with proxy tunnels
 ```

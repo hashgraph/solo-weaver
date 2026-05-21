@@ -460,7 +460,7 @@ jobs:
           # Build binary
           echo 'Building solo-provisioner binary...'
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
-          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task build:weaver GOOS=linux GOARCH=amd64
+          sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task build:cli GOOS=linux GOARCH=amd64
           echo "Binary built:"
           ls -la bin/solo-provisioner-linux-amd64
 

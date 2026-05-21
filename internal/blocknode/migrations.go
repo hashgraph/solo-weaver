@@ -13,7 +13,7 @@
 // This avoids intermediate chart upgrades, version-swapping, and repeated
 // StatefulSet deletions when multiple storage migrations apply at once.
 //
-// All block node migrations are registered centrally in cmd/weaver/commands/root.go RegisterMigrations().
+// All block node migrations are registered centrally in cmd/cli/commands/root.go RegisterMigrations().
 //
 // To add a new storage migration:
 //  1. Add an OptionalStorage entry to optionalStorages in optional_storage.go
