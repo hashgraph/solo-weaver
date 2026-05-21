@@ -49,6 +49,12 @@ includes:
   vm:
     taskfile: ./taskfiles/vm.yaml
     flatten: true
+  cli:
+    taskfile: ./taskfiles/cli.yaml
+    flatten: true
+  daemon:
+    taskfile: ./taskfiles/daemon.yaml
+    flatten: true
 
 tasks:
   clean:
@@ -98,7 +104,7 @@ tasks:
     cmds:
       - task: "clean"
       - task: "generate"
-      - task: "build:weaver:all"
+      - task: "build:cli:all"
     sources:
       - "**/*.go"
     generates:
@@ -109,7 +115,7 @@ tasks:
     deps:
       - "build"
     cmds:
-      - task: "hash:weaver:all"
+      - task: "hash:cli:all"
     sources:
       - "bin/solo-provisioner-linux-*"
       - "bin/solo-provisioner-darwin-*"
@@ -120,7 +126,7 @@ tasks:
     deps:
       - "build"
     cmds:
-      - task: "sign:weaver:all"
+      - task: "sign:cli:all"
 
   build:image:
     deps:
@@ -131,132 +137,10 @@ tasks:
   generate:
     cmds:
       - "go generate ./..."
-  
-  build:weaver:all:
-    desc: "Build the binary for all configured operating systems and architectures"
-    cmds:
-      - task: build:weaver:all:os
-  
-  build:weaver:all:os:
-    internal: true
-    desc: "Build the binary for all configured operating systems"
-    cmds:
-      - for:
-          var: OS
-        task: build:weaver:all:arch
-        vars:
-          GOOS: "{{.ITEM}}"
-  
-  build:weaver:all:arch:
-    internal: true
-    desc: "Build the binary for all configured architectures"
-    cmds:
-      - for:
-          var: ARCH
-        task: build:weaver
-        vars:
-          GOOS: "{{.GOOS}}"
-          GOARCH: "{{.ITEM}}"
-  
-  build:weaver:
-    desc: "Build the binary for the specified operating system and architecture (dev mode)"
-    env:
-      GOOS: "{{coalesce .GOOS OS}}"
-      GOARCH: "{{coalesce .GOARCH ARCH}}"
-    cmds:
-      - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/weaver
-      - cmd: chmod +x bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
 
-  hash:weaver:all:
-    desc: "Hash the binary binaries for all configured operating systems and architectures"
-    cmds:
-      - task: hash:weaver:all:os
-  
-  hash:weaver:all:os:
-    internal: true
-    desc: "Hash the binary binaries for all configured operating systems"
-    cmds:
-      - for:
-          var: OS
-        task: hash:weaver:all:arch
-        vars:
-          GOOS: "{{.ITEM}}"
-  
-  hash:weaver:all:arch:
-    internal: true
-    desc: "Hash the binary binaries for all configured architectures"
-    cmds:
-      - for:
-          var: ARCH
-        task: hash:weaver
-        vars:
-          GOOS: "{{.GOOS}}"
-          GOARCH: "{{.ITEM}}"
-  
-  hash:weaver:
-    internal: true
-    desc: "Hash the binary binaries for the specified operating system and architecture"
-    dir: bin
-    cmds:
-      - cmd: sha256sum solo-provisioner-{{.GOOS}}-{{.GOARCH}} > solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
-
-  sign:weaver:all:
-    desc: "Sign the binary binaries for all configured operating systems and architectures"
-    cmds:
-      - task: sign:weaver:all:os
-  
-  sign:weaver:all:os:
-    internal: true
-    desc: "Sign the binary binaries for all configured operating systems"
-    cmds:
-      - for:
-          var: OS
-        task: sign:weaver:all:arch
-        vars:
-          GOOS: "{{.ITEM}}"
-  
-  sign:weaver:all:arch:
-    internal: true
-    desc: "Sign the binary binaries for all configured architectures"
-    cmds:
-      - for:
-          var: ARCH
-        task: sign:weaver
-        vars:
-          GOOS: "{{.GOOS}}"
-          GOARCH: "{{.ITEM}}"
-  
-  sign:weaver:
-    internal: true
-    desc: "Sign the binary binaries for the specified operating system and architecture"
-    env:
-      GOOS: "{{coalesce .GOOS OS}}"
-      GOARCH: "{{coalesce .GOARCH ARCH}}"
-    cmds:
-      - task: hash:weaver
-        vars:
-          GOOS: "{{.GOOS}}"
-          GOARCH: "{{.GOARCH}}"
-      - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
-      - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}
-  
   run:
     deps:
-      - "run:weaver"
-  
-  run:weaver:
-    deps:
-      - "build"
-    cmds:
-      - "bin/weaver-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
-  
-  run:weaver:skipdl:
-    deps:
-      - "build"
-    env:
-      _LOG_LEVEL: "Debug"
-    cmds:
-      - "bin/weaver-{{OS}}-{{ARCH}}{{exeExt}} {{.CLI_ARGS}}"
+      - "run:cli"
   
   install:go:
     deps:
