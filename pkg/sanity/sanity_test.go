@@ -420,6 +420,12 @@ func TestSanity_Filename(t *testing.T) {
 			output: "u2318",
 		},
 		{
+			// Filename/Identifier still strips dots — the dot relaxation is
+			// scoped to Username only (issue #600).
+			input:  "name.with.dots",
+			output: "namewithdots",
+		},
+		{
 			input:  "日本語",
 			output: "",
 			err:    ErrInvalidFilename,
@@ -659,10 +665,34 @@ func TestSanity_Username(t *testing.T) {
 			errMsg:    "username contains invalid characters",
 		},
 		{
-			name:      "username with period",
+			name:      "valid username with period (firstname.lastname)",
 			input:     "john.doe",
-			shouldErr: true,
-			errMsg:    "username contains invalid characters",
+			expected:  "john.doe",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with multiple periods",
+			input:     "a.b.c",
+			expected:  "a.b.c",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with leading period",
+			input:     ".hidden",
+			expected:  ".hidden",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with trailing period",
+			input:     "trailing.",
+			expected:  "trailing.",
+			shouldErr: false,
+		},
+		{
+			name:      "valid SUDO_USER-style firstname.lastname",
+			input:     "nana.ec",
+			expected:  "nana.ec",
+			shouldErr: false,
 		},
 		{
 			name:      "username with colon",

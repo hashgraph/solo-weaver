@@ -69,6 +69,29 @@ func filterValidIdentifierChars(s string) (string, int) {
 	return string(sb[:j]), j
 }
 
+// isValidUsernameChar checks if a byte is a valid character for usernames.
+// In addition to the identifier set (alphanumeric, underscore, hyphen), it
+// allows '.' because POSIX/Linux usernames commonly use the firstname.lastname
+// convention (e.g. via SSSD/AD-joined hosts). The '..' traversal sequence is
+// still rejected upstream in Username().
+func isValidUsernameChar(b byte) bool {
+	return isValidIdentifierChar(b) || b == '.'
+}
+
+// filterValidUsernameChars filters a string to contain only valid username characters
+// Returns the filtered string and the count of valid characters
+func filterValidUsernameChars(s string) (string, int) {
+	sb := []byte(s)
+	j := 0
+	for _, b := range sb {
+		if isValidUsernameChar(b) {
+			sb[j] = b
+			j++
+		}
+	}
+	return string(sb[:j]), j
+}
+
 // Identifier validates and sanitizes a string to be a safe identifier.
 // It only allows alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens.
 // This is useful for validating module names, filenames, usernames, and other identifiers.
@@ -210,10 +233,13 @@ func ModuleName(s string) (string, error) {
 // This function is particularly important when dealing with environment variables like SUDO_USER
 // that could be manipulated by attackers. It ensures that the username:
 //  1. Is not empty (precondition check)
-//  2. Contains only alphanumeric characters (a-z, A-Z, 0-9), underscores, and hyphens
+//  2. Contains only alphanumeric characters (a-z, A-Z, 0-9), underscores, hyphens, and dots
 //  3. Does not contain path traversal sequences (e.g., "..", "/")
 //  4. Does not contain shell metacharacters or special characters
 //  5. Contains at least one valid character after sanitization
+//
+// Dots are permitted to support common firstname.lastname Linux account conventions
+// (e.g. SSSD/AD-joined hosts). Path traversal via ".." is still rejected.
 //
 // Returns the sanitized username, or an error if the username is invalid or unsafe.
 func Username(s string) (string, error) {
@@ -231,8 +257,8 @@ func Username(s string) (string, error) {
 		return "", errorx.IllegalArgument.New("username contains shell metacharacters: %s", s)
 	}
 
-	// Sanitize: only allow alphanumeric, underscore, and hyphen
-	sanitized, count := filterValidIdentifierChars(s)
+	// Sanitize: only allow alphanumeric, underscore, hyphen, and dot
+	sanitized, count := filterValidUsernameChars(s)
 
 	if count == 0 {
 		return "", errorx.IllegalArgument.New("username contains no valid characters")
