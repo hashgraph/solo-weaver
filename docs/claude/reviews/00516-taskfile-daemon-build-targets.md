@@ -89,7 +89,10 @@ for cfg in ('.releaserc_cli.json', '.releaserc_daemon.json'):
     print(cfg, '— missing:', missing if missing else 'none')
 "
 
-# go vet across affected packages
+# go vet across affected packages (requires generated mocks; pkg/{fsx,security/principal,
+# software,kernel,helm}/mocks_generated.go are gitignored — run `task mocks` first on
+# a fresh checkout, otherwise vet fails on test files that reference fsx.MockManager etc.)
+task mocks
 GOOS=linux GOARCH=amd64 go vet ./pkg/version/... ./cmd/cli/... ./cmd/daemon/... ./internal/...
 
 # Each binary's version subpackage is isolated
