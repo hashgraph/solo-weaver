@@ -14,7 +14,7 @@ After #514/#515 (PR #596, rolled up via #597), `cmd/cli/main.go` and `cmd/daemon
 
 This PR:
 
-- **#516 — aggregator wiring.** Top-level `build`/`hash`/`sign` now call both `:cli:all` and `:daemon:all`; `sources:`/`generates:` globs gain daemon entries. Per-binary aggregators (`hash:cli:all`, `sign:cli:all`, daemon equivalents) gain `deps: [build:*:all]` so they're self-sufficient — the release pipelines call them directly without depending on the top-level wrapper.
+- **#516 — aggregator wiring.** Top-level `build:` now invokes both `build:cli:all` and `build:daemon:all`; `sources:`/`generates:` globs gain daemon entries. The top-level `hash:` and `sign:` aggregators are **deleted** — they had no remaining callers, since each release pipeline invokes the per-binary tasks (`task hash:cli:all`, `task sign:cli:all`, daemon equivalents) directly. Per-binary aggregators gain `deps: [build:*:all]` so they're self-sufficient, and `build:cli:all` / `build:daemon:all` gain `deps: [generate]` so the embedded `pkg/version/{cli,daemon}/{VERSION,COMMIT}` files exist on a clean checkout. The `generate:` task is declared `run: once` so multiple deps in one invocation share a single execution.
 - **#517 — independent release processes.** Replace the single config + workflow with two independent semantic-release pipelines: `.releaserc_cli.json` + `flow-deploy-release-cli.yaml` (tag namespace `solo-provisioner-vX.Y.Z`), and `.releaserc_daemon.json` + `flow-deploy-release-daemon.yaml` (tag namespace `solo-provisioner-daemon-vX.Y.Z`). Each workflow is `workflow_dispatch`-only and writes to its binary's VERSION file (`pkg/version/cli/VERSION` or `pkg/version/daemon/VERSION`).
 - **`pkg/version` refactor.** Split into symmetric subpackages so each binary embeds its own VERSION/COMMIT. Shared code under `internal/...` keeps importing the parent `pkg/version`; each subpackage registers its Info with the parent at init() so `version.Get`/`Number`/`Commit` returns the running binary's value.
 
@@ -22,9 +22,9 @@ This PR:
 
 | File | What changed |
 |---|---|
-| `Taskfile.yaml` | Top-level `build`/`hash`/`sign` aggregators invoke both `:cli:all` and `:daemon:all`; daemon globs added to `sources:`/`generates:`. |
-| `taskfiles/cli.yaml` | `hash:cli:all` and `sign:cli:all` gain `deps: [build:cli:all]` so they're self-sufficient. |
-| `taskfiles/daemon.yaml` | `hash:daemon:all` and `sign:daemon:all` gain `deps: [build:daemon:all]`. |
+| `Taskfile.yaml` | Top-level `build:` invokes both `build:cli:all` and `build:daemon:all`; daemon globs added to `sources:`/`generates:`. Top-level `hash:` and `sign:` aggregators deleted (no remaining callers). `generate:` declared `run: once`. `build:image:` deps retargeted `hash` → `build`. |
+| `taskfiles/cli.yaml` | `build:cli:all` gains `deps: [generate]`; `hash:cli:all` and `sign:cli:all` gain `deps: [build:cli:all]` so each is self-sufficient on a clean checkout. |
+| `taskfiles/daemon.yaml` | Symmetric: `build:daemon:all` deps `generate`; `hash:daemon:all` and `sign:daemon:all` deps `build:daemon:all`. |
 | `pkg/version/info.go` | Adds runtime-current Info accessors (`SetCurrent`, `Get`, `Number`, `Commit`) so shared code reads the running binary's version. |
 | `pkg/version/version_cmd.go` | `Cmd()` becomes `NewCmd(getter)` factory; `Print()` takes Info as a parameter. |
 | `pkg/version/cli/*` | Moved from `pkg/version/*` — embeds CLI's VERSION/COMMIT, exposes `Get`/`Cmd`/`Print`, `init()` registers with parent. |
@@ -49,7 +49,7 @@ This PR:
 - [ ] **`deps` on per-binary aggregators are correct.** `hash:cli:all` deps `build:cli:all`; `sign:cli:all` deps `build:cli:all`; same for daemon. This is what lets the release configs call `task hash:cli:all` standalone without a separate build step.
 - [ ] **No CLI/daemon cross-import in version packages.** `go list -deps ./cmd/cli` shows `pkg/version/cli` only (not daemon); `go list -deps ./cmd/daemon` shows `pkg/version/daemon` only.
 - [ ] **Shared internal/ code is unchanged.** `internal/doctor`, `internal/state`, `internal/ui`, `internal/workflows` still import `pkg/version` (the parent), and `version.Get`/`Number`/`Commit` return the right binary's values via the init-registered current Info.
-- [ ] **`.releaserc_*.json` are valid JSON and the asset paths exist** after `task build:* && task hash:* && task sign:*` for each binary.
+- [ ] **`.releaserc_*.json` are valid JSON and the asset paths exist** after `task hash:cli:all && task sign:cli:all` (CLI) and `task hash:daemon:all && task sign:daemon:all` (daemon) — each per-binary command's build dep fires automatically.
 - [ ] **`tagFormat:` is set in each config** (`solo-provisioner-v${version}` and `solo-provisioner-daemon-v${version}`). semantic-release uses this to derive the next version from existing tags in that namespace.
 - [ ] **VERSION write paths are per-binary.** `.releaserc_cli.json`'s `verifyRelease` writes `pkg/version/cli/VERSION`; daemon's writes `pkg/version/daemon/VERSION`.
 - [ ] **Each workflow points at the right config.** `flow-deploy-release-cli.yaml` uses `--extends $(pwd)/.releaserc_cli.json`; daemon's uses `.releaserc_daemon.json`.
@@ -189,17 +189,19 @@ task vm:test:integration TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'
 
    ```bash
    rm -rf bin
-   task build && task hash
+   task hash:cli:all && task hash:daemon:all              # build deps fire automatically
    python3 -c "
    import json, os
-   assets = json.load(open('.releaserc_cli.json'))['plugins'][2][1]['assets']
-   for a in assets:
-       exists = '✓' if os.path.exists(a['path']) else '✗'
-       print(f\"  {exists} {a['path']:60s} — {a['label']}\")
+   for cfg in ('.releaserc_cli.json', '.releaserc_daemon.json'):
+       print(cfg)
+       assets = json.load(open(cfg))['plugins'][2][1]['assets']
+       for a in assets:
+           exists = '✓' if os.path.exists(a['path']) else '✗'
+           print(f\"  {exists} {a['path']:60s} — {a['label']}\")
    "
    ```
 
-   Expected: all 4 non-`.asc` paths show `✓` (the `.asc` signature files require `task sign` with GPG).
+   Expected: all 4 non-`.asc` paths for each binary show `✓` (the `.asc` signature files require `task sign:cli:all` / `task sign:daemon:all` with GPG configured).
 
 ## Release-workflow UAT (post-merge)
 
