@@ -17,6 +17,8 @@ type WeaverPaths struct {
 	DownloadsDir   string
 	DiagnosticsDir string
 	StateDir       string
+	DaemonDir      string
+	DaemonSockPath string
 
 	AllDirectories []string
 
@@ -40,7 +42,10 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		DownloadsDir:   path.Join(home, "downloads"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 		StateDir:       path.Join(home, "state"),
+		DaemonDir:      path.Join(home, "daemon"),
 	}
+
+	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
 	pp.SandboxBinDir = path.Join(pp.SandboxDir, "bin")
@@ -91,6 +96,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		pp.DownloadsDir,
 		pp.DiagnosticsDir,
 		pp.StateDir,
+		pp.DaemonDir,
 	}
 	pp.AllDirectories = append(pp.AllDirectories, pp.SandboxDirectories...)
 
