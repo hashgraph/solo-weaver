@@ -40,6 +40,8 @@ tasks:
 
   hash:daemon:all:
     desc: "Hash the daemon binaries for all configured operating systems and architectures"
+    deps:
+      - "build:daemon:all"
     cmds:
       - task: hash:daemon:all:os
 
@@ -73,6 +75,8 @@ tasks:
 
   sign:daemon:all:
     desc: "Sign the daemon binaries for all configured operating systems and architectures"
+    deps:
+      - "build:daemon:all"
     cmds:
       - task: sign:daemon:all:os
 

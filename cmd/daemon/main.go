@@ -16,7 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/version"
+	version "github.com/hashgraph/solo-weaver/pkg/version/daemon"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )

@@ -105,32 +105,18 @@ tasks:
       - task: "clean"
       - task: "generate"
       - task: "build:cli:all"
+      - task: "build:daemon:all"
     sources:
       - "**/*.go"
     generates:
       - "bin/solo-provisioner-linux-*"
       - "bin/solo-provisioner-darwin-*"
-
-  hash:
-    deps:
-      - "build"
-    cmds:
-      - task: "hash:cli:all"
-    sources:
-      - "bin/solo-provisioner-linux-*"
-      - "bin/solo-provisioner-darwin-*"
-    generates:
-      - "bin/*.sha256"
-
-  sign:
-    deps:
-      - "build"
-    cmds:
-      - task: "sign:cli:all"
+      - "bin/solo-provisioner-daemon-linux-*"
+      - "bin/solo-provisioner-daemon-darwin-*"
 
   build:image:
     deps:
-      - task: "hash"
+      - task: "build"
     cmds:
       - "docker build -t solo-weaver ."
   

@@ -40,6 +40,8 @@ tasks:
 
   hash:cli:all:
     desc: "Hash the CLI binaries for all configured operating systems and architectures"
+    deps:
+      - "build:cli:all"
     cmds:
       - task: hash:cli:all:os
 
@@ -73,6 +75,8 @@ tasks:
 
   sign:cli:all:
     desc: "Sign the CLI binaries for all configured operating systems and architectures"
+    deps:
+      - "build:cli:all"
     cmds:
       - task: sign:cli:all:os
 

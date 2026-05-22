@@ -355,8 +355,10 @@ dist/
 /bin/
 
 ### Application Version Info ###
-pkg/version/COMMIT
-pkg/version/VERSION
+pkg/version/cli/COMMIT
+pkg/version/cli/VERSION
+pkg/version/daemon/COMMIT
+pkg/version/daemon/VERSION
 
 ### Generated Files ###
 **/mocks_generated.go
