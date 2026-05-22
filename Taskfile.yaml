@@ -103,7 +103,8 @@ tasks:
       - "vendor"
     cmds:
       - task: "clean"
-      - task: "generate"
+      # `generate` runs via build:cli:all / build:daemon:all's deps; declared
+      # `run: once` so it only fires once across all callers in this invocation.
       - task: "build:cli:all"
       - task: "build:daemon:all"
     sources:
@@ -121,6 +122,10 @@ tasks:
       - "docker build -t solo-weaver ."
   
   generate:
+    # Declared `run: once` so multiple callers in the same invocation (e.g.
+    # build:cli:all and build:daemon:all from top-level `task build`) share a
+    # single execution.
+    run: once
     cmds:
       - "go generate ./..."
 

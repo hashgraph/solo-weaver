@@ -57,11 +57,12 @@ Two problems on `main` (post-#597):
 
 ### Part A — Taskfile wiring (#516)
 
-- [ ] `Taskfile.yaml` — top-level `build:` adds `- task: build:daemon:all`; `generates:` adds daemon globs.
+- [ ] `Taskfile.yaml` — top-level `build:` adds `- task: build:daemon:all`; `generates:` adds daemon globs. The explicit `- task: generate` is removed from `build:` cmds (now covered by sub-aggregator deps).
 - [ ] `Taskfile.yaml` — delete top-level `hash:` and `sign:` aggregators (no remaining callers; release configs invoke per-binary tasks directly).
 - [ ] `Taskfile.yaml` — `build:image:` switches `deps: [hash]` → `deps: [build]` (no Dockerfile present today; kept consistent with what survives).
-- [ ] `taskfiles/cli.yaml` — `hash:cli:all` gets `deps: [build:cli:all]`; `sign:cli:all` gets `deps: [build:cli:all]`.
-- [ ] `taskfiles/daemon.yaml` — `hash:daemon:all` gets `deps: [build:daemon:all]`; `sign:daemon:all` gets `deps: [build:daemon:all]`.
+- [ ] `Taskfile.yaml` — `generate:` task declared `run: once` so multiple callers in the same invocation share a single execution.
+- [ ] `taskfiles/cli.yaml` — `build:cli:all` gets `deps: [generate]` so `pkg/version/cli/{VERSION,COMMIT}` exist before `go build ./cmd/cli`. `hash:cli:all` and `sign:cli:all` get `deps: [build:cli:all]`. Together this means standalone callers (release pipeline's `task hash:cli:all` / `sign:cli:all`) work on a clean checkout.
+- [ ] `taskfiles/daemon.yaml` — symmetric: `build:daemon:all` gets `deps: [generate]`; `hash:daemon:all` and `sign:daemon:all` get `deps: [build:daemon:all]`.
 
 ### Part B — `pkg/version` refactor
 

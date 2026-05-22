@@ -5,6 +5,11 @@ version: 3
 tasks:
   build:cli:all:
     desc: "Build the CLI binary for all configured operating systems and architectures"
+    # generate produces pkg/version/cli/{VERSION,COMMIT} which are //go:embed-ed
+    # into the binary. Without this dep, standalone callers (e.g., the release
+    # pipeline's `task hash:cli:all`) hit a clean-checkout build failure.
+    deps:
+      - "generate"
     cmds:
       - task: build:cli:all:os
 
