@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/automa-saga/logx"
@@ -39,8 +40,8 @@ func NewServer(sockPath string, sw *SoakWatcher, cfg ServerConfig) *Server {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("GET /soak/status", s.handleSoakStatus)
-	mux.HandleFunc("POST /soak/start", s.handleSoakStart)
+	mux.HandleFunc("GET /migration/consensus/soak/status", s.handleSoakStatus)
+	mux.HandleFunc("POST /migration/consensus/soak/start", s.handleSoakStart)
 
 	s.srv = &http.Server{
 		Handler:           mux,
@@ -53,6 +54,10 @@ func NewServer(sockPath string, sw *SoakWatcher, cfg ServerConfig) *Server {
 // requests, and shuts down cleanly when ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
 	sockPath := s.sockPath
+
+	if err := os.MkdirAll(filepath.Dir(sockPath), 0o750); err != nil {
+		return err
+	}
 
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return err
