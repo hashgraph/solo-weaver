@@ -205,23 +205,27 @@ task vm:test:integration TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'
 
 These steps verify both pipelines end-to-end without producing a real release. Each step is independent — you can dry-run the CLI workflow without ever touching the daemon one, or vice versa.
 
-### A. Seed the CLI tag namespace (one-time, pre-first-release)
+### A. Seed both tag namespaces (one-time, pre-first-release)
 
-If skipped, the first CLI workflow run will produce `solo-provisioner-v1.0.0` instead of continuing from the existing `v0.16.0` lineage.
+Both pipelines should stay in the `0.x.y` range (matching the CLI's existing lineage). Without seeding tags, semantic-release defaults to `1.0.0` on the first release — which we don't want.
+
+- **CLI:** continue from the existing `v0.16.0` lineage so the next release is `0.16.x` / `0.17.0`.
+- **Daemon:** start fresh at `0.0.0` so the first release is `0.0.1` or `0.1.0` (depending on commit kinds), well below `1.0.0`. The `releaseRules: [{ breaking: true, release: "minor" }]` block (already in both `.releaserc_*.json` files) overrides the default `BREAKING CHANGE → major` rule to keep both pipelines in `0.x.y` even when breaking commits appear.
 
 ```bash
 git tag solo-provisioner-v0.16.0 v0.16.0
-git push origin solo-provisioner-v0.16.0
+git tag solo-provisioner-daemon-v0.0.0 v0.16.0
+git push origin solo-provisioner-v0.16.0 solo-provisioner-daemon-v0.0.0
 ```
 
-Daemon's tag namespace deliberately starts fresh — no seeding tag needed. Daemon's first release will be `solo-provisioner-daemon-v1.0.0`.
+(Tagging the daemon seed at `v0.16.0`'s commit aligns the two pipelines' baseline — each one analyzes the same set of commits as "candidates for the next release" on first run.)
 
-Verify the seeding tag landed:
+Verify the seeding tags landed:
 
 ```bash
 git fetch origin --tags
 git tag -l 'solo-provisioner-v*'                    # expect: solo-provisioner-v0.16.0
-git tag -l 'solo-provisioner-daemon-v*'             # expect: (empty)
+git tag -l 'solo-provisioner-daemon-v*'             # expect: solo-provisioner-daemon-v0.0.0
 ```
 
 ### B. Dry-run each workflow
@@ -245,7 +249,7 @@ If the predicted version is `1.0.0`, the seeding tag (step A) didn't land — fi
 
 **B2. Daemon workflow dry-run:**
 
-Same as B1, but for **Deploy Release Artifact (Daemon)**. Expected predicted version on first run: `1.0.0` (no prior tag in that namespace). The annotation should read `solo-provisioner-daemon-v1.0.0`.
+Same as B1, but for **Deploy Release Artifact (Daemon)**. With the `solo-provisioner-daemon-v0.0.0` seeding tag in place, the predicted version on first run should be `0.0.1` (only fix commits since the seed) or `0.1.0` (any feat commit since the seed, including the daemon introduction itself). The annotation should read `solo-provisioner-daemon-v0.x.y`. If you see `v1.0.0`, the seeding tag (step A) didn't land — fix and retry.
 
 ### C. Verify the configs were honored
 

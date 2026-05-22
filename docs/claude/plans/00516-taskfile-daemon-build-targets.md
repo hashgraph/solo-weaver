@@ -40,8 +40,8 @@ Two problems on `main` (post-#597):
 | Add `deps:` to per-binary aggregators (`hash:cli:all` → `build:cli:all`)? | Yes. Necessary so the release configs can call `task hash:cli:all` standalone without prepending an explicit build. Symmetric on both binaries: `hash:cli:all` / `sign:cli:all` `deps: [build:cli:all]`; same for daemon. (The top-level `hash` keeps its existing `deps: [build]` — that's the same `build` task we updated for #516, which already calls both families.) |
 | Shape of the `pkg/version` refactor? | **Symmetric subpackages.** `pkg/version/cli/` and `pkg/version/daemon/` each own a `VERSION`, `COMMIT`, embed file, generate script, and a thin `Get()` / `Cmd()` / `Print()` facade. Shared code (the `Info` struct, `Format`/`Text` methods, the `NewCmd(getter)` factory) lives at `pkg/version/`. CLI's existing files move from `pkg/version/{VERSION,COMMIT,releases.go,version_cmd.go,generate_*}` → `pkg/version/cli/…`. Daemon gets a parallel tree. |
 | Where do the new semantic-release configs live? | `.releaserc_cli.json` and `.releaserc_daemon.json` at the repo root, mirroring the original `.releaserc` filename convention. Each workflow invokes `npx semantic-release --extends $(pwd)/.releaserc_{cli,daemon}.json`. The top-level `.releaserc` is **deleted** to avoid accidental fallback (cosmiconfig only auto-loads exactly `.releaserc[.json|.yaml|.yml|.js|.cjs]` — the suffixed variants are NOT auto-discovered, so explicit `--extends` is required and there's no ambiguity). |
-| Tag namespaces? | `solo-provisioner-v${version}` (CLI) and `solo-provisioner-daemon-v${version}` (daemon). Bootstrapped by pre-pushing `solo-provisioner-v0.16.0` to origin pointing at the existing `v0.16.0` commit (latest stable). Daemon starts fresh — semantic-release defaults to `1.0.0` on first run. |
-| Bootstrap the CLI lineage in-PR or out-of-PR? | Out-of-PR. Pre-pushing tags from a PR is awkward (they wouldn't exist until merge); we document the bootstrap step in the plan's "Rollout" section so whoever merges the PR knows to push the seeding tag immediately after. Daemon needs no pre-push. |
+| Tag namespaces? | `solo-provisioner-v${version}` (CLI) and `solo-provisioner-daemon-v${version}` (daemon). Both pipelines should stay in `0.x.y` — the `releaseRules: [{ breaking: true, release: "minor" }]` block (already in both `.releaserc_*.json` files) overrides the default `BREAKING CHANGE → major` so breaking commits stay in `0.x.y`. Bootstrapped by pre-pushing two seeding tags on origin: `solo-provisioner-v0.16.0` (continues CLI's existing lineage from the latest stable) and `solo-provisioner-daemon-v0.0.0` (so the daemon's first release lands at `0.0.1` / `0.1.0`, not `1.0.0`). Both seed at `v0.16.0`'s commit so the two pipelines see the same baseline. |
+| Bootstrap the lineage in-PR or out-of-PR? | Out-of-PR. Pre-pushing tags from a PR is awkward (they wouldn't exist until merge); we document the bootstrap step in the plan's "Rollout" section so whoever merges the PR knows to push both seeding tags immediately after. |
 | Workflow file shape? | Two independent `flow-deploy-release-*.yaml` entry workflows (CLI + daemon), each `workflow_dispatch`-only. Most of the body is duplicated between them (Go setup, GPG, npm install) — duplication chosen over a reusable `zxc-release.yaml` because the two pipelines' differences live in CLI args, paths, and labels, and a parameterized reusable workflow would mostly be `if: target == 'cli'` branches that obscure rather than DRY. The repo already has the `flow-*` (entry) vs `zxc-*` (reusable) convention; we're picking "two entries, no shared reusable" here because the parameterization gain is small. Revisit if a third release surface ever appears. |
 | Delete or keep `flow-deploy-release-artifact.yaml`? | **Delete.** It assumes a single combined pipeline that no longer exists. Replaced by the two new entries. |
 | `verifyRelease` exec for the version file write? | Each config writes to its own VERSION: CLI's `cmd: 'printf "%s" "${nextRelease.version}" > pkg/version/cli/VERSION'`; daemon's `pkg/version/daemon/VERSION`. |
@@ -132,13 +132,14 @@ Two problems on `main` (post-#597):
 ## Rollout (post-merge, outside the PR)
 
 1. Merge the rollup epic PR (this PR or a follow-up that brings the epic branch into main).
-2. Push the seeding CLI tag to origin so semantic-release computes the next CLI version from `v0.16.0`:
+2. Push the seeding tags to origin so each pipeline starts in the desired range:
    ```bash
    git tag solo-provisioner-v0.16.0 v0.16.0
-   git push origin solo-provisioner-v0.16.0
+   git tag solo-provisioner-daemon-v0.0.0 v0.16.0
+   git push origin solo-provisioner-v0.16.0 solo-provisioner-daemon-v0.0.0
    ```
-   No daemon tag pre-push needed; daemon's first release will be `solo-provisioner-daemon-v1.0.0` (semantic-release default).
-3. Sanity-check by manually triggering each workflow in `--dry-run-enabled=true` mode and confirming the predicted next versions.
+   CLI continues from the existing `v0.16.0` lineage; daemon starts fresh at `0.0.0` so its first release lands at `0.0.1` / `0.1.0` rather than semantic-release's default `1.0.0`.
+3. Sanity-check by manually triggering each workflow in `--dry-run-enabled=true` mode and confirming the predicted next versions (both should be `0.x.y`).
 
 ## Test plan
 
@@ -168,7 +169,7 @@ Two problems on `main` (post-#597):
 
 ## Risks / rollbacks
 
-- **Risk — pre-rollout tag seeding forgotten.** If `solo-provisioner-v0.16.0` isn't pushed before the first CLI workflow run, semantic-release will default to `1.0.0` for the first new CLI release — a version regression in the user-facing tag. Mitigated: rollout step is documented above and called out in the PR description. The first workflow run can also be done in `--dry-run-enabled=true` mode to inspect the predicted next version before committing.
+- **Risk — pre-rollout tag seeding forgotten.** If either `solo-provisioner-v0.16.0` or `solo-provisioner-daemon-v0.0.0` isn't pushed before the corresponding first workflow run, semantic-release will default to `1.0.0` for that pipeline — a version jump we don't want (CLI would lose its `0.16.x` lineage; daemon would skip past `0.x.y` entirely). Mitigated: rollout step is documented above and called out in the PR description. The first workflow run can also be done in `--dry-run-enabled=true` mode to inspect the predicted next version before committing.
 - **Risk — `pkg/version` import sweep miss.** A missed `pkg/version` (without subpackage) import in code that should target `cli` would either fail to compile or compile against the empty parent package. Mitigated: sanity grep in the test plan.
 - **Risk — release-config typo (`path:` mismatch).** semantic-release fails at upload time, not at PR-check time. Mitigated: per-config asset existence check in the test plan.
 - **Risk — cross-binary commit traffic inflates version bumps.** With no scope filtering, a release workflow run will compute the next version off all commits since the last tag in its namespace — even commits that only touched the other binary. Mitigated as accepted limitation; revisit by adding `releaseRules` scope filters if it becomes a problem.
