@@ -42,8 +42,12 @@ var (
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
 			defer stop()
 
-			if err := daemon.New(models.Paths()).Run(ctx); err != nil {
-				return errorx.InternalError.Wrap(err, "daemon error")
+			d, err := daemon.New(models.Paths())
+			if err != nil {
+				return err
+			}
+			if err := d.Run(ctx); err != nil {
+				return err
 			}
 
 			logx.As().Info().Msg("Solo Provisioner daemon stopped")
