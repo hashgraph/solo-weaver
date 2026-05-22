@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+package consensus
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"github.com/automa-saga/logx"
 )
 
-// SoakWatcher manages the migration soak lifecycle: it owns the activation
+// MigrationMonitor manages the migration soak lifecycle: it owns the activation
 // channel, shared status, and the goroutine that monitors soak criteria.
 // Stub — full implementation in story #520.
 // Once all mainnet nodes are migrated to the new deployment model, this can be safely disabled or removed from the
 // codebase.
-type SoakWatcher struct {
-	// soakStartCh carries activation requests from POST /soak/start.
+type MigrationMonitor struct {
+	// soakStartCh carries activation requests from POST /migration/consensus/soak/start.
 	// Buffered 1 so the HTTP handler never blocks.
 	soakStartCh chan SoakStartRequest
 
@@ -35,8 +35,8 @@ type SoakWatcher struct {
 	soakWg sync.WaitGroup
 }
 
-func NewSoakWatcher() *SoakWatcher {
-	return &SoakWatcher{
+func NewMigrationMonitor() *MigrationMonitor {
+	return &MigrationMonitor{
 		soakStartCh: make(chan SoakStartRequest, 1),
 	}
 }
@@ -49,15 +49,15 @@ func NewSoakWatcher() *SoakWatcher {
 //
 // Both cases are intentionally indistinguishable to callers — only one soak
 // activation may be in-flight at any time.
-func (sw *SoakWatcher) TryEnqueue(req SoakStartRequest) bool {
-	if sw.soakActive.Swap(true) {
+func (mm *MigrationMonitor) TryEnqueue(req SoakStartRequest) bool {
+	if mm.soakActive.Swap(true) {
 		return false
 	}
 	select {
-	case sw.soakStartCh <- req:
+	case mm.soakStartCh <- req:
 		return true
 	default:
-		sw.soakActive.Store(false)
+		mm.soakActive.Store(false)
 		return false
 	}
 }
@@ -67,9 +67,9 @@ var idleSoakStatus = &SoakStatusResponse{Active: false}
 
 // Status returns the current soak status. Never returns nil.
 // Returns the live pointer when a watcher is active to avoid a copy on the
-// hot GET /soak/status read path.
-func (sw *SoakWatcher) Status() *SoakStatusResponse {
-	if p := sw.soakStatus.Load(); p != nil {
+// hot GET /migration/consensus/soak/status read path.
+func (mm *MigrationMonitor) Status() *SoakStatusResponse {
+	if p := mm.soakStatus.Load(); p != nil {
 		return p
 	}
 	return idleSoakStatus
@@ -77,18 +77,18 @@ func (sw *SoakWatcher) Status() *SoakStatusResponse {
 
 // Run is the dispatch loop. It blocks until ctx is cancelled, then waits for
 // any in-flight watcher goroutines to finish before returning.
-func (sw *SoakWatcher) Run(ctx context.Context) error {
-	defer sw.soakWg.Wait()
+func (mm *MigrationMonitor) Run(ctx context.Context) error {
+	defer mm.soakWg.Wait()
 
-	sw.resumeIfNeeded(ctx)
+	mm.resumeIfNeeded(ctx)
 
 	for {
 		select {
-		case req := <-sw.soakStartCh:
+		case req := <-mm.soakStartCh:
 			// soakWg.Add before goroutine start so the deferred soakWg.Wait()
 			// above accounts for it.
-			sw.soakWg.Add(1)
-			go sw.run(ctx, req)
+			mm.soakWg.Add(1)
+			go mm.run(ctx, req)
 		case <-ctx.Done():
 			// Intentional: if soakStartCh has a buffered item at the same time
 			// ctx is cancelled, Go's select may pick either case. The spawned
@@ -102,7 +102,7 @@ func (sw *SoakWatcher) Run(ctx context.Context) error {
 // run is the per-activation watcher goroutine. It is not inside the errgroup
 // so a watcher failure does not cancel the whole daemon.
 // Stub — implemented in story #520.
-func (sw *SoakWatcher) run(ctx context.Context, req SoakStartRequest) {
+func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
 	// Single outermost defer: recovery wraps all cleanup so a panic in the
 	// cleanup path is caught rather than silently replacing the original panic.
 	defer func() {
@@ -112,10 +112,10 @@ func (sw *SoakWatcher) run(ctx context.Context, req SoakStartRequest) {
 				Str("panic", fmt.Sprintf("%v", r)).
 				Msg("Soak watcher panicked")
 		}
-		sw.soakStatus.Store(nil)
-		sw.soakActive.Store(false)
+		mm.soakStatus.Store(nil)
+		mm.soakActive.Store(false)
 		logx.As().Info().Str("reason", "SoakStopped").Str("node_id", req.NodeID).Msg("Soak watcher stopped")
-		sw.soakWg.Done()
+		mm.soakWg.Done()
 	}()
 
 	logx.As().Info().
@@ -125,7 +125,7 @@ func (sw *SoakWatcher) run(ctx context.Context, req SoakStartRequest) {
 		Time("cutover_ts", req.CutoverTimestamp).
 		Msg("Soak watcher started")
 
-	sw.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &req})
+	mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &req})
 
 	// Story #520: poll soak criteria, emit JSONL events, auto-decommission.
 	<-ctx.Done()
@@ -136,11 +136,11 @@ func (sw *SoakWatcher) run(ctx context.Context, req SoakStartRequest) {
 // Stub — implemented in story #520.
 //
 // Invariant for story #520: before spawning run(), this function must:
-//  1. call sw.soakActive.Store(true) — keeps the duplicate-watcher guard consistent
-//  2. call sw.soakWg.Add(1) before the goroutine starts — keeps soakWg.Wait()
+//  1. call mm.soakActive.Store(true) — keeps the duplicate-watcher guard consistent
+//  2. call mm.soakWg.Add(1) before the goroutine starts — keeps soakWg.Wait()
 //     quiescence guarantee intact
 //
 // Omitting either step is a silent correctness bug.
-func (sw *SoakWatcher) resumeIfNeeded(_ context.Context) {
+func (mm *MigrationMonitor) resumeIfNeeded(_ context.Context) {
 	logx.As().Debug().Msg("Checking for soak state to resume (not yet implemented)")
 }

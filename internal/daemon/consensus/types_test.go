@@ -2,18 +2,18 @@
 
 //go:build !integration
 
-package daemon_test
+package consensus_test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
 	"github.com/stretchr/testify/assert"
 )
 
 func Test_SoakStartRequest_Validate(t *testing.T) {
-	validReq := daemon.SoakStartRequest{
+	validReq := consensus.SoakStartRequest{
 		NodeID:            "0.0.3",
 		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
 		CutoverTimestamp:  time.Now(),
@@ -21,7 +21,7 @@ func Test_SoakStartRequest_Validate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		req     daemon.SoakStartRequest
+		req     consensus.SoakStartRequest
 		wantErr string
 	}{
 		{
@@ -30,17 +30,17 @@ func Test_SoakStartRequest_Validate(t *testing.T) {
 		},
 		{
 			name:    "missing node_id",
-			req:     daemon.SoakStartRequest{MigrationPlanPath: validReq.MigrationPlanPath, CutoverTimestamp: validReq.CutoverTimestamp},
+			req:     consensus.SoakStartRequest{MigrationPlanPath: validReq.MigrationPlanPath, CutoverTimestamp: validReq.CutoverTimestamp},
 			wantErr: "node_id is required",
 		},
 		{
 			name:    "missing migration_plan_path",
-			req:     daemon.SoakStartRequest{NodeID: validReq.NodeID, CutoverTimestamp: validReq.CutoverTimestamp},
+			req:     consensus.SoakStartRequest{NodeID: validReq.NodeID, CutoverTimestamp: validReq.CutoverTimestamp},
 			wantErr: "migration_plan_path is required",
 		},
 		{
 			name:    "missing cutover_timestamp",
-			req:     daemon.SoakStartRequest{NodeID: validReq.NodeID, MigrationPlanPath: validReq.MigrationPlanPath},
+			req:     consensus.SoakStartRequest{NodeID: validReq.NodeID, MigrationPlanPath: validReq.MigrationPlanPath},
 			wantErr: "cutover_timestamp is required",
 		},
 	}

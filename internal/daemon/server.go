@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
 )
 
 const defaultReadHeaderTimeout = 5 * time.Second
@@ -26,12 +27,12 @@ type ServerConfig struct {
 // Server is the Unix socket HTTP control plane for solo-provisioner-daemon.
 type Server struct {
 	sockPath string
-	sw       *SoakWatcher
+	mm       *consensus.MigrationMonitor
 	srv      *http.Server
 }
 
-func NewServer(sockPath string, sw *SoakWatcher, cfg ServerConfig) *Server {
-	s := &Server{sockPath: sockPath, sw: sw}
+func NewServer(sockPath string, mm *consensus.MigrationMonitor, cfg ServerConfig) *Server {
+	s := &Server{sockPath: sockPath, mm: mm}
 
 	rht := cfg.ReadHeaderTimeout
 	if rht == 0 {

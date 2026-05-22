@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,9 +38,9 @@ func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Cli
 	paths := models.WeaverPaths{DaemonSockPath: sockPath}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	sw := daemon.NewSoakWatcher()
-	srv := daemon.NewServer(sockPath, sw, cfg)
-	go func() { _ = daemon.NewWithComponents(paths, srv, sw).Run(ctx) }()
+	mm := consensus.NewMigrationMonitor()
+	srv := daemon.NewServer(sockPath, mm, cfg)
+	go func() { _ = daemon.NewWithComponents(paths, srv, mm).Run(ctx) }()
 
 	// Wait until the socket is reachable.
 	require.Eventually(t, func() bool {
@@ -97,7 +98,7 @@ func Test_SoakStatus_Idle(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	var body daemon.SoakStatusResponse
+	var body consensus.SoakStatusResponse
 	resp := getJSON(t, client, "http://daemon/migration/consensus/soak/status", &body)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.False(t, body.Active)
@@ -109,13 +110,13 @@ func Test_SoakStart_Then_Status(t *testing.T) {
 	defer cancel()
 
 	cutover := time.Now().UTC().Truncate(time.Second)
-	payload := daemon.SoakStartRequest{
+	payload := consensus.SoakStartRequest{
 		NodeID:            "0.0.3",
 		CutoverTimestamp:  cutover,
 		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
 	}
 
-	var startResp daemon.SoakStartResponse
+	var startResp consensus.SoakStartResponse
 	resp := postJSON(t, client, "http://daemon/migration/consensus/soak/start", payload, &startResp)
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 	assert.True(t, startResp.Accepted)
@@ -123,12 +124,12 @@ func Test_SoakStart_Then_Status(t *testing.T) {
 	// The soak-watcher goroutine updates soakStatus asynchronously after the
 	// HTTP response returns — poll until it becomes visible.
 	require.Eventually(t, func() bool {
-		var status daemon.SoakStatusResponse
+		var status consensus.SoakStatusResponse
 		getJSON(t, client, "http://daemon/migration/consensus/soak/status", &status)
 		return status.Active
 	}, 2*time.Second, 10*time.Millisecond, "soak status did not become active")
 
-	var status daemon.SoakStatusResponse
+	var status consensus.SoakStatusResponse
 	getJSON(t, client, "http://daemon/migration/consensus/soak/status", &status)
 	require.NotNil(t, status.Request)
 	assert.Equal(t, payload.NodeID, status.Request.NodeID)
@@ -140,19 +141,19 @@ func Test_SoakStart_Conflict_When_Active(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	payload := daemon.SoakStartRequest{
+	payload := consensus.SoakStartRequest{
 		NodeID:            "0.0.3",
 		CutoverTimestamp:  time.Now(),
 		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
 	}
 
-	var first daemon.SoakStartResponse
+	var first consensus.SoakStartResponse
 	resp := postJSON(t, client, "http://daemon/migration/consensus/soak/start", payload, &first)
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 
 	// Wait for the first request to be consumed from the channel.
 	require.Eventually(t, func() bool {
-		var status daemon.SoakStatusResponse
+		var status consensus.SoakStatusResponse
 		getJSON(t, client, "http://daemon/migration/consensus/soak/status", &status)
 		return status.Active
 	}, 2*time.Second, 10*time.Millisecond)
@@ -188,7 +189,7 @@ func Test_SoakStart_MissingNodeID(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	payload := daemon.SoakStartRequest{CutoverTimestamp: time.Now()}
+	payload := consensus.SoakStartRequest{CutoverTimestamp: time.Now()}
 	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
@@ -203,7 +204,7 @@ func Test_SoakStart_MissingMigrationPlanPath(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	payload := daemon.SoakStartRequest{NodeID: "0.0.3", CutoverTimestamp: time.Now()}
+	payload := consensus.SoakStartRequest{NodeID: "0.0.3", CutoverTimestamp: time.Now()}
 	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
@@ -218,7 +219,7 @@ func Test_SoakStart_MissingCutoverTimestamp(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	payload := daemon.SoakStartRequest{
+	payload := consensus.SoakStartRequest{
 		NodeID:            "0.0.3",
 		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
 	}

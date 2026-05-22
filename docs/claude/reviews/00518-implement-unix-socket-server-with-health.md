@@ -74,8 +74,7 @@ task lint
 
 ```bash
 # 1. Build CLI and daemon binaries
-task build:cli GOOS=linux GOARCH=arm64
-task build:weaver GOOS=linux GOARCH=arm64
+task build:daemon GOOS=linux GOARCH=arm64
 
 # 2. Install solo-provisioner to create the directory structure
 sudo ./solo-provisioner-linux-arm64 install
