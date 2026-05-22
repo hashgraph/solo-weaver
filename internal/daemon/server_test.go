@@ -203,11 +203,7 @@ func Test_SoakStart_MissingMigrationPlanPath(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	payload := daemon.SoakStartRequest{
-		NodeID:            "0.0.3",
-		CutoverTimestamp:  time.Now(),
-		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
-	}
+	payload := daemon.SoakStartRequest{NodeID: "0.0.3", CutoverTimestamp: time.Now()}
 	resp, err := client.Post("http://daemon/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
