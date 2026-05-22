@@ -60,7 +60,7 @@ This PR:
 ## Commands to run
 
 ```bash
-cd /Users/bruno.marques/code/src/github.com/hashgraph/solo-weaver-wt/00516-taskfile-daemon-build-targets
+cd "$HOME/code/src/github.com/hashgraph/solo-weaver-wt/00516-taskfile-daemon-build-targets"
 
 # Lint
 task lint:check
