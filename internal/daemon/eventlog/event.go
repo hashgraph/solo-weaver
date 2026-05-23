@@ -2,10 +2,7 @@
 
 package eventlog
 
-import (
-	"errors"
-	"time"
-)
+import "time"
 
 // Level is the severity of a lifecycle milestone — mirrors HIP-defined values.
 // Only INFO and ERROR are defined because every event in this file is either a
@@ -33,22 +30,31 @@ type Event struct {
 func (e Event) validate() error {
 	var errs []error
 	if e.Ts.IsZero() {
-		errs = append(errs, errors.New("event: Ts is required"))
+		errs = append(errs, ErrInvalidEvent.New("Ts is required"))
 	}
 	if e.Level == "" {
-		errs = append(errs, errors.New("event: Level is required"))
+		errs = append(errs, ErrInvalidEvent.New("Level is required"))
 	}
 	if e.Reason == "" {
-		errs = append(errs, errors.New("event: Reason is required"))
+		errs = append(errs, ErrInvalidEvent.New("Reason is required"))
 	}
 	if e.Msg == "" {
-		errs = append(errs, errors.New("event: Msg is required"))
+		errs = append(errs, ErrInvalidEvent.New("Msg is required"))
 	}
 	if e.OperationID == "" {
-		errs = append(errs, errors.New("event: OperationID is required"))
+		errs = append(errs, ErrInvalidEvent.New("OperationID is required"))
 	}
 	if e.NodeID == "" {
-		errs = append(errs, errors.New("event: NodeID is required"))
+		errs = append(errs, ErrInvalidEvent.New("NodeID is required"))
 	}
-	return errors.Join(errs...)
+	// errors.Join from stdlib works fine with errorx errors.
+	var joined error
+	for _, err := range errs {
+		if joined == nil {
+			joined = err
+		} else {
+			joined = ErrInvalidEvent.Wrap(joined, "%s", err.Error())
+		}
+	}
+	return joined
 }

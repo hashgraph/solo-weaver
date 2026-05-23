@@ -4,11 +4,11 @@ package filepruner
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+
 )
 
 // Strategy determines the reference timestamp used to assess a file's age.
@@ -61,7 +61,7 @@ func (p *Pruner) Prune(dir, glob string, maxAge time.Duration, keep int) error {
 		}
 		if ts.Before(cutoff) {
 			if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-				errs = append(errs, fmt.Errorf("remove %s: %w", path, rmErr))
+				errs = append(errs, ErrPruneFailed.Wrap(rmErr, "remove %s", path))
 			}
 		} else {
 			remaining = append(remaining, path)
@@ -92,7 +92,7 @@ func (s FilenameTimestampStrategy) Timestamp(path string) (time.Time, error) {
 			return t, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("filepruner: no %q timestamp found in filename %q", s.Layout, name)
+	return time.Time{}, ErrNoTimestamp.New("no %q timestamp found in filename %q", s.Layout, name)
 }
 
 // ModTimeStrategy uses the file's modification time as its age reference.
@@ -124,7 +124,7 @@ func enforceCap(files []string, keep int) []error {
 	var errs []error
 	for len(files) > keep {
 		if rmErr := os.Remove(files[0]); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("remove %s: %w", files[0], rmErr))
+			errs = append(errs, ErrPruneFailed.Wrap(rmErr, "remove %s", files[0]))
 		}
 		files = files[1:]
 	}
