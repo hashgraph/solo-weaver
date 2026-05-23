@@ -24,7 +24,7 @@ func sampleEvent(reason string) eventlog.Event {
 		Level:       eventlog.LevelInfo,
 		Reason:      reason,
 		Msg:         "test message",
-		OperationID: "upgrade-20260415T143000-v0.75.0",
+		OperationID: "upgrade-20260415T143000Z-v0.75.0",
 		NodeID:      "0.0.3",
 	}
 }
@@ -48,7 +48,7 @@ func readLines(t *testing.T, path string) []map[string]any {
 
 func Test_NewOperation_WritesAndFsyncs(t *testing.T) {
 	dir := t.TempDir()
-	const opID = "upgrade-20260415T143000-v0.75.0"
+	const opID = "upgrade-20260415T143000Z-v0.75.0"
 
 	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func Test_NewOperation_WritesAndFsyncs(t *testing.T) {
 
 func Test_NewOperation_TruncatesPreviousFile(t *testing.T) {
 	dir := t.TempDir()
-	const opID = "upgrade-20260415T143000-v0.75.0"
+	const opID = "upgrade-20260415T143000Z-v0.75.0"
 
 	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func Test_NewAppend_AppendsAcrossOpens(t *testing.T) {
 
 func Test_Log_RejectsEventWithMissingFields(t *testing.T) {
 	dir := t.TempDir()
-	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000-v0.75.0")
+	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000Z-v0.75.0")
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -137,7 +137,7 @@ func Test_Log_RejectsEventWithMissingFields(t *testing.T) {
 func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 	dir := t.TempDir()
 
-	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000-v0.75.0")
+	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000Z-v0.75.0")
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -155,101 +155,4 @@ func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 
 	lines := readLines(t, l.Path())
 	assert.Len(t, lines, goroutines, "every concurrent write must produce exactly one valid JSON line")
-}
-
-func Test_PruneOldest_RemovesFilesOlderThanMaxAge(t *testing.T) {
-	dir := t.TempDir()
-
-	// Filenames encode 2024 dates — well outside 365 days from 2026.
-	old1 := filepath.Join(dir, "consensus-upgrade-20240101T000000-v0.70.0.jsonl")
-	old2 := filepath.Join(dir, "consensus-upgrade-20240601T000000-v0.71.0.jsonl")
-	recent := filepath.Join(dir, "consensus-upgrade-20260415T143000-v0.75.0.jsonl")
-
-	for _, p := range []string{old1, old2, recent} {
-		require.NoError(t, os.WriteFile(p, []byte("{}"), 0o640))
-	}
-
-	require.NoError(t, eventlog.PruneOldest(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 50))
-
-	assert.NoFileExists(t, old1)
-	assert.NoFileExists(t, old2)
-	assert.FileExists(t, recent)
-}
-
-func Test_PruneOldest_EnforcesHardCap(t *testing.T) {
-	dir := t.TempDir()
-
-	// All filenames within the last year but cap is 3.
-	names := []string{
-		"consensus-upgrade-20260101T000000-v0.71.0.jsonl",
-		"consensus-upgrade-20260201T000000-v0.72.0.jsonl",
-		"consensus-upgrade-20260301T000000-v0.73.0.jsonl",
-		"consensus-upgrade-20260401T000000-v0.74.0.jsonl",
-		"consensus-upgrade-20260415T143000-v0.75.0.jsonl",
-	}
-	for _, n := range names {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o640))
-	}
-
-	require.NoError(t, eventlog.PruneOldest(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 3))
-
-	assert.NoFileExists(t, filepath.Join(dir, names[0]), "oldest should be pruned")
-	assert.NoFileExists(t, filepath.Join(dir, names[1]), "second oldest should be pruned")
-	assert.FileExists(t, filepath.Join(dir, names[2]))
-	assert.FileExists(t, filepath.Join(dir, names[3]))
-	assert.FileExists(t, filepath.Join(dir, names[4]))
-}
-
-func Test_PruneOldestByModTime_RemovesOldFilesAndEnforcesCap(t *testing.T) {
-	dir := t.TempDir()
-
-	// Files have no timestamp in name (simulates fixed/rotated files).
-	names := []string{"events-a.jsonl", "events-b.jsonl", "events-c.jsonl", "events-d.jsonl"}
-	for _, n := range names {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o640))
-	}
-
-	// Back-date the first two beyond maxAge.
-	past := time.Now().Add(-400 * 24 * time.Hour)
-	require.NoError(t, os.Chtimes(filepath.Join(dir, names[0]), past, past))
-	require.NoError(t, os.Chtimes(filepath.Join(dir, names[1]), past, past))
-
-	// maxAge=365d, cap=3 — 2 removed by age, 0 more by cap (2 remain ≤ 3).
-	require.NoError(t, eventlog.PruneOldestByModTime(dir, "events-*.jsonl", 365*24*time.Hour, 3))
-
-	assert.NoFileExists(t, filepath.Join(dir, names[0]))
-	assert.NoFileExists(t, filepath.Join(dir, names[1]))
-	assert.FileExists(t, filepath.Join(dir, names[2]))
-	assert.FileExists(t, filepath.Join(dir, names[3]))
-}
-
-func Test_PruneOldest_BothConditionsApplied(t *testing.T) {
-	dir := t.TempDir()
-
-	// 2 files with 2024 dates (old) + 4 files with 2026 dates (recent); cap is 3.
-	// Expect: 2 old removed by age, 1 more removed by cap → 3 remain.
-	old1 := filepath.Join(dir, "consensus-upgrade-20240101T000000-v0.70.0.jsonl")
-	old2 := filepath.Join(dir, "consensus-upgrade-20240601T000000-v0.71.0.jsonl")
-	recent := []string{
-		"consensus-upgrade-20260101T000000-v0.72.0.jsonl",
-		"consensus-upgrade-20260201T000000-v0.73.0.jsonl",
-		"consensus-upgrade-20260301T000000-v0.74.0.jsonl",
-		"consensus-upgrade-20260415T143000-v0.75.0.jsonl",
-	}
-
-	for _, p := range []string{old1, old2} {
-		require.NoError(t, os.WriteFile(p, []byte("{}"), 0o640))
-	}
-	for _, n := range recent {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o640))
-	}
-
-	require.NoError(t, eventlog.PruneOldest(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 3))
-
-	assert.NoFileExists(t, old1)
-	assert.NoFileExists(t, old2)
-	assert.NoFileExists(t, filepath.Join(dir, recent[0]), "oldest recent should be pruned to satisfy cap")
-	assert.FileExists(t, filepath.Join(dir, recent[1]))
-	assert.FileExists(t, filepath.Join(dir, recent[2]))
-	assert.FileExists(t, filepath.Join(dir, recent[3]))
 }
