@@ -9,18 +9,29 @@
 The daemon already emits structured JSON logs via `logx` (zerolog), forwarded to journald.
 JSONL event files serve a distinct and complementary purpose:
 
-| Concern | Structured logs (journald) | JSONL event files |
-|---------|---------------------------|-------------------|
-| Audience | Operators debugging the daemon process | Node operators, SREs, post-mortem reviewers |
-| Scope | All daemon internals (backoff, reconnect, auth retries, …) | Business milestones only (workflow started, files placed, completed/failed) |
-| Access | Requires `journalctl` on the host; may require root | Plain file; readable by any tool (`cat`, `jq`, `grep`) |
-| Persistence | Journald rotation policy (size/time based, per host config) | Explicit retention: ≤365 days & ≤50 files per component |
-| Portability | Cannot be attached to a ticket or shared off-host without export | Self-contained file; trivial to attach to a post-mortem or support ticket |
-| HIP mandate | No | Yes — the HIP defines the event schema, file location, and retention as a contractual interface |
+**What structured logs (journald) give you:**
+- Real-time operational visibility — watch attempts, backoff, auth errors, dedup rejections
+- Verbose — everything the daemon does
+- Ephemeral — journald rotates and may not persist across reboots depending on host configuration
+- Consumed by: operators tailing logs, alerting on log patterns
 
-**In short:** structured logs answer "what did the daemon do and why did it fail?" for
-engineers who have host access. JSONL event files answer "did this upgrade happen, when,
-and did it succeed?" for operators and auditors who do not.
+**What the JSONL event file gives you:**
+- Business-level milestone record — what upgrade operations happened and where they stopped
+- Sparse — only 4–5 events per upgrade (`ExecuteWorkflowStarted`, `FilesPlaced`, `ExecuteWorkflowCompleted`/`Failed`)
+- Durable — written with `O_APPEND + fsync`; survives daemon crashes and restarts
+- Consumed by: `provisioner daemon check` (reads the last event to report upgrade status), support diagnostics, post-mortem audit
+
+**The key distinction that justifies both:**
+
+If the daemon crashes mid-upgrade, journald may not reliably tell you where it stopped.
+The JSONL file will — the last line is the last milestone reached before the crash. That is
+the crash-safe audit trail the HIP references.
+
+Additionally, `provisioner daemon check` reading a predictable local file is simpler and
+more reliable than parsing journald output.
+
+**HIP mandate:** the HIP defines the event schema, file location, and retention as a
+contractual interface — the JSONL files are not optional.
 
 ## Decision
 
