@@ -15,8 +15,12 @@ import (
 // Each Log call fsyncs so entries survive a daemon crash.
 type EventLogger struct {
 	mu   sync.Mutex
+	path string
 	file *os.File
 }
+
+// Path returns the absolute path of the underlying JSONL file.
+func (l *EventLogger) Path() string { return l.path }
 
 // NewOperation creates a per-operation JSONL file in dir named
 // "consensus-<operationID>.jsonl" and returns a logger. The file is truncated
@@ -25,10 +29,10 @@ func NewOperation(dir, operationID string) (*EventLogger, error) {
 	return open(filepath.Join(dir, "consensus-"+operationID+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 }
 
-// NewAppend opens (or creates) a fixed append-only JSONL file at path.
-// Used for migration events where multiple operations share one file.
-func NewAppend(path string) (*EventLogger, error) {
-	return open(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
+// NewAppend opens (or creates) a fixed append-only JSONL file in dir named
+// fileName. Used for migration events where multiple operations share one file.
+func NewAppend(dir, fileName string) (*EventLogger, error) {
+	return open(filepath.Join(dir, fileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND)
 }
 
 func open(path string, flag int) (*EventLogger, error) {
@@ -36,7 +40,7 @@ func open(path string, flag int) (*EventLogger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &EventLogger{file: f}, nil
+	return &EventLogger{path: path, file: f}, nil
 }
 
 // Log appends one JSON line to the file and fsyncs.

@@ -52,6 +52,7 @@ func Test_NewOperation_WritesAndFsyncs(t *testing.T) {
 
 	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "consensus-"+opID+".jsonl"), l.Path())
 
 	require.NoError(t, l.Log(sampleEvent("ExecuteWorkflowStarted")))
 	require.NoError(t, l.Log(sampleEvent("FilesPlaced")))
@@ -88,19 +89,20 @@ func Test_NewOperation_TruncatesPreviousFile(t *testing.T) {
 
 func Test_NewAppend_AppendsAcrossOpens(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "consensus-migrate-events.jsonl")
+	const fileName = "consensus-migrate-events.jsonl"
 
-	l, err := eventlog.NewAppend(path)
+	l, err := eventlog.NewAppend(dir, fileName)
 	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, fileName), l.Path())
 	require.NoError(t, l.Log(sampleEvent("MigrationStarted")))
 	require.NoError(t, l.Close())
 
-	l2, err := eventlog.NewAppend(path)
+	l2, err := eventlog.NewAppend(dir, fileName)
 	require.NoError(t, err)
 	require.NoError(t, l2.Log(sampleEvent("MigrationCompleted")))
 	require.NoError(t, l2.Close())
 
-	lines := readLines(t, path)
+	lines := readLines(t, filepath.Join(dir, fileName))
 	require.Len(t, lines, 2, "NewAppend must accumulate entries across opens")
 	assert.Equal(t, "MigrationStarted", lines[0]["reason"])
 	assert.Equal(t, "MigrationCompleted", lines[1]["reason"])
