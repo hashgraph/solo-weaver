@@ -11,6 +11,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -36,7 +37,7 @@ type Daemon struct {
 }
 
 func New(paths models.WeaverPaths) *Daemon {
-	pruneUpgradeEventLogs(paths.DaemonEventsDir)
+	pruneUpgradeEventLogs(paths.HomeDir, paths.DaemonEventsDir)
 
 	mm := consensus.NewMigrationMonitor()
 	d := &Daemon{
@@ -51,12 +52,22 @@ func New(paths models.WeaverPaths) *Daemon {
 // pruneUpgradeEventLogs applies the retention policy to per-operation upgrade
 // JSONL files on daemon startup. A failure is logged as a warning and does not
 // block startup — a retained extra file is less harmful than a failed daemon.
-func pruneUpgradeEventLogs(dir string) {
+// homeDir is used to verify dir is within the weaver home tree, preventing
+// accidental pruning of arbitrary filesystem paths.
+func pruneUpgradeEventLogs(homeDir, dir string) {
 	if dir == "" || !filepath.IsAbs(dir) {
 		logx.As().Warn().
 			Str("reason", "UpgradeEventLogPruneSkipped").
 			Str("dir", dir).
 			Msg("Skipping upgrade event log pruning — dir is empty or relative")
+		return
+	}
+	if _, err := sanity.ValidatePathWithinBase(homeDir, dir); err != nil {
+		logx.As().Warn().Err(err).
+			Str("reason", "UpgradeEventLogPruneSkipped").
+			Str("dir", dir).
+			Str("home", homeDir).
+			Msg("Skipping upgrade event log pruning — dir is outside weaver home")
 		return
 	}
 	p := filepruner.New(filepruner.FilenameTimestampStrategy{
