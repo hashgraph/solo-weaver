@@ -43,7 +43,8 @@ daemon restart.
 - [ ] `runWatch` has a named-return `recover()` — a panic in the watch loop logs and returns an error, triggering backoff rather than crashing the daemon
 - [ ] `handleExecute` goroutine has `recover()` — a panic in the workflow does not crash the daemon
 - [ ] Missing `daemon.yaml` returns `ErrConfigNotFound` (carries `errorx.NotFound()` trait)
-- [ ] Malformed or missing required fields return `ErrConfigMalformed`
+- [ ] Malformed or missing required fields (`node_id`, `kubeconfig`, `orbit`) return `ErrConfigMalformed`
+- [ ] `upgrade_dir` is optional — empty value falls back to `/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current` via `DaemonConfig.upgradeDir()`
 - [ ] `DaemonConfigPath` resolves to `$home/config/daemon.yaml`
 - [ ] `cmd/daemon/main.go` returns `daemon.New` errors unwrapped — no double-wrap in `errorx.InternalError`
 - [ ] `NewWithComponents` (export_test.go) is test-only and not part of the production API
@@ -209,8 +210,10 @@ EOF
 ```bash
 sudo mkdir -p /opt/solo/weaver/config
 sudo tee /opt/solo/weaver/config/daemon.yaml <<'EOF'
-kubeconfig: /opt/solo/weaver/config/daemon.kubeconfig
-orbit: hedera-network
+node_id:     0.0.3
+kubeconfig:  /opt/solo/weaver/sandbox/etc/weaver/kubeconfig
+orbit:       hedera-network
+upgrade_dir: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
 EOF
 ```
 

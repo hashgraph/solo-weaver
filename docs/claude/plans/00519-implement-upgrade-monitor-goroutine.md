@@ -53,8 +53,10 @@ Daemon.Run(ctx)
 The daemon reads `daemon.yaml` at startup:
 
 ```yaml
-kubeconfig: /opt/solo/weaver/config/daemon.kubeconfig   # written by solo-provisioner
-orbit: hedera-network                                   # CN namespace
+node_id:     0.0.3                                              # required; Hedera node identifier; used as nodeId in JSONL events
+kubeconfig:  /opt/solo/weaver/sandbox/etc/weaver/kubeconfig    # required; scoped kubeconfig written by solo-provisioner
+orbit:       hedera-network                                     # required; CN namespace for CR watch
+upgrade_dir: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current   # optional; this is the default
 ```
 
 ## Changed Files
