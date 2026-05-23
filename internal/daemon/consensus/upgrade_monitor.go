@@ -319,6 +319,12 @@ func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unst
 // context derived from ctx with an explicit timeout (e.g. context.WithTimeout).
 // If any step hangs indefinitely, activeOpID stays set and the daemon will
 // reject all future upgrades without crashing or logging an error.
+//
+// IMPORTANT — event log pruning: after the per-operation EventLogger is closed
+// at the end of this function, call filepruner to prune old consensus-upgrade-*.jsonl
+// files from paths.DaemonEventsDir (FilenameTimestampStrategy, maxAge=365d, keep=50).
+// Pruning at startup covers the initial case; pruning here covers long-running daemons
+// where startup pruning never re-runs. See pkg/filepruner and #555.
 func (um *UpgradeMonitor) handleExecute(_ context.Context, cr *unstructured.Unstructured) error {
 	operationID, _, _ := unstructured.NestedString(cr.Object, "spec", "operationId")
 	if um.onExecute != nil {
