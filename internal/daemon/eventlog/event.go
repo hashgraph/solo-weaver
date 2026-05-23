@@ -2,7 +2,10 @@
 
 package eventlog
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Level is the severity of a lifecycle milestone — mirrors HIP-defined values.
 // Only INFO and ERROR are defined because every event in this file is either a
@@ -47,14 +50,5 @@ func (e Event) validate() error {
 	if e.NodeID == "" {
 		errs = append(errs, ErrInvalidEvent.New("NodeID is required"))
 	}
-	// errors.Join from stdlib works fine with errorx errors.
-	var joined error
-	for _, err := range errs {
-		if joined == nil {
-			joined = err
-		} else {
-			joined = ErrInvalidEvent.Wrap(joined, "%s", err.Error())
-		}
-	}
-	return joined
+	return errors.Join(errs...)
 }

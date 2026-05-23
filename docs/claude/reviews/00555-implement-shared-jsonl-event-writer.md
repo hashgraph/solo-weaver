@@ -53,7 +53,7 @@ This story introduces two packages:
 - [ ] Pruning failure is logged as a warning and does not block daemon startup
 - [ ] `DaemonEventsDir` is added to `AllDirectories` - daemon startup creates the directory automatically
 - [ ] `DaemonConsensusMigrateEventsPath` is `$home/daemon/events/consensus-migrate-events.jsonl`
-- [ ] Post-execute pruning noted as IMPORTANT comment in `handleExecute` stub on #519 branch
+- [ ] Post-execute pruning is out of scope for this PR — wired in the story that implements `handleExecute` steps (depends on #519)
 - [ ] All new source files carry the SPDX Apache-2.0 header
 
 ## Test Commands

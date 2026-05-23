@@ -40,6 +40,12 @@ func New(strategy Strategy) *Pruner {
 // Returns a combined error if any deletion fails, so partial pruning is visible
 // to the caller rather than silently violating the retention contract.
 func (p *Pruner) Prune(dir, glob string, keep int) error {
+	if p.strategy == nil {
+		return ErrPruneFailed.New("Prune called with nil strategy")
+	}
+	if keep < 0 {
+		return ErrPruneFailed.New("keep must be >= 0, got %d", keep)
+	}
 	matches, err := globSorted(dir, glob)
 	if err != nil {
 		return err

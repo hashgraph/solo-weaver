@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	upgradeEventLayout  = "20060102T150405Z"
-	upgradeEventMaxAge  = 365 * 24 * time.Hour
-	upgradeEventKeep    = 50
-	upgradeEventGlob    = "consensus-upgrade-*.jsonl"
+	upgradeEventLayout = "20060102T150405Z"
+	upgradeEventMaxAge = 365 * 24 * time.Hour
+	upgradeEventKeep   = 50
+	upgradeEventGlob   = "consensus-upgrade-*.jsonl"
 )
 
 // Daemon is the controller for solo-provisioner-daemon. It composes the

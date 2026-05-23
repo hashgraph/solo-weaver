@@ -163,6 +163,20 @@ func Test_Any_PrunesWhenEitherConditionMet(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, recentSmall), "recent and small — must be kept")
 }
 
+func Test_Prune_RejectsNegativeKeep(t *testing.T) {
+	p := filepruner.New(filepruner.ModTimeStrategy{MaxAge: year})
+	err := p.Prune(t.TempDir(), "*.jsonl", -1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keep must be >= 0")
+}
+
+func Test_Prune_RejectsNilStrategy(t *testing.T) {
+	p := filepruner.New(nil)
+	err := p.Prune(t.TempDir(), "*.jsonl", 10)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil strategy")
+}
+
 func Test_ModTimeStrategy_RemovesOldFilesAndEnforcesCap(t *testing.T) {
 	dir := t.TempDir()
 	names := []string{"events-a.jsonl", "events-b.jsonl", "events-c.jsonl", "events-d.jsonl"}
