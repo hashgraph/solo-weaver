@@ -89,6 +89,13 @@ const filenameTimestampLayout = "20060102T150405"
 // maxAge, then removes oldest-first until at most keep files remain.
 // Returns a combined error if any deletion fails — partial pruning is reported so
 // the caller can log a warning rather than silently violating the retention contract.
+//
+// This function is intended only for per-operation files whose names embed an
+// ISO-8601 timestamp (e.g. "consensus-upgrade-20260415T143000-v0.75.0.jsonl").
+// Fixed append-only files such as "consensus-migrate-events.jsonl" have no
+// retention policy and must never be passed to this function — they carry no
+// timestamp in the filename and would be skipped by the age check but still count
+// toward the hard cap, producing unexpected deletions.
 func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error {
 	matches, err := filepath.Glob(filepath.Join(dir, glob))
 	if err != nil {
