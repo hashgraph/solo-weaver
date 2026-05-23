@@ -48,40 +48,40 @@ func readLines(t *testing.T, path string) []map[string]any {
 
 func Test_NewOperation_WritesAndFsyncs(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "consensus-upgrade-20260415T143000-v0.75.0.jsonl")
+	const opID = "upgrade-20260415T143000-v0.75.0"
 
-	l, err := eventlog.NewOperation(path)
+	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
 
 	require.NoError(t, l.Log(sampleEvent("ExecuteWorkflowStarted")))
 	require.NoError(t, l.Log(sampleEvent("FilesPlaced")))
 	require.NoError(t, l.Close())
 
-	lines := readLines(t, path)
+	lines := readLines(t, filepath.Join(dir, "consensus-"+opID+".jsonl"))
 	require.Len(t, lines, 2)
 	assert.Equal(t, "ExecuteWorkflowStarted", lines[0]["reason"])
 	assert.Equal(t, "FilesPlaced", lines[1]["reason"])
-	assert.Equal(t, "upgrade-20260415T143000-v0.75.0", lines[0]["operationId"])
+	assert.Equal(t, opID, lines[0]["operationId"])
 	assert.Equal(t, "0.0.3", lines[0]["nodeId"])
 }
 
 func Test_NewOperation_TruncatesPreviousFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "consensus-upgrade-test.jsonl")
+	const opID = "upgrade-20260415T143000-v0.75.0"
 
 	// Write one event then close.
-	l, err := eventlog.NewOperation(path)
+	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
 	require.NoError(t, l.Log(sampleEvent("ExecuteWorkflowStarted")))
 	require.NoError(t, l.Close())
 
 	// Open again — must start fresh, not append.
-	l2, err := eventlog.NewOperation(path)
+	l2, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
 	require.NoError(t, l2.Log(sampleEvent("ExecuteWorkflowCompleted")))
 	require.NoError(t, l2.Close())
 
-	lines := readLines(t, path)
+	lines := readLines(t, filepath.Join(dir, "consensus-"+opID+".jsonl"))
 	require.Len(t, lines, 1, "NewOperation must truncate; file should contain only the second session's event")
 	assert.Equal(t, "ExecuteWorkflowCompleted", lines[0]["reason"])
 }
@@ -108,9 +108,8 @@ func Test_NewAppend_AppendsAcrossOpens(t *testing.T) {
 
 func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "concurrent.jsonl")
 
-	l, err := eventlog.NewOperation(path)
+	l, err := eventlog.NewOperation(dir, "upgrade-concurrent-test")
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -126,7 +125,7 @@ func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, l.Close())
 
-	lines := readLines(t, path)
+	lines := readLines(t, filepath.Join(dir, "consensus-upgrade-concurrent-test.jsonl"))
 	assert.Len(t, lines, goroutines, "every concurrent write must produce exactly one valid JSON line")
 }
 

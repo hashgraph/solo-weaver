@@ -18,11 +18,11 @@ type EventLogger struct {
 	file *os.File
 }
 
-// NewOperation creates a new per-operation JSONL file at path and returns a logger.
-// The file is truncated on open so each operation starts fresh.
-// The caller must call Close when the operation completes.
-func NewOperation(path string) (*EventLogger, error) {
-	return open(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+// NewOperation creates a per-operation JSONL file in dir named
+// "consensus-<operationID>.jsonl" and returns a logger. The file is truncated
+// on open so each operation starts fresh. The caller must call Close when done.
+func NewOperation(dir, operationID string) (*EventLogger, error) {
+	return open(filepath.Join(dir, "consensus-"+operationID+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 }
 
 // NewAppend opens (or creates) a fixed append-only JSONL file at path.
