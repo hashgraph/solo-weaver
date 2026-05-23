@@ -200,6 +200,29 @@ func Test_PruneOldest_EnforcesHardCap(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, names[4]))
 }
 
+func Test_PruneOldestByModTime_RemovesOldFilesAndEnforcesCap(t *testing.T) {
+	dir := t.TempDir()
+
+	// Files have no timestamp in name (simulates fixed/rotated files).
+	names := []string{"events-a.jsonl", "events-b.jsonl", "events-c.jsonl", "events-d.jsonl"}
+	for _, n := range names {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o640))
+	}
+
+	// Back-date the first two beyond maxAge.
+	past := time.Now().Add(-400 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, names[0]), past, past))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, names[1]), past, past))
+
+	// maxAge=365d, cap=3 — 2 removed by age, 0 more by cap (2 remain ≤ 3).
+	require.NoError(t, eventlog.PruneOldestByModTime(dir, "events-*.jsonl", 365*24*time.Hour, 3))
+
+	assert.NoFileExists(t, filepath.Join(dir, names[0]))
+	assert.NoFileExists(t, filepath.Join(dir, names[1]))
+	assert.FileExists(t, filepath.Join(dir, names[2]))
+	assert.FileExists(t, filepath.Join(dir, names[3]))
+}
+
 func Test_PruneOldest_BothConditionsApplied(t *testing.T) {
 	dir := t.TempDir()
 

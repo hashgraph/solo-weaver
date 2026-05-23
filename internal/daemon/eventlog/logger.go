@@ -85,36 +85,28 @@ func (l *EventLogger) Close() error {
 const filenameTimestampLayout = "20060102T150405"
 
 // PruneOldest applies the retention policy to per-operation JSONL files matching
-// glob in dir: first removes files whose embedded filename timestamp is older than
-// maxAge, then removes oldest-first until at most keep files remain.
-// Returns a combined error if any deletion fails — partial pruning is reported so
-// the caller can log a warning rather than silently violating the retention contract.
+// glob in dir using the ISO-8601 timestamp embedded in each filename to determine
+// age. Files older than maxAge are removed first; then oldest-first until at most
+// keep files remain. Returns a combined error if any deletion fails.
 //
-// This function is intended only for per-operation files whose names embed an
-// ISO-8601 timestamp (e.g. "consensus-upgrade-20260415T143000-v0.75.0.jsonl").
-// Fixed append-only files such as "consensus-migrate-events.jsonl" have no
-// retention policy and must never be passed to this function — they carry no
-// timestamp in the filename and would be skipped by the age check but still count
-// toward the hard cap, producing unexpected deletions.
+// Use this for per-operation files whose names embed a timestamp
+// (e.g. "consensus-upgrade-20260415T143000-v0.75.0.jsonl").
+// Files whose names contain no parseable timestamp are kept and count toward the cap.
+// For files without a timestamp in the name use PruneOldestByModTime instead.
 func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error {
-	matches, err := filepath.Glob(filepath.Join(dir, glob))
+	matches, err := globSorted(dir, glob)
 	if err != nil {
 		return err
 	}
 
-	// Sort ascending by name — ISO-8601 timestamps in filenames sort chronologically.
-	sort.Strings(matches)
-
 	cutoff := time.Now().Add(-maxAge)
 	var errs []error
-
-	// Pass 1: remove files whose filename timestamp predates the cutoff.
 	var remaining []string
+
 	for _, p := range matches {
 		ts, parseErr := parseFilenameTimestamp(filepath.Base(p))
 		if parseErr != nil {
-			// Cannot determine age from filename — keep the file rather than
-			// silently deleting something we can't date.
+			// Cannot determine age from filename — keep rather than silently delete.
 			remaining = append(remaining, p)
 			continue
 		}
@@ -127,23 +119,69 @@ func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error {
 		}
 	}
 
-	// Pass 2: if still over the cap, remove oldest first.
-	for len(remaining) > keep {
-		if rmErr := os.Remove(remaining[0]); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("remove %s: %w", remaining[0], rmErr))
-		}
-		remaining = remaining[1:]
-	}
-
-	return errors.Join(errs...)
+	return errors.Join(append(errs, enforceCap(remaining, keep)...)...)
 }
 
-// parseFilenameTimestamp extracts the ISO-8601 compact timestamp from a filename
-// of the form "consensus-upgrade-<ts>-<ver>.jsonl" (e.g. "20260415T143000").
+// PruneOldestByModTime applies the retention policy to JSONL files matching glob
+// in dir using each file's modification time to determine age. Files whose ModTime
+// is older than maxAge are removed first; then oldest-first (by ModTime) until at
+// most keep files remain. Returns a combined error if any deletion fails.
+//
+// Use this for files without a timestamp in the filename
+// (e.g. a fixed append-only file that has been rotated externally).
+// For per-operation files with an embedded filename timestamp use PruneOldest instead.
+func PruneOldestByModTime(dir, glob string, maxAge time.Duration, keep int) error {
+	matches, err := globSorted(dir, glob)
+	if err != nil {
+		return err
+	}
+
+	cutoff := time.Now().Add(-maxAge)
+	var errs []error
+	var remaining []string
+
+	for _, p := range matches {
+		info, statErr := os.Stat(p)
+		if statErr != nil {
+			continue // already gone
+		}
+		if info.ModTime().Before(cutoff) {
+			if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("remove %s: %w", p, rmErr))
+			}
+		} else {
+			remaining = append(remaining, p)
+		}
+	}
+
+	return errors.Join(append(errs, enforceCap(remaining, keep)...)...)
+}
+
+// globSorted returns files matching glob in dir, sorted ascending by name.
+func globSorted(dir, glob string) ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(dir, glob))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(matches)
+	return matches, nil
+}
+
+// enforceCap removes the oldest files (front of the sorted slice) until len(files) <= keep.
+func enforceCap(files []string, keep int) []error {
+	var errs []error
+	for len(files) > keep {
+		if rmErr := os.Remove(files[0]); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove %s: %w", files[0], rmErr))
+		}
+		files = files[1:]
+	}
+	return errs
+}
+
+// parseFilenameTimestamp extracts the ISO-8601 compact timestamp from a filename.
 // Returns an error if no parseable timestamp is found.
 func parseFilenameTimestamp(name string) (time.Time, error) {
-	// Filenames follow the pattern: prefix-<YYYYMMDDTHHmmSS>-<suffix>
-	// Walk through the dash-separated segments and try to parse each one.
 	for i := 0; i < len(name); i++ {
 		// A compact ISO-8601 timestamp is exactly 15 chars: YYYYMMDDTHHmmSS
 		if i+15 <= len(name) {
