@@ -28,30 +28,37 @@ func writeFiles(t *testing.T, dir string, names []string) {
 	}
 }
 
+// tsName builds a consensus-upgrade filename with a timestamp offset from now.
+// offset < 0 means in the past (e.g. -2*year = 2 years ago).
+func tsName(offset time.Duration, ver string) string {
+	ts := time.Now().UTC().Add(offset).Format(upgradeLayout)
+	return "consensus-upgrade-" + ts + "-" + ver + ".jsonl"
+}
+
 func Test_FilenameTimestampStrategy_RemovesOldFiles(t *testing.T) {
 	dir := t.TempDir()
-	writeFiles(t, dir, []string{
-		"consensus-upgrade-20240101T000000Z-v0.70.0.jsonl", // old
-		"consensus-upgrade-20240601T000000Z-v0.71.0.jsonl", // old
-		"consensus-upgrade-20260415T143000Z-v0.75.0.jsonl", // recent
-	})
+	old1 := tsName(-2*year, "v0.70.0")
+	old2 := tsName(-18*30*24*time.Hour, "v0.71.0") // ~18 months ago
+	recent := tsName(-30*24*time.Hour, "v0.75.0")  // 30 days ago
+	writeFiles(t, dir, []string{old1, old2, recent})
 
 	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
 	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 50))
 
-	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"))
-	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240601T000000Z-v0.71.0.jsonl"))
-	assert.FileExists(t, filepath.Join(dir, "consensus-upgrade-20260415T143000Z-v0.75.0.jsonl"))
+	assert.NoFileExists(t, filepath.Join(dir, old1))
+	assert.NoFileExists(t, filepath.Join(dir, old2))
+	assert.FileExists(t, filepath.Join(dir, recent))
 }
 
 func Test_FilenameTimestampStrategy_EnforcesHardCap(t *testing.T) {
 	dir := t.TempDir()
+	// 5 recent files (all within MaxAge); cap=3 → oldest 2 removed
 	names := []string{
-		"consensus-upgrade-20260101T000000Z-v0.71.0.jsonl",
-		"consensus-upgrade-20260201T000000Z-v0.72.0.jsonl",
-		"consensus-upgrade-20260301T000000Z-v0.73.0.jsonl",
-		"consensus-upgrade-20260401T000000Z-v0.74.0.jsonl",
-		"consensus-upgrade-20260415T143000Z-v0.75.0.jsonl",
+		tsName(-150*24*time.Hour, "v0.71.0"),
+		tsName(-120*24*time.Hour, "v0.72.0"),
+		tsName(-90*24*time.Hour, "v0.73.0"),
+		tsName(-60*24*time.Hour, "v0.74.0"),
+		tsName(-30*24*time.Hour, "v0.75.0"),
 	}
 	writeFiles(t, dir, names)
 
@@ -67,24 +74,23 @@ func Test_FilenameTimestampStrategy_EnforcesHardCap(t *testing.T) {
 
 func Test_FilenameTimestampStrategy_BothConditionsApplied(t *testing.T) {
 	dir := t.TempDir()
-	// 2 old (2024) + 4 recent (2026); cap=3 → 2 removed by age, 1 more by cap.
-	writeFiles(t, dir, []string{
-		"consensus-upgrade-20240101T000000Z-v0.70.0.jsonl",
-		"consensus-upgrade-20240601T000000Z-v0.71.0.jsonl",
-	})
+	// 2 old + 4 recent; cap=3 → 2 removed by age, 1 more by cap.
+	old1 := tsName(-2*year, "v0.70.0")
+	old2 := tsName(-18*30*24*time.Hour, "v0.71.0")
+	writeFiles(t, dir, []string{old1, old2})
 	recent := []string{
-		"consensus-upgrade-20260101T000000Z-v0.72.0.jsonl",
-		"consensus-upgrade-20260201T000000Z-v0.73.0.jsonl",
-		"consensus-upgrade-20260301T000000Z-v0.74.0.jsonl",
-		"consensus-upgrade-20260415T143000Z-v0.75.0.jsonl",
+		tsName(-150*24*time.Hour, "v0.72.0"),
+		tsName(-120*24*time.Hour, "v0.73.0"),
+		tsName(-90*24*time.Hour, "v0.74.0"),
+		tsName(-30*24*time.Hour, "v0.75.0"),
 	}
 	writeFiles(t, dir, recent)
 
 	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
 	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 3))
 
-	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"))
-	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240601T000000Z-v0.71.0.jsonl"))
+	assert.NoFileExists(t, filepath.Join(dir, old1))
+	assert.NoFileExists(t, filepath.Join(dir, old2))
 	assert.NoFileExists(t, filepath.Join(dir, recent[0]), "oldest recent should be pruned to satisfy cap")
 	assert.FileExists(t, filepath.Join(dir, recent[1]))
 	assert.FileExists(t, filepath.Join(dir, recent[2]))
@@ -93,15 +99,16 @@ func Test_FilenameTimestampStrategy_BothConditionsApplied(t *testing.T) {
 
 func Test_FilenameTimestampStrategy_KeepsFileWithNoTimestamp(t *testing.T) {
 	dir := t.TempDir()
+	old := tsName(-2*year, "v0.70.0")
 	writeFiles(t, dir, []string{
-		"consensus-upgrade-20240101T000000Z-v0.70.0.jsonl",
+		old,
 		"consensus-migrate-events.jsonl", // no timestamp — must be kept
 	})
 
 	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
 	require.NoError(t, p.Prune(dir, "*.jsonl", 50))
 
-	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"))
+	assert.NoFileExists(t, filepath.Join(dir, old))
 	assert.FileExists(t, filepath.Join(dir, "consensus-migrate-events.jsonl"), "file with no timestamp must not be deleted")
 }
 
@@ -122,9 +129,9 @@ func Test_FileSizeStrategy_PrunesOversizedFiles(t *testing.T) {
 func Test_All_PrunesOnlyWhenBothConditionsMet(t *testing.T) {
 	dir := t.TempDir()
 	// old + large → pruned; old + small → kept; recent + large → kept
-	oldLarge := "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"
-	oldSmall := "consensus-upgrade-20240601T000000Z-v0.71.0.jsonl"
-	recentLarge := "consensus-upgrade-20260415T143000Z-v0.75.0.jsonl"
+	oldLarge := tsName(-2*year, "v0.70.0")
+	oldSmall := tsName(-18*30*24*time.Hour, "v0.71.0")
+	recentLarge := tsName(-30*24*time.Hour, "v0.75.0")
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, oldLarge), make([]byte, 200), 0o640))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, oldSmall), []byte("{}"), 0o640))
@@ -144,9 +151,9 @@ func Test_All_PrunesOnlyWhenBothConditionsMet(t *testing.T) {
 func Test_Any_PrunesWhenEitherConditionMet(t *testing.T) {
 	dir := t.TempDir()
 	// old + small → pruned (old); recent + large → pruned (large); recent + small → kept
-	oldSmall := "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"
-	recentLarge := "consensus-upgrade-20260415T143000Z-v0.75.0.jsonl"
-	recentSmall := "consensus-upgrade-20260301T000000Z-v0.74.0.jsonl"
+	oldSmall := tsName(-2*year, "v0.70.0")
+	recentLarge := tsName(-30*24*time.Hour, "v0.75.0")
+	recentSmall := tsName(-60*24*time.Hour, "v0.74.0")
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, oldSmall), []byte("{}"), 0o640))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, recentLarge), make([]byte, 200), 0o640))
