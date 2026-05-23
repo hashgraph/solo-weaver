@@ -45,33 +45,37 @@ in future.
 ### Upgrade Workflow — Per-Operation File
 
 ```
-/opt/solo/weaver/daemon/events/consensus-upgrade-20260415T143000-v0.75.0.jsonl
+/opt/solo/weaver/daemon/events/consensus-upgrade-20260415T143000Z-v0.75.0.jsonl
 ```
 
-One file per upgrade operation (`consensus-upgrade-<ts>-<ver>.jsonl`).
+One file per upgrade operation (`consensus-upgrade-<ts>Z-<ver>.jsonl`).
+The timestamp uses compact ISO-8601 with a UTC `Z` suffix: `20060102T150405Z`.
 
 **Why per-operation:**
 - One file = one incident. Trivial to isolate, grep, share, or attach to a post-mortem.
-- Retention is clean and bounded: on daemon startup, files older than 365 days are
-  removed, then oldest-first until at most 50 remain (whichever limit is hit first).
+- Retention is clean and bounded: files older than 365 days are removed, then oldest-first
+  until at most 50 remain.
 - Corruption blast radius is limited to the current operation's file.
 
-**Note on filename vs operationId:** The `operationId` (e.g. `upgrade-20260415T143000-v0.75.0`)
+**Note on filename vs operationId:** The `operationId` (e.g. `upgrade-20260415T143000Z-v0.75.0`)
 does not carry the `consensus-` prefix — it is a semantic identifier used in CR labels
 and event payloads. The filename prefix is a filesystem namespace convention only.
 
-**Bookend events (written to this file):**
+**Opening / closing events (written to this file):**
 - `ExecuteWorkflowStarted` — first entry; written on `ReadyForProvisionerDaemon` detection
 - `ExecuteWorkflowCompleted` / `ExecuteWorkflowFailed` — terminal entry
 
 Internal UpgradeMonitor watch-loop transitions (backoff, reconnect, auth errors) go to
 journald only — they are operational noise, not business milestones.
 
-**Retention:** on daemon startup, apply the unified policy: delete all
-`consensus-upgrade-*.jsonl` files older than 365 days, then delete oldest-first
-until at most 50 files remain. Both thresholds are enforced together — a file is kept
-only if it is within 365 days **and** within the 50-file cap. Sorted by filename
-timestamp (ISO-8601 embedded in the name). No runtime rotation needed.
+**Retention policy — two triggers:**
+1. **On daemon startup** — `daemon.New()` calls the pruner before starting monitors.
+2. **After each `handleExecute` completes** — pruner runs immediately after closing the
+   per-operation logger. This covers long-running daemons where startup pruning never
+   re-runs. Files are only added during upgrades so this is the natural trigger.
+
+Both triggers apply the same policy: remove files older than 365 days (by filename
+timestamp), then remove oldest-first until at most 50 remain.
 
 ### Migration Workflow — Fixed Append-Only File
 
@@ -82,12 +86,12 @@ timestamp (ISO-8601 embedded in the name). No runtime rotation needed.
 **Why fixed file:** Migration soak is a long-running continuous process potentially
 spanning days. There is no clean "one operationId = one file" boundary. A single fixed
 file fits naturally; the `operationId` field in every entry scopes events to a specific
-migration. Not subject to rotation.
+migration. Not subject to pruning.
 
 ### UC Events (reference — not owned by this plan)
 
 ```
-/opt/solo/weaver/uc/events/upgrade-<ts>-<ver>.jsonl
+/opt/solo/weaver/uc/events/upgrade-<ts>Z-<ver>.jsonl
 ```
 
 UC runs as a sidecar on the consensus node pod — it is always consensus-scoped by
@@ -97,11 +101,11 @@ cadence, so a unified policy avoids divergence.
 
 ### Summary Table
 
-| Component | Workflow  | File strategy      | Path                                              | Retention         |
-|-----------|-----------|--------------------|---------------------------------------------------|-------------------|
-| Daemon    | Upgrade   | Per-operation      | `daemon/events/consensus-upgrade-<ts>-<ver>.jsonl` | ≤365 days & ≤50 files on startup |
-| Daemon    | Migration | Fixed append-only  | `daemon/events/consensus-migrate-events.jsonl`    | None              |
-| UC        | Upgrade   | Per-operation      | `uc/events/upgrade-<ts>-<ver>.jsonl`              | ≤365 days & ≤50 files on startup |
+| Component | Workflow  | File strategy      | Path                                               | Retention                        |
+|-----------|-----------|--------------------|---------------------------------------------------|----------------------------------|
+| Daemon    | Upgrade   | Per-operation      | `daemon/events/consensus-upgrade-<ts>Z-<ver>.jsonl` | ≤365 days & ≤50 files; on startup + post-execute |
+| Daemon    | Migration | Fixed append-only  | `daemon/events/consensus-migrate-events.jsonl`    | None                             |
+| UC        | Upgrade   | Per-operation      | `uc/events/upgrade-<ts>Z-<ver>.jsonl`             | ≤365 days & ≤50 files on startup |
 
 ## HIP-Defined Events
 
@@ -114,71 +118,61 @@ All events share the base fields: `ts`, `level`, `reason`, `msg`, `operationId`,
 | `ExecuteWorkflowCompleted` | INFO    | `consensus-upgrade-*.jsonl`   | Workflow finished; `PendingNodeUpgrade` signaled |
 | `ExecuteWorkflowFailed`    | ERROR   | `consensus-upgrade-*.jsonl`   | Workflow halted; manual intervention required |
 
-Example file `consensus-upgrade-20260415T143000-v0.75.0.jsonl`:
+Example file `consensus-upgrade-20260415T143000Z-v0.75.0.jsonl`:
 
 ```jsonl
-{"ts":"2026-04-15T14:30:00Z","level":"INFO","reason":"ExecuteWorkflowStarted","msg":"Execute workflow triggered by ReadyForProvisionerDaemon; beginning upgrade steps","operationId":"upgrade-20260415T143000-v0.75.0","nodeId":"0.0.3"}
-{"ts":"2026-04-15T14:30:05Z","level":"INFO","reason":"FilesPlaced","msg":"InfraConfig and infrastructure-versions.yaml placed on host filesystem","operationId":"upgrade-20260415T143000-v0.75.0","nodeId":"0.0.3"}
-{"ts":"2026-04-15T14:31:02Z","level":"INFO","reason":"ExecuteWorkflowCompleted","msg":"Execute workflow finished; PendingNodeUpgrade signaled","operationId":"upgrade-20260415T143000-v0.75.0","nodeId":"0.0.3"}
+{"ts":"2026-04-15T14:30:00Z","level":"INFO","reason":"ExecuteWorkflowStarted","msg":"Execute workflow triggered by ReadyForProvisionerDaemon; beginning upgrade steps","operationId":"upgrade-20260415T143000Z-v0.75.0","nodeId":"0.0.3"}
+{"ts":"2026-04-15T14:30:05Z","level":"INFO","reason":"FilesPlaced","msg":"InfraConfig and infrastructure-versions.yaml placed on host filesystem","operationId":"upgrade-20260415T143000Z-v0.75.0","nodeId":"0.0.3"}
+{"ts":"2026-04-15T14:31:02Z","level":"INFO","reason":"ExecuteWorkflowCompleted","msg":"Execute workflow finished; PendingNodeUpgrade signaled","operationId":"upgrade-20260415T143000Z-v0.75.0","nodeId":"0.0.3"}
 ```
 
 ## Package Design
 
-### Package
+### Packages
 
-`internal/daemon/eventlog/`
+- `internal/daemon/eventlog/` — JSONL writer; no K8s or pruning dependencies
+- `pkg/filepruner/` — strategy-based file pruner; usable by daemon, UC, and any future component
 
-Kept separate from `internal/daemon/consensus/` so the migration monitor (#520) and any
-future daemon sub-system can share the same writer without importing the consensus package.
-
-### Types
+### eventlog API
 
 ```go
-// Level is the severity of an event — mirrors HIP-defined values.
-type Level string
+// NewOperation creates a per-operation JSONL file in dir named
+// "consensus-<operationID>.jsonl". Truncates on open. Caller must Close when done.
+func NewOperation(dir, operationID string) (*EventLogger, error)
 
-const (
-    LevelInfo  Level = "INFO"
-    LevelError Level = "ERROR"
-)
+// NewAppend opens (or creates) a fixed append-only file dir/fileName.
+func NewAppend(dir, fileName string) (*EventLogger, error)
 
-// Event is a single lifecycle milestone written to a JSONL file.
-// All fields are required; zero values produce invalid entries.
-type Event struct {
-    Ts          time.Time `json:"ts"`
-    Level       Level     `json:"level"`
-    Reason      string    `json:"reason"`
-    Msg         string    `json:"msg"`
-    OperationID string    `json:"operationId"`
-    NodeID      string    `json:"nodeId"`
-}
-```
-
-### EventLogger
-
-```go
-type EventLogger struct {
-    mu   sync.Mutex
-    file *os.File  // opened with O_WRONLY|O_APPEND|O_CREATE, perm 0o640
-}
-
-// NewOperation creates a new per-operation JSONL file at path and returns a logger.
-// The caller is responsible for calling Close() when the operation completes.
-func NewOperation(path string) (*EventLogger, error)
-
-// NewAppend opens (or creates) a fixed append-only JSONL file at path.
-func NewAppend(path string) (*EventLogger, error)
-
-// Log appends one JSON line and fsyncs. Returns an error if I/O fails.
+// Log validates all fields, appends one JSON line, and fsyncs.
 func (l *EventLogger) Log(e Event) error
+
+// Path returns the absolute path of the underlying file.
+func (l *EventLogger) Path() string
 
 // Close flushes and closes the underlying file.
 func (l *EventLogger) Close() error
+```
 
-// PruneOldest applies the retention policy to per-operation JSONL files matching
-// glob in dir: first removes files older than maxAge, then removes oldest-first
-// until at most keep files remain. Called on daemon and UC startup.
-func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error
+### filepruner API
+
+```go
+// Strategy decides whether a file is a pruning candidate.
+type Strategy interface {
+    ShouldPrune(path string) (bool, error)
+}
+
+// Built-in strategies
+FilenameTimestampStrategy{Layout string, MaxAge time.Duration}  // timestamp in filename
+ModTimeStrategy{MaxAge time.Duration}                           // file ModTime
+FileSizeStrategy{MaxBytes int64}                                // file size
+
+// Composite strategies
+All(strategies ...Strategy) Strategy  // prune if ALL match (AND)
+Any(strategies ...Strategy) Strategy  // prune if ANY match (OR)
+
+// Pruner
+func New(strategy Strategy) *Pruner
+func (p *Pruner) Prune(dir, glob string, keep int) error
 ```
 
 ### Error handling policy
@@ -187,28 +181,38 @@ If `Log()` returns an error (disk full, permissions lost):
 - **Do not silently drop** — the file is the crash-safe audit trail
 - **Log a warn to journald** with `reason=EventLogWriteFailed` and the underlying error
 - **Continue the upgrade** — a missing audit trail is bad; a halted upgrade is worse
-- The operator can investigate via journald; the JSONL gap is bounded and recoverable
+
+If `Prune()` returns an error (delete failed, permissions):
+- **Log a warn to journald** with `reason=UpgradeEventLogPruneFailed`
+- **Continue** — a stale extra file is less harmful than a blocked daemon or failed upgrade
+
+All errors use `errorx` typed errors (`ErrInvalidEvent`, `ErrPruneFailed`, `ErrNoTimestamp`).
 
 ### File paths on WeaverPaths
 
 ```go
 DaemonEventsDir                  string  // $home/daemon/events
-// Per-operation files are constructed at runtime:
-// filepath.Join(DaemonEventsDir, "consensus-upgrade-"+operationID+".jsonl")
-// Fixed file:
-DaemonConsensusUpgradeEventsDir  string  // same as DaemonEventsDir (used for pruning glob)
 DaemonConsensusMigrateEventsPath string  // $home/daemon/events/consensus-migrate-events.jsonl
 ```
 
-`DaemonEventsDir` is added to `AllDirectories` so daemon startup creates it.
+`DaemonEventsDir` is added to `AllDirectories` so daemon startup creates it automatically.
 
 ### Wire-up
 
-`EventLogger` for migration is constructed once in `daemon.New()` and injected into
-`MigrationMonitor`. For upgrade, a new per-operation logger is created inside
-`handleExecute` for each operation and closed when the operation completes.
+**On daemon startup** (`daemon.New()`):
+- Call `filepruner` with `FilenameTimestampStrategy{Layout: "20060102T150405Z", MaxAge: 365d}` and `keep=50` against `DaemonEventsDir`.
 
-Nil-safe `logEvent` helper on `UpgradeMonitor` avoids nil checks at every call site:
+**In `handleExecute`** (subsequent story):
+- Open a per-operation logger via `eventlog.NewOperation(paths.DaemonEventsDir, operationID)`
+- Emit opening/closing events via `logEvent` helper (nil-safe wrapper)
+- Close logger on completion
+- Run pruner again post-close — covers long-running daemons where startup pruning never re-runs
+
+**Migration logger** (`daemon.New()`, story #520):
+- Open once via `eventlog.NewAppend(paths.DaemonEventsDir, "consensus-migrate-events.jsonl")`
+- Inject into `MigrationMonitor`
+
+Nil-safe `logEvent` helper on `UpgradeMonitor`:
 
 ```go
 func (um *UpgradeMonitor) logEvent(log *eventlog.EventLogger, e eventlog.Event) {
@@ -232,15 +236,19 @@ in `handleExecute`. This keeps the JSONL logger free of K8s dependencies.
 
 ### In scope
 
-- `internal/daemon/eventlog/logger.go` — `EventLogger`, `NewOperation`, `NewAppend`, `Log`, `Close`, `PruneOldest`
-- `internal/daemon/eventlog/event.go` — `Event`, `Level` constants
-- `internal/daemon/eventlog/logger_test.go` — unit tests (temp file, concurrent writes, fsync, pruning)
+- `internal/daemon/eventlog/event.go` — `Event`, `Level` constants, field validation
+- `internal/daemon/eventlog/errors.go` — `ErrInvalidEvent` errorx type
+- `internal/daemon/eventlog/logger.go` — `EventLogger`, `NewOperation`, `NewAppend`, `Log`, `Close`, `Path`
+- `internal/daemon/eventlog/logger_test.go` — unit tests (write, truncate, append, concurrent writes, validation, Path absoluteness)
+- `pkg/filepruner/pruner.go` — `Strategy`, `Pruner`, `FilenameTimestampStrategy`, `ModTimeStrategy`, `FileSizeStrategy`, `All`, `Any`
+- `pkg/filepruner/errors.go` — `ErrPruneFailed`, `ErrNoTimestamp` errorx types
+- `pkg/filepruner/pruner_test.go` — unit tests for all strategies and composites
 - `pkg/models/weaver_paths.go` — add `DaemonEventsDir`, `DaemonConsensusMigrateEventsPath`
-- `internal/daemon/daemon.go` — construct migration `EventLogger`, inject into `MigrationMonitor`; call `PruneOldest` on startup
-- `internal/daemon/consensus/upgrade_monitor.go` — create per-operation logger in `handleExecute`, emit bookend events, close on completion
+- `internal/daemon/daemon.go` — call pruner on startup
 
 ### Out of scope
 
+- `handleExecute` event emission and post-execute pruning — story that implements `handleExecute` steps
 - Migration event logger (`consensus-migrate-events.jsonl`) wiring — story #520
 - K8s Event emission — belongs in the `handleExecute` implementation story
 - UC event log — separate component, separate story
@@ -254,6 +262,6 @@ in `handleExecute`. This keeps the JSONL logger free of K8s dependencies.
 2. **File I/O failure policy**: the plan above continues the upgrade on write failure.
    Should the HIP mandate halt-on-log-failure for strict auditability?
 
-3. **Startup pruning timing**: pruning the last 10 upgrade files on daemon startup means
-   a crash loop could prune files before they are read. Should pruning happen after the
-   watch is established, or is startup pruning acceptable?
+3. **Startup pruning timing**: a crash loop could prune files before they are read.
+   Should pruning happen after the watch is established, or is startup pruning acceptable?
+   Note: post-execute pruning (trigger 2) is unaffected by crash loops.
