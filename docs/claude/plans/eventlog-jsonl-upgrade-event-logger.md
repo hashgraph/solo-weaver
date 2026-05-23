@@ -23,7 +23,8 @@ One file per upgrade operation (`consensus-upgrade-<ts>-<ver>.jsonl`).
 
 **Why per-operation:**
 - One file = one incident. Trivial to isolate, grep, share, or attach to a post-mortem.
-- Retention is clean and bounded: on daemon startup, keep the last 10 `consensus-upgrade-*.jsonl` files.
+- Retention is clean and bounded: on daemon startup, files older than 365 days are
+  removed, then oldest-first until at most 50 remain (whichever limit is hit first).
 - Corruption blast radius is limited to the current operation's file.
 
 **Note on filename vs operationId:** The `operationId` (e.g. `upgrade-20260415T143000-v0.75.0`)
@@ -37,8 +38,11 @@ and event payloads. The filename prefix is a filesystem namespace convention onl
 Internal UpgradeMonitor watch-loop transitions (backoff, reconnect, auth errors) go to
 journald only — they are operational noise, not business milestones.
 
-**Retention:** on daemon startup, delete all but the 10 most recent `consensus-upgrade-*.jsonl`
-files (sorted by filename timestamp). No runtime rotation needed.
+**Retention:** on daemon startup, apply the unified policy: delete all
+`consensus-upgrade-*.jsonl` files older than 365 days, then delete oldest-first
+until at most 50 files remain. Both thresholds are enforced together — a file is kept
+only if it is within 365 days **and** within the 50-file cap. Sorted by filename
+timestamp (ISO-8601 embedded in the name). No runtime rotation needed.
 
 ### Migration Workflow — Fixed Append-Only File
 
@@ -58,15 +62,17 @@ migration. Not subject to rotation.
 ```
 
 UC runs as a sidecar on the consensus node pod — it is always consensus-scoped by
-context. No `consensus-` prefix needed. Same per-operation strategy; last 10 on UC startup.
+context. No `consensus-` prefix needed. Same per-operation strategy and identical retention policy (365 days / 50-file cap)
+applied on UC startup — UC and the daemon share the same hostPath mount and upgrade
+cadence, so a unified policy avoids divergence.
 
 ### Summary Table
 
 | Component | Workflow  | File strategy      | Path                                              | Retention         |
 |-----------|-----------|--------------------|---------------------------------------------------|-------------------|
-| Daemon    | Upgrade   | Per-operation      | `daemon/events/consensus-upgrade-<ts>-<ver>.jsonl` | Last 10 on startup |
+| Daemon    | Upgrade   | Per-operation      | `daemon/events/consensus-upgrade-<ts>-<ver>.jsonl` | ≤365 days & ≤50 files on startup |
 | Daemon    | Migration | Fixed append-only  | `daemon/events/consensus-migrate-events.jsonl`    | None              |
-| UC        | Upgrade   | Per-operation      | `uc/events/upgrade-<ts>-<ver>.jsonl`              | Last 10 on startup |
+| UC        | Upgrade   | Per-operation      | `uc/events/upgrade-<ts>-<ver>.jsonl`              | ≤365 days & ≤50 files on startup |
 
 ## HIP-Defined Events
 
@@ -140,9 +146,10 @@ func (l *EventLogger) Log(e Event) error
 // Close flushes and closes the underlying file.
 func (l *EventLogger) Close() error
 
-// PruneOldest deletes all but the n most recent files matching the glob pattern.
-// Called on daemon startup for per-operation files.
-func PruneOldest(dir, glob string, keep int) error
+// PruneOldest applies the retention policy to per-operation JSONL files matching
+// glob in dir: first removes files older than maxAge, then removes oldest-first
+// until at most keep files remain. Called on daemon and UC startup.
+func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error
 ```
 
 ### Error handling policy
