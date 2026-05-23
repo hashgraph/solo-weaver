@@ -2,7 +2,10 @@
 
 package eventlog
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Level is the severity of a lifecycle milestone — mirrors HIP-defined values.
 // Only INFO and ERROR are defined because every event in this file is either a
@@ -17,7 +20,7 @@ const (
 )
 
 // Event is a single lifecycle milestone written to a JSONL file.
-// All fields are required; zero values produce invalid entries.
+// All fields are required; Log rejects an Event with any zero value.
 type Event struct {
 	Ts          time.Time `json:"ts"`
 	Level       Level     `json:"level"`
@@ -25,4 +28,27 @@ type Event struct {
 	Msg         string    `json:"msg"`
 	OperationID string    `json:"operationId"`
 	NodeID      string    `json:"nodeId"`
+}
+
+func (e Event) validate() error {
+	var errs []error
+	if e.Ts.IsZero() {
+		errs = append(errs, errors.New("event: Ts is required"))
+	}
+	if e.Level == "" {
+		errs = append(errs, errors.New("event: Level is required"))
+	}
+	if e.Reason == "" {
+		errs = append(errs, errors.New("event: Reason is required"))
+	}
+	if e.Msg == "" {
+		errs = append(errs, errors.New("event: Msg is required"))
+	}
+	if e.OperationID == "" {
+		errs = append(errs, errors.New("event: OperationID is required"))
+	}
+	if e.NodeID == "" {
+		errs = append(errs, errors.New("event: NodeID is required"))
+	}
+	return errors.Join(errs...)
 }

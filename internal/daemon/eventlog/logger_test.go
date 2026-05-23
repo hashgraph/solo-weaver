@@ -52,13 +52,14 @@ func Test_NewOperation_WritesAndFsyncs(t *testing.T) {
 
 	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(l.Path()), "Path() must be absolute")
 	assert.Equal(t, filepath.Join(dir, "consensus-"+opID+".jsonl"), l.Path())
 
 	require.NoError(t, l.Log(sampleEvent("ExecuteWorkflowStarted")))
 	require.NoError(t, l.Log(sampleEvent("FilesPlaced")))
 	require.NoError(t, l.Close())
 
-	lines := readLines(t, filepath.Join(dir, "consensus-"+opID+".jsonl"))
+	lines := readLines(t, l.Path())
 	require.Len(t, lines, 2)
 	assert.Equal(t, "ExecuteWorkflowStarted", lines[0]["reason"])
 	assert.Equal(t, "FilesPlaced", lines[1]["reason"])
@@ -70,7 +71,6 @@ func Test_NewOperation_TruncatesPreviousFile(t *testing.T) {
 	dir := t.TempDir()
 	const opID = "upgrade-20260415T143000-v0.75.0"
 
-	// Write one event then close.
 	l, err := eventlog.NewOperation(dir, opID)
 	require.NoError(t, err)
 	require.NoError(t, l.Log(sampleEvent("ExecuteWorkflowStarted")))
@@ -82,7 +82,7 @@ func Test_NewOperation_TruncatesPreviousFile(t *testing.T) {
 	require.NoError(t, l2.Log(sampleEvent("ExecuteWorkflowCompleted")))
 	require.NoError(t, l2.Close())
 
-	lines := readLines(t, filepath.Join(dir, "consensus-"+opID+".jsonl"))
+	lines := readLines(t, l2.Path())
 	require.Len(t, lines, 1, "NewOperation must truncate; file should contain only the second session's event")
 	assert.Equal(t, "ExecuteWorkflowCompleted", lines[0]["reason"])
 }
@@ -93,6 +93,7 @@ func Test_NewAppend_AppendsAcrossOpens(t *testing.T) {
 
 	l, err := eventlog.NewAppend(dir, fileName)
 	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(l.Path()), "Path() must be absolute")
 	assert.Equal(t, filepath.Join(dir, fileName), l.Path())
 	require.NoError(t, l.Log(sampleEvent("MigrationStarted")))
 	require.NoError(t, l.Close())
@@ -102,16 +103,41 @@ func Test_NewAppend_AppendsAcrossOpens(t *testing.T) {
 	require.NoError(t, l2.Log(sampleEvent("MigrationCompleted")))
 	require.NoError(t, l2.Close())
 
-	lines := readLines(t, filepath.Join(dir, fileName))
+	lines := readLines(t, l.Path())
 	require.Len(t, lines, 2, "NewAppend must accumulate entries across opens")
 	assert.Equal(t, "MigrationStarted", lines[0]["reason"])
 	assert.Equal(t, "MigrationCompleted", lines[1]["reason"])
 }
 
+func Test_Log_RejectsEventWithMissingFields(t *testing.T) {
+	dir := t.TempDir()
+	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000-v0.75.0")
+	require.NoError(t, err)
+	defer l.Close()
+
+	cases := []struct {
+		name  string
+		event eventlog.Event
+	}{
+		{"zero Ts", eventlog.Event{Level: eventlog.LevelInfo, Reason: "R", Msg: "M", OperationID: "op", NodeID: "node"}},
+		{"empty Level", eventlog.Event{Ts: time.Now(), Reason: "R", Msg: "M", OperationID: "op", NodeID: "node"}},
+		{"empty Reason", eventlog.Event{Ts: time.Now(), Level: eventlog.LevelInfo, Msg: "M", OperationID: "op", NodeID: "node"}},
+		{"empty Msg", eventlog.Event{Ts: time.Now(), Level: eventlog.LevelInfo, Reason: "R", OperationID: "op", NodeID: "node"}},
+		{"empty OperationID", eventlog.Event{Ts: time.Now(), Level: eventlog.LevelInfo, Reason: "R", Msg: "M", NodeID: "node"}},
+		{"empty NodeID", eventlog.Event{Ts: time.Now(), Level: eventlog.LevelInfo, Reason: "R", Msg: "M", OperationID: "op"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := l.Log(tc.event)
+			assert.Error(t, err, "Log must reject event with %s", tc.name)
+		})
+	}
+}
+
 func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 	dir := t.TempDir()
 
-	l, err := eventlog.NewOperation(dir, "upgrade-concurrent-test")
+	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000-v0.75.0")
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -127,14 +153,14 @@ func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, l.Close())
 
-	lines := readLines(t, filepath.Join(dir, "consensus-upgrade-concurrent-test.jsonl"))
+	lines := readLines(t, l.Path())
 	assert.Len(t, lines, goroutines, "every concurrent write must produce exactly one valid JSON line")
 }
 
 func Test_PruneOldest_RemovesFilesOlderThanMaxAge(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create 3 files: two old, one recent.
+	// Filenames encode 2024 dates — well outside 365 days from 2026.
 	old1 := filepath.Join(dir, "consensus-upgrade-20240101T000000-v0.70.0.jsonl")
 	old2 := filepath.Join(dir, "consensus-upgrade-20240601T000000-v0.71.0.jsonl")
 	recent := filepath.Join(dir, "consensus-upgrade-20260415T143000-v0.75.0.jsonl")
@@ -142,11 +168,6 @@ func Test_PruneOldest_RemovesFilesOlderThanMaxAge(t *testing.T) {
 	for _, p := range []string{old1, old2, recent} {
 		require.NoError(t, os.WriteFile(p, []byte("{}"), 0o640))
 	}
-
-	// Back-date the two old files.
-	past := time.Now().Add(-400 * 24 * time.Hour)
-	require.NoError(t, os.Chtimes(old1, past, past))
-	require.NoError(t, os.Chtimes(old2, past, past))
 
 	require.NoError(t, eventlog.PruneOldest(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 50))
 
@@ -158,7 +179,7 @@ func Test_PruneOldest_RemovesFilesOlderThanMaxAge(t *testing.T) {
 func Test_PruneOldest_EnforcesHardCap(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create 5 recent files — all within maxAge, but cap is 3.
+	// All filenames within the last year but cap is 3.
 	names := []string{
 		"consensus-upgrade-20260101T000000-v0.71.0.jsonl",
 		"consensus-upgrade-20260201T000000-v0.72.0.jsonl",
@@ -182,7 +203,8 @@ func Test_PruneOldest_EnforcesHardCap(t *testing.T) {
 func Test_PruneOldest_BothConditionsApplied(t *testing.T) {
 	dir := t.TempDir()
 
-	// 2 old files + 4 recent files; cap is 3 — expect 2 old removed, then 1 more for cap.
+	// 2 files with 2024 dates (old) + 4 files with 2026 dates (recent); cap is 3.
+	// Expect: 2 old removed by age, 1 more removed by cap → 3 remain.
 	old1 := filepath.Join(dir, "consensus-upgrade-20240101T000000-v0.70.0.jsonl")
 	old2 := filepath.Join(dir, "consensus-upgrade-20240601T000000-v0.71.0.jsonl")
 	recent := []string{
@@ -194,8 +216,6 @@ func Test_PruneOldest_BothConditionsApplied(t *testing.T) {
 
 	for _, p := range []string{old1, old2} {
 		require.NoError(t, os.WriteFile(p, []byte("{}"), 0o640))
-		past := time.Now().Add(-400 * 24 * time.Hour)
-		require.NoError(t, os.Chtimes(p, past, past))
 	}
 	for _, n := range recent {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o640))

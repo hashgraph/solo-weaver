@@ -4,6 +4,8 @@ package eventlog
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,16 +38,26 @@ func NewAppend(dir, fileName string) (*EventLogger, error) {
 }
 
 func open(path string, flag int) (*EventLogger, error) {
-	f, err := os.OpenFile(path, flag, 0o640)
+	// Resolve to absolute path so Path() always returns an absolute path
+	// regardless of whether the caller passed a relative dir.
+	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	return &EventLogger{path: path, file: f}, nil
+	f, err := os.OpenFile(abs, flag, 0o640)
+	if err != nil {
+		return nil, err
+	}
+	return &EventLogger{path: abs, file: f}, nil
 }
 
-// Log appends one JSON line to the file and fsyncs.
-// Returns an error if marshalling or I/O fails; the caller decides whether to halt or continue.
+// Log validates e, appends one JSON line to the file, and fsyncs.
+// Returns an error if any required field is empty, or if marshalling or I/O fails.
+// The caller decides whether to halt or continue on error.
 func (l *EventLogger) Log(e Event) error {
+	if err := e.validate(); err != nil {
+		return err
+	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -68,9 +80,15 @@ func (l *EventLogger) Close() error {
 	return l.file.Close()
 }
 
+// filenameTimestampLayout is the ISO-8601 compact form embedded in per-operation filenames,
+// e.g. "consensus-upgrade-20260415T143000-v0.75.0.jsonl" → "20260415T143000".
+const filenameTimestampLayout = "20060102T150405"
+
 // PruneOldest applies the retention policy to per-operation JSONL files matching
-// glob in dir: first removes files older than maxAge, then removes oldest-first
-// until at most keep files remain. Called on daemon and UC startup.
+// glob in dir: first removes files whose embedded filename timestamp is older than
+// maxAge, then removes oldest-first until at most keep files remain.
+// Returns a combined error if any deletion fails — partial pruning is reported so
+// the caller can log a warning rather than silently violating the retention contract.
 func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error {
 	matches, err := filepath.Glob(filepath.Join(dir, glob))
 	if err != nil {
@@ -81,16 +99,22 @@ func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error {
 	sort.Strings(matches)
 
 	cutoff := time.Now().Add(-maxAge)
+	var errs []error
 
-	// Pass 1: remove files older than maxAge.
+	// Pass 1: remove files whose filename timestamp predates the cutoff.
 	var remaining []string
 	for _, p := range matches {
-		info, err := os.Stat(p)
-		if err != nil {
-			continue // already gone
+		ts, parseErr := parseFilenameTimestamp(filepath.Base(p))
+		if parseErr != nil {
+			// Cannot determine age from filename — keep the file rather than
+			// silently deleting something we can't date.
+			remaining = append(remaining, p)
+			continue
 		}
-		if info.ModTime().Before(cutoff) {
-			_ = os.Remove(p)
+		if ts.Before(cutoff) {
+			if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("remove %s: %w", p, rmErr))
+			}
 		} else {
 			remaining = append(remaining, p)
 		}
@@ -98,9 +122,29 @@ func PruneOldest(dir, glob string, maxAge time.Duration, keep int) error {
 
 	// Pass 2: if still over the cap, remove oldest first.
 	for len(remaining) > keep {
-		_ = os.Remove(remaining[0])
+		if rmErr := os.Remove(remaining[0]); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove %s: %w", remaining[0], rmErr))
+		}
 		remaining = remaining[1:]
 	}
 
-	return nil
+	return errors.Join(errs...)
+}
+
+// parseFilenameTimestamp extracts the ISO-8601 compact timestamp from a filename
+// of the form "consensus-upgrade-<ts>-<ver>.jsonl" (e.g. "20260415T143000").
+// Returns an error if no parseable timestamp is found.
+func parseFilenameTimestamp(name string) (time.Time, error) {
+	// Filenames follow the pattern: prefix-<YYYYMMDDTHHmmSS>-<suffix>
+	// Walk through the dash-separated segments and try to parse each one.
+	for i := 0; i < len(name); i++ {
+		// A compact ISO-8601 timestamp is exactly 15 chars: YYYYMMDDTHHmmSS
+		if i+15 <= len(name) {
+			t, err := time.Parse(filenameTimestampLayout, name[i:i+15])
+			if err == nil {
+				return t, nil
+			}
+		}
+	}
+	return time.Time{}, fmt.Errorf("no parseable timestamp in filename %q", name)
 }
