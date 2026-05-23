@@ -109,6 +109,22 @@ func Test_NewAppend_AppendsAcrossOpens(t *testing.T) {
 	assert.Equal(t, "MigrationCompleted", lines[1]["reason"])
 }
 
+func Test_NewOperation_RejectsUnsafeOperationID(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"../escape", "/absolute", "sub/dir"} {
+		_, err := eventlog.NewOperation(dir, bad)
+		assert.Error(t, err, "NewOperation must reject operationID %q", bad)
+	}
+}
+
+func Test_NewAppend_RejectsUnsafeFileName(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"../escape.jsonl", "/absolute.jsonl", "sub/dir.jsonl"} {
+		_, err := eventlog.NewAppend(dir, bad)
+		assert.Error(t, err, "NewAppend must reject fileName %q", bad)
+	}
+}
+
 func Test_Log_RejectsEventWithMissingFields(t *testing.T) {
 	dir := t.TempDir()
 	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000Z-v0.75.0")
@@ -139,18 +155,22 @@ func Test_Log_ConcurrentWritesProduceValidLines(t *testing.T) {
 
 	l, err := eventlog.NewOperation(dir, "upgrade-20260415T143000Z-v0.75.0")
 	require.NoError(t, err)
-	defer l.Close()
 
 	const goroutines = 20
+	errs := make(chan error, goroutines)
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			_ = l.Log(sampleEvent("ConcurrentEvent"))
+			errs <- l.Log(sampleEvent("ConcurrentEvent"))
 		}()
 	}
 	wg.Wait()
+	close(errs)
+	for e := range errs {
+		require.NoError(t, e)
+	}
 	require.NoError(t, l.Close())
 
 	lines := readLines(t, l.Path())

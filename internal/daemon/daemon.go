@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/automa-saga/logx"
@@ -51,6 +52,13 @@ func New(paths models.WeaverPaths) *Daemon {
 // JSONL files on daemon startup. A failure is logged as a warning and does not
 // block startup — a retained extra file is less harmful than a failed daemon.
 func pruneUpgradeEventLogs(dir string) {
+	if dir == "" || !filepath.IsAbs(dir) {
+		logx.As().Warn().
+			Str("reason", "UpgradeEventLogPruneSkipped").
+			Str("dir", dir).
+			Msg("Skipping upgrade event log pruning — dir is empty or relative")
+		return
+	}
 	p := filepruner.New(filepruner.FilenameTimestampStrategy{
 		Layout: upgradeEventLayout,
 		MaxAge: upgradeEventMaxAge,

@@ -23,13 +23,21 @@ func (l *EventLogger) Path() string { return l.path }
 // NewOperation creates a per-operation JSONL file in dir named
 // "consensus-<operationID>.jsonl" and returns a logger. The file is truncated
 // on open so each operation starts fresh. The caller must call Close when done.
+// operationID must not contain path separators or be an absolute path.
 func NewOperation(dir, operationID string) (*EventLogger, error) {
+	if filepath.Base(operationID) != operationID || filepath.IsAbs(operationID) {
+		return nil, ErrInvalidEvent.New("operationID contains path separators or is absolute: %q", operationID)
+	}
 	return open(filepath.Join(dir, "consensus-"+operationID+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 }
 
 // NewAppend opens (or creates) a fixed append-only JSONL file in dir named
 // fileName. Used for migration events where multiple operations share one file.
+// fileName must be a plain filename with no path separators.
 func NewAppend(dir, fileName string) (*EventLogger, error) {
+	if filepath.Base(fileName) != fileName || filepath.IsAbs(fileName) {
+		return nil, ErrInvalidEvent.New("fileName must be a plain filename with no path separators: %q", fileName)
+	}
 	return open(filepath.Join(dir, fileName), os.O_CREATE|os.O_WRONLY|os.O_APPEND)
 }
 

@@ -48,7 +48,7 @@ func (p *Pruner) Prune(dir, glob string, keep int) error {
 	}
 	matches, err := globSorted(dir, glob)
 	if err != nil {
-		return err
+		return ErrPruneFailed.Wrap(err, "glob %q in %s", glob, dir)
 	}
 
 	var errs []error
@@ -64,6 +64,8 @@ func (p *Pruner) Prune(dir, glob string, keep int) error {
 		if candidate {
 			if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 				errs = append(errs, ErrPruneFailed.Wrap(rmErr, "remove %s", path))
+				// Keep in remaining so cap enforcement accounts for files we failed to delete.
+				remaining = append(remaining, path)
 			}
 		} else {
 			remaining = append(remaining, path)
