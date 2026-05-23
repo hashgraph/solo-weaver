@@ -105,6 +105,64 @@ func Test_FilenameTimestampStrategy_KeepsFileWithNoTimestamp(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, "consensus-migrate-events.jsonl"), "file with no timestamp must not be deleted")
 }
 
+func Test_FileSizeStrategy_PrunesOversizedFiles(t *testing.T) {
+	dir := t.TempDir()
+	small := filepath.Join(dir, "small.jsonl")
+	large := filepath.Join(dir, "large.jsonl")
+	require.NoError(t, os.WriteFile(small, []byte("{}"), 0o640))
+	require.NoError(t, os.WriteFile(large, make([]byte, 200), 0o640)) // 200 bytes
+
+	p := filepruner.New(filepruner.FileSizeStrategy{MaxBytes: 100})
+	require.NoError(t, p.Prune(dir, "*.jsonl", 50))
+
+	assert.FileExists(t, small)
+	assert.NoFileExists(t, large)
+}
+
+func Test_All_PrunesOnlyWhenBothConditionsMet(t *testing.T) {
+	dir := t.TempDir()
+	// old + large → pruned; old + small → kept; recent + large → kept
+	oldLarge := "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"
+	oldSmall := "consensus-upgrade-20240601T000000Z-v0.71.0.jsonl"
+	recentLarge := "consensus-upgrade-20260415T143000Z-v0.75.0.jsonl"
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, oldLarge), make([]byte, 200), 0o640))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, oldSmall), []byte("{}"), 0o640))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, recentLarge), make([]byte, 200), 0o640))
+
+	p := filepruner.New(filepruner.All(
+		filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year},
+		filepruner.FileSizeStrategy{MaxBytes: 100},
+	))
+	require.NoError(t, p.Prune(dir, "*.jsonl", 50))
+
+	assert.NoFileExists(t, filepath.Join(dir, oldLarge), "old AND large — must be pruned")
+	assert.FileExists(t, filepath.Join(dir, oldSmall), "old but small — must be kept")
+	assert.FileExists(t, filepath.Join(dir, recentLarge), "large but recent — must be kept")
+}
+
+func Test_Any_PrunesWhenEitherConditionMet(t *testing.T) {
+	dir := t.TempDir()
+	// old + small → pruned (old); recent + large → pruned (large); recent + small → kept
+	oldSmall := "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"
+	recentLarge := "consensus-upgrade-20260415T143000Z-v0.75.0.jsonl"
+	recentSmall := "consensus-upgrade-20260301T000000Z-v0.74.0.jsonl"
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, oldSmall), []byte("{}"), 0o640))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, recentLarge), make([]byte, 200), 0o640))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, recentSmall), []byte("{}"), 0o640))
+
+	p := filepruner.New(filepruner.Any(
+		filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year},
+		filepruner.FileSizeStrategy{MaxBytes: 100},
+	))
+	require.NoError(t, p.Prune(dir, "*.jsonl", 50))
+
+	assert.NoFileExists(t, filepath.Join(dir, oldSmall), "old — must be pruned")
+	assert.NoFileExists(t, filepath.Join(dir, recentLarge), "large — must be pruned")
+	assert.FileExists(t, filepath.Join(dir, recentSmall), "recent and small — must be kept")
+}
+
 func Test_ModTimeStrategy_RemovesOldFilesAndEnforcesCap(t *testing.T) {
 	dir := t.TempDir()
 	names := []string{"events-a.jsonl", "events-b.jsonl", "events-c.jsonl", "events-d.jsonl"}

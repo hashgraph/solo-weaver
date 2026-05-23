@@ -106,6 +106,65 @@ func (s ModTimeStrategy) ShouldPrune(path string) (bool, error) {
 	return info.ModTime().Before(time.Now().Add(-s.MaxAge)), nil
 }
 
+// FileSizeStrategy prunes files whose size exceeds MaxBytes.
+// Useful for unbounded append-only files that have no age-based retention policy.
+type FileSizeStrategy struct {
+	MaxBytes int64
+}
+
+// ShouldPrune returns true if the file's size exceeds MaxBytes.
+func (s FileSizeStrategy) ShouldPrune(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	return info.Size() > s.MaxBytes, nil
+}
+
+// All returns a composite strategy that prunes a file only when every provided
+// strategy returns ShouldPrune=true (logical AND). The first error encountered
+// is returned and the file is kept.
+func All(strategies ...Strategy) Strategy {
+	return allStrategy(strategies)
+}
+
+type allStrategy []Strategy
+
+func (a allStrategy) ShouldPrune(path string) (bool, error) {
+	for _, s := range a {
+		ok, err := s.ShouldPrune(path)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// Any returns a composite strategy that prunes a file when at least one provided
+// strategy returns ShouldPrune=true (logical OR). The first error encountered
+// is returned and the file is kept.
+func Any(strategies ...Strategy) Strategy {
+	return anyStrategy(strategies)
+}
+
+type anyStrategy []Strategy
+
+func (a anyStrategy) ShouldPrune(path string) (bool, error) {
+	for _, s := range a {
+		ok, err := s.ShouldPrune(path)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // globSorted returns files matching glob in dir, sorted ascending by name.
 func globSorted(dir, glob string) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(dir, glob))
