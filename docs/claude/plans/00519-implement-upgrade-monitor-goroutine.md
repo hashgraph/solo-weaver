@@ -26,7 +26,7 @@ and no watch loop. The daemon could not observe or react to upgrade CRs.
 |----------|----------|
 | K8s client type | `k8s.io/client-go/dynamic` — CRD is unstructured, no generated types needed |
 | Scope of watch | Single namespace (`cfg.Namespace`) — one daemon manages one CN |
-| Daemon configuration | `daemon.yaml` at `DaemonConfigPath` (`$home/config/daemon.yaml`) written by solo-provisioner at install |
+| Daemon configuration | `daemon.yaml` at `DaemonConfigPath` (`$home/config/daemon.yaml`) written by solo-provisioner at install — **not CLI flags**. Rationale: (1) the service file is identical on every node; node-specific values live in `daemon.yaml` alone so `ExecStart` has no arguments; (2) config changes (e.g. kubeconfig rotation) only require rewriting the file + `systemctl restart` — no `daemon-reload` or unit file edit; (3) the service file and config file have different owners and lifecycles (`provisioner daemon install` writes both once; only the yaml is rewritten on credential rotation); (4) kubeconfig path does not appear in `ps aux`/`/proc/<pid>/cmdline`; (5) adding new fields costs one line in yaml vs a new cobra flag + `ExecStart` argument on every node. |
 | Missing daemon.yaml | `New()` fails fast; systemd `Restart=always` retries after provisioner installs it |
 | Kubeconfig re-read | Only on auth errors (401/403), not on every reconnect |
 | Backoff | 2 s initial, x2 factor, 5 min cap — matches HIP requirement for robust K8s API reconnect |
