@@ -4,10 +4,20 @@ package daemon
 
 import (
 	"context"
+	"time"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
+	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	upgradeEventLayout  = "20060102T150405Z"
+	upgradeEventMaxAge  = 365 * 24 * time.Hour
+	upgradeEventKeep    = 50
+	upgradeEventGlob    = "consensus-upgrade-*.jsonl"
 )
 
 // Daemon is the controller for solo-provisioner-daemon. It composes the
@@ -25,6 +35,8 @@ type Daemon struct {
 }
 
 func New(paths models.WeaverPaths) *Daemon {
+	pruneUpgradeEventLogs(paths.DaemonEventsDir)
+
 	mm := consensus.NewMigrationMonitor()
 	d := &Daemon{
 		paths:            paths,
@@ -33,6 +45,22 @@ func New(paths models.WeaverPaths) *Daemon {
 	}
 	d.server = NewServer(paths.DaemonSockPath, mm, ServerConfig{})
 	return d
+}
+
+// pruneUpgradeEventLogs applies the retention policy to per-operation upgrade
+// JSONL files on daemon startup. A failure is logged as a warning and does not
+// block startup — a retained extra file is less harmful than a failed daemon.
+func pruneUpgradeEventLogs(dir string) {
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{
+		Layout: upgradeEventLayout,
+		MaxAge: upgradeEventMaxAge,
+	})
+	if err := p.Prune(dir, upgradeEventGlob, upgradeEventKeep); err != nil {
+		logx.As().Warn().Err(err).
+			Str("reason", "UpgradeEventLogPruneFailed").
+			Str("dir", dir).
+			Msg("Failed to prune upgrade event logs on startup — continuing")
+	}
 }
 
 // NewWithComponents constructs a Daemon from pre-built sub-systems. Intended
