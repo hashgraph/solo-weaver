@@ -4,6 +4,24 @@
 > **HIP channels:** Upgrade event log + Migration event log under `daemon/events/`
 > **Related:** CR retention HIP amendment (pending), UC event log (separate component)
 
+## Why JSONL in Addition to Structured Logs
+
+The daemon already emits structured JSON logs via `logx` (zerolog), forwarded to journald.
+JSONL event files serve a distinct and complementary purpose:
+
+| Concern | Structured logs (journald) | JSONL event files |
+|---------|---------------------------|-------------------|
+| Audience | Operators debugging the daemon process | Node operators, SREs, post-mortem reviewers |
+| Scope | All daemon internals (backoff, reconnect, auth retries, …) | Business milestones only (workflow started, files placed, completed/failed) |
+| Access | Requires `journalctl` on the host; may require root | Plain file; readable by any tool (`cat`, `jq`, `grep`) |
+| Persistence | Journald rotation policy (size/time based, per host config) | Explicit retention: ≤365 days & ≤50 files per component |
+| Portability | Cannot be attached to a ticket or shared off-host without export | Self-contained file; trivial to attach to a post-mortem or support ticket |
+| HIP mandate | No | Yes — the HIP defines the event schema, file location, and retention as a contractual interface |
+
+**In short:** structured logs answer "what did the daemon do and why did it fail?" for
+engineers who have host access. JSONL event files answer "did this upgrade happen, when,
+and did it succeed?" for operators and auditors who do not.
+
 ## Decision
 
 The daemon writes two categories of JSONL event logs using different file strategies.
