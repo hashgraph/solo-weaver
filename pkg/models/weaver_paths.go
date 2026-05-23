@@ -20,6 +20,9 @@ type WeaverPaths struct {
 	DaemonDir      string
 	DaemonSockPath string
 
+	DaemonEventsDir                  string // $home/daemon/events
+	DaemonConsensusMigrateEventsPath string // $home/daemon/events/consensus-migrate-events.jsonl
+
 	AllDirectories []string
 
 	// Sandbox directories for isolated binaries
@@ -46,6 +49,8 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	}
 
 	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
+	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
+	pp.DaemonConsensusMigrateEventsPath = path.Join(pp.DaemonEventsDir, "consensus-migrate-events.jsonl")
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
 	pp.SandboxBinDir = path.Join(pp.SandboxDir, "bin")
@@ -97,6 +102,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		pp.DiagnosticsDir,
 		pp.StateDir,
 		pp.DaemonDir,
+		pp.DaemonEventsDir,
 	}
 	pp.AllDirectories = append(pp.AllDirectories, pp.SandboxDirectories...)
 
