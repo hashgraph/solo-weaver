@@ -19,20 +19,20 @@ type EventLogger struct {
 }
 
 // NewOperation creates a new per-operation JSONL file at path and returns a logger.
-// The file is opened with O_CREATE|O_WRONLY|O_TRUNC so each operation starts fresh.
+// The file is truncated on open so each operation starts fresh.
 // The caller must call Close when the operation completes.
 func NewOperation(path string) (*EventLogger, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
-	if err != nil {
-		return nil, err
-	}
-	return &EventLogger{file: f}, nil
+	return open(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 }
 
 // NewAppend opens (or creates) a fixed append-only JSONL file at path.
 // Used for migration events where multiple operations share one file.
 func NewAppend(path string) (*EventLogger, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	return open(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
+}
+
+func open(path string, flag int) (*EventLogger, error) {
+	f, err := os.OpenFile(path, flag, 0o640)
 	if err != nil {
 		return nil, err
 	}
