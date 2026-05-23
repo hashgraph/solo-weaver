@@ -170,6 +170,35 @@ func Test_Any_PrunesWhenEitherConditionMet(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, recentSmall), "recent and small — must be kept")
 }
 
+func Test_FilenameTimestampStrategy_KeepsStrategyErrorFilesOutOfCap(t *testing.T) {
+	dir := t.TempDir()
+	// no-timestamp file: strategy returns error → protected, never cap-pruned
+	protected := "consensus-migrate-events.jsonl"
+	recent1 := tsName(-90*24*time.Hour, "v0.73.0")
+	recent2 := tsName(-60*24*time.Hour, "v0.74.0")
+	recent3 := tsName(-30*24*time.Hour, "v0.75.0")
+	writeFiles(t, dir, []string{protected, recent1, recent2, recent3})
+
+	// keep=2 should only cap-prune from the 3 timestamped eligible files, not the protected one
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
+	require.NoError(t, p.Prune(dir, "*.jsonl", 2))
+
+	assert.FileExists(t, filepath.Join(dir, protected), "strategy-error file must never be cap-pruned")
+	assert.NoFileExists(t, filepath.Join(dir, recent1), "oldest eligible removed to satisfy cap")
+	assert.FileExists(t, filepath.Join(dir, recent2))
+	assert.FileExists(t, filepath.Join(dir, recent3))
+}
+
+func Test_FilenameTimestampStrategy_RejectsEmptyLayout(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, []string{"consensus-migrate-events.jsonl"})
+
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: "", MaxAge: year})
+	// Prune itself returns no error (strategy errors keep files), but the file must not be deleted
+	require.NoError(t, p.Prune(dir, "*.jsonl", 50))
+	assert.FileExists(t, filepath.Join(dir, "consensus-migrate-events.jsonl"), "empty Layout must not delete files")
+}
+
 func Test_Prune_RejectsNegativeKeep(t *testing.T) {
 	p := filepruner.New(filepruner.ModTimeStrategy{MaxAge: year})
 	err := p.Prune(t.TempDir(), "*.jsonl", -1)

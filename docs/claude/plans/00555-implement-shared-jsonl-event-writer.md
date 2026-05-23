@@ -1,7 +1,7 @@
 # Plan — Daemon Event Logger (JSONL)
 
 > **Depends on:** First story that implements `handleExecute` steps (InfraConfig placement, ConsensusConfig CR, status patch)
-> **HIP channels:** Upgrade event log + Migration event log under `daemon/events/`
+> **HIP channels:** Upgrade event log + Migration event log under `daemon/events/consensus/`
 > **Related:** CR retention HIP amendment (pending), UC event log (separate component)
 
 ## Why JSONL in Addition to Structured Logs
@@ -36,16 +36,31 @@ contractual interface — the JSONL files are not optional.
 ## Decision
 
 The daemon writes two categories of JSONL event logs using different file strategies.
-All daemon event filenames are prefixed with `consensus-` to namespace the `events/`
-directory as the daemon gains support for additional node types (block node, relay, etc.)
-in future.
+Events are organised under `daemon/events/<component>/` so future node types
+(block node, relay, etc.) get sibling directories without polluting a single flat directory.
+
+## Directory Layout
+
+```
+$home/daemon/events/
+  consensus/
+    upgrade/    <- consensus-upgrade-<ts>Z-<ver>.jsonl  (one per operation; pruned)
+    migrate/    <- consensus-migrate-events.jsonl        (append-only; not pruned by age)
+  block-node/   <- future
+  relay/        <- future
+```
+
+Separating upgrade and migrate into their own subdirectories means:
+- Each pruner call uses a simple `*.jsonl` glob against its own directory — no cross-contamination risk.
+- No need for special "skip if no timestamp" logic when pruning the upgrade directory.
+- Adding a new component is a one-line `WeaverPaths` addition.
 
 ## File Strategy
 
 ### Upgrade Workflow — Per-Operation File
 
 ```
-/opt/solo/weaver/daemon/events/consensus-upgrade-20260415T143000Z-v0.75.0.jsonl
+/opt/solo/weaver/daemon/events/consensus/upgrade/consensus-upgrade-20260415T143000Z-v0.75.0.jsonl
 ```
 
 One file per upgrade operation (`consensus-upgrade-<ts>Z-<ver>.jsonl`).
@@ -80,7 +95,7 @@ timestamp), then remove oldest-first until at most 50 remain.
 ### Migration Workflow — Fixed Append-Only File
 
 ```
-/opt/solo/weaver/daemon/events/consensus-migrate-events.jsonl
+/opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
 ```
 
 **Why fixed file:** Migration soak is a long-running continuous process potentially
@@ -101,24 +116,24 @@ cadence, so a unified policy avoids divergence.
 
 ### Summary Table
 
-| Component | Workflow  | File strategy      | Path                                               | Retention                        |
-|-----------|-----------|--------------------|---------------------------------------------------|----------------------------------|
-| Daemon    | Upgrade   | Per-operation      | `daemon/events/consensus-upgrade-<ts>Z-<ver>.jsonl` | ≤365 days & ≤50 files; on startup + post-execute |
-| Daemon    | Migration | Fixed append-only  | `daemon/events/consensus-migrate-events.jsonl`    | None                             |
-| UC        | Upgrade   | Per-operation      | `uc/events/upgrade-<ts>Z-<ver>.jsonl`             | ≤365 days & ≤50 files on startup |
+| Component | Workflow  | File strategy      | Path                                                                              | Retention                                          |
+|-----------|-----------|--------------------|-----------------------------------------------------------------------------------|----------------------------------------------------|
+| Daemon    | Upgrade   | Per-operation      | `daemon/events/consensus/upgrade/consensus-upgrade-<ts>Z-<ver>.jsonl`             | ≤365 days & ≤50 files; on startup + post-execute   |
+| Daemon    | Migration | Fixed append-only  | `daemon/events/consensus/migrate/consensus-migrate-events.jsonl`                  | None                                               |
+| UC        | Upgrade   | Per-operation      | `uc/events/upgrade-<ts>Z-<ver>.jsonl`                                             | ≤365 days & ≤50 files on startup                  |
 
 ## HIP-Defined Events
 
 All events share the base fields: `ts`, `level`, `reason`, `msg`, `operationId`, `nodeId`.
 
-| Reason                     | Level   | File                          | When emitted |
-|----------------------------|---------|-------------------------------|--------------|
-| `ExecuteWorkflowStarted`   | INFO    | `consensus-upgrade-*.jsonl`   | `handleExecute` begins |
-| `FilesPlaced`              | INFO    | `consensus-upgrade-*.jsonl`   | All assets written to host filesystem |
-| `ExecuteWorkflowCompleted` | INFO    | `consensus-upgrade-*.jsonl`   | Workflow finished; `PendingNodeUpgrade` signaled |
-| `ExecuteWorkflowFailed`    | ERROR   | `consensus-upgrade-*.jsonl`   | Workflow halted; manual intervention required |
+| Reason                     | Level   | File                                    | When emitted |
+|----------------------------|---------|-----------------------------------------|--------------|
+| `ExecuteWorkflowStarted`   | INFO    | `consensus/upgrade/consensus-upgrade-*.jsonl` | `handleExecute` begins |
+| `FilesPlaced`              | INFO    | `consensus/upgrade/consensus-upgrade-*.jsonl` | All assets written to host filesystem |
+| `ExecuteWorkflowCompleted` | INFO    | `consensus/upgrade/consensus-upgrade-*.jsonl` | Workflow finished; `PendingNodeUpgrade` signaled |
+| `ExecuteWorkflowFailed`    | ERROR   | `consensus/upgrade/consensus-upgrade-*.jsonl` | Workflow halted; manual intervention required |
 
-Example file `consensus-upgrade-20260415T143000Z-v0.75.0.jsonl`:
+Example file `consensus/upgrade/consensus-upgrade-20260415T143000Z-v0.75.0.jsonl`:
 
 ```jsonl
 {"ts":"2026-04-15T14:30:00Z","level":"INFO","reason":"ExecuteWorkflowStarted","msg":"Execute workflow triggered by ReadyForProvisionerDaemon; beginning upgrade steps","operationId":"upgrade-20260415T143000Z-v0.75.0","nodeId":"0.0.3"}
@@ -130,7 +145,7 @@ Example file `consensus-upgrade-20260415T143000Z-v0.75.0.jsonl`:
 
 ### Packages
 
-- `internal/daemon/eventlog/` — JSONL writer; no K8s or pruning dependencies
+- `pkg/eventlog/` — JSONL writer; no K8s or pruning dependencies; placed under `pkg/` so it is importable by daemon, UC, and any future component outside `internal/daemon`
 - `pkg/filepruner/` — strategy-based file pruner; usable by daemon, UC, and any future component
 
 ### eventlog API
@@ -138,9 +153,11 @@ Example file `consensus-upgrade-20260415T143000Z-v0.75.0.jsonl`:
 ```go
 // NewOperation creates a per-operation JSONL file in dir named
 // "consensus-<operationID>.jsonl". Truncates on open. Caller must Close when done.
+// operationID must be a plain identifier with no path separators.
 func NewOperation(dir, operationID string) (*EventLogger, error)
 
 // NewAppend opens (or creates) a fixed append-only file dir/fileName.
+// fileName must be a plain filename with no path separators.
 func NewAppend(dir, fileName string) (*EventLogger, error)
 
 // Log validates all fields, appends one JSON line, and fsyncs.
@@ -157,12 +174,14 @@ func (l *EventLogger) Close() error
 
 ```go
 // Strategy decides whether a file is a pruning candidate.
+// If ShouldPrune returns an error the file is treated as protected and never
+// deleted — neither by the strategy pass nor by cap enforcement.
 type Strategy interface {
     ShouldPrune(path string) (bool, error)
 }
 
 // Built-in strategies
-FilenameTimestampStrategy{Layout string, MaxAge time.Duration}  // timestamp in filename
+FilenameTimestampStrategy{Layout string, MaxAge time.Duration}  // timestamp in filename; Layout must be non-empty
 ModTimeStrategy{MaxAge time.Duration}                           // file ModTime
 FileSizeStrategy{MaxBytes int64}                                // file size
 
@@ -192,24 +211,28 @@ All errors use `errorx` typed errors (`ErrInvalidEvent`, `ErrPruneFailed`, `ErrN
 
 ```go
 DaemonEventsDir                  string  // $home/daemon/events
-DaemonConsensusMigrateEventsPath string  // $home/daemon/events/consensus-migrate-events.jsonl
+DaemonConsensusEventsDir         string  // $home/daemon/events/consensus
+DaemonConsensusUpgradeEventsDir  string  // $home/daemon/events/consensus/upgrade
+DaemonConsensusMigrateEventsDir  string  // $home/daemon/events/consensus/migrate
+DaemonConsensusMigrateEventsPath string  // $home/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
 ```
 
-`DaemonEventsDir` is added to `AllDirectories` so daemon startup creates it automatically.
+All four directories are added to `AllDirectories` so daemon startup creates them automatically.
 
 ### Wire-up
 
 **On daemon startup** (`daemon.New()`):
-- Call `filepruner` with `FilenameTimestampStrategy{Layout: "20060102T150405Z", MaxAge: 365d}` and `keep=50` against `DaemonEventsDir`.
+- Validate `DaemonConsensusUpgradeEventsDir` is within the weaver home tree via `sanity.ValidatePathWithinBase`
+- Call `filepruner` with `FilenameTimestampStrategy{Layout: "20060102T150405Z", MaxAge: 365d}` and `keep=50` against `DaemonConsensusUpgradeEventsDir`.
 
 **In `handleExecute`** (subsequent story):
-- Open a per-operation logger via `eventlog.NewOperation(paths.DaemonEventsDir, operationID)`
+- Open a per-operation logger via `eventlog.NewOperation(paths.DaemonConsensusUpgradeEventsDir, operationID)`
 - Emit opening/closing events via `logEvent` helper (nil-safe wrapper)
 - Close logger on completion
 - Run pruner again post-close — covers long-running daemons where startup pruning never re-runs
 
 **Migration logger** (`daemon.New()`, story #520):
-- Open once via `eventlog.NewAppend(paths.DaemonEventsDir, "consensus-migrate-events.jsonl")`
+- Open once via `eventlog.NewAppend(paths.DaemonConsensusMigrateEventsDir, "consensus-migrate-events.jsonl")`
 - Inject into `MigrationMonitor`
 
 Nil-safe `logEvent` helper on `UpgradeMonitor`:
@@ -236,15 +259,15 @@ in `handleExecute`. This keeps the JSONL logger free of K8s dependencies.
 
 ### In scope
 
-- `internal/daemon/eventlog/event.go` — `Event`, `Level` constants, field validation
-- `internal/daemon/eventlog/errors.go` — `ErrInvalidEvent` errorx type
-- `internal/daemon/eventlog/logger.go` — `EventLogger`, `NewOperation`, `NewAppend`, `Log`, `Close`, `Path`
-- `internal/daemon/eventlog/logger_test.go` — unit tests (write, truncate, append, concurrent writes, validation, Path absoluteness)
+- `pkg/eventlog/event.go` — `Event`, `Level` constants, field validation
+- `pkg/eventlog/errors.go` — `ErrInvalidEvent` errorx type
+- `pkg/eventlog/logger.go` — `EventLogger`, `NewOperation`, `NewAppend`, `Log`, `Close`, `Path`
+- `pkg/eventlog/logger_test.go` — unit tests (write, truncate, append, concurrent writes, validation, Path absoluteness, unsafe path rejection)
 - `pkg/filepruner/pruner.go` — `Strategy`, `Pruner`, `FilenameTimestampStrategy`, `ModTimeStrategy`, `FileSizeStrategy`, `All`, `Any`
 - `pkg/filepruner/errors.go` — `ErrPruneFailed`, `ErrNoTimestamp` errorx types
-- `pkg/filepruner/pruner_test.go` — unit tests for all strategies and composites
-- `pkg/models/weaver_paths.go` — add `DaemonEventsDir`, `DaemonConsensusMigrateEventsPath`
-- `internal/daemon/daemon.go` — call pruner on startup
+- `pkg/filepruner/pruner_test.go` — unit tests for all strategies, composites, cap enforcement, protected-file exclusion, empty Layout guard
+- `pkg/models/weaver_paths.go` — add `DaemonConsensusEventsDir`, `DaemonConsensusUpgradeEventsDir`, `DaemonConsensusMigrateEventsDir`, `DaemonConsensusMigrateEventsPath`
+- `internal/daemon/daemon.go` — call pruner on startup against `DaemonConsensusUpgradeEventsDir`
 
 ### Out of scope
 

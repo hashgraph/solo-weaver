@@ -11,7 +11,8 @@ import (
 )
 
 // Strategy decides whether a file is a candidate for pruning.
-// If ShouldPrune returns an error the file is kept — the pruner will not delete
+// If ShouldPrune returns an error the file is treated as protected: it is kept
+// by both the strategy pass and the hard-cap pass. The pruner will never delete
 // a file whose eligibility cannot be determined.
 type Strategy interface {
 	ShouldPrune(path string) (bool, error)
@@ -30,12 +31,15 @@ func New(strategy Strategy) *Pruner {
 
 // Prune applies the retention policy to files matching glob in dir:
 //  1. Files for which the strategy returns ShouldPrune=true are removed.
-//  2. If more than keep files remain, the oldest (first in ascending name order)
-//     are removed until the cap is satisfied.
+//  2. If more than keep eligible files remain after step 1, the first entries
+//     in ascending filename order are removed until the cap is satisfied.
+//     Files whose eligibility could not be determined (strategy returned an error)
+//     are never removed — neither in step 1 nor by the cap pass.
 //
-// Files are sorted ascending by name before both passes. For strategies whose
-// decision is based on a timestamp embedded in the filename
-// (e.g. FilenameTimestampStrategy) this preserves chronological order.
+// Files are sorted ascending by name before both passes. For strategies that
+// embed a timestamp in the filename (e.g. FilenameTimestampStrategy) this
+// preserves chronological order; for other strategies it is an arbitrary but
+// stable order.
 //
 // Returns a combined error if any deletion fails, so partial pruning is visible
 // to the caller rather than silently violating the retention contract.
@@ -52,27 +56,31 @@ func (p *Pruner) Prune(dir, glob string, keep int) error {
 	}
 
 	var errs []error
-	var remaining []string
+	// eligible holds files that the strategy successfully evaluated (true or false).
+	// protected holds files whose eligibility could not be determined; they are
+	// excluded from cap enforcement so a misconfigured strategy cannot silently
+	// delete files like consensus-migrate-events.jsonl.
+	var eligible, protected []string
 
 	for _, path := range matches {
 		candidate, stratErr := p.strategy.ShouldPrune(path)
 		if stratErr != nil {
-			// Cannot determine eligibility — keep the file rather than silently delete it.
-			remaining = append(remaining, path)
+			protected = append(protected, path)
 			continue
 		}
 		if candidate {
 			if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 				errs = append(errs, ErrPruneFailed.Wrap(rmErr, "remove %s", path))
-				// Keep in remaining so cap enforcement accounts for files we failed to delete.
-				remaining = append(remaining, path)
+				// Keep in eligible so cap enforcement accounts for files we failed to delete.
+				eligible = append(eligible, path)
 			}
 		} else {
-			remaining = append(remaining, path)
+			eligible = append(eligible, path)
 		}
 	}
 
-	return errors.Join(append(errs, enforceCap(remaining, keep)...)...)
+	_ = protected // never passed to enforceCap
+	return errors.Join(append(errs, enforceCap(eligible, keep)...)...)
 }
 
 // FilenameTimestampStrategy prunes files whose timestamp embedded in the filename
@@ -87,7 +95,12 @@ type FilenameTimestampStrategy struct {
 }
 
 // ShouldPrune returns true if the timestamp embedded in the filename predates now-MaxAge.
+// Returns an error if Layout is empty (an empty layout causes time.Parse to match any
+// empty substring, making every file appear timestamped).
 func (s FilenameTimestampStrategy) ShouldPrune(path string) (bool, error) {
+	if s.Layout == "" {
+		return false, ErrPruneFailed.New("FilenameTimestampStrategy.Layout must not be empty")
+	}
 	name := filepath.Base(path)
 	n := len(s.Layout)
 	for i := 0; i <= len(name)-n; i++ {
@@ -183,8 +196,8 @@ func globSorted(dir, glob string) ([]string, error) {
 	return matches, nil
 }
 
-// enforceCap removes the oldest files (front of the sorted slice) until
-// len(files) <= keep. Returns any deletion errors.
+// enforceCap removes files from the front of the ascending-name-sorted slice
+// until len(files) <= keep. Returns any deletion errors.
 func enforceCap(files []string, keep int) []error {
 	var errs []error
 	for len(files) > keep {

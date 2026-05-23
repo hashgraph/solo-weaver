@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/daemon/eventlog"
+	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

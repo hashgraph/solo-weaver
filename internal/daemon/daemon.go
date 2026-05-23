@@ -37,7 +37,7 @@ type Daemon struct {
 }
 
 func New(paths models.WeaverPaths) *Daemon {
-	pruneUpgradeEventLogs(paths.HomeDir, paths.DaemonEventsDir)
+	pruneUpgradeEventLogs(paths.HomeDir, paths.DaemonConsensusUpgradeEventsDir)
 
 	mm := consensus.NewMigrationMonitor()
 	d := &Daemon{

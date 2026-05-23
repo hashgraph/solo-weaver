@@ -5,6 +5,6 @@ package eventlog
 import "github.com/joomcode/errorx"
 
 var (
-	ErrNamespace    = errorx.NewNamespace("daemon.eventlog")
+	ErrNamespace    = errorx.NewNamespace("eventlog")
 	ErrInvalidEvent = ErrNamespace.NewType("invalid_event")
 )
