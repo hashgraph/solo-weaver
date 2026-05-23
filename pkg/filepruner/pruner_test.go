@@ -15,9 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// UpgradeFilenameLayout is the timestamp format embedded in consensus upgrade filenames:
+// upgradeLayout is the timestamp format embedded in consensus upgrade filenames:
 // consensus-upgrade-20260415T143000Z-v0.75.0.jsonl
-const UpgradeFilenameLayout = "20060102T150405Z"
+const upgradeLayout = "20060102T150405Z"
+
+const year = 365 * 24 * time.Hour
 
 func writeFiles(t *testing.T, dir string, names []string) {
 	t.Helper()
@@ -34,8 +36,8 @@ func Test_FilenameTimestampStrategy_RemovesOldFiles(t *testing.T) {
 		"consensus-upgrade-20260415T143000Z-v0.75.0.jsonl", // recent
 	})
 
-	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: UpgradeFilenameLayout})
-	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 50))
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
+	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 50))
 
 	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"))
 	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240601T000000Z-v0.71.0.jsonl"))
@@ -53,8 +55,8 @@ func Test_FilenameTimestampStrategy_EnforcesHardCap(t *testing.T) {
 	}
 	writeFiles(t, dir, names)
 
-	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: UpgradeFilenameLayout})
-	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 3))
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
+	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 3))
 
 	assert.NoFileExists(t, filepath.Join(dir, names[0]))
 	assert.NoFileExists(t, filepath.Join(dir, names[1]))
@@ -78,8 +80,8 @@ func Test_FilenameTimestampStrategy_BothConditionsApplied(t *testing.T) {
 	}
 	writeFiles(t, dir, recent)
 
-	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: UpgradeFilenameLayout})
-	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 365*24*time.Hour, 3))
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
+	require.NoError(t, p.Prune(dir, "consensus-upgrade-*.jsonl", 3))
 
 	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"))
 	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240601T000000Z-v0.71.0.jsonl"))
@@ -92,12 +94,12 @@ func Test_FilenameTimestampStrategy_BothConditionsApplied(t *testing.T) {
 func Test_FilenameTimestampStrategy_KeepsFileWithNoTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, []string{
-		"consensus-upgrade-20240101T000000Z-v0.70.0.jsonl", // old, will be pruned by age
-		"consensus-migrate-events.jsonl",                   // no timestamp — must be kept
+		"consensus-upgrade-20240101T000000Z-v0.70.0.jsonl",
+		"consensus-migrate-events.jsonl", // no timestamp — must be kept
 	})
 
-	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: UpgradeFilenameLayout})
-	require.NoError(t, p.Prune(dir, "*.jsonl", 365*24*time.Hour, 50))
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{Layout: upgradeLayout, MaxAge: year})
+	require.NoError(t, p.Prune(dir, "*.jsonl", 50))
 
 	assert.NoFileExists(t, filepath.Join(dir, "consensus-upgrade-20240101T000000Z-v0.70.0.jsonl"))
 	assert.FileExists(t, filepath.Join(dir, "consensus-migrate-events.jsonl"), "file with no timestamp must not be deleted")
@@ -112,8 +114,8 @@ func Test_ModTimeStrategy_RemovesOldFilesAndEnforcesCap(t *testing.T) {
 	require.NoError(t, os.Chtimes(filepath.Join(dir, names[0]), past, past))
 	require.NoError(t, os.Chtimes(filepath.Join(dir, names[1]), past, past))
 
-	p := filepruner.New(filepruner.ModTimeStrategy{})
-	require.NoError(t, p.Prune(dir, "events-*.jsonl", 365*24*time.Hour, 3))
+	p := filepruner.New(filepruner.ModTimeStrategy{MaxAge: year})
+	require.NoError(t, p.Prune(dir, "events-*.jsonl", 3))
 
 	assert.NoFileExists(t, filepath.Join(dir, names[0]))
 	assert.NoFileExists(t, filepath.Join(dir, names[1]))
