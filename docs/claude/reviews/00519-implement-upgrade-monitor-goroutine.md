@@ -21,7 +21,7 @@ daemon restart.
 | `internal/daemon/daemon.go` | Modified: `New()` reads `daemon.yaml`, constructs `UpgradeMonitor` |
 | `internal/daemon/export_test.go` | New: `NewWithComponents` test helper (test-only) |
 | `pkg/models/weaver_paths.go` | Modified: added `DaemonConfigPath` field (`$home/config/daemon.yaml`) |
-| `cmd/daemon/main.go` | Modified: returns `daemon.New` errors directly (no double-wrap in `errorx.InternalError`) |
+| `cmd/daemon/main.go` | Modified: load+override+validate flow; optional `--node-id`, `--kubeconfig`, `--orbit`, `--upgrade-dir` flags; calls `NewFromConfig` with resolved config |
 
 ## Review Checklist
 
@@ -45,6 +45,9 @@ daemon restart.
 - [ ] Missing `daemon.yaml` returns `ErrConfigNotFound` (carries `errorx.NotFound()` trait)
 - [ ] Malformed or missing required fields (`node_id`, `kubeconfig`, `orbit`) return `ErrConfigMalformed`
 - [ ] `upgrade_dir` is optional — empty value falls back to `/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current` via `DaemonConfig.upgradeDir()`
+- [ ] `DaemonConfig.Validate()` is called by `LoadDaemonConfig` and again by `cmd/daemon/main.go` after flag overrides — validation is never bypassed
+- [ ] CLI flag overrides (`--node-id`, `--kubeconfig`, `--orbit`, `--upgrade-dir`) each take precedence over the corresponding `daemon.yaml` field when set; unset flags leave the file value unchanged
+- [ ] `NewFromConfig` is the construction path when caller holds a resolved config; `New` wraps it for the no-override production path
 - [ ] `DaemonConfigPath` resolves to `$home/config/daemon.yaml`
 - [ ] `cmd/daemon/main.go` returns `daemon.New` errors unwrapped — no double-wrap in `errorx.InternalError`
 - [ ] `NewWithComponents` (export_test.go) is test-only and not part of the production API

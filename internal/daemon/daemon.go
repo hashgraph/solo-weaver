@@ -39,7 +39,9 @@ type Daemon struct {
 
 // New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
 // paths.DaemonConfigPath and fails fast if the config is missing or invalid —
-// the daemon must not start without a valid kubeconfig and orbit.
+// the daemon must not start without a valid node_id, kubeconfig, and orbit.
+// Use NewFromConfig when the caller has already resolved the config (e.g. with
+// CLI flag overrides applied).
 func New(paths models.WeaverPaths) (*Daemon, error) {
 	pruneUpgradeEventLogs(paths.HomeDir, paths.DaemonConsensusUpgradeEventsDir)
 
@@ -47,8 +49,16 @@ func New(paths models.WeaverPaths) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewFromConfig(paths, cfg)
+}
 
+// NewFromConfig constructs a Daemon from a pre-resolved DaemonConfig. The
+// caller is responsible for loading and validating cfg (e.g. via LoadDaemonConfig
+// followed by applying CLI flag overrides). cfg must pass Validate() before
+// this function is called.
+func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) {
 	um, err := consensus.NewUpgradeMonitor(consensus.UpgradeMonitorConfig{
+		NodeID:         cfg.NodeID,
 		KubeconfigPath: cfg.Kubeconfig,
 		Namespace:      cfg.Orbit,
 	})

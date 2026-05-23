@@ -48,6 +48,11 @@ type UpgradeMonitorConfig struct {
 	// Namespace is the orbit namespace to watch for NetworkUpgradeExecute CRs.
 	// One daemon manages one CN, so one namespace is sufficient.
 	Namespace string
+
+	// NodeID is the Hedera node identifier for the consensus node managed by
+	// this daemon (e.g. "0.0.3"). Populated as nodeId in all JSONL event log
+	// entries emitted by handleExecute.
+	NodeID string
 }
 
 // UpgradeMonitor watches the Kubernetes API for NetworkUpgradeExecute CRs

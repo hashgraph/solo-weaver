@@ -53,9 +53,25 @@ func (c DaemonConfig) upgradeDir() string {
 	return "/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current"
 }
 
+// Validate checks that all required fields are present. Called by
+// LoadDaemonConfig and by cmd/daemon/main.go after applying CLI flag overrides.
+func (c DaemonConfig) Validate() error {
+	if c.NodeID == "" {
+		return ErrConfigMalformed.New("node_id is required")
+	}
+	if c.Kubeconfig == "" {
+		return ErrConfigMalformed.New("kubeconfig is required")
+	}
+	if c.Orbit == "" {
+		return ErrConfigMalformed.New("orbit is required")
+	}
+	return nil
+}
+
 // LoadDaemonConfig reads and parses the daemon config file at path.
 // Returns an error if the file is missing or malformed — the daemon must not
-// start without a valid config.
+// start without a valid config. CLI flag overrides are applied after this call
+// in cmd/daemon/main.go; call Validate() again after overrides are applied.
 func LoadDaemonConfig(path string) (DaemonConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -67,14 +83,8 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid daemon config at %s", path)
 	}
 
-	if cfg.NodeID == "" {
-		return DaemonConfig{}, ErrConfigMalformed.New("daemon config %s: node_id is required", path)
-	}
-	if cfg.Kubeconfig == "" {
-		return DaemonConfig{}, ErrConfigMalformed.New("daemon config %s: kubeconfig is required", path)
-	}
-	if cfg.Orbit == "" {
-		return DaemonConfig{}, ErrConfigMalformed.New("daemon config %s: orbit is required", path)
+	if err := cfg.Validate(); err != nil {
+		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "daemon config %s", path)
 	}
 
 	return cfg, nil
