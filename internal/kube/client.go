@@ -395,6 +395,34 @@ func (c *Client) DeleteManifest(ctx context.Context, manifestPath string) error 
 	return c.processResources(ctx, objs, handler)
 }
 
+// ListPVCs returns all PersistentVolumeClaims in the given namespace that match
+// the provided label selector. An empty selector matches all PVCs in the namespace.
+func (c *Client) ListPVCs(ctx context.Context, namespace, labelSelector string) ([]unstructured.Unstructured, error) {
+	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
+	list, err := c.Dyn.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to list PVCs in namespace %s with selector %q", namespace, labelSelector)
+	}
+	return list.Items, nil
+}
+
+// ListPVs returns all cluster-scoped PersistentVolumes that match the provided
+// label selector. Callers that want namespace-scoped results should filter the
+// returned items by spec.claimRef.namespace afterwards (PVs are cluster-scoped,
+// so namespace cannot be a list parameter).
+func (c *Client) ListPVs(ctx context.Context, labelSelector string) ([]unstructured.Unstructured, error) {
+	gvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumes"}
+	list, err := c.Dyn.Resource(gvr).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to list PVs with selector %q", labelSelector)
+	}
+	return list.Items, nil
+}
+
 // DeletePV deletes a PersistentVolume by name.
 // Returns nil if the PV doesn't exist.
 func (c *Client) DeletePV(ctx context.Context, name string) error {

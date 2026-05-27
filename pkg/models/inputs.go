@@ -66,6 +66,7 @@ type BlockNodeInputs struct {
 	ValuesFile          string
 	ReuseValues         bool
 	ResetStorage        bool
+	PurgeStorage        bool // When true, also delete PVCs/PVs (implies ResetStorage)
 	NoRestart           bool // When true, skip the rollout-restart step after reconfigure
 	SkipHardwareChecks  bool
 	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values

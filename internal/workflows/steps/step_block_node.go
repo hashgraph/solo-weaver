@@ -21,6 +21,7 @@ const (
 	DeleteBlockNodePVsStepId         = "delete-block-node-pvs"
 	RecreateBlockNodeStorageStepId   = "recreate-block-node-storage"
 	InstallBlockNodeStepId           = "install-block-node"
+	UninstallBlockNodeStepId         = "uninstall-block-node"
 	UpgradeBlockNodeStepId           = "upgrade-block-node"
 	WaitForBlockNodeStepId           = "wait-for-block-node"
 	ResetBlockNodeStepId             = "reset-block-node"
@@ -187,7 +188,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 
 func UninstallBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
-	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
+	return automa.NewWorkflowBuilder().WithId(UninstallBlockNodeStepId).Steps(
 		uninstallBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
 	)
 }
@@ -437,6 +438,20 @@ func ResetBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node reset successfully")
 		})
+}
+
+// DeleteBlockNodePersistentVolumes returns the step that deletes the block
+// node's PVCs and PVs by label selector. Used by the uninstall --purge-storage
+// workflow after the data directories have been wiped.
+//
+// This is a thin public facade over the package-private deleteBlockNodePVs
+// helper; handlers in internal/bll/blocknode/ cannot reach the helper directly.
+// The inner step already carries its own DeleteBlockNodePVsStepId and notify
+// hooks (StepStart/StepFailure/StepCompletion), so no wrapper workflow is
+// added here — wrapping would either collide on the step id or duplicate the
+// notifications.
+func DeleteBlockNodePersistentVolumes(inputs models.BlockNodeInputs) automa.Builder {
+	return deleteBlockNodePVs(newBlockNodeManagerProvider(inputs))
 }
 
 // PurgeBlockNodeStorage scales down the block node and clears all storage.

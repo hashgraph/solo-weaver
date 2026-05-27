@@ -13,11 +13,12 @@ task uat:compat     # Backward compatibility (standalone, installs released vers
 task uat:all        # Everything: lifecycle + teleport + alloy + compat (requires Docker)
 
 # Individual steps (for debugging or manual runs):
-task uat:setup      # Install cluster + block node (v0.26.0)
-task uat:core       # Block node upgrades + reset (requires setup)
-task uat:teleport   # Teleport install/uninstall (requires setup + Docker)
-task uat:alloy      # Alloy install/uninstall (requires setup + Docker)
-task uat:teardown   # Uninstall everything
+task uat:setup         # Install cluster + block node (v0.26.0)
+task uat:core          # Block node upgrades + reset (requires setup)
+task uat:purge-storage # Verify the three uninstall variants: (no flag) / --with-reset / --purge-storage (requires setup; destructive — leaves no block node behind)
+task uat:teleport      # Teleport install/uninstall (requires setup + Docker)
+task uat:alloy         # Alloy install/uninstall (requires setup + Docker)
+task uat:teardown      # Uninstall everything
 ```
 
 These tasks are designed to run inside any Linux VM — both the local UTM VM

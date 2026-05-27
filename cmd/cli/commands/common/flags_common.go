@@ -115,7 +115,16 @@ func FlagWithStorageReset() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
 		Name:        "with-reset",
 		ShortName:   "",
-		Description: "Reset storage before upgrading (clears all data)",
+		Description: "Wipe block node data directories; PVs and PVCs are preserved",
+		Default:     false,
+	}
+}
+
+func FlagPurgeStorage() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "purge-storage",
+		ShortName:   "",
+		Description: "Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset)",
 		Default:     false,
 	}
 }

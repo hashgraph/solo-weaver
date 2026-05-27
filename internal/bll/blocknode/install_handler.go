@@ -51,7 +51,7 @@ func (h *InstallHandler) BuildWorkflow(
 		return nil, errorx.IllegalState.New(
 			"block node is already installed; cannot install again").
 			WithProperty(models.ErrPropertyResolution,
-				"use 'weaver block node reset' or 'weaver block node upgrade', or pass --force to continue")
+				"use 'solo-provisioner block node reset' or 'solo-provisioner block node upgrade', or pass --force to continue")
 	}
 
 	// Fail fast if storage paths can't be resolved — don't set up a cluster for nothing.

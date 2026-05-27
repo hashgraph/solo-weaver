@@ -45,7 +45,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot reconfigure").
 			WithProperty(models.ErrPropertyResolution,
-				"use 'weaver block node install' to install the block node first, or pass --force to continue")
+				"use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
 	}
 
 	// Fail fast if storage paths can't be resolved.
@@ -55,7 +55,8 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 	var wb *automa.WorkflowBuilder
-	if ins.ResetStorage {
+	switch {
+	case ins.PurgeStorage:
 		// Purge data at the currently deployed paths: build a copy of ins that
 		// carries the *old* storage configuration so that ResetStorage clears the
 		// directories that actually exist on disk. Namespace and release are the
@@ -66,10 +67,28 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 		// After purging old dirs, recreate PVs/PVCs and create new directories at
 		// the new paths, then upgrade the chart.
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
+		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").
 			Steps(steps.PurgeBlockNodeStorage(oldIns), steps.RecreateBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))
-	} else {
-		// For non-reset reconfigures, storage path changes require --with-reset because
+	case ins.ResetStorage:
+		// --with-reset wipes data only; PVs/PVCs are preserved. Storage paths must
+		// not have changed because local-PV hostPath is immutable.
+		changed, err := storagePathsChanged(currentState.BlockNodeState.Storage, ins)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to compare storage paths")
+		}
+		if changed {
+			return nil, errorx.IllegalArgument.New(
+				"storage paths have changed; PVs/PVCs cannot be updated without clearing existing data").
+				WithProperty(models.ErrPropertyResolution,
+					"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
+		}
+
+		oldIns := ins
+		oldIns.Storage = currentState.BlockNodeState.Storage
+		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
+			Steps(steps.PurgeBlockNodeStorage(oldIns), steps.UpgradeBlockNode(ins))
+	default:
+		// For non-reset reconfigures, storage path changes require --purge-storage because
 		// existing PVs/PVCs cannot be mutated in-place; block with a clear error.
 		changed, err := storagePathsChanged(currentState.BlockNodeState.Storage, ins)
 		if err != nil {
@@ -79,7 +98,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 			return nil, errorx.IllegalArgument.New(
 				"storage paths have changed; PVs/PVCs cannot be updated without clearing existing data").
 				WithProperty(models.ErrPropertyResolution,
-					"re-run with --with-reset to delete existing PVs/PVCs and recreate them at the new paths")
+					"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
 		}
 
 		if ins.NoRestart {

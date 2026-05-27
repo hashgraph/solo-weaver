@@ -13,6 +13,7 @@ import (
 var (
 	flagNoReuseValues bool
 	flagWithReset     bool
+	flagPurgeStorage  bool
 
 	upgradeCmd = &cobra.Command{
 		Use:   "upgrade",

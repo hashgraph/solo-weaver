@@ -108,6 +108,7 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 			// Prepare template data
 			data := struct {
 				Namespace           string
+				Release             string
 				LivePath            string
 				ArchivePath         string
 				LogPath             string
@@ -122,6 +123,7 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 				IncludePlugins      bool
 			}{
 				Namespace:           manager.blockNodeInputs.Namespace,
+				Release:             manager.blockNodeInputs.Release,
 				LivePath:            livePath,
 				ArchivePath:         archivePath,
 				LogPath:             logPath,
@@ -242,6 +244,7 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	// Prepare template data
 	data := struct {
 		Namespace           string
+		Release             string
 		LivePath            string
 		ArchivePath         string
 		LogPath             string
@@ -256,6 +259,7 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 		IncludePlugins      bool
 	}{
 		Namespace:           manager.blockNodeInputs.Namespace,
+		Release:             manager.blockNodeInputs.Release,
 		LivePath:            livePath,
 		ArchivePath:         archivePath,
 		LogPath:             logPath,
@@ -304,4 +308,80 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 5Gi"), "Should have exactly 2 occurrences of 5Gi (log PV + PVC)")
 	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 15Gi"), "Should have exactly 2 occurrences of 15Gi (verification PV + PVC)")
 	assert.Equal(t, 2, strings.Count(yamlStr, "storage: 8Gi"), "Should have exactly 2 occurrences of 8Gi (plugins PV + PVC)")
+}
+
+// TestStorageConfigRendersLabels verifies that every PV and PVC produced by
+// the storage-config template carries the solo-provisioner block-node-storage
+// labels and the instance label. The label-scoped DeleteAllPersistentVolumes
+// path depends on this being true.
+func TestStorageConfigRendersLabels(t *testing.T) {
+	data := struct {
+		Namespace           string
+		Release             string
+		LivePath            string
+		ArchivePath         string
+		LogPath             string
+		VerificationPath    string
+		PluginsPath         string
+		LiveSize            string
+		ArchiveSize         string
+		LogSize             string
+		VerificationSize    string
+		PluginsSize         string
+		IncludeVerification bool
+		IncludePlugins      bool
+	}{
+		Namespace:           "block-node-ns",
+		Release:             "my-release",
+		LivePath:            "/mnt/live",
+		ArchivePath:         "/mnt/archive",
+		LogPath:             "/mnt/log",
+		VerificationPath:    "/mnt/verification",
+		PluginsPath:         "/mnt/plugins",
+		LiveSize:            "5Gi",
+		ArchiveSize:         "5Gi",
+		LogSize:             "5Gi",
+		VerificationSize:    "5Gi",
+		PluginsSize:         "5Gi",
+		IncludeVerification: true,
+		IncludePlugins:      true,
+	}
+
+	rendered, err := templates.Render("files/block-node/storage-config.yaml", data)
+	require.NoError(t, err)
+
+	// 5 PV + 5 PVC = 10 metadata blocks. Each must carry all three labels.
+	assert.Equal(t, 10, strings.Count(rendered, "app.kubernetes.io/managed-by: solo-provisioner"),
+		"expected one managed-by label per PV/PVC")
+	assert.Equal(t, 10, strings.Count(rendered, "app.kubernetes.io/component: block-node-storage"),
+		"expected one component label per PV/PVC")
+	assert.Equal(t, 10, strings.Count(rendered, "app.kubernetes.io/instance: my-release"),
+		"expected one instance=my-release label per PV/PVC")
+}
+
+// TestOptionalStorageRendersLabels checks the same invariant on the per-storage
+// optional template used by storage migrations.
+func TestOptionalStorageRendersLabels(t *testing.T) {
+	data := struct {
+		Namespace string
+		Release   string
+		PVName    string
+		PVCName   string
+		Path      string
+		Size      string
+	}{
+		Namespace: "block-node-ns",
+		Release:   "my-release",
+		PVName:    "verification-storage-pv",
+		PVCName:   "verification-storage-pvc",
+		Path:      "/mnt/verification",
+		Size:      "5Gi",
+	}
+
+	rendered, err := templates.Render("files/block-node/optional-storage.yaml", data)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, strings.Count(rendered, "app.kubernetes.io/managed-by: solo-provisioner"))
+	assert.Equal(t, 2, strings.Count(rendered, "app.kubernetes.io/component: block-node-storage"))
+	assert.Equal(t, 2, strings.Count(rendered, "app.kubernetes.io/instance: my-release"))
 }

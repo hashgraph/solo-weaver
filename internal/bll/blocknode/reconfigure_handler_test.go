@@ -12,10 +12,23 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
 )
+
+// assertResolutionMentions extracts the ErrPropertyResolution from the given
+// errorx error and asserts it contains the given substring. The resolution is
+// metadata-only — err.Error() does NOT include it — so we have to pull it out.
+func assertResolutionMentions(t *testing.T, err error, want string) {
+	t.Helper()
+	raw, ok := errorx.ExtractProperty(err, models.ErrPropertyResolution)
+	require.True(t, ok, "expected error to carry a resolution property")
+	resolution, ok := raw.(string)
+	require.True(t, ok, "expected resolution property to be a string, got %T", raw)
+	assert.Contains(t, resolution, want)
+}
 
 // newMinimalReconfigureHandler returns a handler with only the fields used
 // by BuildWorkflow (runtime is not accessed during workflow construction).
@@ -45,6 +58,12 @@ func deployedBlockNodeState(basePath string) state.State {
 
 // reconfigureInputs returns minimal valid UserInputs for a reconfigure.
 func reconfigureInputs(basePath string, resetStorage bool) models.UserInputs[models.BlockNodeInputs] {
+	return reconfigureInputsWithFlags(basePath, resetStorage, false)
+}
+
+// reconfigureInputsWithFlags is the full-flag variant for tests that need to
+// exercise --purge-storage paths.
+func reconfigureInputsWithFlags(basePath string, resetStorage, purgeStorage bool) models.UserInputs[models.BlockNodeInputs] {
 	return models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{
 			Namespace:    "block-node-ns",
@@ -54,7 +73,8 @@ func reconfigureInputs(basePath string, resetStorage bool) models.UserInputs[mod
 			Storage: models.BlockNodeStorage{
 				BasePath: basePath,
 			},
-			ResetStorage: resetStorage,
+			ResetStorage: resetStorage || purgeStorage,
+			PurgeStorage: purgeStorage,
 			ReuseValues:  true,
 		},
 	}
@@ -77,14 +97,13 @@ func workflowStepIDs(t *testing.T, wb *automa.WorkflowBuilder) []string {
 	return ids
 }
 
-// TestBuildWorkflow_WithReset_IncludesRecreateStep verifies that when
-// --with-reset is supplied the workflow contains all three expected sub-workflows
-// in the correct order: purge → recreate → upgrade.
-func TestBuildWorkflow_WithReset_IncludesRecreateStep(t *testing.T) {
+// TestBuildWorkflow_WithReset_PathsUnchanged_DataOnly verifies that
+// --with-reset wipes data but leaves PVs/PVCs intact: purge → upgrade.
+func TestBuildWorkflow_WithReset_PathsUnchanged_DataOnly(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
-	currentState := deployedBlockNodeState("/mnt/old-storage")
-	inputs := reconfigureInputs("/mnt/new-storage", true)
+	currentState := deployedBlockNodeState("/mnt/storage")
+	inputs := reconfigureInputs("/mnt/storage", true)
 
 	wb, err := h.BuildWorkflow(currentState, inputs)
 
@@ -95,53 +114,50 @@ func TestBuildWorkflow_WithReset_IncludesRecreateStep(t *testing.T) {
 	ids := workflowStepIDs(t, wb)
 	assert.Equal(t, []string{
 		steps.PurgeBlockNodeStorageStepId,
-		steps.RecreateBlockNodeStorageStepId,
 		steps.UpgradeBlockNodeStepId,
 	}, ids)
 }
 
-// TestBuildWorkflow_WithReset_PurgeUsesOldStoragePaths verifies that the
-// PurgeBlockNodeStorage sub-workflow is created with the *currently deployed*
-// storage configuration (so ResetStorage clears the directories that actually
-// exist on disk), while the RecreateBlockNodeStorage and UpgradeBlockNode
-// sub-workflows receive the *new* (requested) configuration.
-//
-// We verify this indirectly: if both sub-workflows shared the same provider
-// (built from `ins`), the PurgeBlockNodeStorage manager would see new paths
-// that don't exist yet and silently no-op. We can't call Execute here (no
-// cluster), but we confirm that BuildWorkflow builds without errors and that
-// the workflow structure is correct regardless of whether paths are the same or
-// different.
-func TestBuildWorkflow_WithReset_PathsChangedAndUnchanged(t *testing.T) {
+// TestBuildWorkflow_WithReset_PathsChanged_ReturnsError verifies that
+// --with-reset alone is rejected when storage paths change; the operator
+// must now use --purge-storage to delete and recreate PVs/PVCs.
+func TestBuildWorkflow_WithReset_PathsChanged_ReturnsError(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	currentState := deployedBlockNodeState("/mnt/old")
+	inputs := reconfigureInputs("/mnt/new", true)
+
+	wb, err := h.BuildWorkflow(currentState, inputs)
+
+	require.Error(t, err)
+	assert.Nil(t, wb)
+	assert.Contains(t, err.Error(), "storage paths have changed")
+	assertResolutionMentions(t, err, "--purge-storage")
+}
+
+// TestBuildWorkflow_PurgeStorage_IncludesRecreateStep verifies that
+// --purge-storage triggers the full purge → recreate → upgrade chain
+// (which deletes PVs/PVCs, creates new ones at the new paths, then upgrades).
+func TestBuildWorkflow_PurgeStorage_IncludesRecreateStep(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
 	for _, tc := range []struct {
-		name         string
-		oldBase      string
-		newBase      string
-		wantWorkflow string
+		name    string
+		oldBase string
+		newBase string
 	}{
-		{
-			name:         "paths_changed",
-			oldBase:      "/mnt/old",
-			newBase:      "/mnt/new",
-			wantWorkflow: "block-node-reconfigure-with-reset",
-		},
-		{
-			name:         "paths_unchanged",
-			oldBase:      "/mnt/storage",
-			newBase:      "/mnt/storage",
-			wantWorkflow: "block-node-reconfigure-with-reset",
-		},
+		{name: "paths_changed", oldBase: "/mnt/old", newBase: "/mnt/new"},
+		{name: "paths_unchanged", oldBase: "/mnt/storage", newBase: "/mnt/storage"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			currentState := deployedBlockNodeState(tc.oldBase)
-			inputs := reconfigureInputs(tc.newBase, true)
+			inputs := reconfigureInputsWithFlags(tc.newBase, false, true)
 
 			wb, err := h.BuildWorkflow(currentState, inputs)
 
 			require.NoError(t, err)
-			assert.Equal(t, tc.wantWorkflow, wb.Id())
+			require.NotNil(t, wb)
+			assert.Equal(t, "block-node-reconfigure-purge-storage", wb.Id())
 
 			ids := workflowStepIDs(t, wb)
 			assert.Equal(t, []string{
@@ -174,7 +190,8 @@ func TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart(t *testing.T) {
 }
 
 // TestBuildWorkflow_NoReset_ChangedPathsReturnsError verifies that changing
-// storage paths without --with-reset is blocked with a clear error.
+// storage paths without --purge-storage is blocked with a clear error that
+// points at the right flag.
 func TestBuildWorkflow_NoReset_ChangedPathsReturnsError(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
@@ -186,6 +203,7 @@ func TestBuildWorkflow_NoReset_ChangedPathsReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, wb)
 	assert.Contains(t, err.Error(), "storage paths have changed")
+	assertResolutionMentions(t, err, "--purge-storage")
 }
 
 // TestBuildWorkflow_NotInstalled_ReturnsError verifies the guard condition.
