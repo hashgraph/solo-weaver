@@ -17,6 +17,17 @@ type WeaverPaths struct {
 	DownloadsDir   string
 	DiagnosticsDir string
 	StateDir       string
+	DaemonDir      string
+	DaemonSockPath string
+
+	DaemonEventsDir string // $home/daemon/events
+
+	// Consensus event subdirectories — scoped so future components (block-node, relay) get sibling dirs.
+	DaemonConsensusEventsDir        string // $home/daemon/events/consensus
+	DaemonConsensusUpgradeEventsDir string // $home/daemon/events/consensus/upgrade
+	DaemonConsensusMigrateEventsDir string // $home/daemon/events/consensus/migrate
+
+	DaemonConsensusMigrateEventsPath string // $home/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
 
 	AllDirectories []string
 
@@ -40,7 +51,15 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		DownloadsDir:   path.Join(home, "downloads"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 		StateDir:       path.Join(home, "state"),
+		DaemonDir:      path.Join(home, "daemon"),
 	}
+
+	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
+	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
+	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
+	pp.DaemonConsensusUpgradeEventsDir = path.Join(pp.DaemonConsensusEventsDir, "upgrade")
+	pp.DaemonConsensusMigrateEventsDir = path.Join(pp.DaemonConsensusEventsDir, "migrate")
+	pp.DaemonConsensusMigrateEventsPath = path.Join(pp.DaemonConsensusMigrateEventsDir, "consensus-migrate-events.jsonl")
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
 	pp.SandboxBinDir = path.Join(pp.SandboxDir, "bin")
@@ -91,6 +110,11 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		pp.DownloadsDir,
 		pp.DiagnosticsDir,
 		pp.StateDir,
+		pp.DaemonDir,
+		pp.DaemonEventsDir,
+		pp.DaemonConsensusEventsDir,
+		pp.DaemonConsensusUpgradeEventsDir,
+		pp.DaemonConsensusMigrateEventsDir,
 	}
 	pp.AllDirectories = append(pp.AllDirectories, pp.SandboxDirectories...)
 
