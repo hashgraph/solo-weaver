@@ -144,19 +144,19 @@ func Execute(ctx context.Context) error {
 }
 
 func initConfig(ctx context.Context) {
+	// Cap verbose level at 1 (extra -V's are harmless) and propagate to the
+	// doctor package up front so any error raised during this init function —
+	// including config.Initialize below — honors -V.
+	if ui.VerboseLevel > 1 {
+		ui.VerboseLevel = 1
+	}
+	doctor.VerboseLevel = ui.VerboseLevel
+
 	var err error
 	err = config.Initialize(flagConfig)
 	if err != nil {
 		doctor.CheckErr(ctx, err)
 	}
-
-	// Cap verbose level at 1 (extra -V's are harmless)
-	if ui.VerboseLevel > 1 {
-		ui.VerboseLevel = 1
-	}
-
-	// Propagate verbose flag to the doctor package for error diagnostics
-	doctor.VerboseLevel = ui.VerboseLevel
 
 	logConfig := config.Get().Log
 	if flagLogLevel != "" {
