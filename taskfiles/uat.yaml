@@ -154,20 +154,24 @@ tasks:
         CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
         NS=block-node
         LIVE_DIR=/opt/weaver/block-node-storage/live
+        # Match the dual selector used by DeleteAllPersistentVolumes: solo-provisioner-managed OR Helm-managed for this release.
+        BN_LABEL_SELECTOR='app.kubernetes.io/component=block-node-storage,app.kubernetes.io/managed-by in (solo-provisioner,Helm)'
 
-        count_release_pvcs() { kubectl get pvc -n "$NS" --no-headers 2>/dev/null | wc -l | tr -d ' '; }
-        count_release_pvs()  { kubectl get pv -o json | jq --arg ns "$NS" '[.items[] | select(.spec.claimRef.namespace == $ns)] | length'; }
+        count_release_pvcs() { kubectl get pvc -n "$NS" -l "$BN_LABEL_SELECTOR" --no-headers 2>/dev/null | wc -l | tr -d ' '; }
+        # PVs are cluster-scoped: filter by both the label selector AND spec.claimRef.namespace
+        # so two block-node releases in different namespaces never count each other.
+        count_release_pvs()  { kubectl get pv -l "$BN_LABEL_SELECTOR" -o json | jq --arg ns "$NS" '[.items[] | select(.spec.claimRef.namespace == $ns)] | length'; }
         live_dir_has_files()  { sudo bash -c "ls -A '$LIVE_DIR' 2>/dev/null | head -1" | grep -q .; }
 
 
-        echo -e '\n▶ Sanity check: block-node is installed with PV/PVCs and data'
-        kubectl get pvc -n "$NS"
-        kubectl get pv | grep -E 'block-node-storage|live-storage|archive-storage|logging-storage' || true
+        echo -e '\n▶ Sanity check: block-node is installed with labeled PV/PVCs and data'
+        kubectl get pvc -n "$NS" -l "$BN_LABEL_SELECTOR"
+        kubectl get pv -l "$BN_LABEL_SELECTOR"
         BASELINE_PVCS=$(count_release_pvcs)
         BASELINE_PVS=$(count_release_pvs)
-        [ "$BASELINE_PVCS" -gt 0 ] || { echo "FAIL: no block-node PVCs found"; exit 1; }
-        [ "$BASELINE_PVS" -gt 0 ]  || { echo "FAIL: no block-node PVs found"; exit 1; }
-        echo "   PVCs: $BASELINE_PVCS  PVs (claimRef in $NS): $BASELINE_PVS"
+        [ "$BASELINE_PVCS" -gt 0 ] || { echo "FAIL: no block-node PVCs matched selector — has the install bootstrapped the new labels?"; exit 1; }
+        [ "$BASELINE_PVS" -gt 0 ]  || { echo "FAIL: no block-node PVs matched selector and namespace"; exit 1; }
+        echo "   PVCs (labeled, in $NS): $BASELINE_PVCS   PVs (labeled, claimRef in $NS): $BASELINE_PVS"
 
 
         echo -e '\n▶ Variant 1/3: uninstall (no flag) — helm release should go; PV/PVC + data should stay'
