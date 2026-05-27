@@ -21,6 +21,7 @@ const (
 	DeleteBlockNodePVsStepId         = "delete-block-node-pvs"
 	RecreateBlockNodeStorageStepId   = "recreate-block-node-storage"
 	InstallBlockNodeStepId           = "install-block-node"
+	UninstallBlockNodeStepId         = "uninstall-block-node"
 	UpgradeBlockNodeStepId           = "upgrade-block-node"
 	WaitForBlockNodeStepId           = "wait-for-block-node"
 	ResetBlockNodeStepId             = "reset-block-node"
@@ -187,7 +188,7 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 
 func UninstallBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
-	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
+	return automa.NewWorkflowBuilder().WithId(UninstallBlockNodeStepId).Steps(
 		uninstallBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
 	)
 }
