@@ -400,7 +400,7 @@ func TestSanity_Alphanumeric(t *testing.T) {
 	}
 }
 
-func TestSanity_Filename(t *testing.T) {
+func TestSanity_SanitizeFilename(t *testing.T) {
 	req := require.New(t)
 	testCases := []struct {
 		input  string
@@ -420,34 +420,41 @@ func TestSanity_Filename(t *testing.T) {
 			output: "u2318",
 		},
 		{
+			// SanitizeFilename still strips dots today — the '.' allowance is
+			// scoped to ValidateUsername only (issue #600). When SanitizeFilename
+			// eventually diverges (e.g. to permit dots in real filenames), update
+			// this case to expect the dot to be preserved.
+			input:  "name.with.dots",
+			output: "namewithdots",
+		},
+		{
 			input:  "日本語",
 			output: "",
-			err:    ErrInvalidFilename,
+			err:    ErrInvalidName,
 		},
 		{
 			input:  "⌘",
 			output: "",
-			err:    ErrInvalidFilename,
+			err:    ErrInvalidName,
 		},
 		{
 			input:  "",
 			output: "",
-			err:    ErrInvalidFilename,
+			err:    ErrInvalidName,
 		},
 	}
 
 	for _, testCase := range testCases {
-		output, err := Filename(testCase.input)
+		output, err := SanitizeFilename(testCase.input)
 		req.Equal(testCase.output, output, testCase.input)
 		req.Equal(testCase.err, err, testCase.input)
 	}
 }
 
-func TestSanity_Username(t *testing.T) {
+func TestSanity_ValidateUsername(t *testing.T) {
 	testCases := []struct {
 		name      string
 		input     string
-		expected  string
 		shouldErr bool
 		errMsg    string
 	}{
@@ -455,37 +462,31 @@ func TestSanity_Username(t *testing.T) {
 		{
 			name:      "valid simple username",
 			input:     "john",
-			expected:  "john",
 			shouldErr: false,
 		},
 		{
 			name:      "valid username with underscore",
 			input:     "john_doe",
-			expected:  "john_doe",
 			shouldErr: false,
 		},
 		{
 			name:      "valid username with hyphen",
 			input:     "john-doe",
-			expected:  "john-doe",
 			shouldErr: false,
 		},
 		{
 			name:      "valid username with numbers",
 			input:     "user123",
-			expected:  "user123",
 			shouldErr: false,
 		},
 		{
 			name:      "valid username with mixed case",
 			input:     "JohnDoe",
-			expected:  "JohnDoe",
 			shouldErr: false,
 		},
 		{
 			name:      "valid username with all allowed characters",
 			input:     "user_123-test",
-			expected:  "user_123-test",
 			shouldErr: false,
 		},
 
@@ -659,10 +660,29 @@ func TestSanity_Username(t *testing.T) {
 			errMsg:    "username contains invalid characters",
 		},
 		{
-			name:      "username with period",
+			name:      "valid username with period (firstname.lastname)",
 			input:     "john.doe",
-			shouldErr: true,
-			errMsg:    "username contains invalid characters",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with multiple periods",
+			input:     "a.b.c",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with leading period",
+			input:     ".hidden",
+			shouldErr: false,
+		},
+		{
+			name:      "valid username with trailing period",
+			input:     "trailing.",
+			shouldErr: false,
+		},
+		{
+			name:      "valid SUDO_USER-style firstname.lastname",
+			input:     "nana.ec",
+			shouldErr: false,
 		},
 		{
 			name:      "username with colon",
@@ -676,13 +696,13 @@ func TestSanity_Username(t *testing.T) {
 			name:      "username with only special characters",
 			input:     "!!!",
 			shouldErr: true,
-			errMsg:    "username contains no valid characters",
+			errMsg:    "username contains invalid characters",
 		},
 		{
 			name:      "username with only spaces",
 			input:     "   ",
 			shouldErr: true,
-			errMsg:    "username contains no valid characters",
+			errMsg:    "username contains invalid characters",
 		},
 
 		// Invalid usernames - control characters
@@ -747,7 +767,7 @@ func TestSanity_Username(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
-			result, err := Username(tc.input)
+			err := ValidateUsername(tc.input)
 			if tc.shouldErr {
 				req.Error(err, "expected error for input: %s", tc.input)
 				if tc.errMsg != "" {
@@ -755,7 +775,6 @@ func TestSanity_Username(t *testing.T) {
 				}
 			} else {
 				req.NoError(err, "expected no error for input: %s", tc.input)
-				req.Equal(tc.expected, result, "output should match expected")
 			}
 		})
 	}

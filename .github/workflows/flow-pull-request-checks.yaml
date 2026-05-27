@@ -19,8 +19,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: solo-linux-medium
+    outputs:
+      non_docs: ${{ steps.filter.outputs.non_docs }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            non_docs:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.non_docs == 'true'
     uses: ./.github/workflows/zxc-code-compiles.yaml
     with:
       custom-job-label: Standard
@@ -29,7 +55,9 @@ jobs:
     name: Unit Tests
     uses: ./.github/workflows/zxc-unit-test.yaml
     needs:
+      - changes
       - build
+    if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: Standard
 
@@ -37,7 +65,9 @@ jobs:
     name: UAT Backward Compatibility
     uses: ./.github/workflows/zxc-uat-test.yaml
     needs:
+      - changes
       - build
+    if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: UAT Compat
       uat-scenario: compat
@@ -47,8 +77,10 @@ jobs:
     name: UAT Core Lifecycle
     uses: ./.github/workflows/zxc-uat-test.yaml
     needs:
+      - changes
       - build
       - uat-compat
+    if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: UAT Core
       uat-scenario: lifecycle
@@ -58,8 +90,10 @@ jobs:
     name: Integration Tests
     uses: ./.github/workflows/zxc-integration-test.yaml
     needs:
+      - changes
       - build
       - uat-core
+    if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: Standard
       vm-os: debian

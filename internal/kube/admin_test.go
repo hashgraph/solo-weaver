@@ -542,13 +542,28 @@ func TestKubeConfigManager_ConfigureCurrentUserKubeConfig(t *testing.T) {
 			errorContains: "invalid characters",
 		},
 		{
-			name:     "security - SUDO_USER with period",
+			// Dotted usernames (firstname.lastname) are valid POSIX accounts and
+			// must be accepted as SUDO_USER. See issue #600.
+			name:     "success - SUDO_USER with period (firstname.lastname)",
 			sudoUser: "user.admin",
 			setupMocks: func(ctrl *gomock.Controller, fm *fsx.MockManager, pm *principal.MockManager) {
-				// No mocks needed - should fail validation before any operations
+				mockUser := principal.NewMockUser(ctrl)
+				mockUser.EXPECT().HomeDir().Return("/home/user.admin").AnyTimes()
+
+				mockGroup := principal.NewMockGroup(ctrl)
+				mockUser.EXPECT().PrimaryGroup().Return(mockGroup).AnyTimes()
+
+				pm.EXPECT().LookupUserByName("user.admin").Return(mockUser, nil)
+
+				expectedKubeDir := "/home/user.admin/.kube"
+				fm.EXPECT().CreateDirectory(expectedKubeDir, false).Return(nil)
+
+				expectedConfigDest := path.Join(expectedKubeDir, "config")
+				fm.EXPECT().CopyFile(kubeConfigSourcePath, expectedConfigDest, true).Return(nil)
+
+				fm.EXPECT().WriteOwner(expectedKubeDir, mockUser, mockGroup, true).Return(nil)
 			},
-			expectError:   true,
-			errorContains: "invalid characters",
+			expectError: false,
 		},
 		{
 			name:     "security - SUDO_USER with colon",
