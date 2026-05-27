@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Deploy Release Artifact (Daemon)"
+on:
+  workflow_dispatch:
+    inputs:
+      go-version:
+        description: "Go Version:"
+        type: string
+        required: false
+        default: "1.25.2"
+      dry-run-enabled:
+        description: "Perform Dry Run"
+        type: boolean
+        required: false
+        default: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  create-github-release:
+    name: Github / Release / Daemon
+    runs-on: solo-linux-medium
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          fetch-depth: 0
+
+      - name: Retrieve Commit Hash
+        id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "sha-abbrev=$(git rev-parse HEAD | tr -d '[:space:]' | cut -c1-8)" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup GoLang
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version: ${{ inputs.go-version || '1.25.2'}}
+
+      - name: Install GnuPG Tools
+        run: |
+          if ! command -v gpg2 >/dev/null 2>&1; then
+            echo "::group::Updating APT Repository Indices"
+              sudo apt update
+            echo "::endgroup::"
+            echo "::group::Installing GnuPG Tools"
+              sudo apt install -y gnupg2
+            echo "::endgroup::"
+          fi
+
+      - name: Import GPG key
+        id: gpg_key
+        uses: step-security/ghaction-import-gpg@69c854a83c7f79463f8bdf46772ab09826c560cd # v6.3.1
+        with:
+          gpg_private_key: ${{ secrets.GPG_KEY_CONTENTS }}
+          passphrase: ${{ secrets.GPG_KEY_PASSPHRASE }}
+          git_config_global: true
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_tag_gpgsign: false
+
+      - name: Install Task
+        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          version: 3.39.2
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 20
+
+      - name: Install Semantic Release
+        run: npm install -g semantic-release@24.2.4 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@8.0.0
+
+      - name: Publish Semantic Release (Daemon)
+        id: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          FLAGS=""
+          if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
+            FLAGS="--dry-run"
+          fi
+
+          npx semantic-release ${FLAGS} --extends "$(pwd)/.releaserc_daemon.json" 2>&1 | tee semantic-release-output.txt
+
+          # Extract the next version from semantic-release output for dry-run
+          if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
+            NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' semantic-release-output.txt || echo "")
+            if [[ -n "$NEXT_VERSION" ]]; then
+              echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Dry-run: Next daemon release would be solo-provisioner-daemon-v${NEXT_VERSION}"
+            else
+              echo "::notice::Dry-run: No new daemon release would be created"
+            fi
+          fi
+
+      - name: Retrieve Release Version
+        id: version
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
+            VERSION="${{ steps.semantic-release.outputs.next-version }}"
+            if [[ -n "$VERSION" ]]; then
+              echo "number=${VERSION}" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Dry-run mode - predicted daemon version: ${VERSION}"
+            else
+              echo "number=dry-run-no-release" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Dry-run mode - no daemon release would be created"
+            fi
+          else
+            if [[ -f "pkg/version/daemon/VERSION" ]]; then
+              echo "number=$(cat pkg/version/daemon/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
+            else
+              echo "::error::pkg/version/daemon/VERSION file not found after release"
+              exit 1
+            fi
+          fi

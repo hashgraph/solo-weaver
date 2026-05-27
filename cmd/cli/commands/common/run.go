@@ -22,7 +22,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	pkgconfig "github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/version"
+	version "github.com/hashgraph/solo-weaver/pkg/version/cli"
 	"github.com/spf13/cobra"
 )
 

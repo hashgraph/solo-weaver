@@ -5,6 +5,11 @@ version: 3
 tasks:
   build:daemon:all:
     desc: "Build the daemon binary for all configured operating systems and architectures"
+    # generate produces pkg/version/daemon/{VERSION,COMMIT} which are //go:embed-ed
+    # into the binary. Without this dep, standalone callers (e.g., the release
+    # pipeline's `task hash:daemon:all`) hit a clean-checkout build failure.
+    deps:
+      - "generate"
     cmds:
       - task: build:daemon:all:os
 
@@ -40,6 +45,8 @@ tasks:
 
   hash:daemon:all:
     desc: "Hash the daemon binaries for all configured operating systems and architectures"
+    deps:
+      - "build:daemon:all"
     cmds:
       - task: hash:daemon:all:os
 
@@ -73,6 +80,8 @@ tasks:
 
   sign:daemon:all:
     desc: "Sign the daemon binaries for all configured operating systems and architectures"
+    deps:
+      - "build:daemon:all"
     cmds:
       - task: sign:daemon:all:os
 
