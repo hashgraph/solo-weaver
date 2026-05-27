@@ -22,7 +22,9 @@ vars:
   SSH_PUBLIC_KEY: "{{.SSH_PRIVATE_KEY}}.pub"
   # Common SSH options for all VM connections. IdentityAgent=none prevents
   # external SSH agents (e.g. 1Password) from intercepting key auth.
-  SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none"
+  # ProxyCommand routes through nc with --apple-no-connectx to avoid macOS
+  # connectx(2) failures on bridged UTM networks behind captive WiFi or VPNs.
+  SSH_OPTS: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none -o ProxyCommand="nc --apple-no-connectx %h %p"'
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
   GET_VM_IP: |
     get_vm_ip() {
