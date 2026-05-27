@@ -45,7 +45,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot reconfigure").
 			WithProperty(models.ErrPropertyResolution,
-				"use 'weaver block node install' to install the block node first, or pass --force to continue")
+				"use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
 	}
 
 	// Fail fast if storage paths can't be resolved.

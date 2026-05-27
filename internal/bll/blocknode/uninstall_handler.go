@@ -41,7 +41,7 @@ func (h *UninstallHandler) BuildWorkflow(
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot uninstall").
 			WithProperty(models.ErrPropertyResolution,
-				"use 'weaver block node install' to install the block node, or pass --force to continue")
+				"use 'solo-provisioner block node install' to install the block node, or pass --force to continue")
 	}
 
 	ins := inputs.Custom

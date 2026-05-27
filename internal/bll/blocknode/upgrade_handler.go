@@ -50,7 +50,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot upgrade").
-			WithProperty(models.ErrPropertyResolution, "use 'weaver block node install' to install the block node first, or pass --force to continue")
+			WithProperty(models.ErrPropertyResolution, "use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
 	}
 
 	if currentState.BlockNodeState.ReleaseInfo.ChartRef != "" &&
@@ -76,7 +76,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 			"block node chart version cannot be downgraded from %q to %q",
 			currentVer, desiredVer).
 			WithProperty(models.ErrPropertyResolution,
-				"version downgrade is not supported; use 'weaver block node reconfigure' to re-apply configuration at the current version")
+				"version downgrade is not supported; use 'solo-provisioner block node reconfigure' to re-apply configuration at the current version")
 	}
 	if desiredVer.Equal(currentVer) && !inputs.Common.Force {
 		return nil, errorx.IllegalArgument.New(

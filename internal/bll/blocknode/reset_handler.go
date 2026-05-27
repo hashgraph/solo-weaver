@@ -43,7 +43,7 @@ func (h *ResetHandler) BuildWorkflow(
 	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
 		return nil, errorx.IllegalState.New(
 			"block node is not installed; cannot reset").
-			WithProperty(models.ErrPropertyResolution, "use 'weaver block node install' to install the "+
+			WithProperty(models.ErrPropertyResolution, "use 'solo-provisioner block node install' to install the "+
 				"block node first, or pass --force to continue")
 	}
 

@@ -12,10 +12,23 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
 )
+
+// assertResolutionMentions extracts the ErrPropertyResolution from the given
+// errorx error and asserts it contains the given substring. The resolution is
+// metadata-only — err.Error() does NOT include it — so we have to pull it out.
+func assertResolutionMentions(t *testing.T, err error, want string) {
+	t.Helper()
+	raw, ok := errorx.ExtractProperty(err, models.ErrPropertyResolution)
+	require.True(t, ok, "expected error to carry a resolution property")
+	resolution, ok := raw.(string)
+	require.True(t, ok, "expected resolution property to be a string, got %T", raw)
+	assert.Contains(t, resolution, want)
+}
 
 // newMinimalReconfigureHandler returns a handler with only the fields used
 // by BuildWorkflow (runtime is not accessed during workflow construction).
@@ -119,7 +132,7 @@ func TestBuildWorkflow_WithReset_PathsChanged_ReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, wb)
 	assert.Contains(t, err.Error(), "storage paths have changed")
-	assert.Contains(t, err.Error(), "--purge-storage")
+	assertResolutionMentions(t, err, "--purge-storage")
 }
 
 // TestBuildWorkflow_PurgeStorage_IncludesRecreateStep verifies that
@@ -190,7 +203,7 @@ func TestBuildWorkflow_NoReset_ChangedPathsReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, wb)
 	assert.Contains(t, err.Error(), "storage paths have changed")
-	assert.Contains(t, err.Error(), "--purge-storage")
+	assertResolutionMentions(t, err, "--purge-storage")
 }
 
 // TestBuildWorkflow_NotInstalled_ReturnsError verifies the guard condition.
