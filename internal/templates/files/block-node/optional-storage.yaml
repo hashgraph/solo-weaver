@@ -3,6 +3,10 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: {{ .PVName }}
+  labels:
+    app.kubernetes.io/managed-by: solo-provisioner
+    app.kubernetes.io/component: block-node-storage
+    app.kubernetes.io/instance: {{ or .Release "block-node" }}
 spec:
   claimRef:
     name: {{ .PVCName }}
@@ -20,6 +24,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ .PVCName }}
   namespace: {{ or .Namespace "block-node" }}
+  labels:
+    app.kubernetes.io/managed-by: solo-provisioner
+    app.kubernetes.io/component: block-node-storage
+    app.kubernetes.io/instance: {{ or .Release "block-node" }}
 spec:
   accessModes:
     - ReadWriteOnce

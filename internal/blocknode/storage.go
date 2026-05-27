@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // SetupStorage creates the required directories for block node storage
@@ -102,6 +103,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 
 	data := struct {
 		Namespace           string
+		Release             string
 		LivePath            string
 		ArchivePath         string
 		LogPath             string
@@ -116,6 +118,7 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 		IncludePlugins      bool
 	}{
 		Namespace:           m.blockNodeInputs.Namespace,
+		Release:             m.blockNodeInputs.Release,
 		LivePath:            livePath,
 		ArchivePath:         archivePath,
 		LogPath:             logPath,
@@ -166,32 +169,106 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	return nil
 }
 
-// DeleteAllPersistentVolumes deletes all known block-node PVs and PVCs by name.
-// It does not depend on a previously-written manifest file, making it safe to call
-// even when the tempDir has been cleared or was never written.
-// Missing resources are silently ignored.
+// SoloProvisionerStorageLabelSelector matches PVs/PVCs created by
+// solo-provisioner's own block-node storage templates.
+const SoloProvisionerStorageLabelSelector = "app.kubernetes.io/managed-by=solo-provisioner,app.kubernetes.io/component=block-node-storage"
+
+// helmManagedStorageLabelSelector matches PVs/PVCs created by the block-node
+// Helm chart for the given release (e.g. if a values override flips the
+// chart's persistence.create to true). Helm-rendered resources carry
+// app.kubernetes.io/managed-by=Helm and app.kubernetes.io/instance=<release>
+// by Helm convention.
+func helmManagedStorageLabelSelector(release string) string {
+	return "app.kubernetes.io/managed-by=Helm,app.kubernetes.io/instance=" + release
+}
+
+// DeleteAllPersistentVolumes deletes every block-node PV and PVC that belongs
+// to this release: both solo-provisioner-managed (from our templates) and
+// Helm-managed (if the chart's persistence.create override is ever turned on).
+// PVs are cluster-scoped so the returned list is additionally filtered by
+// spec.claimRef.namespace. Missing resources are silently ignored.
 func (m *Manager) DeleteAllPersistentVolumes(ctx context.Context) error {
 	ns := m.blockNodeInputs.Namespace
+	release := m.blockNodeInputs.Release
 
-	corePVCNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
-	corePVNames := []string{"live-storage-pv", "archive-storage-pv", "logging-storage-pv"}
-
-	for _, optStor := range GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion) {
-		corePVCNames = append(corePVCNames, optStor.PVCName)
-		corePVNames = append(corePVNames, optStor.PVName)
+	selectors := []string{}
+	if release != "" {
+		selectors = append(selectors, SoloProvisionerStorageLabelSelector+",app.kubernetes.io/instance="+release)
+		selectors = append(selectors, helmManagedStorageLabelSelector(release))
+	} else {
+		selectors = append(selectors, SoloProvisionerStorageLabelSelector)
 	}
 
-	for _, pvcName := range corePVCNames {
-		m.logger.Info().Str("pvc", pvcName).Msg("Deleting PVC")
-		if err := m.kubeClient.DeletePVC(ctx, ns, pvcName); err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to delete PVC %s", pvcName)
+	seenPVC := map[string]struct{}{}
+	for _, sel := range selectors {
+		pvcs, err := m.kubeClient.ListPVCs(ctx, ns, sel)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to list block-node PVCs in namespace %s (selector %q)", ns, sel)
+		}
+		for _, pvc := range pvcs {
+			name := pvc.GetName()
+			if _, dup := seenPVC[name]; dup {
+				continue
+			}
+			seenPVC[name] = struct{}{}
+			m.logger.Info().Str("pvc", name).Str("selector", sel).Msg("Deleting PVC")
+			if err := m.kubeClient.DeletePVC(ctx, ns, name); err != nil {
+				return errorx.IllegalState.Wrap(err, "failed to delete PVC %s", name)
+			}
 		}
 	}
 
-	for _, pvName := range corePVNames {
-		m.logger.Info().Str("pv", pvName).Msg("Deleting PV")
-		if err := m.kubeClient.DeletePV(ctx, pvName); err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to delete PV %s", pvName)
+	seenPV := map[string]struct{}{}
+	for _, sel := range selectors {
+		pvs, err := m.kubeClient.ListPVs(ctx, sel)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to list block-node PVs (selector %q)", sel)
+		}
+		for _, pv := range pvs {
+			// PVs are cluster-scoped; restrict deletion to PVs whose claimRef
+			// points at this block-node's namespace so releases in different
+			// namespaces remain isolated.
+			claimNs, found, _ := unstructured.NestedString(pv.Object, "spec", "claimRef", "namespace")
+			if !found || claimNs != ns {
+				continue
+			}
+			name := pv.GetName()
+			if _, dup := seenPV[name]; dup {
+				continue
+			}
+			seenPV[name] = struct{}{}
+			m.logger.Info().Str("pv", name).Str("selector", sel).Msg("Deleting PV")
+			if err := m.kubeClient.DeletePV(ctx, name); err != nil {
+				return errorx.IllegalState.Wrap(err, "failed to delete PV %s", name)
+			}
+		}
+	}
+
+	// Transitional fallback for installations created before the storage labels
+	// were introduced (and therefore not matched by the selectors above).
+	// DeletePVC/DeletePV are no-ops on missing resources, so this is a safe
+	// idempotent retry by name. Remove once all field deployments have rolled
+	// past the version that adds the labels (tracked in the operator guide).
+	legacyPVCNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
+	legacyPVNames := []string{"live-storage-pv", "archive-storage-pv", "logging-storage-pv"}
+	for _, optStor := range GetOptionalStorages() {
+		legacyPVCNames = append(legacyPVCNames, optStor.PVCName)
+		legacyPVNames = append(legacyPVNames, optStor.PVName)
+	}
+	for _, name := range legacyPVCNames {
+		if _, dup := seenPVC[name]; dup {
+			continue
+		}
+		if err := m.kubeClient.DeletePVC(ctx, ns, name); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to delete legacy PVC %s", name)
+		}
+	}
+	for _, name := range legacyPVNames {
+		if _, dup := seenPV[name]; dup {
+			continue
+		}
+		if err := m.kubeClient.DeletePV(ctx, name); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to delete legacy PV %s", name)
 		}
 	}
 
@@ -208,12 +285,14 @@ func (m *Manager) CreateOptionalStorage(ctx context.Context, tempDir string, opt
 
 	data := struct {
 		Namespace string
+		Release   string
 		PVName    string
 		PVCName   string
 		Path      string
 		Size      string
 	}{
 		Namespace: m.blockNodeInputs.Namespace,
+		Release:   m.blockNodeInputs.Release,
 		PVName:    optStor.PVName,
 		PVCName:   optStor.PVCName,
 		Path:      storagePath,
