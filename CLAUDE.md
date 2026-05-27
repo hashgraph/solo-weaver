@@ -36,6 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    git rebase -i origin/<base>        # mark the target commit as 'edit', then amend
    ```
 5. **Before committing or pushing**, always show the full commit message and the list of files to be committed/pushed, and wait for explicit user approval before proceeding.
+6. **When you add, rename, remove, or change the semantics of a CLI flag or subcommand** (under `cmd/cli/commands/...`), also update `docs/quickstart.md` — the relevant command's example block, its **Additional Flags** table, and any nearby explanatory text. Flag descriptions there must match the description string in `cmd/cli/commands/common/flags_common.go` and the `--help` output. CLI surface changes that miss this step ship docs that drift out of date.
 
 ## Writing Markdown Files
 

@@ -183,7 +183,7 @@ sudo solo-provisioner block node upgrade \
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--no-reuse-values` | Don't reuse previous release values | `false` |
-| `--with-reset` | Reset storage (clear all data) before upgrade | `false` |
+| `--with-reset` | Wipe block node data directories; PVs and PVCs are preserved | `false` |
 
 #### Reset Block Node
 
@@ -255,29 +255,51 @@ sudo solo-provisioner block node reconfigure \
 |------|-------------|---------|
 | `--no-reuse-values` | Don't reuse previous release values | `false` |
 | `--no-restart` | Skip rollout-restart of the block node pod after reconfiguring | `false` |
-| `--with-reset` | Reset storage (clear all data) before reconfiguring | `false` |
+| `--with-reset` | Wipe block node data directories; PVs and PVCs are preserved | `false` |
+| `--purge-storage` | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
+
+> **Storage path changes**: Local PV `hostPath.path` is immutable. If your
+> reconfigure changes any storage path, you must pass `--purge-storage` so the
+> existing PV/PVCs are deleted and recreated at the new paths. Running
+> `reconfigure --with-reset` with a path change is rejected with a clear error.
 
 #### Uninstall Block Node
 
-Remove the Hedera Block Node Helm release:
+`block node uninstall` has three variants depending on what you want to keep:
+
+| Command | Helm release | Data on disk | PV/PVC objects |
+|---|---|---|---|
+| `block node uninstall` | removed | kept | kept |
+| `block node uninstall --with-reset` | removed | **wiped** | kept |
+| `block node uninstall --purge-storage` | removed | **wiped** | **deleted** |
 
 ```bash
-# Basic uninstall
+# Basic uninstall — release removed, data and PV/PVCs preserved for a future re-install
 sudo solo-provisioner block node uninstall --profile=mainnet
 
-# Uninstall and clear all storage data
+# Wipe data but keep PV/PVCs so a re-install can reuse them
 sudo solo-provisioner block node uninstall \
   --profile=mainnet \
   --with-reset
+
+# Fully clean up — release, data, PVCs, and PVs all removed
+sudo solo-provisioner block node uninstall \
+  --profile=mainnet \
+  --purge-storage
 ```
 
 **Additional Flags**:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--with-reset` | Reset storage (clear all data) before uninstalling | `false` |
+| `--with-reset` | Wipe block node data directories; PVs and PVCs are preserved | `false` |
+| `--purge-storage` | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
 
-> **Warning**: Uninstalling removes the Helm release. Use `--with-reset` to also clear all block data from disk.
+> **Picking the right one**: use the default uninstall if you plan to re-install
+> against the same data. Use `--with-reset` to start fresh on disk but keep the
+> PV/PVC topology. Use `--purge-storage` for a full cleanup; this is the only
+> targeted way to remove the block-node PVs without tearing down the whole
+> cluster via `kube cluster uninstall`.
 
 ---
 
