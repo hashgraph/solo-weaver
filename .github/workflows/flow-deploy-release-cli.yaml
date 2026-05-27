@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: "Deploy Release Artifact"
+name: "Deploy Release Artifact (CLI)"
 on:
   workflow_dispatch:
     inputs:
@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   create-github-release:
-    name: Github / Release
+    name: Github / Release / CLI
     runs-on: solo-linux-medium
     steps:
       - name: Harden Runner
@@ -86,28 +86,28 @@ jobs:
       - name: Install Semantic Release
         run: npm install -g semantic-release@24.2.4 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@8.0.0
 
-      - name: Publish Semantic Release
+      - name: Publish Semantic Release (CLI)
         id: semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          
+
           FLAGS=""
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             FLAGS="--dry-run"
           fi
-          
-          npx semantic-release ${FLAGS} 2>&1 | tee semantic-release-output.txt
-          
+
+          npx semantic-release ${FLAGS} --extends "$(pwd)/.releaserc_cli.json" 2>&1 | tee semantic-release-output.txt
+
           # Extract the next version from semantic-release output for dry-run
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' semantic-release-output.txt || echo "")
             if [[ -n "$NEXT_VERSION" ]]; then
               echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run: Next release would be v${NEXT_VERSION}"
+              echo "::notice::Dry-run: Next CLI release would be solo-provisioner-v${NEXT_VERSION}"
             else
-              echo "::notice::Dry-run: No new release would be created"
+              echo "::notice::Dry-run: No new CLI release would be created"
             fi
           fi
 
@@ -115,21 +115,21 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          
+
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             VERSION="${{ steps.semantic-release.outputs.next-version }}"
             if [[ -n "$VERSION" ]]; then
               echo "number=${VERSION}" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run mode - predicted version: ${VERSION}"
+              echo "::notice::Dry-run mode - predicted CLI version: ${VERSION}"
             else
               echo "number=dry-run-no-release" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run mode - no release would be created"
+              echo "::notice::Dry-run mode - no CLI release would be created"
             fi
           else
-            if [[ -f "pkg/version/VERSION" ]]; then
-              echo "number=$(cat pkg/version/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
+            if [[ -f "pkg/version/cli/VERSION" ]]; then
+              echo "number=$(cat pkg/version/cli/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
             else
-              echo "::error::VERSION file not found after release"
+              echo "::error::pkg/version/cli/VERSION file not found after release"
               exit 1
             fi
           fi

@@ -103,38 +103,29 @@ tasks:
       - "vendor"
     cmds:
       - task: "clean"
-      - task: "generate"
+      # `generate` runs via build:cli:all / build:daemon:all's deps; declared
+      # `run: once` so it only fires once across all callers in this invocation.
       - task: "build:cli:all"
+      - task: "build:daemon:all"
     sources:
       - "**/*.go"
     generates:
       - "bin/solo-provisioner-linux-*"
       - "bin/solo-provisioner-darwin-*"
-
-  hash:
-    deps:
-      - "build"
-    cmds:
-      - task: "hash:cli:all"
-    sources:
-      - "bin/solo-provisioner-linux-*"
-      - "bin/solo-provisioner-darwin-*"
-    generates:
-      - "bin/*.sha256"
-
-  sign:
-    deps:
-      - "build"
-    cmds:
-      - task: "sign:cli:all"
+      - "bin/solo-provisioner-daemon-linux-*"
+      - "bin/solo-provisioner-daemon-darwin-*"
 
   build:image:
     deps:
-      - task: "hash"
+      - task: "build"
     cmds:
       - "docker build -t solo-weaver ."
   
   generate:
+    # Declared `run: once` so multiple callers in the same invocation (e.g.
+    # build:cli:all and build:daemon:all from top-level `task build`) share a
+    # single execution.
+    run: once
     cmds:
       - "go generate ./..."
 
