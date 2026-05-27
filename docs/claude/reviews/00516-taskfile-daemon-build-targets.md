@@ -191,11 +191,14 @@ task vm:test:integration TEST_NAME='^Test_StepKubeadm_Fresh_Integration$'
    **2d. Shared-code reads the running binary's version** (proves the parent-package `SetCurrent` registration works through `internal/...` callers).
 
    ```bash
-   # Force an error path so internal/doctor's Diagnose() runs and dumps version info.
-   ./bin/solo-provisioner-linux-amd64 block node check --config /nonexistent.yaml 2>&1 | grep -A1 -i "version"
+   # Force an error path with -V (full diagnostics) so internal/doctor's
+   # verbose output dumps Version/Commit. Without -V, internal/doctor only
+   # emits the compact error panel and the version line is suppressed
+   # (internal/doctor/diagnose.go:checkErrCompact vs checkErrVerbose).
+   ./bin/solo-provisioner-linux-amd64 -V block node check --config /nonexistent.yaml 2>&1 | grep -iE "version|commit"
    ```
 
-   Expected: the diagnostic output (powered by `internal/doctor/diagnose.go` calling `version.Number()` / `version.Commit()`) shows the CLI's version — proof that the parent package's runtime `Get()` returns the right binary's Info via the subpackage init() registration.
+   Expected: the verbose diagnostic output (powered by `internal/doctor/diagnose.go` calling `version.Number()` / `version.Commit()`) shows the CLI's `Version:` and `Commit:` lines — proof that the parent package's runtime `Get()` returns the right binary's Info via the subpackage init() registration.
 
 3. **Per-binary aggregator is self-sufficient.**
 
