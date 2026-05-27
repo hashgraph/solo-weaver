@@ -439,6 +439,27 @@ func ResetBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		})
 }
 
+// DeleteBlockNodePersistentVolumes deletes the block node's PVCs and PVs by
+// label selector. Used by the uninstall --purge-storage workflow after the
+// data directories have been wiped.
+func DeleteBlockNodePersistentVolumes(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
+	managerProvider := newBlockNodeManagerProvider(inputs)
+
+	return automa.NewWorkflowBuilder().WithId(DeleteBlockNodePVsStepId).Steps(
+		deleteBlockNodePVs(managerProvider),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Deleting Block Node PVs and PVCs")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete Block Node PVs and PVCs")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node PVs and PVCs deleted")
+		})
+}
+
 // PurgeBlockNodeStorage scales down the block node and clears all storage.
 // This does NOT scale back up - use ResetBlockNode if you need to restart the pod after clearing.
 func PurgeBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {

@@ -44,6 +44,8 @@ func resetFlags(cmd *cobra.Command) {
 	flagValuesFile = ""
 	flagNoReuseValues = false
 	flagNoRestart = false
+	flagWithReset = false
+	flagPurgeStorage = false
 
 	if cmd != nil {
 		cmd.ResetFlags()

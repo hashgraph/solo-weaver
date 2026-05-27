@@ -57,6 +57,7 @@ var (
 
 func init() {
 	common.FlagWithStorageReset().SetVarP(reconfigureCmd, &flagWithReset, false)
+	common.FlagPurgeStorage().SetVarP(reconfigureCmd, &flagPurgeStorage, false)
 	common.FlagValuesFile().SetVarP(reconfigureCmd, &flagValuesFile, false)
 	common.FlagNoReuseValues().SetVarP(reconfigureCmd, &flagNoReuseValues, false)
 	common.FlagNoRestart().SetVar(reconfigureCmd, &flagNoRestart, false)

@@ -46,10 +46,17 @@ func (h *UninstallHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 	var wb *automa.WorkflowBuilder
-	if ins.ResetStorage {
+	switch {
+	case ins.PurgeStorage:
+		// Wipe data, delete PVCs/PVs, then uninstall the chart. Order matters:
+		// local-PV reclaimPolicy: Retain leaves orphaned hostPath dirs behind if
+		// data isn't wiped before the PVs disappear.
+		wb = automa.NewWorkflowBuilder().WithId("block-node-uninstall-purge-storage").
+			Steps(steps.PurgeBlockNodeStorage(ins), steps.DeleteBlockNodePersistentVolumes(ins), steps.UninstallBlockNode(ins))
+	case ins.ResetStorage:
 		wb = automa.NewWorkflowBuilder().WithId("block-node-uninstall-with-reset").
 			Steps(steps.PurgeBlockNodeStorage(ins), steps.UninstallBlockNode(ins))
-	} else {
+	default:
 		wb = automa.NewWorkflowBuilder().WithId("block-node-uninstall").
 			Steps(steps.UninstallBlockNode(ins))
 	}

@@ -144,6 +144,7 @@ func resolveBlocknodeEffectiveInputs(
 			ReuseValues:         inputs.Custom.ReuseValues,
 			SkipHardwareChecks:  inputs.Custom.SkipHardwareChecks,
 			ResetStorage:        inputs.Custom.ResetStorage,
+			PurgeStorage:        inputs.Custom.PurgeStorage,
 			NoRestart:           inputs.Custom.NoRestart,
 			LoadBalancerEnabled: inputs.Custom.LoadBalancerEnabled,
 			PluginPreset:        inputs.Custom.PluginPreset,
