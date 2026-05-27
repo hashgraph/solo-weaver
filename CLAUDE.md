@@ -36,6 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    git rebase -i origin/<base>        # mark the target commit as 'edit', then amend
    ```
 5. **Before committing or pushing**, always show the full commit message and the list of files to be committed/pushed, and wait for explicit user approval before proceeding.
+6. **When starting a new story** (e.g. "let's start story #X", "moving to next story", "next issue"), remind the user to run `/compact` before continuing, to keep context focused and reduce token usage.
 
 ## Writing Markdown Files
 
