@@ -28,6 +28,14 @@ var (
 	flagVersion      bool
 	flagOutputFormat string
 
+	// Optional overrides — each takes precedence over the corresponding daemon.yaml
+	// field when set. The service file stays flag-free; these flags are for
+	// operator debugging and integration testing without editing daemon.yaml.
+	flagNodeID     string
+	flagKubeconfig string
+	flagOrbit      string
+	flagUpgradeDir string
+
 	rootCmd = &cobra.Command{
 		Use:   "solo-provisioner-daemon",
 		Short: "Long-running daemon for Solo Provisioner host-level work",
@@ -42,8 +50,35 @@ var (
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
 			defer stop()
 
-			if err := daemon.New(models.Paths()).Run(ctx); err != nil {
-				return errorx.InternalError.Wrap(err, "daemon error")
+			paths := models.Paths()
+
+			// Load daemon.yaml; apply any CLI flag overrides; re-validate.
+			cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
+			if err != nil {
+				return err
+			}
+			if flagNodeID != "" {
+				cfg.NodeID = flagNodeID
+			}
+			if flagKubeconfig != "" {
+				cfg.Kubeconfig = flagKubeconfig
+			}
+			if flagOrbit != "" {
+				cfg.Orbit = flagOrbit
+			}
+			if flagUpgradeDir != "" {
+				cfg.UpgradeDir = flagUpgradeDir
+			}
+			if err := cfg.Validate(); err != nil {
+				return err
+			}
+
+			d, err := daemon.NewFromConfig(paths, cfg)
+			if err != nil {
+				return err
+			}
+			if err := d.Run(ctx); err != nil {
+				return err
 			}
 
 			logx.As().Info().Msg("Solo Provisioner daemon stopped")
@@ -57,6 +92,14 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Set log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Print version and exit")
 	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "json", "Output format (json, yaml)")
+
+	// Optional overrides for daemon.yaml fields. When set, each flag takes
+	// precedence over the corresponding value in daemon.yaml. The normal
+	// production deployment sets no flags — everything comes from daemon.yaml.
+	rootCmd.Flags().StringVar(&flagNodeID, "node-id", "", "Override node_id from daemon.yaml (e.g. 0.0.3)")
+	rootCmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Override kubeconfig path from daemon.yaml")
+	rootCmd.Flags().StringVar(&flagOrbit, "orbit", "", "Override orbit (K8s namespace) from daemon.yaml")
+	rootCmd.Flags().StringVar(&flagUpgradeDir, "upgrade-dir", "", "Override upgrade_dir from daemon.yaml")
 
 	rootCmd.AddCommand(version.Cmd())
 }
