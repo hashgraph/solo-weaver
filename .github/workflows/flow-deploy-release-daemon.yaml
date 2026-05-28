@@ -83,8 +83,24 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Semantic Release
-        run: npm install -g semantic-release@24.2.4 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@8.0.0
+      - name: Install Semantic Release & plugins
+        run: |
+          set -euo pipefail
+          cat > package.json <<'JSON'
+          {
+            "name": "solo-weaver-release-tooling",
+            "private": true,
+            "devDependencies": {
+              "semantic-release": "24.2.4",
+              "@semantic-release/commit-analyzer": "13.0.1",
+              "@semantic-release/release-notes-generator": "14.1.1",
+              "@semantic-release/github": "11.0.6",
+              "@semantic-release/exec": "7.1.0",
+              "conventional-changelog-conventionalcommits": "8.0.0"
+            }
+          }
+          JSON
+          npm install --no-audit --no-fund
 
       - name: Publish Semantic Release (Daemon)
         id: semantic-release
