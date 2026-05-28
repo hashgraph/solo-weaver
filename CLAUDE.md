@@ -236,7 +236,7 @@ Detailed framework docs live in `docs/dev/`:
 
 - All dependencies are vendored in `/vendor` — run `go mod vendor` after updating `go.mod`
 - Builds produce two binaries at `bin/solo-provisioner-{OS}-{ARCH}` (CLI) and `bin/solo-provisioner-daemon-{OS}-{ARCH}` (daemon); `task build` produces both, and hashing/signing are done via the per-binary tasks `hash:cli:all`, `hash:daemon:all`, `sign:cli:all`, and `sign:daemon:all`
-- Each binary has its own release pipeline and tag namespace: CLI → `solo-provisioner-vX.Y.Z` driven by `.releaserc_cli.json` and `.github/workflows/flow-deploy-release-cli.yaml`; daemon → `solo-provisioner-daemon-vX.Y.Z` driven by `.releaserc_daemon.json` and `flow-deploy-release-daemon.yaml`. They can be released independently
+- Each binary has its own release pipeline and tag namespace: CLI → `vX.Y.Z` driven by `.releaserc_cli.json` and `.github/workflows/flow-deploy-release-cli.yaml`; daemon → `daemon-vX.Y.Z` driven by `.releaserc_daemon.json` and `flow-deploy-release-daemon.yaml`. They can be released independently. Daemon releases also set `make_latest=false` on the GitHub release so the repo's "Latest" badge stays pinned to the CLI namespace.
 - Each binary embeds its own VERSION/COMMIT at `pkg/version/cli/` and `pkg/version/daemon/`; the `pkg/version` parent package exposes `Get`/`Number`/`Commit` whose values are registered at init time by whichever subpackage the running binary imports
 - Deployment profiles: `local`, `perfnet`, `testnet`, `previewnet`, `mainnet`
 - PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/)
