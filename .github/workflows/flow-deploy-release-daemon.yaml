@@ -118,7 +118,7 @@ jobs:
 
           # Extract the next version from semantic-release output for dry-run
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
-            NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' semantic-release-output.txt || echo "")
+            NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\(-[0-9A-Za-z.-]\{1,\}\)\{0,1\}\).*/\1/p' semantic-release-output.txt || echo "")
             if [[ -n "$NEXT_VERSION" ]]; then
               echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
               echo "::notice::Dry-run: Next daemon release would be daemon-v${NEXT_VERSION}"
