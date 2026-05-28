@@ -7,18 +7,19 @@ import (
 )
 
 type WeaverPaths struct {
-	HomeDir        string
-	BinDir         string
-	LogsDir        string
-	UtilsDir       string
-	ConfigDir      string
-	BackupDir      string
-	TempDir        string
-	DownloadsDir   string
-	DiagnosticsDir string
-	StateDir       string
-	DaemonDir      string
-	DaemonSockPath string
+	HomeDir          string
+	BinDir           string
+	LogsDir          string
+	UtilsDir         string
+	ConfigDir        string
+	BackupDir        string
+	TempDir          string
+	DownloadsDir     string
+	DiagnosticsDir   string
+	StateDir         string
+	DaemonDir        string
+	DaemonSockPath   string
+	DaemonConfigPath string
 
 	DaemonEventsDir string // $home/daemon/events
 
@@ -55,6 +56,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	}
 
 	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
+	pp.DaemonConfigPath = path.Join(pp.ConfigDir, "daemon.yaml")
 	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
 	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
 	pp.DaemonConsensusUpgradeEventsDir = path.Join(pp.DaemonConsensusEventsDir, "upgrade")

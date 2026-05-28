@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -36,17 +37,43 @@ type Daemon struct {
 	migrationMonitor *consensus.MigrationMonitor
 }
 
-func New(paths models.WeaverPaths) *Daemon {
+// New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
+// paths.DaemonConfigPath and fails fast if the config is missing or invalid —
+// the daemon must not start without a valid node_id, kubeconfig, and orbit.
+// Use NewFromConfig when the caller has already resolved the config (e.g. with
+// CLI flag overrides applied).
+func New(paths models.WeaverPaths) (*Daemon, error) {
 	pruneUpgradeEventLogs(paths.HomeDir, paths.DaemonConsensusUpgradeEventsDir)
+
+	cfg, err := LoadDaemonConfig(paths.DaemonConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	return NewFromConfig(paths, cfg)
+}
+
+// NewFromConfig constructs a Daemon from a pre-resolved DaemonConfig. The
+// caller is responsible for loading and validating cfg (e.g. via LoadDaemonConfig
+// followed by applying CLI flag overrides). cfg must pass Validate() before
+// this function is called.
+func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) {
+	um, err := consensus.NewUpgradeMonitor(consensus.UpgradeMonitorConfig{
+		NodeID:         cfg.NodeID,
+		KubeconfigPath: cfg.Kubeconfig,
+		Namespace:      cfg.Orbit,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	mm := consensus.NewMigrationMonitor()
 	d := &Daemon{
 		paths:            paths,
-		upgradeMonitor:   consensus.NewUpgradeMonitor(),
+		upgradeMonitor:   um,
 		migrationMonitor: mm,
 	}
-	d.server = NewServer(paths.DaemonSockPath, mm, ServerConfig{})
-	return d
+	d.server = NewServer(paths.DaemonSockPath, mm, ServerConfig{}) // zero value → all defaults
+	return d, nil
 }
 
 // pruneUpgradeEventLogs applies the retention policy to per-operation upgrade
@@ -82,24 +109,30 @@ func pruneUpgradeEventLogs(homeDir, dir string) {
 	}
 }
 
-// NewWithComponents constructs a Daemon from pre-built sub-systems. Intended
-// for tests that need to inject a custom Server (e.g. with a short timeout).
-func NewWithComponents(paths models.WeaverPaths, srv *Server, mm *consensus.MigrationMonitor) *Daemon {
-	return &Daemon{
-		paths:            paths,
-		server:           srv,
-		upgradeMonitor:   consensus.NewUpgradeMonitor(),
-		migrationMonitor: mm,
-	}
-}
-
 // Run starts all sub-systems and blocks until ctx is cancelled or a critical
 // sub-system exits with an error. It is the single entry point called from
 // cmd/daemon/main.go.
+//
+// A top-level recover logs any unhandled panic with a structured message before
+// calling os.Exit(2), ensuring the reason is captured in the daemon log before
+// systemd restarts the process. Sub-system panics are caught earlier (runWatch,
+// handleExecute) and converted to errors so this path is a last resort only.
 func (d *Daemon) Run(ctx context.Context) error {
+	defer func() {
+		if r := recover(); r != nil {
+			logx.As().Error().
+				Str("reason", "DaemonPanic").
+				Interface("panic", r).
+				Msg("Unhandled panic in daemon — exiting for systemd restart")
+			os.Exit(2)
+		}
+	}()
+
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return d.server.Start(ctx) })
-	eg.Go(func() error { return d.upgradeMonitor.Run(ctx) })
+	if d.upgradeMonitor != nil {
+		eg.Go(func() error { return d.upgradeMonitor.Run(ctx) })
+	}
 	eg.Go(func() error { return d.migrationMonitor.Run(ctx) })
 	return eg.Wait()
 }
