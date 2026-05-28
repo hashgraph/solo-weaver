@@ -8,46 +8,79 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/joomcode/errorx"
 )
 
 const (
 	daemonServiceTemplatePath = "files/weaver/solo-provisioner-daemon.service"
-	daemonServiceDstPath      = "/etc/systemd/system/solo-provisioner-daemon.service"
 	daemonServiceName         = "solo-provisioner-daemon"
 )
 
-// InstallDaemonServiceStep installs the solo-provisioner-daemon systemd service unit file,
-// runs daemon-reload, and enables the service.
-func InstallDaemonServiceStep() *automa.StepBuilder {
+// installDaemonServiceFiles writes the unit template to the sandbox path and
+// creates the /usr/lib/systemd/system symlink that points to it.
+// sandboxPath — $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
+// symlinkPath — /usr/lib/systemd/system/solo-provisioner-daemon.service
+func installDaemonServiceFiles(sandboxPath, symlinkPath string) error {
+	content, err := templates.Files.ReadFile(daemonServiceTemplatePath)
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to read daemon service template")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(sandboxPath), 0o755); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to create sandbox systemd directory %s", filepath.Dir(sandboxPath))
+	}
+
+	if err := os.WriteFile(sandboxPath, content, 0o644); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to write daemon service file to %s", sandboxPath)
+	}
+
+	// Remove any stale symlink or file before creating the new one.
+	_ = os.Remove(symlinkPath)
+	if err := os.Symlink(sandboxPath, symlinkPath); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to create systemd symlink %s -> %s", symlinkPath, sandboxPath)
+	}
+
+	return nil
+}
+
+// removeDaemonServiceFiles removes the /usr/lib/systemd/system symlink and the
+// sandbox unit file. Errors for non-existent paths are ignored.
+func removeDaemonServiceFiles(sandboxPath, symlinkPath string) {
+	_ = os.Remove(symlinkPath)
+	_ = os.Remove(sandboxPath)
+}
+
+// InstallDaemonServiceStep installs the solo-provisioner-daemon systemd service
+// unit file into the weaver sandbox, creates a symlink at
+// /usr/lib/systemd/system/solo-provisioner-daemon.service, runs daemon-reload,
+// enables, and starts the service.
+func InstallDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
+	sandboxPath := paths.DaemonServiceSandboxPath
+	symlinkPath := paths.DaemonServiceSymlinkPath
+
 	return automa.NewStepBuilder().WithId("install-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			content, err := templates.Files.ReadFile(daemonServiceTemplatePath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to read daemon service template")))
-			}
-
-			if err := os.WriteFile(daemonServiceDstPath, content, 0o644); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to write daemon service file to %s", daemonServiceDstPath)))
+			if err := installDaemonServiceFiles(sandboxPath, symlinkPath); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			if err := pkgos.DaemonReload(ctx); err != nil {
-				_ = os.Remove(daemonServiceDstPath)
+				removeDaemonServiceFiles(sandboxPath, symlinkPath)
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err, "daemon-reload failed after writing daemon service file")))
 			}
 
 			if err := pkgos.EnableService(ctx, daemonServiceName); err != nil {
-				_ = os.Remove(daemonServiceDstPath)
+				removeDaemonServiceFiles(sandboxPath, symlinkPath)
 				_ = pkgos.DaemonReload(ctx)
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to enable service %s", daemonServiceName)))
@@ -58,7 +91,10 @@ func InstallDaemonServiceStep() *automa.StepBuilder {
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to start service %s", daemonServiceName)))
 			}
 
-			logx.As().Info().Str("path", daemonServiceDstPath).Msg("Solo Provisioner Daemon service installed, enabled, and started")
+			logx.As().Info().
+				Str("sandbox_path", sandboxPath).
+				Str("symlink_path", symlinkPath).
+				Msg("Solo Provisioner Daemon service installed, enabled, and started")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -67,8 +103,8 @@ func InstallDaemonServiceStep() *automa.StepBuilder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			_ = pkgos.DisableService(ctx, daemonServiceName)
+			removeDaemonServiceFiles(sandboxPath, symlinkPath)
 			_ = pkgos.DaemonReload(ctx)
-			_ = os.Remove(daemonServiceDstPath)
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -79,24 +115,29 @@ func InstallDaemonServiceStep() *automa.StepBuilder {
 		})
 }
 
-// RemoveDaemonServiceStep disables and removes the solo-provisioner-daemon systemd service unit file.
-func RemoveDaemonServiceStep() *automa.StepBuilder {
+// RemoveDaemonServiceStep stops, disables, and removes the
+// solo-provisioner-daemon systemd service — both the system symlink and the
+// sandbox unit file.
+func RemoveDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
+	sandboxPath := paths.DaemonServiceSandboxPath
+	symlinkPath := paths.DaemonServiceSymlinkPath
+
 	return automa.NewStepBuilder().WithId("remove-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Stop before disable — disabling a running unit does not stop it.
 			_ = pkgos.StopService(ctx, daemonServiceName)
 			_ = pkgos.DisableService(ctx, daemonServiceName)
 
-			if err := os.Remove(daemonServiceDstPath); err != nil && !os.IsNotExist(err) {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to remove daemon service file %s", daemonServiceDstPath)))
-			}
+			removeDaemonServiceFiles(sandboxPath, symlinkPath)
 
 			if err := pkgos.DaemonReload(ctx); err != nil {
 				logx.As().Warn().Err(err).Msg("daemon-reload failed after removing daemon service file")
 			}
 
-			logx.As().Info().Str("path", daemonServiceDstPath).Msg("Solo Provisioner Daemon service removed")
+			logx.As().Info().
+				Str("sandbox_path", sandboxPath).
+				Str("symlink_path", symlinkPath).
+				Msg("Solo Provisioner Daemon service removed")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -112,25 +153,41 @@ func RemoveDaemonServiceStep() *automa.StepBuilder {
 }
 
 // CheckDaemonServiceStep verifies the daemon installation and runtime health:
-//  1. Unit file exists at /etc/systemd/system/solo-provisioner-daemon.service
-//  2. Service is enabled (systemctl is-enabled)
-//  3. Service is active/running (systemctl is-active)
-//  4. Daemon binary exists at /opt/solo/weaver/bin/solo-provisioner-daemon
-//  5. Sudoers entry exists at /etc/sudoers.d/solo-provisioner
-//  6. Unix socket responds to GET /health → {"status":"ok"}
-func CheckDaemonServiceStep(sockPath string) *automa.StepBuilder {
+//  1. Sandbox unit file exists at $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
+//  2. System symlink exists at /usr/lib/systemd/system/solo-provisioner-daemon.service → sandbox file
+//  3. Service is enabled (systemctl is-enabled)
+//  4. Service is active/running (systemctl is-active)
+//  5. Daemon binary exists at /opt/solo/weaver/bin/solo-provisioner-daemon
+//  6. Sudoers entry exists at /etc/sudoers.d/solo-provisioner
+//  7. Unix socket responds to GET /health → HTTP 200
+func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.StepBuilder {
+	sandboxPath := paths.DaemonServiceSandboxPath
+	symlinkPath := paths.DaemonServiceSymlinkPath
+
 	return automa.NewStepBuilder().WithId("check-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			// 1. Unit file
-			if _, err := os.Stat(daemonServiceDstPath); err != nil {
+			// 1. Sandbox unit file
+			if _, err := os.Stat(sandboxPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service unit file not found at %s; run: solo-provisioner daemon service install", daemonServiceDstPath)))
+					automa.WithError(errorx.IllegalState.New("daemon service unit file not found at %s; run: solo-provisioner daemon service install", sandboxPath)))
 			}
-			meta["unit_file"] = daemonServiceDstPath
+			meta["unit_file"] = sandboxPath
 
-			// 2. Service enabled
+			// 2. System symlink — must exist and point to the sandbox file
+			linkTarget, err := os.Readlink(symlinkPath)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.New("daemon service symlink not found at %s; run: solo-provisioner daemon service install", symlinkPath)))
+			}
+			if filepath.Clean(linkTarget) != filepath.Clean(sandboxPath) {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.New("daemon service symlink %s points to %s, expected %s", symlinkPath, linkTarget, sandboxPath)))
+			}
+			meta["symlink"] = symlinkPath
+
+			// 3. Service enabled
 			enabled, err := pkgos.IsServiceEnabled(ctx, daemonServiceName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
@@ -142,7 +199,7 @@ func CheckDaemonServiceStep(sockPath string) *automa.StepBuilder {
 					automa.WithError(errorx.IllegalState.New("daemon service is not enabled; run: systemctl enable %s", daemonServiceName)))
 			}
 
-			// 3. Service active
+			// 4. Service active
 			running, err := pkgos.IsServiceRunning(ctx, daemonServiceName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
@@ -154,7 +211,7 @@ func CheckDaemonServiceStep(sockPath string) *automa.StepBuilder {
 					automa.WithError(errorx.IllegalState.New("daemon service is not running; run: systemctl start %s", daemonServiceName)))
 			}
 
-			// 4. Daemon binary
+			// 5. Daemon binary
 			daemonBinPath := "/opt/solo/weaver/bin/solo-provisioner-daemon"
 			if _, err := os.Stat(daemonBinPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
@@ -162,14 +219,14 @@ func CheckDaemonServiceStep(sockPath string) *automa.StepBuilder {
 			}
 			meta["binary"] = daemonBinPath
 
-			// 5. Sudoers entry
+			// 6. Sudoers entry
 			if _, err := os.Stat(sudoersDstPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.IllegalState.New("sudoers entry not found at %s; run: solo-provisioner install", sudoersDstPath)))
 			}
 			meta["sudoers"] = sudoersDstPath
 
-			// 6. Unix socket health — proxy is explicitly disabled so that
+			// 7. Unix socket health — proxy is explicitly disabled so that
 			// HTTP(S)_PROXY env vars don't redirect the request away from the
 			// local Unix socket.
 			client := &http.Client{
