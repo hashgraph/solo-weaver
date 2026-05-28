@@ -4,12 +4,14 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
+	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -35,6 +37,7 @@ type Daemon struct {
 	server           *Server
 	upgradeMonitor   *consensus.UpgradeMonitor
 	migrationMonitor *consensus.MigrationMonitor
+	migrateLogger    *eventlog.EventLogger
 }
 
 // New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
@@ -66,11 +69,41 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		return nil, err
 	}
 
-	mm := consensus.NewMigrationMonitor()
+	var migrateLogger *eventlog.EventLogger
+	if ml, err := eventlog.NewAppend(paths.DaemonConsensusMigrateEventsDir, "consensus-migrate-events.jsonl"); err != nil {
+		logx.As().Warn().Err(err).
+			Str("reason", "MigrateLoggerInitFailed").
+			Str("dir", paths.DaemonConsensusMigrateEventsDir).
+			Msg("Failed to open migrate event logger — migration events will not be persisted")
+	} else {
+		migrateLogger = ml
+	}
+
+	mm := consensus.NewMigrationMonitorWith(
+		cfg.NodeID,
+		migrateLogger,
+		&consensus.NoopDecommissioner{},
+		consensus.MigrationMonitorConfig{},
+		paths.DaemonConsensusMigrateEventsDir,
+	).WithCriteria(
+		consensus.SoakDuration{}, // zero Period → defaults to DefaultSoakPeriod (48h)
+		consensus.UploaderBacklogCleared{},
+		&consensus.NoPodRestarts{
+			KubeconfigPath: cfg.Kubeconfig,
+			Namespace:      cfg.Orbit,
+			PodLabelSelector: fmt.Sprintf(
+				"operator.solo.hedera.com/orbit=%s,operator.solo.hedera.com/node-id=%s",
+				cfg.Orbit, cfg.NodeID,
+			),
+		},
+		consensus.ConsensusParticipationNominal{},
+	)
+
 	d := &Daemon{
 		paths:            paths,
 		upgradeMonitor:   um,
 		migrationMonitor: mm,
+		migrateLogger:    migrateLogger,
 	}
 	d.server = NewServer(paths.DaemonSockPath, mm, ServerConfig{}) // zero value → all defaults
 	return d, nil
@@ -127,6 +160,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 			os.Exit(2)
 		}
 	}()
+	if d.migrateLogger != nil {
+		defer func() {
+			if err := d.migrateLogger.Close(); err != nil {
+				logx.As().Warn().Err(err).Str("reason", "MigrateLoggerCloseFailed").Msg("Failed to close migrate event logger")
+			}
+		}()
+	}
 
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return d.server.Start(ctx) })
