@@ -1,121 +1,80 @@
-# Review Guide — #521 solo-provisioner-daemon.service + CLI install/uninstall
+# Review Guide — #521/#522 solo-provisioner-daemon.service + CLI service commands
 
-## Problem & Solution
+> **Issues:** https://github.com/hashgraph/solo-weaver/issues/521,
+> https://github.com/hashgraph/solo-weaver/issues/522
+> **PR:** #623 — base `00499-feat-solo-provisioner-daemon-core`
 
-The existing `solo-provisioner.service` template was wrong: `Type=simple`, wrong binary
-(`solo-provisioner daemon`), and its install/remove steps were commented out with no CLI
-entry point. This PR replaces it with a correct `solo-provisioner-daemon.service`
-(`Type=notify`, `Restart=always`, proper sandbox) and adds
-`solo-provisioner daemon service install/uninstall` CLI commands to deploy it.
+## Summary
 
-## Changed Files
+Adds the `solo-provisioner-daemon.service` systemd unit file (sandbox+symlink pattern)
+and the `solo-provisioner daemon service install|check|uninstall` CLI commands.
+Activates `InstallSudoersStep`/`RemoveSudoersStep` in the self-install workflows and
+restricts the sudoers NOPASSWD entry to `solo-provisioner self-upgrade [args]` only.
 
-| File | Description |
+## Changed files
+
+| File | Change |
 |---|---|
-| `internal/templates/files/weaver/solo-provisioner.service` | **Deleted** — was wrong type/binary, not in use |
-| `internal/templates/files/weaver/solo-provisioner-daemon.service` | **New** — correct unit file (`Type=notify`, `Restart=always`, sandbox hardening) |
-| `internal/templates/files/weaver/sudoers` | Added `solo-provisioner` binary paths so `weaver` user can call `sudo solo-provisioner self-upgrade` |
-| `internal/workflows/steps/step_weaver.go` | Removed dead `InstallWeaverServiceStep`, `RemoveWeaverServiceStep`, and their constants |
-| `internal/workflows/steps/step_daemon.go` | **New** — `InstallDaemonServiceStep` / `RemoveDaemonServiceStep` workflow steps |
-| `internal/workflows/weaver.go` | Wired `InstallSudoersStep` / `RemoveSudoersStep` (were commented out); removed dead service step refs |
-| `internal/workflows/daemon.go` | **New** — `NewDaemonServiceInstallWorkflow` / `NewDaemonServiceUninstallWorkflow` |
-| `cmd/cli/commands/daemon/daemon.go` | **New** — `daemon` parent Cobra command |
-| `cmd/cli/commands/daemon/service/service.go` | **New** — `daemon service` subcommand |
-| `cmd/cli/commands/daemon/service/install.go` | **New** — `daemon service install` leaf command |
-| `cmd/cli/commands/daemon/service/uninstall.go` | **New** — `daemon service uninstall` leaf command |
-| `cmd/cli/commands/root.go` | Wired `daemon.GetCmd()` into root |
+| `internal/templates/files/weaver/solo-provisioner-daemon.service` | New — `Type=notify`, sandbox hardening, no `NoNewPrivileges` |
+| `internal/templates/files/weaver/solo-provisioner.service` | Deleted — was wrong type/binary, not in use |
+| `internal/templates/files/weaver/sudoers` | Add solo-provisioner `self-upgrade` NOPASSWD (no-arg + wildcard forms); remove broad binary grant |
+| `internal/workflows/steps/step_daemon.go` | New — `InstallDaemonServiceStep`, `RemoveDaemonServiceStep`, `CheckDaemonServiceStep` using sandbox+symlink pattern; binary path derived from `paths.BinDir` |
+| `internal/workflows/steps/step_weaver.go` | Remove dead service steps; keep sudoers steps |
+| `internal/workflows/steps/step_daemon_it_test.go` | New — 4 integration tests (root-skipped when euid != 0) |
+| `internal/workflows/daemon.go` | New — `NewDaemonServiceInstallWorkflow`, `NewDaemonServiceUninstallWorkflow`, `NewDaemonServiceCheckWorkflow` |
+| `internal/workflows/weaver.go` | Uncomment `InstallSudoersStep`/`RemoveSudoersStep` |
+| `pkg/models/weaver_paths.go` | Add `DaemonServiceSandboxPath`, `DaemonServiceSymlinkPath`; add sandbox systemd dir |
+| `cmd/cli/commands/daemon/` | New — `daemon`, `daemon service`, `install`, `uninstall`, `check` Cobra commands |
+| `cmd/cli/commands/root.go` | Register `daemon` command |
 
-## Code Review Checklist
+## Review checklist
 
-- [ ] Service file has `Type=notify` (not `Type=simple`) — required for sd_notify integration (#527)
-- [ ] `ExecStart` points to `/opt/solo/weaver/bin/solo-provisioner-daemon` (daemon binary, not CLI)
-- [ ] `ReadWritePaths=/opt/solo /opt/hgcapp` covers all paths the daemon writes to
-- [ ] `ProtectSystem=strict` does not block the daemon's read-only access to system paths
-- [ ] `NoNewPrivileges=true` does not break `sudo solo-provisioner self-upgrade` — daemon calls `sudo`, not setuid
-- [ ] sudoers template includes both `/opt/solo/weaver/bin/solo-provisioner` and `/usr/local/bin/solo-provisioner`
-- [ ] `InstallDaemonServiceStep` rollback disables the service and removes the unit file
-- [ ] Dead `InstallWeaverServiceStep` / `RemoveWeaverServiceStep` fully removed (no lingering references)
-- [ ] `InstallSudoersStep` / `RemoveSudoersStep` now active in self-install/uninstall workflows
-- [ ] `daemon service install` wraps with `CheckPrivilegesStep()` (requires root)
-- [ ] CLI command tree follows the same pattern as `teleport` (parent → subcommand → leaf)
-- [ ] `daemon.GetCmd()` registered in `root.go` before `version.Cmd()` (alphabetical order)
+- [ ] Unit file uses `Type=notify` — `systemctl start` will block until `READY=1` (implemented in #527)
+- [ ] `NoNewPrivileges` is intentionally absent — daemon needs setuid for `sudo solo-provisioner self-upgrade`
+- [ ] `ProtectSystem=strict` + `ReadWritePaths=/opt/solo /opt/hgcapp` provides sandbox hardening without breaking write paths
+- [ ] Unit file written to `$home/sandbox/usr/lib/systemd/system/`; symlinked to `/usr/lib/systemd/system/` (matches kubelet/crio pattern)
+- [ ] `installDaemonServiceFiles` cleans up sandbox file if symlink creation fails (no half-installed state)
+- [ ] `RemoveDaemonServiceStep` calls `StopService` before `DisableService` (disable does not stop a running unit)
+- [ ] `CheckDaemonServiceStep` verifies sandbox file, symlink target, enabled, running, binary (via `paths.BinDir`), sudoers, Unix socket health
+- [ ] Unix socket health check transport has `Proxy: nil` — prevents HTTP_PROXY env vars intercepting local socket requests
+- [ ] Sudoers restricts to `solo-provisioner self-upgrade` only (no-arg + wildcard both listed; `*` alone requires at least one argument)
+- [ ] Integration tests skip when `euid != 0`; tests call unexported helpers directly (same package, no export shims)
 
-## Test Commands
+## Test commands
 
 ```bash
-# Unit tests (macOS-safe)
+# Unit tests (macOS safe)
 task test:unit
 
-# Targeted coverage for new packages
-task test:coverage TEST_PATHS=./cmd/cli/commands/daemon/... TEST_REGEX="."
-task test:coverage TEST_PATHS=./internal/workflows/... TEST_REGEX="."
-
-# Full unit suite in UTM VM
-task vm:test:unit
+# Integration tests (UTM VM, root required)
+task vm:test:integration TEST_NAME='^Test_DaemonService'
+task vm:test:integration TEST_NAME='^Test_InstallDaemonServiceStep'
+task vm:test:integration TEST_NAME='^Test_RemoveDaemonServiceStep'
 ```
 
-## Manual UAT
-
-### Prerequisites
-- UTM VM running (`task vm:start`)
-- Build: `task build:cli GOOS=linux GOARCH=amd64`
-- Copy binary to VM and run `sudo solo-provisioner install`
-
-### 1. Install daemon service
+## Manual UAT (UTM VM)
 
 ```bash
+# Install
 sudo solo-provisioner daemon service install
-```
+systemctl status solo-provisioner-daemon   # active (activating) — waits for READY=1
 
-Expected output:
-```
-✓ Checking privileges
-✓ Installing solo-provisioner-daemon systemd service
-solo-provisioner-daemon service installed and enabled; start it with: systemctl start solo-provisioner-daemon
-```
+# Check
+sudo solo-provisioner daemon service check
 
-Verify:
-```bash
-systemctl status solo-provisioner-daemon
-# Expected: loaded, enabled (inactive/dead — binary not yet deployed)
-
-cat /etc/systemd/system/solo-provisioner-daemon.service
-# Expected: Type=notify, ExecStart=/opt/solo/weaver/bin/solo-provisioner-daemon
-```
-
-### 2. Uninstall daemon service
-
-```bash
+# Uninstall
 sudo solo-provisioner daemon service uninstall
+ls /usr/lib/systemd/system/solo-provisioner-daemon.service  # should not exist
 ```
 
-Expected output:
-```
-✓ Checking privileges
-✓ Removing solo-provisioner-daemon systemd service
-```
-
-Verify:
-```bash
-ls /etc/systemd/system/solo-provisioner-daemon.service
-# Expected: No such file or directory
-```
-
-### 3. Verify sudoers entry
+## Sudoers verification
 
 ```bash
-sudo solo-provisioner install
-cat /etc/sudoers.d/solo-provisioner
-# Expected: includes /opt/solo/weaver/bin/solo-provisioner and /usr/local/bin/solo-provisioner
+# As weaver user — these should work
+sudo /opt/solo/weaver/bin/solo-provisioner self-upgrade
+sudo /opt/solo/weaver/bin/solo-provisioner self-upgrade --force
 
-# Verify weaver user can invoke the binary via sudo
-sudo -u weaver sudo solo-provisioner version
-# Expected: version output, no permission error
-```
-
-### 4. Verify legacy service file is gone
-
-```bash
-ls /etc/systemd/system/solo-provisioner.service 2>&1
-# Expected: No such file or directory (was never installed)
+# These should be denied
+sudo /opt/solo/weaver/bin/solo-provisioner install
+sudo /opt/solo/weaver/bin/solo-provisioner kube cluster install
 ```
