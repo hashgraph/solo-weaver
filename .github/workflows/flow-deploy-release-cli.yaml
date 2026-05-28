@@ -121,7 +121,7 @@ jobs:
             NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' semantic-release-output.txt || echo "")
             if [[ -n "$NEXT_VERSION" ]]; then
               echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run: Next CLI release would be solo-provisioner-v${NEXT_VERSION}"
+              echo "::notice::Dry-run: Next CLI release would be v${NEXT_VERSION}"
             else
               echo "::notice::Dry-run: No new CLI release would be created"
             fi

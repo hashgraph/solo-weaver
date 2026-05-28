@@ -1,5 +1,5 @@
 {
-  "tagFormat": "solo-provisioner-daemon-v${version}",
+  "tagFormat": "daemon-v${version}",
   "plugins": [
     ["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }],
     ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
@@ -29,6 +29,9 @@
   ],
   "prepare": [
     ["@semantic-release/exec", { "cmd": "task sign:daemon:all" }]
+  ],
+  "success": [
+    ["@semantic-release/exec", { "cmd": "gh release edit ${nextRelease.gitTag} --repo \"$GITHUB_REPOSITORY\" --latest=false" }]
   ],
   "branches": [
     { "name": "main" },
