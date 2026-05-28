@@ -43,9 +43,11 @@ func installDaemonServiceFiles(sandboxPath, symlinkPath string) error {
 		return errorx.InternalError.Wrap(err, "failed to write daemon service file to %s", sandboxPath)
 	}
 
-	// Remove any stale symlink or file before creating the new one.
+	// Remove any stale symlink before creating the new one.
 	_ = os.Remove(symlinkPath)
 	if err := os.Symlink(sandboxPath, symlinkPath); err != nil {
+		// Clean up the sandbox file so a failed install doesn't leave a half-installed state.
+		_ = os.Remove(sandboxPath)
 		return errorx.InternalError.Wrap(err, "failed to create systemd symlink %s -> %s", symlinkPath, sandboxPath)
 	}
 
@@ -211,8 +213,9 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 					automa.WithError(errorx.IllegalState.New("daemon service is not running; run: systemctl start %s", daemonServiceName)))
 			}
 
-			// 5. Daemon binary
-			daemonBinPath := "/opt/solo/weaver/bin/solo-provisioner-daemon"
+			// 5. Daemon binary — path derived from WeaverPaths so tests and
+			// future path changes don't require touching this step.
+			daemonBinPath := filepath.Join(paths.BinDir, "solo-provisioner-daemon")
 			if _, err := os.Stat(daemonBinPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.IllegalState.New("daemon binary not found at %s", daemonBinPath)))

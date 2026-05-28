@@ -17,6 +17,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// requireRoot skips the test if not running as root. Creating and removing
+// symlinks under /usr/lib/systemd/system requires root privileges.
+func requireRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Skip("test requires root privileges (euid != 0) — run via task vm:test:integration")
+	}
+}
+
 // daemonTestPaths returns a WeaverPaths rooted at a temp sandbox so that unit
 // file placement tests do not touch the real weaver home. The symlink path
 // still targets /usr/lib/systemd/system (requires root in the test VM).
@@ -34,7 +43,7 @@ func cleanupDaemonService(t *testing.T, paths models.WeaverPaths) {
 	ctx := context.Background()
 	_ = osx.StopService(ctx, daemonServiceName)
 	_ = osx.DisableService(ctx, daemonServiceName)
-	RemoveDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
+	removeDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
 	_ = osx.DaemonReload(ctx)
 }
 
@@ -43,12 +52,14 @@ func cleanupDaemonService(t *testing.T, paths models.WeaverPaths) {
 // /usr/lib/systemd/system symlink pointing to it, and that
 // removeDaemonServiceFiles tears both down.
 func Test_DaemonService_FilePlacement_Integration(t *testing.T) {
+	requireRoot(t)
+
 	paths := daemonTestPaths(t)
 	cleanupDaemonService(t, paths)
 	t.Cleanup(func() { cleanupDaemonService(t, paths) })
 
 	// Install files
-	err := InstallDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
+	err := installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
 	require.NoError(t, err)
 
 	// Sandbox file must exist and be non-empty
@@ -62,7 +73,7 @@ func Test_DaemonService_FilePlacement_Integration(t *testing.T) {
 	assert.Equal(t, filepath.Clean(paths.DaemonServiceSandboxPath), filepath.Clean(target))
 
 	// Remove files
-	RemoveDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
+	removeDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
 
 	_, err = os.Lstat(paths.DaemonServiceSymlinkPath)
 	assert.True(t, os.IsNotExist(err), "symlink should be gone after removal")
@@ -76,6 +87,8 @@ func Test_DaemonService_FilePlacement_Integration(t *testing.T) {
 // then disabled. It does not start the service (Type=notify requires the daemon
 // binary to send READY=1, which is not available in the test environment).
 func Test_DaemonService_EnableDisable_Integration(t *testing.T) {
+	requireRoot(t)
+
 	paths := daemonTestPaths(t)
 	cleanupDaemonService(t, paths)
 	t.Cleanup(func() { cleanupDaemonService(t, paths) })
@@ -83,7 +96,7 @@ func Test_DaemonService_EnableDisable_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Place files + daemon-reload
-	require.NoError(t, InstallDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
 	require.NoError(t, osx.DaemonReload(ctx))
 
 	// Enable
@@ -107,6 +120,8 @@ func Test_DaemonService_EnableDisable_Integration(t *testing.T) {
 // is not present in the test environment), so we exercise the rollback path
 // directly after a partial install via the helper functions.
 func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
+	requireRoot(t)
+
 	paths := daemonTestPaths(t)
 	cleanupDaemonService(t, paths)
 	t.Cleanup(func() { cleanupDaemonService(t, paths) })
@@ -115,7 +130,7 @@ func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
 
 	// Simulate a partial install: files placed + daemon-reload + enabled,
 	// but service never started (as if RestartService had failed).
-	require.NoError(t, InstallDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
 	require.NoError(t, osx.DaemonReload(ctx))
 	require.NoError(t, osx.EnableService(ctx, daemonServiceName))
 
@@ -143,6 +158,8 @@ func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
 // Test_RemoveDaemonServiceStep_Integration verifies that RemoveDaemonServiceStep
 // removes the symlink and sandbox file and disables the service.
 func Test_RemoveDaemonServiceStep_Integration(t *testing.T) {
+	requireRoot(t)
+
 	paths := daemonTestPaths(t)
 	cleanupDaemonService(t, paths)
 	t.Cleanup(func() { cleanupDaemonService(t, paths) })
@@ -150,7 +167,7 @@ func Test_RemoveDaemonServiceStep_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Simulate an installed (but not running) service
-	require.NoError(t, InstallDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
 	require.NoError(t, osx.DaemonReload(ctx))
 	require.NoError(t, osx.EnableService(ctx, daemonServiceName))
 
