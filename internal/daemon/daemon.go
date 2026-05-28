@@ -109,17 +109,6 @@ func pruneUpgradeEventLogs(homeDir, dir string) {
 	}
 }
 
-// NewWithComponents constructs a Daemon from pre-built sub-systems. Intended
-// for tests that need to inject a custom Server (e.g. with a short timeout).
-func NewWithComponents(paths models.WeaverPaths, srv *Server, mm *consensus.MigrationMonitor) *Daemon {
-	return &Daemon{
-		paths:            paths,
-		server:           srv,
-		upgradeMonitor:   nil,
-		migrationMonitor: mm,
-	}
-}
-
 // Run starts all sub-systems and blocks until ctx is cancelled or a critical
 // sub-system exits with an error. It is the single entry point called from
 // cmd/daemon/main.go.
