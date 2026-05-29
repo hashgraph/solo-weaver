@@ -1,3 +1,11 @@
 # Solo-provisioner: allow weaver to run privileged commands without a password
+# Note: both the bare "self-upgrade" and "self-upgrade *" entries are required —
+# sudoers argument matching with a trailing * requires at least one argument, so
+# the no-arg form must be listed separately to permit "sudo solo-provisioner self-upgrade".
+# self-upgrade is the only permitted subcommand; all other CLI operations are blocked.
 weaver ALL=(root) NOPASSWD: /usr/bin/helm, /usr/bin/kubectl, /usr/sbin/kubeadm, \
-  /bin/systemctl, /usr/bin/systemctl, /bin/mkdir
+  /bin/systemctl, /usr/bin/systemctl, /bin/mkdir, \
+  /opt/solo/weaver/bin/solo-provisioner self-upgrade, \
+  /opt/solo/weaver/bin/solo-provisioner self-upgrade *, \
+  /usr/local/bin/solo-provisioner self-upgrade, \
+  /usr/local/bin/solo-provisioner self-upgrade *
