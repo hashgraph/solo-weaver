@@ -22,12 +22,16 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hashgraph/solo-weaver/internal/ui"
+	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
+
+	"github.com/hashgraph/solo-weaver/internal/ui"
 )
 
 // ErrAborted is returned when the user cancels out of an interactive prompt.
-var ErrAborted = errors.New("aborted by user")
+// It is an errorx-typed sentinel so callers can `errors.Is(err, ErrAborted)`
+// and the doctor layer can branch on the RejectedOperation namespace.
+var ErrAborted = errorx.RejectedOperation.New("aborted by user")
 
 // chosenPair holds a title/value pair for summary printing.
 type chosenPair struct {
@@ -86,7 +90,7 @@ func wrapFormError(err error) error {
 	if errors.Is(err, huh.ErrUserAborted) {
 		return ErrAborted
 	}
-	return fmt.Errorf("prompt error: %w", err)
+	return errorx.ExternalError.Wrap(err, "prompt error")
 }
 
 // SelectPrompt defines an interactive select prompt for a flag with a fixed set of choices.

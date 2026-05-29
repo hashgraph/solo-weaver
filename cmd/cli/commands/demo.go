@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/joomcode/errorx"
+	"github.com/spf13/cobra"
+
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/spf13/cobra"
 )
 
 var flagDemoStress bool
@@ -127,7 +129,7 @@ func demoStep(id, name string, duration time.Duration, outcome demoOutcome) *aut
 			time.Sleep(duration)
 			switch outcome {
 			case statusFail:
-				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("simulated failure in %s", name)))
+				return automa.FailureReport(stp, automa.WithError(errorx.IllegalState.New("simulated failure in %s", name)))
 			case statusSkip:
 				return automa.SkippedReport(stp)
 			default:

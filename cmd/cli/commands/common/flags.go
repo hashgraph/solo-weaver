@@ -4,15 +4,15 @@ package common
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 )
 
 // FlagDefinition defines a command-line flag typed by T.
@@ -82,7 +82,7 @@ func (fp FlagDefinition[T]) valueFrom(flags *pflag.FlagSet) (T, error) {
 		}
 		return any(v).(T), nil
 	default:
-		return zero, fmt.Errorf("unsupported flag type: %T", zero)
+		return zero, errorx.AssertionFailed.New("unsupported flag type: %T", zero)
 	}
 }
 
@@ -114,7 +114,7 @@ func (fp FlagDefinition[T]) Value(cmd *cobra.Command, args []string) (T, error) 
 		return val, nil
 	}
 
-	return zero, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
+	return zero, errorx.IllegalArgument.New("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
 }
 
 func (fp FlagDefinition[T]) ValueLocal(cmd *cobra.Command, args []string) (T, error) {
@@ -258,7 +258,7 @@ func (fp FlagDefinition[T]) setFlagVar(flags *pflag.FlagSet, cmd *cobra.Command,
 		flags.DurationVarP(pd, fp.Name, fp.ShortName, def, fp.Description)
 
 	default:
-		return fmt.Errorf("unsupported flag type: %T", zero)
+		return errorx.AssertionFailed.New("unsupported flag type: %T", zero)
 	}
 
 	return nil
@@ -328,7 +328,7 @@ func (fp CommaSplitStringsFlagDefinition) Value(cmd *cobra.Command, args []strin
 	if val, err := fp.ValueOwnPersistent(cmd, args); err == nil {
 		return val, nil
 	}
-	return nil, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
+	return nil, errorx.IllegalArgument.New("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
 }
 
 func (fp CommaSplitStringsFlagDefinition) ValueLocal(cmd *cobra.Command, args []string) ([]string, error) {
@@ -457,7 +457,7 @@ func (fp RepeatableStringFlagDefinition) Value(cmd *cobra.Command, args []string
 	if val, err := fp.ValueOwnPersistent(cmd, args); err == nil {
 		return val, nil
 	}
-	return nil, fmt.Errorf("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
+	return nil, errorx.IllegalArgument.New("flag %s not found in local, own-persistent, or inherited flag sets", fp.Name)
 }
 
 func (fp RepeatableStringFlagDefinition) ValueLocal(cmd *cobra.Command, args []string) ([]string, error) {

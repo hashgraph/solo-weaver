@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/joomcode/errorx"
+
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -78,19 +80,19 @@ func chartSpec(name string) *helmChartSpec {
 func resolveCatalogChart(name string) (*helmChartSpec, error) {
 	catalog, err := software.LoadInfrastructureCatalog()
 	if err != nil {
-		return nil, fmt.Errorf("load infrastructure catalog: %w", err)
+		return nil, errorx.IllegalFormat.Wrap(err, "load infrastructure catalog")
 	}
 	meta, err := catalog.GetClusterComponent(name)
 	if err != nil {
-		return nil, fmt.Errorf("catalog: %w", err)
+		return nil, errorx.IllegalArgument.Wrap(err, "catalog")
 	}
 	version, err := meta.GetDefaultVersion()
 	if err != nil {
-		return nil, fmt.Errorf("catalog: %w", err)
+		return nil, errorx.IllegalFormat.Wrap(err, "catalog")
 	}
 	sum, ok := meta.Versions[software.Version(version)]
 	if !ok {
-		return nil, fmt.Errorf("catalog: chart %q version %q has no checksum entry", name, version)
+		return nil, errorx.IllegalFormat.New("catalog: chart %q version %q has no checksum entry", name, version)
 	}
 	return &helmChartSpec{
 		Chart:     meta.Chart,

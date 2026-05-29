@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/joomcode/errorx"
 )
 
 type lineReader[E unixUser | unixGroup] func(index int, line string) (*E, error)
@@ -57,12 +59,12 @@ func readEntityFile[E unixUser | unixGroup](file string, fn lineReader[E]) ([]*E
 
 func parseUnixUser(index int, line string) (*unixUser, error) {
 	if !strings.Contains(line, ":") {
-		return nil, fmt.Errorf("invalid user entry at line %d, no colons were present", index)
+		return nil, errorx.IllegalFormat.New("invalid user entry at line %d, no colons were present", index)
 	}
 
 	parts := strings.Split(line, ":")
 	if len(parts) != 7 {
-		return nil, fmt.Errorf("invalid user entry at line %d, not enough fields", index)
+		return nil, errorx.IllegalFormat.New("invalid user entry at line %d, not enough fields", index)
 	}
 
 	// The unix passwd file has the following colon delimited fields:
@@ -77,17 +79,17 @@ func parseUnixUser(index int, line string) (*unixUser, error) {
 
 	username := strings.TrimSpace(parts[0])
 	if len(username) == 0 {
-		return nil, fmt.Errorf("invalid user entry at line %d, empty username field", index)
+		return nil, errorx.IllegalFormat.New("invalid user entry at line %d, empty username field", index)
 	}
 
 	uid, err := strconv.Atoi(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("invalid user entry at line %d, invalid uid field", index)
+		return nil, errorx.IllegalFormat.Wrap(err, "invalid user entry at line %d, invalid uid field", index)
 	}
 
 	gid, err := strconv.Atoi(parts[3])
 	if err != nil {
-		return nil, fmt.Errorf("invalid user entry at line %d, invalid gid field", index)
+		return nil, errorx.IllegalFormat.Wrap(err, "invalid user entry at line %d, invalid gid field", index)
 	}
 
 	displayName := displayNameFromGecos(parts[4])
@@ -114,22 +116,22 @@ func parseUnixGroup(index int, line string) (*unixGroup, error) {
 	// parts[3] = members
 
 	if !strings.Contains(line, ":") {
-		return nil, fmt.Errorf("invalid group entry at line %d, no colons were present", index)
+		return nil, errorx.IllegalFormat.New("invalid group entry at line %d, no colons were present", index)
 	}
 
 	parts := strings.Split(line, ":")
 	if len(parts) < 3 || len(parts) > 4 {
-		return nil, fmt.Errorf("invalid group entry at line %d, not enough fields", index)
+		return nil, errorx.IllegalFormat.New("invalid group entry at line %d, not enough fields", index)
 	}
 
 	groupname := strings.TrimSpace(parts[0])
 	if len(groupname) == 0 {
-		return nil, fmt.Errorf("invalid group entry at line %d, empty groupname field", index)
+		return nil, errorx.IllegalFormat.New("invalid group entry at line %d, empty groupname field", index)
 	}
 
 	gid, err := strconv.Atoi(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("invalid group entry at line %d, invalid gid field", index)
+		return nil, errorx.IllegalFormat.Wrap(err, "invalid group entry at line %d, invalid gid field", index)
 	}
 
 	var members []string

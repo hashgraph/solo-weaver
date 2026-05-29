@@ -7,7 +7,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -15,8 +14,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 )
 
@@ -77,12 +77,12 @@ func WithInsecureTLS(insecure bool) DownloaderOption {
 func (fd *Downloader) validateRedirect(req *http.Request, via []*http.Request) error {
 	// Limit the number of redirects to prevent redirect loops
 	if len(via) >= 10 {
-		return fmt.Errorf("stopped after 10 redirects")
+		return errorx.RejectedOperation.New("stopped after 10 redirects")
 	}
 
 	// Validate the redirect URL against the allowlist
 	if err := sanity.ValidateURL(req.URL.String(), &sanity.ValidateURLOptions{AllowedDomains: fd.allowedDomains}); err != nil {
-		return fmt.Errorf("redirect to untrusted domain: %w", err)
+		return errorx.RejectedOperation.Wrap(err, "redirect to untrusted domain")
 	}
 
 	return nil
@@ -216,7 +216,7 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 
 			// Validate that the target path is within the extraction directory
 			if _, err := sanity.ValidatePathWithinBase(cleanDestDir, targetPath); err != nil {
-				return NewExtractionError(fmt.Errorf("path traversal attempt in hdr.ServerName: %s", hdr.Name), cleanCompressedPath, cleanDestDir)
+				return NewExtractionError(errorx.IllegalState.New("path traversal attempt in hdr.ServerName: %s", hdr.Name), cleanCompressedPath, cleanDestDir)
 			}
 
 			switch hdr.Typeflag {
@@ -250,7 +250,7 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				// Validate symlink target to prevent path traversal attacks
 				// Reject absolute paths in symlink targets
 				if filepath.IsAbs(hdr.Linkname) {
-					return NewExtractionError(fmt.Errorf("absolute symlink target not allowed: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+					return NewExtractionError(errorx.IllegalState.New("absolute symlink target not allowed: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
 				}
 
 				// Resolve the symlink target relative to the symlink's parent directory
@@ -258,7 +258,7 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				symlinkDir := filepath.Dir(targetPath)
 				resolvedTarget := filepath.Join(symlinkDir, hdr.Linkname)
 				if _, err := sanity.ValidatePathWithinBase(cleanDestDir, resolvedTarget); err != nil {
-					return NewExtractionError(fmt.Errorf("symlink target escapes extraction directory: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+					return NewExtractionError(errorx.IllegalState.New("symlink target escapes extraction directory: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
 				}
 
 				// Ensure parent directory exists
@@ -281,13 +281,13 @@ func (fd *Downloader) Extract(compressedFilePath string, destDir string) error {
 				// Validate hardlink target to prevent path traversal attacks
 				// Reject absolute paths in hardlink targets
 				if filepath.IsAbs(hdr.Linkname) {
-					return NewExtractionError(fmt.Errorf("absolute hardlink target not allowed: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+					return NewExtractionError(errorx.IllegalState.New("absolute hardlink target not allowed: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
 				}
 
 				// Hard links - hdr.Linkname contains the target path (relative to archive root)
 				linkTarget := filepath.Join(cleanDestDir, hdr.Linkname)
 				if _, err := sanity.ValidatePathWithinBase(cleanDestDir, linkTarget); err != nil {
-					return NewExtractionError(fmt.Errorf("hardlink target escapes extraction directory: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
+					return NewExtractionError(errorx.IllegalState.New("hardlink target escapes extraction directory: %s -> %s", hdr.Name, hdr.Linkname), cleanCompressedPath, cleanDestDir)
 				}
 
 				// Ensure parent directory exists

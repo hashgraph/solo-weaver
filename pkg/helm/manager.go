@@ -5,7 +5,6 @@ package helm
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,7 +224,7 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 	// Check chart dependencies to make sure all are present in /charts
 	if chartDependencies := chartRequested.Metadata.Dependencies; chartDependencies != nil {
 		if err := action.CheckDependencies(chartRequested, chartDependencies); err != nil {
-			err = fmt.Errorf("failed to check chart dependencies: %w", err)
+			err = errorx.ExternalError.Wrap(err, "failed to check chart dependencies")
 			if !installClient.DependencyUpdate {
 				return nil, err
 			}
@@ -246,7 +245,7 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 			}
 			// Reload the chart with the updated Chart.lock file.
 			if chartRequested, err = loader.Load(chartPath); err != nil {
-				return nil, fmt.Errorf("failed to reload chart after repo update: %w", err)
+				return nil, errorx.ExternalError.Wrap(err, "failed to reload chart after repo update")
 			}
 		}
 	}
@@ -366,7 +365,7 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 
 	if req := chart.Metadata.Dependencies; req != nil {
 		if err := action.CheckDependencies(chart, req); err != nil {
-			err = fmt.Errorf("failed to check chart dependencies: %w", err)
+			err = errorx.ExternalError.Wrap(err, "failed to check chart dependencies")
 			if !upgradeClient.DependencyUpdate {
 				return nil, ErrChartDependencyMissing.Wrap(err, "chart dependency check failed")
 			}

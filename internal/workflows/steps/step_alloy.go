@@ -4,7 +4,6 @@ package steps
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -12,16 +11,17 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/alloy"
-	"github.com/hashgraph/solo-weaver/pkg/config"
-	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/cli/values"
 
+	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
-	"helm.sh/helm/v3/pkg/cli/values"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 const (
@@ -97,7 +97,7 @@ func preCheckAlloy() automa.Builder {
 				k, err := kube.NewClient()
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						fmt.Errorf("failed to create kubernetes client: %w", err)))
+						errorx.ExternalError.Wrap(err, "failed to create kubernetes client")))
 				}
 
 				// Build config to determine required secrets
@@ -112,11 +112,11 @@ func preCheckAlloy() automa.Builder {
 					actualKeys, err := k.GetSecretKeys(ctx, spec.Namespace, secretName)
 					if err != nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("failed to read K8s Secret %q in namespace %q: %w", secretName, spec.Namespace, err)))
+							errorx.ExternalError.Wrap(err, "failed to read K8s Secret %q in namespace %q", secretName, spec.Namespace)))
 					}
 					if actualKeys == nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("K8s Secret %q not found in namespace %q; expected keys: %v. "+
+							errorx.IllegalState.New("K8s Secret %q not found in namespace %q; expected keys: %v. "+
 								"Create the secret before installing Alloy, e.g.: "+
 								"kubectl create secret generic %s --namespace=%s --from-literal=<KEY>=<password>",
 								secretName, spec.Namespace, expectedKeys, secretName, spec.Namespace)))
@@ -135,7 +135,7 @@ func preCheckAlloy() automa.Builder {
 					}
 					if len(missingKeys) > 0 {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("K8s Secret %q in namespace %q is missing required keys: %v; found keys: %v",
+							errorx.IllegalState.New("K8s Secret %q in namespace %q is missing required keys: %v; found keys: %v",
 								secretName, spec.Namespace, missingKeys, actualKeys)))
 					}
 
@@ -146,7 +146,7 @@ func preCheckAlloy() automa.Builder {
 				for _, remote := range cfg.PrometheusRemotes {
 					if err := network.CheckEndpointReachable(ctx, remote.URL, 10*time.Second); err != nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("Prometheus remote %q at %s is not reachable: %w", remote.Name, remote.URL, err)))
+							errorx.ExternalError.Wrap(err, "Prometheus remote %q at %s is not reachable", remote.Name, remote.URL)))
 					}
 					l.Info().Str("name", remote.Name).Str("url", remote.URL).Msg("Prometheus remote is reachable")
 				}
@@ -154,7 +154,7 @@ func preCheckAlloy() automa.Builder {
 				if cfg.PrometheusURL != "" {
 					if err := network.CheckEndpointReachable(ctx, cfg.PrometheusURL, 10*time.Second); err != nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("Prometheus remote at %s is not reachable: %w", cfg.PrometheusURL, err)))
+							errorx.ExternalError.Wrap(err, "Prometheus remote at %s is not reachable", cfg.PrometheusURL)))
 					}
 					l.Info().Str("url", cfg.PrometheusURL).Msg("Prometheus remote is reachable")
 				}
@@ -163,7 +163,7 @@ func preCheckAlloy() automa.Builder {
 				for _, remote := range cfg.LokiRemotes {
 					if err := network.CheckEndpointReachable(ctx, remote.URL, 10*time.Second); err != nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("Loki remote %q at %s is not reachable: %w", remote.Name, remote.URL, err)))
+							errorx.ExternalError.Wrap(err, "Loki remote %q at %s is not reachable", remote.Name, remote.URL)))
 					}
 					l.Info().Str("name", remote.Name).Str("url", remote.URL).Msg("Loki remote is reachable")
 				}
@@ -171,7 +171,7 @@ func preCheckAlloy() automa.Builder {
 				if cfg.LokiURL != "" {
 					if err := network.CheckEndpointReachable(ctx, cfg.LokiURL, 10*time.Second); err != nil {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(
-							fmt.Errorf("Loki remote at %s is not reachable: %w", cfg.LokiURL, err)))
+							errorx.ExternalError.Wrap(err, "Loki remote at %s is not reachable", cfg.LokiURL)))
 					}
 					l.Info().Str("url", cfg.LokiURL).Msg("Loki remote is reachable")
 				}
@@ -634,7 +634,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 			// Discover block node namespace from Helm
 			blockNodeNamespace, err := state.GetBlockNodeNamespace()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(fmt.Errorf("failed to discover block node namespace: %w", err)))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errorx.ExternalError.Wrap(err, "failed to discover block node namespace")))
 			}
 			if blockNodeNamespace == "" {
 				l.Warn().Msg("Block node monitoring enabled but block node not found; skipping ServiceMonitor deployment")

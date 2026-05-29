@@ -227,7 +227,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 		pluginPreset = bnpkg.PresetCustom
 	}
 	if pluginPreset == bnpkg.PresetCustom && pluginList == "" {
-		return nil, fmt.Errorf("--plugins is required when --plugin-preset=%s", bnpkg.PresetCustom)
+		return nil, errorx.IllegalArgument.New("--plugins is required when --plugin-preset=%s", bnpkg.PresetCustom)
 	}
 
 	inputs := &models.UserInputs[models.BlockNodeInputs]{
