@@ -1,0 +1,22 @@
+[Unit]
+Description=Solo Provisioner Daemon
+After=network.target
+
+[Service]
+Type=notify
+User=weaver
+Group=weaver
+ExecStart=/opt/solo/weaver/bin/solo-provisioner-daemon
+Restart=always
+RestartSec=5s
+
+# Sandbox hardening
+# Note: NoNewPrivileges is intentionally omitted — the daemon invokes
+# `sudo solo-provisioner self-upgrade` which requires privilege escalation
+# via setuid; NoNewPrivileges=true would prevent that.
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/solo /opt/hgcapp
+
+[Install]
+WantedBy=multi-user.target
