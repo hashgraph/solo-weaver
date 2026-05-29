@@ -21,6 +21,13 @@ type WeaverPaths struct {
 	DaemonSockPath   string
 	DaemonConfigPath string
 
+	// DaemonServiceSandboxPath is the canonical unit file location inside the
+	// weaver sandbox: $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
+	// DaemonServiceSymlinkPath is the system-wide symlink that points to it:
+	// /usr/lib/systemd/system/solo-provisioner-daemon.service
+	DaemonServiceSandboxPath string
+	DaemonServiceSymlinkPath string
+
 	DaemonEventsDir string // $home/daemon/events
 
 	// Consensus event subdirectories — scoped so future components (block-node, relay) get sibling dirs.
@@ -67,6 +74,9 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	pp.SandboxBinDir = path.Join(pp.SandboxDir, "bin")
 	pp.SandboxLocalBinDir = path.Join(pp.SandboxDir, "usr", "local", "bin")
 
+	pp.DaemonServiceSandboxPath = path.Join(pp.SandboxDir, "usr", "lib", "systemd", "system", "solo-provisioner-daemon.service")
+	pp.DaemonServiceSymlinkPath = "/usr/lib/systemd/system/solo-provisioner-daemon.service"
+
 	pp.SandboxDirectories = []string{
 		pp.SandboxDir,
 		pp.SandboxBinDir,
@@ -90,6 +100,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		path.Join(pp.SandboxDir, "var/logs/crio/pods"),
 		path.Join(pp.SandboxDir, "run/runc"),
 		path.Join(pp.SandboxDir, "usr/libexec/crio"),
+		path.Join(pp.SandboxDir, "usr/lib/systemd/system"),
 		path.Join(pp.SandboxDir, "usr/lib/systemd/system/kubelet.service.d"),
 		path.Join(pp.SandboxDir, "usr/local/share/man"),
 		path.Join(pp.SandboxDir, "usr/local/share/oci-umount/oci-umount.d"),

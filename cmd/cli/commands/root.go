@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/alloy"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/block"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
@@ -93,6 +94,7 @@ func init() {
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
+	rootCmd.AddCommand(daemon.GetCmd())
 	rootCmd.AddCommand(version.Cmd())
 	rootCmd.AddCommand(tuiDemoCmd)
 
