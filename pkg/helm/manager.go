@@ -323,14 +323,9 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 	upgradeClient.Version = chartVersion
 	upgradeClient.Atomic = o.Atomic
 	upgradeClient.Wait = o.Wait
-	upgradeClient.ReuseValues = o.ReuseValues
+	applyReuseValues(upgradeClient, o.ReuseValues, o.ValueOpts != nil)
 	upgradeClient.Timeout = o.Timeout
 	upgradeClient.Labels = o.Labels
-
-	// Set defaults if ValueOpts is not provided
-	if o.ValueOpts == nil {
-		upgradeClient.ReuseValues = true
-	}
 
 	if upgradeClient.Timeout == 0 {
 		upgradeClient.Timeout = DefaultTimeout
@@ -406,6 +401,31 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 	l.Info().Any("info", rel.Info).Msg("Helm chart upgraded successfully")
 
 	return rel, nil
+}
+
+// applyReuseValues configures the Helm Upgrade action to honor our
+// "reuse previously supplied user values" intent.
+//
+// We deliberately map this onto Helm's ResetThenReuseValues field, NOT the
+// older ReuseValues field. With ReuseValues=true, Helm overwrites the new
+// chart's values.yaml defaults with the old release's coalesced values (see
+// vendor/helm.sh/helm/v3/pkg/action/upgrade.go reuseValues()), which silently
+// drops any key the new chart added — surfacing as nil-pointer template errors
+// when crossing a chart version that introduces a new default key. See #633.
+//
+// ResetThenReuseValues keeps the new chart's values.yaml as the base, then
+// overlays the old release's user-supplied Config on top, which is the
+// behavior our --no-reuse-values flag semantically promises.
+//
+// When no new ValueOpts are supplied (hasValueOpts=false), we force the
+// reset-then-reuse path regardless of reuseValues, matching the previous
+// default that always reused on this branch.
+func applyReuseValues(client *action.Upgrade, reuseValues bool, hasValueOpts bool) {
+	if !hasValueOpts {
+		client.ResetThenReuseValues = true
+		return
+	}
+	client.ResetThenReuseValues = reuseValues
 }
 
 // List lists Helm releases in the specified namespace
