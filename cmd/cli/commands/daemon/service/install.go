@@ -12,12 +12,16 @@ import (
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install the solo-provisioner-daemon systemd service",
-	Long:  "Install, enable, and start the solo-provisioner-daemon systemd service unit file on the local system.",
+	Long: "Provision RBAC resources, generate the daemon kubeconfig, install and start the " +
+		"solo-provisioner-daemon systemd service. Requires root privileges and a reachable K8s cluster.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := common.RunWorkflowBuilder(cmd.Context(), workflows.NewDaemonServiceInstallWorkflow()); err != nil {
+		wf, err := workflows.NewDaemonServiceInstallWorkflow()
+		if err != nil {
 			return err
 		}
-
+		if err := common.RunWorkflowBuilder(cmd.Context(), wf); err != nil {
+			return err
+		}
 		logx.As().Info().Msg("solo-provisioner-daemon service installed, enabled, and started")
 		return nil
 	},

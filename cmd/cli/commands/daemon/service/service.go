@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const daemonServiceName = "solo-provisioner-daemon"
+
 var serviceCmd = &cobra.Command{
 	Use:   "service",
 	Short: "Manage the solo-provisioner-daemon systemd service",
@@ -18,6 +20,8 @@ func init() {
 	serviceCmd.AddCommand(checkCmd)
 	serviceCmd.AddCommand(installCmd)
 	serviceCmd.AddCommand(uninstallCmd)
+	serviceCmd.AddCommand(startCmd)
+	serviceCmd.AddCommand(stopCmd)
 }
 
 func GetCmd() *cobra.Command {

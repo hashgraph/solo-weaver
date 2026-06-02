@@ -7,19 +7,20 @@ import (
 )
 
 type WeaverPaths struct {
-	HomeDir          string
-	BinDir           string
-	LogsDir          string
-	UtilsDir         string
-	ConfigDir        string
-	BackupDir        string
-	TempDir          string
-	DownloadsDir     string
-	DiagnosticsDir   string
-	StateDir         string
-	DaemonDir        string
-	DaemonSockPath   string
-	DaemonConfigPath string
+	HomeDir              string
+	BinDir               string
+	LogsDir              string
+	UtilsDir             string
+	ConfigDir            string
+	BackupDir            string
+	TempDir              string
+	DownloadsDir         string
+	DiagnosticsDir       string
+	StateDir             string
+	DaemonDir            string
+	DaemonSockPath       string
+	DaemonConfigPath     string
+	DaemonKubeconfigPath string // /opt/solo/weaver/config/daemon.kubeconfig
 
 	// DaemonServiceSandboxPath is the canonical unit file location inside the
 	// weaver sandbox: $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
@@ -64,6 +65,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 
 	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
 	pp.DaemonConfigPath = path.Join(pp.ConfigDir, "daemon.yaml")
+	pp.DaemonKubeconfigPath = path.Join(pp.ConfigDir, "daemon.kubeconfig")
 	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
 	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
 	pp.DaemonConsensusUpgradeEventsDir = path.Join(pp.DaemonConsensusEventsDir, "upgrade")

@@ -11,8 +11,14 @@ import (
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall the solo-provisioner-daemon systemd service",
-	Long:  "Disable and remove the solo-provisioner-daemon systemd service unit file from the local system.",
+	Long: "Stop and disable the solo-provisioner-daemon systemd service, remove the daemon kubeconfig, " +
+		"and delete the K8s RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding, token Secret). " +
+		"Requires root privileges.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return common.RunWorkflowBuilder(cmd.Context(), workflows.NewDaemonServiceUninstallWorkflow())
+		wf, err := workflows.NewDaemonServiceUninstallWorkflow()
+		if err != nil {
+			return err
+		}
+		return common.RunWorkflowBuilder(cmd.Context(), wf)
 	},
 }
