@@ -4,7 +4,33 @@ package manifests
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 )
+
+// allowedDestinationPrefixes is the closed set of marker prefixes that may
+// start the `destination` field on any external-files.yaml entry. The
+// downloader resolves each marker to a real filesystem path at apply time;
+// rejecting arbitrary host paths here prevents a council-signed manifest
+// from being able to drop files at an unrelated location on disk.
+//
+// Kept unexported so that enforcement (validateDestinationPrefix) reads from
+// an immutable source of truth — external callers see only a cloned copy via
+// AllowedDestinationPrefixes() and cannot weaken the policy by mutating the
+// slice in place.
+var allowedDestinationPrefixes = []string{
+	"HAPIAPP_DIR",
+	"SOLO_PROVISIONER_DIR",
+}
+
+// AllowedDestinationPrefixes returns a fresh copy of the closed set of marker
+// prefixes recognised on external-files.yaml destination fields. Tooling that
+// lints CN deployment packages outside of the daemon can reuse the same set
+// without reimplementing the policy. Each call returns a new slice so callers
+// cannot affect enforcement by mutating the returned value.
+func AllowedDestinationPrefixes() []string {
+	return slices.Clone(allowedDestinationPrefixes)
+}
 
 // ExternalFiles is the parsed root of an external-files.yaml manifest. It
 // declares large remote files (over the ~1 MB ConfigurationFile-CR limit)
@@ -121,6 +147,9 @@ func (f *ExternalFile) validate(idx int) error {
 	if f.Destination == "" {
 		return NewValidationError(KindExternalFiles, prefix+".destination", "must not be empty")
 	}
+	if err := validateDestinationPrefix(prefix+".destination", f.Destination); err != nil {
+		return err
+	}
 
 	switch f.Phase.Download {
 	case DownloadPhasePrepare, DownloadPhaseFreeze:
@@ -141,4 +170,19 @@ func (f *ExternalFile) validate(idx int) error {
 	}
 
 	return nil
+}
+
+// validateDestinationPrefix enforces that dest starts with one of the
+// allowedDestinationPrefixes followed by a `/` (so "HAPIAPP_DIR" alone or
+// "HAPIAPP_DIR_FOO/x" is rejected). Arbitrary filesystem paths (anything
+// not starting with a recognised marker) are rejected with a clear error
+// listing the supported prefixes.
+func validateDestinationPrefix(fieldPath, dest string) error {
+	for _, prefix := range allowedDestinationPrefixes {
+		if strings.HasPrefix(dest, prefix+"/") {
+			return nil
+		}
+	}
+	return NewValidationError(KindExternalFiles, fieldPath,
+		fmt.Sprintf("must start with a recognised marker prefix followed by '/' (allowed: %v); got %q", allowedDestinationPrefixes, dest))
 }
