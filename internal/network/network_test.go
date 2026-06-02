@@ -4,6 +4,7 @@ package network
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,71 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestProbeTCP_SucceedsWhenListenerAccepts(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	// Accept-and-close loop so DialContext succeeds.
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	attempts, err := ProbeTCP(context.Background(), ln.Addr().String(), 5*time.Second, 1*time.Second, 100*time.Millisecond)
+	require.NoError(t, err)
+	assert.Equal(t, 1, attempts, "expected first-attempt success")
+}
+
+func TestProbeTCP_FailsWhenTargetUnreachable(t *testing.T) {
+	t.Parallel()
+
+	// Reserve a port then close it so the address is in a "connection refused"
+	// state. Loopback gives us a fast refusal rather than relying on routing.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	deadAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	overall := 600 * time.Millisecond
+	start := time.Now()
+	attempts, err := ProbeTCP(context.Background(), deadAddr, overall, 200*time.Millisecond, 100*time.Millisecond)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "expected error dialing closed port")
+	assert.GreaterOrEqual(t, attempts, 2, "expected at least 2 retry attempts")
+	assert.LessOrEqual(t, elapsed, overall+300*time.Millisecond, "ProbeTCP ran longer than overall budget")
+}
+
+func TestProbeTCP_RespectsParentContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	deadAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = ProbeTCP(ctx, deadAddr, 30*time.Second, 200*time.Millisecond, 100*time.Millisecond)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "expected error after parent cancel")
+	assert.LessOrEqual(t, elapsed, 2*time.Second, "ProbeTCP did not exit promptly after parent cancel")
+}
 
 func TestCheckEndpointReachable(t *testing.T) {
 	tests := []struct {

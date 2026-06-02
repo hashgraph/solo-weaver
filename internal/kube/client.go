@@ -48,6 +48,7 @@ const (
 	KindPod         ResourceKind = "Pod"
 	KindDeployment  ResourceKind = "Deployment"
 	KindStatefulSet ResourceKind = "StatefulSet"
+	KindDaemonSet   ResourceKind = "DaemonSet"
 	KindJob         ResourceKind = "Job"
 	KindPVC         ResourceKind = "PersistentVolumeClaim"
 	KindPV          ResourceKind = "PersistentVolume"
@@ -62,6 +63,7 @@ var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
 	KindPod:         {Group: "", Version: "v1", Resource: "pods"},
 	KindDeployment:  {Group: "apps", Version: "v1", Resource: "deployments"},
 	KindStatefulSet: {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	KindDaemonSet:   {Group: "apps", Version: "v1", Resource: "daemonsets"},
 	KindJob:         {Group: "batch", Version: "v1", Resource: "jobs"},
 	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	KindPV:          {Group: "", Version: "v1", Resource: "persistentvolumes"},
@@ -973,6 +975,36 @@ func IsDeploymentReady(obj *unstructured.Unstructured, err error) (bool, error) 
 	return false, nil
 }
 
+// IsDaemonSetRolledOut returns true when the DaemonSet's controller has observed
+// the latest spec (status.observedGeneration >= metadata.generation), every node
+// that should run a pod has one updated and ready, and there are no pods still
+// running the old template (status.numberMisscheduled is ignored — it tracks
+// nodes that should NOT have a pod but do, which is unrelated to rollout state).
+//
+// Use as a CheckFunc with WaitForResource(KindDaemonSet, ...).
+func IsDaemonSetRolledOut(obj *unstructured.Unstructured, err error) (bool, error) {
+	if ok, err := IsPresent(obj, err); !ok || err != nil {
+		return ok, err
+	}
+
+	generation, _, _ := unstructured.NestedInt64(obj.Object, "metadata", "generation")
+	observed, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
+	if observed < generation {
+		return false, nil
+	}
+
+	desired, _, _ := unstructured.NestedInt64(obj.Object, "status", "desiredNumberScheduled")
+	ready, _, _ := unstructured.NestedInt64(obj.Object, "status", "numberReady")
+	updated, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedNumberScheduled")
+
+	if desired == 0 {
+		// No nodes selected for the DS — nothing to roll out.
+		return true, nil
+	}
+
+	return ready == desired && updated == desired, nil
+}
+
 // IsJobComplete checks if a Job has completed successfully
 func IsJobComplete(obj *unstructured.Unstructured, err error) (bool, error) {
 	if ok, err := IsPresent(obj, err); !ok || err != nil {
@@ -1182,6 +1214,31 @@ func (c *Client) patchReplicas(ctx context.Context, gvr schema.GroupVersionResou
 	)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to scale %s: %s/%s", gvr.Resource, namespace, name)
+	}
+
+	return nil
+}
+
+// RolloutRestartDaemonSet triggers a rolling restart of a DaemonSet by patching
+// spec.template.metadata.annotations with kubectl.kubernetes.io/restartedAt set to
+// the current time. This is the same mechanic used by `kubectl rollout restart`.
+// Pair with WaitForResource(KindDaemonSet, ..., IsDaemonSetRolledOut, timeout) to
+// block until the new pods are observed.
+func (c *Client) RolloutRestartDaemonSet(ctx context.Context, namespace, name string) error {
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
+
+	patch := []byte(`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"` +
+		time.Now().UTC().Format(time.RFC3339) + `"}}}}}`)
+
+	_, err := c.Dyn.Resource(gvr).Namespace(namespace).Patch(
+		ctx,
+		name,
+		types.MergePatchType,
+		patch,
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to rollout restart daemonset: %s/%s", namespace, name)
 	}
 
 	return nil

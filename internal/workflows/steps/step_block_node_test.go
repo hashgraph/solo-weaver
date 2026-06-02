@@ -71,7 +71,7 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 6, "Expected 6 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait")
+	require.Len(t, report.StepReports, 7, "Expected 7 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait, verify-reachable")
 
 	// Verify hedera owner step
 	hederaReport := report.StepReports[0]
@@ -106,6 +106,12 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	waitReport := report.StepReports[5]
 	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
+
+	// Verify reachability probe step (no-ops when LoadBalancerEnabled is false,
+	// still reports success — see blocknode.Manager.VerifyExternalReachable).
+	verifyReport := report.StepReports[6]
+	require.Equal(t, VerifyBlockNodeReachableStepId, verifyReport.Id)
+	require.Equal(t, automa.StatusSuccess, verifyReport.Status)
 }
 
 func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
@@ -144,7 +150,7 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 6, "Expected 6 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait")
+	require.Len(t, report.StepReports, 7, "Expected 7 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait, verify-reachable")
 
 	// Verify hedera owner step
 	hederaReport := report.StepReports[0]
@@ -179,6 +185,12 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	waitReport := report.StepReports[5]
 	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
+
+	// Verify reachability probe step (no-ops when LoadBalancerEnabled is false,
+	// still reports success — see blocknode.Manager.VerifyExternalReachable).
+	verifyReport := report.StepReports[6]
+	require.Equal(t, VerifyBlockNodeReachableStepId, verifyReport.Id)
+	require.Equal(t, automa.StatusSuccess, verifyReport.Status)
 }
 
 func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
@@ -210,7 +222,7 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps still complete successfully
-	require.Len(t, report.StepReports, 6, "Expected 6 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait")
+	require.Len(t, report.StepReports, 7, "Expected 7 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait, verify-reachable")
 
 	// All steps should succeed (idempotent)
 	for _, stepReport := range report.StepReports {
