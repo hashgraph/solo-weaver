@@ -4,7 +4,6 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,7 +46,7 @@ func GetMachineIP() (string, error) {
 			return ip.String(), nil
 		}
 	}
-	return "", fmt.Errorf("no connected network interface found")
+	return "", errorx.IllegalState.New("no connected network interface found")
 }
 
 // CheckEndpointReachable verifies that a URL endpoint is reachable.

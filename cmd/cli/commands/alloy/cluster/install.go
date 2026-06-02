@@ -3,15 +3,15 @@
 package cluster
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
+	"github.com/joomcode/errorx"
+	"github.com/spf13/cobra"
+
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/spf13/cobra"
 )
 
 var installCmd = &cobra.Command{
@@ -49,12 +49,12 @@ Examples:
 		// Parse multi-remote flags
 		prometheusRemotes, err := parseRemoteFlags(flagPrometheusRemotes)
 		if err != nil {
-			return fmt.Errorf("invalid --add-prometheus-remote flag: %w", err)
+			return errorx.IllegalArgument.Wrap(err, "invalid --add-prometheus-remote flag")
 		}
 
 		lokiRemotes, err := parseRemoteFlags(flagLokiRemotes)
 		if err != nil {
-			return fmt.Errorf("invalid --add-loki-remote flag: %w", err)
+			return errorx.IllegalArgument.Wrap(err, "invalid --add-loki-remote flag")
 		}
 
 		// Validate that legacy and new flags are not mixed
@@ -62,7 +62,7 @@ Examples:
 		hasNewFlags := len(prometheusRemotes) > 0 || len(lokiRemotes) > 0
 
 		if hasLegacyFlags && hasNewFlags {
-			return fmt.Errorf("cannot mix legacy flags (--prometheus-url, --prometheus-username, --loki-url, --loki-username) with new flags (--add-prometheus-remote, --add-loki-remote); use one style or the other")
+			return errorx.IllegalArgument.New("cannot mix legacy flags (--prometheus-url, --prometheus-username, --loki-url, --loki-username) with new flags (--add-prometheus-remote, --add-loki-remote); use one style or the other")
 		}
 
 		// Apply Alloy configuration overrides
@@ -81,7 +81,7 @@ Examples:
 
 		// Validate configuration before proceeding
 		if err := alloyOverrides.Validate(); err != nil {
-			return fmt.Errorf("invalid configuration: %w", err)
+			return errorx.IllegalArgument.Wrap(err, "invalid configuration")
 		}
 
 		config.OverrideAlloyConfig(alloyOverrides)

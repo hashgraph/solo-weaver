@@ -3,9 +3,10 @@
 package cluster
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
@@ -31,7 +32,7 @@ func parseRemoteFlags(flags []string) ([]models.AlloyRemoteConfig, error) {
 		for _, pair := range splitKeyValuePairs(flag) {
 			eqIdx := strings.Index(pair, "=")
 			if eqIdx == -1 {
-				return nil, fmt.Errorf("invalid key=value pair %q in %q, expected format: name=<name>,url=<url>,username=<username>", pair, flag)
+				return nil, errorx.IllegalArgument.New("invalid key=value pair %q in %q, expected format: name=<name>,url=<url>,username=<username>", pair, flag)
 			}
 
 			key := strings.TrimSpace(pair[:eqIdx])
@@ -47,16 +48,16 @@ func parseRemoteFlags(flags []string) ([]models.AlloyRemoteConfig, error) {
 			case "labelprofile":
 				remote.LabelProfile = value
 			default:
-				return nil, fmt.Errorf("unknown key %q in %q, valid keys are: name, url, username, labelProfile", key, flag)
+				return nil, errorx.IllegalArgument.New("unknown key %q in %q, valid keys are: name, url, username, labelProfile", key, flag)
 			}
 		}
 
 		// Validate required fields
 		if remote.Name == "" {
-			return nil, fmt.Errorf("missing required 'name' in %q", flag)
+			return nil, errorx.IllegalArgument.New("missing required 'name' in %q", flag)
 		}
 		if remote.URL == "" {
-			return nil, fmt.Errorf("missing required 'url' in %q", flag)
+			return nil, errorx.IllegalArgument.New("missing required 'url' in %q", flag)
 		}
 
 		remotes = append(remotes, remote)

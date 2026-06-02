@@ -4,11 +4,12 @@ package steps
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/joomcode/errorx"
+
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
@@ -33,7 +34,7 @@ func CheckClusterCRDs(id string, crds []string, timeout time.Duration, provider 
 			// update meta with the checked CRDs and their details
 			foundCRDs, err := prepareCRDMeta(ctx, k)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(fmt.Errorf("failed to prepare CRD meta: %w", err)))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errorx.InternalError.Wrap(err, "failed to prepare CRD meta")))
 			}
 
 			meta := map[string]string{}

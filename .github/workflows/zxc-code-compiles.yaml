@@ -34,6 +34,10 @@ jobs:
 
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Full history so golangci-lint's `new-from-rev: origin/main` can
+          # diff the PR head against the base commit. Used by `task lint:errorx`.
+          fetch-depth: 0
 
       - name: Install Task
         uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
