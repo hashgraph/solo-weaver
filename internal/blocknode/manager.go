@@ -6,6 +6,7 @@ import (
 	"context"
 	oslib "os"
 	"path"
+	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -30,7 +31,18 @@ const (
 	NanoValuesPath      = "files/block-node/nano-values.yaml"
 
 	// Timeouts
-	PodReadyTimeoutSeconds = 300
+	PodReadyTimeoutSeconds      = 300
+	ReachabilityProbeTimeoutSec = 60
+)
+
+// Reachability probe dial cadence. A single dial attempt uses ReachabilityProbeDialTimeout;
+// failed attempts back off by ReachabilityProbeRetryDelay before retrying, until the overall
+// ReachabilityProbeTimeoutSec budget is exhausted. The dial-timeout/back-off split gives
+// MetalLB ARP convergence and Cilium reconciler latency time to settle without making the
+// whole probe block on a single hung connection.
+var (
+	ReachabilityProbeDialTimeout = 10 * time.Second
+	ReachabilityProbeRetryDelay  = 2 * time.Second
 )
 
 // Manager handles block node setup and management operations.
@@ -44,6 +56,13 @@ type Manager struct {
 	kubeClient      *kube.Client
 	logger          *zerolog.Logger
 	blockNodeInputs models.BlockNodeInputs
+
+	// preUpgradeServiceSpecs holds the spec map of every Service in the block-node
+	// namespace as observed by SnapshotServices, keyed by Service name. Used by
+	// BlockNodeServicesChanged to decide whether the Helm upgrade actually mutated
+	// any Service — and therefore whether a Cilium DaemonSet restart is needed
+	// (see issue #619). nil until SnapshotServices has been called.
+	preUpgradeServiceSpecs map[string]map[string]interface{}
 }
 
 // NewManager creates a new block node manager

@@ -14,23 +14,26 @@ import (
 )
 
 const (
-	SetupBlockNodeStepId             = "setup-block-node"
-	SetupBlockNodeStorageStepId      = "setup-block-node-storage"
-	CreateBlockNodeNamespaceStepId   = "create-block-node-namespace"
-	CreateBlockNodePVsStepId         = "create-block-node-pvs"
-	DeleteBlockNodePVsStepId         = "delete-block-node-pvs"
-	RecreateBlockNodeStorageStepId   = "recreate-block-node-storage"
-	InstallBlockNodeStepId           = "install-block-node"
-	UninstallBlockNodeStepId         = "uninstall-block-node"
-	UpgradeBlockNodeStepId           = "upgrade-block-node"
-	WaitForBlockNodeStepId           = "wait-for-block-node"
-	ResetBlockNodeStepId             = "reset-block-node"
-	PurgeBlockNodeStorageStepId      = "purge-block-node-storage"
-	ScaleDownBlockNodeStepId         = "scale-down-block-node"
-	ClearBlockNodeStorageStepId      = "clear-block-node-storage"
-	ScaleUpBlockNodeStepId           = "scale-up-block-node"
-	WaitForBlockNodeTerminatedStepId = "wait-for-block-node-terminated"
-	RolloutRestartBlockNodeStepId    = "rollout-restart-block-node"
+	SetupBlockNodeStepId                 = "setup-block-node"
+	SetupBlockNodeStorageStepId          = "setup-block-node-storage"
+	CreateBlockNodeNamespaceStepId       = "create-block-node-namespace"
+	CreateBlockNodePVsStepId             = "create-block-node-pvs"
+	DeleteBlockNodePVsStepId             = "delete-block-node-pvs"
+	RecreateBlockNodeStorageStepId       = "recreate-block-node-storage"
+	InstallBlockNodeStepId               = "install-block-node"
+	UninstallBlockNodeStepId             = "uninstall-block-node"
+	UpgradeBlockNodeStepId               = "upgrade-block-node"
+	WaitForBlockNodeStepId               = "wait-for-block-node"
+	ResetBlockNodeStepId                 = "reset-block-node"
+	PurgeBlockNodeStorageStepId          = "purge-block-node-storage"
+	ScaleDownBlockNodeStepId             = "scale-down-block-node"
+	ClearBlockNodeStorageStepId          = "clear-block-node-storage"
+	ScaleUpBlockNodeStepId               = "scale-up-block-node"
+	WaitForBlockNodeTerminatedStepId     = "wait-for-block-node-terminated"
+	RolloutRestartBlockNodeStepId        = "rollout-restart-block-node"
+	SnapshotBlockNodeServicesStepId      = "snapshot-block-node-services"
+	RestartCiliumIfServicesChangedStepId = "restart-cilium-if-services-changed"
+	VerifyBlockNodeReachableStepId       = "verify-block-node-reachable"
 )
 
 // SetupBlockNode sets up the block node on the cluster
@@ -44,6 +47,7 @@ func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		createBlockNodePVs(blockNodeManagerProvider),
 		installBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
+		verifyBlockNodeReachable(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Block Node Deployment")
@@ -311,14 +315,25 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 		})
 }
 
-// UpgradeBlockNode upgrades the block node on the cluster
+// UpgradeBlockNode upgrades the block node on the cluster.
+//
+// The pre-upgrade Service snapshot + conditional Cilium DS restart + reachability
+// probe at the tail are the fix for issue #619: Helm upgrades that change
+// Service.spec.type leave Cilium's eBPF reconciler in a stale state, blackholing
+// external traffic. The snapshot lets the workflow restart Cilium only when an
+// upgrade actually mutated a Service (the common chart-version-bump case is
+// no-change → no ~30s restart cost). The probe converts any remaining failure
+// mode (Cilium, MetalLB, chart, firewall) into a loud workflow error.
 func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
 		EnsureHederaOwnerStep(),
+		snapshotBlockNodeServices(blockNodeManagerProvider),
 		upgradeBlockNode(inputs, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
+		restartCiliumIfServicesChanged(blockNodeManagerProvider),
+		verifyBlockNodeReachable(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Upgrading Block Node")
@@ -713,5 +728,87 @@ func RecreateBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBui
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node storage recreated successfully")
+		})
+}
+
+// snapshotBlockNodeServices captures the current spec of every Service in the
+// block-node namespace onto the shared Manager. Pair with
+// restartCiliumIfServicesChanged later in the workflow to skip the Cilium DS
+// restart when the upgrade did not actually touch any Service.
+func snapshotBlockNodeServices(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(SnapshotBlockNodeServicesStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if err := manager.SnapshotServices(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Snapshotting Block Node Services")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to snapshot Block Node Services")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node Services snapshotted")
+		})
+}
+
+// restartCiliumIfServicesChanged restarts the Cilium DaemonSet only when the
+// block-node Service set differs from the pre-upgrade snapshot. See
+// `blocknode.Manager.RestartCiliumDaemonSetIfServicesChanged` and issue #619.
+func restartCiliumIfServicesChanged(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(RestartCiliumIfServicesChangedStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if err := manager.RestartCiliumDaemonSetIfServicesChanged(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking whether Cilium DaemonSet needs a restart")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to restart Cilium DaemonSet")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Cilium DaemonSet check complete")
+		})
+}
+
+// verifyBlockNodeReachable TCP-dials the block-node LoadBalancer Service from
+// the solo-provisioner host process. No-ops when LoadBalancerEnabled is false
+// (local profile). See `blocknode.Manager.VerifyExternalReachable`.
+func verifyBlockNodeReachable(getManager func() (*blocknode.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(VerifyBlockNodeReachableStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			manager, err := getManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if err := manager.VerifyExternalReachable(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Verifying Block Node external reachability")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Block Node is not reachable from the provisioner host")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node external reachability verified")
 		})
 }

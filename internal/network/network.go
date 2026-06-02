@@ -50,6 +50,44 @@ func GetMachineIP() (string, error) {
 	return "", fmt.Errorf("no connected network interface found")
 }
 
+// ProbeTCP opens a TCP connection to addr and closes it immediately. On failure
+// it retries with retryDelay between attempts until overallTimeout elapses (or
+// the parent context is cancelled). Each individual dial uses dialTimeout.
+//
+// Returns the number of attempts made and the last dial error if all attempts
+// failed; returns (n, nil) on the first successful connect.
+//
+// Use for "is this service reachable from here" probes where MetalLB ARP
+// convergence or Cilium reconciler latency may delay first-byte arrival but
+// silent failure (eBPF table miss, dropped SYN) needs to surface as an error.
+func ProbeTCP(ctx context.Context, addr string, overallTimeout, dialTimeout, retryDelay time.Duration) (int, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, overallTimeout)
+	defer cancel()
+
+	var lastErr error
+	attempts := 0
+	for {
+		attempts++
+		dialCtx, dialCancel := context.WithTimeout(probeCtx, dialTimeout)
+		var d net.Dialer
+		conn, err := d.DialContext(dialCtx, "tcp", addr)
+		dialCancel()
+		if err == nil {
+			_ = conn.Close()
+			return attempts, nil
+		}
+		lastErr = err
+
+		retry := time.NewTimer(retryDelay)
+		select {
+		case <-probeCtx.Done():
+			retry.Stop()
+			return attempts, lastErr
+		case <-retry.C:
+		}
+	}
+}
+
 // CheckEndpointReachable verifies that a URL endpoint is reachable.
 // It extracts the base URL (scheme + host) and performs a simple HTTP HEAD request.
 // Returns nil if reachable, error otherwise.
