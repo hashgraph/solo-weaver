@@ -25,8 +25,10 @@ This PR adds:
 ## Review checklist
 
 - [ ] `sdNotify` returns `nil` silently when `NOTIFY_SOCKET` is unset (no regression for manual / test runs)
-- [ ] `defer sdNotify(sdStopping)` fires on all exit paths of `Run()` (ctx cancel, error, panic)
-- [ ] Probe timeout: after 60 s without success, `READY=1` is sent anyway — `systemctl start` never hangs indefinitely
+- [ ] `defer sdNotify(sdStopping)` fires on normal exit paths; explicit `sdNotify(sdStopping)` in panic handler before `os.Exit(2)` (os.Exit bypasses defers)
+- [ ] `READY=1` is sent **only on probe success** — never as a fallback after timeout; a misconfigured daemon stays in `activating` until systemd's `TimeoutStartSec` marks it failed
+- [ ] Probe runs in a background goroutine so the Unix socket server starts immediately; tests that start only `srv.Start(ctx)` are not blocked by the probe
+- [ ] `probeKubeRBAC` sets `restCfg.Timeout = 30 s` so a hung API server cannot block a single attempt indefinitely
 - [ ] `probeKubeRBAC` uses `SelfSubjectAccessReview` for both `list` and `watch` on `networkupgradeexecutes.hedera.com` in orbit namespace
 - [ ] `Daemon.cfg` is populated in `NewFromConfig` (not just `New`)
 - [ ] No new vendor dependency (k8s client-go was already used in `internal/daemon/consensus/criteria.go`)
