@@ -246,20 +246,87 @@ files: []
 	require.Contains(t, err.Error(), "exactly one YAML document")
 }
 
-// Pins the contract that this parser does NOT enforce the specific allowed
-// destination marker prefixes (HAPIAPP_DIR, SOLO_PROVISIONER_DIR). That
-// strict-allowlist enforcement is the subject of #536, which is the
-// follow-on PR in this epic. Until then, any non-empty destination passes.
-func TestParseExternalFiles_DestinationPrefixNotYetEnforced(t *testing.T) {
-	data := []byte(`
+// Pins the closed-set policy on destination prefixes. Both recognised
+// markers are accepted; anything else — absolute paths, relative paths,
+// unknown markers, near-misses — fails parsing.
+func TestParseExternalFiles_DestinationPrefixEnforcement(t *testing.T) {
+	acceptCases := []struct {
+		name        string
+		destination string
+	}{
+		{"HAPIAPP_DIR with subpath", "HAPIAPP_DIR/data/keys/a.bin"},
+		{"SOLO_PROVISIONER_DIR with subpath", "SOLO_PROVISIONER_DIR/certs/a.pem"},
+		// "Is this a sensible path under HAPIAPP_DIR?" is the downloader's
+		// responsibility, not the parser's. We only enforce the marker.
+		{"marker with empty subpath", "HAPIAPP_DIR/"},
+	}
+	for _, tc := range acceptCases {
+		t.Run("accepts: "+tc.name, func(t *testing.T) {
+			data := []byte(`
 schemaVersion: v1
 files:
   - url: "s3://x/y"
     algorithm: sha256
     checksum: "z"
-    destination: "/absolute/path/elsewhere.bin"
+    destination: "` + tc.destination + `"
     phase: {download: prepare, install: freeze}
 `)
-	_, err := ParseExternalFiles(data)
-	require.NoError(t, err, "destination allowlist enforcement is deferred to #536")
+			_, err := ParseExternalFiles(data)
+			require.NoError(t, err)
+		})
+	}
+
+	rejectCases := []struct {
+		name        string
+		destination string
+	}{
+		{"absolute filesystem path", "/absolute/path/elsewhere.bin"},
+		{"relative path", "data/keys/a.bin"},
+		{"unknown marker", "HEDERA_DATA_DIR/data/keys/a.bin"},
+		{"marker without trailing slash", "HAPIAPP_DIR"},
+		{"marker as prefix of longer token", "HAPIAPP_DIR_FOO/x"},
+	}
+	for _, tc := range rejectCases {
+		t.Run("rejects: "+tc.name, func(t *testing.T) {
+			data := []byte(`
+schemaVersion: v1
+files:
+  - url: "s3://x/y"
+    algorithm: sha256
+    checksum: "z"
+    destination: "` + tc.destination + `"
+    phase: {download: prepare, install: freeze}
+`)
+			_, err := ParseExternalFiles(data)
+			require.Error(t, err)
+			require.True(t, errorx.IsOfType(err, ValidationError),
+				"expected ValidationError, got %v", err)
+			require.Contains(t, err.Error(), "files[0].destination")
+			require.Contains(t, err.Error(), "marker prefix")
+			require.Contains(t, err.Error(), "HAPIAPP_DIR")
+			require.Contains(t, err.Error(), "SOLO_PROVISIONER_DIR")
+		})
+	}
+}
+
+// AllowedDestinationPrefixes is part of the public API; pin its exact
+// contents so a future widening (or narrowing) is a deliberate decision
+// visible in the diff.
+func TestAllowedDestinationPrefixes_PinnedSet(t *testing.T) {
+	require.Equal(t, []string{"HAPIAPP_DIR", "SOLO_PROVISIONER_DIR"}, AllowedDestinationPrefixes())
+}
+
+// Mutating the slice returned by AllowedDestinationPrefixes must not weaken
+// or alter enforcement — the exported accessor returns a clone so callers
+// cannot reach the internal source of truth used by validateDestinationPrefix.
+func TestAllowedDestinationPrefixes_ReturnedSliceIsClone(t *testing.T) {
+	got := AllowedDestinationPrefixes()
+	for i := range got {
+		got[i] = "MUTATED"
+	}
+	require.Equal(t, []string{"HAPIAPP_DIR", "SOLO_PROVISIONER_DIR"}, AllowedDestinationPrefixes(),
+		"mutating the returned slice must not affect subsequent calls")
+
+	err := validateDestinationPrefix("files[0].destination", "MUTATED/foo")
+	require.Error(t, err, "enforcement must reject a value that only matched the caller-mutated slice")
 }
