@@ -203,12 +203,19 @@ func (mm *MigrationMonitor) allCriteriaGreen(ctx context.Context, req SoakStartR
 //
 // Both cases are intentionally indistinguishable to callers — only one soak
 // activation may be in-flight at any time.
+//
+// soakStatus is set to Active=true here, synchronously, so that
+// GET /soak/status reflects the accepted request immediately — without waiting
+// for the watcher goroutine (spawned by Run) to store the same value. The
+// watcher stores it again on startup (idempotent), and clears it on exit.
 func (mm *MigrationMonitor) TryEnqueue(req SoakStartRequest) bool {
 	if mm.soakActive.Swap(true) {
 		return false
 	}
 	select {
 	case mm.soakStartCh <- req:
+		reqCopy := req
+		mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &reqCopy})
 		return true
 	default:
 		mm.soakActive.Store(false)
