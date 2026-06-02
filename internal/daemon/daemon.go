@@ -16,6 +16,10 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"golang.org/x/sync/errgroup"
+	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -23,6 +27,15 @@ const (
 	upgradeEventMaxAge = 365 * 24 * time.Hour
 	upgradeEventKeep   = 50
 	upgradeEventGlob   = "consensus-upgrade-*.jsonl"
+
+	kubeProbeInterval    = 2 * time.Second
+	kubeProbeRESTTimeout = 30 * time.Second // per-attempt REST timeout; matches upgrade_monitor.go and criteria.go
+
+	// networkUpgradeExecuteGroup and resource are the exact RBAC verbs the daemon
+	// needs to watch NetworkUpgradeExecute CRs. Probing these ensures the
+	// daemon's ServiceAccount has the required permissions before signalling READY.
+	networkUpgradeExecuteGroup    = "hedera.com"
+	networkUpgradeExecuteResource = "networkupgradeexecutes"
 )
 
 // Daemon is the controller for solo-provisioner-daemon. It composes the
@@ -34,6 +47,7 @@ const (
 //   - MigrationMonitor    — dispatch loop always on; per-activation goroutine on demand (#520)
 type Daemon struct {
 	paths            models.WeaverPaths
+	cfg              DaemonConfig
 	server           *Server
 	upgradeMonitor   *consensus.UpgradeMonitor
 	migrationMonitor *consensus.MigrationMonitor
@@ -101,6 +115,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 
 	d := &Daemon{
 		paths:            paths,
+		cfg:              cfg,
 		upgradeMonitor:   um,
 		migrationMonitor: mm,
 		migrateLogger:    migrateLogger,
@@ -142,6 +157,78 @@ func pruneUpgradeEventLogs(homeDir, dir string) {
 	}
 }
 
+// probeKubeRBAC issues SelfSubjectAccessReview calls to verify that the daemon's
+// ServiceAccount has the `list` and `watch` verbs on networkupgradeexecutes in
+// the given namespace. Returns nil only when both verbs are allowed.
+func probeKubeRBAC(ctx context.Context, kubeconfigPath, namespace string) error {
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("build kubeconfig: %w", err)
+	}
+	// Cap each REST call so a hung API server doesn't block a single probe
+	// attempt indefinitely. Matches the timeout used in upgrade_monitor.go and
+	// criteria.go.
+	restCfg.Timeout = kubeProbeRESTTimeout
+	client, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		return fmt.Errorf("build kube client: %w", err)
+	}
+
+	for _, verb := range []string{"list", "watch"} {
+		review := &authorizationv1.SelfSubjectAccessReview{
+			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: namespace,
+					Verb:      verb,
+					Group:     networkUpgradeExecuteGroup,
+					Resource:  networkUpgradeExecuteResource,
+				},
+			},
+		}
+		result, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("SelfSubjectAccessReview(%s): %w", verb, err)
+		}
+		if !result.Status.Allowed {
+			return fmt.Errorf("RBAC denied: verb=%s resource=%s.%s namespace=%s", verb, networkUpgradeExecuteResource, networkUpgradeExecuteGroup, namespace)
+		}
+	}
+	return nil
+}
+
+// probeKubeRBACWithRetry retries probeKubeRBAC every kubeProbeInterval until
+// it succeeds or ctx is cancelled. Returns nil on success, ctx.Err() if the
+// context is cancelled before the probe succeeds.
+//
+// There is intentionally no internal timeout: if RBAC is misconfigured the
+// probe will never succeed, and the caller must NOT send READY=1. Systemd's
+// TimeoutStartSec (default 90 s) will cancel the context and mark the service
+// as failed — which is the correct loud startup failure for a broken config.
+func probeKubeRBACWithRetry(ctx context.Context, kubeconfigPath, namespace string) error {
+	attempt := 0
+	for {
+		attempt++
+		if err := probeKubeRBAC(ctx, kubeconfigPath, namespace); err == nil {
+			logx.As().Info().
+				Str("reason", "KubeRBACProbeSuccess").
+				Int("attempt", attempt).
+				Msg("Kubernetes RBAC probe succeeded — daemon has required permissions")
+			return nil
+		} else {
+			logx.As().Warn().Err(err).
+				Str("reason", "KubeRBACProbeFailed").
+				Int("attempt", attempt).
+				Msg("Kubernetes RBAC probe failed — retrying")
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(kubeProbeInterval):
+		}
+	}
+}
+
 // Run starts all sub-systems and blocks until ctx is cancelled or a critical
 // sub-system exits with an error. It is the single entry point called from
 // cmd/daemon/main.go.
@@ -151,12 +238,21 @@ func pruneUpgradeEventLogs(homeDir, dir string) {
 // systemd restarts the process. Sub-system panics are caught earlier (runWatch,
 // handleExecute) and converted to errors so this path is a last resort only.
 func (d *Daemon) Run(ctx context.Context) error {
+	// Signal systemd that we are stopping on any return path (ctx cancel or error).
+	defer func() { _ = sdNotify(sdStopping) }()
+
 	defer func() {
 		if r := recover(); r != nil {
 			logx.As().Error().
 				Str("reason", "DaemonPanic").
 				Interface("panic", r).
 				Msg("Unhandled panic in daemon — exiting for systemd restart")
+			// sdStopping must be sent explicitly here because os.Exit(2) bypasses
+			// all pending defers. The sdNotify(sdStopping) defer was registered
+			// first (line 237), so in LIFO order it would run last — after this
+			// panic recovery returns. But os.Exit never returns, so that defer
+			// is never reached.
+			_ = sdNotify(sdStopping)
 			os.Exit(2)
 		}
 	}()
@@ -168,11 +264,38 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}()
 	}
 
+	// Preflight: kubeconfig must exist and be parseable before we start anything.
+	// This is a hard precondition — the provisioning workflow (story #624) writes
+	// the kubeconfig before calling `systemctl start`. A missing or invalid file
+	// is a configuration error that will never self-heal, so we fail fast here
+	// rather than burning 90 s of systemd TimeoutStartSec on pointless retries.
+	if _, err := clientcmd.BuildConfigFromFlags("", d.cfg.Kubeconfig); err != nil {
+		return fmt.Errorf("kubeconfig preflight failed — daemon cannot start: %w", err)
+	}
+
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return d.server.Start(ctx) })
 	if d.upgradeMonitor != nil {
 		eg.Go(func() error { return d.upgradeMonitor.Run(ctx) })
 	}
 	eg.Go(func() error { return d.migrationMonitor.Run(ctx) })
+
+	// Probe K8s RBAC concurrently so the server starts immediately without
+	// blocking. The probe only retries transient API connectivity failures —
+	// the kubeconfig is already validated above. READY=1 is sent only on
+	// success; if RBAC is misconfigured the probe retries until systemd cancels
+	// the context via TimeoutStartSec, marking the service failed.
+	go func() {
+		if err := probeKubeRBACWithRetry(ctx, d.cfg.Kubeconfig, d.cfg.Orbit); err != nil {
+			logx.As().Error().Err(err).
+				Str("reason", "KubeRBACProbeAborted").
+				Msg("RBAC probe aborted — not sending READY=1; systemd will time out and mark service failed")
+			return
+		}
+		if err := sdNotify(sdReady); err != nil {
+			logx.As().Warn().Err(err).Str("reason", "SdNotifyReadyFailed").Msg("Failed to send READY=1 to systemd")
+		}
+	}()
+
 	return eg.Wait()
 }

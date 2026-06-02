@@ -16,7 +16,6 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
-	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,19 +30,29 @@ func startTestDaemon(t *testing.T) (*http.Client, context.CancelFunc) {
 
 // startTestDaemonWithConfig is like startTestDaemon but accepts a ServerConfig
 // and also returns the socket path so tests can dial raw connections.
+//
+// Only the HTTP server is started — not the full Daemon — so tests are not
+// coupled to K8s client initialisation or the RBAC probe goroutine.
 func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Client, string, context.CancelFunc) {
 	t.Helper()
 
 	sockPath := filepath.Join(t.TempDir(), "daemon.sock")
-	paths := models.WeaverPaths{DaemonSockPath: sockPath}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mm := consensus.NewMigrationMonitor()
 	srv := daemon.NewServer(sockPath, mm, cfg)
-	go func() { _ = daemon.NewWithComponents(paths, srv, mm).Run(ctx) }()
 
-	// Wait until the socket is reachable.
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	// Wait until the socket is reachable; fail early if Start returns an error.
 	require.Eventually(t, func() bool {
+		select {
+		case err := <-errCh:
+			require.NoError(t, err, "server exited unexpectedly")
+			return false
+		default:
+		}
 		c, err := net.Dial("unix", sockPath)
 		if err == nil {
 			_ = c.Close()
