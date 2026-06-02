@@ -6,7 +6,7 @@
 package state
 
 import (
-	"fmt"
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 )
@@ -22,12 +22,12 @@ const (
 func GetBlockNodeNamespace() (string, error) {
 	hm, err := helm.NewManager()
 	if err != nil {
-		return "", fmt.Errorf("failed to create helm manager: %w", err)
+		return "", errorx.InternalError.Wrap(err, "failed to create helm manager")
 	}
 
 	releases, err := hm.ListAll()
 	if err != nil {
-		return "", fmt.Errorf("failed to list helm releases: %w", err)
+		return "", errorx.ExternalError.Wrap(err, "failed to list helm releases")
 	}
 
 	for _, rel := range releases {

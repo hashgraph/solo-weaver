@@ -4,9 +4,10 @@
 package alloy
 
 import (
-	"fmt"
 	"os"
 	"strings"
+
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/alloy/labels"
 	"github.com/hashgraph/solo-weaver/internal/network"
@@ -61,7 +62,7 @@ func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuil
 	if cb.clusterName == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
-			return nil, fmt.Errorf("cluster name not provided and failed to get hostname: %w", err)
+			return nil, errorx.ExternalError.Wrap(err, "cluster name not provided and failed to get hostname")
 		}
 		cb.clusterName = hostname
 	}

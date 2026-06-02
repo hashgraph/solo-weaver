@@ -3,8 +3,9 @@
 package sudoers
 
 import (
-	"fmt"
 	"strings"
+
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 )
@@ -40,11 +41,11 @@ func ValidateContent(content []byte) error {
 			continue
 		}
 		if !strings.Contains(line, "=") {
-			return fmt.Errorf("sudoers line missing '=' separator: %q", line)
+			return errorx.IllegalFormat.New("sudoers line missing '=' separator: %q", line)
 		}
 		idx := strings.LastIndex(line, ":")
 		if idx < 0 {
-			return fmt.Errorf("sudoers line missing command tag (e.g. NOPASSWD:): %q", line)
+			return errorx.IllegalFormat.New("sudoers line missing command tag (e.g. NOPASSWD:): %q", line)
 		}
 		for _, cmd := range strings.Split(line[idx+1:], ",") {
 			cmd = strings.TrimSpace(cmd)
@@ -52,7 +53,7 @@ func ValidateContent(content []byte) error {
 				continue
 			}
 			if cmd != "ALL" && !strings.HasPrefix(cmd, "/") {
-				return fmt.Errorf("sudoers command must be an absolute path or ALL, got: %q", cmd)
+				return errorx.IllegalFormat.New("sudoers command must be an absolute path or ALL, got: %q", cmd)
 			}
 		}
 	}
@@ -63,10 +64,10 @@ func ValidateContent(content []byte) error {
 // Delegates to fsx.AtomicWriteFile so partial writes are never visible to sudo.
 func WriteEntry(dst string, content []byte) error {
 	if err := ValidateContent(content); err != nil {
-		return fmt.Errorf("sudoers content failed validation: %w", err)
+		return errorx.IllegalFormat.Wrap(err, "sudoers content failed validation")
 	}
 	if err := fsx.AtomicWriteFile(dst, content, 0o440); err != nil {
-		return fmt.Errorf("failed to write sudoers entry at %s: %w", dst, err)
+		return errorx.ExternalError.Wrap(err, "failed to write sudoers entry at %s", dst)
 	}
 	return nil
 }

@@ -13,6 +13,9 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/joomcode/errorx"
+	"github.com/spf13/cobra"
+
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -23,7 +26,6 @@ import (
 	pkgconfig "github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	version "github.com/hashgraph/solo-weaver/pkg/version/cli"
-	"github.com/spf13/cobra"
 )
 
 const KeyRequireGlobalChecks = "requireGlobalChecks"
@@ -101,7 +103,7 @@ func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) error {
 
 	result, ok := finalModel.(ui.Model)
 	if !ok {
-		return fmt.Errorf("unexpected TUI model type")
+		return errorx.AssertionFailed.New("unexpected TUI model type")
 	}
 
 	if result.Err() != nil {
@@ -176,7 +178,7 @@ func deepestFailureError(r *automa.Report) error {
 		if sr.Error != nil {
 			return sr.Error
 		}
-		return fmt.Errorf("step %q failed", sr.Id)
+		return errorx.IllegalState.New("step %q failed", sr.Id)
 	}
 	return nil
 }

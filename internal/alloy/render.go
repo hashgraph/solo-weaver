@@ -3,9 +3,10 @@
 package alloy
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -32,7 +33,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	// 1. Core config (always required)
 	coreConfig, err := templates.Render(CoreTemplatePath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render core config: %w", err)
+		return nil, errorx.InternalError.Wrap(err, "failed to render core config")
 	}
 	modules = append(modules, ModuleConfig{
 		Name:     "core",
@@ -49,7 +50,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 		}
 		remotesConfig, err := templates.Render(RemotesTemplatePath, remotesData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render remotes config: %w", err)
+			return nil, errorx.InternalError.Wrap(err, "failed to render remotes config")
 		}
 		modules = append(modules, ModuleConfig{
 			Name:     "remotes",
@@ -69,7 +70,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	if hasPrometheusRemotes {
 		agentMetricsConfig, err := templates.Render(AgentMetricsTemplatePath, moduleData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render agent-metrics config: %w", err)
+			return nil, errorx.InternalError.Wrap(err, "failed to render agent-metrics config")
 		}
 		modules = append(modules, ModuleConfig{
 			Name:     "agent-metrics",
@@ -82,7 +83,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	if hasPrometheusRemotes {
 		nodeExporterConfig, err := templates.Render(NodeExporterTemplatePath, moduleData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render node-exporter config: %w", err)
+			return nil, errorx.InternalError.Wrap(err, "failed to render node-exporter config")
 		}
 		modules = append(modules, ModuleConfig{
 			Name:     "node-exporter",
@@ -95,7 +96,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	if hasPrometheusRemotes {
 		kubeletConfig, err := templates.Render(KubeletTemplatePath, moduleData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render kubelet config: %w", err)
+			return nil, errorx.InternalError.Wrap(err, "failed to render kubelet config")
 		}
 		modules = append(modules, ModuleConfig{
 			Name:     "kubelet",
@@ -108,7 +109,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	if hasLokiRemotes {
 		syslogConfig, err := templates.Render(SyslogTemplatePath, moduleData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render syslog config: %w", err)
+			return nil, errorx.InternalError.Wrap(err, "failed to render syslog config")
 		}
 		modules = append(modules, ModuleConfig{
 			Name:     "syslog",
@@ -122,7 +123,7 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 	if cb.MonitorBlockNode() && hasPrometheusRemotes && hasLokiRemotes {
 		blockNodeConfig, err := templates.Render(BlockNodeTemplatePath, moduleData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to render block-node config: %w", err)
+			return nil, errorx.InternalError.Wrap(err, "failed to render block-node config")
 		}
 		modules = append(modules, ModuleConfig{
 			Name:     "block-node",

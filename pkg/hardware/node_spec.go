@@ -5,6 +5,7 @@ package hardware
 import (
 	"fmt"
 
+	"github.com/joomcode/errorx"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -25,7 +26,7 @@ var _ Spec = (*nodeSpec)(nil)
 func NewNodeSpec(nodeType, profile string, hostProfile HostProfile) (Spec, error) {
 	requirements, found := GetRequirements(nodeType, profile)
 	if !found {
-		return nil, fmt.Errorf("no requirements defined for node type %q with profile %q", nodeType, profile)
+		return nil, errorx.IllegalArgument.New("no requirements defined for node type %q with profile %q", nodeType, profile)
 	}
 
 	return &nodeSpec{

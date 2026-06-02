@@ -9,10 +9,11 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -205,7 +206,7 @@ func InitializeCluster() *automa.StepBuilder {
 
 			_, err = automa_steps.RunBashScript(pullImageCmd, "")
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to pull kubeadm images: %w", err)))
+				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to pull kubeadm images")))
 			}
 			logx.As().Info().Msg("Kubeadm images pulled successfully.")
 
@@ -216,17 +217,17 @@ func InitializeCluster() *automa.StepBuilder {
 
 			_, err = automa_steps.RunBashScript(initCmd, "")
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to initialize cluster with kubeadm: %w", err)))
+				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to initialize cluster with kubeadm")))
 			}
 
 			// Step 3: Configure kubeconfig
 			kubeConfigManager, err := kube.NewKubeConfigManager()
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to create kubeconfig manager: %w", err)))
+				return automa.FailureReport(stp, automa.WithError(errorx.InternalError.Wrap(err, "failed to create kubeconfig manager")))
 			}
 			err = kubeConfigManager.Configure()
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(fmt.Errorf("failed to configure kubeconfig: %w", err)))
+				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to configure kubeconfig")))
 			}
 
 			return automa.SuccessReport(stp, automa.WithDetail("Cluster initialized successfully"))

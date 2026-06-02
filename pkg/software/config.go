@@ -11,8 +11,10 @@ import (
 	"sync"
 	"text/template"
 
-	"github.com/hashgraph/solo-weaver/pkg/semver"
+	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
+
+	"github.com/hashgraph/solo-weaver/pkg/semver"
 )
 
 //go:embed infrastructure-catalog.yaml
@@ -211,7 +213,7 @@ func (v VersionDetails) GetArchiveByName(archiveName string) (*ArchiveDetail, er
 			return &v.Archives[i], nil
 		}
 	}
-	return nil, fmt.Errorf("archive file '%s' not found", archiveName)
+	return nil, errorx.IllegalArgument.New("archive file '%s' not found", archiveName)
 }
 
 // GetBinaryByName retrieves a specific binary file by name
@@ -221,7 +223,7 @@ func (v VersionDetails) GetBinaryByName(binaryName string) (*BinaryDetail, error
 			return &v.Binaries[i], nil
 		}
 	}
-	return nil, fmt.Errorf("binary file '%s' not found", binaryName)
+	return nil, errorx.IllegalArgument.New("binary file '%s' not found", binaryName)
 }
 
 // GetConfigByName retrieves a specific configuration file by name
@@ -231,7 +233,7 @@ func (v VersionDetails) GetConfigByName(configName string) (*ConfigDetail, error
 			return &v.Configs[i], nil
 		}
 	}
-	return nil, fmt.Errorf("configuration file '%s' not found", configName)
+	return nil, errorx.IllegalArgument.New("configuration file '%s' not found", configName)
 }
 
 type ArchiveDetail struct {
@@ -391,13 +393,13 @@ func (c *InfrastructureCatalog) validate() error {
 	for i := range c.Host {
 		host := &c.Host[i]
 		if _, err := host.GetDefaultVersion(); err != nil {
-			return fmt.Errorf("host[%s]: %w", host.Name, err)
+			return errorx.IllegalFormat.Wrap(err, "host[%s]", host.Name)
 		}
 	}
 	for i := range c.Cluster {
 		chart := &c.Cluster[i]
 		if err := chart.validate(); err != nil {
-			return fmt.Errorf("cluster[%s]: %w", chart.Name, err)
+			return errorx.IllegalFormat.Wrap(err, "cluster[%s]", chart.Name)
 		}
 	}
 	return nil
@@ -416,28 +418,28 @@ func (cm *ChartMetadata) validate() error {
 	switch cm.Type {
 	case ChartTypeClassic:
 		if cm.Repo == "" {
-			return fmt.Errorf("classic chart must declare a repo")
+			return errorx.IllegalFormat.New("classic chart must declare a repo")
 		}
 	case ChartTypeOCI:
 		if cm.Repo != "" {
-			return fmt.Errorf("oci chart must not declare a repo (repo is encoded in the chart reference)")
+			return errorx.IllegalFormat.New("oci chart must not declare a repo (repo is encoded in the chart reference)")
 		}
 	case "":
-		return fmt.Errorf("missing type (must be %q or %q)", ChartTypeClassic, ChartTypeOCI)
+		return errorx.IllegalFormat.New("missing type (must be %q or %q)", ChartTypeClassic, ChartTypeOCI)
 	default:
-		return fmt.Errorf("unknown type %q (must be %q or %q)", cm.Type, ChartTypeClassic, ChartTypeOCI)
+		return errorx.IllegalFormat.New("unknown type %q (must be %q or %q)", cm.Type, ChartTypeClassic, ChartTypeOCI)
 	}
 	if cm.Chart == "" {
-		return fmt.Errorf("missing chart reference")
+		return errorx.IllegalFormat.New("missing chart reference")
 	}
 	if cm.Namespace == "" {
-		return fmt.Errorf("missing namespace")
+		return errorx.IllegalFormat.New("missing namespace")
 	}
 	if cm.Release == "" {
-		return fmt.Errorf("missing release")
+		return errorx.IllegalFormat.New("missing release")
 	}
 	if len(cm.Versions) == 0 {
-		return fmt.Errorf("no versions declared")
+		return errorx.IllegalFormat.New("no versions declared")
 	}
 	// Iterate over versions in a stable, alphabetical order so that when
 	// more than one version is malformed the error message always names
@@ -451,10 +453,10 @@ func (cm *ChartMetadata) validate() error {
 	for _, version := range versions {
 		details := cm.Versions[version]
 		if details.Algorithm == "" {
-			return fmt.Errorf("version %s: empty algorithm", version)
+			return errorx.IllegalFormat.New("version %s: empty algorithm", version)
 		}
 		if details.Value == "" {
-			return fmt.Errorf("version %s: empty checksum", version)
+			return errorx.IllegalFormat.New("version %s: empty checksum", version)
 		}
 	}
 	if _, err := cm.GetDefaultVersion(); err != nil {
@@ -469,7 +471,7 @@ func (cm *ChartMetadata) validate() error {
 // `default:` is unset or names an unknown version.
 func (cm *ChartMetadata) GetDefaultVersion() (string, error) {
 	if cm.Default == "" {
-		return "", fmt.Errorf("chart %s has no default version declared", cm.Name)
+		return "", errorx.IllegalFormat.New("chart %s has no default version declared", cm.Name)
 	}
 	if _, ok := cm.Versions[cm.Default]; !ok {
 		return "", NewVersionNotFoundError(cm.Name, string(cm.Default))
@@ -498,7 +500,7 @@ func executeTemplate(templateStr string, data TemplateData) (string, error) {
 // error when `default:` is unset or names an unknown version.
 func (si *ArtifactMetadata) GetDefaultVersion() (string, error) {
 	if si.Default == "" {
-		return "", fmt.Errorf("artifact %s has no default version declared", si.Name)
+		return "", errorx.IllegalFormat.New("artifact %s has no default version declared", si.Name)
 	}
 	if _, ok := si.Versions[si.Default]; !ok {
 		return "", NewVersionNotFoundError(si.Name, string(si.Default))

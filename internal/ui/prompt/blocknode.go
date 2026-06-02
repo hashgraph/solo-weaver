@@ -9,13 +9,15 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/joomcode/errorx"
+	"github.com/spf13/cobra"
+
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
-	"github.com/spf13/cobra"
 )
 
 // storagePathMode constants define the two mutually exclusive storage configuration modes.
@@ -27,14 +29,14 @@ const (
 // validateRetentionThreshold validates that a retention threshold is a non-negative integer.
 func validateRetentionThreshold(s string) error {
 	if s == "" {
-		return fmt.Errorf("retention threshold cannot be empty")
+		return errorx.IllegalArgument.New("retention threshold cannot be empty")
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return fmt.Errorf("retention threshold must be a non-negative integer")
+		return errorx.IllegalArgument.New("retention threshold must be a non-negative integer")
 	}
 	if n < 0 {
-		return fmt.Errorf("retention threshold must be a non-negative integer")
+		return errorx.IllegalArgument.New("retention threshold must be a non-negative integer")
 	}
 	return nil
 }
@@ -54,7 +56,7 @@ func validateOptionalPath(s string) error {
 // individual-paths mode, where every path must be provided.
 func validateRequiredPath(s string) error {
 	if s == "" {
-		return fmt.Errorf("path cannot be empty in individual paths mode")
+		return errorx.IllegalArgument.New("path cannot be empty in individual paths mode")
 	}
 	_, err := sanity.SanitizePath(s)
 	return err
@@ -74,7 +76,7 @@ func namespaceInputPrompt(eff string, target *string) InputPrompt {
 		Target:         target,
 		Validate: func(s string) error {
 			if s == "" {
-				return fmt.Errorf("namespace cannot be empty")
+				return errorx.IllegalArgument.New("namespace cannot be empty")
 			}
 			return sanity.ValidateIdentifier(s)
 		},
@@ -91,7 +93,7 @@ func releaseNameInputPrompt(eff string, target *string) InputPrompt {
 		Target:         target,
 		Validate: func(s string) error {
 			if s == "" {
-				return fmt.Errorf("release name cannot be empty")
+				return errorx.IllegalArgument.New("release name cannot be empty")
 			}
 			return sanity.ValidateIdentifier(s)
 		},
@@ -108,7 +110,7 @@ func chartVersionInputPrompt(eff string, target *string) InputPrompt {
 		Target:         target,
 		Validate: func(s string) error {
 			if s == "" {
-				return fmt.Errorf("chart version cannot be empty")
+				return errorx.IllegalArgument.New("chart version cannot be empty")
 			}
 			return sanity.ValidateVersion(s)
 		},
@@ -529,7 +531,7 @@ func RunPluginPresetPrompts(
 		Value(&selectedPlugins).
 		Validate(func(selected []string) error {
 			if len(selected) == 0 {
-				return fmt.Errorf("at least one plugin must be selected for the Custom preset")
+				return errorx.IllegalArgument.New("at least one plugin must be selected for the Custom preset")
 			}
 			return nil
 		})

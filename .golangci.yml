@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# golangci-lint v2 configuration.
+#
+# Scope is intentionally narrow: only forbidigo is enabled, and only to
+# enforce that production code uses github.com/joomcode/errorx for error
+# construction and wrapping rather than the stdlib errors.New / fmt.Errorf.
+# Other linters are not enabled here so adopting this config does not
+# require a large pre-existing-issues cleanup.
+#
+# Pre-existing call sites are exempted via `issues.new-from-rev: origin/main`,
+# which scopes findings to lines changed relative to main. CI must check
+# out with `fetch-depth: 0` so the base commit is available.
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags: []
+  # Default mode (no explicit `modules-download-mode`) lets golangci-lint
+  # auto-pick between vendor and module cache the same way `go build` and
+  # `go vet` do, avoiding spurious vendor-consistency errors during lint.
+
+linters:
+  default: none
+  enable:
+    - forbidigo
+
+  settings:
+    forbidigo:
+      analyze-types: true
+      exclude-godoc-examples: true
+      forbid:
+        - pattern: '^errors\.New$'
+          msg: >-
+            solo-weaver standard: use github.com/joomcode/errorx instead of
+            errors.New, e.g. errorx.IllegalState.New("...") or
+            errorx.IllegalArgument.New("...").
+        - pattern: '^fmt\.Errorf$'
+          msg: >-
+            solo-weaver standard: use github.com/joomcode/errorx instead of
+            fmt.Errorf. Use errorx.<Type>.Wrap(err, "...") to add context
+            to an existing error, or errorx.<Type>.New("...") for a new
+            one.
+
+  exclusions:
+    # Tests are allowed to use errors.New / fmt.Errorf — error semantics
+    # in tests are local to the test and don't need rich typing.
+    rules:
+      - path: _test\.go
+        linters:
+          - forbidigo
+      # Generated code (e.g. mocks_generated.go produced by `task mocks`) is
+      # outside the contributor's control.
+      - path: '(\.gen\.go|_generated\.go|/generated/)$'
+        linters:
+          - forbidigo
+
+issues:
+  # Only flag findings on lines changed relative to origin/main. Existing
+  # call sites are out of scope for this gate; they are migrated in the
+  # same PR but the gate itself only polices new code going forward.
+  new-from-rev: origin/main
+  max-issues-per-linter: 0
+  max-same-issues: 0

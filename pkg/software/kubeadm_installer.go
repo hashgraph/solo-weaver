@@ -198,7 +198,7 @@ var GenerateKubeadmToken = func() (string, error) {
 		for i := range b {
 			nBig, err := rand.Int(rand.Reader, big.NewInt(int64(len(allowedChars))))
 			if err != nil {
-				return "", fmt.Errorf("failed to generate random int for kubeadm token: %w", err)
+				return "", errorx.ExternalError.Wrap(err, "failed to generate random int for kubeadm token")
 			}
 			b[i] = allowedChars[nBig.Int64()]
 		}
