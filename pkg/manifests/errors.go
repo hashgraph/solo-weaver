@@ -13,10 +13,12 @@ var (
 	MissingSchemaVersionError     = ErrorsNamespace.NewType("missing_schema_version")
 	UnsupportedSchemaVersionError = ErrorsNamespace.NewType("unsupported_schema_version")
 	UnknownKindError              = ErrorsNamespace.NewType("unknown_kind")
+	ValidationError               = ErrorsNamespace.NewType("validation_error")
 
 	kindProperty              = errorx.RegisterPrintableProperty("kind")
 	schemaVersionProperty     = errorx.RegisterPrintableProperty("schema_version")
 	supportedVersionsProperty = errorx.RegisterPrintableProperty("supported_versions")
+	fieldProperty             = errorx.RegisterPrintableProperty("field")
 )
 
 const (
@@ -24,6 +26,7 @@ const (
 	missingSchemaVersionErrorMsg     = "manifest %q is missing required field \"schemaVersion\""
 	unsupportedSchemaVersionErrorMsg = "manifest %q declares schemaVersion %q (supported: %v)"
 	unknownKindErrorMsg              = "unknown manifest kind %q"
+	validationErrorMsg               = "manifest %q: invalid %s: %s"
 )
 
 func NewParseError(cause error, kind Kind) *errorx.Error {
@@ -54,4 +57,15 @@ func NewUnsupportedSchemaVersionError(kind Kind, declared SchemaVersion, support
 func NewUnknownKindError(kind Kind) *errorx.Error {
 	return UnknownKindError.New(unknownKindErrorMsg, string(kind)).
 		WithProperty(kindProperty, string(kind))
+}
+
+// NewValidationError flags a semantic-validation failure on a parsed manifest:
+// a field is present and structurally valid, but its value violates a rule
+// that yaml.Unmarshal alone cannot enforce (e.g. layerHashes appearing in the
+// wrong place for a deterministic build). The field path is the dotted Go
+// field name, e.g. `images.backupUploader.registries[0].layerHashes`.
+func NewValidationError(kind Kind, field string, reason string) *errorx.Error {
+	return ValidationError.New(validationErrorMsg, string(kind), field, reason).
+		WithProperty(kindProperty, string(kind)).
+		WithProperty(fieldProperty, field)
 }
