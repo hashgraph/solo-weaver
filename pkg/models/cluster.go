@@ -12,7 +12,7 @@ type ClusterInfo struct {
 	KubeconfigPath string                  `yaml:"kubeconfigPath" json:"kubeconfigPath"`
 	ServerVersion  k8sversion.Info         `yaml:"serverVersion" json:"serverVersion"`
 	Host           string                  `yaml:"host" json:"host"`
-	Proxy          string                  `yaml:"proxy", json:"proxy"`
+	Proxy          string                  `yaml:"proxy" json:"proxy"`
 	Clusters       map[string]*api.Cluster `yaml:"clusters" json:"clusters"`
 	Contexts       map[string]*api.Context `yaml:"contexts" json:"contexts"`
 	CurrentContext string                  `yaml:"currentContext" json:"currentContext"`

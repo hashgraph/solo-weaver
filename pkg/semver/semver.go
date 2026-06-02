@@ -130,7 +130,7 @@ func (v *Semver) genVersionStr() error {
 	// version = major.minor.patch
 	_, err := buffer.WriteString(fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.patch))
 	if err != nil {
-		return errorx.IllegalFormat.Wrap(err, "failed to generate version string with major %q, minor %q and patch %q",
+		return errorx.IllegalFormat.Wrap(err, "failed to generate version string with major %d, minor %d and patch %d",
 			v.major, v.minor, v.patch)
 	}
 
