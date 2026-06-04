@@ -86,6 +86,11 @@ func init() {
 	// disable global checks for install command since we need to install it first without any checks
 	common.SkipGlobalChecks(selfInstallCmd)
 
+	// `version` must be invokable on an uninstalled host (it's the no-install
+	// sanity check reviewers run), so it opts out of the global checks too.
+	versionCmd := version.Cmd()
+	common.SkipGlobalChecks(versionCmd)
+
 	// add subcommands
 	rootCmd.AddCommand(selfInstallCmd)
 	rootCmd.AddCommand(selfUninstallCmd)
@@ -93,7 +98,7 @@ func init() {
 	rootCmd.AddCommand(block.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
-	rootCmd.AddCommand(version.Cmd())
+	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
 
 	if common.DetectShortNameCollisions(rootCmd) {
