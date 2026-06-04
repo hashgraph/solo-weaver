@@ -19,14 +19,16 @@ tasks:
     dir: scripts
     deps:
       - "vm:start"
+      - "vm:sync"
     cmds:
       - "./debug-vm-run.sh test {{.CLI_ARGS}}"
-  
+
   vm:debug:app:
     desc: "Start remote application debug server on the VM (pass args with -- after command)"
     dir: scripts
     deps:
       - "vm:start"
+      - "vm:sync"
     cmds:
       - "./debug-vm-run.sh app {{.CLI_ARGS}}"
   
@@ -85,6 +87,12 @@ tasks:
         if ! command -v rsync >/dev/null 2>&1; then
           echo "Installing rsync via Homebrew..."
           brew install rsync
+        elif rsync --version 2>&1 | head -1 | grep -qi openrsync; then
+          # macOS ships Apple's openrsync at /usr/bin/rsync, which injects
+          # flags (e.g. --apple-no-connectx) that Samba rsync in the VM rejects.
+          # Force-install the full Samba rsync via Homebrew.
+          echo "Detected Apple's openrsync (incompatible with VM's Samba rsync); installing Homebrew rsync..."
+          brew install rsync
         else
           echo "rsync is already installed"
         fi
@@ -121,7 +129,7 @@ tasks:
           echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
           if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
             echo "✓ Golden VM already exists in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-            echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory ('open -a UTM')."
+            echo "👉 Please restart UTM to reload VMs ('open -a UTM'), then run 'task vm:start'."
             exit 1 # non zero would stop further steps
           else
             echo "✓ No existing golden VM found, proceeding to download."
@@ -187,7 +195,7 @@ tasks:
         cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
         
         echo "✓ Golden VM downloaded successfully and placed in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-        echo "👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory ('open -a UTM')."
+        echo "👉 Please restart UTM to reload VMs ('open -a UTM'), then run 'task vm:start'."
         exit 1 # non zero would stop further steps
   
   vm:reset:
@@ -322,7 +330,53 @@ tasks:
           -o ConnectTimeout=10 -o ServerAliveInterval=3 -o ServerAliveCountMax=2 \
           -o LogLevel=ERROR -fN -L 2222:127.0.0.1:22 {{.VM_USER}}@$VM_IP || true
         echo "✓ SSH port forwarding established on localhost:2222 for debugging purposes"
-  
+
+  vm:sync:
+    desc: "Sync the host source tree to the VM's /mnt/solo-weaver via rsync (one-way, host → VM). Run after switching worktrees or editing files on the host."
+    deps:
+      - vm:install
+      - vm:start
+    cmds:
+      - |
+        VM_IP=$({{.GET_VM_IP}} get_vm_ip)
+        if [ -z "$VM_IP" ]; then
+          echo "❌ Could not determine VM IP. Is the VM running?"
+          exit 1
+        fi
+        # Preflight: rsync must be installed in the VM and /mnt/solo-weaver
+        # must be writable by {{.VM_USER}}. A configured/golden-image VM
+        # satisfies both; older or hand-rolled VMs may not.
+        if ! ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$VM_IP \
+          'command -v rsync >/dev/null 2>&1 && [ -w /mnt/solo-weaver ]'; then
+          echo "❌ VM preflight failed: 'rsync' missing or /mnt/solo-weaver not writable by {{.VM_USER}}."
+          echo "👉 Run 'task vm:reset' to re-clone the VM from the golden image."
+          exit 1
+        fi
+        # rsync's -e arg gets re-parsed by the shell, which mangles SSH_OPTS
+        # values that contain nested quotes (e.g. ProxyCommand="nc ..."),
+        # leaking inner tokens into rsync's argv. Write ssh + opts to a
+        # wrapper script and pass that as -e so the option string survives.
+        SSH_WRAPPER=$(mktemp -t solo-vm-ssh.XXXXXX)
+        trap 'rm -f "$SSH_WRAPPER"' EXIT
+        cat > "$SSH_WRAPPER" <<'EOF'
+        #!/bin/sh
+        exec ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} "$@"
+        EOF
+        chmod +x "$SSH_WRAPPER"
+        echo "📤 Syncing $(pwd) → {{.VM_USER}}@$VM_IP:/mnt/solo-weaver/ ..."
+        rsync -az --delete \
+          --exclude='.git' \
+          --exclude='.ssh' \
+          --exclude='*.iso' \
+          --exclude='*.img' \
+          --exclude='*.qcow2' \
+          --exclude='*.log' \
+          --exclude='.DS_Store' \
+          -e "$SSH_WRAPPER" \
+          ./ \
+          {{.VM_USER}}@$VM_IP:/mnt/solo-weaver/
+        echo "✓ Sync complete"
+
   vm:configure:
     internal: true
     desc: "Configure the VM with SSH, sudo, and mounts (full configuration)"
@@ -434,21 +488,16 @@ tasks:
           sudo systemctl restart sshd || sudo systemctl restart ssh
           echo '✓ SSH daemon configured for root login with keys'
         
-          echo 'Mounting shared directory...'
           sudo mkdir -p /mnt/solo-weaver
-          if ! grep -q '/mnt/solo-weaver' /etc/fstab; then
-            echo 'share   /mnt/solo-weaver   9p  trans=virtio,version=9p2000.L,rw,nofail 0   0' | sudo tee -a /etc/fstab >/dev/null
-          fi
-          sudo mount -a || true
-        
-          # Try to set ownership and permissions to the VM user (best effort)
-        
-          echo "✓ Shared directory mounted at /mnt/solo-weaver"
+          sudo chown -R {{.VM_USER}}:{{.VM_USER}} /mnt/solo-weaver
+          echo '✓ /mnt/solo-weaver ready for rsync (run task vm:sync from the host)'
         "
   
   vm:configure:tools:
     internal: true
     desc: "Install development tools (Git, Task, Go, Delve) - runs after proxy tunnels are set up"
+    deps:
+      - vm:sync
     cmds:
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)

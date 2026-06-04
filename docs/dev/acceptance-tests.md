@@ -29,6 +29,9 @@ These tasks are designed to run inside any Linux VM — both the local UTM VM
 - UTM VM set up (`task vm:start`)
 - Cache proxy running (`task proxy:start`)
 - Binary built (`task build:cli GOOS=linux GOARCH=arm64`)
+- Host tree synced into the VM (`task vm:sync`) — required after editing files on the host or switching worktrees;
+  the `vm:test:*`, `vm:alloy:*`, `vm:teleport:*`, and debug tasks invoke this automatically, but the in-VM UAT runs
+  driven from `task vm:ssh:proxy` rely on the most recent manual `task vm:sync`.
 
 ## A. Core Block Node Lifecycle
 

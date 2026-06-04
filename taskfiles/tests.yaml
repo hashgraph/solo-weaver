@@ -110,6 +110,7 @@ tasks:
     desc: "Run all unit tests in a UTM VM (useful for testing system-level functionality)"
     deps:
       - "vm:start"
+      - "vm:sync"
     cmds:
       - cmd: |
           VM_IP=$({{.GET_VM_IP}} get_vm_ip)
@@ -132,6 +133,7 @@ tasks:
     desc: "Run all integration tests in a UTM VM with cache proxies (useful for testing system-level functionality). Use TEST_NAME to run a specific test, e.g., task vm:test:integration TEST_NAME='^Test_InitializeCluster_Fresh_Integration$'"
     deps:
       - vm:start
+      - vm:sync
     cmds:
       - cmd: |
           VM_IP=$({{.GET_VM_IP}} get_vm_ip)

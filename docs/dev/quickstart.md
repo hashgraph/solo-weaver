@@ -9,7 +9,7 @@ development, testing, and debugging using UTM VMs.
 - Task (https://taskfile.dev/#/installation)
 - Git
 - UTM (for local development and debugging)
-- rsync (for file synchronization with UTM VMs)
+- rsync (auto-installed via `task vm:install`; on macOS, Homebrew rsync is used because the system `/usr/bin/rsync` is Apple's openrsync and is incompatible with the VM's Samba rsync)
 - (Optional) IntelliJ IDEA or GoLand for debugging
 
 ## Project Setup 
@@ -66,23 +66,38 @@ This is handled automatically when you run:
 task vm:start
 ```
 
-**NOTE:** If no VM image exists yet, it will download **golden Debian image**, and you will need to restart UTM to load
-the new image and set up shared folder (e.g. `solo-weaver`).
-Remember you only need to set up the shared folder once. You will see instructions as below:
+**NOTE:** If no VM image exists yet, it will download the **golden Debian image** and prompt you to restart UTM so it
+picks up the new VM:
 
-``` 
-👉 Please restart UTM to reload VMs and set up the shared solo-weaver directory (`open -a UTM`).
+```
+👉 Please restart UTM to reload VMs ('open -a UTM'), then run 'task vm:start'.
 ```
 
-Once you restart UTM and set the shared-folder `solo-weaver`, run the following command again to start the VM:
-
-```sh
-task vm:start
-```
+After restarting UTM, run `task vm:start` again to finish provisioning.
 
 ---
 
-#### 2. Day-to-Day Debugging & Testing
+#### 2. Syncing host changes into the VM
+
+The host source tree is **not** auto-mounted in the VM. Instead, the VM gets a one-way rsync copy at
+`/mnt/solo-weaver`. Run `task vm:sync` after editing files on the host, after switching git worktrees, or any time you
+want the VM to reflect the current host state:
+
+```sh
+task vm:sync
+```
+
+`task vm:test:unit`, `task vm:test:integration`, `task vm:alloy:start`, `task vm:teleport:start`, and the debug-server
+tasks already declare `vm:sync` as a dependency, so the most common workflows stay one-command. Plain `task vm:ssh`
+does **not** auto-sync — call `task vm:sync` first if you need fresh code inside the SSH session.
+
+`task vm:sync` uses `rsync -az --delete`, so files removed on the host are also removed in the VM. The `bin/` and
+`vendor/` directories are included (local builds happen on the host); `.git`, `.ssh`, and VM disk artifacts
+(`*.iso`, `*.img`, `*.qcow2`) are excluded.
+
+---
+
+#### 3. Day-to-Day Debugging & Testing
 
 Once you have started the vm, you can follow the instructions below to run and debug your application or tests inside
 the VM directly from IntelliJ IDEA or other IDEs.
