@@ -14,26 +14,24 @@ import (
 )
 
 const (
-	SetupBlockNodeStepId                 = "setup-block-node"
-	SetupBlockNodeStorageStepId          = "setup-block-node-storage"
-	CreateBlockNodeNamespaceStepId       = "create-block-node-namespace"
-	CreateBlockNodePVsStepId             = "create-block-node-pvs"
-	DeleteBlockNodePVsStepId             = "delete-block-node-pvs"
-	RecreateBlockNodeStorageStepId       = "recreate-block-node-storage"
-	InstallBlockNodeStepId               = "install-block-node"
-	UninstallBlockNodeStepId             = "uninstall-block-node"
-	UpgradeBlockNodeStepId               = "upgrade-block-node"
-	WaitForBlockNodeStepId               = "wait-for-block-node"
-	ResetBlockNodeStepId                 = "reset-block-node"
-	PurgeBlockNodeStorageStepId          = "purge-block-node-storage"
-	ScaleDownBlockNodeStepId             = "scale-down-block-node"
-	ClearBlockNodeStorageStepId          = "clear-block-node-storage"
-	ScaleUpBlockNodeStepId               = "scale-up-block-node"
-	WaitForBlockNodeTerminatedStepId     = "wait-for-block-node-terminated"
-	RolloutRestartBlockNodeStepId        = "rollout-restart-block-node"
-	SnapshotBlockNodeServicesStepId      = "snapshot-block-node-services"
-	RestartCiliumIfServicesChangedStepId = "restart-cilium-if-services-changed"
-	VerifyBlockNodeReachableStepId       = "verify-block-node-reachable"
+	SetupBlockNodeStepId             = "setup-block-node"
+	SetupBlockNodeStorageStepId      = "setup-block-node-storage"
+	CreateBlockNodeNamespaceStepId   = "create-block-node-namespace"
+	CreateBlockNodePVsStepId         = "create-block-node-pvs"
+	DeleteBlockNodePVsStepId         = "delete-block-node-pvs"
+	RecreateBlockNodeStorageStepId   = "recreate-block-node-storage"
+	InstallBlockNodeStepId           = "install-block-node"
+	UninstallBlockNodeStepId         = "uninstall-block-node"
+	UpgradeBlockNodeStepId           = "upgrade-block-node"
+	WaitForBlockNodeStepId           = "wait-for-block-node"
+	ResetBlockNodeStepId             = "reset-block-node"
+	PurgeBlockNodeStorageStepId      = "purge-block-node-storage"
+	ScaleDownBlockNodeStepId         = "scale-down-block-node"
+	ClearBlockNodeStorageStepId      = "clear-block-node-storage"
+	ScaleUpBlockNodeStepId           = "scale-up-block-node"
+	WaitForBlockNodeTerminatedStepId = "wait-for-block-node-terminated"
+	RolloutRestartBlockNodeStepId    = "rollout-restart-block-node"
+	VerifyBlockNodeReachableStepId   = "verify-block-node-reachable"
 )
 
 // SetupBlockNode sets up the block node on the cluster
@@ -317,22 +315,23 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 
 // UpgradeBlockNode upgrades the block node on the cluster.
 //
-// The pre-upgrade Service snapshot + conditional Cilium DS restart + reachability
-// probe at the tail are the fix for issue #619: Helm upgrades that change
-// Service.spec.type leave Cilium's eBPF reconciler in a stale state, blackholing
-// external traffic. The snapshot lets the workflow restart Cilium only when an
-// upgrade actually mutated a Service (the common chart-version-bump case is
-// no-change → no ~30s restart cost). The probe converts any remaining failure
-// mode (Cilium, MetalLB, chart, firewall) into a loud workflow error.
+// The upgradeBlockNode step deletes the helm-owned Services immediately
+// before calling helm so that helm recreates them as fresh CREATE events.
+// Cilium's eBPF service reconciler drops the `spec.type` transition UPDATE
+// event (the root cause of #619) but handles CREATE cleanly, so the
+// topology flip heals itself without any kube-system-wide Cilium DaemonSet
+// restart. The delete is placed AFTER preflight (migration discovery,
+// values-file rendering) so a preflight failure leaves the Services intact
+// — the failure window between delete and helm shrinks to a function call.
+// The post-upgrade reachability probe converts any remaining failure mode
+// (Cilium, MetalLB, chart, firewall) into a loud workflow error. See #644.
 func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
 		EnsureHederaOwnerStep(),
-		snapshotBlockNodeServices(blockNodeManagerProvider),
 		upgradeBlockNode(inputs, blockNodeManagerProvider),
 		waitForBlockNode(blockNodeManagerProvider),
-		restartCiliumIfServicesChanged(blockNodeManagerProvider),
 		verifyBlockNodeReachable(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -347,7 +346,15 @@ func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		})
 }
 
-// upgradeBlockNode upgrades the block node helm chart
+// upgradeBlockNode upgrades the block node helm chart.
+//
+// Order matters: preflight (BuildMigrationWorkflow, ComputeValuesFile,
+// migrationWorkflow.Build) runs before DeleteHelmOwnedServices so that any
+// preflight failure leaves the Services intact and the cluster reachable.
+// The Services are deleted only at the commit point — immediately before the
+// helm operation that would have recreated them anyway — so the failure
+// window between delete and helm is a function call. Helm's atomic mode
+// covers anything that fails from UpgradeChart onward.
 func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blocknode.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(UpgradeBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -358,7 +365,7 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Check if this upgrade requires migrations due to breaking chart changes
+			// Preflight: any failure here is safe — Services intact, no outage.
 			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, inputs.Profile, inputs.ValuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
@@ -372,6 +379,12 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 
+				// Commit point: delete Services immediately before the helm
+				// operation that the migration workflow will perform.
+				if err := manager.DeleteHelmOwnedServices(ctx); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+
 				report := workflow.Execute(ctx)
 				if report.Error != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
@@ -382,9 +395,14 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			// Normal upgrade path
+			// Normal upgrade path: preflight values computation first.
 			valuesFilePath, err := manager.ComputeValuesFile(inputs.Profile, inputs.ValuesFile)
 			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			// Commit point: delete Services immediately before helm upgrade.
+			if err := manager.DeleteHelmOwnedServices(ctx); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -728,61 +746,6 @@ func RecreateBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBui
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node storage recreated successfully")
-		})
-}
-
-// snapshotBlockNodeServices captures the current spec of every Service in the
-// block-node namespace onto the shared Manager. Pair with
-// restartCiliumIfServicesChanged later in the workflow to skip the Cilium DS
-// restart when the upgrade did not actually touch any Service.
-func snapshotBlockNodeServices(getManager func() (*blocknode.Manager, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId(SnapshotBlockNodeServicesStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			manager, err := getManager()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			if err := manager.SnapshotServices(ctx); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Snapshotting Block Node Services")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to snapshot Block Node Services")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node Services snapshotted")
-		})
-}
-
-// restartCiliumIfServicesChanged restarts the Cilium DaemonSet only when the
-// block-node Service set differs from the pre-upgrade snapshot. See
-// `blocknode.Manager.RestartCiliumDaemonSetIfServicesChanged` and issue #619.
-func restartCiliumIfServicesChanged(getManager func() (*blocknode.Manager, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId(RestartCiliumIfServicesChangedStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			manager, err := getManager()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			if err := manager.RestartCiliumDaemonSetIfServicesChanged(ctx); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Checking whether Cilium DaemonSet needs a restart")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to restart Cilium DaemonSet")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Cilium DaemonSet check complete")
 		})
 }
 

@@ -47,22 +47,16 @@ var (
 
 // Manager handles block node setup and management operations.
 // Methods are grouped by concern across sibling files:
-//   - storage.go  — directory setup, PV/PVC lifecycle, path resolution
-//   - chart.go    — Helm install/upgrade/uninstall, StatefulSet and pod lifecycle
-//   - values.go   — Helm values file computation and YAML injection helpers
+//   - storage.go      — directory setup, PV/PVC lifecycle, path resolution
+//   - chart.go        — Helm install/upgrade/uninstall, StatefulSet and pod lifecycle, helm-owned Service teardown
+//   - values.go       — Helm values file computation and YAML injection helpers
+//   - reachability.go — post-upgrade external-reachability probe
 type Manager struct {
 	fsManager       fsx.Manager
 	helmManager     helm.Manager
 	kubeClient      *kube.Client
 	logger          *zerolog.Logger
 	blockNodeInputs models.BlockNodeInputs
-
-	// preUpgradeServiceSpecs holds the spec map of every Service in the block-node
-	// namespace as observed by SnapshotServices, keyed by Service name. Used by
-	// BlockNodeServicesChanged to decide whether the Helm upgrade actually mutated
-	// any Service — and therefore whether a Cilium DaemonSet restart is needed
-	// (see issue #619). nil until SnapshotServices has been called.
-	preUpgradeServiceSpecs map[string]map[string]interface{}
 }
 
 // NewManager creates a new block node manager
