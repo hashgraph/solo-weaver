@@ -243,7 +243,7 @@ tasks:
 
   vm:teleport:start:
     desc: "Start Teleport server in the VM"
-    deps: [vm:install-docker]
+    deps: [vm:install-docker, vm:sync]
     cmds:
       - |
         echo "🚀 Starting Teleport server in VM..."
@@ -276,6 +276,7 @@ tasks:
 
   vm:teleport:stop:
     desc: "Stop Teleport server in the VM"
+    deps: [vm:sync]
     cmds:
       - |
         echo "🛑 Stopping Teleport server in VM..."
@@ -293,6 +294,7 @@ tasks:
 
   vm:teleport:clean:
     desc: "Stop and remove all Teleport data in the VM"
+    deps: [vm:sync]
     cmds:
       - |
         echo "🧹 Cleaning Teleport server in VM..."

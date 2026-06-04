@@ -327,7 +327,7 @@ tasks:
 
   vm:alloy:start:
     desc: "Set up Alloy stack in the VM"
-    deps: [vm:install-docker]
+    deps: [vm:install-docker, vm:sync]
     cmds:
       - |
         echo "🚀 Setting up Alloy stack in VM..."
@@ -361,6 +361,7 @@ tasks:
 
   vm:alloy:stop:
     desc: "Stop Alloy stack in the VM"
+    deps: [vm:sync]
     cmds:
       - |
         echo "🛑 Stopping Alloy stack in VM..."
@@ -378,6 +379,7 @@ tasks:
 
   vm:alloy:clean:
     desc: "Stop and remove all Alloy data in the VM"
+    deps: [vm:sync]
     cmds:
       - |
         echo "🧹 Cleaning Alloy stack in VM..."
