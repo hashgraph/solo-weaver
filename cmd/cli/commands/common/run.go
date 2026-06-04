@@ -192,6 +192,20 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// `--version` on the root command must work on an uninstalled host: the
+	// root's RunE prints the version and returns, so running the installation
+	// check first would defeat the flag's purpose. Limit the bypass to the
+	// root (Parent == nil) so an inherited --version on a subcommand — which
+	// has no print path — still goes through the normal checks. Query
+	// PersistentFlags directly: it's where the flag is declared, and unlike
+	// Flags() it doesn't depend on cobra's pre-Execute merge step (which
+	// matters in unit tests that invoke this PreRun without Execute).
+	if cmd.Parent() == nil {
+		if v, _ := cmd.PersistentFlags().GetBool(FlagVersion().Name); v {
+			return nil
+		}
+	}
+
 	if !RequireGlobalChecks(cmd) {
 		return nil
 	}

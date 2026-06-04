@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/joomcode/errorx"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,6 +107,21 @@ func TestDeepestFailureError_PicksFirstFailureNotSecond(t *testing.T) {
 
 	got := deepestFailureError(r)
 	require.ErrorIs(t, got, first)
+}
+
+// TestRunPersistentPreRun_VersionFlagShortCircuits guards the bypass for
+// `./solo-provisioner --version`: on a freshly built binary the installation
+// workflow would fail, so the root's PreRun must return nil before it runs
+// when --version is set on the root command. If this returned an error or
+// reached the workflow build, the test would fail or panic — neither happens
+// because the short-circuit fires first.
+func TestRunPersistentPreRun_VersionFlagShortCircuits(t *testing.T) {
+	root := &cobra.Command{Use: "solo-provisioner"}
+	flagName := FlagVersion().Name
+	root.PersistentFlags().BoolP(flagName, FlagVersion().ShortName, false, "show version")
+	require.NoError(t, root.PersistentFlags().Set(flagName, "true"))
+
+	require.NoError(t, RunPersistentPreRun(root, nil))
 }
 
 // TestDeepestFailureError_SkipsSkippedAndSuccessSiblings verifies that
