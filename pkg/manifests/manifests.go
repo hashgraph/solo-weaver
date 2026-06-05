@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package manifests parses and validates the YAML manifest files shipped under
-// manifests/ inside a consensus-node deployment package
+// Package manifests parses and validates the YAML manifest files shipped
+// under manifests/ inside a consensus-node deployment package
 // (consensus-node-components.yaml, infrastructure-versions.yaml,
 // external-files.yaml, state-sources.yaml).
 //
-// The package exposes the cross-cutting schemaVersion validator
-// (ValidateSchemaVersion plus its supporting Kind, SchemaVersion, Header
-// types and typed errorx error classifications) used by every per-manifest
-// parser as its first step.
+// Each per-manifest parser (ParseConsensusNodeComponents,
+// ParseInfrastructureVersions, ParseExternalFiles, ParseStateSources) runs
+// the cross-cutting schemaVersion check (ValidateSchemaVersion) first, then
+// strict-decodes the document against its typed root struct, then runs
+// semantic validation. Typed errorx error classifications (ParseError,
+// MissingSchemaVersionError, UnsupportedSchemaVersionError, UnknownKindError,
+// ValidationError) let callers branch on failure mode without string
+// matching.
 package manifests
 
 import (
@@ -17,11 +21,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SchemaVersion is the value of the schemaVersion field on a manifest.
-type SchemaVersion string
+// SchemaVersion is the value of the schemaVersion field on a manifest. The
+// HIP defines the field as an integer ("schemaVersion: 1") so the parser
+// does not need to round-trip strings into version numbers.
+type SchemaVersion int
 
 // SchemaV1 is the only schemaVersion currently accepted on any manifest.
-const SchemaV1 SchemaVersion = "v1"
+const SchemaV1 SchemaVersion = 1
 
 // Kind identifies which of the four manifest files is being parsed. Its string
 // value matches the basename (without ".yaml") of the file inside the
@@ -46,8 +52,8 @@ var supportedVersions = map[Kind]map[SchemaVersion]struct{}{
 }
 
 // Header captures the common schemaVersion field present on every manifest.
-// Concrete parsers in #531–#534 embed it in their root struct so a single
-// strict-decode pass yields both the version and the rest of the document.
+// Concrete parsers embed it in their root struct so a single strict-decode
+// pass yields both the version and the rest of the document.
 type Header struct {
 	SchemaVersion SchemaVersion `yaml:"schemaVersion"`
 }
@@ -67,15 +73,22 @@ func ValidateSchemaVersion(kind Kind, data []byte) (Header, error) {
 		return Header{}, NewUnknownKindError(kind)
 	}
 
-	var h Header
-	if err := yaml.Unmarshal(data, &h); err != nil {
+	// Probe with a pointer-typed schemaVersion so we can distinguish "field
+	// absent or explicit null" (nil) from "explicit value zero" (&0). yaml.v3
+	// would otherwise coerce both cases to SchemaVersion(0) and lose the
+	// distinction.
+	var probe struct {
+		SchemaVersion *SchemaVersion `yaml:"schemaVersion"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
 		return Header{}, NewParseError(err, kind)
 	}
 
-	if h.SchemaVersion == "" {
+	if probe.SchemaVersion == nil {
 		return Header{}, NewMissingSchemaVersionError(kind)
 	}
 
+	h := Header{SchemaVersion: *probe.SchemaVersion}
 	if _, ok := supported[h.SchemaVersion]; !ok {
 		return Header{}, NewUnsupportedSchemaVersionError(kind, h.SchemaVersion, sortedSupported(kind))
 	}

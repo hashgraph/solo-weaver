@@ -11,7 +11,7 @@ import (
 )
 
 const fullExternalFilesManifest = `
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://hedera-artifacts/keys/genesis-key.bin"
     algorithm: sha256
@@ -50,7 +50,7 @@ func TestParseExternalFiles_FullHappyPath(t *testing.T) {
 
 func TestParseExternalFiles_EmptyFilesList(t *testing.T) {
 	// A manifest with no files declared is a structurally valid no-op.
-	doc, err := ParseExternalFiles([]byte("schemaVersion: v1\n"))
+	doc, err := ParseExternalFiles([]byte("schemaVersion: 1\n"))
 	require.NoError(t, err)
 	require.Empty(t, doc.Files)
 }
@@ -59,7 +59,7 @@ func TestParseExternalFiles_OptionalDefaultsFalse(t *testing.T) {
 	// The story specifies optional defaults to false. Verify yaml.v3 produces
 	// that result for an entry that omits optional entirely.
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://x/y"
     algorithm: sha256
@@ -75,7 +75,7 @@ files:
 }
 
 func TestParseExternalFiles_RejectsUnknownTopLevelField(t *testing.T) {
-	_, err := ParseExternalFiles([]byte("schemaVersion: v1\nmysteryField: 1\n"))
+	_, err := ParseExternalFiles([]byte("schemaVersion: 1\nmysteryField: 1\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
 }
@@ -85,7 +85,7 @@ func TestParseExternalFiles_RejectsHIPHashFieldShape(t *testing.T) {
 	// for #533 supersedes that with separate algorithm + checksum fields.
 	// A manifest using the old shape must surface as a parse error.
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://x/y"
     hash: "sha256:abc"
@@ -98,7 +98,7 @@ files:
 }
 
 func TestParseExternalFiles_RejectsUnsupportedSchemaVersion(t *testing.T) {
-	_, err := ParseExternalFiles([]byte("schemaVersion: v2\n"))
+	_, err := ParseExternalFiles([]byte("schemaVersion: 2\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
 		"expected UnsupportedSchemaVersionError, got %v", err)
@@ -107,7 +107,7 @@ func TestParseExternalFiles_RejectsUnsupportedSchemaVersion(t *testing.T) {
 func TestParseExternalFiles_ValidationFailures(t *testing.T) {
 	base := func(over string) string {
 		// Build a minimal valid entry and overlay the specific failure shape.
-		return "schemaVersion: v1\nfiles:\n  - " + strings.TrimPrefix(over, "- ")
+		return "schemaVersion: 1\nfiles:\n  - " + strings.TrimPrefix(over, "- ")
 	}
 
 	tests := []struct {
@@ -195,7 +195,7 @@ func TestParseExternalFiles_ValidationFailures(t *testing.T) {
 		{
 			name: "duplicate destinations",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://x/a"
     algorithm: sha256
@@ -228,7 +228,7 @@ files:
 
 func TestParseExternalFiles_RejectsMultipleYAMLDocuments(t *testing.T) {
 	data := []byte(`---
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://x/y"
     algorithm: sha256
@@ -236,7 +236,7 @@ files:
     destination: "HAPIAPP_DIR/y"
     phase: {download: prepare, install: freeze}
 ---
-schemaVersion: v1
+schemaVersion: 1
 files: []
 `)
 	_, err := ParseExternalFiles(data)
@@ -263,7 +263,7 @@ func TestParseExternalFiles_DestinationPrefixEnforcement(t *testing.T) {
 	for _, tc := range acceptCases {
 		t.Run("accepts: "+tc.name, func(t *testing.T) {
 			data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://x/y"
     algorithm: sha256
@@ -289,7 +289,7 @@ files:
 	for _, tc := range rejectCases {
 		t.Run("rejects: "+tc.name, func(t *testing.T) {
 			data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 files:
   - url: "s3://x/y"
     algorithm: sha256

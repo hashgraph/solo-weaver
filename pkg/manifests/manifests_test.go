@@ -17,7 +17,7 @@ func TestValidateSchemaVersion_AcceptsV1ForEveryKnownKind(t *testing.T) {
 		KindStateSources,
 	} {
 		t.Run(string(kind), func(t *testing.T) {
-			header, err := ValidateSchemaVersion(kind, []byte("schemaVersion: v1\n"))
+			header, err := ValidateSchemaVersion(kind, []byte("schemaVersion: 1\n"))
 			require.NoError(t, err)
 			require.Equal(t, SchemaV1, header.SchemaVersion)
 		})
@@ -45,19 +45,19 @@ func TestValidateSchemaVersion_MissingField(t *testing.T) {
 }
 
 func TestValidateSchemaVersion_UnsupportedValue(t *testing.T) {
-	data := []byte("schemaVersion: v2\n")
+	data := []byte("schemaVersion: 2\n")
 	_, err := ValidateSchemaVersion(KindConsensusNodeComponents, data)
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
 		"expected UnsupportedSchemaVersionError, got %v", err)
 	require.Contains(t, err.Error(), string(KindConsensusNodeComponents))
-	require.Contains(t, err.Error(), "v2")
-	require.Contains(t, err.Error(), "v1")
+	require.Contains(t, err.Error(), "2")
+	require.Contains(t, err.Error(), "1")
 }
 
 func TestValidateSchemaVersion_MalformedYAML(t *testing.T) {
-	// Unterminated mapping key — yaml.v3 rejects this at parse time.
-	data := []byte("schemaVersion: [v1\n")
+	// Unterminated flow sequence — yaml.v3 rejects this at parse time.
+	data := []byte("schemaVersion: [1\n")
 	_, err := ValidateSchemaVersion(KindStateSources, data)
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, ParseError),
@@ -65,8 +65,18 @@ func TestValidateSchemaVersion_MalformedYAML(t *testing.T) {
 	require.Contains(t, err.Error(), string(KindStateSources))
 }
 
+func TestValidateSchemaVersion_NonIntegerValue(t *testing.T) {
+	// The HIP made schemaVersion an integer; a string value must fail
+	// decoding, not silently coerce.
+	data := []byte(`schemaVersion: "v1"` + "\n")
+	_, err := ValidateSchemaVersion(KindExternalFiles, data)
+	require.Error(t, err)
+	require.True(t, errorx.IsOfType(err, ParseError),
+		"expected ParseError, got %v", err)
+}
+
 func TestValidateSchemaVersion_UnknownKind(t *testing.T) {
-	_, err := ValidateSchemaVersion(Kind("not-a-real-manifest"), []byte("schemaVersion: v1\n"))
+	_, err := ValidateSchemaVersion(Kind("not-a-real-manifest"), []byte("schemaVersion: 1\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, UnknownKindError),
 		"expected UnknownKindError, got %v", err)
@@ -74,10 +84,10 @@ func TestValidateSchemaVersion_UnknownKind(t *testing.T) {
 }
 
 // Pins the contract that unknown top-level fields are tolerated at the
-// schemaVersion-validation stage. Per-kind parsers added in #531–#534 must not
-// assume this validator has already rejected unknown fields.
+// schemaVersion-validation stage. Per-kind parsers must not assume this
+// validator has already rejected unknown fields.
 func TestValidateSchemaVersion_ToleratesUnknownFields(t *testing.T) {
-	data := []byte("schemaVersion: v1\nrogueField: ignore-me\nnested:\n  also: tolerated\n")
+	data := []byte("schemaVersion: 1\nrogueField: ignore-me\nnested:\n  also: tolerated\n")
 	header, err := ValidateSchemaVersion(KindInfrastructureVersions, data)
 	require.NoError(t, err)
 	require.Equal(t, SchemaV1, header.SchemaVersion)

@@ -14,7 +14,7 @@ import (
 // provisioner binaries with full integrity records, plus a representative
 // host[] and cluster[] audit list.
 const fullInfrastructureVersionsManifest = `
-schemaVersion: v1
+schemaVersion: 1
 provisioner:
   cli:
     version: "0.42.0"
@@ -70,7 +70,7 @@ func TestParseInfrastructureVersions_FullHappyPath(t *testing.T) {
 func TestParseInfrastructureVersions_AllSectionsAbsent(t *testing.T) {
 	// Per "absent = no change", a manifest with only schemaVersion is a no-op
 	// but is structurally valid.
-	doc, err := ParseInfrastructureVersions([]byte("schemaVersion: v1\n"))
+	doc, err := ParseInfrastructureVersions([]byte("schemaVersion: 1\n"))
 	require.NoError(t, err)
 	require.Nil(t, doc.Provisioner)
 	require.Empty(t, doc.Host)
@@ -81,7 +81,7 @@ func TestParseInfrastructureVersions_OnlyCLIPresent(t *testing.T) {
 	// "Absent = no change" applies inside provisioner too: declaring only the
 	// CLI's record (e.g. a CLI-only release) is valid.
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 provisioner:
   cli:
     version: "0.42.0"
@@ -96,7 +96,7 @@ provisioner:
 }
 
 func TestParseInfrastructureVersions_RejectsUnknownTopLevelField(t *testing.T) {
-	_, err := ParseInfrastructureVersions([]byte("schemaVersion: v1\nmysteryField: 42\n"))
+	_, err := ParseInfrastructureVersions([]byte("schemaVersion: 1\nmysteryField: 42\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
 }
@@ -107,7 +107,7 @@ func TestParseInfrastructureVersions_RejectsHIPSingleProvisionerVersion(t *testi
 	// the old shape must surface as a parse error rather than be silently
 	// accepted with both cli and daemon nil.
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 provisioner:
   version: "0.42.0"
 `)
@@ -117,7 +117,7 @@ provisioner:
 }
 
 func TestParseInfrastructureVersions_RejectsUnsupportedSchemaVersion(t *testing.T) {
-	_, err := ParseInfrastructureVersions([]byte("schemaVersion: v2\n"))
+	_, err := ParseInfrastructureVersions([]byte("schemaVersion: 2\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
 		"expected UnsupportedSchemaVersionError, got %v", err)
@@ -133,7 +133,7 @@ func TestParseInfrastructureVersions_ValidationFailures(t *testing.T) {
 		{
 			name: "cli missing version",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 provisioner:
   cli:
     algorithm: sha256
@@ -145,7 +145,7 @@ provisioner:
 		{
 			name: "cli missing algorithm",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 provisioner:
   cli:
     version: "0.42.0"
@@ -157,7 +157,7 @@ provisioner:
 		{
 			name: "daemon missing checksum",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 provisioner:
   daemon:
     version: "0.42.0"
@@ -169,7 +169,7 @@ provisioner:
 		{
 			name: "host entry missing name",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 host:
   - name: cri-o
     version: "1.33.4"
@@ -181,7 +181,7 @@ host:
 		{
 			name: "host entry missing version",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 host:
   - name: cri-o
 `,
@@ -191,7 +191,7 @@ host:
 		{
 			name: "duplicate host names",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 host:
   - name: cri-o
     version: "1.33.4"
@@ -204,7 +204,7 @@ host:
 		{
 			name: "cluster entry missing version",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 cluster:
   - name: alloy
 `,
@@ -214,7 +214,7 @@ cluster:
 		{
 			name: "duplicate cluster names",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 cluster:
   - name: alloy
     version: "1.4.0"
@@ -241,12 +241,12 @@ cluster:
 
 func TestParseInfrastructureVersions_RejectsMultipleYAMLDocuments(t *testing.T) {
 	data := []byte(`---
-schemaVersion: v1
+schemaVersion: 1
 host:
   - name: cri-o
     version: "1.33.4"
 ---
-schemaVersion: v1
+schemaVersion: 1
 `)
 	_, err := ParseInfrastructureVersions(data)
 	require.Error(t, err)
@@ -259,7 +259,7 @@ schemaVersion: v1
 // in both sections (e.g. some-tool packaged both ways) is allowed.
 func TestParseInfrastructureVersions_NamesShareableAcrossSections(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 host:
   - name: helm
     version: "3.18.6"

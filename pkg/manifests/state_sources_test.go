@@ -11,10 +11,9 @@ import (
 )
 
 const fullStateSourcesManifest = `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "https://storage.googleapis.com/mainnet-state-backups"
-    type: gcs
+  - bucket: "gcs://mainnet-state-backups"
     location: "us-central-1"
     index:
       "council-node-1": "/current-node/council-node-1.txt"
@@ -24,8 +23,7 @@ stateSources:
       "council-node-1": "/council-node-1"
       "council-node-2": "/council-node-2"
       "council-node-3": "/council-node-3"
-  - bucket: "https://s3.cloud.com/mainnet"
-    type: s3
+  - bucket: "s3://mainnet-state-backups-ap"
     location: "ap-southeast-1"
     index:
       "council-node-11": "/current-node/council-node-11.txt"
@@ -41,49 +39,46 @@ func TestParseStateSources_FullHappyPath(t *testing.T) {
 	require.Equal(t, SchemaV1, doc.SchemaVersion)
 	require.Len(t, doc.Sources, 2)
 
-	require.Equal(t, BucketTypeGCS, doc.Sources[0].Type)
+	require.Equal(t, "gcs://mainnet-state-backups", doc.Sources[0].Bucket)
 	require.Equal(t, "us-central-1", doc.Sources[0].Location)
 	require.Len(t, doc.Sources[0].Index, 3)
 	require.Equal(t, "/current-node/council-node-1.txt", doc.Sources[0].Index["council-node-1"])
 	require.Equal(t, "/council-node-1", doc.Sources[0].Paths["council-node-1"])
 
-	require.Equal(t, BucketTypeS3, doc.Sources[1].Type)
+	require.Equal(t, "s3://mainnet-state-backups-ap", doc.Sources[1].Bucket)
 	require.Len(t, doc.Sources[1].Index, 2)
 }
 
 func TestParseStateSources_EmptyStateSourcesTolerated(t *testing.T) {
 	// A manifest with no stateSources is a structurally valid no-op — e.g.
 	// some networks may not use fast-sync.
-	doc, err := ParseStateSources([]byte("schemaVersion: v1\n"))
+	doc, err := ParseStateSources([]byte("schemaVersion: 1\n"))
 	require.NoError(t, err)
 	require.Empty(t, doc.Sources)
 }
 
 func TestParseStateSources_RejectsUnknownTopLevelField(t *testing.T) {
-	_, err := ParseStateSources([]byte("schemaVersion: v1\nmysteryField: 1\n"))
+	_, err := ParseStateSources([]byte("schemaVersion: 1\nmysteryField: 1\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
 }
 
-func TestParseStateSources_RejectsHIPVersionField(t *testing.T) {
-	// The HIP draft used `version: v1` at the top level for this manifest;
-	// the unified convention across all four manifests is schemaVersion.
+func TestParseStateSources_RejectsTopLevelVersionField(t *testing.T) {
+	// `version` is not `schemaVersion`. It is silently ignored at the
+	// schemaVersion stage (the validator inspects only schemaVersion), so
+	// this surfaces as MissingSchemaVersionError.
 	data := []byte(`
-version: v1
+version: 1
 stateSources: []
 `)
 	_, err := ParseStateSources(data)
 	require.Error(t, err)
-	// Missing schemaVersion is caught by the cross-cutting validator (not
-	// by strict-decode), so this surfaces as MissingSchemaVersionError —
-	// "version: v1" is silently ignored at the schemaVersion stage and the
-	// schemaVersion field itself is absent.
 	require.True(t, errorx.IsOfType(err, MissingSchemaVersionError),
 		"expected MissingSchemaVersionError, got %v", err)
 }
 
 func TestParseStateSources_RejectsUnsupportedSchemaVersion(t *testing.T) {
-	_, err := ParseStateSources([]byte("schemaVersion: v2\n"))
+	_, err := ParseStateSources([]byte("schemaVersion: 2\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
 		"expected UnsupportedSchemaVersionError, got %v", err)
@@ -91,10 +86,10 @@ func TestParseStateSources_RejectsUnsupportedSchemaVersion(t *testing.T) {
 
 func TestParseStateSources_RejectsMultipleYAMLDocuments(t *testing.T) {
 	data := []byte(`---
-schemaVersion: v1
+schemaVersion: 1
 stateSources: []
 ---
-schemaVersion: v1
+schemaVersion: 1
 `)
 	_, err := ParseStateSources(data)
 	require.Error(t, err)
@@ -113,10 +108,9 @@ func TestParseStateSources_ValidationFailures(t *testing.T) {
 		{
 			name: "missing bucket",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - type: gcs
-    location: "us-central-1"
+  - location: "us-central-1"
     index: {n1: "/i.txt"}
     paths: {n1: "/p"}
 `,
@@ -124,39 +118,50 @@ stateSources:
 			expectMessage: "must not be empty",
 		},
 		{
-			name: "missing type",
+			name: "unsupported bucket scheme",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
+  - bucket: "azure://x"
     location: "us-central-1"
     index: {n1: "/i.txt"}
     paths: {n1: "/p"}
 `,
-			expectField:   "stateSources[0].type",
-			expectMessage: "must not be empty",
+			expectField:   "stateSources[0].bucket",
+			expectMessage: "must start with a recognised cloud-storage scheme",
 		},
 		{
-			name: "invalid type",
+			name: "https-style bucket rejected",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: azure
+  - bucket: "https://storage.googleapis.com/mainnet"
     location: "us-central-1"
     index: {n1: "/i.txt"}
     paths: {n1: "/p"}
 `,
-			expectField:   "stateSources[0].type",
-			expectMessage: `invalid value "azure"`,
+			expectField:   "stateSources[0].bucket",
+			expectMessage: "must start with a recognised cloud-storage scheme",
+		},
+		{
+			name: "scheme alone (empty bucket name)",
+			yaml: `
+schemaVersion: 1
+stateSources:
+  - bucket: "gcs://"
+    location: "us-central-1"
+    index: {n1: "/i.txt"}
+    paths: {n1: "/p"}
+`,
+			expectField:   "stateSources[0].bucket",
+			expectMessage: "must start with a recognised cloud-storage scheme",
 		},
 		{
 			name: "missing location",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     index: {n1: "/i.txt"}
     paths: {n1: "/p"}
 `,
@@ -166,10 +171,9 @@ stateSources:
 		{
 			name: "empty index",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-central-1"
     index: {}
     paths: {n1: "/p"}
@@ -180,10 +184,9 @@ stateSources:
 		{
 			name: "empty paths",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-central-1"
     index: {n1: "/i.txt"}
     paths: {}
@@ -194,10 +197,9 @@ stateSources:
 		{
 			name: "node listed in index but missing from paths",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-central-1"
     index: {n1: "/i1", n2: "/i2"}
     paths: {n1: "/p1"}
@@ -208,10 +210,9 @@ stateSources:
 		{
 			name: "node listed in paths but missing from index",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-central-1"
     index: {n1: "/i1"}
     paths: {n1: "/p1", n2: "/p2"}
@@ -222,10 +223,9 @@ stateSources:
 		{
 			name: "empty value in index",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-central-1"
     index: {n1: ""}
     paths: {n1: "/p1"}
@@ -236,21 +236,19 @@ stateSources:
 		{
 			name: "duplicate bucket across sources",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-central-1"
     index: {n1: "/i"}
     paths: {n1: "/p"}
-  - bucket: "gs://x"
-    type: gcs
+  - bucket: "gcs://x"
     location: "us-east-1"
     index: {n2: "/i"}
     paths: {n2: "/p"}
 `,
 			expectField:   "stateSources[1].bucket",
-			expectMessage: `duplicate bucket "gs://x"`,
+			expectMessage: `duplicate bucket "gcs://x"`,
 		},
 	}
 	for _, tt := range tests {
@@ -271,19 +269,35 @@ stateSources:
 // whole point of multi-bucket redundancy. Pin that behaviour.
 func TestParseStateSources_SameNodeAcrossBucketsAllowed(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 stateSources:
-  - bucket: "gs://primary"
-    type: gcs
+  - bucket: "gcs://primary"
     location: "us-central-1"
     index: {n1: "/i", n2: "/i"}
     paths: {n1: "/p", n2: "/p"}
   - bucket: "s3://mirror"
-    type: s3
     location: "ap-southeast-1"
     index: {n1: "/i", n2: "/i"}
     paths: {n1: "/p", n2: "/p"}
 `)
 	_, err := ParseStateSources(data)
 	require.NoError(t, err)
+}
+
+// AllowedBucketSchemes is the public surface for the closed set of cloud
+// storage URI schemes recognised on state-sources.yaml. Widening or narrowing
+// the set requires deliberately changing this test, surfacing the policy
+// change in code review.
+func TestAllowedBucketSchemes_PinnedSet(t *testing.T) {
+	require.Equal(t, []string{"gcs://", "s3://"}, AllowedBucketSchemes())
+}
+
+// Mutating the returned slice must not affect enforcement — the unexported
+// allowedBucketSchemes slice is the source of truth and stays immutable
+// behind the accessor.
+func TestAllowedBucketSchemes_ReturnedSliceIsClone(t *testing.T) {
+	got := AllowedBucketSchemes()
+	got[0] = "tampered://"
+	require.Equal(t, []string{"gcs://", "s3://"}, AllowedBucketSchemes(),
+		"mutating the returned slice must not affect subsequent calls")
 }

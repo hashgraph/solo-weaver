@@ -4,8 +4,33 @@ package manifests
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 )
+
+// allowedBucketSchemes is the closed set of cloud-storage URI schemes that
+// may prefix the `bucket` field on any state-sources.yaml entry. The scheme
+// encodes the provider (per HIP-XXXX0): the downloader picks its SDK client
+// purely by string-matching the scheme, so an unknown scheme is unfollowable
+// and must be rejected at parse time rather than silently failing later.
+//
+// Kept unexported so that enforcement (validateBucketScheme) reads from an
+// immutable source of truth — external callers see only a cloned copy via
+// AllowedBucketSchemes() and cannot weaken the policy by mutating the slice
+// in place.
+var allowedBucketSchemes = []string{
+	"gcs://",
+	"s3://",
+}
+
+// AllowedBucketSchemes returns a fresh copy of the closed set of cloud-storage
+// URI schemes recognised on state-sources.yaml bucket fields. Each call
+// returns a new slice so callers cannot affect enforcement by mutating the
+// returned value.
+func AllowedBucketSchemes() []string {
+	return slices.Clone(allowedBucketSchemes)
+}
 
 // StateSources is the parsed root of a state-sources.yaml manifest. It
 // declares one or more cloud storage buckets from which a new or rejoining
@@ -18,27 +43,16 @@ type StateSources struct {
 }
 
 // StateSource is one cloud-storage entry. Each source declares its location
-// (region), the bucket URL, and two parallel maps keyed by node ID: Index
-// names the per-node index file containing the latest available round, and
-// Paths names the per-node base directory where that round's state files
-// live.
+// (region), the bucket URI (whose scheme encodes the provider — `gcs://`,
+// `s3://`), and two parallel maps keyed by node ID: Index names the per-node
+// index file containing the latest available round, and Paths names the
+// per-node base directory where that round's state files live.
 type StateSource struct {
 	Bucket   string            `yaml:"bucket"`
-	Type     BucketType        `yaml:"type"`
 	Location string            `yaml:"location"`
 	Index    map[string]string `yaml:"index"`
 	Paths    map[string]string `yaml:"paths"`
 }
-
-// BucketType enumerates the cloud-storage backends recognised today.
-// Extending this set requires adding the case here and (separately) wiring
-// the downloader to authenticate against the new backend.
-type BucketType string
-
-const (
-	BucketTypeGCS BucketType = "gcs"
-	BucketTypeS3  BucketType = "s3"
-)
 
 // ParseStateSources parses raw YAML bytes of a state-sources.yaml manifest.
 // It runs the cross-cutting schemaVersion check first, then strict-decodes
@@ -61,7 +75,7 @@ func ParseStateSources(data []byte) (*StateSources, error) {
 }
 
 // validate enforces per-source invariants and the cross-source uniqueness
-// rule on bucket URLs (two stateSources[] entries pointing at the same
+// rule on bucket URIs (two stateSources[] entries pointing at the same
 // bucket would be ambiguous and almost certainly a manifest authoring
 // mistake).
 func (ss *StateSources) validate() error {
@@ -87,13 +101,8 @@ func (s *StateSource) validate(idx int) error {
 	if s.Bucket == "" {
 		return NewValidationError(KindStateSources, prefix+".bucket", "must not be empty")
 	}
-	switch s.Type {
-	case BucketTypeGCS, BucketTypeS3:
-	case "":
-		return NewValidationError(KindStateSources, prefix+".type", "must not be empty")
-	default:
-		return NewValidationError(KindStateSources, prefix+".type",
-			fmt.Sprintf("invalid value %q (must be %q or %q)", s.Type, BucketTypeGCS, BucketTypeS3))
+	if err := validateBucketScheme(prefix+".bucket", s.Bucket); err != nil {
+		return err
 	}
 	if s.Location == "" {
 		return NewValidationError(KindStateSources, prefix+".location", "must not be empty")
@@ -119,6 +128,20 @@ func (s *StateSource) validate(idx int) error {
 		return err
 	}
 	return nil
+}
+
+// validateBucketScheme enforces that bucket starts with one of the
+// allowedBucketSchemes. The provider type is encoded in the scheme (per
+// HIP-XXXX0), so an unknown scheme is rejected with a clear error listing
+// the supported set.
+func validateBucketScheme(fieldPath, bucket string) error {
+	for _, scheme := range allowedBucketSchemes {
+		if strings.HasPrefix(bucket, scheme) && len(bucket) > len(scheme) {
+			return nil
+		}
+	}
+	return NewValidationError(KindStateSources, fieldPath,
+		fmt.Sprintf("must start with a recognised cloud-storage scheme (allowed: %v); got %q", allowedBucketSchemes, bucket))
 }
 
 // validateNodeKeysMatch enforces that index and paths declare exactly the

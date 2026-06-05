@@ -24,7 +24,7 @@ var (
 const (
 	parseErrorMsg                    = "failed to parse manifest %q"
 	missingSchemaVersionErrorMsg     = "manifest %q is missing required field \"schemaVersion\""
-	unsupportedSchemaVersionErrorMsg = "manifest %q declares schemaVersion %q (supported: %v)"
+	unsupportedSchemaVersionErrorMsg = "manifest %q declares schemaVersion %d (supported: %v)"
 	unknownKindErrorMsg              = "unknown manifest kind %q"
 	validationErrorMsg               = "manifest %q: invalid %s: %s"
 )
@@ -44,14 +44,14 @@ func NewMissingSchemaVersionError(kind Kind) *errorx.Error {
 }
 
 func NewUnsupportedSchemaVersionError(kind Kind, declared SchemaVersion, supported []SchemaVersion) *errorx.Error {
-	supportedStrs := make([]string, len(supported))
+	supportedInts := make([]int, len(supported))
 	for i, v := range supported {
-		supportedStrs[i] = string(v)
+		supportedInts[i] = int(v)
 	}
-	return UnsupportedSchemaVersionError.New(unsupportedSchemaVersionErrorMsg, string(kind), string(declared), supportedStrs).
+	return UnsupportedSchemaVersionError.New(unsupportedSchemaVersionErrorMsg, string(kind), int(declared), supportedInts).
 		WithProperty(kindProperty, string(kind)).
-		WithProperty(schemaVersionProperty, string(declared)).
-		WithProperty(supportedVersionsProperty, supportedStrs)
+		WithProperty(schemaVersionProperty, int(declared)).
+		WithProperty(supportedVersionsProperty, supportedInts)
 }
 
 func NewUnknownKindError(kind Kind) *errorx.Error {

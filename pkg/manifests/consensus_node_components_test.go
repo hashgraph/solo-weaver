@@ -17,7 +17,7 @@ import (
 // non-deterministic path (per-registry layerHashes, deterministic.supported
 // explicitly false) so both code paths see coverage from a single fixture.
 const fullDeterministicManifest = `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     enabled: true
@@ -107,7 +107,7 @@ func TestParseConsensusNodeComponents_AbsentSectionsTolerated(t *testing.T) {
 	// "Absent = no change" — only consensusNode declared; the other five
 	// components are simply not in the manifest, which is valid.
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -129,14 +129,14 @@ images:
 
 func TestParseConsensusNodeComponents_EmptyImagesTolerated(t *testing.T) {
 	// images: {} (or images: ) — the manifest changes nothing. Permitted.
-	doc, err := ParseConsensusNodeComponents([]byte("schemaVersion: v1\nimages: {}\n"))
+	doc, err := ParseConsensusNodeComponents([]byte("schemaVersion: 1\nimages: {}\n"))
 	require.NoError(t, err)
 	require.Nil(t, doc.Images.ConsensusNode)
 }
 
 func TestParseConsensusNodeComponents_RejectsUnknownTopLevelField(t *testing.T) {
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 mysteryField: 42
 images: {}
 `)
@@ -150,7 +150,7 @@ func TestParseConsensusNodeComponents_RejectsUnknownComponentName(t *testing.T) 
 	// for #531 split it into five named uploaders. Unknown component names
 	// must surface as a parse error rather than be silently dropped.
 	data := []byte(`
-schemaVersion: v1
+schemaVersion: 1
 images:
   cheetah:
     version: "0.43.0"
@@ -164,7 +164,7 @@ images:
 
 func TestParseConsensusNodeComponents_RejectsUnsupportedSchemaVersion(t *testing.T) {
 	// The schemaVersion gate fires before any consensus-node-specific decode.
-	_, err := ParseConsensusNodeComponents([]byte("schemaVersion: v2\nimages: {}\n"))
+	_, err := ParseConsensusNodeComponents([]byte("schemaVersion: 2\nimages: {}\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
 		"expected UnsupportedSchemaVersionError, got %v", err)
@@ -180,7 +180,7 @@ func TestParseConsensusNodeComponents_ValidationFailures(t *testing.T) {
 		{
 			name: "missing version",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     deterministic: {supported: true, layerHashes: {linux/amd64: ["x"], linux/arm64: ["y"]}}
@@ -192,7 +192,7 @@ images:
 		{
 			name: "empty registries",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -205,7 +205,7 @@ images:
 		{
 			name: "registry missing image",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -219,7 +219,7 @@ images:
 		{
 			name: "deterministic supported but no layerHashes",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -232,7 +232,7 @@ images:
 		{
 			name: "deterministic supported but registry has override",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -248,7 +248,7 @@ images:
 		{
 			name: "deterministic unsupported but layerHashes set at deterministic level",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   backupUploader:
     version: "0.33.0"
@@ -265,7 +265,7 @@ images:
 		{
 			name: "deterministic absent — registry must carry layerHashes",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   backupUploader:
     version: "0.33.0"
@@ -278,7 +278,7 @@ images:
 		{
 			name: "unsupported platform key",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -297,7 +297,7 @@ images:
 		{
 			name: "empty layer hash list for a platform",
 			yaml: `
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -328,7 +328,7 @@ images:
 }
 
 func TestParseConsensusNodeComponents_MalformedYAML(t *testing.T) {
-	_, err := ParseConsensusNodeComponents([]byte("schemaVersion: v1\nimages: [not, a, map]\n"))
+	_, err := ParseConsensusNodeComponents([]byte("schemaVersion: 1\nimages: [not, a, map]\n"))
 	require.Error(t, err)
 	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
 }
@@ -339,7 +339,7 @@ func TestParseConsensusNodeComponents_MalformedYAML(t *testing.T) {
 // easy to ship and hard to detect for a council-signed manifest.
 func TestParseConsensusNodeComponents_RejectsMultipleYAMLDocuments(t *testing.T) {
 	data := []byte(`---
-schemaVersion: v1
+schemaVersion: 1
 images:
   consensusNode:
     version: "0.75.0"
@@ -351,7 +351,7 @@ images:
     registries:
       - image: "ghcr.io/x:0.75.0"
 ---
-schemaVersion: v1
+schemaVersion: 1
 images: {}
 `)
 	_, err := ParseConsensusNodeComponents(data)
