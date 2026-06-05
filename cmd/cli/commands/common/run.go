@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path"
 	"time"
 
@@ -145,7 +146,10 @@ func finalizeWorkflowReport(report *automa.Report) error {
 
 	totalDuration := report.EndTime.Sub(report.StartTime)
 	logPath := path.Join(logCfg.Directory, logCfg.Filename)
-	daemonLogPath := path.Join(logCfg.Directory, "solo-provisioner-daemon.log")
+	daemonLogPath := ""
+	if p := path.Join(logCfg.Directory, "solo-provisioner-daemon.log"); fileExists(p) {
+		daemonLogPath = p
+	}
 	fmt.Print(ui.RenderSummaryTable(report, totalDuration, reportPath, logPath, daemonLogPath))
 
 	logx.As().Info().
@@ -157,6 +161,11 @@ func finalizeWorkflowReport(report *automa.Report) error {
 		return err
 	}
 	return report.Error
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // deepestFailureError descends through nested StepReports to return the

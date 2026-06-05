@@ -189,7 +189,7 @@ func initConfig(ctx context.Context) {
 		_ = os.Chmod(logConfig.Directory, models.DefaultStorageDirPerm)
 	}
 
-	// Pre-create the log file with group-readable mode (0640) before lumberjack claims it.
+	// Pre-create the log file with world-readable mode (0644) before lumberjack claims it.
 	// Lumberjack hardcodes 0600 on first creation; opening an existing file uses O_APPEND
 	// which preserves the existing mode. Because the directory now has setgid, the newly
 	// created file inherits the weaver group automatically.
@@ -197,12 +197,13 @@ func initConfig(ctx context.Context) {
 	// fix their group and mode explicitly.
 	logFilePath := path.Join(logConfig.Directory, logConfig.Filename)
 	if _, statErr := os.Stat(logFilePath); os.IsNotExist(statErr) {
-		if f, createErr := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY, 0o640); createErr == nil {
+		if f, createErr := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY, models.DefaultFilePerm); createErr == nil {
 			_ = f.Close()
+			_ = os.Chmod(logFilePath, models.DefaultFilePerm)
 		}
 	} else if statErr == nil && gidErr == nil {
 		_ = os.Chown(logFilePath, 0, svcGID)
-		_ = os.Chmod(logFilePath, 0o640)
+		_ = os.Chmod(logFilePath, models.DefaultFilePerm)
 	}
 	if logConfig.MaxSize == 0 {
 		logConfig.MaxSize = 50 // 50 MB

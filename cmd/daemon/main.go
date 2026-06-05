@@ -94,16 +94,17 @@ func initConfig(ctx context.Context) {
 		_ = os.Chmod(logConfig.Directory, models.DefaultStorageDirPerm)
 	}
 
-	// Pre-create the log file with group-readable mode (0640) before lumberjack
+	// Pre-create the log file with world-readable mode (0644) before lumberjack
 	// claims it. For files created with wrong ownership in prior runs, fix them.
 	logFilePath := path.Join(logConfig.Directory, logConfig.Filename)
 	if _, statErr := os.Stat(logFilePath); os.IsNotExist(statErr) {
-		if f, createErr := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY, 0o640); createErr == nil {
+		if f, createErr := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY, models.DefaultFilePerm); createErr == nil {
 			_ = f.Close()
+			_ = os.Chmod(logFilePath, models.DefaultFilePerm)
 		}
 	} else if statErr == nil && gidErr == nil {
 		_ = os.Chown(logFilePath, 0, svcGID)
-		_ = os.Chmod(logFilePath, 0o640)
+		_ = os.Chmod(logFilePath, models.DefaultFilePerm)
 	}
 	if logConfig.MaxSize == 0 {
 		logConfig.MaxSize = 50
