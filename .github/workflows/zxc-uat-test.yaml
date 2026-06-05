@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       uat-scenario:
-        description: "UAT scenario to run (lifecycle, compat, setup, core, purge-storage, teardown, teleport, alloy, all)"
+        description: "UAT scenario to run (lifecycle, compat, purge-storage, plugin-preset-upgrade, setup, core, teardown, teleport, alloy, all)"
         type: string
         required: false
         default: "lifecycle"
