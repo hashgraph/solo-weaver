@@ -83,9 +83,10 @@ kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\
 ```
 
 ```bash
-# 4. Upgrade to latest (v0.30.2 — version from config file, no CLI flag)
+# 4. Upgrade to intermediate version (v0.30.2 — explicit flag)
 sudo solo-provisioner block node upgrade -p local \
-  -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+  --chart-version 0.30.2 \
+  -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 ```
 
 **Verify:**
@@ -95,7 +96,19 @@ kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\
 ```
 
 ```bash
-# 5. Reset block node (clears storage, keeps cluster)
+# 5. Upgrade to latest (v0.35.1 — version from config file, no CLI flag)
+sudo solo-provisioner block node upgrade -p local \
+  -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+```
+
+**Verify:**
+```bash
+helm list -n block-node                 # Chart version is 0.35.1
+kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{end}{"\n"}{end}'  # Image shows 0.35.1
+```
+
+```bash
+# 6. Reset block node (clears storage, keeps cluster)
 sudo solo-provisioner block node reset -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 ```
@@ -106,7 +119,7 @@ kubectl get pods -n block-node          # Pods running (recreated)
 ```
 
 ```bash
-# 6. Block node uninstall
+# 7. Block node uninstall
 sudo solo-provisioner block node uninstall -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 ```
