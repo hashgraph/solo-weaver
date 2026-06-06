@@ -375,6 +375,9 @@ docs/playbooks/production/dir-structure.txt
 integration-test-report.md
 integration-test.json
 .aiassistant
+# AI-assistant working files — local only, never committed.
+# Plans are drafting scratchpads; review guides live in PR bodies.
+docs/claude/
 # Ignore per-user Claude Code config (settings.local.json, transient state),
 # but allow project-level shared skills under .claude/skills/ to be committed.
 .claude/*
