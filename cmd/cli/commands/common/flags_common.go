@@ -198,3 +198,49 @@ func FlagVerbose() CountFlagDefinition {
 		Description: "Show expanded step-by-step output",
 	}
 }
+
+// ── Daemon service install flags ─────────────────────────────────────────────
+
+// FlagDaemonNodeID is the Hedera node identifier (e.g. "0.0.3") written into
+// daemon.yaml as node_id. Required when daemon.yaml does not already exist.
+func FlagDaemonNodeID() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "node-id",
+		ShortName:   "",
+		Description: `Hedera node identifier for this consensus node (e.g. "0.0.3")`,
+		Default:     "",
+	}
+}
+
+// FlagDaemonOrbit is the Kubernetes namespace (orbit) written into daemon.yaml.
+// Required when daemon.yaml does not already exist.
+func FlagDaemonOrbit() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "orbit",
+		ShortName:   "",
+		Description: "Kubernetes namespace (orbit) where NetworkUpgradeExecute CRs are watched",
+		Default:     "",
+	}
+}
+
+// FlagDaemonUpgradeDir is an optional override for the CN upgrade staging
+// directory. Defaults to /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.
+func FlagDaemonUpgradeDir() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "upgrade-dir",
+		ShortName:   "",
+		Description: "Path to the CN upgrade staging directory (default: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current)",
+		Default:     "",
+	}
+}
+
+// FlagDaemonFromConfig is an optional path to an existing daemon.yaml to copy
+// into place before running the install workflow.
+func FlagDaemonFromConfig() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "from-config",
+		ShortName:   "",
+		Description: "Path to an existing daemon.yaml to copy into /opt/solo/weaver/config/daemon.yaml",
+		Default:     "",
+	}
+}

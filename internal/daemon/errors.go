@@ -16,3 +16,8 @@ var (
 	// ErrConfigMalformed is returned when daemon.yaml exists but cannot be parsed or has missing required fields.
 	ErrConfigMalformed = ErrConfig.NewSubtype("malformed")
 )
+
+// IsConfigNotFound reports whether err is (or wraps) an ErrConfigNotFound error.
+func IsConfigNotFound(err error) bool {
+	return errorx.IsOfType(err, ErrConfigNotFound)
+}

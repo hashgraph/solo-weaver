@@ -12,6 +12,7 @@ import (
 
 // loadOrbit reads the orbit namespace from daemon.yaml. It fails fast if the
 // config is missing or invalid — provisioning cannot proceed without it.
+// Used by uninstall (which always reads from the existing on-disk config).
 func loadOrbit(paths models.WeaverPaths) (string, error) {
 	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
 	if err != nil {
@@ -29,12 +30,16 @@ func loadOrbit(paths models.WeaverPaths) (string, error) {
 //  3. Create RBAC (SA + ClusterRole + CRB + token Secret)
 //  4. Write daemon kubeconfig
 //  5. Install + enable + start systemd service unit
-func NewDaemonServiceInstallWorkflow() (*automa.WorkflowBuilder, error) {
-	paths := models.Paths()
-	orbit, err := loadOrbit(paths)
-	if err != nil {
-		return nil, err
+//
+// orbit must be the non-empty Kubernetes namespace from the daemon config.
+// The caller is responsible for ensuring daemon.yaml exists at
+// paths.DaemonConfigPath before calling this function (the CLI install command
+// writes or copies the file before invoking the workflow).
+func NewDaemonServiceInstallWorkflow(orbit string) (*automa.WorkflowBuilder, error) {
+	if orbit == "" {
+		return nil, errorx.IllegalArgument.New("orbit namespace must not be empty")
 	}
+	paths := models.Paths()
 	return automa.NewWorkflowBuilder().WithId("daemon-service-install-workflow").Steps(
 		CheckPrivilegesStep(),
 		steps.CheckClusterStep(),
