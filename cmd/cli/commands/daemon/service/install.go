@@ -51,12 +51,11 @@ var installCmd = &cobra.Command{
 		}
 
 		// ── 2. Run the install workflow ───────────────────────────────────────
-		upgradeDir := cfg.EffectiveUpgradeDir()
-		wf, err := workflows.NewDaemonServiceInstallWorkflow(cfg.Orbit, workflowsteps.DaemonBinarySource{
+		wf, err := workflows.NewDaemonServiceInstallWorkflow(cfg, workflowsteps.DaemonBinarySource{
 			BinPath:  flagDaemonBin,
 			Checksum: flagDaemonChecksum,
 			Commit:   flagDaemonCommit,
-		}, upgradeDir)
+		})
 		if err != nil {
 			return err
 		}
@@ -127,23 +126,28 @@ func resolveDaemonConfig(
 	}
 
 	// ── Case 3: no daemon.yaml — build it from flags + prompts ───────────────
-	// Pre-fill from explicit flags.
-	cfg = daemon.DaemonConfig{
+	// Pre-fill from explicit flags. Kubeconfig will be written by
+	// WriteConsensusNodeKubeconfigStep; record the well-known path so the daemon can
+	// find it on startup.
+	cn := daemon.ConsensusNodeComponentConfig{
+		Enabled:    true,
 		NodeID:     flagNodeID,
 		Orbit:      flagOrbit,
 		UpgradeDir: flagUpgradeDir,
-		// Kubeconfig will be written by WriteDaemonKubeconfigStep; we record the
-		// well-known destination path so the daemon can find it on startup.
-		Kubeconfig: paths.DaemonKubeconfigPath,
+		Kubeconfig: paths.DaemonCNKubeconfigPath,
+		Monitors:   daemon.ConsensusNodeMonitors{Upgrade: true, Migration: true},
+	}
+	cfg = daemon.DaemonConfig{
+		Components: daemon.DaemonComponents{ConsensusNode: &cn},
 	}
 
 	// Prompt for any fields still empty (unless non-interactive / force).
 	if prompt.ShouldPrompt(rootFlags.Force) {
 		cv := prompt.NewChosenValues()
 		targets := prompt.DaemonInstallInputTargets{
-			NodeID:     &cfg.NodeID,
-			Orbit:      &cfg.Orbit,
-			UpgradeDir: &cfg.UpgradeDir,
+			NodeID:     &cfg.Components.ConsensusNode.NodeID,
+			Orbit:      &cfg.Components.ConsensusNode.Orbit,
+			UpgradeDir: &cfg.Components.ConsensusNode.UpgradeDir,
 		}
 		if err := prompt.RunDaemonInstallPrompts(cmd, targets, cv); err != nil {
 			return daemon.DaemonConfig{}, err
@@ -168,17 +172,21 @@ func resolveDaemonConfig(
 // applyFlagOverrides writes any explicitly-set flag values into cfg.
 // Returns true if at least one field was changed.
 func applyFlagOverrides(cfg *daemon.DaemonConfig) bool {
+	if cfg.Components.ConsensusNode == nil {
+		return false
+	}
+	cn := cfg.Components.ConsensusNode
 	changed := false
 	if flagNodeID != "" {
-		cfg.NodeID = flagNodeID
+		cn.NodeID = flagNodeID
 		changed = true
 	}
 	if flagOrbit != "" {
-		cfg.Orbit = flagOrbit
+		cn.Orbit = flagOrbit
 		changed = true
 	}
 	if flagUpgradeDir != "" {
-		cfg.UpgradeDir = flagUpgradeDir
+		cn.UpgradeDir = flagUpgradeDir
 		changed = true
 	}
 	return changed

@@ -103,12 +103,12 @@ func CheckClusterStep() *automa.StepBuilder {
 // resource already exists it is left unchanged. Rollback only removes resources
 // that were actually created on this run — pre-existing resources are left in
 // place so a failed re-install does not invalidate a working prior installation.
-func CreateDaemonRBACStep(namespace string) *automa.StepBuilder {
+func CreateConsensusNodeRBACStep(namespace string) *automa.StepBuilder {
 	// created is captured by both Execute and Rollback closures so the rollback
 	// knows exactly which resources to undo.
 	var created daemonRBACCreated
 
-	return automa.NewStepBuilder().WithId("create-daemon-rbac").
+	return automa.NewStepBuilder().WithId("create-consensus-node-rbac").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cs, err := newTypedClient()
 			if err != nil {
@@ -206,11 +206,11 @@ func CreateDaemonRBACStep(namespace string) *automa.StepBuilder {
 				Str("cr", daemonClusterRoleName).
 				Str("crb", daemonCRBName).
 				Str("secret", daemonTokenSecretName).
-				Msg("Daemon RBAC resources created")
+				Msg("Consensus-node RBAC resources created")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating daemon RBAC resources")
+			notify.As().StepStart(ctx, stp, "Creating consensus-node RBAC resources")
 			return ctx, nil
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -221,20 +221,20 @@ func CreateDaemonRBACStep(namespace string) *automa.StepBuilder {
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to create daemon RBAC resources")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to create consensus-node RBAC resources")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Daemon RBAC resources created")
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node RBAC resources created")
 		})
 }
 
-// WriteDaemonKubeconfigStep waits for the SA token Secret to be populated then
-// writes a kubeconfig file at paths.DaemonKubeconfigPath using the SA token and
-// cluster CA from the admin kubeconfig. The file is written with mode 0600 (root
-// only) since it contains a service account credential. Rollback removes the file.
-func WriteDaemonKubeconfigStep(paths models.WeaverPaths, namespace string) *automa.StepBuilder {
-	kubeconfigPath := paths.DaemonKubeconfigPath
-	return automa.NewStepBuilder().WithId("write-daemon-kubeconfig").
+// WriteConsensusNodeKubeconfigStep waits for the SA token Secret to be populated
+// then writes a kubeconfig file at paths.DaemonCNKubeconfigPath using the SA token
+// and cluster CA from the admin kubeconfig. The file is written with mode 0600
+// (root only) since it contains a service account credential. Rollback removes it.
+func WriteConsensusNodeKubeconfigStep(paths models.WeaverPaths, namespace string) *automa.StepBuilder {
+	kubeconfigPath := paths.DaemonCNKubeconfigPath
+	return automa.NewStepBuilder().WithId("write-consensus-node-kubeconfig").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cs, err := newTypedClient()
 			if err != nil {
@@ -249,14 +249,14 @@ func WriteDaemonKubeconfigStep(paths models.WeaverPaths, namespace string) *auto
 
 			if err := writeDaemonKubeconfig(kubeconfigPath, server, ca, token); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to write daemon kubeconfig to %s", kubeconfigPath)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to write consensus-node kubeconfig to %s", kubeconfigPath)))
 			}
 
-			logx.As().Info().Str("path", kubeconfigPath).Msg("Daemon kubeconfig written")
+			logx.As().Info().Str("path", kubeconfigPath).Msg("Consensus-node kubeconfig written")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Writing daemon kubeconfig")
+			notify.As().StepStart(ctx, stp, "Writing consensus-node kubeconfig")
 			return ctx, nil
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -264,68 +264,68 @@ func WriteDaemonKubeconfigStep(paths models.WeaverPaths, namespace string) *auto
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to write daemon kubeconfig")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to write consensus-node kubeconfig")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Daemon kubeconfig written")
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node kubeconfig written")
 		})
 }
 
-// RemoveDaemonKubeconfigStep removes the daemon kubeconfig file. Removal is
-// best-effort: a missing file is noted at Info level, a real removal error is
-// logged as a warning and the step still succeeds so uninstall can continue.
-func RemoveDaemonKubeconfigStep(paths models.WeaverPaths) *automa.StepBuilder {
-	kubeconfigPath := paths.DaemonKubeconfigPath
-	return automa.NewStepBuilder().WithId("remove-daemon-kubeconfig").
+// RemoveConsensusNodeKubeconfigStep removes the consensus-node kubeconfig file.
+// Removal is best-effort: a missing file is noted at Info level, a real removal
+// error is logged as a warning and the step still succeeds so uninstall can continue.
+func RemoveConsensusNodeKubeconfigStep(paths models.WeaverPaths) *automa.StepBuilder {
+	kubeconfigPath := paths.DaemonCNKubeconfigPath
+	return automa.NewStepBuilder().WithId("remove-consensus-node-kubeconfig").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			if err := os.Remove(kubeconfigPath); err != nil {
 				if os.IsNotExist(err) {
-					logx.As().Info().Str("path", kubeconfigPath).Msg("Daemon kubeconfig already absent")
+					logx.As().Info().Str("path", kubeconfigPath).Msg("Consensus-node kubeconfig already absent")
 				} else {
-					logx.As().Warn().Err(err).Str("path", kubeconfigPath).Msg("Failed to remove daemon kubeconfig")
+					logx.As().Warn().Err(err).Str("path", kubeconfigPath).Msg("Failed to remove consensus-node kubeconfig")
 				}
 			} else {
-				logx.As().Info().Str("path", kubeconfigPath).Msg("Daemon kubeconfig removed")
+				logx.As().Info().Str("path", kubeconfigPath).Msg("Consensus-node kubeconfig removed")
 			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Removing daemon kubeconfig")
+			notify.As().StepStart(ctx, stp, "Removing consensus-node kubeconfig")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove daemon kubeconfig")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove consensus-node kubeconfig")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Daemon kubeconfig removed")
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node kubeconfig removed")
 		})
 }
 
-// DeleteDaemonRBACStep deletes the ClusterRoleBinding, ClusterRole, token
-// Secret, and ServiceAccount. All deletions are best-effort — missing resources
-// are silently ignored, other errors are logged as warnings. The step always
-// succeeds; if individual deletes warned, the summary log says so explicitly.
-func DeleteDaemonRBACStep(namespace string) *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("delete-daemon-rbac").
+// DeleteConsensusNodeRBACStep deletes the ClusterRoleBinding, ClusterRole, token
+// Secret, and ServiceAccount for the consensus-node component. All deletions are
+// best-effort — missing resources are silently ignored, other errors are logged as
+// warnings. The step always succeeds so uninstall can continue past partial state.
+func DeleteConsensusNodeRBACStep(namespace string) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("delete-consensus-node-rbac").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			allClean := deleteDaemonRBAC(ctx, namespace)
 			if allClean {
-				logx.As().Info().Str("namespace", namespace).Msg("Daemon RBAC resources deleted")
+				logx.As().Info().Str("namespace", namespace).Msg("Consensus-node RBAC resources deleted")
 			} else {
 				logx.As().Warn().Str("namespace", namespace).
-					Msg("Daemon RBAC resources deletion completed with warnings — some resources may not have been removed (see above)")
+					Msg("Consensus-node RBAC resources deletion completed with warnings — some resources may not have been removed (see above)")
 			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Deleting daemon RBAC resources")
+			notify.As().StepStart(ctx, stp, "Deleting consensus-node RBAC resources")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete daemon RBAC resources")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete consensus-node RBAC resources")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Daemon RBAC resources deleted")
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node RBAC resources deleted")
 		})
 }
 

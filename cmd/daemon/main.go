@@ -57,17 +57,18 @@ var (
 			if err != nil {
 				return err
 			}
+			cn := cfg.Components.ConsensusNode
 			if flagNodeID != "" {
-				cfg.NodeID = flagNodeID
+				cn.NodeID = flagNodeID
 			}
 			if flagKubeconfig != "" {
-				cfg.Kubeconfig = flagKubeconfig
+				cn.Kubeconfig = flagKubeconfig
 			}
 			if flagOrbit != "" {
-				cfg.Orbit = flagOrbit
+				cn.Orbit = flagOrbit
 			}
 			if flagUpgradeDir != "" {
-				cfg.UpgradeDir = flagUpgradeDir
+				cn.UpgradeDir = flagUpgradeDir
 			}
 			if err := cfg.Validate(); err != nil {
 				return err

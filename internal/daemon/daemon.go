@@ -74,10 +74,11 @@ func New(paths models.WeaverPaths) (*Daemon, error) {
 // followed by applying CLI flag overrides). cfg must pass Validate() before
 // this function is called.
 func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) {
+	cn := cfg.Components.ConsensusNode
 	um, err := consensus.NewUpgradeMonitor(consensus.UpgradeMonitorConfig{
-		NodeID:         cfg.NodeID,
-		KubeconfigPath: cfg.Kubeconfig,
-		Namespace:      cfg.Orbit,
+		NodeID:         cn.NodeID,
+		KubeconfigPath: cn.Kubeconfig,
+		Namespace:      cn.Orbit,
 	})
 	if err != nil {
 		return nil, err
@@ -94,7 +95,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 	}
 
 	mm := consensus.NewMigrationMonitorWith(
-		cfg.NodeID,
+		cn.NodeID,
 		migrateLogger,
 		&consensus.NoopDecommissioner{},
 		consensus.MigrationMonitorConfig{},
@@ -103,11 +104,11 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		consensus.SoakDuration{}, // zero Period → defaults to DefaultSoakPeriod (48h)
 		consensus.UploaderBacklogCleared{},
 		&consensus.NoPodRestarts{
-			KubeconfigPath: cfg.Kubeconfig,
-			Namespace:      cfg.Orbit,
+			KubeconfigPath: cn.Kubeconfig,
+			Namespace:      cn.Orbit,
 			PodLabelSelector: fmt.Sprintf(
 				"operator.solo.hedera.com/orbit=%s,operator.solo.hedera.com/node-id=%s",
-				cfg.Orbit, cfg.NodeID,
+				cn.Orbit, cn.NodeID,
 			),
 		},
 		consensus.ConsensusParticipationNominal{},
@@ -264,12 +265,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}()
 	}
 
-	// Preflight: kubeconfig must exist and be parseable before we start anything.
-	// This is a hard precondition — the provisioning workflow (story #624) writes
-	// the kubeconfig before calling `systemctl start`. A missing or invalid file
-	// is a configuration error that will never self-heal, so we fail fast here
-	// rather than burning 90 s of systemd TimeoutStartSec on pointless retries.
-	if _, err := clientcmd.BuildConfigFromFlags("", d.cfg.Kubeconfig); err != nil {
+	// Preflight: consensus-node kubeconfig must exist and be parseable before we
+	// start anything. A missing or invalid file is a configuration error that will
+	// never self-heal, so we fail fast here rather than burning systemd's
+	// TimeoutStartSec on pointless retries.
+	if _, err := clientcmd.BuildConfigFromFlags("", d.cfg.Components.ConsensusNode.Kubeconfig); err != nil {
 		return fmt.Errorf("kubeconfig preflight failed — daemon cannot start: %w", err)
 	}
 
@@ -286,7 +286,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// success; if RBAC is misconfigured the probe retries until systemd cancels
 	// the context via TimeoutStartSec, marking the service failed.
 	go func() {
-		if err := probeKubeRBACWithRetry(ctx, d.cfg.Kubeconfig, d.cfg.Orbit); err != nil {
+		if err := probeKubeRBACWithRetry(ctx, d.cfg.Components.ConsensusNode.Kubeconfig, d.cfg.Components.ConsensusNode.Orbit); err != nil {
 			logx.As().Error().Err(err).
 				Str("reason", "KubeRBACProbeAborted").
 				Msg("RBAC probe aborted — not sending READY=1; systemd will time out and mark service failed")
