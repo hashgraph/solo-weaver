@@ -13,16 +13,20 @@ import (
 	daemon "github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
 var (
-	flagNodeID     string
-	flagOrbit      string
-	flagUpgradeDir string
-	flagFromConfig string
+	flagNodeID         string
+	flagOrbit          string
+	flagUpgradeDir     string
+	flagFromConfig     string
+	flagDaemonBin      string
+	flagDaemonChecksum string
+	flagDaemonCommit   string
 )
 
 var installCmd = &cobra.Command{
@@ -47,7 +51,12 @@ var installCmd = &cobra.Command{
 		}
 
 		// ── 2. Run the install workflow ───────────────────────────────────────
-		wf, err := workflows.NewDaemonServiceInstallWorkflow(cfg.Orbit)
+		upgradeDir := cfg.EffectiveUpgradeDir()
+		wf, err := workflows.NewDaemonServiceInstallWorkflow(cfg.Orbit, workflowsteps.DaemonBinarySource{
+			BinPath:  flagDaemonBin,
+			Checksum: flagDaemonChecksum,
+			Commit:   flagDaemonCommit,
+		}, upgradeDir)
 		if err != nil {
 			return err
 		}
@@ -65,6 +74,9 @@ func init() {
 	common.FlagDaemonOrbit().SetVarP(installCmd, &flagOrbit, false)
 	common.FlagDaemonUpgradeDir().SetVarP(installCmd, &flagUpgradeDir, false)
 	common.FlagDaemonFromConfig().SetVarP(installCmd, &flagFromConfig, false)
+	common.FlagDaemonBin().SetVarP(installCmd, &flagDaemonBin, false)
+	common.FlagDaemonChecksum().SetVarP(installCmd, &flagDaemonChecksum, false)
+	common.FlagDaemonCommit().SetVarP(installCmd, &flagDaemonCommit, false)
 }
 
 // resolveDaemonConfig returns the DaemonConfig to use for the install, writing

@@ -26,22 +26,33 @@ func loadOrbit(paths models.WeaverPaths) (string, error) {
 
 // NewDaemonServiceInstallWorkflow provisions the full daemon stack:
 //  1. Check root privileges
-//  2. Check K8s cluster is reachable
-//  3. Create RBAC (SA + ClusterRole + CRB + token Secret)
-//  4. Write daemon kubeconfig
-//  5. Install + enable + start systemd service unit
+//  2. Install the daemon binary — auto-download if binPath is empty, otherwise copy + verify
+//  3. Ensure the CN upgrade directory (/opt/hgcapp/…) exists with correct ownership
+//  4. Check K8s cluster is reachable
+//  5. Create RBAC (SA + ClusterRole + CRB + token Secret)
+//  6. Write daemon kubeconfig
+//  7. Install + enable + start systemd service unit
 //
 // orbit must be the non-empty Kubernetes namespace from the daemon config.
+// binPath is the optional path to a locally-supplied binary; empty triggers auto-download.
+// checksum is an optional sha256 hex digest to verify a manually-supplied binary.
+// commit is an optional git commit SHA to verify via the binary's --version output.
+// upgradeDir is the CN upgrade staging directory (e.g. /opt/hgcapp/…/data/upgrade/current).
+//
 // The caller is responsible for ensuring daemon.yaml exists at
-// paths.DaemonConfigPath before calling this function (the CLI install command
-// writes or copies the file before invoking the workflow).
-func NewDaemonServiceInstallWorkflow(orbit string) (*automa.WorkflowBuilder, error) {
+// paths.DaemonConfigPath before calling this function.
+func NewDaemonServiceInstallWorkflow(orbit string, daemonSrc steps.DaemonBinarySource, upgradeDir string) (*automa.WorkflowBuilder, error) {
 	if orbit == "" {
 		return nil, errorx.IllegalArgument.New("orbit namespace must not be empty")
+	}
+	if upgradeDir == "" {
+		return nil, errorx.IllegalArgument.New("upgrade directory must not be empty")
 	}
 	paths := models.Paths()
 	return automa.NewWorkflowBuilder().WithId("daemon-service-install-workflow").Steps(
 		CheckPrivilegesStep(),
+		steps.InstallDaemonBinaryStep(daemonSrc, paths),
+		steps.EnsureDaemonHgcAppDirStep(upgradeDir),
 		steps.CheckClusterStep(),
 		steps.CreateDaemonRBACStep(orbit),
 		steps.WriteDaemonKubeconfigStep(paths, orbit),

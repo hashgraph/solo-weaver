@@ -1,0 +1,17 @@
+# Daemon release metadata — updated on every daemon release.
+#
+# The provisioner uses this to auto-download and verify the daemon binary
+# when --daemon-bin is not supplied to `solo-provisioner daemon service install`.
+#
+# Fields:
+#   version      — semver matching the daemon-vX.Y.Z release tag
+#   algorithm    — checksum algorithm: sha256 | sha512
+#   checksum     — hex digest of the binary at download_url (no prefix)
+#   commit       — git commit SHA embedded in the binary (from `--version` JSON)
+#   download_url — direct asset URL on GitHub Releases
+daemon:
+  version: "0.0.0"
+  algorithm: "sha256"
+  checksum: ""
+  commit: "2ca3fe9255e6ec4746f9ecacbf185d4c59ef8de1"
+  download_url: "https://github.com/hashgraph/solo-weaver/releases/download/daemon-v0.0.0/solo-provisioner-daemon-linux-amd64"
