@@ -12,62 +12,91 @@ import (
 const DefaultDaemonConfigPath = "/opt/solo/weaver/config/daemon.yaml"
 
 // DaemonConfig is parsed from daemon.yaml at startup. Written by solo-provisioner
-// at cluster install time after RBAC for the daemon is provisioned.
+// at cluster install time after RBAC for each component is provisioned.
 //
 // Example daemon.yaml:
 //
-//	node_id:     0.0.3
-//	kubeconfig:  /opt/solo/weaver/sandbox/etc/weaver/kubeconfig
-//	orbit:       hedera-network
-//	upgrade_dir: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+//	components:
+//	  consensus_node:
+//	    enabled: true
+//	    kubeconfig: /opt/solo/weaver/config/daemon-cn.kubeconfig
+//	    node_id: 0.0.3
+//	    orbit: hedera-network
+//	    upgrade_dir: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+//	    monitors:
+//	      upgrade: true
+//	      migration: true
 type DaemonConfig struct {
-	// NodeID is the Hedera node identifier for the consensus node managed by this
-	// daemon (e.g. "0.0.3"). Used as nodeId in all JSONL event log entries.
-	NodeID string `yaml:"node_id"`
-
-	// Kubeconfig is the path to the scoped kubeconfig used by the daemon for all
-	// Kubernetes API calls. Written by solo-provisioner; distinct from the CLI's
-	// cluster-admin kubeconfig at ~/.kube/config.
-	Kubeconfig string `yaml:"kubeconfig"`
-
-	// Orbit is the Kubernetes namespace where NetworkUpgradeExecute CRs are watched.
-	// Corresponds to the orbit that owns the consensus node managed by this daemon.
-	Orbit string `yaml:"orbit"`
-
-	// UpgradeDir is the path to the CN's upgrade staging directory, where the
-	// consensus node Java process downloads and extracts the build.zip package.
-	// The daemon reads manifests (infrastructure-versions.yaml, etc.) from this
-	// location and may also move or place files into the broader
-	// /opt/hgcapp/services-hedera/HapiApp2.0/ directory tree during infra
-	// upgrades. The weaver/daemon user has write access to that tree.
-	// The daemon does not download or extract the build.zip package itself.
-	// Defaults to /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current if empty.
-	UpgradeDir string `yaml:"upgrade_dir"`
+	Components DaemonComponents `yaml:"components"`
 }
 
-// upgradeDir returns the effective upgrade staging directory: the configured
-// value if non-empty, otherwise the CN Java process's well-known default path.
-// EffectiveUpgradeDir returns UpgradeDir if set, otherwise the default path.
-func (c DaemonConfig) EffectiveUpgradeDir() string {
-	if c.UpgradeDir != "" {
-		return c.UpgradeDir
+// DaemonComponents holds the per-component configuration blocks. Only
+// consensus_node is implemented; block_node and ofac_filter are reserved for
+// future stories (S7+).
+type DaemonComponents struct {
+	ConsensusNode *ConsensusNodeComponentConfig `yaml:"consensus_node,omitempty"`
+}
+
+// ConsensusNodeComponentConfig is the configuration block for the consensus-node
+// component. It carries its own kubeconfig so its RBAC is independent of any
+// future block-node or host-only component.
+type ConsensusNodeComponentConfig struct {
+	// Enabled controls whether this component and its monitors are started.
+	Enabled bool `yaml:"enabled"`
+
+	// Kubeconfig is the path to the scoped kubeconfig for this component's SA.
+	// Written by solo-provisioner during daemon install (WriteConsensusNodeKubeconfigStep).
+	Kubeconfig string `yaml:"kubeconfig"`
+
+	// NodeID is the Hedera node identifier (e.g. "0.0.3"). Used as nodeId in
+	// all JSONL event log entries.
+	NodeID string `yaml:"node_id"`
+
+	// Orbit is the Kubernetes namespace where NetworkUpgradeExecute CRs are watched.
+	Orbit string `yaml:"orbit"`
+
+	// UpgradeDir is the path to the CN's upgrade staging directory.
+	// Defaults to /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.
+	UpgradeDir string `yaml:"upgrade_dir,omitempty"`
+
+	Monitors ConsensusNodeMonitors `yaml:"monitors"`
+}
+
+// ConsensusNodeMonitors toggles individual monitors for the consensus-node component.
+type ConsensusNodeMonitors struct {
+	Upgrade   bool `yaml:"upgrade"`
+	Migration bool `yaml:"migration"`
+}
+
+// EffectiveUpgradeDir returns UpgradeDir if set, otherwise the CN default path.
+func (cn ConsensusNodeComponentConfig) EffectiveUpgradeDir() string {
+	if cn.UpgradeDir != "" {
+		return cn.UpgradeDir
 	}
 	return "/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current"
 }
 
-// Validate checks that all required fields are present. Called by
-// LoadDaemonConfig and by cmd/daemon/main.go after applying CLI flag overrides.
-func (c DaemonConfig) Validate() error {
-	if c.NodeID == "" {
-		return ErrConfigMalformed.New("node_id is required")
+// Validate checks that all required fields within the consensus-node block are present.
+func (cn ConsensusNodeComponentConfig) Validate() error {
+	if cn.NodeID == "" {
+		return ErrConfigMalformed.New("components.consensus_node.node_id is required")
 	}
-	if c.Kubeconfig == "" {
-		return ErrConfigMalformed.New("kubeconfig is required")
+	if cn.Kubeconfig == "" {
+		return ErrConfigMalformed.New("components.consensus_node.kubeconfig is required")
 	}
-	if c.Orbit == "" {
-		return ErrConfigMalformed.New("orbit is required")
+	if cn.Orbit == "" {
+		return ErrConfigMalformed.New("components.consensus_node.orbit is required")
 	}
 	return nil
+}
+
+// Validate checks that the config is structurally valid. Called by
+// LoadDaemonConfig and by cmd/daemon/main.go after applying CLI flag overrides.
+func (c DaemonConfig) Validate() error {
+	if c.Components.ConsensusNode == nil {
+		return ErrConfigMalformed.New("components.consensus_node is required")
+	}
+	return c.Components.ConsensusNode.Validate()
 }
 
 // WriteDaemonConfig serialises cfg to YAML and writes it to path, creating any

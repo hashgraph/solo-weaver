@@ -18,46 +18,48 @@ func loadOrbit(paths models.WeaverPaths) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if cfg.Orbit == "" {
-		return "", errorx.IllegalState.New("daemon config %s: orbit namespace must not be empty", paths.DaemonConfigPath)
+	if cfg.Components.ConsensusNode == nil || cfg.Components.ConsensusNode.Orbit == "" {
+		return "", errorx.IllegalState.New("daemon config %s: components.consensus_node.orbit must not be empty", paths.DaemonConfigPath)
 	}
-	return cfg.Orbit, nil
+	return cfg.Components.ConsensusNode.Orbit, nil
 }
 
-// NewDaemonServiceInstallWorkflow provisions the full daemon stack:
-//  1. Check root privileges
-//  2. Install the daemon binary — auto-download if binPath is empty, otherwise copy + verify
-//  3. Ensure the CN upgrade directory (/opt/hgcapp/…) exists with correct ownership
-//  4. Check K8s cluster is reachable
-//  5. Create RBAC (SA + ClusterRole + CRB + token Secret)
-//  6. Write daemon kubeconfig
-//  7. Install + enable + start systemd service unit
+// NewDaemonServiceInstallWorkflow provisions the full daemon stack. The step
+// list is built dynamically from cfg so that only the preflight and RBAC steps
+// relevant to the enabled components are included:
 //
-// orbit must be the non-empty Kubernetes namespace from the daemon config.
-// binPath is the optional path to a locally-supplied binary; empty triggers auto-download.
-// checksum is an optional sha256 hex digest to verify a manually-supplied binary.
-// commit is an optional git commit SHA to verify via the binary's --version output.
-// upgradeDir is the CN upgrade staging directory (e.g. /opt/hgcapp/…/data/upgrade/current).
+//  1. Check root privileges                         (always)
+//  2. Install the daemon binary                     (always)
+//  3. Ensure CN upgrade directory exists            (consensus_node only)
+//  4. Check K8s cluster is reachable                (any K8s-dependent component)
+//  5. Create RBAC + write kubeconfig per component  (per enabled K8s-dependent component)
+//  6. Install + enable + start systemd service unit (always)
 //
 // The caller is responsible for ensuring daemon.yaml exists at
 // paths.DaemonConfigPath before calling this function.
-func NewDaemonServiceInstallWorkflow(orbit string, daemonSrc steps.DaemonBinarySource, upgradeDir string) (*automa.WorkflowBuilder, error) {
-	if orbit == "" {
-		return nil, errorx.IllegalArgument.New("orbit namespace must not be empty")
+func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.DaemonBinarySource) (*automa.WorkflowBuilder, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "invalid daemon config")
 	}
-	if upgradeDir == "" {
-		return nil, errorx.IllegalArgument.New("upgrade directory must not be empty")
-	}
+
 	paths := models.Paths()
-	return automa.NewWorkflowBuilder().WithId("daemon-service-install-workflow").Steps(
+
+	wfSteps := []automa.Builder{
 		CheckPrivilegesStep(),
 		steps.InstallDaemonBinaryStep(daemonSrc, paths),
-		steps.EnsureDaemonHgcAppDirStep(upgradeDir),
-		steps.CheckClusterStep(),
-		steps.CreateDaemonRBACStep(orbit),
-		steps.WriteDaemonKubeconfigStep(paths, orbit),
-		steps.InstallDaemonServiceStep(paths),
-	), nil
+	}
+
+	// consensus_node: CN-specific preflight + RBAC
+	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
+		wfSteps = append(wfSteps, steps.EnsureDaemonHgcAppDirStep(cn.EffectiveUpgradeDir()))
+		wfSteps = append(wfSteps, steps.CheckClusterStep())
+		wfSteps = append(wfSteps, steps.CreateConsensusNodeRBACStep(cn.Orbit))
+		wfSteps = append(wfSteps, steps.WriteConsensusNodeKubeconfigStep(paths, cn.Orbit))
+	}
+
+	wfSteps = append(wfSteps, steps.InstallDaemonServiceStep(paths))
+
+	return automa.NewWorkflowBuilder().WithId("daemon-service-install-workflow").Steps(wfSteps...), nil
 }
 
 // NewDaemonServiceUninstallWorkflow tears down the daemon stack in reverse:
@@ -74,8 +76,8 @@ func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 	return automa.NewWorkflowBuilder().WithId("daemon-service-uninstall-workflow").Steps(
 		CheckPrivilegesStep(),
 		steps.RemoveDaemonServiceStep(paths),
-		steps.RemoveDaemonKubeconfigStep(paths),
-		steps.DeleteDaemonRBACStep(orbit),
+		steps.RemoveConsensusNodeKubeconfigStep(paths),
+		steps.DeleteConsensusNodeRBACStep(orbit),
 	), nil
 }
 
