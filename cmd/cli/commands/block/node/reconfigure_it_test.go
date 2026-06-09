@@ -21,7 +21,7 @@ blockNode:
   namespace: "test-ns"
   release: "test-release"
   chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
-  version: "0.30.2"
+  version: "0.35.1"
   storage:
     basePath: "/mnt/storage"
 `

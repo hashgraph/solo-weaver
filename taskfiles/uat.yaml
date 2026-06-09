@@ -112,12 +112,13 @@ tasks:
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 
-        echo -e '\n▶ Upgrade to latest (v0.30.2) using updated chartVersion in config'
+        echo -e '\n▶ Upgrade to v0.30.2 using --chart-version flag'
         sudo solo-provisioner block node upgrade -p local \
-          -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+          --chart-version 0.30.2 \
+          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 
 
-        echo -e '\n▶ Verify upgrade to latest (v0.30.2)'
+        echo -e '\n▶ Verify upgrade to v0.30.2 using --chart-version flag'
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
         [ "$CHART_VER" = "0.30.2" ] || { echo "FAIL: expected chart version 0.30.2, got $CHART_VER"; exit 1; }
@@ -127,6 +128,24 @@ tasks:
         echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.30.2'
         ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
         [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.30.2 upgrade, got: '$ANNOTATION'"; exit 1; }
+        echo "   metallb.io/address-pool: $ANNOTATION ✓"
+
+
+        echo -e '\n▶ Upgrade to latest (v0.35.1) using updated chartVersion in config'
+        sudo solo-provisioner block node upgrade -p local \
+          -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
+
+
+        echo -e '\n▶ Verify upgrade to latest (v0.35.1)'
+        CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
+        echo "   Chart version: $CHART_VER"
+        [ "$CHART_VER" = "0.35.1" ] || { echo "FAIL: expected chart version 0.35.1, got $CHART_VER"; exit 1; }
+        echo '   Container images:'
+        kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.35.1'
+        ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
+        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.35.1 upgrade, got: '$ANNOTATION'"; exit 1; }
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 

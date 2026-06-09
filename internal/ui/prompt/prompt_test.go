@@ -377,7 +377,7 @@ func TestRunInputPrompts_SkipsUnregisteredFlag(t *testing.T) {
 		{
 			FlagName:       "chart-version",
 			Title:          "Chart Version",
-			EffectiveValue: "0.30.2",
+			EffectiveValue: "0.35.1",
 			Target:         &target,
 		},
 	}

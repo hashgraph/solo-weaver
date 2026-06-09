@@ -6,7 +6,7 @@ blockNode:
   namespace: "block-node"
   release: "block-node"
   chart: "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
-  version: "0.30.2"
+  version: "0.35.1"
   storage:
     basePath: "/mnt/fast-storage"
 proxy:
