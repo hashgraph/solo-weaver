@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/alloy"
@@ -134,6 +135,15 @@ func Execute(ctx context.Context) error {
 		return errorx.IllegalArgument.New("context is required")
 	}
 
+	// Guard before any file I/O: lumberjack and the state-file reader both
+	// require root. Exit early with a clear message so no log-rotation noise
+	// appears on screen for non-exempt invocations.
+	if os.Getuid() != 0 && !isPrivilegeExemptInvocation(os.Args[1:]) {
+		return errorx.RejectedOperation.New("solo-provisioner must be run with superuser privileges").
+			WithProperty(doctor.ErrPropertyResolution,
+				fmt.Sprintf("Run: sudo %s", strings.Join(os.Args, " ")))
+	}
+
 	cobra.OnInitialize(func() {
 		initConfig(ctx)
 		fmt.Print(ui.RenderVersionHeader())
@@ -234,6 +244,24 @@ func initConfig(ctx context.Context) {
 	// Activate proxy after logging is initialized so the activation log
 	// respects TUI suppression and goes to the log file instead of stdout.
 	activateProxy(ctx)
+}
+
+// isPrivilegeExemptInvocation reports whether args represents an invocation
+// that does not require superuser privileges (version output, help text).
+func isPrivilegeExemptInvocation(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	for _, arg := range args {
+		switch arg {
+		case "--version", "-v", "--help", "-h":
+			return true
+		}
+	}
+	// Only the leading subcommand word can be exempt; flag values and nested
+	// subcommands after it are not checked because they may follow a
+	// flag=value pair whose value looks like a word (e.g. --log-level debug).
+	return args[0] == "version" || args[0] == "help"
 }
 
 func activateProxy(ctx context.Context) {
