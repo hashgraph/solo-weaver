@@ -72,25 +72,53 @@ func InstallDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("install-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			if err := installDaemonServiceFiles(sandboxPath, symlinkPath); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				// installDaemonServiceFiles already returns an *errorx.Error; cast so we
+				// can attach resolution hints without importing a second error package.
+				var errWithHints error = err
+				if ex := errorx.Cast(err); ex != nil {
+					errWithHints = ex.WithProperty(models.ErrPropertyResolution, []string{
+						fmt.Sprintf("Ensure directory is writable: ls -la %s", filepath.Dir(sandboxPath)),
+						fmt.Sprintf("Check available disk space: df -h %s", filepath.Dir(sandboxPath)),
+						"Re-run: sudo solo-provisioner daemon service install",
+					})
+				}
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithHints))
 			}
 
 			if err := pkgos.DaemonReload(ctx); err != nil {
 				removeDaemonServiceFiles(sandboxPath, symlinkPath)
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "daemon-reload failed after writing daemon service file")))
+				errWithHints := errorx.InternalError.Wrap(err, "daemon-reload failed after writing daemon service file").
+					WithProperty(models.ErrPropertyResolution, []string{
+						"Run manually: sudo systemctl daemon-reload",
+						"Check systemd status: sudo systemctl status",
+						"Review journalctl: sudo journalctl -xe --no-pager | tail -30",
+					})
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithHints))
 			}
 
 			if err := pkgos.EnableService(ctx, daemonServiceName); err != nil {
 				removeDaemonServiceFiles(sandboxPath, symlinkPath)
 				_ = pkgos.DaemonReload(ctx)
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to enable service %s", daemonServiceName)))
+				errWithHints := errorx.InternalError.Wrap(err, "failed to enable service %s", daemonServiceName).
+					WithProperty(models.ErrPropertyResolution, []string{
+						fmt.Sprintf("Run manually: sudo systemctl enable %s", daemonServiceName),
+						fmt.Sprintf("Check unit file: ls -la %s", symlinkPath),
+						"Review journalctl: sudo journalctl -xe --no-pager | tail -30",
+					})
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithHints))
 			}
 
 			if err := pkgos.RestartService(ctx, daemonServiceName); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to start service %s", daemonServiceName)))
+				errWithHints := errorx.InternalError.Wrap(err, "failed to start service %s", daemonServiceName).
+					WithProperty(models.ErrPropertyResolution, []string{
+						fmt.Sprintf("Check daemon logs: sudo journalctl -u %s -n 50 --no-pager", daemonServiceName),
+						fmt.Sprintf("Check service status: sudo systemctl status %s", daemonServiceName),
+						"Verify daemon binary exists: ls -la /opt/solo/weaver/bin/solo-provisioner-daemon",
+						"Verify daemon config: cat /opt/solo/weaver/config/daemon.yaml",
+						"Verify daemon kubeconfig: ls -la /opt/solo/weaver/config/daemon.kubeconfig",
+						"Fix config issues then retry: sudo solo-provisioner daemon service start",
+					})
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithHints))
 			}
 
 			logx.As().Info().
