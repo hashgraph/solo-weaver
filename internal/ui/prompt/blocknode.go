@@ -427,8 +427,8 @@ func BlockNodeReconfigureInputPrompts(
 //
 // Pass 2 — custom plugin multi-select (conditional): when the operator selects
 // the Custom preset, a multi-select is shown listing all known block-node
-// plugins. The resulting selection is joined as a comma-separated string and
-// written to *flagPlugins.
+// plugins for the given chartVersion. The resulting selection is joined as a
+// comma-separated string and written to *flagPlugins.
 //
 // The function is a no-op when either flag was already supplied on the command
 // line — the caller's values are respected as-is.
@@ -438,12 +438,14 @@ func BlockNodeReconfigureInputPrompts(
 //   - defaults:        prompt defaults read from the on-disk state file
 //   - flagPluginPreset: pointer to the --plugin-preset flag variable
 //   - flagPlugins:     pointer to the --plugins flag variable
+//   - chartVersion:   target chart version (used to filter available plugins)
 //   - cv:              chosen-values collector for summary printing
 func RunPluginPresetPrompts(
 	cmd *cobra.Command,
 	defaults state.PromptDefaults,
 	flagPluginPreset *string,
 	flagPlugins *string,
+	chartVersion string,
 	cv *ChosenValues,
 ) error {
 	// If the operator already supplied --plugins, no prompting is needed.
@@ -489,9 +491,10 @@ func RunPluginPresetPrompts(
 	// Pre-select the plugins from the last-used custom list (if any),
 	// but filter out any entries that no longer exist in the current
 	// available plugin list so the UI does not silently drop them.
-	validPlugins := make(map[string]struct{}, len(blocknode.AllBlockNodePlugins))
+	versionedPlugins := blocknode.PluginsForVersion(chartVersion)
+	validPlugins := make(map[string]struct{}, len(versionedPlugins))
 	var pluginOptions []huh.Option[string]
-	for _, p := range blocknode.AllBlockNodePlugins {
+	for _, p := range versionedPlugins {
 		validPlugins[p] = struct{}{}
 		pluginOptions = append(pluginOptions, huh.NewOption(p, p))
 	}

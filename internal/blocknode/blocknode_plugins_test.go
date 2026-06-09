@@ -6,10 +6,47 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// ── blockNodePluginHistory registry invariants ────────────────────────────────
+
+func TestPluginHistory_AscendingVersionOrder(t *testing.T) {
+	for i := 1; i < len(blockNodePluginHistory); i++ {
+		prev := blockNodePluginHistory[i-1]
+		curr := blockNodePluginHistory[i]
+		require.NotEmpty(t, curr.MinVersion, "entry %d must have a MinVersion (only the first entry may be empty)", i)
+		// Always validate that curr.MinVersion is parseable, even when prev is the
+		// baseline (empty MinVersion). A typo here would cause configForVersion to
+		// silently skip the entry rather than returning an error.
+		currVer, err := semver.NewSemver(curr.MinVersion)
+		require.NoError(t, err, "entry %d MinVersion %q must be valid semver", i, curr.MinVersion)
+		if prev.MinVersion == "" {
+			continue
+		}
+		prevVer, err := semver.NewSemver(prev.MinVersion)
+		require.NoError(t, err, "entry %d MinVersion %q must be valid semver", i-1, prev.MinVersion)
+		assert.True(t, prevVer.LessThan(currVer), "entry %d (%s) must be > entry %d (%s)", i, curr.MinVersion, i-1, prev.MinVersion)
+	}
+}
+
+func TestPluginHistory_AllKnownPresetsInEveryEntry(t *testing.T) {
+	knownPresets := []string{PresetTier1LFH, PresetTier1RFH}
+	for i, cfg := range blockNodePluginHistory {
+		for _, preset := range knownPresets {
+			assert.NotEmpty(t, cfg.Presets[preset], "entry %d (MinVersion=%q) missing preset %q", i, cfg.MinVersion, preset)
+		}
+	}
+}
+
+func TestPluginHistory_AllPluginsNonEmpty(t *testing.T) {
+	for i, cfg := range blockNodePluginHistory {
+		assert.NotEmpty(t, cfg.AllPlugins, "entry %d (MinVersion=%q) must have a non-empty AllPlugins list", i, cfg.MinVersion)
+	}
+}
 
 // ── AvailablePresets ─────────────────────────────────────────────────────────
 
@@ -30,28 +67,124 @@ func TestAvailablePresets_ReturnsACopy(t *testing.T) {
 // ── PluginListForPreset ──────────────────────────────────────────────────────
 
 func TestPluginListForPreset_Tier1LFH(t *testing.T) {
-	list := PluginListForPreset(PresetTier1LFH)
+	list := PluginListForPreset(PresetTier1LFH, "")
 	assert.NotEmpty(t, list)
 	assert.Contains(t, list, "facility-messaging")
 	assert.Contains(t, list, "blocks-file-historic")
 	assert.Contains(t, list, "blocks-file-recent")
 	assert.NotContains(t, list, "s3-archive")
+	assert.NotContains(t, list, "cloud-storage-archive")
+	assert.NotContains(t, list, "cloud-storage-expanded")
 }
 
-func TestPluginListForPreset_Tier1RFH(t *testing.T) {
-	list := PluginListForPreset(PresetTier1RFH)
-	assert.NotEmpty(t, list)
-	assert.Contains(t, list, "facility-messaging")
-	assert.Contains(t, list, "s3-archive")
-	assert.NotContains(t, list, "blocks-file-historic")
+func TestPluginListForPreset_Tier1RFH_BN035Plus(t *testing.T) {
+	for _, ver := range []string{"", "0.35.0", "0.36.0", "1.0.0"} {
+		list := PluginListForPreset(PresetTier1RFH, ver)
+		assert.NotEmpty(t, list, "version=%q", ver)
+		assert.Contains(t, list, "cloud-storage-archive", "version=%q", ver)
+		assert.Contains(t, list, "cloud-storage-expanded", "version=%q", ver)
+		assert.NotContains(t, list, "s3-archive", "version=%q", ver)
+		assert.NotContains(t, list, "blocks-file-historic", "version=%q", ver)
+	}
+}
+
+func TestPluginListForPreset_Tier1RFH_LegacyBN(t *testing.T) {
+	for _, ver := range []string{"0.34.9", "0.30.0", "0.26.2"} {
+		list := PluginListForPreset(PresetTier1RFH, ver)
+		assert.NotEmpty(t, list, "version=%q", ver)
+		assert.Contains(t, list, "s3-archive", "version=%q", ver)
+		assert.NotContains(t, list, "cloud-storage-archive", "version=%q", ver)
+		assert.NotContains(t, list, "cloud-storage-expanded", "version=%q", ver)
+	}
+}
+
+// TestPluginListForPreset_UpgradeScenario documents the expected behaviour when an
+// operator upgrades from a pre-0.35 chart to 0.35+. solo-weaver reads the stored
+// PluginPreset ("tier1-rfh") and calls PluginListForPreset with the new target
+// chart version; the returned list must contain the renamed cloud-storage plugins
+// even though the previous install used s3-archive.
+func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
+	cases := []struct {
+		name            string
+		installedPreset string
+		targetVersion   string
+		wantContains    []string
+		wantAbsent      []string
+	}{
+		{
+			name:            "RFH upgrade pre-0.35 to 0.35 switches plugin names",
+			installedPreset: PresetTier1RFH,
+			targetVersion:   "0.35.0",
+			wantContains:    []string{"cloud-storage-archive", "cloud-storage-expanded"},
+			wantAbsent:      []string{"s3-archive"},
+		},
+		{
+			name:            "RFH upgrade stays on pre-0.35 keeps legacy name",
+			installedPreset: PresetTier1RFH,
+			targetVersion:   "0.34.9",
+			wantContains:    []string{"s3-archive"},
+			wantAbsent:      []string{"cloud-storage-archive", "cloud-storage-expanded"},
+		},
+		{
+			name:            "LFH upgrade is unaffected by the 0.35 boundary",
+			installedPreset: PresetTier1LFH,
+			targetVersion:   "0.35.0",
+			wantContains:    []string{"blocks-file-historic", "blocks-file-recent"},
+			wantAbsent:      []string{"s3-archive", "cloud-storage-archive", "cloud-storage-expanded"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			list := PluginListForPreset(tc.installedPreset, tc.targetVersion)
+			require.NotEmpty(t, list)
+			for _, want := range tc.wantContains {
+				assert.Contains(t, list, want)
+			}
+			for _, absent := range tc.wantAbsent {
+				assert.NotContains(t, list, absent)
+			}
+		})
+	}
+}
+
+func TestPluginListForPreset_InvalidVersionFallsToLatest(t *testing.T) {
+	list := PluginListForPreset(PresetTier1RFH, "not-a-semver")
+	assert.Contains(t, list, "cloud-storage-archive", "invalid semver must fall back to the latest config")
 }
 
 func TestPluginListForPreset_UnknownReturnsEmpty(t *testing.T) {
-	assert.Empty(t, PluginListForPreset("does-not-exist"))
+	assert.Empty(t, PluginListForPreset("does-not-exist", ""))
 }
 
 func TestPluginListForPreset_CustomReturnsEmpty(t *testing.T) {
-	assert.Empty(t, PluginListForPreset(PresetCustom), "custom preset has no predefined plugin list")
+	assert.Empty(t, PluginListForPreset(PresetCustom, ""), "custom preset has no predefined plugin list")
+}
+
+// ── PluginsForVersion ────────────────────────────────────────────────────────
+
+func TestPluginsForVersion_BN035Plus(t *testing.T) {
+	for _, ver := range []string{"", "0.35.0", "0.36.0"} {
+		plugins := PluginsForVersion(ver)
+		assert.Contains(t, plugins, "cloud-storage-archive", "version=%q", ver)
+		assert.Contains(t, plugins, "cloud-storage-expanded", "version=%q", ver)
+		assert.NotContains(t, plugins, "s3-archive", "version=%q", ver)
+	}
+}
+
+func TestPluginsForVersion_LegacyBN(t *testing.T) {
+	for _, ver := range []string{"0.34.9", "0.30.0"} {
+		plugins := PluginsForVersion(ver)
+		assert.Contains(t, plugins, "s3-archive", "version=%q", ver)
+		assert.NotContains(t, plugins, "cloud-storage-archive", "version=%q", ver)
+		assert.NotContains(t, plugins, "cloud-storage-expanded", "version=%q", ver)
+	}
+}
+
+func TestPluginsForVersion_ReturnsACopy(t *testing.T) {
+	a := PluginsForVersion("")
+	b := PluginsForVersion("")
+	a[0] = "mutated"
+	assert.NotEqual(t, "mutated", b[0], "PluginsForVersion must return an independent copy")
 }
 
 // ── PresetLabel ──────────────────────────────────────────────────────────────
@@ -94,7 +227,7 @@ func TestInjectPluginsConfig_NoOpWhenPluginListEmpty(t *testing.T) {
 }
 
 func TestInjectPluginsConfig_SetsPluginsNames(t *testing.T) {
-	m := managerWithInputs(t, PresetTier1LFH, PluginListForPreset(PresetTier1LFH))
+	m := managerWithInputs(t, PresetTier1LFH, PluginListForPreset(PresetTier1LFH, ""))
 	input := []byte("plugins:\n  mavenImage: some-image\n")
 
 	result, err := m.injectPluginsConfig(input)
@@ -105,11 +238,11 @@ func TestInjectPluginsConfig_SetsPluginsNames(t *testing.T) {
 
 	plugins, ok := vals["plugins"].(map[string]interface{})
 	require.True(t, ok, "plugins key must be a map")
-	assert.Equal(t, PluginListForPreset(PresetTier1LFH), plugins["names"])
+	assert.Equal(t, PluginListForPreset(PresetTier1LFH, ""), plugins["names"])
 }
 
 func TestInjectPluginsConfig_CreatesPluginsMapWhenAbsent(t *testing.T) {
-	m := managerWithInputs(t, PresetTier1RFH, PluginListForPreset(PresetTier1RFH))
+	m := managerWithInputs(t, PresetTier1RFH, PluginListForPreset(PresetTier1RFH, ""))
 	input := []byte("blockNode:\n  config: {}\n")
 
 	result, err := m.injectPluginsConfig(input)
@@ -120,7 +253,7 @@ func TestInjectPluginsConfig_CreatesPluginsMapWhenAbsent(t *testing.T) {
 
 	plugins, ok := vals["plugins"].(map[string]interface{})
 	require.True(t, ok, "plugins map must be created when absent")
-	assert.Equal(t, PluginListForPreset(PresetTier1RFH), plugins["names"])
+	assert.Equal(t, PluginListForPreset(PresetTier1RFH, ""), plugins["names"])
 }
 
 func TestInjectPluginsConfig_OverridesExistingPluginsNames(t *testing.T) {

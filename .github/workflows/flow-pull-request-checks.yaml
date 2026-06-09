@@ -86,6 +86,32 @@ jobs:
       uat-scenario: lifecycle
       vm-os: debian
 
+  uat-purge-storage:
+    name: UAT Purge Storage
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    needs:
+      - changes
+      - build
+      - uat-compat
+    if: needs.changes.outputs.non_docs == 'true'
+    with:
+      custom-job-label: UAT Purge Storage
+      uat-scenario: purge-storage
+      vm-os: debian
+
+  uat-plugin-preset-upgrade:
+    name: UAT Plugin Preset Upgrade
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    needs:
+      - changes
+      - build
+      - uat-compat
+    if: needs.changes.outputs.non_docs == 'true'
+    with:
+      custom-job-label: UAT Plugin Preset Upgrade
+      uat-scenario: plugin-preset-upgrade
+      vm-os: debian
+
   integration-tests:
     name: Integration Tests
     uses: ./.github/workflows/zxc-integration-test.yaml
@@ -93,6 +119,8 @@ jobs:
       - changes
       - build
       - uat-core
+      - uat-purge-storage
+      - uat-plugin-preset-upgrade
     if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: Standard

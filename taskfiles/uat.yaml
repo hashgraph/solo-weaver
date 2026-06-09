@@ -28,6 +28,10 @@ tasks:
   uat:setup:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
     interactive: true
+    vars:
+      BN_VERSION: '{{.BN_VERSION | default "0.26.0"}}'
+      PLUGIN_PRESET: '{{.PLUGIN_PRESET | default ""}}'
+      NON_INTERACTIVE: '{{.NON_INTERACTIVE | default "false"}}'
     cmds:
       - task: uat:bootstrap
       - |
@@ -36,16 +40,23 @@ tasks:
         echo "  UAT Setup: Install Block Node"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+        BN_VERSION='{{.BN_VERSION}}'
+        PLUGIN_PRESET='{{.PLUGIN_PRESET}}'
+        NON_INTERACTIVE='{{.NON_INTERACTIVE}}'
 
-        echo -e '\n▶ Block node install (v0.26.0)'
-        sudo solo-provisioner block node install -p local \
-          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+        INSTALL_ARGS="-p local -c /mnt/solo-weaver/test/config/config_with_proxy.yaml"
+        [ -n "$BN_VERSION" ]            && INSTALL_ARGS="$INSTALL_ARGS --chart-version $BN_VERSION"
+        [ -n "$PLUGIN_PRESET" ]         && INSTALL_ARGS="$INSTALL_ARGS --plugin-preset $PLUGIN_PRESET"
+        [ "$NON_INTERACTIVE" = "true" ] && INSTALL_ARGS="$INSTALL_ARGS --non-interactive"
+
+        echo -e "\n▶ Block node install (${BN_VERSION:-config default})"
+        sudo solo-provisioner block node install $INSTALL_ARGS
 
 
-        echo -e '\n▶ Verify install (v0.26.0)'
+        echo -e "\n▶ Verify install (${BN_VERSION:-config default})"
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
-        [ "$CHART_VER" = "0.26.0" ] || { echo "FAIL: expected chart version 0.26.0, got $CHART_VER"; exit 1; }
+        [ -z "$BN_VERSION" ] || [ "$CHART_VER" = "$BN_VERSION" ] || { echo "FAIL: expected chart version $BN_VERSION, got $CHART_VER"; exit 1; }
         kubectl get pods -n block-node
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
@@ -157,9 +168,10 @@ tasks:
         echo '✅ Core Block Node: PASSED'
 
   uat:purge-storage:
-    desc: "Verify the three block-node uninstall variants (inside VM: requires uat:setup first)"
+    desc: "Verify the three block-node uninstall variants"
     interactive: true
     cmds:
+      - task: uat:setup
       - |
         set -e
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -167,19 +179,23 @@ tasks:
         echo "  matrix: (no flag) → with-reset → purge-storage"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-        # Check cluster exists
-        kubectl get nodes > /dev/null 2>&1 || { echo "FAIL: Kubernetes cluster not found. Run 'task uat:setup' first."; exit 1; }
-
         CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
         NS=block-node
-        LIVE_DIR=/opt/weaver/block-node-storage/live
+        # Must match the basePath in config_with_proxy.yaml (/mnt/fast-storage).
+        # The old /opt/weaver/block-node-storage path was the wrong location.
+        LIVE_DIR=/mnt/fast-storage/live
         # Match the dual selector used by DeleteAllPersistentVolumes: solo-provisioner-managed OR Helm-managed for this release.
         BN_LABEL_SELECTOR='app.kubernetes.io/component=block-node-storage,app.kubernetes.io/managed-by in (solo-provisioner,Helm)'
 
         count_release_pvcs() { kubectl get pvc -n "$NS" -l "$BN_LABEL_SELECTOR" --no-headers 2>/dev/null | wc -l | tr -d ' '; }
-        # PVs are cluster-scoped: filter by both the label selector AND spec.claimRef.namespace
-        # so two block-node releases in different namespaces never count each other.
-        count_release_pvs()  { kubectl get pv -l "$BN_LABEL_SELECTOR" -o json | jq --arg ns "$NS" '[.items[] | select(.spec.claimRef.namespace == $ns)] | length'; }
+        # PVs are cluster-scoped: filter by label selector then count only those whose
+        # claimRef.namespace matches $NS, so two releases in different namespaces don't
+        # cross-count. Uses jsonpath to avoid a jq dependency in the VM.
+        count_release_pvs()  {
+          kubectl get pv -l "$BN_LABEL_SELECTOR" \
+            -o jsonpath='{range .items[*]}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null \
+            | grep -c "^${NS}$" || echo 0
+        }
         live_dir_has_files()  { sudo bash -c "ls -A '$LIVE_DIR' 2>/dev/null | head -1" | grep -q .; }
 
 
@@ -191,6 +207,14 @@ tasks:
         [ "$BASELINE_PVCS" -gt 0 ] || { echo "FAIL: no block-node PVCs matched selector — has the install bootstrapped the new labels?"; exit 1; }
         [ "$BASELINE_PVS" -gt 0 ]  || { echo "FAIL: no block-node PVs matched selector and namespace"; exit 1; }
         echo "   PVCs (labeled, in $NS): $BASELINE_PVCS   PVs (labeled, claimRef in $NS): $BASELINE_PVS"
+
+        # Seed a sentinel file so live_dir_has_files is reliable on a fresh install.
+        # A newly-installed block node may not yet have written any block files;
+        # we only care that uninstall (no flag) preserves existing data, not that
+        # the node has produced blocks.
+        sudo bash -c "mkdir -p '$LIVE_DIR' && echo 'sentinel' > '$LIVE_DIR/sentinel.blk'"
+        live_dir_has_files || { echo "FAIL: could not seed sentinel file in $LIVE_DIR"; exit 1; }
+        echo "   Sentinel file seeded in $LIVE_DIR"
 
 
         echo -e '\n▶ Variant 1/3: uninstall (no flag) — helm release should go; PV/PVC + data should stay'
@@ -235,6 +259,7 @@ tasks:
 
         echo ''
         echo '✅ Block Node Uninstall Variants: PASSED'
+      - task: uat:teardown
 
   uat:teleport:
     desc: "Run teleport lifecycle test (inside VM: requires cluster from uat:setup)"
@@ -499,6 +524,66 @@ tasks:
         echo ''
         echo '✅ solo-operator Lifecycle: PASSED'
 
+  uat:plugin-preset-upgrade:
+    desc: "Verify plugin preset names auto-update on upgrade across the 0.35 version boundary"
+    interactive: true
+    cmds:
+      - task: uat:setup
+        vars:
+          BN_VERSION: "0.33.0"
+          PLUGIN_PRESET: "tier1-rfh"
+          NON_INTERACTIVE: "true"
+      - |
+        set -e
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  UAT Test: Plugin Preset Upgrade (pre-0.35 → 0.35+)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Chart version for the post-0.35 upgrade target.
+        # Update if the current 0.35+ release changes.
+        POST_35_VERSION=0.35.1
+        CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
+        NS=block-node
+
+        get_plugins() {
+          helm get values block-node -n "$NS" 2>/dev/null | grep 'names:' | sed 's/.*names:[[:space:]]*//' | tr -d '"'
+        }
+
+
+        echo -e '\n▶ Verify pre-0.35 Helm values contain s3-archive'
+        PLUGINS=$(get_plugins)
+        echo "   plugins.names: $PLUGINS"
+        echo "$PLUGINS" | grep -q 's3-archive' \
+          || { echo "FAIL: expected s3-archive in plugins.names, got: $PLUGINS"; exit 1; }
+        echo "$PLUGINS" | grep -qv 'cloud-storage-archive' \
+          || { echo "FAIL: cloud-storage-archive should not be present pre-0.35, got: $PLUGINS"; exit 1; }
+        echo "   ✓ s3-archive present, cloud-storage-* absent"
+
+
+        echo -e "\n▶ Upgrade to BN ${POST_35_VERSION} with tier1-rfh preset"
+        sudo solo-provisioner block node upgrade -p local \
+          --chart-version "$POST_35_VERSION" \
+          --plugin-preset tier1-rfh \
+          --non-interactive \
+          -c "$CONFIG"
+
+        echo -e '\n▶ Verify post-0.35 Helm values contain cloud-storage-* and not s3-archive'
+        PLUGINS=$(get_plugins)
+        echo "   plugins.names: $PLUGINS"
+        echo "$PLUGINS" | grep -q 'cloud-storage-archive' \
+          || { echo "FAIL: expected cloud-storage-archive in plugins.names, got: $PLUGINS"; exit 1; }
+        echo "$PLUGINS" | grep -qv 's3-archive' \
+          || { echo "FAIL: s3-archive should not be present post-0.35, got: $PLUGINS"; exit 1; }
+        echo "   ✓ cloud-storage-archive present, s3-archive absent"
+
+        echo ''
+        echo "NOTE: This test verifies plugin names in Helm values only."
+        echo "      Data compatibility between s3-archive and cloud-storage-*"
+        echo "      requires separate BN team sign-off before upgrading live nodes."
+        echo ''
+        echo '✅ Plugin Preset Upgrade: PASSED'
+      - task: uat:teardown
+
   uat:lifecycle:
     desc: "Run core lifecycle test (inside VM: setup → core upgrades → teardown)"
     interactive: true
@@ -516,8 +601,9 @@ tasks:
       - task: uat:solo-operator
       - task: uat:teleport
       - task: uat:alloy
-      - task: uat:purge-storage
       - task: uat:teardown
+      - task: uat:purge-storage
+      - task: uat:plugin-preset-upgrade
       - task: uat:compat
 
 

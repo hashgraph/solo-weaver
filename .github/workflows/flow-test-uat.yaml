@@ -16,6 +16,7 @@ on:
           - setup
           - core
           - purge-storage
+          - plugin-preset-upgrade
           - solo-operator
           - teleport
           - alloy

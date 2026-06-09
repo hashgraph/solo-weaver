@@ -112,6 +112,13 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 		logx.As().Debug().Err(err).Msg("Could not read prompt defaults from state file; using config/defaults only")
 	}
 
+	// reconfigure omits --chart-version (it is an immutable field); fall back to
+	// the deployed version from state so plugin preset resolution uses the correct
+	// version-gated list rather than defaulting to the latest release.
+	if cmd.Name() == "reconfigure" && flagChartVersion == "" {
+		flagChartVersion = defaults.BlockNode.ChartVersion
+	}
+
 	// profileTarget is a local copy that the prompt writes to; after the prompt
 	// completes we propagate it into Cobra's persistent flag set so that
 	// common.FlagProfile().Value(cmd, args) returns the prompted value.
@@ -160,7 +167,7 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	}
 
 	// Plugin preset prompt: two-pass (preset select → conditional custom multi-select).
-	if err := prompt.RunPluginPresetPrompts(cmd, defaults, &flagPluginPreset, &flagPlugins, cv); err != nil {
+	if err := prompt.RunPluginPresetPrompts(cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, cv); err != nil {
 		return err
 	}
 
@@ -221,7 +228,19 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 		}
 	}
 	if pluginList == "" && bnpkg.IsKnownPreset(pluginPreset) {
-		pluginList = bnpkg.PluginListForPreset(pluginPreset)
+		pluginList = bnpkg.PluginListForPreset(pluginPreset, flagChartVersion)
+	}
+	// For non-interactive upgrades (scripted runs where the TUI is skipped),
+	// --plugin-preset is not prompted, so flagPluginPreset stays empty. Re-resolve
+	// from the stored preset to ensure plugin names are updated when crossing chart
+	// version boundaries (e.g. the 0.35 s3-archive → cloud-storage-* rename).
+	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" {
+		if stateDefaults, defErr := state.ReadPromptDefaultsFromDisk(); defErr == nil {
+			if bnpkg.IsKnownPreset(stateDefaults.BlockNode.PluginPreset) {
+				pluginPreset = stateDefaults.BlockNode.PluginPreset
+				pluginList = bnpkg.PluginListForPreset(pluginPreset, flagChartVersion)
+			}
+		}
 	}
 	if pluginList != "" && pluginPreset == "" {
 		pluginPreset = bnpkg.PresetCustom
