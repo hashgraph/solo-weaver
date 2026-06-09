@@ -47,7 +47,8 @@ type DaemonConfig struct {
 
 // upgradeDir returns the effective upgrade staging directory: the configured
 // value if non-empty, otherwise the CN Java process's well-known default path.
-func (c DaemonConfig) upgradeDir() string {
+// EffectiveUpgradeDir returns UpgradeDir if set, otherwise the default path.
+func (c DaemonConfig) EffectiveUpgradeDir() string {
 	if c.UpgradeDir != "" {
 		return c.UpgradeDir
 	}

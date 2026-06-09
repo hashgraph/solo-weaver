@@ -4,19 +4,27 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 )
 
@@ -24,6 +32,303 @@ const (
 	daemonServiceTemplatePath = "files/weaver/solo-provisioner-daemon.service"
 	daemonServiceName         = "solo-provisioner-daemon"
 )
+
+// daemonVersionOutput is the JSON structure emitted by `solo-provisioner-daemon --version`.
+type daemonVersionOutput struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
+// DaemonBinarySource describes where to obtain the daemon binary and how to verify it.
+// When BinPath is empty the binary is auto-downloaded from the URL in the embedded
+// daemon_config.yaml and verified against its embedded checksum.
+// When BinPath is set, Checksum (sha256 hex) and/or Commit (git SHA) may be supplied
+// to verify the binary before it is installed.
+type DaemonBinarySource struct {
+	// BinPath is the local path to the binary. Empty means auto-download.
+	BinPath string
+	// Checksum is an optional sha256 hex digest to verify BinPath.
+	// Ignored when BinPath is empty (the embedded checksum is used instead).
+	Checksum string
+	// Commit is an optional git commit SHA to verify via `<bin> --version`.
+	// Ignored when BinPath is empty (the embedded commit is used instead).
+	Commit string
+}
+
+// InstallDaemonBinaryStep obtains, verifies, and installs the solo-provisioner-daemon
+// binary at paths.BinDir/solo-provisioner-daemon.
+//
+// Resolution order:
+//  1. src.BinPath == "": auto-download from the URL in pkg/deps/daemon_config.yaml,
+//     verify sha256 against the embedded checksum, verify commit via --version.
+//  2. src.BinPath set + src.Checksum set: verify sha256 of BinPath before installing.
+//  3. src.BinPath set + src.Commit set: run --version and compare reported commit.
+//  4. src.BinPath set (no extra flags): still verify the version string via --version.
+//
+// Rollback removes the installed binary.
+func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *automa.StepBuilder {
+	dstPath := filepath.Join(paths.BinDir, "solo-provisioner-daemon")
+
+	return automa.NewStepBuilder().WithId("install-daemon-binary").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Load the embedded release spec — needed in all code paths.
+			spec, err := deps.LoadDaemonReleaseSpec()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			srcPath := src.BinPath
+
+			if srcPath == "" {
+				// ── Auto-download path ──────────────────────────────────────────────
+				if spec.DownloadURL == "" {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.IllegalState.New(
+							"auto-download not configured: daemon_config.yaml has no download_url").
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Supply the binary manually: sudo solo-provisioner daemon service install --daemon-bin=<path>",
+							})))
+				}
+
+				downloadDest := filepath.Join(paths.DownloadsDir, "solo-provisioner-daemon")
+				logx.As().Info().
+					Str("url", spec.DownloadURL).
+					Str("dst", downloadDest).
+					Msg("Downloading daemon binary")
+
+				downloader := software.NewDownloader(
+					software.WithBasePath(paths.HomeDir),
+				)
+				if err := downloader.Download(spec.DownloadURL, downloadDest); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to download daemon binary from %s", spec.DownloadURL).
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Check network connectivity: curl -I " + spec.DownloadURL,
+								fmt.Sprintf("Download manually and supply with: --daemon-bin=<path>"),
+							})))
+				}
+
+				// Verify sha256 of downloaded binary (mandatory — embedded checksum is
+				// the release's authoritative integrity proof).
+				if spec.Checksum != "" {
+					if err := software.VerifyChecksum(downloadDest, spec.Checksum, spec.Algorithm); err != nil {
+						_ = os.Remove(downloadDest)
+						return automa.StepFailureReport(stp.Id(),
+							automa.WithError(errorx.InternalError.Wrap(err,
+								"downloaded daemon binary failed %s verification", spec.Algorithm).
+								WithProperty(models.ErrPropertyResolution, []string{
+									"The downloaded file may be corrupt or tampered with",
+									"Retry the install; if it fails again, report the issue",
+									fmt.Sprintf("Expected %s: %s", spec.Algorithm, spec.Checksum),
+								})))
+					}
+				}
+
+				// Make downloaded file executable before running --version.
+				if err := os.Chmod(downloadDest, 0o755); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to chmod downloaded binary")))
+				}
+
+				srcPath = downloadDest
+			} else {
+				// ── Manual binary path ──────────────────────────────────────────────
+				if _, err := os.Stat(srcPath); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.IllegalArgument.Wrap(err, "daemon binary not found at %s", srcPath).
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Verify the path: ls -la " + srcPath,
+								"Omit --daemon-bin to auto-download the official binary",
+							})))
+				}
+
+				// Optional sha256 verification.
+				if src.Checksum != "" {
+					if err := software.VerifyChecksum(srcPath, src.Checksum, "sha256"); err != nil {
+						return automa.StepFailureReport(stp.Id(),
+							automa.WithError(errorx.InternalError.Wrap(err,
+								"daemon binary at %s failed sha256 verification", srcPath).
+								WithProperty(models.ErrPropertyResolution, []string{
+									"Ensure you supplied the correct binary and checksum",
+									"Re-download the binary from the official releases page",
+								})))
+					}
+					logx.As().Info().Str("path", srcPath).Msg("Daemon binary sha256 verified")
+				}
+			}
+
+			// ── Run --version and verify version + optional commit ──────────────
+			out, err := exec.CommandContext(ctx, srcPath, "--version").Output() //nolint:gosec
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to query daemon binary version at %s", srcPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Ensure the binary is executable: chmod +x " + srcPath,
+							"Ensure it is a Linux amd64 binary matching this host",
+						})))
+			}
+			var vout daemonVersionOutput
+			if err := json.Unmarshal(out, &vout); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err,
+						"failed to parse daemon binary --version output: %s", string(out))))
+			}
+
+			// Version must match the release spec.
+			if vout.Version != spec.Version {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalArgument.New(
+						"daemon binary version mismatch: got %s, required %s", vout.Version, spec.Version).
+						WithProperty(models.ErrPropertyResolution, []string{
+							fmt.Sprintf("Download version %s: %s", spec.Version, spec.DownloadURL),
+							"Or omit --daemon-bin to let the provisioner auto-download the correct version",
+						})))
+			}
+
+			// Commit verification: prefer explicitly-passed commit, fall back to
+			// embedded spec (only for auto-download path where spec.Commit is set).
+			expectedCommit := src.Commit
+			if expectedCommit == "" && src.BinPath == "" {
+				// Auto-download: always verify commit when spec has one.
+				expectedCommit = spec.Commit
+			}
+			if expectedCommit != "" && vout.Commit != expectedCommit {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalArgument.New(
+						"daemon binary commit mismatch: got %s, expected %s", vout.Commit, expectedCommit).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Ensure you are using the official release binary for version " + spec.Version,
+							"Omit --daemon-commit if you built the binary locally",
+						})))
+			}
+
+			// ── Ensure destination dir and copy ─────────────────────────────────
+			if err := os.MkdirAll(paths.BinDir, 0o755); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to create bin directory %s", paths.BinDir)))
+			}
+			if err := copyBinaryFile(srcPath, dstPath); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary to %s", dstPath)))
+			}
+
+			logx.As().Info().
+				Str("src", srcPath).
+				Str("dst", dstPath).
+				Str("version", vout.Version).
+				Str("commit", vout.Commit).
+				Msg("Daemon binary installed")
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			if src.BinPath == "" {
+				notify.As().StepStart(ctx, stp, "Downloading and installing solo-provisioner-daemon binary")
+			} else {
+				notify.As().StepStart(ctx, stp, "Installing solo-provisioner-daemon binary")
+			}
+			return ctx, nil
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			_ = os.Remove(dstPath)
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to install daemon binary")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Daemon binary installed")
+		})
+}
+
+// EnsureDaemonHgcAppDirStep creates the CN upgrade staging directory (and all
+// parent paths, including /opt/hgcapp) if they do not already exist, then sets
+// ownership to hedera:hedera with setgid 2775 so the weaver service account
+// (which is a member of the hedera group) can write to it.
+//
+// This step is required because the systemd unit declares
+// ReadWritePaths=/opt/solo /opt/hgcapp, and systemd's namespace setup fails
+// with ENOENT if /opt/hgcapp does not exist on the host.
+func EnsureDaemonHgcAppDirStep(upgradeDir string) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("ensure-hgcapp-dir").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Create the full path tree (includes /opt/hgcapp as a parent).
+			if err := os.MkdirAll(upgradeDir, 0o755); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to create upgrade directory %s", upgradeDir).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Ensure /opt is writable by root: ls -la /opt",
+							"Create manually: sudo mkdir -p " + upgradeDir,
+						})))
+			}
+
+			// Resolve hedera group.
+			hederaGroupName := config.HederaGroupName()
+			grp, err := user.LookupGroup(hederaGroupName)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.Wrap(err, "hedera group %q not found — run: sudo solo-provisioner install first", hederaGroupName)))
+			}
+			gid, err := strconv.Atoi(grp.Gid)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.Wrap(err, "invalid GID for group %q: %s", hederaGroupName, grp.Gid)))
+			}
+
+			// Walk from /opt/hgcapp down to upgradeDir, applying hedera:hedera
+			// ownership and setgid 2775 on every directory we just created.
+			dirToChown := upgradeDir
+			for {
+				if err := os.Chown(dirToChown, 0, gid); err != nil {
+					logx.As().Warn().Err(err).Str("path", dirToChown).Msg("failed to chown directory to hedera group")
+				}
+				if err := os.Chmod(dirToChown, models.DefaultStorageDirPerm); err != nil {
+					logx.As().Warn().Err(err).Str("path", dirToChown).Msg("failed to chmod directory")
+				}
+				parent := filepath.Dir(dirToChown)
+				if parent == dirToChown || parent == "/" {
+					break
+				}
+				// Stop once we've processed /opt/hgcapp (don't touch /opt itself).
+				if dirToChown == "/opt/hgcapp" {
+					break
+				}
+				dirToChown = parent
+			}
+
+			logx.As().Info().Str("upgrade_dir", upgradeDir).Msg("CN upgrade directory ensured")
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Ensuring CN upgrade directory exists")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to ensure CN upgrade directory")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "CN upgrade directory ready")
+		})
+}
+
+// copyBinaryFile copies src to dst with executable permissions (0755).
+func copyBinaryFile(src, dst string) error {
+	in, err := os.Open(src) //nolint:gosec
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
 
 // installDaemonServiceFiles writes the unit template to the sandbox path and
 // creates the /usr/lib/systemd/system symlink that points to it.

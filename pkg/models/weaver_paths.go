@@ -22,6 +22,13 @@ type WeaverPaths struct {
 	DaemonConfigPath     string
 	DaemonKubeconfigPath string // /opt/solo/weaver/config/daemon.kubeconfig
 
+	// InfraVersionsPath is the optional infrastructure-versions.yaml manifest dropped
+	// into the config directory by the build.zip deployment package (HIP XXXX0).
+	// When present, solo-provisioner validates its declared versions against the
+	// embedded catalog and uses its provisioner.daemon section to drive daemon install.
+	// Path: /opt/solo/weaver/config/infrastructure-versions.yaml
+	InfraVersionsPath string
+
 	// DaemonServiceSandboxPath is the canonical unit file location inside the
 	// weaver sandbox: $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
 	// DaemonServiceSymlinkPath is the system-wide symlink that points to it:
@@ -65,6 +72,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 
 	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
 	pp.DaemonConfigPath = path.Join(pp.ConfigDir, "daemon.yaml")
+	pp.InfraVersionsPath = path.Join(pp.ConfigDir, "infrastructure-versions.yaml")
 	pp.DaemonKubeconfigPath = path.Join(pp.ConfigDir, "daemon.kubeconfig")
 	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
 	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
