@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/alloy"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/block"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
@@ -101,6 +102,7 @@ func init() {
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
+	rootCmd.AddCommand(daemon.GetCmd())
 
 	if common.DetectShortNameCollisions(rootCmd) {
 		logx.As().Warn().Msg("flag short name collisions detected among commands; consider using unique short names " +

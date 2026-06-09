@@ -1,6 +1,8 @@
 # Quickstart Guide
 
-Solo Weaver is a Kubernetes-native deployment automation platform for Hedera network components. It enables node operators to migrate from traditional deployment models to modern, containerized infrastructure with automated lifecycle management.
+Solo Weaver is a Kubernetes-native deployment automation platform for Hedera network components. It enables node
+operators to migrate from traditional deployment models to modern, containerized infrastructure with automated lifecycle
+management.
 
 Below is a quickstart guide to get you up and running with Solo Weaver.
 
@@ -8,6 +10,7 @@ Below is a quickstart guide to get you up and running with Solo Weaver.
 
 - Unix operating system (Tested on: Debian 13.1.0, Ubuntu 22.04)
 - `curl` installed
+
 > **Note:** No system users need to be pre-created. The `weaver:2500` service account is
 > created automatically during `solo-provisioner install`. The `hedera:2000` user and group
 > (used for node storage ownership — block node, consensus node, and similar workloads) are
@@ -39,23 +42,23 @@ sudo solo-provisioner uninstall
 
 These flags are available for all commands:
 
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--config` | `-c` | Path to configuration file | None |
-| `--profile` | `-p` | Deployment profile | Required for most commands |
-| `--output` | `-o` | Output format (yaml\|json) | `yaml` |
-| `--non-interactive` | — | Disable TUI and output raw logs; useful for CI/pipelines | `false` |
-| `--version` | `-v` | Show version | - |
-| `--help` | `-h` | Show help | - |
+| Flag                | Short | Description                                              | Default                    |
+|---------------------|-------|----------------------------------------------------------|----------------------------|
+| `--config`          | `-c`  | Path to configuration file                               | None                       |
+| `--profile`         | `-p`  | Deployment profile                                       | Required for most commands |
+| `--output`          | `-o`  | Output format (yaml\|json)                               | `yaml`                     |
+| `--non-interactive` | —     | Disable TUI and output raw logs; useful for CI/pipelines | `false`                    |
+| `--version`         | `-v`  | Show version                                             | -                          |
+| `--help`            | `-h`  | Show help                                                | -                          |
 
 ### Error Handling Flags
 
 Most installation commands support these execution control flags:
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--stop-on-error` | Stop execution on first error | `true` |
-| `--rollback-on-error` | Rollback executed steps on error | `false` |
+| Flag                  | Description                                | Default |
+|-----------------------|--------------------------------------------|---------|
+| `--stop-on-error`     | Stop execution on first error              | `true`  |
+| `--rollback-on-error` | Rollback executed steps on error           | `false` |
 | `--continue-on-error` | Continue executing steps even if some fail | `false` |
 
 ---
@@ -64,13 +67,13 @@ Most installation commands support these execution control flags:
 
 Solo Provisioner supports five deployment profiles that configure behavior and defaults:
 
-| Profile | Description | Use Case |
-|---------|-------------|----------|
-| `local` | Local development and testing | Development, CI/CD |
-| `perfnet` | Performance testing network | Load testing |
-| `testnet` | Hedera Testnet | Integration testing |
-| `previewnet` | Hedera Previewnet | Preview/staging testing |
-| `mainnet` | Hedera Mainnet | Production deployment |
+| Profile      | Description                   | Use Case                |
+|--------------|-------------------------------|-------------------------|
+| `local`      | Local development and testing | Development, CI/CD      |
+| `perfnet`    | Performance testing network   | Load testing            |
+| `testnet`    | Hedera Testnet                | Integration testing     |
+| `previewnet` | Hedera Previewnet             | Preview/staging testing |
+| `mainnet`    | Hedera Mainnet                | Production deployment   |
 
 > **Important**: Always use `--profile` to specify your target environment.
 
@@ -95,6 +98,7 @@ sudo solo-provisioner block node check --profile=testnet --config=/path/to/confi
 ```
 
 **What it checks**:
+
 - System requirements (CPU, memory, disk)
 - Required dependencies
 - Network connectivity
@@ -132,28 +136,28 @@ sudo solo-provisioner block node install \
 
 **Available Flags**:
 
-| Flag | Description |
-|------|-------------|
-| `--values`, `-f` | Custom Helm values file |
-| `--chart-repo` | Helm chart repository URL |
-| `--chart-version` | Specific chart version |
-| `--namespace` | Kubernetes namespace |
-| `--release-name` | Helm release name |
-| `--base-path` | Base path for all storage |
-| `--archive-path` | Archive storage path |
-| `--live-path` | Live storage path |
-| `--verification-path` | Verification storage path |
-| `--log-path` | Log storage path |
-| `--live-size` | Live storage size (e.g., 10Gi) |
-| `--archive-size` | Archive storage size |
-| `--verification-size` | Verification storage size |
-| `--log-size` | Log storage size |
-| `--plugin-preset` | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); prompts interactively when omitted |
-| `--plugins` | Comma-separated plugin list; overrides `--plugin-preset` when set |
-| `--plugins-size` | PV/PVC size for plugins storage (e.g., `5Gi`, `10Gi`) |
-| `--plugins-path` | Path for plugins storage |
-| `--historic-retention` | Historic block retention threshold (`0` = unlimited) |
-| `--recent-retention` | Recent block retention threshold (default: `96000`) |
+| Flag                      | Description                                                                                                                           |
+|---------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `--values`, `-f`          | Custom Helm values file                                                                                                               |
+| `--chart-repo`            | Helm chart repository URL                                                                                                             |
+| `--chart-version`         | Specific chart version                                                                                                                |
+| `--namespace`             | Kubernetes namespace                                                                                                                  |
+| `--release-name`          | Helm release name                                                                                                                     |
+| `--base-path`             | Base path for all storage                                                                                                             |
+| `--archive-path`          | Archive storage path                                                                                                                  |
+| `--live-path`             | Live storage path                                                                                                                     |
+| `--verification-path`     | Verification storage path                                                                                                             |
+| `--log-path`              | Log storage path                                                                                                                      |
+| `--live-size`             | Live storage size (e.g., 10Gi)                                                                                                        |
+| `--archive-size`          | Archive storage size                                                                                                                  |
+| `--verification-size`     | Verification storage size                                                                                                             |
+| `--log-size`              | Log storage size                                                                                                                      |
+| `--plugin-preset`         | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); prompts interactively when omitted                                   |
+| `--plugins`               | Comma-separated plugin list; overrides `--plugin-preset` when set                                                                     |
+| `--plugins-size`          | PV/PVC size for plugins storage (e.g., `5Gi`, `10Gi`)                                                                                 |
+| `--plugins-path`          | Path for plugins storage                                                                                                              |
+| `--historic-retention`    | Historic block retention threshold (`0` = unlimited)                                                                                  |
+| `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`) |
 
 #### Upgrade Block Node
@@ -180,10 +184,10 @@ sudo solo-provisioner block node upgrade \
 
 **Additional Flags**:
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--no-reuse-values` | Don't reuse previous release values | `false` |
-| `--with-reset` | Wipe block node data directories; PVs and PVCs are preserved | `false` |
+| Flag                | Description                                                  | Default |
+|---------------------|--------------------------------------------------------------|---------|
+| `--no-reuse-values` | Don't reuse previous release values                          | `false` |
+| `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved | `false` |
 
 #### Reset Block Node
 
@@ -200,6 +204,7 @@ sudo solo-provisioner block node reset \
 ```
 
 **What it does**:
+
 1. Scales down the Block Node StatefulSet to 0 replicas
 2. Waits for all pods to terminate
 3. Clears all storage directories (archive, live, log, verification)
@@ -251,12 +256,12 @@ sudo solo-provisioner block node reconfigure \
 
 **Additional Flags**:
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--no-reuse-values` | Don't reuse previous release values | `false` |
-| `--no-restart` | Skip rollout-restart of the block node pod after reconfiguring | `false` |
-| `--with-reset` | Wipe block node data directories; PVs and PVCs are preserved | `false` |
-| `--purge-storage` | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
+| Flag                | Description                                                                                           | Default |
+|---------------------|-------------------------------------------------------------------------------------------------------|---------|
+| `--no-reuse-values` | Don't reuse previous release values                                                                   | `false` |
+| `--no-restart`      | Skip rollout-restart of the block node pod after reconfiguring                                        | `false` |
+| `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
+| `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
 
 > **Storage path changes**: Local PV `hostPath.path` is immutable. If your
 > reconfigure changes any storage path, you must pass `--purge-storage` so the
@@ -267,11 +272,11 @@ sudo solo-provisioner block node reconfigure \
 
 `block node uninstall` has three variants depending on what you want to keep:
 
-| Command | Helm release | Data on disk | PV/PVC objects |
-|---|---|---|---|
-| `block node uninstall` | removed | kept | kept |
-| `block node uninstall --with-reset` | removed | **wiped** | kept |
-| `block node uninstall --purge-storage` | removed | **wiped** | **deleted** |
+| Command                                | Helm release | Data on disk | PV/PVC objects |
+|----------------------------------------|--------------|--------------|----------------|
+| `block node uninstall`                 | removed      | kept         | kept           |
+| `block node uninstall --with-reset`    | removed      | **wiped**    | kept           |
+| `block node uninstall --purge-storage` | removed      | **wiped**    | **deleted**    |
 
 ```bash
 # Basic uninstall — release removed, data and PV/PVCs preserved for a future re-install
@@ -290,9 +295,9 @@ sudo solo-provisioner block node uninstall \
 
 **Additional Flags**:
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--with-reset` | Wipe block node data directories; PVs and PVCs are preserved | `false` |
+| Flag              | Description                                                                                           | Default |
+|-------------------|-------------------------------------------------------------------------------------------------------|---------|
+| `--with-reset`    | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
 | `--purge-storage` | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
 
 > **Picking the right one**: use the default uninstall if you plan to re-install
@@ -312,6 +317,7 @@ Manage the underlying Kubernetes cluster and its components.
 Sets up a complete single-node Kubernetes environment with all required components:
 
 **Components Installed**:
+
 - **kubeadm/kubelet**: Kubernetes cluster initialization and node agent
 - **CRI-O**: Container runtime
 - **Cilium**: Container networking (CNI)
@@ -336,13 +342,14 @@ sudo solo-provisioner kube cluster install \
 
 **Flags**:
 
-| Flag | Short | Description | Required |
-|------|-------|-------------|----------|
-| `--node-type` | `-n` | Type of node (block\|consensus\|mirror) | Yes |
+| Flag          | Short | Description                             | Required |
+|---------------|-------|-----------------------------------------|----------|
+| `--node-type` | `-n`  | Type of node (block\|consensus\|mirror) | Yes      |
 
 #### Uninstall Kubernetes Cluster
 
-Tears down the entire Kubernetes stack including all components (kubeadm, CRI-O, Cilium, etc.) while preserving the downloads cache:
+Tears down the entire Kubernetes stack including all components (kubeadm, CRI-O, Cilium, etc.) while preserving the
+downloads cache:
 
 ```bash
 # Basic uninstall
@@ -379,9 +386,9 @@ sudo solo-provisioner teleport node install \
 
 **Required Flags**:
 
-| Flag | Description |
-|------|-------------|
-| `--token` | Join token for Teleport agent |
+| Flag      | Description                        |
+|-----------|------------------------------------|
+| `--token` | Join token for Teleport agent      |
 | `--proxy` | Teleport proxy address (host:port) |
 
 #### Install Cluster Agent (kubectl Access)
@@ -401,14 +408,14 @@ sudo solo-provisioner teleport cluster install \
 
 **Required Flags**:
 
-| Flag | Description |
-|------|-------------|
+| Flag       | Description                       |
+|------------|-----------------------------------|
 | `--values` | Path to Teleport Helm values file |
 
 **Optional Flags**:
 
-| Flag | Description |
-|------|-------------|
+| Flag        | Description                 |
+|-------------|-----------------------------|
 | `--version` | Teleport Helm chart version |
 
 #### Uninstall Node Agent
@@ -435,16 +442,18 @@ Manage Grafana Alloy observability stack for metrics and logs.
 
 #### Prerequisites
 
-When installing Alloy with remote endpoints (`--add-prometheus-remote` or `--add-loki-remote`), ensure the following prerequisites are met:
+When installing Alloy with remote endpoints (`--add-prometheus-remote` or `--add-loki-remote`), ensure the following
+prerequisites are met:
 
-| Prerequisite | Description |
-|--------------|-------------|
-| **Running Kubernetes Cluster** | A cluster must be set up via `solo-provisioner block node install` or `solo-provisioner kube cluster install` |
-| **K8s Secret** | A Kubernetes Secret named `grafana-alloy-secrets` must exist in the `grafana-alloy` namespace with password keys for each configured remote (e.g., `PROMETHEUS_PASSWORD_PRIMARY`, `LOKI_PASSWORD_PRIMARY`) |
-| **Reachable Remote Endpoints** | Prometheus/Loki URLs must be reachable from the cluster |
-| **Block Node (optional)** | If using `--monitor-block-node`, the block node must be installed first |
+| Prerequisite                   | Description                                                                                                                                                                                                |
+|--------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Running Kubernetes Cluster** | A cluster must be set up via `solo-provisioner block node install` or `solo-provisioner kube cluster install`                                                                                              |
+| **K8s Secret**                 | A Kubernetes Secret named `grafana-alloy-secrets` must exist in the `grafana-alloy` namespace with password keys for each configured remote (e.g., `PROMETHEUS_PASSWORD_PRIMARY`, `LOKI_PASSWORD_PRIMARY`) |
+| **Reachable Remote Endpoints** | Prometheus/Loki URLs must be reachable from the cluster                                                                                                                                                    |
+| **Block Node (optional)**      | If using `--monitor-block-node`, the block node must be installed first                                                                                                                                    |
 
-> **Note**: Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs without remotes and does not require the K8s secret.
+> **Note**: Without `--add-prometheus-remote` or `--add-loki-remote` flags, Alloy installs without remotes and does not
+> require the K8s secret.
 
 #### Install Alloy Stack
 
@@ -470,34 +479,41 @@ sudo solo-provisioner alloy cluster install \
 
 **Available Flags**:
 
-| Flag | Description |
-|------|-------------|
-| `--cluster-name` | Cluster name for metrics/logs labels |
-| `--monitor-block-node` | Enable Block Node specific monitoring |
+| Flag                      | Description                                                                                                                       |
+|---------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `--cluster-name`          | Cluster name for metrics/logs labels                                                                                              |
+| `--monitor-block-node`    | Enable Block Node specific monitoring                                                                                             |
 | `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng` |
-| `--add-loki-remote` | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng` |
-| `--prometheus-url` | Prometheus remote write URL *(deprecated: use `--add-prometheus-remote`)* |
-| `--prometheus-username` | Prometheus authentication username *(deprecated)* |
-| `--loki-url` | Loki remote write URL *(deprecated: use `--add-loki-remote`)* |
-| `--loki-username` | Loki authentication username *(deprecated)* |
+| `--add-loki-remote`       | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng`       |
+| `--prometheus-url`        | Prometheus remote write URL *(deprecated: use `--add-prometheus-remote`)*                                                         |
+| `--prometheus-username`   | Prometheus authentication username *(deprecated)*                                                                                 |
+| `--loki-url`              | Loki remote write URL *(deprecated: use `--add-loki-remote`)*                                                                     |
+| `--loki-username`         | Loki authentication username *(deprecated)*                                                                                       |
 
-> **Note**: Passwords must be pre-created in a K8s Secret named `grafana-alloy-secrets` in the `grafana-alloy` namespace. The secret can be created manually, via ESO, Terraform, or any other mechanism.
+> **Note**: Passwords must be pre-created in a K8s Secret named `grafana-alloy-secrets` in the `grafana-alloy`
+> namespace. The secret can be created manually, via ESO, Terraform, or any other mechanism.
 
 #### Multiple Remote Endpoints
 
-The `--add-prometheus-remote` and `--add-loki-remote` flags use the format `name=<name>,url=<url>,username=<username>[,labelProfile=<profile>]`:
+The `--add-prometheus-remote` and `--add-loki-remote` flags use the format
+`name=<name>,url=<url>,username=<username>[,labelProfile=<profile>]`:
+
 - **name**: Unique identifier for the remote (e.g., `primary`, `backup`, `grafana-cloud`)
 - **url**: The remote write endpoint URL
 - **username**: Authentication username (password is read from the K8s Secret)
-- **labelProfile** *(optional)*: Label profile to auto-inject additional labels (default: `eng`, which adds only `cluster`). See [Label Profiles](#label-profiles) below
+- **labelProfile** *(optional)*: Label profile to auto-inject additional labels (default: `eng`, which adds only
+  `cluster`). See [Label Profiles](#label-profiles) below
 
 **K8s Secret Keys** (for multiple remotes):
 
-Each remote requires a corresponding password key in the `grafana-alloy-secrets` K8s Secret. The key name is derived from the remote type and name:
+Each remote requires a corresponding password key in the `grafana-alloy-secrets` K8s Secret. The key name is derived
+from the remote type and name:
+
 - Prometheus: `PROMETHEUS_PASSWORD_<REMOTE_NAME>`
 - Loki: `LOKI_PASSWORD_<REMOTE_NAME>`
 
 Example for a cluster with `primary` and `backup` remotes, create the secret with:
+
 ```bash
 kubectl create namespace grafana-alloy
 kubectl create secret generic grafana-alloy-secrets \
@@ -510,9 +526,11 @@ kubectl create secret generic grafana-alloy-secrets \
 
 #### Managing Remote Endpoints
 
-The `alloy cluster install` command is **declarative** - it replaces the entire remote configuration with what you specify. To manage endpoints:
+The `alloy cluster install` command is **declarative** - it replaces the entire remote configuration with what you
+specify. To manage endpoints:
 
 **Add a new remote:** Include all existing remotes plus the new one:
+
 ```bash
 # If you had 'primary', and want to add 'backup':
 sudo solo-provisioner alloy cluster install \
@@ -523,6 +541,7 @@ sudo solo-provisioner alloy cluster install \
 ```
 
 **Remove a remote:** Simply omit it from the command:
+
 ```bash
 # Remove 'backup', keep only 'primary':
 sudo solo-provisioner alloy cluster install \
@@ -532,6 +551,7 @@ sudo solo-provisioner alloy cluster install \
 ```
 
 **Modify a remote URL:** Specify the same name with the new URL:
+
 ```bash
 # Change 'primary' Prometheus URL:
 sudo solo-provisioner alloy cluster install \
@@ -541,6 +561,7 @@ sudo solo-provisioner alloy cluster install \
 ```
 
 **Remove all remotes (install without remotes):**
+
 ```bash
 sudo solo-provisioner alloy cluster install \
   --cluster-name=mainnet-block-01
@@ -550,16 +571,18 @@ sudo solo-provisioner alloy cluster install \
 
 #### Label Profiles
 
-Label profiles auto-inject additional labels into every metric and log stream. The optional `labelProfile` key on any remote activates a profile.
+Label profiles auto-inject additional labels into every metric and log stream. The optional `labelProfile` key on any
+remote activates a profile.
 
 **Available profiles:**
 
-| Profile | Labels Added |
-|---------|-------------|
-| `eng` *(default)* | `cluster` |
-| `ops` | `cluster`, `environment`, `instance_type`, `inventory_name`, `ip` (optional) |
+| Profile           | Labels Added                                                                 |
+|-------------------|------------------------------------------------------------------------------|
+| `eng` *(default)* | `cluster`                                                                    |
+| `ops`             | `cluster`, `environment`, `instance_type`, `inventory_name`, `ip` (optional) |
 
 **Example** — install with the `ops` label profile:
+
 ```bash
 sudo solo-provisioner alloy cluster install \
   --cluster-name=lfh02-previewnet-blocknode \
@@ -570,21 +593,86 @@ sudo solo-provisioner alloy cluster install \
 
 With `--cluster-name=lfh02-previewnet-blocknode` and `--profile=previewnet`, the `ops` profile derives:
 
-| Label | Value | Source |
-|-------|-------|--------|
-| `cluster` | `lfh02-previewnet-blocknode` | Always set (from `--cluster-name`) |
-| `environment` | `previewnet` | From `--profile` (deploy profile) |
-| `instance_type` | `lfh` | Alphabetic prefix of the first segment of cluster name |
-| `inventory_name` | `lfh02-previewnet-blocknode` | Full cluster name |
-| `ip` | `<ip>` | Optional; set when an IP address label is available for the node |
+| Label            | Value                        | Source                                                           |
+|------------------|------------------------------|------------------------------------------------------------------|
+| `cluster`        | `lfh02-previewnet-blocknode` | Always set (from `--cluster-name`)                               |
+| `environment`    | `previewnet`                 | From `--profile` (deploy profile)                                |
+| `instance_type`  | `lfh`                        | Alphabetic prefix of the first segment of cluster name           |
+| `inventory_name` | `lfh02-previewnet-blocknode` | Full cluster name                                                |
+| `ip`             | `<ip>`                       | Optional; set when an IP address label is available for the node |
 
-> **Note:** If `labelProfile` is omitted for a given remote, that remote uses the default `eng` profile (only the `cluster` label). Each remote can specify its own `labelProfile`.
-
+> **Note:** If `labelProfile` is omitted for a given remote, that remote uses the default `eng` profile (only the
+`cluster` label). Each remote can specify its own `labelProfile`.
 
 #### Uninstall Alloy Stack
 
 ```bash
 sudo solo-provisioner alloy cluster uninstall
+```
+
+### Daemon Service Commands
+
+Manage the `solo-provisioner-daemon` systemd service that coordinates consensus-node upgrade handoffs as well as other
+automation requirements.
+
+#### Prerequisites
+
+| Prerequisite              | Description                                            |
+|---------------------------|--------------------------------------------------------|
+| **Root privileges**       | All daemon service commands require `sudo`             |
+| **Reachable K8s cluster** | The cluster must be reachable via the admin kubeconfig |
+
+#### Install Daemon Service
+
+Bootstrap `daemon.yaml`, provision K8s RBAC, generate the daemon kubeconfig, and
+start the systemd service in one step.
+
+```bash
+# Interactive install — prompts for node-id and orbit when daemon.yaml is absent
+sudo solo-provisioner daemon service install
+
+# Supply values directly (non-interactive / CI)
+sudo solo-provisioner daemon service install --node-id=0.0.3 --orbit=hedera-network
+
+# Override the CN upgrade staging directory
+sudo solo-provisioner daemon service install --node-id=0.0.3 --orbit=hedera-network \
+  --upgrade-dir=/custom/path/data/upgrade/current
+
+# Copy a pre-built daemon.yaml into place, then run the workflow
+sudo solo-provisioner daemon service install --from-config=/path/to/daemon.yaml
+```
+
+**Additional Flags**
+
+| Flag            | Default                                                       | Description                                                                          |
+|-----------------|---------------------------------------------------------------|--------------------------------------------------------------------------------------|
+| `--node-id`     | _(prompted)_                                                  | Hedera node identifier for this consensus node (e.g. `0.0.3`)                        |
+| `--orbit`       | _(prompted)_                                                  | Kubernetes namespace (orbit) where `NetworkUpgradeExecute` CRs are watched           |
+| `--upgrade-dir` | `/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current` | Path to the CN upgrade staging directory                                             |
+| `--from-config` | _(none)_                                                      | Path to an existing `daemon.yaml` to copy into `/opt/solo/weaver/config/daemon.yaml` |
+
+> **Config bootstrap logic:** If `daemon.yaml` already exists its values are used.
+> Individual fields can still be overridden with `--node-id`, `--orbit`, or `--upgrade-dir`.
+> In interactive mode the prompts are pre-filled with any existing values so pressing
+> Enter accepts them unchanged.
+
+#### Uninstall Daemon Service
+
+```bash
+sudo solo-provisioner daemon service uninstall
+```
+
+#### Check Daemon Service Health
+
+```bash
+sudo solo-provisioner daemon service check
+```
+
+#### Start / Stop Daemon Service
+
+```bash
+sudo solo-provisioner daemon service start
+sudo solo-provisioner daemon service stop
 ```
 
 ---
@@ -687,19 +775,22 @@ proxy:
   containerRegistryProxy: "localhost:5050"
 ```
 
-| Field | Description |
-|-------|-------------|
-| `enabled` | Enable proxy mode |
-| `url` | Proxy address as `host:port` (sets both `HTTP_PROXY` and `HTTPS_PROXY`) |
-| `noProxy` | Comma-separated hosts/CIDRs to bypass proxy (defaults to localhost and private networks) |
-| `sslCertFile` | CA certificate bundle path for TLS verification (sets `SSL_CERT_FILE`) |
-| `containerRegistryProxy` | Container image pull-through cache as `host:port` (configures CRI-O registry mirror) |
+| Field                    | Description                                                                              |
+|--------------------------|------------------------------------------------------------------------------------------|
+| `enabled`                | Enable proxy mode                                                                        |
+| `url`                    | Proxy address as `host:port` (sets both `HTTP_PROXY` and `HTTPS_PROXY`)                  |
+| `noProxy`                | Comma-separated hosts/CIDRs to bypass proxy (defaults to localhost and private networks) |
+| `sslCertFile`            | CA certificate bundle path for TLS verification (sets `SSL_CERT_FILE`)                   |
+| `containerRegistryProxy` | Container image pull-through cache as `host:port` (configures CRI-O registry mirror)     |
 
-When proxy is enabled, Solo Provisioner sets the appropriate environment variables so that all HTTP clients and Helm operations automatically route through the proxy. The `sslCertFile` allows trusting custom CA certificates (e.g., for MITM proxy inspection) without disabling TLS verification.
+When proxy is enabled, Solo Provisioner sets the appropriate environment variables so that all HTTP clients and Helm
+operations automatically route through the proxy. The `sslCertFile` allows trusting custom CA certificates (e.g., for
+MITM proxy inspection) without disabling TLS verification.
 
 ### Environment Variables
 
-Environment variables can override configuration file values. They require a config file to be provided via `--config` flag.
+Environment variables can override configuration file values. They require a config file to be provided via `--config`
+flag.
 
 **Format**: `SOLO_PROVISIONER_<SECTION>_<FIELD>` (uppercase, underscores for nested fields)
 
@@ -793,12 +884,14 @@ sudo solo-provisioner uninstall
 ### Common Issues
 
 **1. Permission Denied**
+
 ```bash
 # Most commands require root privileges
 sudo solo-provisioner block node install --profile=local
 ```
 
 **2. Profile Not Specified**
+
 ```bash
 # Error: profile flag is required
 # Solution: Always specify --profile
@@ -806,6 +899,7 @@ sudo solo-provisioner block node check --profile=mainnet
 ```
 
 **3. Invalid Storage Path**
+
 ```bash
 # Error: invalid base path
 # Ensure path exists and has correct permissions
@@ -814,6 +908,7 @@ sudo solo-provisioner block node install --profile=mainnet --base-path=/mnt/stor
 ```
 
 **4. Helm Chart Issues**
+
 ```bash
 # Check specific chart version availability
 # Use explicit version if needed
@@ -874,6 +969,14 @@ sudo solo-provisioner teleport cluster uninstall
 # ALLOY
 sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-name=<name>]
 sudo solo-provisioner alloy cluster uninstall
+
+# DAEMON
+sudo solo-provisioner daemon service install [--node-id=<id>] [--orbit=<ns>] [--upgrade-dir=<path>]
+sudo solo-provisioner daemon service install --from-config=<path>
+sudo solo-provisioner daemon service uninstall
+sudo solo-provisioner daemon service check
+sudo solo-provisioner daemon service start
+sudo solo-provisioner daemon service stop
 
 # UTILITIES
 solo-provisioner version [--output=json|yaml]

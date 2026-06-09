@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -64,6 +65,23 @@ func (c DaemonConfig) Validate() error {
 	}
 	if c.Orbit == "" {
 		return ErrConfigMalformed.New("orbit is required")
+	}
+	return nil
+}
+
+// WriteDaemonConfig serialises cfg to YAML and writes it to path, creating any
+// missing parent directories. It does not validate cfg — callers should call
+// cfg.Validate() before writing.
+func WriteDaemonConfig(path string, cfg DaemonConfig) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return ErrConfig.Wrap(err, "cannot create config directory %s", filepath.Dir(path))
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return ErrConfigMalformed.Wrap(err, "cannot serialise daemon config")
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return ErrConfig.Wrap(err, "cannot write daemon config to %s", path)
 	}
 	return nil
 }
