@@ -76,7 +76,12 @@ func CheckClusterStep() *automa.StepBuilder {
 			if !exists {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.IllegalState.New(
-						"K8s cluster is not reachable — ensure ~/.kube/config is valid and the API server is up")))
+						"K8s cluster is not reachable — ensure ~/.kube/config is valid and the API server is up").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Verify kubeconfig: kubectl cluster-info",
+							"Check KUBECONFIG env var or ~/.kube/config is present and points to a running cluster",
+							"Ensure the K8s API server is reachable from this host",
+						})))
 			}
 			logx.As().Info().Msg("K8s cluster is reachable")
 			return automa.StepSuccessReport(stp.Id())
@@ -117,7 +122,13 @@ func CreateDaemonRBACStep(namespace string) *automa.StepBuilder {
 			if _, err := cs.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
 				if !kerrors.IsAlreadyExists(err) {
 					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to create ServiceAccount %s", daemonSAName)))
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to create ServiceAccount %s", daemonSAName).
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Ensure the orbit namespace exists: kubectl get ns " + namespace,
+								"Create the namespace if missing: kubectl create ns " + namespace,
+								"Verify your kubeconfig has permission to create ServiceAccounts: kubectl auth can-i create serviceaccounts -n " + namespace,
+								"Re-run after the namespace is ready: sudo solo-provisioner daemon service install --orbit=" + namespace,
+							})))
 				}
 				logx.As().Debug().Str("sa", daemonSAName).Msg("ServiceAccount already exists — skipping")
 			} else {
