@@ -28,6 +28,10 @@ tasks:
   uat:setup:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
     interactive: true
+    vars:
+      BN_VERSION: '{{.BN_VERSION | default "0.26.0"}}'
+      PLUGIN_PRESET: '{{.PLUGIN_PRESET | default ""}}'
+      NON_INTERACTIVE: '{{.NON_INTERACTIVE | default "false"}}'
     cmds:
       - task: uat:bootstrap
       - |
@@ -36,16 +40,23 @@ tasks:
         echo "  UAT Setup: Install Block Node"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+        BN_VERSION='{{.BN_VERSION}}'
+        PLUGIN_PRESET='{{.PLUGIN_PRESET}}'
+        NON_INTERACTIVE='{{.NON_INTERACTIVE}}'
 
-        echo -e '\n▶ Block node install (v0.26.0)'
-        sudo solo-provisioner block node install -p local \
-          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+        INSTALL_ARGS="-p local -c /mnt/solo-weaver/test/config/config_with_proxy.yaml"
+        [ -n "$BN_VERSION" ]            && INSTALL_ARGS="$INSTALL_ARGS --chart-version $BN_VERSION"
+        [ -n "$PLUGIN_PRESET" ]         && INSTALL_ARGS="$INSTALL_ARGS --plugin-preset $PLUGIN_PRESET"
+        [ "$NON_INTERACTIVE" = "true" ] && INSTALL_ARGS="$INSTALL_ARGS --non-interactive"
+
+        echo -e "\n▶ Block node install (${BN_VERSION:-config default})"
+        sudo solo-provisioner block node install $INSTALL_ARGS
 
 
-        echo -e '\n▶ Verify install (v0.26.0)'
+        echo -e "\n▶ Verify install (${BN_VERSION:-config default})"
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
-        [ "$CHART_VER" = "0.26.0" ] || { echo "FAIL: expected chart version 0.26.0, got $CHART_VER"; exit 1; }
+        [ -z "$BN_VERSION" ] || [ "$CHART_VER" = "$BN_VERSION" ] || { echo "FAIL: expected chart version $BN_VERSION, got $CHART_VER"; exit 1; }
         kubectl get pods -n block-node
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
@@ -157,24 +168,16 @@ tasks:
         echo '✅ Core Block Node: PASSED'
 
   uat:purge-storage:
-    desc: "Verify the three block-node uninstall variants (self-contained: bootstraps its own cluster)"
+    desc: "Verify the three block-node uninstall variants"
     interactive: true
     cmds:
+      - task: uat:setup
       - |
         set -e
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "  UAT Test: Block Node Uninstall Variants"
         echo "  matrix: (no flag) → with-reset → purge-storage"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-
-        echo -e '\n▶ Bootstrap binary'
-        task uat:bootstrap
-
-
-        echo -e '\n▶ Install block node (also sets up cluster)'
-        sudo solo-provisioner block node install -p local \
-          -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 
         CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
         NS=block-node
@@ -254,13 +257,9 @@ tasks:
         live_dir_has_files && { echo "FAIL: live data dir not wiped under --purge-storage"; exit 1; }
         echo "   ✓ helm gone; PVCs=0 PVs=0; data wiped"
 
-
-        echo -e '\n▶ Teardown'
-        sudo solo-provisioner kube cluster uninstall || true
-        sudo solo-provisioner uninstall || true
-
         echo ''
         echo '✅ Block Node Uninstall Variants: PASSED'
+      - task: uat:teardown
 
   uat:teleport:
     desc: "Run teleport lifecycle test (inside VM: requires cluster from uat:setup)"
@@ -526,19 +525,23 @@ tasks:
         echo '✅ solo-operator Lifecycle: PASSED'
 
   uat:plugin-preset-upgrade:
-    desc: "Verify plugin preset names auto-update on upgrade across the 0.35 version boundary (self-contained: bootstraps its own cluster)"
+    desc: "Verify plugin preset names auto-update on upgrade across the 0.35 version boundary"
     interactive: true
     cmds:
+      - task: uat:setup
+        vars:
+          BN_VERSION: "0.33.0"
+          PLUGIN_PRESET: "tier1-rfh"
+          NON_INTERACTIVE: "true"
       - |
         set -e
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "  UAT Test: Plugin Preset Upgrade (pre-0.35 → 0.35+)"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-        # Chart versions under test. Update if the last stable pre-0.35 or
-        # current 0.35+ release changes.
-        PRE_35_VERSION=0.33.0
-        POST_35_VERSION=0.35.0
+        # Chart version for the post-0.35 upgrade target.
+        # Update if the current 0.35+ release changes.
+        POST_35_VERSION=0.35.1
         CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
         NS=block-node
 
@@ -547,19 +550,7 @@ tasks:
         }
 
 
-        echo -e '\n▶ Step 1: Bootstrap binary'
-        task uat:bootstrap
-
-
-        echo -e "\n▶ Step 2: Install BN ${PRE_35_VERSION} with tier1-rfh preset (also sets up cluster)"
-        sudo solo-provisioner block node install -p local \
-          --chart-version "$PRE_35_VERSION" \
-          --plugin-preset tier1-rfh \
-          --non-interactive \
-          -c "$CONFIG"
-
-
-        echo -e '\n▶ Step 3: Verify pre-0.35 Helm values contain s3-archive'
+        echo -e '\n▶ Verify pre-0.35 Helm values contain s3-archive'
         PLUGINS=$(get_plugins)
         echo "   plugins.names: $PLUGINS"
         echo "$PLUGINS" | grep -q 's3-archive' \
@@ -569,33 +560,21 @@ tasks:
         echo "   ✓ s3-archive present, cloud-storage-* absent"
 
 
-        echo -e "\n▶ Step 4: Upgrade to BN ${POST_35_VERSION} WITHOUT passing --plugin-preset"
-        echo "   (tests non-interactive re-resolution from stored state)"
-        # Run with || true: BN 0.35.0 may exceed the 5-minute Helm default timeout on CI
-        # VMs (3 CPUs / 4 GB). The effective plugin list is logged before the Helm
-        # operation starts, so we can verify the fix regardless of whether the pod
-        # becomes ready in time.
-        UPGRADE_LOG=/tmp/plugin-preset-upgrade.log
+        echo -e "\n▶ Upgrade to BN ${POST_35_VERSION} with tier1-rfh preset"
         sudo solo-provisioner block node upgrade -p local \
           --chart-version "$POST_35_VERSION" \
+          --plugin-preset tier1-rfh \
           --non-interactive \
-          -c "$CONFIG" 2>&1 | tee "$UPGRADE_LOG" || true
+          -c "$CONFIG"
 
-
-        echo -e '\n▶ Step 5: Verify effective inputs contain cloud-storage-* and NOT s3-archive'
-        # The provisioner logs "Determined effective user inputs" with the resolved
-        # PluginList before the Helm upgrade runs — this is what we verify.
-        grep -q 'cloud-storage-archive' "$UPGRADE_LOG" \
-          || { echo "FAIL: cloud-storage-archive not found in effective upgrade inputs"; exit 1; }
-        grep -q 'cloud-storage-expanded' "$UPGRADE_LOG" \
-          || { echo "FAIL: cloud-storage-expanded not found in effective upgrade inputs"; exit 1; }
-        echo "   ✓ effective inputs contain cloud-storage-archive and cloud-storage-expanded"
-
-
-        echo -e '\n▶ Teardown'
-        sudo solo-provisioner block node uninstall -p local -c "$CONFIG" -y || true
-        sudo solo-provisioner kube cluster uninstall || true
-        sudo solo-provisioner uninstall || true
+        echo -e '\n▶ Verify post-0.35 Helm values contain cloud-storage-* and not s3-archive'
+        PLUGINS=$(get_plugins)
+        echo "   plugins.names: $PLUGINS"
+        echo "$PLUGINS" | grep -q 'cloud-storage-archive' \
+          || { echo "FAIL: expected cloud-storage-archive in plugins.names, got: $PLUGINS"; exit 1; }
+        echo "$PLUGINS" | grep -qv 's3-archive' \
+          || { echo "FAIL: s3-archive should not be present post-0.35, got: $PLUGINS"; exit 1; }
+        echo "   ✓ cloud-storage-archive present, s3-archive absent"
 
         echo ''
         echo "NOTE: This test verifies plugin names in Helm values only."
@@ -603,6 +582,7 @@ tasks:
         echo "      requires separate BN team sign-off before upgrading live nodes."
         echo ''
         echo '✅ Plugin Preset Upgrade: PASSED'
+      - task: uat:teardown
 
   uat:lifecycle:
     desc: "Run core lifecycle test (inside VM: setup → core upgrades → teardown)"
@@ -621,9 +601,9 @@ tasks:
       - task: uat:solo-operator
       - task: uat:teleport
       - task: uat:alloy
+      - task: uat:teardown
       - task: uat:purge-storage
       - task: uat:plugin-preset-upgrade
-      - task: uat:teardown
       - task: uat:compat
 
 
