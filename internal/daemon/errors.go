@@ -21,3 +21,8 @@ var (
 func IsConfigNotFound(err error) bool {
 	return errorx.IsOfType(err, ErrConfigNotFound)
 }
+
+// IsConfigMalformed reports whether err is (or wraps) an ErrConfigMalformed error.
+func IsConfigMalformed(err error) bool {
+	return errorx.IsOfType(err, ErrConfigMalformed)
+}

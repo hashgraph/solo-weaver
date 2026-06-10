@@ -11,6 +11,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	daemon "github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -129,8 +130,15 @@ func resolveDaemonConfig(
 		return cfg, nil
 	}
 
-	// Re-raise anything other than "file not found".
+	// Re-raise anything other than "file not found", attaching resolution hints
+	// so the doctor layer can print actionable next steps.
 	if !errors.Is(err, os.ErrNotExist) && !daemon.IsConfigNotFound(err) {
+		if daemon.IsConfigMalformed(err) {
+			if ex := errorx.Cast(err); ex != nil {
+				return daemon.DaemonConfig{}, ex.WithProperty(doctor.ErrPropertyResolution,
+					configMalformedResolution(paths.DaemonConfigPath))
+			}
+		}
 		return daemon.DaemonConfig{}, err
 	}
 
@@ -162,7 +170,7 @@ func resolveDaemonConfig(
 			Enabled:    true,
 			Orbit:      flagBNOrbit,
 			Kubeconfig: paths.DaemonBNKubeconfigPath,
-			Monitors:   daemon.BlockNodeMonitors{Upgrade: true},
+			Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
 		}
 		bnCfg = &c
 	}
@@ -194,7 +202,8 @@ func resolveDaemonConfig(
 	// Validate before writing — surface missing required fields with clear errors.
 	if err := cfg.Validate(); err != nil {
 		return daemon.DaemonConfig{}, errorx.IllegalArgument.Wrap(err,
-			"daemon config incomplete: supply --components and the required per-component flags, or run interactively")
+			"daemon config incomplete: supply --components and the required per-component flags, or run interactively").
+			WithProperty(doctor.ErrPropertyResolution, missingComponentsResolution())
 	}
 
 	if err := daemon.WriteDaemonConfig(paths.DaemonConfigPath, cfg); err != nil {
@@ -230,6 +239,43 @@ func applyFlagOverrides(cfg *daemon.DaemonConfig) bool {
 		}
 	}
 	return changed
+}
+
+// configMalformedResolution returns resolution steps shown when an existing
+// daemon.yaml fails validation (missing fields, unknown schema, etc.).
+func configMalformedResolution(configPath string) string {
+	return "The existing daemon config is incomplete or invalid. To fix:\n" +
+		"\n" +
+		"  Option A — re-run interactively (recommended):\n" +
+		"    1. Remove the broken config:  sudo rm " + configPath + "\n" +
+		"    2. Re-run the install and follow the prompts:\n" +
+		"         sudo solo-provisioner daemon service install\n" +
+		"\n" +
+		"  Option B — supply all values via flags (non-interactive):\n" +
+		"    sudo solo-provisioner daemon service install \\\n" +
+		"      --components consensus-node \\\n" +
+		"      --cn-node-id 0.0.3 \\\n" +
+		"      --cn-orbit <namespace>\n" +
+		"\n" +
+		"  Option C — copy a pre-built daemon.yaml into place:\n" +
+		"    sudo solo-provisioner daemon service install --from-config /path/to/daemon.yaml"
+}
+
+// missingComponentsResolution returns resolution steps shown when no components
+// are configured (--components flag was omitted in non-interactive mode).
+func missingComponentsResolution() string {
+	return "No daemon components were selected. To fix:\n" +
+		"\n" +
+		"  Option A — re-run interactively (recommended):\n" +
+		"    sudo solo-provisioner daemon service install\n" +
+		"\n" +
+		"  Option B — pass --components explicitly:\n" +
+		"    sudo solo-provisioner daemon service install \\\n" +
+		"      --components consensus-node \\\n" +
+		"      --cn-node-id 0.0.3 \\\n" +
+		"      --cn-orbit <namespace>\n" +
+		"\n" +
+		"  Valid component names: \"consensus-node\", \"block-node\", or both comma-separated."
 }
 
 // copyFile copies src to dst, creating any missing parent directories.
