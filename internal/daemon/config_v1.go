@@ -42,7 +42,7 @@ type blockNodeConfigV1 struct {
 }
 
 type blockNodeMonitorsV1 struct {
-	Upgrade bool `yaml:"upgrade"`
+	TrafficShaper bool `yaml:"traffic_shaper"`
 }
 
 // migrateToLatest is the terminal step of the migration chain at v1.
@@ -73,7 +73,7 @@ func (v daemonConfigV1) migrateToLatest() DaemonConfig {
 			Kubeconfig: bn.Kubeconfig,
 			Orbit:      bn.Orbit,
 			Monitors: BlockNodeMonitors{
-				Upgrade: bn.Monitors.Upgrade,
+				TrafficShaper: bn.Monitors.TrafficShaper,
 			},
 		}
 	}

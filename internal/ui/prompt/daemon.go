@@ -266,7 +266,7 @@ func RunDaemonInstallPrompts(
 		c := daemon.BlockNodeComponentConfig{
 			Enabled:    true,
 			Kubeconfig: paths.DaemonBNKubeconfigPath,
-			Monitors:   daemon.BlockNodeMonitors{Upgrade: true},
+			Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
 		}
 		cfg.Components.BlockNode = &c
 		targets.BNOrbit = &cfg.Components.BlockNode.Orbit
