@@ -7,36 +7,27 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
 	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"golang.org/x/sync/errgroup"
-	authorizationv1 "k8s.io/api/authorization/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-)
-
-const (
-	kubeProbeInterval    = 2 * time.Second
-	kubeProbeRESTTimeout = 30 * time.Second // per-attempt REST timeout; matches upgrade_monitor.go and criteria.go
-
-	// networkUpgradeExecuteGroup and resource are the exact RBAC verbs the daemon
-	// needs to watch NetworkUpgradeExecute CRs. Probing these ensures the
-	// daemon's ServiceAccount has the required permissions before signalling READY.
-	networkUpgradeExecuteGroup    = "hedera.com"
-	networkUpgradeExecuteResource = "networkupgradeexecutes"
 )
 
 // component groups the MonitorRunner instances for one daemon component (e.g.
 // consensus-node). Each monitor runs in its own supervised goroutine started by
 // componentSupervisor.
+//
+// probe is optional: components with no external dependencies (host-only) leave
+// it nil and are treated as immediately ready by the composite probe runner.
+// tracker records per-monitor state for the /status endpoint.
 type component struct {
 	name     string
 	monitors []MonitorRunner
+	probe    ComponentProbe
+	tracker  *StatusTracker
 }
 
 // Daemon is the controller for solo-provisioner-daemon. It composes the
@@ -90,6 +81,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 				Namespace:        cn.Orbit,
 				UpgradeEventsDir: paths.DaemonConsensusUpgradeEventsDir,
 				HomeDir:          paths.HomeDir,
+				UpgradeDir:       cn.EffectiveUpgradeDir(),
 			})
 			if err != nil {
 				return nil, err
@@ -133,6 +125,8 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			components = append(components, component{
 				name:     "consensus-node",
 				monitors: cnMonitors,
+				probe:    buildComponentProbe("consensus-node", cnMonitors),
+				tracker:  NewStatusTracker(),
 			})
 		}
 	}
@@ -144,20 +138,18 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		migrateLogger: migrateLogger,
 	}
 
-	// Build the server. It needs a reference to the migration monitor for the
-	// /status endpoint. Find it in the component list if present.
+	// Build the server. Find the migration monitor (for soak endpoints) and
+	// provide a statusFn closure (for GET /status).
 	var mm *consensus.MigrationMonitor
-	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled && cn.Monitors.Migration {
-		for _, comp := range d.components {
-			for _, mon := range comp.monitors {
-				if m, ok := mon.(*consensus.MigrationMonitor); ok {
-					mm = m
-					break
-				}
+	for _, comp := range d.components {
+		for _, mon := range comp.monitors {
+			if m, ok := mon.(*consensus.MigrationMonitor); ok {
+				mm = m
+				break
 			}
 		}
 	}
-	d.server = NewServer(paths.DaemonSockPath, mm, ServerConfig{}) // zero value → all defaults
+	d.server = NewServer(paths.DaemonSockPath, mm, d.statusSnapshot, ServerConfig{})
 	return d, nil
 }
 
@@ -169,12 +161,13 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 func (d *Daemon) componentSupervisor(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for _, comp := range d.components {
+		tracker := comp.tracker // nil-safe: supervisedMonitor handles nil tracker
 		for _, m := range comp.monitors {
 			wg.Add(1)
 			m := m // pin loop variable for goroutine
 			go func() {
 				defer wg.Done()
-				supervisedMonitor(ctx, m)
+				supervisedMonitor(ctx, m, tracker)
 			}()
 		}
 	}
@@ -185,76 +178,80 @@ func (d *Daemon) componentSupervisor(ctx context.Context) error {
 	return nil
 }
 
-// probeKubeRBAC issues SelfSubjectAccessReview calls to verify that the daemon's
-// ServiceAccount has the `list` and `watch` verbs on networkupgradeexecutes in
-// the given namespace. Returns nil only when both verbs are allowed.
-func probeKubeRBAC(ctx context.Context, kubeconfigPath, namespace string) error {
-	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("build kubeconfig: %w", err)
-	}
-	// Cap each REST call so a hung API server doesn't block a single probe
-	// attempt indefinitely. Matches the timeout used in upgrade_monitor.go and
-	// criteria.go.
-	restCfg.Timeout = kubeProbeRESTTimeout
-	client, err := kubernetes.NewForConfig(restCfg)
-	if err != nil {
-		return fmt.Errorf("build kube client: %w", err)
+// runCompositeProbe runs all component probes concurrently. It fires READY=1
+// only when every probe returns nil. If any probe fails (ctx cancelled) READY=1
+// is not sent; systemd's TimeoutStartSec will mark the service failed.
+func (d *Daemon) runCompositeProbe(ctx context.Context) {
+	var wg sync.WaitGroup
+	results := make(chan error, len(d.components))
+
+	for _, comp := range d.components {
+		if comp.probe == nil {
+			continue // nothing to probe
+		}
+		wg.Add(1)
+		p := comp.probe
+		go func() {
+			defer wg.Done()
+			if err := p.Probe(ctx); err != nil {
+				logx.As().Error().Err(err).
+					Str("reason", "ComponentProbeAborted").
+					Str("component", p.ComponentName()).
+					Msg("Component probe aborted — not sending READY=1")
+				results <- err
+			}
+		}()
 	}
 
-	for _, verb := range []string{"list", "watch"} {
-		review := &authorizationv1.SelfSubjectAccessReview{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace: namespace,
-					Verb:      verb,
-					Group:     networkUpgradeExecuteGroup,
-					Resource:  networkUpgradeExecuteResource,
-				},
-			},
-		}
-		result, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+	wg.Wait()
+	close(results)
+
+	for err := range results {
 		if err != nil {
-			return fmt.Errorf("SelfSubjectAccessReview(%s): %w", verb, err)
-		}
-		if !result.Status.Allowed {
-			return fmt.Errorf("RBAC denied: verb=%s resource=%s.%s namespace=%s", verb, networkUpgradeExecuteResource, networkUpgradeExecuteGroup, namespace)
+			return // at least one probe failed; READY=1 not sent
 		}
 	}
-	return nil
+
+	if err := sdNotify(sdReady); err != nil {
+		logx.As().Warn().Err(err).Str("reason", "SdNotifyReadyFailed").Msg("Failed to send READY=1 to systemd")
+	}
 }
 
-// probeKubeRBACWithRetry retries probeKubeRBAC every kubeProbeInterval until
-// it succeeds or ctx is cancelled. Returns nil on success, ctx.Err() if the
-// context is cancelled before the probe succeeds.
-//
-// There is intentionally no internal timeout: if RBAC is misconfigured the
-// probe will never succeed, and the caller must NOT send READY=1. Systemd's
-// TimeoutStartSec (default 90 s) will cancel the context and mark the service
-// as failed — which is the correct loud startup failure for a broken config.
-func probeKubeRBACWithRetry(ctx context.Context, kubeconfigPath, namespace string) error {
-	attempt := 0
-	for {
-		attempt++
-		if err := probeKubeRBAC(ctx, kubeconfigPath, namespace); err == nil {
-			logx.As().Info().
-				Str("reason", "KubeRBACProbeSuccess").
-				Int("attempt", attempt).
-				Msg("Kubernetes RBAC probe succeeded — daemon has required permissions")
-			return nil
-		} else {
-			logx.As().Warn().Err(err).
-				Str("reason", "KubeRBACProbeFailed").
-				Int("attempt", attempt).
-				Msg("Kubernetes RBAC probe failed — retrying")
+// statusSnapshot builds a StatusResponse from the current tracker snapshots.
+// It is passed to the Server as a closure for the GET /status handler.
+func (d *Daemon) statusSnapshot() StatusResponse {
+	resp := StatusResponse{
+		Components: make(map[string]ComponentStatus, len(d.components)),
+	}
+	for _, comp := range d.components {
+		cs := ComponentStatus{
+			Monitors: make(map[string]MonitorState),
 		}
+		if comp.tracker != nil {
+			for name, state := range comp.tracker.Snapshot() {
+				cs.Monitors[name] = state
+			}
+		}
+		resp.Components[comp.name] = cs
+	}
+	return resp
+}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(kubeProbeInterval):
+// buildComponentProbe collects RequiredProbe() from every ProbableMonitor in
+// monitors and wraps them in a CompositeProbe named componentName. Returns nil
+// when no monitor declares a prerequisite (host-only component); the supervisor
+// treats a nil probe as immediately ready.
+func buildComponentProbe(componentName string, monitors []MonitorRunner) ComponentProbe {
+	var leafProbes []Probe
+	for _, m := range monitors {
+		if pm, ok := m.(ProbableMonitor); ok {
+			leafProbes = append(leafProbes, pm.RequiredProbe())
 		}
 	}
+	if len(leafProbes) == 0 {
+		return nil
+	}
+	return NewCompositeProbe(componentName, leafProbes...)
 }
 
 // Run starts all sub-systems and blocks until ctx is cancelled or a critical
@@ -307,22 +304,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	eg.Go(func() error { return d.server.Start(ctx) })
 	eg.Go(func() error { return d.componentSupervisor(ctx) })
 
-	// Probe K8s RBAC concurrently so the server starts immediately without
-	// blocking. The probe only retries transient API connectivity failures —
-	// the kubeconfig is already validated above. READY=1 is sent only on
-	// success; if RBAC is misconfigured the probe retries until systemd cancels
-	// the context via TimeoutStartSec, marking the service failed.
-	go func() {
-		if err := probeKubeRBACWithRetry(ctx, d.cfg.Components.ConsensusNode.Kubeconfig, d.cfg.Components.ConsensusNode.Orbit); err != nil {
-			logx.As().Error().Err(err).
-				Str("reason", "KubeRBACProbeAborted").
-				Msg("RBAC probe aborted — not sending READY=1; systemd will time out and mark service failed")
-			return
-		}
-		if err := sdNotify(sdReady); err != nil {
-			logx.As().Warn().Err(err).Str("reason", "SdNotifyReadyFailed").Msg("Failed to send READY=1 to systemd")
-		}
-	}()
+	// Run all component probes concurrently. The server is already accepting
+	// requests; READY=1 fires only when every probe passes. Each probe retries
+	// internally until success or ctx cancellation (systemd TimeoutStartSec).
+	go d.runCompositeProbe(ctx)
 
 	return eg.Wait()
 }

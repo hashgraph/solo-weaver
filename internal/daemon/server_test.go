@@ -40,7 +40,7 @@ func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Cli
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mm := consensus.NewMigrationMonitor()
-	srv := daemon.NewServer(sockPath, mm, cfg)
+	srv := daemon.NewServer(sockPath, mm, nil, cfg)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(ctx) }()

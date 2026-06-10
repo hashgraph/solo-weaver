@@ -4,6 +4,8 @@ package daemon
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/automa-saga/logx"
@@ -27,6 +29,45 @@ var (
 )
 
 const supervisedBackoffMultiplier = 2.0
+
+// MonitorState describes the runtime state of a single supervised monitor.
+// State values:
+//   - "running"         — monitor is executing normally
+//   - "backoff:<dur>"   — monitor crashed and is waiting before restart
+//   - "stopped"         — monitor exited cleanly (ctx cancelled or nil return)
+type MonitorState struct {
+	State string `json:"state"`
+}
+
+// StatusTracker holds the latest observed state for a set of monitors. It is
+// safe for concurrent use; supervisedMonitor updates it on each state transition.
+type StatusTracker struct {
+	mu     sync.RWMutex
+	states map[string]MonitorState
+}
+
+// NewStatusTracker returns an empty StatusTracker.
+func NewStatusTracker() *StatusTracker {
+	return &StatusTracker{states: make(map[string]MonitorState)}
+}
+
+// set records a new state for the named monitor.
+func (t *StatusTracker) set(name, state string) {
+	t.mu.Lock()
+	t.states[name] = MonitorState{State: state}
+	t.mu.Unlock()
+}
+
+// Snapshot returns a copy of all monitor states at the time of the call.
+func (t *StatusTracker) Snapshot() map[string]MonitorState {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	out := make(map[string]MonitorState, len(t.states))
+	for k, v := range t.states {
+		out[k] = v
+	}
+	return out
+}
 
 // MonitorRunner is the interface that each long-running monitor goroutine must
 // implement so it can be managed by supervisedMonitor.
@@ -66,17 +107,28 @@ type MonitorRunner interface {
 // This function never returns an error — it absorbs crashes and restarts the
 // monitor indefinitely until ctx is cancelled. Callers that need to detect
 // monitor death should couple this with the componentSupervisor (S3).
-func supervisedMonitor(ctx context.Context, m MonitorRunner) {
+//
+// tracker may be nil; when non-nil it is updated on every state transition so
+// the /status endpoint can report per-monitor state without polling.
+func supervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTracker) {
 	backoff := supervisedBackoffInitial
 	consecutiveCrashes := 0
 
+	setState := func(state string) {
+		if tracker != nil {
+			tracker.set(m.Name(), state)
+		}
+	}
+
 	for {
 		start := time.Now()
+		setState("running")
 
 		err := m.Run(ctx)
 
 		// ctx cancelled → clean shutdown, do not restart.
 		if ctx.Err() != nil {
+			setState("stopped")
 			logx.As().Info().
 				Str("reason", "MonitorStopped").
 				Str("monitor", m.Name()).
@@ -86,6 +138,7 @@ func supervisedMonitor(ctx context.Context, m MonitorRunner) {
 
 		// nil return without ctx cancellation → also clean exit.
 		if err == nil {
+			setState("stopped")
 			logx.As().Info().
 				Str("reason", "MonitorExited").
 				Str("monitor", m.Name()).
@@ -121,8 +174,11 @@ func supervisedMonitor(ctx context.Context, m MonitorRunner) {
 			consecutiveCrashes = 0
 		}
 
+		setState(fmt.Sprintf("backoff:%s", backoff))
+
 		select {
 		case <-ctx.Done():
+			setState("stopped")
 			logx.As().Info().
 				Str("reason", "MonitorStopped").
 				Str("monitor", m.Name()).
