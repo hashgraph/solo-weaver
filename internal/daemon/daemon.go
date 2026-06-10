@@ -43,10 +43,10 @@ type component struct {
 //   - runComponentProbes   — background loop; retries disk probes until all
 //     prerequisites are satisfied; results visible via GET /status
 type Daemon struct {
-	paths       models.WeaverPaths
-	cfg         DaemonConfig
-	server      *Server
-	components  []component
+	paths      models.WeaverPaths
+	cfg        DaemonConfig
+	server     *Server
+	components []component
 	// probeErrors holds the last probe result per component name.
 	// nil = probe passed (or no probe). Written by runComponentProbes,
 	// read by statusSnapshot — both via atomic.Pointer to avoid locks.

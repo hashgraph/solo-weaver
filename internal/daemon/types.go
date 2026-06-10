@@ -18,7 +18,7 @@ type ErrorResponse struct {
 // every enabled component and their individual monitors, plus any unmet startup
 // prerequisites detected by the background probe loop.
 type StatusResponse struct {
-	Components  map[string]ComponentStatus `json:"components"`
+	Components map[string]ComponentStatus `json:"components"`
 	// ProbeErrors maps component name → probe failure message for any component
 	// whose disk prerequisites are not yet satisfied. Empty when all probes pass.
 	ProbeErrors map[string]string `json:"probe_errors,omitempty"`

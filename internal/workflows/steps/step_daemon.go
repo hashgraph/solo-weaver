@@ -71,6 +71,18 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 
 	return automa.NewStepBuilder().WithId("install-daemon-binary").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Refuse to overwrite a running daemon binary ("text file busy").
+			if running, _ := pkgos.IsServiceRunning(ctx, daemonServiceName); running {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.New(
+						"daemon service '%s' is already installed and running", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Uninstall the existing daemon first, then re-install:",
+							"  sudo solo-provisioner daemon service uninstall",
+							"  sudo solo-provisioner daemon service install",
+						})))
+			}
+
 			// Load the embedded release spec — needed in all code paths.
 			spec, err := deps.LoadDaemonReleaseSpec()
 			if err != nil {

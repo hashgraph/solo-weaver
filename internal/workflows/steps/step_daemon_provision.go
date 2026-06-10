@@ -11,7 +11,9 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -486,6 +488,46 @@ func waitForSAToken(ctx context.Context, cs *kubernetes.Clientset, namespace, se
 
 // writeDaemonKubeconfig writes a minimal kubeconfig for the daemon SA to path.
 // The file is created with 0640 (root:weaver) so the daemon can read it.
+// AddOperatorToWeaverGroupStep adds the invoking operator (SUDO_USER) to the
+// weaver group so they can reach the daemon socket without sudo. The step is
+// idempotent — if the user is already a member it logs and succeeds. If
+// SUDO_USER is unset or is "root" the step is skipped silently.
+func AddOperatorToWeaverGroupStep() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("add-operator-to-weaver-group").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			sudoUser := os.Getenv("SUDO_USER")
+			if sudoUser == "" || sudoUser == "root" {
+				logx.As().Debug().Str("reason", "AddOperatorToWeaverGroupSkipped").
+					Msg("SUDO_USER not set or is root — skipping weaver group membership")
+				return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{"skipped": "true"}))
+			}
+
+			pm, err := principal.NewManager()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
+			weaverGroup := config.WeaverGroupName()
+			if err := pm.AddUserToGroup(sudoUser, weaverGroup); err != nil {
+				return automa.FailureReport(stp, automa.WithError(
+					errorx.IllegalState.Wrap(err, "failed to add %s to group %s — fix with: sudo usermod -aG %s %s",
+						sudoUser, weaverGroup, weaverGroup, sudoUser)))
+			}
+
+			logx.As().Info().Str("user", sudoUser).Str("group", weaverGroup).
+				Str("reason", "OperatorAddedToWeaverGroup").
+				Msgf("Added %s to group %s — re-login or run `newgrp %s` to activate", sudoUser, weaverGroup, weaverGroup)
+			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{"user": sudoUser, "group": weaverGroup}))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Adding operator to weaver group")
+			return ctx, nil
+		}).
+		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			return automa.SuccessReport(stp)
+		})
+}
+
 func writeDaemonKubeconfig(path, server, ca, token string) error {
 	cfg := clientcmdapi.NewConfig()
 	cfg.Clusters["solo-weaver"] = &clientcmdapi.Cluster{
