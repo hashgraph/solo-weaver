@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+package core
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/automa-saga/logx"
 )
 
-// Back-off and degradation parameters for supervisedMonitor. Declared as
+// Back-off and degradation parameters for SupervisedMonitor. Declared as
 // package-level vars (not consts) so unit tests can override them without
 // sleeping for real durations.
 var (
@@ -23,8 +23,6 @@ var (
 	// an intervening stable run) before a MonitorDegraded event is emitted.
 	// Fires again on every subsequent multiple of this value (5, 10, 15, …) so
 	// ops keeps seeing the alert as long as the monitor stays degraded.
-	// Not exposed as config — this is internal supervisor policy. Tune via
-	// recompile or, in future, via a --degraded-threshold daemon flag.
 	supervisedDegradedThreshold = 5
 )
 
@@ -40,7 +38,7 @@ type MonitorState struct {
 }
 
 // StatusTracker holds the latest observed state for a set of monitors. It is
-// safe for concurrent use; supervisedMonitor updates it on each state transition.
+// safe for concurrent use; SupervisedMonitor updates it on each state transition.
 type StatusTracker struct {
 	mu     sync.RWMutex
 	states map[string]MonitorState
@@ -70,7 +68,7 @@ func (t *StatusTracker) Snapshot() map[string]MonitorState {
 }
 
 // MonitorRunner is the interface that each long-running monitor goroutine must
-// implement so it can be managed by supervisedMonitor.
+// implement so it can be managed by SupervisedMonitor.
 //
 // Implementations must:
 //   - Return nil when ctx is cancelled (clean shutdown, no restart).
@@ -87,7 +85,7 @@ type MonitorRunner interface {
 	Name() string
 }
 
-// supervisedMonitor runs m in a restart loop. When m.Run returns a non-nil
+// SupervisedMonitor runs m in a restart loop. When m.Run returns a non-nil
 // error the supervisor waits for a back-off delay and then restarts it.
 // Clean shutdown (nil return or ctx cancellation) exits the loop immediately
 // without restarting.
@@ -105,12 +103,11 @@ type MonitorRunner interface {
 //     the alert as long as the monitor remains degraded.
 //
 // This function never returns an error — it absorbs crashes and restarts the
-// monitor indefinitely until ctx is cancelled. Callers that need to detect
-// monitor death should couple this with the componentSupervisor (S3).
+// monitor indefinitely until ctx is cancelled.
 //
 // tracker may be nil; when non-nil it is updated on every state transition so
 // the /status endpoint can report per-monitor state without polling.
-func supervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTracker) {
+func SupervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTracker) {
 	backoff := supervisedBackoffInitial
 	consecutiveCrashes := 0
 
@@ -157,8 +154,7 @@ func supervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTrac
 			Msg("Monitor crashed — restarting after back-off")
 
 		// Emit MonitorDegraded at every supervisedDegradedThreshold consecutive
-		// crashes so ops is alerted at crash #5, #10, #15, … Fires immediately
-		// (before the backoff sleep) so the log entry is visible without delay.
+		// crashes so ops is alerted at crash #5, #10, #15, …
 		if consecutiveCrashes%supervisedDegradedThreshold == 0 {
 			logx.As().Error().Err(err).
 				Str("reason", "MonitorDegraded").

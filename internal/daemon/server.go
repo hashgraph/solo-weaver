@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 )
 
 const defaultReadHeaderTimeout = 5 * time.Second
@@ -23,19 +24,7 @@ type ServerConfig struct {
 	ReadHeaderTimeout time.Duration
 }
 
-// ComponentHandler is implemented by each component to register its own HTTP
-// route sub-tree on the daemon control plane.
-//
-// Convention: all routes registered by a handler must be prefixed with
-// /<component_name>/ (e.g. /consensus_node/..., /block_node/...) to keep the
-// API namespace partitioned.  Process-level routes (/health, /status) are
-// registered by Server itself and must not be claimed by any ComponentHandler.
-type ComponentHandler interface {
-	RegisterRoutes(mux *http.ServeMux)
-}
-
 // ServerOptions groups all injectable dependencies for NewServer.
-// Zero values are safe defaults.
 type ServerOptions struct {
 	// StatusFn returns the full daemon status for GET /status.
 	// Nil disables the endpoint (returns an empty components map).
@@ -43,8 +32,7 @@ type ServerOptions struct {
 
 	// ComponentHandlers registers per-component route sub-trees.
 	// Each entry owns its own /<component>/ prefix.
-	// Nil or empty slice is valid — no component routes will be registered.
-	ComponentHandlers []ComponentHandler
+	ComponentHandlers []core.ComponentHandler
 }
 
 // Server is the Unix socket HTTP control plane for solo-provisioner-daemon.
@@ -58,12 +46,9 @@ type Server struct {
 //
 // Process-level routes (/health, /status) are always registered.
 // Component routes are registered by calling RegisterRoutes on each entry in
-// opts.ComponentHandlers — the order of registration determines precedence for
-// any accidental overlap (avoid overlaps by following the prefix convention).
+// opts.ComponentHandlers.
 //
 // Route scheme: /<component>/<monitor>/<sub-resource>/<verb>
-// Adding a new component means implementing ComponentHandler and appending it
-// to opts.ComponentHandlers — NewServer itself never needs to change.
 func NewServer(sockPath string, opts ServerOptions, cfg ServerConfig) *Server {
 	s := &Server{
 		sockPath: sockPath,
@@ -111,9 +96,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	// Restrict socket to owner+group only so unprivileged local users cannot
-	// reach privileged endpoints (e.g. POST /consensus_node/migration/soak/start).
-	// The daemon runs as root:weaver so only root and weaver group members can connect.
 	if err := os.Chmod(sockPath, 0o660); err != nil {
 		_ = ln.Close()
 		_ = os.Remove(sockPath)

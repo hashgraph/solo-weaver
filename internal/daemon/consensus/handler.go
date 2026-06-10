@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+package consensus
 
 import (
 	"encoding/json"
 	"net/http"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
+	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 )
 
-// ConsensusNodeHandler implements ComponentHandler for all consensus-node HTTP
-// routes under the /consensus_node/ prefix.
+// ConsensusMigrationStatusResponse is the combined view returned by
+// GET /consensus_node/migration/status: supervisor health + current soak state.
+type ConsensusMigrationStatusResponse struct {
+	Monitor core.MonitorState  `json:"monitor"`
+	Soak    SoakStatusResponse `json:"soak"`
+}
+
+// ConsensusNodeHandler implements core.ComponentHandler for all consensus-node
+// HTTP routes under the /consensus_node/ prefix.
 //
 // To add a new monitor for the consensus-node component:
 //  1. Add a field for the monitor and its state func to this struct.
@@ -20,20 +27,20 @@ import (
 type ConsensusNodeHandler struct {
 	// mm is the migration monitor. Nil when the monitor is disabled;
 	// the migration routes return 503 in that case.
-	mm *consensus.MigrationMonitor
+	mm *MigrationMonitor
 
 	// migrationStateFn returns the supervisor-level health of the migration
 	// monitor goroutine (from its StatusTracker). May be nil when mm is nil.
-	migrationStateFn func() MonitorState
+	migrationStateFn func() core.MonitorState
 }
 
 // NewConsensusNodeHandler constructs a ConsensusNodeHandler.
 // mm and migrationStateFn may be nil when the migration monitor is disabled.
-func NewConsensusNodeHandler(mm *consensus.MigrationMonitor, migrationStateFn func() MonitorState) *ConsensusNodeHandler {
+func NewConsensusNodeHandler(mm *MigrationMonitor, migrationStateFn func() core.MonitorState) *ConsensusNodeHandler {
 	return &ConsensusNodeHandler{mm: mm, migrationStateFn: migrationStateFn}
 }
 
-// RegisterRoutes implements ComponentHandler.
+// RegisterRoutes implements core.ComponentHandler.
 // All routes are prefixed with /consensus_node/.
 //
 // Current routes:
@@ -49,8 +56,6 @@ func (h *ConsensusNodeHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // handleConsensusMigrationStatus returns the combined view of the migration
 // monitor: supervisor health (running/backoff/stopped) + current soak state.
-// Primary endpoint for operators that want a single call to assess the
-// consensus-node migration subsystem.
 //
 // For finer-grained access:
 //   - GET /consensus_node/migration/soak/status   — soak state only
@@ -61,7 +66,7 @@ func (h *ConsensusNodeHandler) handleConsensusMigrationStatus(w http.ResponseWri
 		return
 	}
 
-	var state MonitorState
+	var state core.MonitorState
 	if h.migrationStateFn != nil {
 		state = h.migrationStateFn()
 	}
@@ -86,10 +91,9 @@ func (h *ConsensusNodeHandler) handleConsensusSoakStart(w http.ResponseWriter, r
 		return
 	}
 
-	// Cap body size to prevent oversized payloads from exhausting memory.
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10) // 16 KiB
 
-	var req consensus.SoakStartRequest
+	var req SoakStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -112,5 +116,20 @@ func (h *ConsensusNodeHandler) handleConsensusSoakStart(w http.ResponseWriter, r
 		Time("cutover_ts", req.CutoverTimestamp).
 		Msg("Soak start request accepted")
 
-	writeJSON(w, http.StatusAccepted, consensus.SoakStartResponse{Accepted: true})
+	writeJSON(w, http.StatusAccepted, SoakStartResponse{Accepted: true})
+}
+
+// writeJSON serialises v as JSON and writes it with the given status code.
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeError writes a JSON {"error":"..."} body with the given status code.
+func writeError(w http.ResponseWriter, code int, msg string) {
+	type errorBody struct {
+		Error string `json:"error"`
+	}
+	writeJSON(w, code, errorBody{Error: msg})
 }
