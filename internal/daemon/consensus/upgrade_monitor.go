@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/filepruner"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +38,14 @@ const (
 	// after backoffInitial. Any premature close (network blip, proxy idle timeout) is
 	// also subject to the same backoffInitial delay rather than an immediate hot-loop.
 	watchTimeoutSeconds = int64(5 * 60)
+
+	// Upgrade event log retention policy — applied at Run() start and after each
+	// handleExecute so that both startup pruning and long-running daemon pruning
+	// are covered without an extra daemon-level call.
+	upgradeEventLayout = "20060102T150405Z"
+	upgradeEventMaxAge = 365 * 24 * time.Hour
+	upgradeEventKeep   = 50
+	upgradeEventGlob   = "consensus-upgrade-*.jsonl"
 )
 
 // UpgradeMonitorConfig holds configuration for the UpgradeMonitor.
@@ -53,6 +63,17 @@ type UpgradeMonitorConfig struct {
 	// this daemon (e.g. "0.0.3"). Populated as nodeId in all JSONL event log
 	// entries emitted by handleExecute.
 	NodeID string
+
+	// UpgradeEventsDir is the directory where per-operation consensus-upgrade-*.jsonl
+	// files are written by handleExecute. The monitor prunes this directory at the
+	// start of each Run() invocation (covers both startup and post-crash restarts).
+	// Empty string disables pruning.
+	UpgradeEventsDir string
+
+	// HomeDir is the weaver home directory used as a safety base for path
+	// validation during pruning. Pruning is skipped when UpgradeEventsDir falls
+	// outside this tree.
+	HomeDir string
 }
 
 // UpgradeMonitor watches the Kubernetes API for NetworkUpgradeExecute CRs
@@ -90,6 +111,37 @@ func NewUpgradeMonitorWithClient(cfg UpgradeMonitorConfig, client dynamic.Interf
 // Name implements daemon.MonitorRunner.
 func (um *UpgradeMonitor) Name() string { return "upgrade-monitor" }
 
+// pruneUpgradeEventLogs removes stale per-operation upgrade JSONL files from
+// cfg.UpgradeEventsDir. Called at the start of each Run() invocation so
+// pruning happens both at daemon startup and after any supervised restart.
+// A failure is logged as a warning and does not block the monitor from starting.
+func (um *UpgradeMonitor) pruneUpgradeEventLogs() {
+	dir := um.cfg.UpgradeEventsDir
+	if dir == "" {
+		return
+	}
+	if um.cfg.HomeDir != "" {
+		if _, err := sanity.ValidatePathWithinBase(um.cfg.HomeDir, dir); err != nil {
+			logx.As().Warn().Err(err).
+				Str("reason", "UpgradeEventLogPruneSkipped").
+				Str("dir", dir).
+				Str("home", um.cfg.HomeDir).
+				Msg("Skipping upgrade event log pruning — dir is outside weaver home")
+			return
+		}
+	}
+	p := filepruner.New(filepruner.FilenameTimestampStrategy{
+		Layout: upgradeEventLayout,
+		MaxAge: upgradeEventMaxAge,
+	})
+	if err := p.Prune(dir, upgradeEventGlob, upgradeEventKeep); err != nil {
+		logx.As().Warn().Err(err).
+			Str("reason", "UpgradeEventLogPruneFailed").
+			Str("dir", dir).
+			Msg("Failed to prune upgrade event logs — continuing")
+	}
+}
+
 // Run blocks until ctx is cancelled. It continuously watches
 // NetworkUpgradeExecute CRs and triggers handleExecute on
 // ReadyForProvisionerDaemon transitions. Clean watch expiry (server-side
@@ -97,6 +149,10 @@ func (um *UpgradeMonitor) Name() string { return "upgrade-monitor" }
 // exponential backoff; auth errors additionally rebuild the dynamic client
 // from the kubeconfig on disk before retrying.
 func (um *UpgradeMonitor) Run(ctx context.Context) error {
+	// Prune stale upgrade event logs on every Run() entry — covers both the
+	// initial startup and any subsequent supervised restarts.
+	um.pruneUpgradeEventLogs()
+
 	logx.As().Info().
 		Str("reason", "UpgradeMonitorStarted").
 		Str("namespace", um.cfg.Namespace).
