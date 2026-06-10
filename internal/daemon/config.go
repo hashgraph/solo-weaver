@@ -171,7 +171,7 @@ func WriteDaemonConfig(path string, cfg DaemonConfig) error {
 	if err != nil {
 		return ErrConfigMalformed.Wrap(err, "cannot serialise daemon config")
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := os.WriteFile(path, data, 0o640); err != nil {
 		return ErrConfig.Wrap(err, "cannot write daemon config to %s", path)
 	}
 	return nil
