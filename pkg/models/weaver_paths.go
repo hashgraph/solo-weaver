@@ -20,8 +20,9 @@ type WeaverPaths struct {
 	DaemonDir              string
 	DaemonSockPath         string
 	DaemonConfigPath       string
-	DaemonKubeconfigPath   string // /opt/solo/weaver/config/daemon.kubeconfig — legacy; prefer DaemonCNKubeconfigPath
+	DaemonKubeconfigPath   string // /opt/solo/weaver/config/daemon.kubeconfig — legacy; prefer per-component paths
 	DaemonCNKubeconfigPath string // /opt/solo/weaver/config/daemon-cn.kubeconfig
+	DaemonBNKubeconfigPath string // /opt/solo/weaver/config/daemon-bn.kubeconfig
 
 	// InfraVersionsPath is the optional infrastructure-versions.yaml manifest dropped
 	// into the config directory by the build.zip deployment package (HIP XXXX0).
@@ -76,6 +77,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	pp.InfraVersionsPath = path.Join(pp.ConfigDir, "infrastructure-versions.yaml")
 	pp.DaemonKubeconfigPath = path.Join(pp.ConfigDir, "daemon.kubeconfig")
 	pp.DaemonCNKubeconfigPath = path.Join(pp.ConfigDir, "daemon-cn.kubeconfig")
+	pp.DaemonBNKubeconfigPath = path.Join(pp.ConfigDir, "daemon-bn.kubeconfig")
 	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
 	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
 	pp.DaemonConsensusUpgradeEventsDir = path.Join(pp.DaemonConsensusEventsDir, "upgrade")
