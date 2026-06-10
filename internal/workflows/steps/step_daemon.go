@@ -11,16 +11,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
@@ -240,75 +237,6 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 		})
 }
 
-// EnsureDaemonHgcAppDirStep creates the CN upgrade staging directory (and all
-// parent paths, including /opt/hgcapp) if they do not already exist, then sets
-// ownership to hedera:hedera with setgid 2775 so the weaver service account
-// (which is a member of the hedera group) can write to it.
-//
-// This step is required because the systemd unit declares
-// ReadWritePaths=/opt/solo /opt/hgcapp, and systemd's namespace setup fails
-// with ENOENT if /opt/hgcapp does not exist on the host.
-func EnsureDaemonHgcAppDirStep(upgradeDir string) *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("ensure-hgcapp-dir").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// Create the full path tree (includes /opt/hgcapp as a parent).
-			if err := os.MkdirAll(upgradeDir, 0o755); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to create upgrade directory %s", upgradeDir).
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Ensure /opt is writable by root: ls -la /opt",
-							"Create manually: sudo mkdir -p " + upgradeDir,
-						})))
-			}
-
-			// Resolve hedera group.
-			hederaGroupName := config.HederaGroupName()
-			grp, err := user.LookupGroup(hederaGroupName)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.Wrap(err, "hedera group %q not found — run: sudo solo-provisioner install first", hederaGroupName)))
-			}
-			gid, err := strconv.Atoi(grp.Gid)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.Wrap(err, "invalid GID for group %q: %s", hederaGroupName, grp.Gid)))
-			}
-
-			// Walk from /opt/hgcapp down to upgradeDir, applying hedera:hedera
-			// ownership and setgid 2775 on every directory we just created.
-			dirToChown := upgradeDir
-			for {
-				if err := os.Chown(dirToChown, 0, gid); err != nil {
-					logx.As().Warn().Err(err).Str("path", dirToChown).Msg("failed to chown directory to hedera group")
-				}
-				if err := os.Chmod(dirToChown, models.DefaultStorageDirPerm); err != nil {
-					logx.As().Warn().Err(err).Str("path", dirToChown).Msg("failed to chmod directory")
-				}
-				parent := filepath.Dir(dirToChown)
-				if parent == dirToChown || parent == "/" {
-					break
-				}
-				// Stop once we've processed /opt/hgcapp (don't touch /opt itself).
-				if dirToChown == "/opt/hgcapp" {
-					break
-				}
-				dirToChown = parent
-			}
-
-			logx.As().Info().Str("upgrade_dir", upgradeDir).Msg("CN upgrade directory ensured")
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Ensuring CN upgrade directory exists")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to ensure CN upgrade directory")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "CN upgrade directory ready")
-		})
-}
 
 // copyBinaryFile copies src to dst with executable permissions (0755).
 func copyBinaryFile(src, dst string) error {

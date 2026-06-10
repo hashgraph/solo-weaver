@@ -23,23 +23,47 @@ import (
 )
 
 const (
-	daemonSAName          = "solo-provisioner-daemon"
-	daemonClusterRoleName = "solo-provisioner-daemon"
-	daemonCRBName         = "solo-provisioner-daemon"
-	daemonTokenSecretName = "solo-provisioner-daemon-token"
-
-	daemonRBACGroup    = "hedera.com"
-	daemonRBACResource = "networkupgradeexecutes"
-
 	// tokenReadyTimeout is how long we wait for the K8s token controller to
 	// populate the SA token secret after creation.
 	tokenReadyTimeout  = 30 * time.Second
 	tokenReadyInterval = 500 * time.Millisecond
 )
 
-// daemonRBACCreated tracks which RBAC resources were actually created by
-// CreateDaemonRBACStep on this run so the rollback only removes what it made.
-type daemonRBACCreated struct {
+// DaemonComponentSpec describes the K8s resources the daemon install workflow
+// must create for one K8s-dependent daemon component. The workflow builds one
+// spec per enabled component from the DaemonConfig and passes the slice to the
+// generic RBAC and kubeconfig steps — adding a new component (e.g. block-node)
+// therefore requires only a new spec entry, no step code changes.
+type DaemonComponentSpec struct {
+	// ShortName is the suffix appended to all K8s resource names created for
+	// this component (e.g. "cn" → SA solo-provisioner-daemon-cn, ClusterRole
+	// solo-provisioner-daemon-cn, token secret solo-provisioner-daemon-cn-token).
+	ShortName string
+
+	// Namespace is the orbit namespace where the SA and token Secret live.
+	Namespace string
+
+	// KubeconfigPath is the absolute path where the component's scoped
+	// kubeconfig is written (e.g. /opt/solo/weaver/config/daemon-cn.kubeconfig).
+	KubeconfigPath string
+
+	// PolicyRules are the RBAC permissions granted to the component's
+	// ClusterRole. Each component declares only the rules it needs so that
+	// the principle of least privilege is maintained per component.
+	PolicyRules []rbacv1.PolicyRule
+}
+
+func (s DaemonComponentSpec) saName() string          { return "solo-provisioner-daemon-" + s.ShortName }
+func (s DaemonComponentSpec) clusterRoleName() string { return "solo-provisioner-daemon-" + s.ShortName }
+func (s DaemonComponentSpec) crbName() string         { return "solo-provisioner-daemon-" + s.ShortName }
+func (s DaemonComponentSpec) tokenSecretName() string {
+	return "solo-provisioner-daemon-" + s.ShortName + "-token"
+}
+
+// componentRBACCreated tracks which K8s resources were actually created for one
+// component during CreateDaemonRBACStep so that rollback only removes what was
+// made on this run — pre-existing resources are left intact.
+type componentRBACCreated struct {
 	sa     bool
 	cr     bool
 	crb    bool
@@ -98,293 +122,320 @@ func CheckClusterStep() *automa.StepBuilder {
 		})
 }
 
-// CreateDaemonRBACStep idempotently creates the ServiceAccount, ClusterRole,
-// ClusterRoleBinding, and long-lived token Secret needed by the daemon. If any
-// resource already exists it is left unchanged. Rollback only removes resources
-// that were actually created on this run — pre-existing resources are left in
-// place so a failed re-install does not invalidate a working prior installation.
-func CreateConsensusNodeRBACStep(namespace string) *automa.StepBuilder {
-	// created is captured by both Execute and Rollback closures so the rollback
-	// knows exactly which resources to undo.
-	var created daemonRBACCreated
+// CreateDaemonRBACStep idempotently creates, for each component in specs, one
+// ServiceAccount, ClusterRole, ClusterRoleBinding, and long-lived token Secret.
+// Resources that already exist are left unchanged. The rollback only removes
+// resources that were actually created on this run so a failed re-install does
+// not invalidate a prior working installation.
+//
+// Resource names follow the convention solo-provisioner-daemon-<shortName> so
+// that components are isolated and independently upgradeable.
+func CreateDaemonRBACStep(specs []DaemonComponentSpec) *automa.StepBuilder {
+	// created is captured by both Execute and Rollback closures.
+	// created[i] corresponds to specs[i].
+	created := make([]componentRBACCreated, len(specs))
 
-	return automa.NewStepBuilder().WithId("create-consensus-node-rbac").
+	return automa.NewStepBuilder().WithId("create-daemon-rbac").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cs, err := newTypedClient()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// 1. ServiceAccount
-			sa := &corev1.ServiceAccount{
-				ObjectMeta: metav1.ObjectMeta{Name: daemonSAName, Namespace: namespace},
-			}
-			if _, err := cs.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
-				if !kerrors.IsAlreadyExists(err) {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to create ServiceAccount %s", daemonSAName).
-							WithProperty(models.ErrPropertyResolution, []string{
-								"Ensure the orbit namespace exists: kubectl get ns " + namespace,
-								"Create the namespace if missing: kubectl create ns " + namespace,
-								"Verify your kubeconfig has permission to create ServiceAccounts: kubectl auth can-i create serviceaccounts -n " + namespace,
-								"Re-run after the namespace is ready: sudo solo-provisioner daemon service install --orbit=" + namespace,
-							})))
+			for i, spec := range specs {
+				// 1. ServiceAccount
+				sa := &corev1.ServiceAccount{
+					ObjectMeta: metav1.ObjectMeta{Name: spec.saName(), Namespace: spec.Namespace},
 				}
-				logx.As().Debug().Str("sa", daemonSAName).Msg("ServiceAccount already exists — skipping")
-			} else {
-				created.sa = true
-			}
-
-			// 2. ClusterRole
-			cr := &rbacv1.ClusterRole{
-				ObjectMeta: metav1.ObjectMeta{Name: daemonClusterRoleName},
-				Rules: []rbacv1.PolicyRule{{
-					APIGroups: []string{daemonRBACGroup},
-					Resources: []string{daemonRBACResource},
-					Verbs:     []string{"list", "watch"},
-				}},
-			}
-			if _, err := cs.RbacV1().ClusterRoles().Create(ctx, cr, metav1.CreateOptions{}); err != nil {
-				if !kerrors.IsAlreadyExists(err) {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to create ClusterRole %s", daemonClusterRoleName)))
+				if _, err := cs.CoreV1().ServiceAccounts(spec.Namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
+					if !kerrors.IsAlreadyExists(err) {
+						return automa.StepFailureReport(stp.Id(),
+							automa.WithError(errorx.InternalError.Wrap(err, "failed to create ServiceAccount %s", spec.saName()).
+								WithProperty(models.ErrPropertyResolution, []string{
+									"Ensure the orbit namespace exists: kubectl get ns " + spec.Namespace,
+									"Create the namespace if missing: kubectl create ns " + spec.Namespace,
+									"Verify kubeconfig permission: kubectl auth can-i create serviceaccounts -n " + spec.Namespace,
+									"Re-run after the namespace is ready: sudo solo-provisioner daemon service install --orbit=" + spec.Namespace,
+								})))
+					}
+					logx.As().Debug().Str("sa", spec.saName()).Msg("ServiceAccount already exists — skipping")
+				} else {
+					created[i].sa = true
 				}
-				logx.As().Debug().Str("cr", daemonClusterRoleName).Msg("ClusterRole already exists — skipping")
-			} else {
-				created.cr = true
-			}
 
-			// 3. ClusterRoleBinding
-			crb := &rbacv1.ClusterRoleBinding{
-				ObjectMeta: metav1.ObjectMeta{Name: daemonCRBName},
-				Subjects: []rbacv1.Subject{{
-					Kind:      "ServiceAccount",
-					Name:      daemonSAName,
-					Namespace: namespace,
-				}},
-				RoleRef: rbacv1.RoleRef{
-					APIGroup: "rbac.authorization.k8s.io",
-					Kind:     "ClusterRole",
-					Name:     daemonClusterRoleName,
-				},
-			}
-			if _, err := cs.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{}); err != nil {
-				if !kerrors.IsAlreadyExists(err) {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to create ClusterRoleBinding %s", daemonCRBName)))
+				// 2. ClusterRole
+				cr := &rbacv1.ClusterRole{
+					ObjectMeta: metav1.ObjectMeta{Name: spec.clusterRoleName()},
+					Rules:      spec.PolicyRules,
 				}
-				logx.As().Debug().Str("crb", daemonCRBName).Msg("ClusterRoleBinding already exists — skipping")
-			} else {
-				created.crb = true
-			}
+				if _, err := cs.RbacV1().ClusterRoles().Create(ctx, cr, metav1.CreateOptions{}); err != nil {
+					if !kerrors.IsAlreadyExists(err) {
+						return automa.StepFailureReport(stp.Id(),
+							automa.WithError(errorx.InternalError.Wrap(err, "failed to create ClusterRole %s", spec.clusterRoleName())))
+					}
+					logx.As().Debug().Str("cr", spec.clusterRoleName()).Msg("ClusterRole already exists — skipping")
+				} else {
+					created[i].cr = true
+				}
 
-			// 4. Long-lived token Secret — annotated with the SA name so the
-			// token controller populates it automatically.
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      daemonTokenSecretName,
-					Namespace: namespace,
-					Annotations: map[string]string{
-						corev1.ServiceAccountNameKey: daemonSAName,
+				// 3. ClusterRoleBinding
+				crb := &rbacv1.ClusterRoleBinding{
+					ObjectMeta: metav1.ObjectMeta{Name: spec.crbName()},
+					Subjects: []rbacv1.Subject{{
+						Kind:      "ServiceAccount",
+						Name:      spec.saName(),
+						Namespace: spec.Namespace,
+					}},
+					RoleRef: rbacv1.RoleRef{
+						APIGroup: "rbac.authorization.k8s.io",
+						Kind:     "ClusterRole",
+						Name:     spec.clusterRoleName(),
 					},
-				},
-				Type: corev1.SecretTypeServiceAccountToken,
-			}
-			if _, err := cs.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-				if !kerrors.IsAlreadyExists(err) {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to create token Secret %s", daemonTokenSecretName)))
 				}
-				logx.As().Debug().Str("secret", daemonTokenSecretName).Msg("Token Secret already exists — skipping")
-			} else {
-				created.secret = true
-			}
+				if _, err := cs.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{}); err != nil {
+					if !kerrors.IsAlreadyExists(err) {
+						return automa.StepFailureReport(stp.Id(),
+							automa.WithError(errorx.InternalError.Wrap(err, "failed to create ClusterRoleBinding %s", spec.crbName())))
+					}
+					logx.As().Debug().Str("crb", spec.crbName()).Msg("ClusterRoleBinding already exists — skipping")
+				} else {
+					created[i].crb = true
+				}
 
-			logx.As().Info().
-				Str("namespace", namespace).
-				Str("sa", daemonSAName).
-				Str("cr", daemonClusterRoleName).
-				Str("crb", daemonCRBName).
-				Str("secret", daemonTokenSecretName).
-				Msg("Consensus-node RBAC resources created")
+				// 4. Long-lived token Secret — annotated with the SA name so the
+				// token controller populates it automatically.
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      spec.tokenSecretName(),
+						Namespace: spec.Namespace,
+						Annotations: map[string]string{
+							corev1.ServiceAccountNameKey: spec.saName(),
+						},
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+				}
+				if _, err := cs.CoreV1().Secrets(spec.Namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+					if !kerrors.IsAlreadyExists(err) {
+						return automa.StepFailureReport(stp.Id(),
+							automa.WithError(errorx.InternalError.Wrap(err, "failed to create token Secret %s", spec.tokenSecretName())))
+					}
+					logx.As().Debug().Str("secret", spec.tokenSecretName()).Msg("Token Secret already exists — skipping")
+				} else {
+					created[i].secret = true
+				}
+
+				logx.As().Info().
+					Str("component", spec.ShortName).
+					Str("namespace", spec.Namespace).
+					Str("sa", spec.saName()).
+					Str("cr", spec.clusterRoleName()).
+					Str("crb", spec.crbName()).
+					Str("secret", spec.tokenSecretName()).
+					Msg("Daemon RBAC resources created")
+			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating consensus-node RBAC resources")
+			notify.As().StepStart(ctx, stp, "Creating daemon RBAC resources")
 			return ctx, nil
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Only delete what this run actually created — leave pre-existing
 			// resources in place so a failed re-install does not break a prior
 			// working installation.
-			deleteCreatedDaemonRBAC(ctx, namespace, created)
+			for i, spec := range specs {
+				deleteCreatedComponentRBAC(ctx, spec, created[i])
+			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to create consensus-node RBAC resources")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to create daemon RBAC resources")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node RBAC resources created")
+			notify.As().StepCompletion(ctx, stp, rpt, "Daemon RBAC resources created")
 		})
 }
 
-// WriteConsensusNodeKubeconfigStep waits for the SA token Secret to be populated
-// then writes a kubeconfig file at paths.DaemonCNKubeconfigPath using the SA token
-// and cluster CA from the admin kubeconfig. The file is written with mode 0600
-// (root only) since it contains a service account credential. Rollback removes it.
-func WriteConsensusNodeKubeconfigStep(paths models.WeaverPaths, namespace string) *automa.StepBuilder {
-	kubeconfigPath := paths.DaemonCNKubeconfigPath
-	return automa.NewStepBuilder().WithId("write-consensus-node-kubeconfig").
+// WriteDaemonKubeconfigStep waits for each component's SA token Secret to be
+// populated, then writes a scoped kubeconfig to spec.KubeconfigPath using the
+// SA token and cluster CA from the admin kubeconfig. Files are written with mode
+// 0600 (root-readable only) since they contain service account credentials.
+// Rollback removes all kubeconfig files written by this step.
+func WriteDaemonKubeconfigStep(specs []DaemonComponentSpec) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("write-daemon-kubeconfigs").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cs, err := newTypedClient()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			token, ca, server, err := waitForSAToken(ctx, cs, namespace)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "timed out waiting for SA token secret to be populated")))
+			for _, spec := range specs {
+				token, ca, server, err := waitForSAToken(ctx, cs, spec.Namespace, spec.tokenSecretName())
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err,
+							"timed out waiting for SA token secret %s to be populated", spec.tokenSecretName())))
+				}
+				if err := writeDaemonKubeconfig(spec.KubeconfigPath, server, ca, token); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err,
+							"failed to write daemon kubeconfig for component %s to %s", spec.ShortName, spec.KubeconfigPath)))
+				}
+				logx.As().Info().
+					Str("component", spec.ShortName).
+					Str("path", spec.KubeconfigPath).
+					Msg("Daemon kubeconfig written")
 			}
-
-			if err := writeDaemonKubeconfig(kubeconfigPath, server, ca, token); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to write consensus-node kubeconfig to %s", kubeconfigPath)))
-			}
-
-			logx.As().Info().Str("path", kubeconfigPath).Msg("Consensus-node kubeconfig written")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Writing consensus-node kubeconfig")
+			notify.As().StepStart(ctx, stp, "Writing daemon kubeconfigs")
 			return ctx, nil
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			_ = os.Remove(kubeconfigPath)
+			for _, spec := range specs {
+				_ = os.Remove(spec.KubeconfigPath)
+			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to write consensus-node kubeconfig")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to write daemon kubeconfigs")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node kubeconfig written")
+			notify.As().StepCompletion(ctx, stp, rpt, "Daemon kubeconfigs written")
 		})
 }
 
-// RemoveConsensusNodeKubeconfigStep removes the consensus-node kubeconfig file.
-// Removal is best-effort: a missing file is noted at Info level, a real removal
-// error is logged as a warning and the step still succeeds so uninstall can continue.
-func RemoveConsensusNodeKubeconfigStep(paths models.WeaverPaths) *automa.StepBuilder {
-	kubeconfigPath := paths.DaemonCNKubeconfigPath
-	return automa.NewStepBuilder().WithId("remove-consensus-node-kubeconfig").
+// RemoveDaemonKubeconfigStep removes the kubeconfig file for every component in
+// specs. Removal is best-effort: a missing file is noted at Info level, a real
+// removal error is logged as a warning and the step still succeeds so uninstall
+// can continue past partial state.
+func RemoveDaemonKubeconfigStep(specs []DaemonComponentSpec) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("remove-daemon-kubeconfigs").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if err := os.Remove(kubeconfigPath); err != nil {
-				if os.IsNotExist(err) {
-					logx.As().Info().Str("path", kubeconfigPath).Msg("Consensus-node kubeconfig already absent")
+			for _, spec := range specs {
+				if err := os.Remove(spec.KubeconfigPath); err != nil {
+					if os.IsNotExist(err) {
+						logx.As().Info().
+							Str("component", spec.ShortName).
+							Str("path", spec.KubeconfigPath).
+							Msg("Daemon kubeconfig already absent")
+					} else {
+						logx.As().Warn().Err(err).
+							Str("component", spec.ShortName).
+							Str("path", spec.KubeconfigPath).
+							Msg("Failed to remove daemon kubeconfig")
+					}
 				} else {
-					logx.As().Warn().Err(err).Str("path", kubeconfigPath).Msg("Failed to remove consensus-node kubeconfig")
+					logx.As().Info().
+						Str("component", spec.ShortName).
+						Str("path", spec.KubeconfigPath).
+						Msg("Daemon kubeconfig removed")
 				}
-			} else {
-				logx.As().Info().Str("path", kubeconfigPath).Msg("Consensus-node kubeconfig removed")
 			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Removing consensus-node kubeconfig")
+			notify.As().StepStart(ctx, stp, "Removing daemon kubeconfigs")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove consensus-node kubeconfig")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove daemon kubeconfigs")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node kubeconfig removed")
+			notify.As().StepCompletion(ctx, stp, rpt, "Daemon kubeconfigs removed")
 		})
 }
 
-// DeleteConsensusNodeRBACStep deletes the ClusterRoleBinding, ClusterRole, token
-// Secret, and ServiceAccount for the consensus-node component. All deletions are
-// best-effort — missing resources are silently ignored, other errors are logged as
-// warnings. The step always succeeds so uninstall can continue past partial state.
-func DeleteConsensusNodeRBACStep(namespace string) *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("delete-consensus-node-rbac").
+// DeleteDaemonRBACStep deletes the ClusterRoleBinding, ClusterRole, token Secret,
+// and ServiceAccount for every component in specs. All deletions are best-effort —
+// missing resources are silently ignored, other errors are logged as warnings. The
+// step always succeeds so uninstall can continue past partial state.
+func DeleteDaemonRBACStep(specs []DaemonComponentSpec) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("delete-daemon-rbac").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			allClean := deleteDaemonRBAC(ctx, namespace)
-			if allClean {
-				logx.As().Info().Str("namespace", namespace).Msg("Consensus-node RBAC resources deleted")
-			} else {
-				logx.As().Warn().Str("namespace", namespace).
-					Msg("Consensus-node RBAC resources deletion completed with warnings — some resources may not have been removed (see above)")
+			for _, spec := range specs {
+				allClean := deleteAllComponentRBAC(ctx, spec)
+				if allClean {
+					logx.As().Info().
+						Str("component", spec.ShortName).
+						Str("namespace", spec.Namespace).
+						Msg("Daemon RBAC resources deleted")
+				} else {
+					logx.As().Warn().
+						Str("component", spec.ShortName).
+						Str("namespace", spec.Namespace).
+						Msg("Daemon RBAC deletion completed with warnings — some resources may not have been removed (see above)")
+				}
 			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Deleting consensus-node RBAC resources")
+			notify.As().StepStart(ctx, stp, "Deleting daemon RBAC resources")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete consensus-node RBAC resources")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete daemon RBAC resources")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Consensus-node RBAC resources deleted")
+			notify.As().StepCompletion(ctx, stp, rpt, "Daemon RBAC resources deleted")
 		})
 }
 
-// deleteCreatedDaemonRBAC deletes only the resources flagged in created. Used
-// by the rollback path so pre-existing resources are not disturbed.
-// Returns true if all attempted deletes succeeded (or the resource was already
-// gone); false if any delete logged a warning.
-func deleteCreatedDaemonRBAC(ctx context.Context, namespace string, created daemonRBACCreated) bool {
+// deleteCreatedComponentRBAC deletes only the resources flagged in created for
+// the given spec. Used by the rollback path so pre-existing resources are not
+// disturbed. Returns true if all attempted deletes succeeded.
+func deleteCreatedComponentRBAC(ctx context.Context, spec DaemonComponentSpec, created componentRBACCreated) bool {
 	if !created.sa && !created.cr && !created.crb && !created.secret {
 		return true
 	}
 	cs, err := newTypedClient()
 	if err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to build kube client for RBAC rollback")
+		logx.As().Warn().Err(err).Str("component", spec.ShortName).Msg("Failed to build kube client for RBAC rollback")
 		return false
 	}
 	allClean := true
 	del := metav1.DeleteOptions{}
 	if created.crb {
-		if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, daemonCRBName, del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("crb", daemonCRBName).Msg("Rollback: failed to delete ClusterRoleBinding")
+		if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, spec.crbName(), del); err != nil && !kerrors.IsNotFound(err) {
+			logx.As().Warn().Err(err).Str("crb", spec.crbName()).Msg("Rollback: failed to delete ClusterRoleBinding")
 			allClean = false
 		}
 	}
 	if created.cr {
-		if err := cs.RbacV1().ClusterRoles().Delete(ctx, daemonClusterRoleName, del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("cr", daemonClusterRoleName).Msg("Rollback: failed to delete ClusterRole")
+		if err := cs.RbacV1().ClusterRoles().Delete(ctx, spec.clusterRoleName(), del); err != nil && !kerrors.IsNotFound(err) {
+			logx.As().Warn().Err(err).Str("cr", spec.clusterRoleName()).Msg("Rollback: failed to delete ClusterRole")
 			allClean = false
 		}
 	}
 	if created.secret {
-		if err := cs.CoreV1().Secrets(namespace).Delete(ctx, daemonTokenSecretName, del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("secret", daemonTokenSecretName).Msg("Rollback: failed to delete token Secret")
+		if err := cs.CoreV1().Secrets(spec.Namespace).Delete(ctx, spec.tokenSecretName(), del); err != nil && !kerrors.IsNotFound(err) {
+			logx.As().Warn().Err(err).Str("secret", spec.tokenSecretName()).Msg("Rollback: failed to delete token Secret")
 			allClean = false
 		}
 	}
 	if created.sa {
-		if err := cs.CoreV1().ServiceAccounts(namespace).Delete(ctx, daemonSAName, del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("sa", daemonSAName).Msg("Rollback: failed to delete ServiceAccount")
+		if err := cs.CoreV1().ServiceAccounts(spec.Namespace).Delete(ctx, spec.saName(), del); err != nil && !kerrors.IsNotFound(err) {
+			logx.As().Warn().Err(err).Str("sa", spec.saName()).Msg("Rollback: failed to delete ServiceAccount")
 			allClean = false
 		}
 	}
 	return allClean
 }
 
-// deleteDaemonRBAC deletes all four RBAC resources unconditionally. Used by the
-// uninstall step. Errors are logged as warnings and do not abort the caller.
-// Returns true if all deletes were clean.
-func deleteDaemonRBAC(ctx context.Context, namespace string) bool {
-	return deleteCreatedDaemonRBAC(ctx, namespace, daemonRBACCreated{sa: true, cr: true, crb: true, secret: true})
+// deleteAllComponentRBAC deletes all four RBAC resources for spec unconditionally.
+// Used by the uninstall step. Returns true if all deletes were clean.
+func deleteAllComponentRBAC(ctx context.Context, spec DaemonComponentSpec) bool {
+	return deleteCreatedComponentRBAC(ctx, spec, componentRBACCreated{sa: true, cr: true, crb: true, secret: true})
 }
 
 // waitForSAToken polls until the token controller has populated the SA token
-// Secret, then returns the token, CA data, and API server URL extracted from
-// the admin kubeconfig.
-func waitForSAToken(ctx context.Context, cs *kubernetes.Clientset, namespace string) (token, ca, server string, err error) {
+// Secret identified by secretName in namespace, then returns the token, CA data,
+// and API server URL extracted from the admin kubeconfig.
+func waitForSAToken(ctx context.Context, cs *kubernetes.Clientset, namespace, secretName string) (token, ca, server string, err error) {
 	deadline := time.Now().Add(tokenReadyTimeout)
 	for {
-		secret, getErr := cs.CoreV1().Secrets(namespace).Get(ctx, daemonTokenSecretName, metav1.GetOptions{})
+		secret, getErr := cs.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if getErr == nil && len(secret.Data["token"]) > 0 {
 			token = string(secret.Data["token"])
 			ca = string(secret.Data["ca.crt"])
@@ -393,7 +444,7 @@ func waitForSAToken(ctx context.Context, cs *kubernetes.Clientset, namespace str
 
 		if time.Now().After(deadline) {
 			return "", "", "", errorx.InternalError.New(
-				"SA token secret %s/%s not populated within %s", namespace, daemonTokenSecretName, tokenReadyTimeout)
+				"SA token secret %s/%s not populated within %s", namespace, secretName, tokenReadyTimeout)
 		}
 
 		select {

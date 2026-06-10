@@ -208,8 +208,10 @@ func CheckWeaverUserStep() automa.Builder {
 			}
 
 			// Both weaver user and group exist with correct IDs.
-			// hedera:2000 is no longer validated here — EnsureHederaOwnerStep auto-creates
-			// it as the first step of any block-node workflow that requires it.
+			// hedera:2000 is not validated here — EnsureHederaOwnerStep handles
+			// hedera user/group creation and wires weaver into the hedera supplementary
+			// group. That step runs as part of block-node install and will run as part
+			// of CN deploy when that workflow is implemented.
 			meta["user_exists"] = "true"
 			meta["group_exists"] = "true"
 			meta["user_id"] = weaverUserId

@@ -8,32 +8,64 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	rbacv1 "k8s.io/api/rbac/v1"
 )
 
-// loadOrbit reads the orbit namespace from daemon.yaml. It fails fast if the
-// config is missing or invalid — provisioning cannot proceed without it.
-// Used by uninstall (which always reads from the existing on-disk config).
-func loadOrbit(paths models.WeaverPaths) (string, error) {
+// buildComponentSpecs constructs the slice of DaemonComponentSpec for all
+// K8s-dependent components that are enabled in cfg. Host-only components
+// (those that need no K8s RBAC or kubeconfig) are excluded.
+//
+// Adding a new K8s-dependent component (e.g. block-node) requires only a new
+// branch here — no changes to the step implementations are needed.
+func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []steps.DaemonComponentSpec {
+	var specs []steps.DaemonComponentSpec
+
+	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
+		specs = append(specs, steps.DaemonComponentSpec{
+			ShortName:      "cn",
+			Namespace:      cn.Orbit,
+			KubeconfigPath: paths.DaemonCNKubeconfigPath,
+			PolicyRules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"hedera.com"},
+				Resources: []string{"networkupgradeexecutes"},
+				Verbs:     []string{"list", "watch"},
+			}},
+		})
+	}
+
+	// block_node: added in S7 (#667). When enabled, append:
+	//   specs = append(specs, steps.DaemonComponentSpec{
+	//       ShortName:      "bn",
+	//       Namespace:      bn.Orbit,
+	//       KubeconfigPath: paths.DaemonBNKubeconfigPath,
+	//       PolicyRules:    <bn RBAC rules>,
+	//   })
+
+	return specs
+}
+
+// loadComponentSpecs reads daemon.yaml from paths and rebuilds the component
+// spec slice. Used by uninstall which must derive specs from the on-disk config
+// rather than a caller-supplied config.
+func loadComponentSpecs(paths models.WeaverPaths) ([]steps.DaemonComponentSpec, error) {
 	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if cfg.Components.ConsensusNode == nil || cfg.Components.ConsensusNode.Orbit == "" {
-		return "", errorx.IllegalState.New("daemon config %s: components.consensus_node.orbit must not be empty", paths.DaemonConfigPath)
-	}
-	return cfg.Components.ConsensusNode.Orbit, nil
+	return buildComponentSpecs(cfg, paths), nil
 }
 
 // NewDaemonServiceInstallWorkflow provisions the full daemon stack. The step
 // list is built dynamically from cfg so that only the preflight and RBAC steps
 // relevant to the enabled components are included:
 //
-//  1. Check root privileges                         (always)
-//  2. Install the daemon binary                     (always)
-//  3. Ensure CN upgrade directory exists            (consensus_node only)
-//  4. Check K8s cluster is reachable                (any K8s-dependent component)
-//  5. Create RBAC + write kubeconfig per component  (per enabled K8s-dependent component)
-//  6. Install + enable + start systemd service unit (always)
+//  1. Check root privileges                           (always)
+//  2. Install the daemon binary                       (always)
+//  3. Ensure CN upgrade directory exists              (consensus_node only)
+//  4. Check K8s cluster is reachable                  (any K8s-dependent component)
+//  5. Create RBAC resources for all K8s components    (any K8s-dependent component)
+//  6. Write per-component kubeconfigs                 (any K8s-dependent component)
+//  7. Install + enable + start systemd service unit   (always)
 //
 // The caller is responsible for ensuring daemon.yaml exists at
 // paths.DaemonConfigPath before calling this function.
@@ -43,18 +75,21 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 	}
 
 	paths := models.Paths()
+	componentSpecs := buildComponentSpecs(cfg, paths)
 
 	wfSteps := []automa.Builder{
 		CheckPrivilegesStep(),
 		steps.InstallDaemonBinaryStep(daemonSrc, paths),
 	}
 
-	// consensus_node: CN-specific preflight + RBAC
-	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
-		wfSteps = append(wfSteps, steps.EnsureDaemonHgcAppDirStep(cn.EffectiveUpgradeDir()))
-		wfSteps = append(wfSteps, steps.CheckClusterStep())
-		wfSteps = append(wfSteps, steps.CreateConsensusNodeRBACStep(cn.Orbit))
-		wfSteps = append(wfSteps, steps.WriteConsensusNodeKubeconfigStep(paths, cn.Orbit))
+
+	// K8s-dependent components: cluster reachability + RBAC + kubeconfigs.
+	if len(componentSpecs) > 0 {
+		wfSteps = append(wfSteps,
+			steps.CheckClusterStep(),
+			steps.CreateDaemonRBACStep(componentSpecs),
+			steps.WriteDaemonKubeconfigStep(componentSpecs),
+		)
 	}
 
 	wfSteps = append(wfSteps, steps.InstallDaemonServiceStep(paths))
@@ -65,19 +100,19 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 // NewDaemonServiceUninstallWorkflow tears down the daemon stack in reverse:
 //  1. Check root privileges
 //  2. Stop + disable + remove systemd service unit
-//  3. Remove daemon kubeconfig
-//  4. Delete RBAC (CRB + CR + Secret + SA)
+//  3. Remove per-component kubeconfig files
+//  4. Delete per-component RBAC resources (CRB + CR + Secret + SA)
 func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 	paths := models.Paths()
-	orbit, err := loadOrbit(paths)
+	componentSpecs, err := loadComponentSpecs(paths)
 	if err != nil {
 		return nil, err
 	}
 	return automa.NewWorkflowBuilder().WithId("daemon-service-uninstall-workflow").Steps(
 		CheckPrivilegesStep(),
 		steps.RemoveDaemonServiceStep(paths),
-		steps.RemoveConsensusNodeKubeconfigStep(paths),
-		steps.DeleteConsensusNodeRBACStep(orbit),
+		steps.RemoveDaemonKubeconfigStep(componentSpecs),
+		steps.DeleteDaemonRBACStep(componentSpecs),
 	), nil
 }
 
