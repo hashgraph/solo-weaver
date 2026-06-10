@@ -12,10 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
@@ -532,4 +535,49 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner Daemon service is healthy")
 		})
+}
+
+// CheckDaemonComponentPrerequisites queries GET /status on the daemon socket at
+// sockPath and returns a human-readable warning string when any component probe
+// errors are present, or an empty string when all prerequisites are satisfied.
+// It is called by `daemon service check` after the main health workflow passes,
+// to surface disk prerequisite failures as a distinct non-zero exit.
+func CheckDaemonComponentPrerequisites(sockPath string) string {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
+			},
+			Proxy: nil,
+		},
+	}
+
+	resp, err := client.Get("http://local/status")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return "" // /status unavailable — don't block the check
+	}
+	defer resp.Body.Close()
+
+	var status daemon.StatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return ""
+	}
+	if len(status.ProbeErrors) == 0 {
+		return ""
+	}
+
+	components := make([]string, 0, len(status.ProbeErrors))
+	for c := range status.ProbeErrors {
+		components = append(components, c)
+	}
+	sort.Strings(components)
+
+	var sb strings.Builder
+	sb.WriteString("Component prerequisites not yet satisfied — automation will not run until resolved:\n")
+	for _, c := range components {
+		sb.WriteString(fmt.Sprintf("  [NOT READY] %s: %s\n", c, status.ProbeErrors[c]))
+	}
+	sb.WriteString("\nFix the issues above then re-run: solo-provisioner daemon service check")
+	return sb.String()
 }
