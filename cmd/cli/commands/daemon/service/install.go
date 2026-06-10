@@ -156,8 +156,19 @@ func resolveDaemonConfig(
 		cnCfg = &c
 	}
 
+	var bnCfg *daemon.BlockNodeComponentConfig
+	if cs.Has(prompt.ComponentBlockNode) {
+		c := daemon.BlockNodeComponentConfig{
+			Enabled:    true,
+			Orbit:      flagBNOrbit,
+			Kubeconfig: paths.DaemonBNKubeconfigPath,
+			Monitors:   daemon.BlockNodeMonitors{Upgrade: true},
+		}
+		bnCfg = &c
+	}
+
 	cfg = daemon.DaemonConfig{
-		Components: daemon.DaemonComponents{ConsensusNode: cnCfg},
+		Components: daemon.DaemonComponents{ConsensusNode: cnCfg, BlockNode: bnCfg},
 	}
 
 	// Prompt for any fields still empty (unless non-interactive / force).
@@ -170,6 +181,9 @@ func resolveDaemonConfig(
 			targets.CNNodeID = &cnCfg.NodeID
 			targets.CNOrbit = &cnCfg.Orbit
 			targets.CNUpgradeDir = &cnCfg.UpgradeDir
+		}
+		if bnCfg != nil {
+			targets.BNOrbit = &bnCfg.Orbit
 		}
 		if err := prompt.RunDaemonInstallPrompts(cmd, &cfg, targets, paths, cv); err != nil {
 			return daemon.DaemonConfig{}, err
@@ -209,8 +223,12 @@ func applyFlagOverrides(cfg *daemon.DaemonConfig) bool {
 			changed = true
 		}
 	}
-	// block-node orbit override — added in S7 (#667) when BlockNode component config exists.
-	_ = flagBNOrbit
+	if bn := cfg.Components.BlockNode; bn != nil {
+		if flagBNOrbit != "" {
+			bn.Orbit = flagBNOrbit
+			changed = true
+		}
+	}
 	return changed
 }
 
