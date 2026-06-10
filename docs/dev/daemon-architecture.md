@@ -49,7 +49,7 @@ graph TD
     end
 
     http -->|"GET /health\nGET /status"| cli["solo-provisioner CLI\ndaemon service check"]
-    http -->|"POST /migration/consensus/soak/start"| mig_mon
+    http -->|"POST /consensus_node/migration/soak/start"| mig_mon
     up_mon -->|watch CRs| k8s[("Kubernetes API")]
     mig_mon -->|watch pods/metrics| k8s
 ```
@@ -258,12 +258,21 @@ flowchart TD
 The daemon listens on a Unix socket at `/opt/solo/weaver/daemon/daemon.sock`.
 All endpoints return JSON.
 
+Route scheme: `/<component>/<monitor>/<sub-resource>/<verb>` — new components and monitors
+add their own sub-trees without touching existing paths.
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Always returns `{"status":"ok"}` while the process is alive |
-| `GET` | `/status` | Per-component, per-monitor runtime state |
-| `GET` | `/migration/consensus/soak/status` | Current soak state for the migration monitor |
-| `POST` | `/migration/consensus/soak/start` | Enqueue a new soak run (idempotent; 409 if already active) |
+| `GET` | `/status` | Full daemon view: all components and their monitor states |
+| `GET` | `/consensus_node/migration/status` | Combined view: migration monitor health + soak state (`ConsensusMigrationStatusResponse`) |
+| `GET` | `/consensus_node/migration/soak/status` | Soak-run state only (`SoakStatusResponse`) |
+| `POST` | `/consensus_node/migration/soak/start` | Enqueue a new soak run (idempotent; 409 if already active) |
+
+> **Extensibility**: future block-node endpoints follow the same pattern:
+> `GET /block_node/upgrade/status`, `POST /block_node/upgrade/execute`, etc.
+> A planned `GET /consensus_node/migration/monitor/status` will expose monitor
+> health independently of soak state.
 
 The socket path is used directly by `solo-provisioner daemon service check` via `curl --unix-socket`.
 
@@ -284,7 +293,7 @@ The socket path is used directly by `solo-provisioner daemon service check` via 
 - Criteria (all must pass): `SoakDuration` (48 h default), `UploaderBacklogCleared`,
   `NoPodRestarts`, `ConsensusParticipationNominal`.
 - Idempotency: `TryEnqueue()` uses an atomic `soakActive` flag + 1-capacity channel;
-  duplicate `POST /migration/consensus/soak/start` returns HTTP 409.
+  duplicate `POST /consensus_node/migration/soak/start` returns HTTP 409.
 - Writes a structured JSONL event log to `paths.DaemonConsensusMigrateEventsDir`.
 
 ## Install Workflow

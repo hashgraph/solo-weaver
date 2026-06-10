@@ -64,7 +64,7 @@ type MigrationMonitorConfig struct {
 // Once all mainnet nodes are migrated to the new deployment model, this can be safely disabled or removed from the
 // codebase.
 type MigrationMonitor struct {
-	// soakStartCh carries activation requests from POST /migration/consensus/soak/start.
+	// soakStartCh carries activation requests from POST /consensus_node/migration/soak/start.
 	// Buffered 1 so the HTTP handler never blocks.
 	soakStartCh chan SoakStartRequest
 
@@ -205,7 +205,7 @@ func (mm *MigrationMonitor) allCriteriaGreen(ctx context.Context, req SoakStartR
 // activation may be in-flight at any time.
 //
 // soakStatus is set to Active=true here, synchronously, so that
-// GET /soak/status reflects the accepted request immediately — without waiting
+// GET /consensus_node/migration/soak/status reflects the accepted request immediately — without waiting
 // for the watcher goroutine (spawned by Run) to store the same value. The
 // watcher stores it again on startup (idempotent), and clears it on exit.
 func (mm *MigrationMonitor) TryEnqueue(req SoakStartRequest) bool {
@@ -228,7 +228,7 @@ var idleSoakStatus = &SoakStatusResponse{Active: false}
 
 // Status returns the current soak status. Never returns nil.
 // Returns the live pointer when a watcher is active to avoid a copy on the
-// hot GET /migration/consensus/soak/status read path.
+// hot GET /consensus_node/migration/soak/status read path.
 func (mm *MigrationMonitor) Status() *SoakStatusResponse {
 	if p := mm.soakStatus.Load(); p != nil {
 		return p
@@ -238,6 +238,16 @@ func (mm *MigrationMonitor) Status() *SoakStatusResponse {
 
 // Name implements daemon.MonitorRunner.
 func (mm *MigrationMonitor) Name() string { return "migration-monitor" }
+
+// Close implements io.Closer. It flushes and closes the event logger if one
+// was injected. Safe to call when logger is nil (no-op). Must be called after
+// Run returns — not safe to call concurrently with logMigrateEvent.
+func (mm *MigrationMonitor) Close() error {
+	if mm.logger == nil {
+		return nil
+	}
+	return mm.logger.Close()
+}
 
 // Run is the dispatch loop. It blocks until ctx is cancelled, then waits for
 // any in-flight watcher goroutines to finish before returning.

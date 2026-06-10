@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -36,11 +37,20 @@ func startTestDaemon(t *testing.T) (*http.Client, context.CancelFunc) {
 func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Client, string, context.CancelFunc) {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "daemon.sock")
+	// Use /tmp directly to keep the Unix socket path under the 104-char macOS
+	// limit. t.TempDir() embeds the full test name which exceeds the limit for
+	// longer test names.
+	dir, err := os.MkdirTemp("/tmp", "dtest-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sockPath := filepath.Join(dir, "d.sock")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mm := consensus.NewMigrationMonitor()
-	srv := daemon.NewServer(sockPath, mm, nil, cfg)
+	cnHandler := daemon.NewConsensusNodeHandler(mm, nil)
+	srv := daemon.NewServer(sockPath, daemon.ServerOptions{
+		ComponentHandlers: []daemon.ComponentHandler{cnHandler},
+	}, cfg)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(ctx) }()
@@ -108,10 +118,53 @@ func Test_SoakStatus_Idle(t *testing.T) {
 	defer cancel()
 
 	var body consensus.SoakStatusResponse
-	resp := getJSON(t, client, "http://daemon/migration/consensus/soak/status", &body)
+	resp := getJSON(t, client, "http://daemon/consensus_node/migration/soak/status", &body)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.False(t, body.Active)
 	assert.Nil(t, body.Request)
+}
+
+func Test_ConsensusMigrationStatus_Idle(t *testing.T) {
+	client, cancel := startTestDaemon(t)
+	defer cancel()
+
+	var body daemon.ConsensusMigrationStatusResponse
+	resp := getJSON(t, client, "http://daemon/consensus_node/migration/status", &body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	// Monitor state is empty string when migrationStateFn is nil (test helper passes nil).
+	assert.Equal(t, "", body.Monitor.State)
+	// Soak should be idle.
+	assert.False(t, body.Soak.Active)
+	assert.Nil(t, body.Soak.Request)
+}
+
+func Test_ConsensusMigrationStatus_After_SoakStart(t *testing.T) {
+	client, cancel := startTestDaemon(t)
+	defer cancel()
+
+	cutover := time.Now().UTC().Truncate(time.Second)
+	payload := consensus.SoakStartRequest{
+		NodeID:            "0.0.3",
+		CutoverTimestamp:  cutover,
+		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
+	}
+
+	var startResp consensus.SoakStartResponse
+	resp := postJSON(t, client, "http://daemon/consensus_node/migration/soak/start", payload, &startResp)
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	// Poll until soak becomes active, then verify combined status reflects it.
+	require.Eventually(t, func() bool {
+		var body daemon.ConsensusMigrationStatusResponse
+		getJSON(t, client, "http://daemon/consensus_node/migration/status", &body)
+		return body.Soak.Active
+	}, 2*time.Second, 10*time.Millisecond, "combined migration status did not show soak active")
+
+	var body daemon.ConsensusMigrationStatusResponse
+	getJSON(t, client, "http://daemon/consensus_node/migration/status", &body)
+	require.NotNil(t, body.Soak.Request)
+	assert.Equal(t, payload.NodeID, body.Soak.Request.NodeID)
+	assert.True(t, body.Soak.Request.CutoverTimestamp.Equal(cutover))
 }
 
 func Test_SoakStart_Then_Status(t *testing.T) {
@@ -126,7 +179,7 @@ func Test_SoakStart_Then_Status(t *testing.T) {
 	}
 
 	var startResp consensus.SoakStartResponse
-	resp := postJSON(t, client, "http://daemon/migration/consensus/soak/start", payload, &startResp)
+	resp := postJSON(t, client, "http://daemon/consensus_node/migration/soak/start", payload, &startResp)
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 	assert.True(t, startResp.Accepted)
 
@@ -134,12 +187,12 @@ func Test_SoakStart_Then_Status(t *testing.T) {
 	// HTTP response returns — poll until it becomes visible.
 	require.Eventually(t, func() bool {
 		var status consensus.SoakStatusResponse
-		getJSON(t, client, "http://daemon/migration/consensus/soak/status", &status)
+		getJSON(t, client, "http://daemon/consensus_node/migration/soak/status", &status)
 		return status.Active
 	}, 2*time.Second, 10*time.Millisecond, "soak status did not become active")
 
 	var status consensus.SoakStatusResponse
-	getJSON(t, client, "http://daemon/migration/consensus/soak/status", &status)
+	getJSON(t, client, "http://daemon/consensus_node/migration/soak/status", &status)
 	require.NotNil(t, status.Request)
 	assert.Equal(t, payload.NodeID, status.Request.NodeID)
 	assert.Equal(t, payload.MigrationPlanPath, status.Request.MigrationPlanPath)
@@ -157,18 +210,18 @@ func Test_SoakStart_Conflict_When_Active(t *testing.T) {
 	}
 
 	var first consensus.SoakStartResponse
-	resp := postJSON(t, client, "http://daemon/migration/consensus/soak/start", payload, &first)
+	resp := postJSON(t, client, "http://daemon/consensus_node/migration/soak/start", payload, &first)
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 
 	// Wait for the first request to be consumed from the channel.
 	require.Eventually(t, func() bool {
 		var status consensus.SoakStatusResponse
-		getJSON(t, client, "http://daemon/migration/consensus/soak/status", &status)
+		getJSON(t, client, "http://daemon/consensus_node/migration/soak/status", &status)
 		return status.Active
 	}, 2*time.Second, 10*time.Millisecond)
 
 	// Second POST while watcher is running should be rejected.
-	resp2, err := client.Post("http://daemon/migration/consensus/soak/start",
+	resp2, err := client.Post("http://daemon/consensus_node/migration/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
 	defer resp2.Body.Close()
@@ -183,7 +236,7 @@ func Test_SoakStart_InvalidBody(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
+	resp, err := client.Post("http://daemon/consensus_node/migration/soak/start",
 		"application/json", bytes.NewReader([]byte("not-json")))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -199,7 +252,7 @@ func Test_SoakStart_MissingNodeID(t *testing.T) {
 	defer cancel()
 
 	payload := consensus.SoakStartRequest{CutoverTimestamp: time.Now()}
-	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
+	resp, err := client.Post("http://daemon/consensus_node/migration/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -214,7 +267,7 @@ func Test_SoakStart_MissingMigrationPlanPath(t *testing.T) {
 	defer cancel()
 
 	payload := consensus.SoakStartRequest{NodeID: "0.0.3", CutoverTimestamp: time.Now()}
-	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
+	resp, err := client.Post("http://daemon/consensus_node/migration/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -232,7 +285,7 @@ func Test_SoakStart_MissingCutoverTimestamp(t *testing.T) {
 		NodeID:            "0.0.3",
 		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/0.0.3-20250521T143022Z-migration-plan.yaml",
 	}
-	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
+	resp, err := client.Post("http://daemon/consensus_node/migration/soak/start",
 		"application/json", bytes.NewReader(mustMarshal(t, payload)))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -248,7 +301,7 @@ func Test_SoakStart_OversizedBody(t *testing.T) {
 
 	// Send a body larger than the 16 KiB cap set by MaxBytesReader.
 	oversized := make([]byte, 17*1024)
-	resp, err := client.Post("http://daemon/migration/consensus/soak/start",
+	resp, err := client.Post("http://daemon/consensus_node/migration/soak/start",
 		"application/json", bytes.NewReader(oversized))
 	require.NoError(t, err)
 	defer resp.Body.Close()
