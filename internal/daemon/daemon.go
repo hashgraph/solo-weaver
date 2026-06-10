@@ -38,11 +38,10 @@ type component struct {
 //   - componentSupervisor  — one supervised goroutine per enabled monitor;
 //     crashes are absorbed per-monitor with exponential back-off (#662/#663)
 type Daemon struct {
-	paths         models.WeaverPaths
-	cfg           DaemonConfig
-	server        *Server
-	components    []component
-	migrateLogger *eventlog.EventLogger
+	paths      models.WeaverPaths
+	cfg        DaemonConfig
+	server     *Server
+	components []component
 }
 
 // New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
@@ -68,7 +67,6 @@ func New(paths models.WeaverPaths) (*Daemon, error) {
 // Daemon.components slice contains only the monitors that will actually run.
 func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) {
 	var components []component
-	var migrateLogger *eventlog.EventLogger
 
 	cn := cfg.Components.ConsensusNode
 	if cn != nil && cn.Enabled {
@@ -90,6 +88,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		}
 
 		if cn.Monitors.Migration {
+			var migrateLogger *eventlog.EventLogger
 			if ml, err := eventlog.NewAppend(paths.DaemonConsensusMigrateEventsDir, "consensus-migrate-events.jsonl"); err != nil {
 				logx.As().Warn().Err(err).
 					Str("reason", "MigrateLoggerInitFailed").
@@ -149,24 +148,49 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 	}
 
 	d := &Daemon{
-		paths:         paths,
-		cfg:           cfg,
-		components:    components,
-		migrateLogger: migrateLogger,
+		paths:      paths,
+		cfg:        cfg,
+		components: components,
 	}
 
-	// Build the server. Find the migration monitor (for soak endpoints) and
-	// provide a statusFn closure (for GET /status).
-	var mm *consensus.MigrationMonitor
+	// Build per-component HTTP handlers and collect them for the server.
+	// Each component that has HTTP routes constructs its ComponentHandler here
+	// and appends it to the slice — NewServer never needs to know about specific
+	// component types.
+	var componentHandlers []ComponentHandler
+
+	// consensus-node: find the migration monitor and its StatusTracker.
+	var cnMM *consensus.MigrationMonitor
+	var cnMigrationTracker *StatusTracker
 	for _, comp := range d.components {
 		for _, mon := range comp.monitors {
 			if m, ok := mon.(*consensus.MigrationMonitor); ok {
-				mm = m
+				cnMM = m
+				cnMigrationTracker = comp.tracker
 				break
 			}
 		}
 	}
-	d.server = NewServer(paths.DaemonSockPath, mm, d.statusSnapshot, ServerConfig{})
+	if cnMM != nil {
+		// migrationStateFn reads the migration monitor's supervisor health from
+		// its component's StatusTracker. Returns a zero MonitorState when the
+		// tracker has not yet recorded a state (daemon just starting up).
+		migrationStateFn := func() MonitorState {
+			if cnMigrationTracker == nil {
+				return MonitorState{}
+			}
+			return cnMigrationTracker.Snapshot()[cnMM.Name()]
+		}
+		componentHandlers = append(componentHandlers, NewConsensusNodeHandler(cnMM, migrationStateFn))
+	}
+
+	// Future components append their ComponentHandler here:
+	//   if bnMM != nil { componentHandlers = append(componentHandlers, NewBlockNodeHandler(...)) }
+
+	d.server = NewServer(paths.DaemonSockPath, ServerOptions{
+		StatusFn:          d.statusSnapshot,
+		ComponentHandlers: componentHandlers,
+	}, ServerConfig{})
 	return d, nil
 }
 
@@ -301,13 +325,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 			os.Exit(2)
 		}
 	}()
-	if d.migrateLogger != nil {
-		defer func() {
-			if err := d.migrateLogger.Close(); err != nil {
-				logx.As().Warn().Err(err).Str("reason", "MigrateLoggerCloseFailed").Msg("Failed to close migrate event logger")
+	// Close any monitor that implements io.Closer (e.g. MigrationMonitor closing
+	// its event logger). Deferred so it runs after the errgroup and supervisor
+	// have fully stopped — no monitor writes can race with Close.
+	defer func() {
+		for _, comp := range d.components {
+			for _, m := range comp.monitors {
+				if c, ok := m.(interface{ Close() error }); ok {
+					if err := c.Close(); err != nil {
+						logx.As().Warn().Err(err).
+							Str("reason", "MonitorCloseFailed").
+							Str("monitor", m.Name()).
+							Msg("Failed to close monitor")
+					}
+				}
 			}
-		}()
-	}
+		}
+	}()
 
 	// Preflight: each enabled component's kubeconfig must exist and be parseable
 	// before we start anything. A missing or invalid file is a configuration error

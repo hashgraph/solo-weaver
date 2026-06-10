@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// SoakStartRequest is the payload for POST /migration/consensus/soak/start.
+// SoakStartRequest is the payload for POST /consensus_node/migration/soak/start.
 type SoakStartRequest struct {
 	NodeID            string    `json:"node_id"`
 	CutoverTimestamp  time.Time `json:"cutover_timestamp"`
@@ -30,13 +30,13 @@ func (r SoakStartRequest) Validate() error {
 	return nil
 }
 
-// SoakStatusResponse is returned by GET /migration/consensus/soak/status.
+// SoakStatusResponse is returned by GET /consensus_node/migration/soak/status.
 type SoakStatusResponse struct {
 	Active  bool              `json:"active"`
 	Request *SoakStartRequest `json:"request,omitempty"`
 }
 
-// SoakStartResponse is returned by POST /migration/consensus/soak/start on accept.
+// SoakStartResponse is returned by POST /consensus_node/migration/soak/start on accept.
 type SoakStartResponse struct {
 	Accepted bool `json:"accepted"`
 }

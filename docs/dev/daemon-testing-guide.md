@@ -342,7 +342,7 @@ updates the file without re-prompting.
 1. Ensure the daemon is running with `migration: true` in `daemon.yaml`.
 2. Run:
    ```bash
-   curl --unix-socket $SOCK http://localhost/migration/consensus/soak/status
+   curl --unix-socket $SOCK http://localhost/consensus_node/migration/soak/status
    ```
 
 ### Expected result
@@ -353,7 +353,7 @@ updates the file without re-prompting.
 
 ## TC-11 — Migration soak start (idempotency)
 
-**Goal**: verify that `POST /migration/consensus/soak/start` starts a soak and that a duplicate
+**Goal**: verify that `POST /consensus_node/migration/soak/start` starts a soak and that a duplicate
 call returns HTTP 409.
 
 ### Steps
@@ -362,18 +362,18 @@ call returns HTTP 409.
 2. Start a soak:
    ```bash
    curl -s -o /dev/null -w "%{http_code}" \
-     -X POST --unix-socket $SOCK http://localhost/migration/consensus/soak/start
+     -X POST --unix-socket $SOCK http://localhost/consensus_node/migration/soak/start
    # expected: 200 or 202
    ```
 3. Immediately send a second request:
    ```bash
    curl -s -o /dev/null -w "%{http_code}" \
-     -X POST --unix-socket $SOCK http://localhost/migration/consensus/soak/start
+     -X POST --unix-socket $SOCK http://localhost/consensus_node/migration/soak/start
    # expected: 409
    ```
 4. Check soak status:
    ```bash
-   curl --unix-socket $SOCK http://localhost/migration/consensus/soak/status
+   curl --unix-socket $SOCK http://localhost/consensus_node/migration/soak/status
    ```
 
 ### Expected results
