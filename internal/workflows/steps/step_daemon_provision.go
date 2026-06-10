@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 	corev1 "k8s.io/api/core/v1"
@@ -500,6 +501,11 @@ func AddOperatorToWeaverGroupStep() *automa.StepBuilder {
 				logx.As().Debug().Str("reason", "AddOperatorToWeaverGroupSkipped").
 					Msg("SUDO_USER not set or is root — skipping weaver group membership")
 				return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{"skipped": "true"}))
+			}
+			// Validate before passing to usermod — env vars can be manipulated.
+			if err := sanity.ValidateUsername(sudoUser); err != nil {
+				return automa.FailureReport(stp, automa.WithError(
+					errorx.IllegalState.Wrap(err, "invalid SUDO_USER environment variable: %s", sudoUser)))
 			}
 
 			pm, err := principal.NewManager()

@@ -61,11 +61,12 @@ func loadComponentSpecs(paths models.WeaverPaths) ([]steps.DaemonComponentSpec, 
 //
 //  1. Check root privileges                           (always)
 //  2. Install the daemon binary                       (always)
-//  3. Ensure CN upgrade directory exists              (consensus_node only)
+//  3. Ensure hedera user/group exists; add weaver     (always)
 //  4. Check K8s cluster is reachable                  (any K8s-dependent component)
 //  5. Create RBAC resources for all K8s components    (any K8s-dependent component)
 //  6. Write per-component kubeconfigs                 (any K8s-dependent component)
 //  7. Install + enable + start systemd service unit   (always)
+//  8. Add invoking operator (SUDO_USER) to weaver group (always)
 //
 // The caller is responsible for ensuring daemon.yaml exists at
 // paths.DaemonConfigPath before calling this function.
@@ -80,6 +81,7 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 	wfSteps := []automa.Builder{
 		CheckPrivilegesStep(),
 		steps.InstallDaemonBinaryStep(daemonSrc, paths),
+		steps.EnsureHederaOwnerStep(),
 	}
 
 	// K8s-dependent components: cluster reachability + RBAC + kubeconfigs.
