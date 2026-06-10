@@ -168,7 +168,12 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 			if err := json.Unmarshal(out, &vout); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err,
-						"failed to parse daemon binary --version output: %s", string(out))))
+						"failed to parse daemon binary --version output: %s", string(out)).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Ensure the binary is a valid solo-provisioner-daemon build: " + srcPath + " --version",
+							"Ensure the binary targets this host's OS/arch (linux/amd64 or linux/arm64)",
+							"If built locally, rebuild with: task build:daemon GOOS=linux GOARCH=<arch>",
+						})))
 			}
 
 			// Version must match the release spec.

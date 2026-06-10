@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"path"
@@ -179,6 +180,24 @@ func activateProxy(ctx context.Context) {
 func main() {
 	traceId := uuid.NewString()
 	ctx := context.WithValue(context.Background(), "traceId", traceId)
+
+	// Handle --version / -v before cobra initialises anything (config, logging,
+	// proxy). This keeps the output clean — exactly one JSON line on stdout —
+	// which the CLI's daemon-install step parses with exec.Command.Output().
+	// Write directly to os.Stdout (not via cobra's cmd.Println) so that the
+	// output is captured correctly when invoked via exec.Command.Output().
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" {
+			info := version.Get()
+			out, err := info.Format("json")
+			if err != nil {
+				os.Exit(1)
+			}
+			fmt.Fprintln(os.Stdout, out)
+			os.Stdout.Sync() //nolint:errcheck // best-effort flush before os.Exit
+			os.Exit(0)
+		}
+	}
 
 	cobra.OnInitialize(func() {
 		initConfig(ctx)
