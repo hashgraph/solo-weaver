@@ -236,6 +236,9 @@ func (mm *MigrationMonitor) Status() *SoakStatusResponse {
 	return idleSoakStatus
 }
 
+// Name implements daemon.MonitorRunner.
+func (mm *MigrationMonitor) Name() string { return "migration-monitor" }
+
 // Run is the dispatch loop. It blocks until ctx is cancelled, then waits for
 // any in-flight watcher goroutines to finish before returning.
 func (mm *MigrationMonitor) Run(ctx context.Context) error {

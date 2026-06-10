@@ -87,6 +87,9 @@ func NewUpgradeMonitorWithClient(cfg UpgradeMonitorConfig, client dynamic.Interf
 	return &UpgradeMonitor{cfg: cfg, client: client}
 }
 
+// Name implements daemon.MonitorRunner.
+func (um *UpgradeMonitor) Name() string { return "upgrade-monitor" }
+
 // Run blocks until ctx is cancelled. It continuously watches
 // NetworkUpgradeExecute CRs and triggers handleExecute on
 // ReadyForProvisionerDaemon transitions. Clean watch expiry (server-side
