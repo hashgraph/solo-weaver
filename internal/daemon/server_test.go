@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
+	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,9 +48,9 @@ func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Cli
 
 	ctx, cancel := context.WithCancel(context.Background())
 	mm := consensus.NewMigrationMonitor()
-	cnHandler := daemon.NewConsensusNodeHandler(mm, nil)
+	cnHandler := consensus.NewConsensusNodeHandler(mm, nil)
 	srv := daemon.NewServer(sockPath, daemon.ServerOptions{
-		ComponentHandlers: []daemon.ComponentHandler{cnHandler},
+		ComponentHandlers: []core.ComponentHandler{cnHandler},
 	}, cfg)
 
 	errCh := make(chan error, 1)
@@ -128,7 +129,7 @@ func Test_ConsensusMigrationStatus_Idle(t *testing.T) {
 	client, cancel := startTestDaemon(t)
 	defer cancel()
 
-	var body daemon.ConsensusMigrationStatusResponse
+	var body consensus.ConsensusMigrationStatusResponse
 	resp := getJSON(t, client, "http://daemon/consensus_node/migration/status", &body)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	// Monitor state is empty string when migrationStateFn is nil (test helper passes nil).
@@ -155,12 +156,12 @@ func Test_ConsensusMigrationStatus_After_SoakStart(t *testing.T) {
 
 	// Poll until soak becomes active, then verify combined status reflects it.
 	require.Eventually(t, func() bool {
-		var body daemon.ConsensusMigrationStatusResponse
+		var body consensus.ConsensusMigrationStatusResponse
 		getJSON(t, client, "http://daemon/consensus_node/migration/status", &body)
 		return body.Soak.Active
 	}, 2*time.Second, 10*time.Millisecond, "combined migration status did not show soak active")
 
-	var body daemon.ConsensusMigrationStatusResponse
+	var body consensus.ConsensusMigrationStatusResponse
 	getJSON(t, client, "http://daemon/consensus_node/migration/status", &body)
 	require.NotNil(t, body.Soak.Request)
 	assert.Equal(t, payload.NodeID, body.Soak.Request.NodeID)

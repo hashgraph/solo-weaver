@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+//go:build !integration
+
+package core
 
 import (
 	"context"
@@ -20,17 +22,14 @@ type fakeLeafProbe struct {
 
 func (p *fakeLeafProbe) Probe(ctx context.Context) error { return p.fn(ctx) }
 
-// succeedingProbe returns a leaf probe that always succeeds immediately.
 func succeedingProbe() Probe {
 	return &fakeLeafProbe{fn: func(_ context.Context) error { return nil }}
 }
 
-// failingProbe returns a leaf probe that always fails immediately.
 func failingProbe() Probe {
 	return &fakeLeafProbe{fn: func(_ context.Context) error { return errors.New("probe failed") }}
 }
 
-// blockingProbe returns a leaf probe that blocks until ctx is cancelled.
 func blockingProbe() Probe {
 	return &fakeLeafProbe{fn: func(ctx context.Context) error {
 		<-ctx.Done()
@@ -38,7 +37,6 @@ func blockingProbe() Probe {
 	}}
 }
 
-// unblockedBy returns a leaf probe that blocks until ch is closed.
 func unblockedBy(ch <-chan struct{}) Probe {
 	return &fakeLeafProbe{fn: func(ctx context.Context) error {
 		select {
@@ -69,8 +67,6 @@ func TestCompositeProbe_AllPass(t *testing.T) {
 }
 
 func TestCompositeProbe_OneFailCancelsOthers(t *testing.T) {
-	// A failing probe + a blocking probe: the blocking probe must be cancelled
-	// by the errgroup context when the failing probe returns an error.
 	cp := NewCompositeProbe("test", failingProbe(), blockingProbe())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -96,7 +92,6 @@ func TestCompositeProbe_CtxCancelAborts(t *testing.T) {
 }
 
 func TestCompositeProbe_NestedComposite(t *testing.T) {
-	// CompositeProbe itself satisfies Probe, so it can be nested.
 	inner := NewCompositeProbe("inner", succeedingProbe(), succeedingProbe())
 	outer := NewCompositeProbe("outer", succeedingProbe(), inner)
 
@@ -105,19 +100,15 @@ func TestCompositeProbe_NestedComposite(t *testing.T) {
 	assert.NoError(t, outer.Probe(ctx))
 }
 
-// ---- buildComponentProbe / ProbableMonitor assembly tests ----
+// ---- BuildComponentProbe tests ----
 
-// TestBuildComponentProbe_NoProbableMonitors verifies nil is returned when no
-// monitor implements ProbableMonitor (host-only component).
 func TestBuildComponentProbe_NoProbableMonitors(t *testing.T) {
 	monitors := []MonitorRunner{
 		&fakeMonitor{name: "plain-monitor"},
 	}
-	assert.Nil(t, buildComponentProbe("host-only", monitors))
+	assert.Nil(t, BuildComponentProbe("host-only", monitors))
 }
 
-// TestBuildComponentProbe_CollectsFromProbableMonitors verifies that probes
-// from all ProbableMonitor implementations are collected into a CompositeProbe.
 func TestBuildComponentProbe_CollectsFromProbableMonitors(t *testing.T) {
 	unblock1 := make(chan struct{})
 	unblock2 := make(chan struct{})
@@ -130,9 +121,9 @@ func TestBuildComponentProbe_CollectsFromProbableMonitors(t *testing.T) {
 		fakeMonitor: fakeMonitor{name: "m2"},
 		probe:       unblockedBy(unblock2),
 	}
-	plain := &fakeMonitor{name: "plain"} // no RequiredProbe
+	plain := &fakeMonitor{name: "plain"}
 
-	probe := buildComponentProbe("cn", []MonitorRunner{m1, plain, m2})
+	probe := BuildComponentProbe("cn", []MonitorRunner{m1, plain, m2})
 	require.NotNil(t, probe)
 	assert.Equal(t, "cn", probe.ComponentName())
 
@@ -142,7 +133,6 @@ func TestBuildComponentProbe_CollectsFromProbableMonitors(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- probe.Probe(ctx) }()
 
-	// Neither unblocked yet — probe must still be running.
 	select {
 	case <-done:
 		t.Fatal("probe returned before both sub-probes passed")
@@ -157,86 +147,6 @@ func TestBuildComponentProbe_CollectsFromProbableMonitors(t *testing.T) {
 		assert.NoError(t, err)
 	case <-time.After(1 * time.Second):
 		t.Fatal("probe did not return after all sub-probes passed")
-	}
-}
-
-// ---- runCompositeProbe / Daemon-level tests ----
-
-func TestRunCompositeProbe_NoComponents_ReturnsImmediately(t *testing.T) {
-	d := &Daemon{}
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
-
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("runCompositeProbe blocked with no components")
-	}
-}
-
-func TestRunCompositeProbe_SkipsNilProbe(t *testing.T) {
-	d := &Daemon{components: []component{{name: "host-only", probe: nil}}}
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
-
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("runCompositeProbe blocked on nil-probe component")
-	}
-}
-
-func TestRunCompositeProbe_BlocksUntilAllPass(t *testing.T) {
-	unblock := make(chan struct{})
-	d := &Daemon{
-		components: []component{{
-			name:  "slow",
-			probe: NewCompositeProbe("slow", unblockedBy(unblock)),
-		}},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
-
-	select {
-	case <-done:
-		t.Fatal("runCompositeProbe returned before probe passed")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	close(unblock)
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("runCompositeProbe did not return after probe passed")
-	}
-}
-
-func TestRunCompositeProbe_CtxCancelAborts(t *testing.T) {
-	d := &Daemon{
-		components: []component{{
-			name:  "blocking",
-			probe: NewCompositeProbe("blocking", blockingProbe()),
-		}},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
-
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("runCompositeProbe did not exit after ctx cancel")
 	}
 }
 
@@ -263,7 +173,7 @@ func TestStatusTracker_SnapshotIsACopy(t *testing.T) {
 	assert.Equal(t, "stopped", snap2["m"].State)
 }
 
-// ---- supervisedMonitor tracker integration ----
+// ---- SupervisedMonitor + StatusTracker integration ----
 
 func TestSupervisedMonitor_TrackerUpdated(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -281,7 +191,7 @@ func TestSupervisedMonitor_TrackerUpdated(t *testing.T) {
 
 	tracker := NewStatusTracker()
 	done := make(chan struct{})
-	go func() { supervisedMonitor(ctx, m, tracker); close(done) }()
+	go func() { SupervisedMonitor(ctx, m, tracker); close(done) }()
 
 	select {
 	case <-running:
@@ -320,7 +230,7 @@ func TestSupervisedMonitor_TrackerBackoffState(t *testing.T) {
 	}
 
 	tracker := NewStatusTracker()
-	go supervisedMonitor(ctx, m, tracker)
+	go SupervisedMonitor(ctx, m, tracker)
 
 	<-crashed
 	assert.Eventually(t, func() bool {
