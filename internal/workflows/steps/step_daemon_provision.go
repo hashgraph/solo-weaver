@@ -151,13 +151,17 @@ func CreateDaemonRBACStep(specs []DaemonComponentSpec) *automa.StepBuilder {
 				}
 				if _, err := cs.CoreV1().ServiceAccounts(spec.Namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
 					if !kerrors.IsAlreadyExists(err) {
+						orbitFlag := "--cn-orbit"
+						if spec.ShortName == "bn" {
+							orbitFlag = "--bn-orbit"
+						}
 						return automa.StepFailureReport(stp.Id(),
 							automa.WithError(errorx.InternalError.Wrap(err, "failed to create ServiceAccount %s", spec.saName()).
 								WithProperty(models.ErrPropertyResolution, []string{
 									"Ensure the orbit namespace exists: kubectl get ns " + spec.Namespace,
 									"Create the namespace if missing: kubectl create ns " + spec.Namespace,
 									"Verify kubeconfig permission: kubectl auth can-i create serviceaccounts -n " + spec.Namespace,
-									"Re-run after the namespace is ready: sudo solo-provisioner daemon service install --orbit=" + spec.Namespace,
+									"Re-run after the namespace is ready: sudo solo-provisioner daemon service install " + orbitFlag + "=" + spec.Namespace,
 								})))
 					}
 					logx.As().Debug().Str("sa", spec.saName()).Msg("ServiceAccount already exists — skipping")
