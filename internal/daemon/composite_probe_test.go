@@ -13,6 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func init() {
+	// Speed up retry loop for unit tests — avoids 30-second waits between rounds.
+	componentProbeInterval = 10 * time.Millisecond
+}
+
 // ---- local probe helpers (used only by RunCompositeProbe tests) ----
 
 type fakeLeafProbe struct {
@@ -39,7 +44,7 @@ func unblockedBy(ch <-chan struct{}) core.Probe {
 	}}
 }
 
-// ---- runCompositeProbe / Daemon-level tests ----
+// ---- runComponentProbes / Daemon-level tests ----
 
 func TestRunCompositeProbe_NoComponents_ReturnsImmediately(t *testing.T) {
 	d := &Daemon{}
@@ -47,12 +52,12 @@ func TestRunCompositeProbe_NoComponents_ReturnsImmediately(t *testing.T) {
 	defer cancel()
 
 	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
+	go func() { d.runComponentProbes(ctx); close(done) }()
 
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("runCompositeProbe blocked with no components")
+		t.Fatal("runComponentProbes blocked with no components")
 	}
 }
 
@@ -62,12 +67,12 @@ func TestRunCompositeProbe_SkipsNilProbe(t *testing.T) {
 	defer cancel()
 
 	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
+	go func() { d.runComponentProbes(ctx); close(done) }()
 
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("runCompositeProbe blocked on nil-probe component")
+		t.Fatal("runComponentProbes blocked on nil-probe component")
 	}
 }
 
@@ -84,11 +89,11 @@ func TestRunCompositeProbe_BlocksUntilAllPass(t *testing.T) {
 	defer cancel()
 
 	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
+	go func() { d.runComponentProbes(ctx); close(done) }()
 
 	select {
 	case <-done:
-		t.Fatal("runCompositeProbe returned before probe passed")
+		t.Fatal("runComponentProbes returned before probe passed")
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -96,7 +101,7 @@ func TestRunCompositeProbe_BlocksUntilAllPass(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(1 * time.Second):
-		t.Fatal("runCompositeProbe did not return after probe passed")
+		t.Fatal("runComponentProbes did not return after probe passed")
 	}
 }
 
@@ -109,13 +114,13 @@ func TestRunCompositeProbe_CtxCancelAborts(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
+	go func() { d.runComponentProbes(ctx); close(done) }()
 
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(1 * time.Second):
-		t.Fatal("runCompositeProbe did not exit after ctx cancel")
+		t.Fatal("runComponentProbes did not exit after ctx cancel")
 	}
 }
 
@@ -134,11 +139,11 @@ func TestRunCompositeProbe_MixedProbes(t *testing.T) {
 	defer cancel()
 
 	done := make(chan struct{})
-	go func() { d.runCompositeProbe(ctx); close(done) }()
+	go func() { d.runComponentProbes(ctx); close(done) }()
 
 	select {
 	case <-done:
-		t.Fatal("runCompositeProbe returned before real probe passed")
+		t.Fatal("runComponentProbes returned before real probe passed")
 	case <-time.After(30 * time.Millisecond):
 	}
 
@@ -146,7 +151,7 @@ func TestRunCompositeProbe_MixedProbes(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(1 * time.Second):
-		t.Fatal("runCompositeProbe did not return after probe passed")
+		t.Fatal("runComponentProbes did not return after probe passed")
 	}
 }
 
@@ -162,12 +167,12 @@ func TestRunCompositeProbe_AllNilProbes(t *testing.T) {
 	done := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	go func() { d.runCompositeProbe(ctx); close(done) }()
+	go func() { d.runComponentProbes(ctx); close(done) }()
 
 	select {
 	case <-done:
 		assert.True(t, true) // passes immediately
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("runCompositeProbe blocked on all-nil probes")
+		t.Fatal("runComponentProbes blocked on all-nil probes")
 	}
 }

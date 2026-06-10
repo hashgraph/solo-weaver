@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode"
@@ -38,11 +40,17 @@ type component struct {
 //   - Socket server        — always on; HTTP control plane on daemon.sock
 //   - componentSupervisor  — one supervised goroutine per enabled monitor;
 //     crashes are absorbed per-monitor with exponential back-off (#662/#663)
+//   - runComponentProbes   — background loop; retries disk probes until all
+//     prerequisites are satisfied; results visible via GET /status
 type Daemon struct {
-	paths      models.WeaverPaths
-	cfg        DaemonConfig
-	server     *Server
-	components []component
+	paths       models.WeaverPaths
+	cfg         DaemonConfig
+	server      *Server
+	components  []component
+	// probeErrors holds the last probe result per component name.
+	// nil = probe passed (or no probe). Written by runComponentProbes,
+	// read by statusSnapshot — both via atomic.Pointer to avoid locks.
+	probeErrors atomic.Pointer[map[string]string]
 }
 
 // New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
@@ -151,45 +159,70 @@ func (d *Daemon) componentSupervisor(ctx context.Context) error {
 	return nil
 }
 
-// runCompositeProbe runs all component probes concurrently. It fires READY=1
-// only when every probe returns nil.
-func (d *Daemon) runCompositeProbe(ctx context.Context) {
-	var wg sync.WaitGroup
-	results := make(chan error, len(d.components))
+// componentProbeInterval is the delay between probe retry rounds.
+// Overridable in tests via init() to avoid 30-second waits.
+var componentProbeInterval = 30 * time.Second
 
+// runComponentProbes is a background loop that retries each component's disk
+// prerequisite probe every componentProbeInterval until all pass or ctx is cancelled.
+// Results are stored in d.probeErrors and surfaced via GET /status so that
+// `solo-provisioner daemon service check` can report them with actionable warnings.
+// This loop does not gate READY=1 — the daemon is functional (socket listening)
+// as soon as it starts; component readiness is a separate concern.
+func (d *Daemon) runComponentProbes(ctx context.Context) {
+	componentProbes := make([]core.ComponentProbe, 0, len(d.components))
 	for _, comp := range d.components {
-		if comp.probe == nil {
-			continue
+		if comp.probe != nil {
+			componentProbes = append(componentProbes, comp.probe)
 		}
-		wg.Add(1)
-		p := comp.probe
-		go func() {
-			defer wg.Done()
-			if err := p.Probe(ctx); err != nil {
-				logx.As().Error().Err(err).
-					Str("reason", "ComponentProbeAborted").
-					Str("component", p.ComponentName()).
-					Msg("Component probe aborted — not sending READY=1")
-				results <- err
-			}
-		}()
+	}
+	if len(componentProbes) == 0 {
+		return
 	}
 
-	wg.Wait()
-	close(results)
+	for {
+		errs := make(map[string]string, len(componentProbes))
+		var wg sync.WaitGroup
+		var mu sync.Mutex
 
-	for err := range results {
-		if err != nil {
+		for _, p := range componentProbes {
+			wg.Add(1)
+			p := p
+			go func() {
+				defer wg.Done()
+				err := p.Probe(ctx)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					errs[p.ComponentName()] = err.Error()
+					logx.As().Warn().Err(err).
+						Str("reason", "ComponentProbeNotReady").
+						Str("component", p.ComponentName()).
+						Msg("Component prerequisites not yet satisfied — run: solo-provisioner daemon service check")
+				}
+			}()
+		}
+		wg.Wait()
+
+		if len(errs) == 0 {
+			d.probeErrors.Store(nil)
+			logx.As().Info().Str("reason", "AllComponentProbesReady").
+				Msg("All component prerequisites satisfied")
 			return
 		}
-	}
+		d.probeErrors.Store(&errs)
 
-	if err := sdNotify(sdReady); err != nil {
-		logx.As().Warn().Err(err).Str("reason", "SdNotifyReadyFailed").Msg("Failed to send READY=1 to systemd")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(componentProbeInterval):
+		}
 	}
 }
 
-// statusSnapshot builds a StatusResponse from the current tracker snapshots.
+// statusSnapshot builds a StatusResponse from the current tracker snapshots
+// and the latest probe results. ProbeErrors is non-empty when any component's
+// disk prerequisites are not yet satisfied.
 func (d *Daemon) statusSnapshot() StatusResponse {
 	resp := StatusResponse{
 		Components: make(map[string]ComponentStatus, len(d.components)),
@@ -204,6 +237,9 @@ func (d *Daemon) statusSnapshot() StatusResponse {
 			}
 		}
 		resp.Components[comp.name] = cs
+	}
+	if pe := d.probeErrors.Load(); pe != nil && len(*pe) > 0 {
+		resp.ProbeErrors = *pe
 	}
 	return resp
 }
@@ -253,11 +289,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 	}
 
+	// READY=1 means the daemon process is up and its socket is serving.
+	// Component prerequisite health is tracked separately by runComponentProbes
+	// and surfaced via GET /status — operators use `daemon service check` to
+	// inspect it. This keeps systemd's start timeout from firing on environments
+	// where disk prerequisites (upgrade dir, permissions) are not yet in place.
+	if err := sdNotify(sdReady); err != nil {
+		logx.As().Warn().Err(err).Str("reason", "SdNotifyReadyFailed").Msg("Failed to send READY=1 to systemd")
+	}
+
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return d.server.Start(ctx) })
 	eg.Go(func() error { return d.componentSupervisor(ctx) })
 
-	go d.runCompositeProbe(ctx)
+	go d.runComponentProbes(ctx)
 
 	return eg.Wait()
 }
