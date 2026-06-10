@@ -82,7 +82,6 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 		steps.InstallDaemonBinaryStep(daemonSrc, paths),
 	}
 
-
 	// K8s-dependent components: cluster reachability + RBAC + kubeconfigs.
 	if len(componentSpecs) > 0 {
 		wfSteps = append(wfSteps,

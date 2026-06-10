@@ -9,13 +9,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultDaemonConfigPath = "/opt/solo/weaver/config/daemon.yaml"
+const (
+	DefaultDaemonConfigPath = "/opt/solo/weaver/config/daemon.yaml"
 
-// DaemonConfig is parsed from daemon.yaml at startup. Written by solo-provisioner
-// at cluster install time after RBAC for each component is provisioned.
+	// CurrentSchemaVersion is the schema version written by this build.
+	// Increment this constant whenever a breaking structural change is made to
+	// DaemonConfig so that LoadDaemonConfig can detect and migrate old files.
+	CurrentSchemaVersion = 1
+)
+
+// DaemonConfig is parsed from daemon.yaml at startup.
 //
 // Example daemon.yaml:
 //
+//	schema_version: 1
 //	components:
 //	  consensus_node:
 //	    enabled: true
@@ -26,7 +33,19 @@ const DefaultDaemonConfigPath = "/opt/solo/weaver/config/daemon.yaml"
 //	    monitors:
 //	      upgrade: true
 //	      migration: true
+//	  block_node:
+//	    enabled: true
+//	    kubeconfig: /opt/solo/weaver/config/daemon-bn.kubeconfig
+//	    orbit: block-node
+//	    monitors:
+//	      upgrade: true
+//	      migration: true
 type DaemonConfig struct {
+	// SchemaVersion identifies the config file format. Always written as
+	// CurrentSchemaVersion by WriteDaemonConfig. A value of 0 means the file
+	// predates schema versioning and is treated as version 1 for compatibility.
+	SchemaVersion int `yaml:"schema_version"`
+
 	Components DaemonComponents `yaml:"components"`
 }
 
@@ -100,9 +119,10 @@ func (c DaemonConfig) Validate() error {
 }
 
 // WriteDaemonConfig serialises cfg to YAML and writes it to path, creating any
-// missing parent directories. It does not validate cfg — callers should call
-// cfg.Validate() before writing.
+// missing parent directories. It stamps SchemaVersion = CurrentSchemaVersion
+// before writing. Callers should call cfg.Validate() before writing.
 func WriteDaemonConfig(path string, cfg DaemonConfig) error {
+	cfg.SchemaVersion = CurrentSchemaVersion
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return ErrConfig.Wrap(err, "cannot create config directory %s", filepath.Dir(path))
 	}
@@ -120,15 +140,59 @@ func WriteDaemonConfig(path string, cfg DaemonConfig) error {
 // Returns an error if the file is missing or malformed — the daemon must not
 // start without a valid config. CLI flag overrides are applied after this call
 // in cmd/daemon/main.go; call Validate() again after overrides are applied.
+//
+// Loading uses a two-phase approach:
+//  1. Probe: unmarshal only schema_version to determine the on-disk format.
+//  2. Parse + migrate: unmarshal into the versioned struct for that version,
+//     then walk the migration chain (vN.migrateToLatest()) to produce the
+//     current DaemonConfig. Each step in the chain is a pure field transform
+//     that knows only about one version transition.
+//
+// Version rules:
+//   - 0 (absent): pre-versioning file; treated as version 1.
+//   - 1..CurrentSchemaVersion: accepted; migrated to current if needed.
+//   - > CurrentSchemaVersion: rejected — written by a newer binary.
 func LoadDaemonConfig(path string) (DaemonConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return DaemonConfig{}, ErrConfigNotFound.Wrap(err, "daemon config not found at %s", path)
 	}
 
-	var cfg DaemonConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	// Phase 1: probe the schema version only.
+	var probe struct {
+		SchemaVersion int `yaml:"schema_version"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
 		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid daemon config at %s", path)
+	}
+	version := probe.SchemaVersion
+	if version == 0 {
+		version = 1 // pre-versioning file; treat as v1
+	}
+	if version > CurrentSchemaVersion {
+		return DaemonConfig{}, ErrConfigMalformed.New(
+			"daemon config %s was written by a newer binary (schema_version %d > supported %d); "+
+				"upgrade solo-provisioner-daemon to a compatible version",
+			path, version, CurrentSchemaVersion)
+	}
+
+	// Phase 2: unmarshal into the versioned struct and walk the migration chain.
+	// To add support for a new version N:
+	//   1. Add daemonConfigVN in config_vN.go with migrateToLatest() and migrate().
+	//   2. Add case N here.
+	//   3. Bump CurrentSchemaVersion.
+	var cfg DaemonConfig
+	switch version {
+	case 1:
+		var raw daemonConfigV1
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid v1 daemon config at %s", path)
+		}
+		cfg = raw.migrateToLatest()
+	default:
+		// Should never reach here given the version > CurrentSchemaVersion guard above.
+		return DaemonConfig{}, ErrConfigMalformed.New(
+			"unsupported daemon config schema_version %d at %s", version, path)
 	}
 
 	if err := cfg.Validate(); err != nil {
