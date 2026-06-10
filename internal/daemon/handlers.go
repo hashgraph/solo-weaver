@@ -24,6 +24,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.statusFn == nil {
+		writeJSON(w, http.StatusOK, StatusResponse{Components: map[string]ComponentStatus{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.statusFn())
+}
+
 func (s *Server) handleSoakStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.mm.Status())
 }

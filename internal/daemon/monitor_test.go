@@ -54,7 +54,7 @@ func TestSupervisedMonitor_RestartsAfterCrash(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		supervisedMonitor(ctx, m)
+		supervisedMonitor(ctx, m, nil)
 		close(done)
 	}()
 
@@ -84,7 +84,7 @@ func TestSupervisedMonitor_NoRestartOnCtxCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		supervisedMonitor(ctx, m)
+		supervisedMonitor(ctx, m, nil)
 		close(done)
 	}()
 
@@ -132,7 +132,7 @@ func TestSupervisedMonitor_BackoffResetAfterStableRun(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		supervisedMonitor(ctx, m)
+		supervisedMonitor(ctx, m, nil)
 		close(done)
 	}()
 
@@ -183,7 +183,7 @@ func TestSupervisedMonitor_DegradedEventFired(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		supervisedMonitor(ctx, m)
+		supervisedMonitor(ctx, m, nil)
 		close(done)
 	}()
 
@@ -243,7 +243,7 @@ func TestSupervisedMonitor_DegradedCounterResetsAfterStableRun(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		supervisedMonitor(ctx, m)
+		supervisedMonitor(ctx, m, nil)
 		close(done)
 	}()
 
@@ -283,7 +283,7 @@ func TestSupervisedMonitor_BackoffCapAtMax(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		supervisedMonitor(ctx, m)
+		supervisedMonitor(ctx, m, nil)
 		close(done)
 	}()
 

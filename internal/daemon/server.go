@@ -28,11 +28,14 @@ type ServerConfig struct {
 type Server struct {
 	sockPath string
 	mm       *consensus.MigrationMonitor
+	statusFn func() StatusResponse
 	srv      *http.Server
 }
 
-func NewServer(sockPath string, mm *consensus.MigrationMonitor, cfg ServerConfig) *Server {
-	s := &Server{sockPath: sockPath, mm: mm}
+// NewServer constructs a Server. mm may be nil when the migration monitor is
+// disabled; statusFn may be nil to disable the /status endpoint.
+func NewServer(sockPath string, mm *consensus.MigrationMonitor, statusFn func() StatusResponse, cfg ServerConfig) *Server {
+	s := &Server{sockPath: sockPath, mm: mm, statusFn: statusFn}
 
 	rht := cfg.ReadHeaderTimeout
 	if rht == 0 {
@@ -41,6 +44,7 @@ func NewServer(sockPath string, mm *consensus.MigrationMonitor, cfg ServerConfig
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /status", s.handleStatus)
 	mux.HandleFunc("GET /migration/consensus/soak/status", s.handleSoakStatus)
 	mux.HandleFunc("POST /migration/consensus/soak/start", s.handleSoakStart)
 

@@ -4,10 +4,12 @@ package consensus
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/daemon/probes"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -48,6 +50,14 @@ const (
 	upgradeEventGlob   = "consensus-upgrade-*.jsonl"
 )
 
+// networkUpgradeExecuteGroup and networkUpgradeExecuteResource are the RBAC
+// coordinates the daemon needs to watch NetworkUpgradeExecute CRs. Used by
+// RequiredProbe to build the KubeRBACProbe for this monitor.
+const (
+	networkUpgradeExecuteGroup    = "hedera.com"
+	networkUpgradeExecuteResource = "networkupgradeexecutes"
+)
+
 // UpgradeMonitorConfig holds configuration for the UpgradeMonitor.
 type UpgradeMonitorConfig struct {
 	// KubeconfigPath is the path to the daemon's scoped kubeconfig. Built once
@@ -74,6 +84,14 @@ type UpgradeMonitorConfig struct {
 	// validation during pruning. Pruning is skipped when UpgradeEventsDir falls
 	// outside this tree.
 	HomeDir string
+
+	// UpgradeDir is the active upgrade staging directory (the `current`
+	// subdirectory under the CN's upgrade path). RequiredProbe verifies
+	// ownership and write-access on this directory and its parent before the
+	// monitor is allowed to start. Defaults to the CN standard path when empty.
+	//
+	// Example: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+	UpgradeDir string
 }
 
 // UpgradeMonitor watches the Kubernetes API for NetworkUpgradeExecute CRs
@@ -110,6 +128,52 @@ func NewUpgradeMonitorWithClient(cfg UpgradeMonitorConfig, client dynamic.Interf
 
 // Name implements daemon.MonitorRunner.
 func (um *UpgradeMonitor) Name() string { return "upgrade-monitor" }
+
+// RequiredProbe implements daemon.ProbableMonitor. It returns a composite probe
+// that verifies three prerequisites before the monitor is allowed to run:
+//
+//  1. Kube RBAC — the daemon's ServiceAccount can list/watch NetworkUpgradeExecute CRs.
+//  2. Parent dir ownership — the upgrade staging root (e.g. .../data/upgrade) is owned
+//     by hedera:hedera with at least rwxr-xr-x (0755).
+//  3. Current dir ownership + write access — the active staging subdir (UpgradeDir,
+//     e.g. .../data/upgrade/current) is owned by hedera:hedera with at least rwxrwxr-x
+//     (0775) and the running daemon process can actually write to it, proving that
+//     `usermod -aG hedera weaver` was applied.
+func (um *UpgradeMonitor) RequiredProbe() probes.Probe {
+	upgradeDir := um.cfg.UpgradeDir         // e.g. .../data/upgrade/current
+	upgradeRoot := filepath.Dir(upgradeDir) // e.g. .../data/upgrade
+
+	return probes.NewCompositeProbe(
+		// 1. Kube RBAC: must be able to list/watch NetworkUpgradeExecute CRs.
+		&probes.KubeRBACProbe{
+			KubeconfigPath: um.cfg.KubeconfigPath,
+			Namespace:      um.cfg.Namespace,
+			Group:          networkUpgradeExecuteGroup,
+			Resource:       networkUpgradeExecuteResource,
+			Verbs:          []string{"list", "watch"},
+		},
+		// 2. Parent dir: hedera installer created this with 0755. If it is wrong
+		//    the operator needs to re-run the CN install preflight.
+		&probes.DiskOwnershipProbe{
+			Path:       upgradeRoot,
+			User:       "hedera",
+			Group:      "hedera",
+			Permission: 0o755,
+		},
+		// 3a. Current dir ownership: `cluster install` must have run chmod g+rwx.
+		&probes.DiskOwnershipProbe{
+			Path:       upgradeDir,
+			User:       "hedera",
+			Group:      "hedera",
+			Permission: 0o775, // g+rwx: chmod g+rwx .../current
+		},
+		// 3b. Current dir write test: proves the daemon process has effective write
+		//     access (group membership, ACLs, mount flags, SELinux all exercised).
+		&probes.DiskWriteTestProbe{
+			Dir: upgradeDir,
+		},
+	)
+}
 
 // pruneUpgradeEventLogs removes stale per-operation upgrade JSONL files from
 // cfg.UpgradeEventsDir. Called at the start of each Run() invocation so
