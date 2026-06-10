@@ -28,6 +28,7 @@ var checkCmd = &cobra.Command{
 		// separately so we can exit non-zero if any probe is still failing.
 		paths := models.Paths()
 		if warning := steps.CheckDaemonComponentPrerequisites(paths.DaemonSockPath); warning != "" {
+			logx.As().Warn().Msg(warning)
 			return errorx.IllegalState.New(
 				"daemon is running but component prerequisites are not satisfied — " +
 					"fix the issues listed above and re-run: solo-provisioner daemon service check")
