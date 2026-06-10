@@ -264,7 +264,17 @@ func isPrivilegeExemptInvocation(args []string) bool {
 	// Only the leading subcommand word can be exempt; flag values and nested
 	// subcommands after it are not checked because they may follow a
 	// flag=value pair whose value looks like a word (e.g. --log-level debug).
-	return args[0] == "version" || args[0] == "help"
+	if args[0] == "version" || args[0] == "help" {
+		return true
+	}
+
+	// `daemon service check` is read-only: it queries the Unix socket and exits.
+	// The socket is group-accessible (weaver:weaver 0660) so any user in the
+	// weaver group can reach it without sudo.
+	if len(args) >= 3 && args[0] == "daemon" && args[1] == "service" && args[2] == "check" {
+		return true
+	}
+	return false
 }
 
 func activateProxy(ctx context.Context) {
