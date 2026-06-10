@@ -20,9 +20,11 @@ import (
 )
 
 var (
-	flagNodeID         string
-	flagOrbit          string
-	flagUpgradeDir     string
+	flagComponents     string // comma-separated: "consensus-node", "block-node"
+	flagCNNodeID       string
+	flagCNOrbit        string
+	flagCNUpgradeDir   string
+	flagBNOrbit        string
 	flagFromConfig     string
 	flagDaemonBin      string
 	flagDaemonChecksum string
@@ -35,9 +37,14 @@ var installCmd = &cobra.Command{
 	Long: "Bootstrap daemon.yaml (prompting for required fields when not supplied), " +
 		"provision RBAC resources, generate the daemon kubeconfig, and install + start the " +
 		"solo-provisioner-daemon systemd service. Requires root privileges and a reachable K8s cluster.\n\n" +
+		"Use --components to select which components to enable (e.g. \"consensus-node,block-node\"). " +
+		"At least one component must be selected — RBAC and kubeconfigs are only provisioned for " +
+		"the chosen components.\n\n" +
 		"If daemon.yaml already exists its values are used as-is; individual fields can be overridden " +
-		"with --node-id, --orbit, and --upgrade-dir. Use --from-config to copy a pre-built daemon.yaml " +
-		"into place instead of prompting.",
+		"with --cn-node-id, --cn-orbit, --cn-upgrade-dir, and --bn-orbit. Use --from-config to copy a " +
+		"pre-built daemon.yaml into place instead of prompting.\n\n" +
+		"To add or remove components after initial install, run 'daemon service uninstall' first, " +
+		"then re-run 'daemon service install' with the updated --components list.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var rootFlags common.RootFlags
 		_ = common.ExtractRootFlags(cmd, args, &rootFlags)
@@ -69,9 +76,11 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	common.FlagDaemonNodeID().SetVarP(installCmd, &flagNodeID, false)
-	common.FlagDaemonOrbit().SetVarP(installCmd, &flagOrbit, false)
-	common.FlagDaemonUpgradeDir().SetVarP(installCmd, &flagUpgradeDir, false)
+	common.FlagDaemonComponents().SetVarP(installCmd, &flagComponents, false)
+	common.FlagDaemonCNNodeID().SetVarP(installCmd, &flagCNNodeID, false)
+	common.FlagDaemonCNOrbit().SetVarP(installCmd, &flagCNOrbit, false)
+	common.FlagDaemonCNUpgradeDir().SetVarP(installCmd, &flagCNUpgradeDir, false)
+	common.FlagDaemonBNOrbit().SetVarP(installCmd, &flagBNOrbit, false)
 	common.FlagDaemonFromConfig().SetVarP(installCmd, &flagFromConfig, false)
 	common.FlagDaemonBin().SetVarP(installCmd, &flagDaemonBin, false)
 	common.FlagDaemonChecksum().SetVarP(installCmd, &flagDaemonChecksum, false)
@@ -126,30 +135,43 @@ func resolveDaemonConfig(
 	}
 
 	// ── Case 3: no daemon.yaml — build it from flags + prompts ───────────────
-	// Pre-fill from explicit flags. Kubeconfig will be written by
-	// WriteConsensusNodeKubeconfigStep; record the well-known path so the daemon can
-	// find it on startup.
-	cn := daemon.ConsensusNodeComponentConfig{
-		Enabled:    true,
-		NodeID:     flagNodeID,
-		Orbit:      flagOrbit,
-		UpgradeDir: flagUpgradeDir,
-		Kubeconfig: paths.DaemonCNKubeconfigPath,
-		Monitors:   daemon.ConsensusNodeMonitors{Upgrade: true, Migration: true},
+
+	// Parse --components into a ComponentSet. When the flag was not set the set
+	// is empty and RunDaemonInstallPrompts will ask interactively.
+	cs := prompt.ParseComponentsFlag(flagComponents)
+
+	// Pre-populate per-component configs from any explicit flags so that
+	// RunDaemonInstallPrompts receives already-filled targets and can skip
+	// prompting for fields the operator supplied on the command line.
+	var cnCfg *daemon.ConsensusNodeComponentConfig
+	if cs.Has(prompt.ComponentConsensusNode) {
+		c := daemon.ConsensusNodeComponentConfig{
+			Enabled:    true,
+			NodeID:     flagCNNodeID,
+			Orbit:      flagCNOrbit,
+			UpgradeDir: flagCNUpgradeDir,
+			Kubeconfig: paths.DaemonCNKubeconfigPath,
+			Monitors:   daemon.ConsensusNodeMonitors{Upgrade: true, Migration: true},
+		}
+		cnCfg = &c
 	}
+
 	cfg = daemon.DaemonConfig{
-		Components: daemon.DaemonComponents{ConsensusNode: &cn},
+		Components: daemon.DaemonComponents{ConsensusNode: cnCfg},
 	}
 
 	// Prompt for any fields still empty (unless non-interactive / force).
 	if prompt.ShouldPrompt(rootFlags.Force) {
 		cv := prompt.NewChosenValues()
 		targets := prompt.DaemonInstallInputTargets{
-			NodeID:     &cfg.Components.ConsensusNode.NodeID,
-			Orbit:      &cfg.Components.ConsensusNode.Orbit,
-			UpgradeDir: &cfg.Components.ConsensusNode.UpgradeDir,
+			ComponentsRaw: &flagComponents,
 		}
-		if err := prompt.RunDaemonInstallPrompts(cmd, targets, cv); err != nil {
+		if cnCfg != nil {
+			targets.CNNodeID = &cnCfg.NodeID
+			targets.CNOrbit = &cnCfg.Orbit
+			targets.CNUpgradeDir = &cnCfg.UpgradeDir
+		}
+		if err := prompt.RunDaemonInstallPrompts(cmd, &cfg, targets, paths, cv); err != nil {
 			return daemon.DaemonConfig{}, err
 		}
 		cv.Print("Daemon configuration")
@@ -158,7 +180,7 @@ func resolveDaemonConfig(
 	// Validate before writing — surface missing required fields with clear errors.
 	if err := cfg.Validate(); err != nil {
 		return daemon.DaemonConfig{}, errorx.IllegalArgument.Wrap(err,
-			"daemon config incomplete: supply --node-id and --orbit flags, or run interactively")
+			"daemon config incomplete: supply --components and the required per-component flags, or run interactively")
 	}
 
 	if err := daemon.WriteDaemonConfig(paths.DaemonConfigPath, cfg); err != nil {
@@ -172,23 +194,23 @@ func resolveDaemonConfig(
 // applyFlagOverrides writes any explicitly-set flag values into cfg.
 // Returns true if at least one field was changed.
 func applyFlagOverrides(cfg *daemon.DaemonConfig) bool {
-	if cfg.Components.ConsensusNode == nil {
-		return false
-	}
-	cn := cfg.Components.ConsensusNode
 	changed := false
-	if flagNodeID != "" {
-		cn.NodeID = flagNodeID
-		changed = true
+	if cn := cfg.Components.ConsensusNode; cn != nil {
+		if flagCNNodeID != "" {
+			cn.NodeID = flagCNNodeID
+			changed = true
+		}
+		if flagCNOrbit != "" {
+			cn.Orbit = flagCNOrbit
+			changed = true
+		}
+		if flagCNUpgradeDir != "" {
+			cn.UpgradeDir = flagCNUpgradeDir
+			changed = true
+		}
 	}
-	if flagOrbit != "" {
-		cn.Orbit = flagOrbit
-		changed = true
-	}
-	if flagUpgradeDir != "" {
-		cn.UpgradeDir = flagUpgradeDir
-		changed = true
-	}
+	// block-node orbit override — added in S7 (#667) when BlockNode component config exists.
+	_ = flagBNOrbit
 	return changed
 }
 

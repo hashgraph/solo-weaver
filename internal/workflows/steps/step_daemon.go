@@ -237,7 +237,6 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 		})
 }
 
-
 // copyBinaryFile copies src to dst with executable permissions (0755).
 func copyBinaryFile(src, dst string) error {
 	in, err := os.Open(src) //nolint:gosec

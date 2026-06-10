@@ -628,15 +628,17 @@ Bootstrap `daemon.yaml`, provision K8s RBAC, generate the daemon kubeconfig, and
 start the systemd service in one step.
 
 ```bash
-# Interactive install — prompts for node-id and orbit when daemon.yaml is absent
+# Interactive install — prompts for components, cn-node-id, and cn-orbit when daemon.yaml is absent
 sudo solo-provisioner daemon service install
 
-# Supply values directly (non-interactive / CI)
-sudo solo-provisioner daemon service install --node-id=0.0.3 --orbit=hedera-network
+# Enable consensus-node only (non-interactive / CI)
+sudo solo-provisioner daemon service install \
+  --components=consensus-node --cn-node-id=0.0.3 --cn-orbit=hedera-network
 
 # Override the CN upgrade staging directory
-sudo solo-provisioner daemon service install --node-id=0.0.3 --orbit=hedera-network \
-  --upgrade-dir=/custom/path/data/upgrade/current
+sudo solo-provisioner daemon service install \
+  --components=consensus-node --cn-node-id=0.0.3 --cn-orbit=hedera-network \
+  --cn-upgrade-dir=/custom/path/data/upgrade/current
 
 # Copy a pre-built daemon.yaml into place, then run the workflow
 sudo solo-provisioner daemon service install --from-config=/path/to/daemon.yaml
@@ -644,17 +646,24 @@ sudo solo-provisioner daemon service install --from-config=/path/to/daemon.yaml
 
 **Additional Flags**
 
-| Flag            | Default                                                       | Description                                                                          |
-|-----------------|---------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| `--node-id`     | _(prompted)_                                                  | Hedera node identifier for this consensus node (e.g. `0.0.3`)                        |
-| `--orbit`       | _(prompted)_                                                  | Kubernetes namespace (orbit) where `NetworkUpgradeExecute` CRs are watched           |
-| `--upgrade-dir` | `/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current` | Path to the CN upgrade staging directory                                             |
-| `--from-config` | _(none)_                                                      | Path to an existing `daemon.yaml` to copy into `/opt/solo/weaver/config/daemon.yaml` |
+| Flag                | Default                                                       | Description                                                                                              |
+|---------------------|---------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| `--components`      | _(prompted)_                                                  | Comma-separated list of components to enable: `consensus-node`, `block-node`                             |
+| `--cn-node-id`      | _(prompted)_                                                  | Hedera node identifier for the consensus node (e.g. `0.0.3`)                                            |
+| `--cn-orbit`        | _(prompted)_                                                  | Kubernetes namespace (orbit) where consensus-node `NetworkUpgradeExecute` CRs are watched                |
+| `--cn-upgrade-dir`  | `/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current` | Path to the consensus-node upgrade staging directory                                                    |
+| `--bn-orbit`        | _(prompted)_                                                  | Kubernetes namespace (orbit) for the block-node component _(supported in a future release)_              |
+| `--from-config`     | _(none)_                                                      | Path to an existing `daemon.yaml` to copy into `/opt/solo/weaver/config/daemon.yaml`                     |
 
 > **Config bootstrap logic:** If `daemon.yaml` already exists its values are used.
-> Individual fields can still be overridden with `--node-id`, `--orbit`, or `--upgrade-dir`.
+> Individual fields can still be overridden with the component-scoped flags above.
 > In interactive mode the prompts are pre-filled with any existing values so pressing
 > Enter accepts them unchanged.
+>
+> **Adding or removing components:** Run `daemon service uninstall` first, then
+> re-run `daemon service install` with the updated `--components` list. At least
+> one component must be selected — RBAC and kubeconfigs are only provisioned for
+> the chosen components.
 
 #### Uninstall Daemon Service
 
@@ -971,7 +980,7 @@ sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-
 sudo solo-provisioner alloy cluster uninstall
 
 # DAEMON
-sudo solo-provisioner daemon service install [--node-id=<id>] [--orbit=<ns>] [--upgrade-dir=<path>]
+sudo solo-provisioner daemon service install [--components=<list>] [--cn-node-id=<id>] [--cn-orbit=<ns>] [--cn-upgrade-dir=<path>]
 sudo solo-provisioner daemon service install --from-config=<path>
 sudo solo-provisioner daemon service uninstall
 sudo solo-provisioner daemon service check

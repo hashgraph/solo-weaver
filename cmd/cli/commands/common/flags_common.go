@@ -202,35 +202,62 @@ func FlagVerbose() CountFlagDefinition {
 
 // ── Daemon service install flags ─────────────────────────────────────────────
 
-// FlagDaemonNodeID is the Hedera node identifier (e.g. "0.0.3") written into
-// daemon.yaml as node_id. Required when daemon.yaml does not already exist.
-func FlagDaemonNodeID() FlagDefinition[string] {
+// FlagDaemonComponents selects which daemon components to enable.
+// Accepts a comma-separated list of component names: "consensus-node", "block-node".
+// When omitted the operator is prompted interactively.
+func FlagDaemonComponents() FlagDefinition[string] {
 	return FlagDefinition[string]{
-		Name:        "node-id",
+		Name:        "components",
 		ShortName:   "",
-		Description: `Hedera node identifier for this consensus node (e.g. "0.0.3")`,
+		Description: `Comma-separated list of daemon components to enable (choices: "consensus-node", "block-node")`,
 		Default:     "",
 	}
 }
 
-// FlagDaemonOrbit is the Kubernetes namespace (orbit) written into daemon.yaml.
-// Required when daemon.yaml does not already exist.
-func FlagDaemonOrbit() FlagDefinition[string] {
+// FlagDaemonCNNodeID is the Hedera node identifier (e.g. "0.0.3") written into
+// daemon.yaml as the consensus-node node_id. Required when daemon.yaml does not
+// already exist and consensus-node is enabled.
+func FlagDaemonCNNodeID() FlagDefinition[string] {
 	return FlagDefinition[string]{
-		Name:        "orbit",
+		Name:        "cn-node-id",
 		ShortName:   "",
-		Description: "Kubernetes namespace (orbit) where NetworkUpgradeExecute CRs are watched",
+		Description: `Hedera node identifier for the consensus node (e.g. "0.0.3")`,
 		Default:     "",
 	}
 }
 
-// FlagDaemonUpgradeDir is an optional override for the CN upgrade staging
-// directory. Defaults to /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.
-func FlagDaemonUpgradeDir() FlagDefinition[string] {
+// FlagDaemonCNOrbit is the Kubernetes namespace (orbit) for the consensus-node
+// component written into daemon.yaml. Required when daemon.yaml does not already
+// exist and consensus-node is enabled.
+func FlagDaemonCNOrbit() FlagDefinition[string] {
 	return FlagDefinition[string]{
-		Name:        "upgrade-dir",
+		Name:        "cn-orbit",
 		ShortName:   "",
-		Description: "Path to the CN upgrade staging directory (default: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current)",
+		Description: "Kubernetes namespace (orbit) where consensus-node NetworkUpgradeExecute CRs are watched",
+		Default:     "",
+	}
+}
+
+// FlagDaemonCNUpgradeDir is an optional override for the consensus-node upgrade
+// staging directory.
+// Defaults to /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.
+func FlagDaemonCNUpgradeDir() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "cn-upgrade-dir",
+		ShortName:   "",
+		Description: "Path to the consensus-node upgrade staging directory (default: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current)",
+		Default:     "",
+	}
+}
+
+// FlagDaemonBNOrbit is the Kubernetes namespace (orbit) for the block-node
+// component written into daemon.yaml. Required when daemon.yaml does not already
+// exist and block-node is enabled.
+func FlagDaemonBNOrbit() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "bn-orbit",
+		ShortName:   "",
+		Description: "Kubernetes namespace (orbit) for the block-node component",
 		Default:     "",
 	}
 }

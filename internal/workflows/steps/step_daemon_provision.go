@@ -53,9 +53,11 @@ type DaemonComponentSpec struct {
 	PolicyRules []rbacv1.PolicyRule
 }
 
-func (s DaemonComponentSpec) saName() string          { return "solo-provisioner-daemon-" + s.ShortName }
-func (s DaemonComponentSpec) clusterRoleName() string { return "solo-provisioner-daemon-" + s.ShortName }
-func (s DaemonComponentSpec) crbName() string         { return "solo-provisioner-daemon-" + s.ShortName }
+func (s DaemonComponentSpec) saName() string { return "solo-provisioner-daemon-" + s.ShortName }
+func (s DaemonComponentSpec) clusterRoleName() string {
+	return "solo-provisioner-daemon-" + s.ShortName
+}
+func (s DaemonComponentSpec) crbName() string { return "solo-provisioner-daemon-" + s.ShortName }
 func (s DaemonComponentSpec) tokenSecretName() string {
 	return "solo-provisioner-daemon-" + s.ShortName + "-token"
 }
