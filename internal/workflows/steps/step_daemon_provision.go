@@ -265,8 +265,8 @@ func CreateDaemonRBACStep(specs []DaemonComponentSpec) *automa.StepBuilder {
 // WriteDaemonKubeconfigStep waits for each component's SA token Secret to be
 // populated, then writes a scoped kubeconfig to spec.KubeconfigPath using the
 // SA token and cluster CA from the admin kubeconfig. Files are written with mode
-// 0600 (root-readable only) since they contain service account credentials.
-// Rollback removes all kubeconfig files written by this step.
+// 0640 (root:weaver) so the daemon process (running as the weaver group) can
+// read them. Rollback removes all kubeconfig files written by this step.
 func WriteDaemonKubeconfigStep(specs []DaemonComponentSpec) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("write-daemon-kubeconfigs").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -485,7 +485,7 @@ func waitForSAToken(ctx context.Context, cs *kubernetes.Clientset, namespace, se
 }
 
 // writeDaemonKubeconfig writes a minimal kubeconfig for the daemon SA to path.
-// The file is created with 0600 permissions (root-readable only).
+// The file is created with 0640 (root:weaver) so the daemon can read it.
 func writeDaemonKubeconfig(path, server, ca, token string) error {
 	cfg := clientcmdapi.NewConfig()
 	cfg.Clusters["solo-weaver"] = &clientcmdapi.Cluster{
@@ -505,7 +505,7 @@ func writeDaemonKubeconfig(path, server, ca, token string) error {
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to serialize kubeconfig")
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := os.WriteFile(path, data, 0o640); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to write kubeconfig to %s", path)
 	}
 	return nil
