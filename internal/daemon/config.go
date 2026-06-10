@@ -36,10 +36,9 @@ const (
 //	  block_node:
 //	    enabled: true
 //	    kubeconfig: /opt/solo/weaver/config/daemon-bn.kubeconfig
-//	    orbit: block-node
+//	    orbit: hedera-block-node
 //	    monitors:
 //	      upgrade: true
-//	      migration: true
 type DaemonConfig struct {
 	// SchemaVersion identifies the config file format. Always written as
 	// CurrentSchemaVersion by WriteDaemonConfig. A value of 0 means the file
@@ -49,11 +48,10 @@ type DaemonConfig struct {
 	Components DaemonComponents `yaml:"components"`
 }
 
-// DaemonComponents holds the per-component configuration blocks. Only
-// consensus_node is implemented; block_node and ofac_filter are reserved for
-// future stories (S7+).
+// DaemonComponents holds the per-component configuration blocks.
 type DaemonComponents struct {
 	ConsensusNode *ConsensusNodeComponentConfig `yaml:"consensus_node,omitempty"`
+	BlockNode     *BlockNodeComponentConfig     `yaml:"block_node,omitempty"`
 }
 
 // ConsensusNodeComponentConfig is the configuration block for the consensus-node
@@ -87,6 +85,38 @@ type ConsensusNodeMonitors struct {
 	Migration bool `yaml:"migration"`
 }
 
+// BlockNodeComponentConfig is the configuration block for the block-node component.
+// It carries its own kubeconfig so its RBAC is independent of the consensus-node.
+type BlockNodeComponentConfig struct {
+	// Enabled controls whether this component and its monitors are started.
+	Enabled bool `yaml:"enabled"`
+
+	// Kubeconfig is the path to the scoped kubeconfig for this component's SA.
+	// Written by solo-provisioner during daemon install.
+	Kubeconfig string `yaml:"kubeconfig"`
+
+	// Orbit is the Kubernetes namespace where block-node CRs are watched.
+	Orbit string `yaml:"orbit"`
+
+	Monitors BlockNodeMonitors `yaml:"monitors"`
+}
+
+// BlockNodeMonitors toggles individual monitors for the block-node component.
+type BlockNodeMonitors struct {
+	Upgrade bool `yaml:"upgrade"`
+}
+
+// Validate checks that all required fields within the block-node block are present.
+func (bn BlockNodeComponentConfig) Validate() error {
+	if bn.Kubeconfig == "" {
+		return ErrConfigMalformed.New("components.block_node.kubeconfig is required")
+	}
+	if bn.Orbit == "" {
+		return ErrConfigMalformed.New("components.block_node.orbit is required")
+	}
+	return nil
+}
+
 // EffectiveUpgradeDir returns UpgradeDir if set, otherwise the CN default path.
 func (cn ConsensusNodeComponentConfig) EffectiveUpgradeDir() string {
 	if cn.UpgradeDir != "" {
@@ -111,11 +141,22 @@ func (cn ConsensusNodeComponentConfig) Validate() error {
 
 // Validate checks that the config is structurally valid. Called by
 // LoadDaemonConfig and by cmd/daemon/main.go after applying CLI flag overrides.
+// At least one component (consensus_node or block_node) must be present.
 func (c DaemonConfig) Validate() error {
-	if c.Components.ConsensusNode == nil {
-		return ErrConfigMalformed.New("components.consensus_node is required")
+	if c.Components.ConsensusNode == nil && c.Components.BlockNode == nil {
+		return ErrConfigMalformed.New("at least one component (consensus_node or block_node) is required")
 	}
-	return c.Components.ConsensusNode.Validate()
+	if cn := c.Components.ConsensusNode; cn != nil {
+		if err := cn.Validate(); err != nil {
+			return err
+		}
+	}
+	if bn := c.Components.BlockNode; bn != nil {
+		if err := bn.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WriteDaemonConfig serialises cfg to YAML and writes it to path, creating any

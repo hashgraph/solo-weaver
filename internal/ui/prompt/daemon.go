@@ -187,7 +187,7 @@ type DaemonInstallInputTargets struct {
 	CNNodeID     *string
 	CNOrbit      *string
 	CNUpgradeDir *string
-	// BNOrbit: added in S7 (#667) when BlockNode component config exists.
+	BNOrbit      *string
 }
 
 // RunDaemonInstallPrompts presents interactive prompts for the daemon service
@@ -261,18 +261,31 @@ func RunDaemonInstallPrompts(
 		}
 	}
 
-	// Step 4: block-node prompts — added in S7 (#667).
-	// Surface a clear error if the operator selected block-node before it is
-	// supported; prevents a confusing validation failure downstream.
-	if cs.Has(ComponentBlockNode) {
-		return errorx.IllegalState.New(
-			"block-node component support is not yet available in this release; " +
-				"remove \"" + ComponentBlockNode + "\" from --components and retry")
+	// Step 4: wire up block-node component if selected.
+	if cs.Has(ComponentBlockNode) && cfg.Components.BlockNode == nil {
+		c := daemon.BlockNodeComponentConfig{
+			Enabled:    true,
+			Kubeconfig: paths.DaemonBNKubeconfigPath,
+			Monitors:   daemon.BlockNodeMonitors{Upgrade: true},
+		}
+		cfg.Components.BlockNode = &c
+		targets.BNOrbit = &cfg.Components.BlockNode.Orbit
 	}
 
-	// Keep the bn-orbit prompt builder compiled even though it is not yet called,
-	// so the symbol is reachable for S7 without a separate removal pass.
-	_ = daemonBNOrbitInputPrompt
+	// Step 5: prompt for block-node fields.
+	if cs.Has(ComponentBlockNode) && cfg.Components.BlockNode != nil {
+		bn := cfg.Components.BlockNode
+		orbitTarget := targets.BNOrbit
+		if orbitTarget == nil {
+			orbitTarget = &bn.Orbit
+		}
+		bnPrompts := []InputPrompt{
+			daemonBNOrbitInputPrompt(*orbitTarget, orbitTarget),
+		}
+		if err := RunInputPrompts(cmd, bnPrompts, cv); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

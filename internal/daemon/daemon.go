@@ -131,6 +131,23 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		}
 	}
 
+	bn := cfg.Components.BlockNode
+	if bn != nil && bn.Enabled {
+		var bnMonitors []MonitorRunner
+		if bn.Monitors.Upgrade {
+			bnMonitors = append(bnMonitors, &blockNodeUpgradeMonitor{})
+		}
+		if len(bnMonitors) > 0 {
+			// Stub monitors have no external probe — nil probe means immediately ready.
+			components = append(components, component{
+				name:     "block-node",
+				monitors: bnMonitors,
+				probe:    nil,
+				tracker:  NewStatusTracker(),
+			})
+		}
+	}
+
 	d := &Daemon{
 		paths:         paths,
 		cfg:           cfg,
@@ -292,12 +309,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}()
 	}
 
-	// Preflight: consensus-node kubeconfig must exist and be parseable before we
-	// start anything. A missing or invalid file is a configuration error that will
-	// never self-heal, so we fail fast here rather than burning systemd's
+	// Preflight: each enabled component's kubeconfig must exist and be parseable
+	// before we start anything. A missing or invalid file is a configuration error
+	// that will never self-heal, so we fail fast here rather than burning systemd's
 	// TimeoutStartSec on pointless retries.
-	if _, err := clientcmd.BuildConfigFromFlags("", d.cfg.Components.ConsensusNode.Kubeconfig); err != nil {
-		return fmt.Errorf("kubeconfig preflight failed — daemon cannot start: %w", err)
+	if cn := d.cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
+		if _, err := clientcmd.BuildConfigFromFlags("", cn.Kubeconfig); err != nil {
+			return fmt.Errorf("consensus-node kubeconfig preflight failed — daemon cannot start: %w", err)
+		}
+	}
+	if bn := d.cfg.Components.BlockNode; bn != nil && bn.Enabled {
+		if _, err := clientcmd.BuildConfigFromFlags("", bn.Kubeconfig); err != nil {
+			return fmt.Errorf("block-node kubeconfig preflight failed — daemon cannot start: %w", err)
+		}
 	}
 
 	eg, ctx := errgroup.WithContext(ctx)
