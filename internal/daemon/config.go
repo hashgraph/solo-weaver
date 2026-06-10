@@ -103,7 +103,7 @@ type BlockNodeComponentConfig struct {
 
 // BlockNodeMonitors toggles individual monitors for the block-node component.
 type BlockNodeMonitors struct {
-	Upgrade bool `yaml:"upgrade"`
+	TrafficShaper bool `yaml:"traffic_shaper"`
 }
 
 // Validate checks that all required fields within the block-node block are present.

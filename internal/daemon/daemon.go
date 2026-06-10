@@ -102,7 +102,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 	bn := cfg.Components.BlockNode
 	if bn != nil && bn.Enabled {
 		result, err := blocknode.NewComponent(blocknode.ComponentConfig{
-			UpgradeEnabled: bn.Monitors.Upgrade,
+			TrafficShaperEnabled: bn.Monitors.TrafficShaper,
 		})
 		if err != nil {
 			return nil, err
