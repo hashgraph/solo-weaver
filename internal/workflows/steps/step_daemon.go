@@ -100,11 +100,15 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 				}
 
 				if err := installer.Download(); err != nil {
+					version := installer.Version()
+					releasesURL := "https://github.com/hashgraph/solo-weaver/releases/tag/daemon-v" + version
 					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to download daemon binary").
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to download daemon binary version %s", version).
 							WithProperty(models.ErrPropertyResolution, []string{
-								"Check network connectivity to github.com",
-								"Supply the binary manually: sudo solo-provisioner daemon service install --daemon-bin=<path>",
+								fmt.Sprintf("Verify the release exists: %s", releasesURL),
+								"Check network connectivity: curl -I https://github.com",
+								fmt.Sprintf("Download manually from: %s", releasesURL),
+								fmt.Sprintf("Then install with: sudo solo-provisioner daemon service install --daemon-bin=<path-to-binary>"),
 							})))
 				}
 
@@ -396,6 +400,35 @@ func RemoveDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner Daemon service removed")
+		})
+}
+
+// RemoveDaemonBinaryStep removes the solo-provisioner-daemon binary from
+// paths.BinDir. This is a best-effort step — a missing binary is not an error.
+func RemoveDaemonBinaryStep(paths models.WeaverPaths) *automa.StepBuilder {
+	binPath := filepath.Join(paths.BinDir, software.DaemonBinaryName)
+
+	return automa.NewStepBuilder().WithId("remove-daemon-binary").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if err := os.Remove(binPath); err != nil && !os.IsNotExist(err) {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to remove daemon binary at %s", binPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Remove manually: sudo rm " + binPath,
+						})))
+			}
+			logx.As().Info().Str("path", binPath).Msg("Daemon binary removed")
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Removing solo-provisioner-daemon binary")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove solo-provisioner-daemon binary")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner Daemon binary removed")
 		})
 }
 
