@@ -29,7 +29,6 @@ var (
 	flagFromConfig     string
 	flagDaemonBin      string
 	flagDaemonChecksum string
-	flagDaemonCommit   string
 )
 
 var installCmd = &cobra.Command{
@@ -62,7 +61,6 @@ var installCmd = &cobra.Command{
 		wf, err := workflows.NewDaemonServiceInstallWorkflow(cfg, workflowsteps.DaemonBinarySource{
 			BinPath:  flagDaemonBin,
 			Checksum: flagDaemonChecksum,
-			Commit:   flagDaemonCommit,
 		})
 		if err != nil {
 			return err
@@ -85,7 +83,6 @@ func init() {
 	common.FlagDaemonFromConfig().SetVarP(installCmd, &flagFromConfig, false)
 	common.FlagDaemonBin().SetVarP(installCmd, &flagDaemonBin, false)
 	common.FlagDaemonChecksum().SetVarP(installCmd, &flagDaemonChecksum, false)
-	common.FlagDaemonCommit().SetVarP(installCmd, &flagDaemonCommit, false)
 }
 
 // resolveDaemonConfig returns the DaemonConfig to use for the install, writing

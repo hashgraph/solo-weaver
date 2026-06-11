@@ -21,7 +21,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -39,35 +38,32 @@ type daemonVersionOutput struct {
 	Commit  string `json:"commit"`
 }
 
-// DaemonBinarySource describes where to obtain the daemon binary and how to verify it.
-// When BinPath is empty the binary is auto-downloaded from the URL in the embedded
-// daemon_config.yaml and verified against its embedded checksum.
-// When BinPath is set, Checksum (sha256 hex) and/or Commit (git SHA) may be supplied
-// to verify the binary before it is installed.
+// DaemonBinarySource describes where to obtain the daemon binary.
+// When BinPath is empty the binary is auto-downloaded from the URL embedded in
+// the infrastructure catalog (pkg/software/infrastructure-catalog.yaml) and
+// verified against its per-arch sha256 checksum.
+// When BinPath is set, Checksum (sha256 hex) may be supplied to verify the
+// binary before it is installed.
 type DaemonBinarySource struct {
 	// BinPath is the local path to the binary. Empty means auto-download.
 	BinPath string
 	// Checksum is an optional sha256 hex digest to verify BinPath.
-	// Ignored when BinPath is empty (the embedded checksum is used instead).
+	// Ignored when BinPath is empty (the catalog checksum is used instead).
 	Checksum string
-	// Commit is an optional git commit SHA to verify via `<bin> --version`.
-	// Ignored when BinPath is empty (the embedded commit is used instead).
-	Commit string
 }
 
 // InstallDaemonBinaryStep obtains, verifies, and installs the solo-provisioner-daemon
 // binary at paths.BinDir/solo-provisioner-daemon.
 //
 // Resolution order:
-//  1. src.BinPath == "": auto-download from the URL in pkg/deps/daemon_config.yaml,
-//     verify sha256 against the embedded checksum, verify commit via --version.
+//  1. src.BinPath == "": auto-download via the infrastructure catalog, verify
+//     sha256 against the embedded per-arch checksum.
 //  2. src.BinPath set + src.Checksum set: verify sha256 of BinPath before installing.
-//  3. src.BinPath set + src.Commit set: run --version and compare reported commit.
-//  4. src.BinPath set (no extra flags): still verify the version string via --version.
+//  3. src.BinPath set (no checksum): copy as-is after confirming the file exists.
 //
 // Rollback removes the installed binary.
 func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *automa.StepBuilder {
-	dstPath := filepath.Join(paths.BinDir, "solo-provisioner-daemon")
+	dstPath := filepath.Join(paths.BinDir, software.DaemonBinaryName)
 
 	return automa.NewStepBuilder().WithId("install-daemon-binary").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -83,152 +79,106 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 						})))
 			}
 
-			// Load the embedded release spec — needed in all code paths.
-			spec, err := deps.LoadDaemonReleaseSpec()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to load daemon release spec").
-						WithProperty(models.ErrPropertyResolution, []string{
-							"The provisioner binary may be corrupt or built without an embedded release spec",
-							"Re-install the provisioner: sudo solo-provisioner install",
-						})))
-			}
-
-			srcPath := src.BinPath
-
-			if srcPath == "" {
-				// ── Auto-download path ──────────────────────────────────────────────
-				if spec.DownloadURL == "" {
+			if src.BinPath == "" {
+				// ── Auto-download path: delegate entirely to daemonInstaller ────────
+				installer, err := software.NewDaemonInstaller()
+				if err != nil {
 					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.IllegalState.New(
-							"auto-download not configured: daemon_config.yaml has no download_url").
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to initialise daemon installer").
 							WithProperty(models.ErrPropertyResolution, []string{
+								"The provisioner binary may be built without a catalog entry for solo-provisioner-daemon",
+								"Re-install the provisioner: sudo solo-provisioner install",
+							})))
+				}
+
+				installed, err := installer.IsInstalled()
+				if err == nil && installed {
+					logx.As().Info().
+						Str("version", installer.Version()).
+						Msg("Daemon binary already installed, skipping download")
+					return automa.StepSuccessReport(stp.Id())
+				}
+
+				if err := installer.Download(); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to download daemon binary").
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Check network connectivity to github.com",
 								"Supply the binary manually: sudo solo-provisioner daemon service install --daemon-bin=<path>",
 							})))
 				}
 
-				downloadDest := filepath.Join(paths.DownloadsDir, "solo-provisioner-daemon")
+				if err := installer.Install(); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary").
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Check available disk space: df -h " + paths.BinDir,
+								"Ensure the target directory is writable: ls -la " + paths.BinDir,
+							})))
+				}
+
+				_ = installer.Cleanup()
+
 				logx.As().Info().
-					Str("url", spec.DownloadURL).
-					Str("dst", downloadDest).
-					Msg("Downloading daemon binary")
-
-				downloader := software.NewDownloader(
-					software.WithBasePath(paths.HomeDir),
-				)
-				if err := downloader.Download(spec.DownloadURL, downloadDest); err != nil {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to download daemon binary from %s", spec.DownloadURL).
-							WithProperty(models.ErrPropertyResolution, []string{
-								"Check network connectivity: curl -I " + spec.DownloadURL,
-								fmt.Sprintf("Download manually and supply with: --daemon-bin=<path>"),
-							})))
-				}
-
-				// Verify sha256 of downloaded binary (mandatory — embedded checksum is
-				// the release's authoritative integrity proof).
-				if spec.Checksum != "" {
-					if err := software.VerifyChecksum(downloadDest, spec.Checksum, spec.Algorithm); err != nil {
-						_ = os.Remove(downloadDest)
-						return automa.StepFailureReport(stp.Id(),
-							automa.WithError(errorx.InternalError.Wrap(err,
-								"downloaded daemon binary failed %s verification", spec.Algorithm).
-								WithProperty(models.ErrPropertyResolution, []string{
-									"The downloaded file may be corrupt or tampered with",
-									"Retry the install; if it fails again, report the issue",
-									fmt.Sprintf("Expected %s: %s", spec.Algorithm, spec.Checksum),
-								})))
-					}
-				}
-
-				// Make downloaded file executable before running --version.
-				if err := os.Chmod(downloadDest, 0o755); err != nil {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to chmod downloaded binary").
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Check filesystem permissions on: " + downloadDest,
-							"Ensure the downloads directory is writable: ls -la " + filepath.Dir(downloadDest),
-						})))
-				}
-
-				srcPath = downloadDest
-			} else {
-				// ── Manual binary path ──────────────────────────────────────────────
-				if _, err := os.Stat(srcPath); err != nil {
-					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.IllegalArgument.Wrap(err, "daemon binary not found at %s", srcPath).
-							WithProperty(models.ErrPropertyResolution, []string{
-								"Verify the path: ls -la " + srcPath,
-								"Omit --daemon-bin to auto-download the official binary",
-							})))
-				}
-
-				// Optional sha256 verification.
-				if src.Checksum != "" {
-					if err := software.VerifyChecksum(srcPath, src.Checksum, "sha256"); err != nil {
-						return automa.StepFailureReport(stp.Id(),
-							automa.WithError(errorx.InternalError.Wrap(err,
-								"daemon binary at %s failed sha256 verification", srcPath).
-								WithProperty(models.ErrPropertyResolution, []string{
-									"Ensure you supplied the correct binary and checksum",
-									"Re-download the binary from the official releases page",
-								})))
-					}
-					logx.As().Info().Str("path", srcPath).Msg("Daemon binary sha256 verified")
-				}
+					Str("dst", dstPath).
+					Str("version", installer.Version()).
+					Msg("Daemon binary installed")
+				return automa.StepSuccessReport(stp.Id())
 			}
 
-			// ── Run --version and verify version + optional commit ──────────────
-			out, err := exec.CommandContext(ctx, srcPath, "--version").Output() //nolint:gosec
+			// ── Manual binary path ──────────────────────────────────────────────
+			if _, err := os.Stat(src.BinPath); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalArgument.Wrap(err, "daemon binary not found at %s", src.BinPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Verify the path: ls -la " + src.BinPath,
+							"Omit --daemon-bin to auto-download the official binary",
+						})))
+			}
+
+			if src.Checksum != "" {
+				if err := software.VerifyChecksum(src.BinPath, src.Checksum, "sha256"); err != nil {
+					return automa.StepFailureReport(stp.Id(),
+						automa.WithError(errorx.InternalError.Wrap(err,
+							"daemon binary at %s failed sha256 verification", src.BinPath).
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Ensure you supplied the correct binary and checksum",
+								"Re-download the binary from the official releases page",
+							})))
+				}
+				logx.As().Info().Str("path", src.BinPath).Msg("Daemon binary sha256 verified")
+			}
+
+			// Run --version to confirm the binary executes on this host's platform.
+			// A wrong-arch binary (e.g. amd64 binary on arm64 host) will fail here
+			// with a clear error rather than silently installing an unusable binary.
+			out, err := exec.CommandContext(ctx, src.BinPath, "--version").Output() //nolint:gosec
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to query daemon binary version at %s", srcPath).
+					automa.WithError(errorx.InternalError.Wrap(err,
+						"daemon binary at %s cannot execute on this host — wrong platform?", src.BinPath).
 						WithProperty(models.ErrPropertyResolution, []string{
-							"Ensure the binary is executable: chmod +x " + srcPath,
-							"Ensure it is a Linux amd64 binary matching this host",
+							"Ensure the binary targets this host's OS/arch (linux/amd64 or linux/arm64)",
+							"Verify: file " + src.BinPath,
+							"If built locally, rebuild with: task build:daemon GOOS=linux GOARCH=<arch>",
 						})))
 			}
 			var vout daemonVersionOutput
 			if err := json.Unmarshal(out, &vout); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err,
-						"failed to parse daemon binary --version output: %s", string(out)).
+						"failed to parse --version output from %s: %s", src.BinPath, string(out)).
 						WithProperty(models.ErrPropertyResolution, []string{
-							"Ensure the binary is a valid solo-provisioner-daemon build: " + srcPath + " --version",
-							"Ensure the binary targets this host's OS/arch (linux/amd64 or linux/arm64)",
-							"If built locally, rebuild with: task build:daemon GOOS=linux GOARCH=<arch>",
+							"Ensure the binary is a valid solo-provisioner-daemon build",
+							"Test manually: " + src.BinPath + " --version",
 						})))
 			}
+			logx.As().Info().
+				Str("path", src.BinPath).
+				Str("version", vout.Version).
+				Str("commit", vout.Commit).
+				Msg("Daemon binary platform verified")
 
-			// Version must match the release spec.
-			if vout.Version != spec.Version {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalArgument.New(
-						"daemon binary version mismatch: got %s, required %s", vout.Version, spec.Version).
-						WithProperty(models.ErrPropertyResolution, []string{
-							fmt.Sprintf("Download version %s: %s", spec.Version, spec.DownloadURL),
-							"Or omit --daemon-bin to let the provisioner auto-download the correct version",
-						})))
-			}
-
-			// Commit verification: prefer explicitly-passed commit, fall back to
-			// embedded spec (only for auto-download path where spec.Commit is set).
-			expectedCommit := src.Commit
-			if expectedCommit == "" && src.BinPath == "" {
-				// Auto-download: always verify commit when spec has one.
-				expectedCommit = spec.Commit
-			}
-			if expectedCommit != "" && vout.Commit != expectedCommit {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalArgument.New(
-						"daemon binary commit mismatch: got %s, expected %s", vout.Commit, expectedCommit).
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Ensure you are using the official release binary for version " + spec.Version,
-							"Omit --daemon-commit if you built the binary locally",
-						})))
-			}
-
-			// ── Ensure destination dir and copy ─────────────────────────────────
 			if err := os.MkdirAll(paths.BinDir, 0o755); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to create bin directory %s", paths.BinDir).
@@ -237,7 +187,7 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 							"Ensure the parent directory is writable: ls -la " + filepath.Dir(paths.BinDir),
 						})))
 			}
-			if err := copyBinaryFile(srcPath, dstPath); err != nil {
+			if err := copyBinaryFile(src.BinPath, dstPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary to %s", dstPath).
 						WithProperty(models.ErrPropertyResolution, []string{
@@ -247,10 +197,8 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 			}
 
 			logx.As().Info().
-				Str("src", srcPath).
+				Str("src", src.BinPath).
 				Str("dst", dstPath).
-				Str("version", vout.Version).
-				Str("commit", vout.Commit).
 				Msg("Daemon binary installed")
 			return automa.StepSuccessReport(stp.Id())
 		}).
