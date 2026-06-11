@@ -213,14 +213,14 @@ func FlagDaemonComponents() FlagDefinition[string] {
 	}
 }
 
-// FlagDaemonCNNodeID is the Hedera node identifier (e.g. "0.0.3") written into
-// daemon.yaml as the consensus-node node_id. Required when daemon.yaml does not
-// already exist and consensus-node is enabled.
+// FlagDaemonCNNodeID is the numeric node identifier written into daemon.yaml as
+// the consensus-node node_id. Required when daemon.yaml does not already exist
+// and consensus-node is enabled.
 func FlagDaemonCNNodeID() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "cn-node-id",
 		ShortName:   "",
-		Description: `Hedera node identifier for the consensus node (e.g. "0.0.3")`,
+		Description: `Numeric node identifier for the consensus node (e.g. "0", "1", "2")`,
 		Default:     "",
 	}
 }

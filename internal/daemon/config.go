@@ -27,7 +27,7 @@ const (
 //	  consensus_node:
 //	    enabled: true
 //	    kubeconfig: /opt/solo/weaver/config/daemon-cn.kubeconfig
-//	    node_id: 0.0.3
+//	    node_id: 0
 //	    orbit: hedera-network
 //	    upgrade_dir: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
 //	    monitors:
@@ -65,7 +65,7 @@ type ConsensusNodeComponentConfig struct {
 	// Written by solo-provisioner during daemon install (WriteConsensusNodeKubeconfigStep).
 	Kubeconfig string `yaml:"kubeconfig"`
 
-	// NodeID is the Hedera node identifier (e.g. "0.0.3"). Used as nodeId in
+	// NodeID is the numeric node identifier (e.g. "0", "1", "2"). Used as nodeId in
 	// all JSONL event log entries.
 	NodeID string `yaml:"node_id"`
 
