@@ -1702,3 +1702,61 @@ For each test case, record:
 | Log snippet | Paste relevant `journalctl` lines on FAIL |
 
 File a GitHub issue against `hashgraph/solo-weaver` for each FAIL, tagged `bug` and `daemon`.
+
+---
+
+## TC-UNT-01 — LoadDaemonConfig: schema_version newer than binary
+
+**Type:** Unit test (automated)
+**Command:**
+```bash
+go test -tags='!integration' -run TestLoadDaemonConfig_NewerSchemaVersion ./internal/daemon/
+```
+
+**Scenario:** `daemon.yaml` contains `schema_version: 99` (future binary). The daemon must reject the file with a human-readable error before any strict-decode runs on unknown keys.
+
+**Expected results:**
+- [ ] Error type is `ErrConfigMalformed`
+- [ ] Error message contains `"newer binary"` and `"99"`
+- [ ] Error message does NOT contain `"invalid keys"` (no raw decode error)
+
+---
+
+## TC-UNT-02 — LoadDaemonConfig: valid v1 config
+
+**Type:** Unit test (automated)
+**Command:**
+```bash
+go test -tags='!integration' -run TestLoadDaemonConfig_ValidV1 ./internal/daemon/
+```
+
+**Expected results:**
+- [ ] Returns populated `DaemonConfig` with no error
+- [ ] `ConsensusNode` fields match YAML values
+
+---
+
+## TC-UNT-03 — LoadDaemonConfig: missing file
+
+**Type:** Unit test (automated)
+**Command:**
+```bash
+go test -tags='!integration' -run TestLoadDaemonConfig_MissingFile ./internal/daemon/
+```
+
+**Expected results:**
+- [ ] Error type is `ErrConfigNotFound`
+
+---
+
+## TC-UNT-04 — LoadDaemonConfig: no schema_version treated as v1
+
+**Type:** Unit test (automated)
+**Command:**
+```bash
+go test -tags='!integration' -run TestLoadDaemonConfig_NoSchemaVersionTreatedAsV1 ./internal/daemon/
+```
+
+**Expected results:**
+- [ ] Returns populated `DaemonConfig` with no error
+- [ ] `SchemaVersion` is set to `CurrentSchemaVersion`
