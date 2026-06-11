@@ -86,7 +86,12 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 			// Load the embedded release spec — needed in all code paths.
 			spec, err := deps.LoadDaemonReleaseSpec()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to load daemon release spec").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"The provisioner binary may be corrupt or built without an embedded release spec",
+							"Re-install the provisioner: sudo solo-provisioner install",
+						})))
 			}
 
 			srcPath := src.BinPath
@@ -139,7 +144,11 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 				// Make downloaded file executable before running --version.
 				if err := os.Chmod(downloadDest, 0o755); err != nil {
 					return automa.StepFailureReport(stp.Id(),
-						automa.WithError(errorx.InternalError.Wrap(err, "failed to chmod downloaded binary")))
+						automa.WithError(errorx.InternalError.Wrap(err, "failed to chmod downloaded binary").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check filesystem permissions on: " + downloadDest,
+							"Ensure the downloads directory is writable: ls -la " + filepath.Dir(downloadDest),
+						})))
 				}
 
 				srcPath = downloadDest
@@ -222,11 +231,19 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 			// ── Ensure destination dir and copy ─────────────────────────────────
 			if err := os.MkdirAll(paths.BinDir, 0o755); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to create bin directory %s", paths.BinDir)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to create bin directory %s", paths.BinDir).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check available disk space: df -h " + paths.BinDir,
+							"Ensure the parent directory is writable: ls -la " + filepath.Dir(paths.BinDir),
+						})))
 			}
 			if err := copyBinaryFile(srcPath, dstPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary to %s", dstPath)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary to %s", dstPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check available disk space: df -h " + paths.BinDir,
+							"Ensure the target directory is writable: ls -la " + paths.BinDir,
+						})))
 			}
 
 			logx.As().Info().
@@ -434,6 +451,75 @@ func RemoveDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
 		})
 }
 
+// StartDaemonServiceStep starts the solo-provisioner-daemon systemd service.
+func StartDaemonServiceStep() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("start-daemon-service").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if err := pkgos.StartService(ctx, daemonServiceName); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to start service %s", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							fmt.Sprintf("Check daemon logs: sudo journalctl -u %s -n 50 --no-pager", daemonServiceName),
+							fmt.Sprintf("Check service status: sudo systemctl status %s", daemonServiceName),
+							"Verify daemon binary: ls -la /opt/solo/weaver/bin/solo-provisioner-daemon",
+							"Verify daemon config: cat /opt/solo/weaver/config/daemon.yaml",
+							"If not yet installed: sudo solo-provisioner daemon service install",
+						})))
+			}
+			logx.As().Info().Msgf("Service %s started", daemonServiceName)
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Starting solo-provisioner-daemon systemd service")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to start solo-provisioner-daemon service")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner Daemon service started")
+		})
+}
+
+// StopDaemonServiceStep stops the solo-provisioner-daemon systemd service and
+// verifies the service is no longer running.
+func StopDaemonServiceStep() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("stop-daemon-service").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if err := pkgos.StopService(ctx, daemonServiceName); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to stop service %s", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							fmt.Sprintf("Check service status: sudo systemctl status %s", daemonServiceName),
+							fmt.Sprintf("Check daemon logs: sudo journalctl -u %s -n 50 --no-pager", daemonServiceName),
+							fmt.Sprintf("Force-kill if stuck: sudo systemctl kill %s", daemonServiceName),
+						})))
+			}
+
+			if running, _ := pkgos.IsServiceRunning(ctx, daemonServiceName); running {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.New("service %s is still running after stop", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							fmt.Sprintf("Force-kill: sudo systemctl kill %s", daemonServiceName),
+							fmt.Sprintf("Check status: sudo systemctl status %s", daemonServiceName),
+						})))
+			}
+
+			logx.As().Info().Msgf("Service %s stopped", daemonServiceName)
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Stopping solo-provisioner-daemon systemd service")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to stop solo-provisioner-daemon service")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner Daemon service stopped")
+		})
+}
+
 // CheckDaemonServiceStep verifies the daemon installation and runtime health:
 //  1. Sandbox unit file exists at $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
 //  2. System symlink exists at /usr/lib/systemd/system/solo-provisioner-daemon.service → sandbox file
@@ -453,7 +539,10 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 			// 1. Sandbox unit file
 			if _, err := os.Stat(sandboxPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service unit file not found at %s; run: solo-provisioner daemon service install", sandboxPath)))
+					automa.WithError(errorx.IllegalState.New("daemon service unit file not found at %s", sandboxPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Run: sudo solo-provisioner daemon service install",
+						})))
 			}
 			meta["unit_file"] = sandboxPath
 
@@ -461,11 +550,18 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 			linkTarget, err := os.Readlink(symlinkPath)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service symlink not found at %s; run: solo-provisioner daemon service install", symlinkPath)))
+					automa.WithError(errorx.IllegalState.New("daemon service symlink not found at %s", symlinkPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Run: sudo solo-provisioner daemon service install",
+						})))
 			}
 			if filepath.Clean(linkTarget) != filepath.Clean(sandboxPath) {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service symlink %s points to %s, expected %s", symlinkPath, linkTarget, sandboxPath)))
+					automa.WithError(errorx.IllegalState.New("daemon service symlink %s points to %s, expected %s", symlinkPath, linkTarget, sandboxPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Remove the stale symlink and reinstall: sudo rm " + symlinkPath,
+							"Then run: sudo solo-provisioner daemon service install",
+						})))
 			}
 			meta["symlink"] = symlinkPath
 
@@ -473,24 +569,40 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 			enabled, err := pkgos.IsServiceEnabled(ctx, daemonServiceName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to check if %s is enabled", daemonServiceName)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to check if %s is enabled", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check systemd status: sudo systemctl status " + daemonServiceName,
+							"Review journalctl: sudo journalctl -xe --no-pager | tail -30",
+						})))
 			}
 			meta["enabled"] = fmt.Sprintf("%v", enabled)
 			if !enabled {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service is not enabled; run: systemctl enable %s", daemonServiceName)))
+					automa.WithError(errorx.IllegalState.New("daemon service %s is not enabled", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Enable and start the service: sudo solo-provisioner daemon service install",
+							"Or manually: sudo systemctl enable --now " + daemonServiceName,
+						})))
 			}
 
 			// 4. Service active
 			running, err := pkgos.IsServiceRunning(ctx, daemonServiceName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to check if %s is running", daemonServiceName)))
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to check if %s is running", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check service status: sudo systemctl status " + daemonServiceName,
+							"Check daemon logs: sudo journalctl -u " + daemonServiceName + " -n 50 --no-pager",
+						})))
 			}
 			meta["running"] = fmt.Sprintf("%v", running)
 			if !running {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service is not running; run: systemctl start %s", daemonServiceName)))
+					automa.WithError(errorx.IllegalState.New("daemon service %s is not running", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Start the service: sudo solo-provisioner daemon service start",
+							"Check daemon logs: sudo journalctl -u " + daemonServiceName + " -n 50 --no-pager",
+						})))
 			}
 
 			// 5. Daemon binary — path derived from WeaverPaths so tests and
@@ -498,14 +610,20 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 			daemonBinPath := filepath.Join(paths.BinDir, "solo-provisioner-daemon")
 			if _, err := os.Stat(daemonBinPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon binary not found at %s", daemonBinPath)))
+					automa.WithError(errorx.IllegalState.New("daemon binary not found at %s", daemonBinPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Reinstall the daemon: sudo solo-provisioner daemon service install --daemon-bin <path>",
+						})))
 			}
 			meta["binary"] = daemonBinPath
 
 			// 6. Sudoers entry
 			if _, err := os.Stat(sudoersDstPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("sudoers entry not found at %s; run: solo-provisioner install", sudoersDstPath)))
+					automa.WithError(errorx.IllegalState.New("sudoers entry not found at %s", sudoersDstPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Run: sudo solo-provisioner install",
+						})))
 			}
 			meta["sudoers"] = sudoersDstPath
 
@@ -524,12 +642,21 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 			resp, err := client.Get("http://local/health")
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.Wrap(err, "daemon socket not reachable at %s; daemon may not be running", sockPath)))
+					automa.WithError(errorx.IllegalState.Wrap(err, "daemon socket not reachable at %s", sockPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check the daemon is running: sudo systemctl status " + daemonServiceName,
+							"Start if stopped: sudo solo-provisioner daemon service start",
+							"Check daemon logs: sudo journalctl -u " + daemonServiceName + " -n 50 --no-pager",
+						})))
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon health check returned HTTP %d", resp.StatusCode)))
+					automa.WithError(errorx.IllegalState.New("daemon health check returned HTTP %d", resp.StatusCode).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check daemon logs: sudo journalctl -u " + daemonServiceName + " -n 50 --no-pager",
+							"Restart the daemon: sudo solo-provisioner daemon service stop && sudo solo-provisioner daemon service start",
+						})))
 			}
 			meta["socket"] = sockPath
 			meta["health"] = "ok"

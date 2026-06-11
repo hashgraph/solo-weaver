@@ -3,8 +3,11 @@
 package service
 
 import (
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -12,21 +15,21 @@ import (
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the solo-provisioner-daemon systemd service",
-	Long:  "Start the solo-provisioner-daemon systemd service via systemctl. Requires root privileges.",
+	Long:  "Start the solo-provisioner-daemon systemd service via systemctl, then verify it is healthy. Requires root privileges.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := pkgos.StartService(cmd.Context(), daemonServiceName); err != nil {
-			if ex := errorx.Cast(err); ex != nil {
-				return ex.WithProperty(models.ErrPropertyResolution, []string{
-					"Check service logs: sudo journalctl -u solo-provisioner-daemon -n 50 --no-pager",
-					"Check service status: sudo systemctl status solo-provisioner-daemon",
-					"Verify daemon binary: ls -la /opt/solo/weaver/bin/solo-provisioner-daemon",
-					"Verify daemon config: cat /opt/solo/weaver/config/daemon.yaml",
-					"Verify daemon kubeconfig: ls -la /opt/solo/weaver/config/daemon.kubeconfig",
-					"If not yet installed: sudo solo-provisioner daemon service install",
-				})
-			}
+		if err := common.RunWorkflowBuilder(cmd.Context(), workflows.NewDaemonServiceStartWorkflow()); err != nil {
 			return err
 		}
+
+		paths := models.Paths()
+		if warning := steps.CheckDaemonComponentPrerequisites(paths.DaemonSockPath); warning != "" {
+			logx.As().Warn().Msg(warning)
+			return errorx.IllegalState.New(
+				"daemon started but component prerequisites are not satisfied — " +
+					"fix the issues listed above and re-run: solo-provisioner daemon service check")
+		}
+
+		logx.As().Info().Msg("solo-provisioner-daemon service started and healthy")
 		return nil
 	},
 }
