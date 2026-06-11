@@ -67,15 +67,18 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 
 	return automa.NewStepBuilder().WithId("install-daemon-binary").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// Refuse to overwrite a running daemon binary ("text file busy").
+			// Refuse to overwrite a running daemon binary — copyBinaryFile uses
+			// O_TRUNC which fails with "text file busy" on an active executable.
+			// The operator must stop the service before installing a new binary.
 			if running, _ := pkgos.IsServiceRunning(ctx, daemonServiceName); running {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.IllegalState.New(
-						"daemon service '%s' is already installed and running", daemonServiceName).
+						"daemon service '%s' is already running — stop it before installing", daemonServiceName).
 						WithProperty(models.ErrPropertyResolution, []string{
-							"Uninstall the existing daemon first, then re-install:",
-							"  sudo solo-provisioner daemon service uninstall",
-							"  sudo solo-provisioner daemon service install",
+							"Stop the service, re-run install, then verify:",
+							"  sudo solo-provisioner daemon service stop",
+							"  sudo solo-provisioner daemon service install [flags]",
+							"  sudo solo-provisioner daemon service check",
 						})))
 			}
 
