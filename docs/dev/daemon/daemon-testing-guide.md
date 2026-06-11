@@ -9,6 +9,11 @@ Copy-paste the block below on a **fresh Linux VM** to prepare everything the tes
 Run it once before executing any test case. Skip steps you have already completed.
 
 ```bash
+# --- 0. Build ----
+task build
+
+# Copy the `solo-provisioner-daemon` and `solo-provisioner` binaries to the VM (e.g. via `scp`):
+
 # ── 1. Environment ─────────────────────────────────────────────────────────
 export ORBIT=consensus        # orbit namespace (consensus-node CR namespace)
 export NODE_ID=0              # numeric consensus-node ID
@@ -834,39 +839,43 @@ consensus-node block.
 
 ---
 
-## TC-18 — Idempotent install (re-run without changes)
+## TC-18 — Install blocked when daemon is already running
 
-**Goal**: verify that running `daemon service install` on a node where everything is already
-correctly installed completes without error and does not modify any files.
+**Goal**: verify that `daemon service install` exits with a clear, actionable error when the
+daemon service is already running, rather than attempting to overwrite an in-use binary.
+This is intentional behaviour — `copyBinaryFile` uses `O_TRUNC` which fails with
+"text file busy" on an active executable. The operator must stop the service first.
 
 ### Steps
 
-1. Ensure daemon is installed and running.
-2. Record the modification time of `daemon.yaml`:
+1. Ensure daemon is installed and running:
    ```bash
-   stat /opt/solo/weaver/config/daemon.yaml
+   sudo solo-provisioner daemon service check
    ```
-3. Re-run install with the same parameters:
+2. Attempt to re-run install without stopping first:
    ```bash
    sudo solo-provisioner daemon service install \
      --components consensus-node \
      --cn-node-id $NODE_ID \
      --cn-orbit $ORBIT
    ```
-4. Check that K8s RBAC resources were not re-created (check `kubectl describe` for creation timestamp).
 
 ### Expected results
 
-- [ ] Install completes without error
-- [ ] Service remains active throughout
-- [ ] RBAC resources have the **same** creation timestamp as before (idempotent — no duplicate create)
+- [ ] Command exits non-zero with a message containing "already running"
+- [ ] Resolution hint directs operator to `daemon service stop` then `daemon service install`
+- [ ] Service remains running and unmodified after the failed attempt
 
-> **Known bug (TC-18 FAIL)**: As of build `0.0.0/3695924b`, `daemon service install` returns
-> an error (`daemon service already installed and running`) when the daemon is already running.
-> The RBAC timestamps ARE unchanged (idempotent behaviour at K8s level), but the command exits
-> non-zero. **Workaround**: stop the daemon first (`sudo solo-provisioner daemon service stop`),
-> run the install, then start it again. This also blocks the RBAC-restore step in TC-25 from
-> using the documented flow — see TC-25 notes.
+### Correct operator flow when re-install is needed
+
+```bash
+sudo solo-provisioner daemon service stop
+sudo solo-provisioner daemon service install \
+  --components consensus-node \
+  --cn-node-id $NODE_ID \
+  --cn-orbit $ORBIT
+sudo solo-provisioner daemon service check
+```
 
 ---
 
@@ -1222,16 +1231,17 @@ without a daemon restart.
 4. Check the journal.
 5. Restore RBAC:
 
-   > **Known issue**: `daemon service install` fails while the daemon is running (TC-18 bug).
-   > Use `kubectl` to restore the ClusterRoleBinding directly:
+   > **Note**: `daemon service install` is intentionally blocked while the daemon is running
+   > (see TC-18). To restore RBAC without a service interruption, use `kubectl` directly:
    > ```bash
    > sudo kubectl create clusterrolebinding solo-provisioner-daemon-cn \
    >   --clusterrole=solo-provisioner-daemon-cn \
    >   --serviceaccount=$ORBIT:solo-provisioner-daemon-cn
    > ```
    >
-   > Once TC-18 is fixed, the documented flow is:
+   > To restore RBAC via the CLI (requires brief service interruption):
    > ```bash
+   > sudo solo-provisioner daemon service stop
    > sudo solo-provisioner daemon service install \
    >   --components consensus-node \
    >   --cn-node-id $NODE_ID \
