@@ -3,6 +3,129 @@
 > **Audience**: human testers running manual acceptance tests on a Linux node (UTM VM or real machine).
 > For developer architecture details see [daemon-architecture.md](daemon-architecture.md).
 
+## Quick-start: full session setup
+
+Copy-paste the block below on a **fresh Linux VM** to prepare everything the test suite needs.
+Run it once before executing any test case. Skip steps you have already completed.
+
+```bash
+# ── 1. Environment ─────────────────────────────────────────────────────────
+export ORBIT=consensus        # orbit namespace (consensus-node CR namespace)
+export NODE_ID=0              # numeric consensus-node ID
+export SOCK=/opt/solo/weaver/daemon/daemon.sock
+export DAEMON_BIN=/home/$USER/solo-provisioner-daemon-linux-amd64   # path to daemon binary (copy via scp first)
+
+# ── 2. Install solo-provisioner CLI ────────────────────────────────────────
+# (assumes the installer binary was copied to ~/ via scp beforehand)
+sudo ~/solo-provisioner-linux-amd64 install --non-interactive
+
+# ── 3. Bootstrap a single-node Kubernetes cluster ─────────────────────────
+sudo solo-provisioner kube cluster install \
+  --profile local \
+  --node-type block \
+  --non-interactive
+
+# Verify:
+sudo kubectl get nodes
+# expected: NAME   STATUS   ROLES           AGE   VERSION
+#           ...    Ready    control-plane   ...   v1.x.y
+
+# ── 4. Create the orbit namespace ─────────────────────────────────────────
+sudo kubectl create ns $ORBIT
+
+# ── 5. hedera group / user + upgrade staging directory ────────────────────
+sudo groupadd -g 2000 hedera 2>/dev/null || true
+sudo useradd -r -u 2000 -g hedera -s /sbin/nologin hedera 2>/dev/null || true
+sudo mkdir -p /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+sudo chown hedera:hedera \
+  /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade \
+  /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+sudo chmod 0775 /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+
+# Add weaver to hedera group (re-login not needed; daemon exec picks it up)
+sudo usermod -aG hedera weaver
+
+# Verify write access:
+sudo -u weaver touch /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current/.probe && echo OK
+sudo -u weaver rm /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current/.probe
+
+# ── 6. Apply NetworkUpgradeExecute CRD (required for TC-23 – TC-26) ───────
+# Option A — from repo checkout:
+#   sudo kubectl apply -f hack/crds/networkupgradeexecute.yaml
+# Option B — inline (no repo checkout needed):
+sudo kubectl apply -f - <<'CRDEOF'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: networkupgradeexecutes.hedera.com
+spec:
+  group: hedera.com
+  names:
+    kind: NetworkUpgradeExecute
+    listKind: NetworkUpgradeExecuteList
+    plural: networkupgradeexecutes
+    singular: networkupgradeexecute
+    shortNames:
+      - nue
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - operationId
+                - orbit
+              properties:
+                operationId:
+                  type: string
+                orbit:
+                  type: string
+                upgradeFileHash:
+                  type: string
+                upgradeFileUrl:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum:
+                    - Pending
+                    - ReadyForProvisionerDaemon
+                    - InProgress
+                    - Completed
+                    - Failed
+                message:
+                  type: string
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: OperationID
+          type: string
+          jsonPath: .spec.operationId
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+CRDEOF
+
+# Verify:
+sudo kubectl get crd networkupgradeexecutes.hedera.com
+# expected: networkupgradeexecutes.hedera.com   <age>
+```
+
+Once all six steps complete, proceed to TC-01.
+
+---
+
 ## Prerequisites
 
 Before running any test case, confirm the following are in place:
@@ -13,6 +136,109 @@ Before running any test case, confirm the following are in place:
 - [ ] A reachable Kubernetes cluster (`kubectl cluster-info` succeeds with the default kubeconfig)
 - [ ] `curl` available for HTTP control-plane tests
 - [ ] Running as a user with `sudo` access (some steps require root for systemd and `/usr/lib/systemd/system/`)
+
+### Orbit namespace
+
+The `daemon service install` RBAC step creates a ServiceAccount inside the orbit namespace.
+If the namespace does not exist the install will fail with `namespaces "$ORBIT" not found`.
+
+Create it before running any install test case:
+```bash
+sudo kubectl create ns $ORBIT
+# e.g.: sudo kubectl create ns consensus
+```
+
+### NetworkUpgradeExecute CRD (required for TC-23 – TC-26)
+
+The upgrade monitor watches `NetworkUpgradeExecute` CRs. If the CRD is not installed the
+monitor enters exponential backoff and TC-23 – TC-26 cannot run.
+
+A minimal CRD is bundled at `hack/crds/networkupgradeexecute.yaml`. Apply it before running
+TC-23 – TC-26:
+
+```bash
+# From the repo root:
+sudo kubectl apply -f hack/crds/networkupgradeexecute.yaml
+
+# Verify:
+kubectl get crd networkupgradeexecutes.hedera.com
+# expected: networkupgradeexecutes.hedera.com   <age>
+```
+
+If you are running on a fresh VM **without** a local repo checkout, apply the CRD inline:
+
+```bash
+sudo kubectl apply -f - <<'EOF'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: networkupgradeexecutes.hedera.com
+spec:
+  group: hedera.com
+  names:
+    kind: NetworkUpgradeExecute
+    listKind: NetworkUpgradeExecuteList
+    plural: networkupgradeexecutes
+    singular: networkupgradeexecute
+    shortNames:
+      - nue
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - operationId
+                - orbit
+              properties:
+                operationId:
+                  type: string
+                orbit:
+                  type: string
+                upgradeFileHash:
+                  type: string
+                upgradeFileUrl:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum:
+                    - Pending
+                    - ReadyForProvisionerDaemon
+                    - InProgress
+                    - Completed
+                    - Failed
+                message:
+                  type: string
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: OperationID
+          type: string
+          jsonPath: .spec.operationId
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+EOF
+```
+
+Wait ~60 s for the upgrade monitor to pick up the CRD and log `reason=UpgradeMonitorWatchEstablished`
+before running TC-23:
+
+```bash
+journalctl -u solo-provisioner-daemon.service -f | grep -m1 UpgradeMonitorWatchEstablished
+```
 
 ### Consensus-node prerequisite: upgrade staging directory
 
@@ -90,6 +316,17 @@ daemon will fail to start (systemd marks it failed after `TimeoutStartSec`).
      requirements in the Prerequisites section above, otherwise the daemon will fail to start**
 4. Confirm the summary table and allow the workflow to run.
 
+   > **Non-interactive equivalent** (skips all prompts — use this for scripted runs or to verify
+   > the flags before running TC-02):
+   > ```bash
+   > sudo solo-provisioner daemon service install \
+   >   --components consensus-node \
+   >   --cn-node-id $NODE_ID \
+   >   --cn-orbit $ORBIT \
+   >   --daemon-bin $DAEMON_BIN \
+   >   --non-interactive
+   > ```
+
 ### Expected results
 
 - [ ] Workflow completes without error; final line: `solo-provisioner-daemon service installed, enabled, and started`
@@ -133,14 +370,28 @@ daemon will fail to start (systemd marks it failed after `TimeoutStartSec`).
 ### Steps
 
 1. Uninstall if already installed (see TC-07).
-2. Run:
+2. Run (fully non-interactive — no prompts):
    ```bash
    sudo solo-provisioner daemon service install \
      --components consensus-node \
      --cn-node-id $NODE_ID \
-     --cn-orbit $ORBIT
+     --cn-orbit $ORBIT \
+     --daemon-bin $DAEMON_BIN \
+     --non-interactive
    ```
-   where `$NODE_ID` is a numeric value (e.g. `0`).
+   where `$NODE_ID` is a numeric value (e.g. `0`) and `$DAEMON_BIN` is the path to the
+   `solo-provisioner-daemon` binary (see Quick-start section).
+
+   > **Without a local binary** (lets the CLI auto-download from the catalog):
+   > ```bash
+   > sudo solo-provisioner daemon service install \
+   >   --components consensus-node \
+   >   --cn-node-id $NODE_ID \
+   >   --cn-orbit $ORBIT \
+   >   --non-interactive
+   > ```
+   > Note: auto-download requires a real GitHub release tag. Version `0.0.0` will fail with
+   > resolution hints (see TC-21). Use `--daemon-bin` when testing against a dev build.
 
 ### Expected results
 
@@ -222,6 +473,7 @@ updates the file without re-prompting.
 2. Run:
    ```bash
    sudo solo-provisioner daemon service check
+   # SOCK is set automatically; the command connects to /opt/solo/weaver/daemon/daemon.sock
    ```
 
 ### Expected results
@@ -609,6 +861,13 @@ correctly installed completes without error and does not modify any files.
 - [ ] Service remains active throughout
 - [ ] RBAC resources have the **same** creation timestamp as before (idempotent — no duplicate create)
 
+> **Known bug (TC-18 FAIL)**: As of build `0.0.0/3695924b`, `daemon service install` returns
+> an error (`daemon service already installed and running`) when the daemon is already running.
+> The RBAC timestamps ARE unchanged (idempotent behaviour at K8s level), but the command exits
+> non-zero. **Workaround**: stop the daemon first (`sudo solo-provisioner daemon service stop`),
+> run the install, then start it again. This also blocks the RBAC-restore step in TC-25 from
+> using the documented flow — see TC-25 notes.
+
 ---
 
 ## TC-19 — Startup probe failure: missing or misconfigured upgrade directory
@@ -933,6 +1192,11 @@ kubectl delete networkupgradeexecute test-upgrade-01 -n $ORBIT
   reason=UpgradeMonitorDuplicateEvent operation_id=test-op-001
   ```
 
+> **Known bug (TC-24 FAIL)**: As of build `0.0.0/3695924b`, `UpgradeMonitorDuplicateEvent` is never
+> emitted. `ExecuteWorkflowStarted` fires multiple times for the same `operationId` (observed 3× in
+> testing). Deduplication logic is broken — the in-progress set may not be populated before a second
+> event arrives (race), or is cleared on watch reconnect. File a bug against `UpgradeMonitor.handleEvent()`.
+
 ### Teardown
 
 ```bash
@@ -956,11 +1220,24 @@ without a daemon restart.
    ```
 3. Wait up to 30 seconds for the watch to fail and the monitor to retry.
 4. Check the journal.
-5. Restore RBAC by re-running install (idempotent):
-   ```bash
-   sudo solo-provisioner daemon service install \
-     --components consensus-node --cn-node-id $NODE_ID --cn-orbit $ORBIT
-   ```
+5. Restore RBAC:
+
+   > **Known issue**: `daemon service install` fails while the daemon is running (TC-18 bug).
+   > Use `kubectl` to restore the ClusterRoleBinding directly:
+   > ```bash
+   > sudo kubectl create clusterrolebinding solo-provisioner-daemon-cn \
+   >   --clusterrole=solo-provisioner-daemon-cn \
+   >   --serviceaccount=$ORBIT:solo-provisioner-daemon-cn
+   > ```
+   >
+   > Once TC-18 is fixed, the documented flow is:
+   > ```bash
+   > sudo solo-provisioner daemon service install \
+   >   --components consensus-node \
+   >   --cn-node-id $NODE_ID \
+   >   --cn-orbit $ORBIT \
+   >   --non-interactive
+   > ```
 6. Wait ~10 seconds, then check the journal again.
 
 ### Expected results
@@ -986,8 +1263,8 @@ from the events directory when the daemon (re)starts.
 
 ```bash
 # Create synthetic old log files (dated >365 days ago).
-# Replace EVENTSDIR with the actual events directory (e.g. /opt/solo/weaver/events).
-EVENTSDIR=/opt/solo/weaver/events
+EVENTSDIR=/opt/solo/weaver/daemon/events/consensus/upgrade
+sudo mkdir -p $EVENTSDIR
 sudo touch -t $(date -d '400 days ago' +%Y%m%d%H%M) \
   $EVENTSDIR/consensus-upgrade-20240101T000000Z.jsonl
 sudo touch -t $(date -d '400 days ago' +%Y%m%d%H%M) \
@@ -1004,6 +1281,7 @@ ls $EVENTSDIR/consensus-upgrade-*.jsonl
 2. Check the events directory:
    ```bash
    ls $EVENTSDIR/consensus-upgrade-*.jsonl
+   # expected: EVENTSDIR=/opt/solo/weaver/daemon/events/consensus/upgrade
    ```
 
 ### Expected results
@@ -1017,7 +1295,7 @@ ls $EVENTSDIR/consensus-upgrade-*.jsonl
 ## TC-27 — Migration monitor: soak start accepted
 
 **Goal**: verify that `POST /consensus_node/migration/soak/start` activates the soak,
-returns HTTP 200, and immediately reflects `active: true` in the status endpoint.
+returns HTTP 202, and immediately reflects `active: true` in the status endpoint.
 
 ### Prerequisites
 
@@ -1038,7 +1316,7 @@ returns HTTP 200, and immediately reflects `active: true` in the status endpoint
      -H 'Content-Type: application/json' \
      -d '{"node_id":"$NODE_ID","cutover_timestamp":"2024-01-15T00:00:00Z","migration_plan_path":"/tmp/plan.yaml"}' \
      http://localhost/consensus_node/migration/soak/start
-   # expected: {"accepted":true} followed by HTTP 200
+   # expected: {"accepted":true} followed by HTTP 202
    ```
 3. Immediately check status:
    ```bash
@@ -1051,7 +1329,7 @@ returns HTTP 200, and immediately reflects `active: true` in the status endpoint
 
 ### Expected results
 
-- [ ] `POST` returns HTTP 200, body `{"accepted":true}`
+- [ ] `POST` returns HTTP 202, body `{"accepted":true}`
 - [ ] Status immediately shows `"active": true` with the submitted request details:
   ```json
   {
@@ -1126,7 +1404,7 @@ resumes automatically from the persisted `cutover-state.jsonl` without losing el
 - [ ] Journal does **not** contain `reason=SoakStateCorrupted`
 - [ ] The state file is present on disk:
   ```bash
-  sudo ls -la /opt/solo/weaver/config/cutover-state.jsonl
+  sudo ls -la /opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl
   ```
 
 ---
@@ -1147,10 +1425,10 @@ poll interval — the absence of this event is the failure signal for external m
 3. Wait one poll interval (default 15 min; use a test build with a short interval if available).
 4. Check the migration events log (not journald — this goes to the JSONL event file):
    ```bash
-   # The migrate events file is typically named consensus-migrate-events.jsonl
-   # Check the daemon events directory:
-   sudo ls /opt/solo/weaver/events/
-   sudo cat /opt/solo/weaver/events/consensus-migrate-events.jsonl | python3 -m json.tool
+   # The migrate events JSONL lives at:
+   MIGRATE_EVENTS=/opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
+   sudo ls /opt/solo/weaver/daemon/events/consensus/migrate/
+   sudo cat $MIGRATE_EVENTS | python3 -m json.tool
    ```
 
 ### Expected results
@@ -1191,7 +1469,7 @@ a `FleetThresholdReached` event on the next poll tick.
 2. Wait one poll interval.
 3. Check the migration events JSONL:
    ```bash
-   sudo cat /opt/solo/weaver/events/consensus-migrate-events.jsonl | python3 -m json.tool
+   sudo cat /opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl | python3 -m json.tool
    ```
 
 ### Expected results
@@ -1219,7 +1497,8 @@ restarts, the monitor logs `SoakStateCorrupted`, deletes the bad file, and start
 
 1. Start a soak (TC-27) and confirm the state file is written:
    ```bash
-   sudo ls /opt/solo/weaver/config/cutover-state.jsonl
+   sudo ls /opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl
+   # expected: file present
    ```
 2. Stop the daemon:
    ```bash
@@ -1227,7 +1506,7 @@ restarts, the monitor logs `SoakStateCorrupted`, deletes the bad file, and start
    ```
 3. Corrupt the state file:
    ```bash
-   echo 'not valid json {{{' | sudo tee /opt/solo/weaver/config/cutover-state.jsonl
+   echo 'not valid json {{{' | sudo tee /opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl
    ```
 4. Start the daemon:
    ```bash
@@ -1244,7 +1523,7 @@ restarts, the monitor logs `SoakStateCorrupted`, deletes the bad file, and start
    ```
 7. Check the events JSONL for the `SoakStateCorrupted` event:
    ```bash
-   sudo cat /opt/solo/weaver/events/consensus-migrate-events.jsonl | python3 -m json.tool
+   sudo cat /opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl | python3 -m json.tool
    ```
 
 ### Expected results
@@ -1254,7 +1533,7 @@ restarts, the monitor logs `SoakStateCorrupted`, deletes the bad file, and start
 - [ ] Events JSONL contains a line with `reason=SoakStateCorrupted`
 - [ ] The corrupted state file is deleted:
   ```bash
-  sudo ls /opt/solo/weaver/config/cutover-state.jsonl
+  sudo ls /opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl
   # expected: No such file or directory
   ```
 - [ ] Journal does **not** contain any panic or fatal error
@@ -1285,7 +1564,7 @@ emits exactly one `CriterionMet` event for that criterion — not one per tick.
 2. Wait two poll intervals.
 3. Check the migration events JSONL:
    ```bash
-   sudo grep '"reason":"CriterionMet"' /opt/solo/weaver/events/consensus-migrate-events.jsonl | wc -l
+   sudo grep '"reason":"CriterionMet"' /opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl | wc -l
    ```
 
 ### Expected results
