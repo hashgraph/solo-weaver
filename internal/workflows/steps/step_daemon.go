@@ -624,13 +624,9 @@ func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.S
 		})
 }
 
-// CheckDaemonComponentPrerequisites queries GET /status on the daemon socket at
-// sockPath and returns a human-readable warning string when any component probe
-// errors are present, or an empty string when all prerequisites are satisfied.
-// It is called by `daemon service check` after the main health workflow passes,
-// to surface disk prerequisite failures as a distinct non-zero exit.
-func CheckDaemonComponentPrerequisites(sockPath string) string {
-	client := &http.Client{
+// socketClient returns an HTTP client that connects to the daemon Unix socket.
+func socketClient(sockPath string) *http.Client {
+	return &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -639,18 +635,33 @@ func CheckDaemonComponentPrerequisites(sockPath string) string {
 			Proxy: nil,
 		},
 	}
+}
 
-	resp, err := client.Get("http://local/status")
+// FetchDaemonStatus fetches GET /status from the daemon socket and returns the
+// decoded response. Returns nil if the endpoint is unreachable or returns a
+// non-200 status — callers treat nil as "status unavailable, skip".
+func FetchDaemonStatus(sockPath string) *daemon.StatusResponse {
+	resp, err := socketClient(sockPath).Get("http://local/status")
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return "" // /status unavailable — don't block the check
+		return nil
 	}
 	defer resp.Body.Close()
 
 	var status daemon.StatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return ""
+		return nil
 	}
-	if len(status.ProbeErrors) == 0 {
+	return &status
+}
+
+// CheckDaemonComponentPrerequisites queries GET /status on the daemon socket at
+// sockPath and returns a human-readable warning string when any component probe
+// errors are present, or an empty string when all prerequisites are satisfied.
+// It is called by `daemon service check` after the main health workflow passes,
+// to surface disk prerequisite failures as a distinct non-zero exit.
+func CheckDaemonComponentPrerequisites(sockPath string) string {
+	status := FetchDaemonStatus(sockPath)
+	if status == nil || len(status.ProbeErrors) == 0 {
 		return ""
 	}
 
