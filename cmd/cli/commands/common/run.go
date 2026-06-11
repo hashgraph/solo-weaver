@@ -83,10 +83,14 @@ func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) error {
 
 	// Execute the workflow in a background goroutine; the TUI event loop
 	// owns the main goroutine until the workflow finishes.
-	reportCh := make(chan *automa.Report, 1)
+	type fnResult struct {
+		report *automa.Report
+		err    error
+	}
+	resultCh := make(chan fnResult, 1)
 	go func() {
 		report, err := fn()
-		reportCh <- report
+		resultCh <- fnResult{report: report, err: err}
 		program.Send(ui.WorkflowDoneMsg{Report: report, Err: err})
 	}()
 
@@ -97,9 +101,19 @@ func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) error {
 	log.SetOutput(origLogOutput)
 	ui.SuppressConsoleLogging(ensureLogConfig())
 
+	// Always drain resultCh. In the normal path the goroutine sends its result
+	// before WorkflowDoneMsg (which causes tea.Quit), so this is a non-blocking
+	// read. When the TUI exits early (e.g. SSH/headless: BubbleTea quits without
+	// a terminal error before WorkflowDoneMsg arrives), we block here until fn()
+	// finishes — preventing a goroutine leak and ensuring we have the real result.
+	wfResult := <-resultCh
+
 	if tuiErr != nil {
 		fmt.Printf("TUI error: %v\n", tuiErr)
-		return finalizeWorkflowReport(<-reportCh)
+		if wfResult.err != nil {
+			return wfResult.err
+		}
+		return finalizeWorkflowReport(wfResult.report)
 	}
 
 	result, ok := finalModel.(ui.Model)
@@ -107,11 +121,21 @@ func RunWorkflow(ctx context.Context, fn func() (*automa.Report, error)) error {
 		return errorx.AssertionFailed.New("unexpected TUI model type")
 	}
 
-	if result.Err() != nil {
-		return result.Err()
+	// Use the TUI model's report/err (set by WorkflowDoneMsg). Fall back to the
+	// goroutine's direct result when the TUI quit before WorkflowDoneMsg was
+	// processed — e.g. in SSH/headless mode where BubbleTea exits cleanly but
+	// model.Report() returns nil, causing finalizeWorkflowReport(nil) → exit 0.
+	report := result.Report()
+	fnErr := result.Err()
+	if report == nil && fnErr == nil {
+		report = wfResult.report
+		fnErr = wfResult.err
 	}
 
-	return finalizeWorkflowReport(result.Report())
+	if fnErr != nil {
+		return fnErr
+	}
+	return finalizeWorkflowReport(report)
 }
 
 // RunWorkflowBuilder is a convenience wrapper that builds an automa workflow
