@@ -3,6 +3,9 @@
 package service
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -24,9 +27,16 @@ var checkCmd = &cobra.Command{
 			return err
 		}
 
-		// Workflow passed (daemon is up). Now check component prerequisites
-		// separately so we can exit non-zero if any probe is still failing.
 		paths := models.Paths()
+
+		// Print the full /status response so the operator can see component state.
+		if status := steps.FetchDaemonStatus(paths.DaemonSockPath); status != nil {
+			if out, err := json.MarshalIndent(status, "", "  "); err == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			}
+		}
+
+		// Exit non-zero if any component probe is still failing.
 		if warning := steps.CheckDaemonComponentPrerequisites(paths.DaemonSockPath); warning != "" {
 			logx.As().Warn().Msg(warning)
 			return errorx.IllegalState.New(
