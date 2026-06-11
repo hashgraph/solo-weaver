@@ -3,26 +3,87 @@
 > **Audience**: human testers running manual acceptance tests on a Linux node (UTM VM or real machine).
 > For developer architecture details see [daemon-architecture.md](daemon-architecture.md).
 
+## Reset: clean up a prior test run
+
+If you have run tests before on this machine, clean up all leftover state before starting a
+new session. Copy-paste the block below; each command is safe to run even if the resource does
+not exist.
+
+```bash
+export ORBIT=consensus
+
+# Stop and fully uninstall the daemon
+sudo solo-provisioner daemon service uninstall --non-interactive 2>/dev/null || true
+
+# Remove any config/binary left by a partial run
+sudo rm -f /opt/solo/weaver/config/daemon.yaml
+sudo rm -f /opt/solo/weaver/config/daemon-cn.kubeconfig
+sudo rm -f /opt/solo/weaver/config/daemon-bn.kubeconfig
+sudo rm -f /opt/solo/weaver/bin/solo-provisioner-daemon
+
+# Remove RBAC created by previous installs
+sudo kubectl delete clusterrolebinding solo-provisioner-daemon-cn solo-provisioner-daemon-bn 2>/dev/null || true
+sudo kubectl delete clusterrole solo-provisioner-daemon-cn solo-provisioner-daemon-bn 2>/dev/null || true
+sudo kubectl delete serviceaccount solo-provisioner-daemon-cn -n $ORBIT 2>/dev/null || true
+sudo kubectl delete serviceaccount solo-provisioner-daemon-bn -n hedera-block-node 2>/dev/null || true
+
+# Remove any lingering upgrade CRs and the NUE CRD itself
+sudo kubectl delete networkupgradeexecute --all -n $ORBIT 2>/dev/null || true
+sudo kubectl delete crd networkupgradeexecutes.hedera.com 2>/dev/null || true
+
+# Remove daemon event logs (migration soak state, upgrade event logs)
+sudo rm -rf /opt/solo/weaver/daemon/events/
+
+# Restore upgrade staging dir if it was renamed by TC-19
+sudo mv /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.bak \
+        /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current 2>/dev/null || true
+
+echo "=== Reset complete ==="
+systemctl is-active solo-provisioner-daemon.service 2>&1       # expected: inactive
+ls /opt/solo/weaver/config/daemon.yaml 2>/dev/null || echo "daemon.yaml absent (good)"
+```
+
+> **Build tip**: the daemon binary file stays busy in the OS page cache right after `scp`.
+> Copy it to `/tmp` before using it with `--daemon-bin` to avoid a "text file busy" error:
+> ```bash
+> cp ~/solo-provisioner-daemon-linux-amd64 /tmp/solo-provisioner-daemon-new
+> chmod +x /tmp/solo-provisioner-daemon-new
+> export DAEMON_BIN=/tmp/solo-provisioner-daemon-new
+> ```
+
+---
+
 ## Quick-start: full session setup
 
 Copy-paste the block below on a **fresh Linux VM** to prepare everything the test suite needs.
 Run it once before executing any test case. Skip steps you have already completed.
 
 ```bash
-# --- 0. Build ----
-task build
+# ── 0. Build (on your dev machine, not the VM) ─────────────────────────────
+task build:cli   GOOS=linux GOARCH=amd64
+task build:daemon GOOS=linux GOARCH=amd64
 
-# Copy the `solo-provisioner-daemon` and `solo-provisioner` binaries to the VM (e.g. via `scp`):
+# Copy both binaries to the VM.  Wait for scp to finish before continuing.
+gcloud compute scp bin/solo-provisioner-linux-amd64 \
+                    bin/solo-provisioner-daemon-linux-amd64 <VM_NAME>:~/
+
+# ── 0b. On the VM — move daemon binary away from the scp landing path ──────
+# scp leaves the file open in the kernel page cache; running it directly from ~/
+# causes "text file busy".  Copy to /tmp first.
+cp ~/solo-provisioner-daemon-linux-amd64 /tmp/solo-provisioner-daemon-new
+chmod +x /tmp/solo-provisioner-daemon-new
 
 # ── 1. Environment ─────────────────────────────────────────────────────────
 export ORBIT=consensus        # orbit namespace (consensus-node CR namespace)
 export NODE_ID=0              # numeric consensus-node ID
 export SOCK=/opt/solo/weaver/daemon/daemon.sock
-export DAEMON_BIN=/home/$USER/solo-provisioner-daemon-linux-amd64   # path to daemon binary (copy via scp first)
+export DAEMON_BIN=/tmp/solo-provisioner-daemon-new   # use the /tmp copy
 
 # ── 2. Install solo-provisioner CLI ────────────────────────────────────────
-# (assumes the installer binary was copied to ~/ via scp beforehand)
-sudo ~/solo-provisioner-linux-amd64 install --non-interactive
+# Run the CLI installer from /tmp to avoid the same "text file busy" issue.
+cp ~/solo-provisioner-linux-amd64 /tmp/solo-provisioner-new
+chmod +x /tmp/solo-provisioner-new
+sudo /tmp/solo-provisioner-new install --non-interactive
 
 # ── 3. Bootstrap a single-node Kubernetes cluster ─────────────────────────
 sudo solo-provisioner kube cluster install \
@@ -343,7 +404,7 @@ daemon will fail to start (systemd marks it failed after `TimeoutStartSec`).
 - [ ] Scoped kubeconfig written:
   ```bash
   ls -la /opt/solo/weaver/config/daemon-cn.kubeconfig
-  # mode must be 0600
+  # mode is 0640 (root:weaver) — readable only by root and the weaver service account
   ```
 - [ ] Daemon binary placed at `/opt/solo/weaver/bin/solo-provisioner-daemon`:
   ```bash
@@ -649,16 +710,23 @@ call returns HTTP 409.
 ### Steps
 
 1. Ensure the daemon is running with migration monitor enabled.
-2. Start a soak:
+2. Start a soak (a JSON body with `node_id`, `cutover_timestamp`, and `migration_plan_path` is
+   required — a bare POST with no body returns 400):
    ```bash
    sudo curl -s -o /dev/null -w "%{http_code}" \
-     -X POST --unix-socket $SOCK http://localhost/consensus_node/migration/soak/start
-   # expected: 200 or 202
+     -X POST --unix-socket $SOCK \
+     -H 'Content-Type: application/json' \
+     -d '{"node_id":"0","cutover_timestamp":"2024-01-15T00:00:00Z","migration_plan_path":"/tmp/plan.yaml"}' \
+     http://localhost/consensus_node/migration/soak/start
+   # expected: 202
    ```
 3. Immediately send a second request:
    ```bash
    sudo curl -s -o /dev/null -w "%{http_code}" \
-     -X POST --unix-socket $SOCK http://localhost/consensus_node/migration/soak/start
+     -X POST --unix-socket $SOCK \
+     -H 'Content-Type: application/json' \
+     -d '{"node_id":"0","cutover_timestamp":"2024-01-15T00:00:00Z","migration_plan_path":"/tmp/plan.yaml"}' \
+     http://localhost/consensus_node/migration/soak/start
    # expected: 409
    ```
 4. Check soak status:
@@ -1201,10 +1269,9 @@ kubectl delete networkupgradeexecute test-upgrade-01 -n $ORBIT
   reason=UpgradeMonitorDuplicateEvent operation_id=test-op-001
   ```
 
-> **Known bug (TC-24 FAIL)**: As of build `0.0.0/3695924b`, `UpgradeMonitorDuplicateEvent` is never
-> emitted. `ExecuteWorkflowStarted` fires multiple times for the same `operationId` (observed 3× in
-> testing). Deduplication logic is broken — the in-progress set may not be populated before a second
-> event arrives (race), or is cleared on watch reconnect. File a bug against `UpgradeMonitor.handleEvent()`.
+> **Previously known bug — FIXED in `c4dd8a32`**: As of build `0.0.0/3695924b`, `UpgradeMonitorDuplicateEvent` was never
+> emitted and `ExecuteWorkflowStarted` fired multiple times for the same `operationId`. This is fixed
+> in commit `c4dd8a32` (branch `00499-feat-solo-provisioner-daemon-core`).
 
 ### Teardown
 
@@ -1332,9 +1399,9 @@ returns HTTP 202, and immediately reflects `active: true` in the status endpoint
    ```bash
    sudo curl -s --unix-socket $SOCK http://localhost/consensus_node/migration/soak/status | python3 -m json.tool
    ```
-4. Check the daemon journal:
+4. Check the migration events JSONL (not the journal — soak events go to the events file):
    ```bash
-   journalctl -u solo-provisioner-daemon.service -n 30
+   sudo tail -5 /opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
    ```
 
 ### Expected results
@@ -1351,7 +1418,12 @@ returns HTTP 202, and immediately reflects `active: true` in the status endpoint
     }
   }
   ```
-- [ ] Journal contains `reason=SoakStarted` with the `node_id` and `cutover_timestamp`
+- [ ] Migration events JSONL contains `reason=SoakStarted` with the `node_id` and `cutover_timestamp`:
+  ```json
+  {"reason":"SoakStarted","msg":"Soak started for node 0; cutover at 2024-01-15T00:00:00Z", ...}
+  ```
+  > **Note**: the systemd journal logs `reason=SoakStartAccepted`; the canonical `SoakStarted` event
+  > lives in the JSONL file at `/opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl`.
 
 ---
 
@@ -1402,15 +1474,20 @@ resumes automatically from the persisted `cutover-state.jsonl` without losing el
    ```bash
    sudo curl -s --unix-socket $SOCK http://localhost/consensus_node/migration/soak/status | python3 -m json.tool
    ```
-5. Check the journal for the resume log:
+5. Check the migration events JSONL for the resume event:
    ```bash
-   journalctl -u solo-provisioner-daemon.service -n 50
+   sudo tail -5 /opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
    ```
 
 ### Expected results
 
 - [ ] After restart, status shows `"active": true` with the **original** `cutover_timestamp`
-- [ ] Journal contains `reason=SoakResumed` with `elapsed_hours` reflecting real elapsed time since the original cutover
+- [ ] Migration events JSONL contains `reason=SoakResumed` with `elapsed_hours` reflecting real elapsed time:
+  ```json
+  {"reason":"SoakResumed","msg":"Soak resumed after daemon restart for node 0; cutover at 2024-01-15T00:00:00Z; ...h elapsed", ...}
+  ```
+  > **Note**: the systemd journal logs `reason=SoakResuming`; the canonical `SoakResumed` event is
+  > in the JSONL events file, not the journal.
 - [ ] Journal does **not** contain `reason=SoakStateCorrupted`
 - [ ] The state file is present on disk:
   ```bash
