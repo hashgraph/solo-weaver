@@ -400,32 +400,35 @@ func deleteCreatedComponentRBAC(ctx context.Context, spec DaemonComponentSpec, c
 	}
 	cs, err := newTypedClient()
 	if err != nil {
-		logx.As().Warn().Err(err).Str("component", spec.ShortName).Msg("Failed to build kube client for RBAC rollback")
+		logx.As().Warn().Err(err).Str("component", spec.ShortName).Msg("failed to build kube client for RBAC cleanup")
 		return false
 	}
 	allClean := true
 	del := metav1.DeleteOptions{}
 	if created.crb {
 		if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, spec.crbName(), del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("crb", spec.crbName()).Msg("Rollback: failed to delete ClusterRoleBinding")
+			logx.As().Warn().Err(err).Str("crb", spec.crbName()).Msg("failed to delete ClusterRoleBinding")
 			allClean = false
 		}
 	}
 	if created.cr {
 		if err := cs.RbacV1().ClusterRoles().Delete(ctx, spec.clusterRoleName(), del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("cr", spec.clusterRoleName()).Msg("Rollback: failed to delete ClusterRole")
+			logx.As().Warn().Err(err).Str("cr", spec.clusterRoleName()).Msg("failed to delete ClusterRole")
+			allClean = false
+		}
+	}
+	// Delete SA before Secret: K8s garbage-collects the owned token Secret when the SA
+	// is removed, so deleting SA first avoids a race where the token controller adds a
+	// finalizer to the SA while the Secret deletion is in flight.
+	if created.sa {
+		if err := cs.CoreV1().ServiceAccounts(spec.Namespace).Delete(ctx, spec.saName(), del); err != nil && !kerrors.IsNotFound(err) {
+			logx.As().Warn().Err(err).Str("sa", spec.saName()).Msg("failed to delete ServiceAccount")
 			allClean = false
 		}
 	}
 	if created.secret {
 		if err := cs.CoreV1().Secrets(spec.Namespace).Delete(ctx, spec.tokenSecretName(), del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("secret", spec.tokenSecretName()).Msg("Rollback: failed to delete token Secret")
-			allClean = false
-		}
-	}
-	if created.sa {
-		if err := cs.CoreV1().ServiceAccounts(spec.Namespace).Delete(ctx, spec.saName(), del); err != nil && !kerrors.IsNotFound(err) {
-			logx.As().Warn().Err(err).Str("sa", spec.saName()).Msg("Rollback: failed to delete ServiceAccount")
+			logx.As().Warn().Err(err).Str("secret", spec.tokenSecretName()).Msg("failed to delete token Secret")
 			allClean = false
 		}
 	}
