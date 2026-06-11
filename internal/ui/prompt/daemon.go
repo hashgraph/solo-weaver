@@ -104,8 +104,8 @@ func daemonNodeIDInputPrompt(eff string, target *string) InputPrompt {
 	return InputPrompt{
 		FlagName:       "cn-node-id",
 		Title:          "Consensus Node ID",
-		Description:    `Identifier for this consensus node (e.g. "0.0.3")`,
-		Placeholder:    "0.0.3",
+		Description:    `Numeric identifier for this consensus node (e.g. "0", "1", "2")`,
+		Placeholder:    "0",
 		EffectiveValue: eff,
 		Target:         target,
 		Validate: func(s string) error {
