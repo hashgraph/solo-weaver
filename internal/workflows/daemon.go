@@ -104,8 +104,9 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 // NewDaemonServiceUninstallWorkflow tears down the daemon stack in reverse:
 //  1. Check root privileges
 //  2. Stop + disable + remove systemd service unit
-//  3. Remove per-component kubeconfig files
-//  4. Delete per-component RBAC resources (CRB + CR + Secret + SA)
+//  3. Remove the daemon binary from paths.BinDir
+//  4. Remove per-component kubeconfig files
+//  5. Delete per-component RBAC resources (CRB + CR + Secret + SA)
 func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 	paths := models.Paths()
 	componentSpecs, err := loadComponentSpecs(paths)
@@ -115,6 +116,7 @@ func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 	return automa.NewWorkflowBuilder().WithId("daemon-service-uninstall-workflow").Steps(
 		CheckPrivilegesStep(),
 		steps.RemoveDaemonServiceStep(paths),
+		steps.RemoveDaemonBinaryStep(paths),
 		steps.RemoveDaemonKubeconfigStep(componentSpecs),
 		steps.DeleteDaemonRBACStep(componentSpecs),
 	), nil
