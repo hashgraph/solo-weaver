@@ -120,8 +120,9 @@ func resolveDaemonConfig(
 	// ── Case 2: daemon.yaml already exists ───────────────────────────────────
 	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
 	if err == nil {
-		// File exists and is valid; apply any explicit flag overrides.
+		// Apply flag overrides and merge any newly requested components.
 		changed := applyFlagOverrides(&cfg)
+		changed = mergeRequestedComponents(&cfg, flagComponents) || changed
 		if changed {
 			if err := daemon.WriteDaemonConfig(paths.DaemonConfigPath, cfg); err != nil {
 				return daemon.DaemonConfig{}, err
@@ -167,11 +168,10 @@ func resolveDaemonConfig(
 
 	var bnCfg *daemon.BlockNodeComponentConfig
 	if cs.Has(prompt.ComponentBlockNode) {
+		// Orbit and Kubeconfig omitted while traffic-shaper is stubbed.
 		c := daemon.BlockNodeComponentConfig{
-			Enabled:    true,
-			Orbit:      flagBNOrbit,
-			Kubeconfig: paths.DaemonBNKubeconfigPath,
-			Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
+			Enabled:  true,
+			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
 		}
 		bnCfg = &c
 	}
@@ -191,9 +191,7 @@ func resolveDaemonConfig(
 			targets.CNOrbit = &cnCfg.Orbit
 			targets.CNUpgradeDir = &cnCfg.UpgradeDir
 		}
-		if bnCfg != nil {
-			targets.BNOrbit = &bnCfg.Orbit
-		}
+		// BNOrbit not prompted while traffic-shaper is stubbed.
 		if err := prompt.RunDaemonInstallPrompts(cmd, &cfg, targets, paths, cv); err != nil {
 			return daemon.DaemonConfig{}, err
 		}
@@ -213,6 +211,21 @@ func resolveDaemonConfig(
 	logx.As().Info().Str("path", paths.DaemonConfigPath).Msg("daemon config written")
 
 	return cfg, nil
+}
+
+// mergeRequestedComponents adds any component blocks requested via --components
+// that are absent in cfg. Returns true if cfg was modified.
+func mergeRequestedComponents(cfg *daemon.DaemonConfig, componentsFlag string) bool {
+	cs := prompt.ParseComponentsFlag(componentsFlag)
+	changed := false
+	if cs.Has(prompt.ComponentBlockNode) && cfg.Components.BlockNode == nil {
+		cfg.Components.BlockNode = &daemon.BlockNodeComponentConfig{
+			Enabled:  true,
+			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
+		}
+		changed = true
+	}
+	return changed
 }
 
 // applyFlagOverrides writes any explicitly-set flag values into cfg.

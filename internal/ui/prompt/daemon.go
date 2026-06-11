@@ -32,7 +32,7 @@ var knownComponents = []struct {
 	defaultOn   bool
 }{
 	{ComponentConsensusNode, "Monitor NetworkUpgradeExecute CRs for consensus-node upgrades", true},
-	{ComponentBlockNode, "Monitor block-node component (--bn-orbit required)", false},
+	{ComponentBlockNode, "Monitor block-node component (traffic-shaper stub)", false},
 }
 
 // ── ComponentSet ─────────────────────────────────────────────────────────────
@@ -262,29 +262,13 @@ func RunDaemonInstallPrompts(
 	}
 
 	// Step 4: wire up block-node component if selected.
+	// Orbit and Kubeconfig are omitted while the traffic-shaper is stubbed.
 	if cs.Has(ComponentBlockNode) && cfg.Components.BlockNode == nil {
 		c := daemon.BlockNodeComponentConfig{
-			Enabled:    true,
-			Kubeconfig: paths.DaemonBNKubeconfigPath,
-			Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
+			Enabled:  true,
+			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
 		}
 		cfg.Components.BlockNode = &c
-		targets.BNOrbit = &cfg.Components.BlockNode.Orbit
-	}
-
-	// Step 5: prompt for block-node fields.
-	if cs.Has(ComponentBlockNode) && cfg.Components.BlockNode != nil {
-		bn := cfg.Components.BlockNode
-		orbitTarget := targets.BNOrbit
-		if orbitTarget == nil {
-			orbitTarget = &bn.Orbit
-		}
-		bnPrompts := []InputPrompt{
-			daemonBNOrbitInputPrompt(*orbitTarget, orbitTarget),
-		}
-		if err := RunInputPrompts(cmd, bnPrompts, cv); err != nil {
-			return err
-		}
 	}
 
 	return nil

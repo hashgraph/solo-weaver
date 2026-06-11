@@ -283,11 +283,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return fmt.Errorf("consensus-node kubeconfig preflight failed — daemon cannot start: %w", err)
 		}
 	}
-	if bn := d.cfg.Components.BlockNode; bn != nil && bn.Enabled {
-		if _, err := clientcmd.BuildConfigFromFlags("", bn.Kubeconfig); err != nil {
-			return fmt.Errorf("block-node kubeconfig preflight failed — daemon cannot start: %w", err)
-		}
-	}
+	// block-node kubeconfig preflight is deferred until the traffic-shaper monitor
+	// requires K8s access (currently stubbed; it polls a remote API only).
 
 	// READY=1 means the daemon process is up and its socket is serving.
 	// Component prerequisite health is tracked separately by runComponentProbes

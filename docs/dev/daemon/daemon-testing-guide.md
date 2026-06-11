@@ -18,14 +18,12 @@ sudo solo-provisioner daemon service uninstall --non-interactive 2>/dev/null || 
 # Remove any config/binary left by a partial run
 sudo rm -f /opt/solo/weaver/config/daemon.yaml
 sudo rm -f /opt/solo/weaver/config/daemon-cn.kubeconfig
-sudo rm -f /opt/solo/weaver/config/daemon-bn.kubeconfig
 sudo rm -f /opt/solo/weaver/bin/solo-provisioner-daemon
 
-# Remove RBAC created by previous installs
-sudo kubectl delete clusterrolebinding solo-provisioner-daemon-cn solo-provisioner-daemon-bn 2>/dev/null || true
-sudo kubectl delete clusterrole solo-provisioner-daemon-cn solo-provisioner-daemon-bn 2>/dev/null || true
+# Remove RBAC created by previous installs (block-node RBAC deferred — no BN SA/CR/CRB yet)
+sudo kubectl delete clusterrolebinding solo-provisioner-daemon-cn 2>/dev/null || true
+sudo kubectl delete clusterrole solo-provisioner-daemon-cn 2>/dev/null || true
 sudo kubectl delete serviceaccount solo-provisioner-daemon-cn -n $ORBIT 2>/dev/null || true
-sudo kubectl delete serviceaccount solo-provisioner-daemon-bn -n hedera-block-node 2>/dev/null || true
 
 # Remove any lingering upgrade CRs and the NUE CRD itself
 sudo kubectl delete networkupgradeexecute --all -n $ORBIT 2>/dev/null || true
@@ -825,8 +823,11 @@ clear error rather than silently corrupting state.
 
 ## TC-15 — Block-node component stub (consensus-node + block-node together)
 
-**Goal**: verify that enabling the block-node component at install time creates its kubeconfig,
-RBAC, and starts stub monitors without crashing the daemon.
+**Goal**: verify that enabling the block-node component at install time writes the `block_node`
+section to `daemon.yaml` and starts the stub traffic-shaper monitor alongside consensus-node.
+
+> **Note**: block-node kubeconfig and RBAC provisioning are deferred — the traffic-shaper
+> monitor is currently stubbed and polls a remote API only (no K8s watch needed).
 
 ### Steps
 
@@ -836,27 +837,20 @@ RBAC, and starts stub monitors without crashing the daemon.
    sudo solo-provisioner daemon service install \
      --components consensus-node,block-node \
      --cn-node-id $NODE_ID \
-     --cn-orbit $ORBIT \
-     --bn-orbit hedera-block-node
+     --cn-orbit $ORBIT
    ```
 
 ### Expected results
 
 - [ ] Install completes without error
 - [ ] `daemon.yaml` contains both `consensus_node` and `block_node` blocks
-- [ ] Block-node kubeconfig written: `ls /opt/solo/weaver/config/daemon-bn.kubeconfig`
-- [ ] Block-node RBAC exists:
-  ```bash
-  kubectl get serviceaccount solo-provisioner-daemon-bn -n hedera-block-node
-  kubectl get clusterrole solo-provisioner-daemon-bn
-  ```
 - [ ] `/status` shows `block-node` component:
   ```bash
   sudo curl --unix-socket $SOCK http://localhost/status | python3 -m json.tool
-  # "block-node": { "monitors": { "bn-upgrade-monitor": { "state": "running" } } }
+  # "block-node": { "monitors": { "bn-traffic-shaper-monitor": { "state": "running" } } }
   ```
 - [ ] Log contains:
-  `block-node upgrade monitor not yet implemented — stub running`
+  `block-node traffic-shaper monitor not yet implemented — stub running`
 
 ---
 
@@ -865,14 +859,15 @@ RBAC, and starts stub monitors without crashing the daemon.
 **Goal**: verify that a block-node-only config is valid and the daemon starts without a
 consensus-node block.
 
+> **Note**: `--bn-orbit` is no longer required while the traffic-shaper monitor is stubbed.
+
 ### Steps
 
 1. Uninstall if already installed.
 2. Run:
    ```bash
    sudo solo-provisioner daemon service install \
-     --components block-node \
-     --bn-orbit hedera-block-node
+     --components block-node
    ```
 
 ### Expected results
