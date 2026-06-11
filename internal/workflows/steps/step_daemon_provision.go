@@ -487,8 +487,6 @@ func waitForSAToken(ctx context.Context, cs *kubernetes.Clientset, namespace, se
 	return token, ca, server, nil
 }
 
-// writeDaemonKubeconfig writes a minimal kubeconfig for the daemon SA to path.
-// The file is created with 0640 (root:weaver) so the daemon can read it.
 // AddOperatorToWeaverGroupStep adds the invoking operator (SUDO_USER) to the
 // weaver group so they can reach the daemon socket without sudo. The step is
 // idempotent — if the user is already a member it logs and succeeds. If
@@ -534,6 +532,8 @@ func AddOperatorToWeaverGroupStep() *automa.StepBuilder {
 		})
 }
 
+// writeDaemonKubeconfig writes a minimal kubeconfig for the daemon SA to path.
+// The file is created with 0640 (root:weaver) so the daemon can read it.
 func writeDaemonKubeconfig(path, server, ca, token string) error {
 	cfg := clientcmdapi.NewConfig()
 	cfg.Clusters["solo-weaver"] = &clientcmdapi.Cluster{
