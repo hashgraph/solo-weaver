@@ -120,6 +120,24 @@ func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 	), nil
 }
 
+// NewDaemonServiceStartWorkflow starts the daemon service and verifies health.
+func NewDaemonServiceStartWorkflow() *automa.WorkflowBuilder {
+	paths := models.Paths()
+	return automa.NewWorkflowBuilder().WithId("daemon-service-start-workflow").Steps(
+		CheckPrivilegesStep(),
+		steps.StartDaemonServiceStep(),
+		steps.CheckDaemonServiceStep(paths, paths.DaemonSockPath),
+	)
+}
+
+// NewDaemonServiceStopWorkflow stops the daemon service.
+func NewDaemonServiceStopWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId("daemon-service-stop-workflow").Steps(
+		CheckPrivilegesStep(),
+		steps.StopDaemonServiceStep(),
+	)
+}
+
 // NewDaemonServiceCheckWorkflow checks the health of the daemon installation:
 // sandbox unit file, system symlink, service enabled/running, binary, sudoers entry,
 // and Unix socket health.

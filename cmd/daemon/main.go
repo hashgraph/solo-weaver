@@ -56,6 +56,12 @@ var (
 			// Load daemon.yaml; apply any CLI flag overrides; re-validate.
 			cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
 			if err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Verify the config exists: ls -la " + paths.DaemonConfigPath,
+						"Reinstall the daemon to recreate the config: sudo solo-provisioner daemon service install",
+					})
+				}
 				return err
 			}
 			cn := cfg.Components.ConsensusNode
@@ -72,14 +78,34 @@ var (
 				cn.UpgradeDir = flagUpgradeDir
 			}
 			if err := cfg.Validate(); err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Check the config: cat " + paths.DaemonConfigPath,
+						"Fix missing fields or reinstall: sudo solo-provisioner daemon service install",
+					})
+				}
 				return err
 			}
 
 			d, err := daemon.NewFromConfig(paths, cfg)
 			if err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Check the daemon config: cat " + paths.DaemonConfigPath,
+						"Check the kubeconfig: ls -la " + paths.DaemonCNKubeconfigPath,
+						"Reinstall the daemon: sudo solo-provisioner daemon service install",
+					})
+				}
 				return err
 			}
 			if err := d.Run(ctx); err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Check daemon logs: sudo journalctl -u solo-provisioner-daemon -n 100 --no-pager",
+						"Check service status: sudo systemctl status solo-provisioner-daemon",
+						"Restart the daemon: sudo solo-provisioner daemon service stop && sudo solo-provisioner daemon service start",
+					})
+				}
 				return err
 			}
 

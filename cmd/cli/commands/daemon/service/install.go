@@ -105,7 +105,11 @@ func resolveDaemonConfig(
 	if flagFromConfig != "" {
 		if err := copyFile(flagFromConfig, paths.DaemonConfigPath); err != nil {
 			return daemon.DaemonConfig{}, errorx.ExternalError.Wrap(err,
-				"cannot copy config from %s to %s", flagFromConfig, paths.DaemonConfigPath)
+				"cannot copy config from %s to %s", flagFromConfig, paths.DaemonConfigPath).
+				WithProperty(models.ErrPropertyResolution, []string{
+					"Verify the source file exists and is readable: ls -la " + flagFromConfig,
+					"Ensure the destination directory is writable: ls -la " + filepath.Dir(paths.DaemonConfigPath),
+				})
 		}
 		logx.As().Info().Str("src", flagFromConfig).Str("dst", paths.DaemonConfigPath).
 			Msg("daemon config copied from --from-config")
