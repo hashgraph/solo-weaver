@@ -229,6 +229,82 @@ func Test_UpgradeMonitor_RejectsDifferentOperationWhileBusy(t *testing.T) {
 	cancel()
 }
 
+func Test_UpgradeMonitor_DeduplicatesAfterCompletion(t *testing.T) {
+	// TC-24 regression: after handleExecute returns, a second ReadyForProvisionerDaemon
+	// event for the same operationId must be silently dropped via completedOpIDs,
+	// not re-dispatched (the bug: stub returns instantly, clearing activeOpID before
+	// the duplicate event arrives).
+	const ns = "hedera-network"
+	const opID = "upgrade-20260522T120000-v0.75.0"
+
+	cr := makeExecuteCR("upgrade-execute", ns, opID, "ReadyForProvisionerDaemon")
+	um, client := newFakeUpgradeMonitor(t, ns)
+
+	var called atomic.Int32
+	um.SetOnExecute(func(_ string) { called.Add(1) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = um.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	// First event — handleExecute fires and returns immediately (stub).
+	_, err := client.Resource(upgradeExecuteGVR).Namespace(ns).Create(ctx, cr, metav1.CreateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return called.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	// Wait for the goroutine to finish and completedOpIDs to be populated.
+	require.Eventually(t, func() bool {
+		ids := um.CompletedOpIDs()
+		_, ok := ids[opID]
+		return ok
+	}, time.Second, 10*time.Millisecond, "operationId should appear in completedOpIDs after successful execution")
+
+	// Second event with same operationId — must be dropped by completedOpIDs guard.
+	cr2 := cr.DeepCopy()
+	cr2.SetResourceVersion("2")
+	_, err = client.Resource(upgradeExecuteGVR).Namespace(ns).Update(ctx, cr2, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int32(1), called.Load(), "handleExecute must not fire again for a completed operationId")
+	cancel()
+}
+
+func Test_UpgradeMonitor_SeedsCompletedFromList(t *testing.T) {
+	// On startup, CRs already in terminal phases (Succeeded, Failed) must be seeded
+	// into completedOpIDs so they are never re-dispatched even if a stale watch event
+	// delivers them as ReadyForProvisionerDaemon.
+	const ns = "hedera-network"
+
+	succeededCR := makeExecuteCR("upgrade-execute-done", ns, "op-succeeded", "Succeeded")
+	failedCR := makeExecuteCR("upgrade-execute-failed", ns, "op-failed", "Failed")
+	pendingCR := makeExecuteCR("upgrade-execute-pending", ns, "op-pending", "Pending")
+
+	um, _ := newFakeUpgradeMonitor(t, ns, succeededCR, failedCR, pendingCR)
+
+	var called atomic.Int32
+	um.SetOnExecute(func(_ string) { called.Add(1) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() { _ = um.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		ids := um.CompletedOpIDs()
+		_, hasDone := ids["op-succeeded"]
+		_, hasFailed := ids["op-failed"]
+		return hasDone && hasFailed
+	}, time.Second, 10*time.Millisecond, "terminal-phase CRs must be seeded into completedOpIDs on startup")
+
+	ids := um.CompletedOpIDs()
+	assert.NotContains(t, ids, "op-pending", "Pending CR must not be seeded as completed")
+	assert.Equal(t, int32(0), called.Load(), "handleExecute must not fire for terminal-phase CRs")
+	cancel()
+}
+
 func Test_isAuthError_DetectsUnauthorizedAndForbidden(t *testing.T) {
 	unauthorized := k8serrors.NewUnauthorized("token expired")
 	forbidden := k8serrors.NewForbidden(

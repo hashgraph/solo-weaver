@@ -13,5 +13,4 @@ const (
 	BLOCK_NODE_CHART             = "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
 	BLOCK_NODE_VERSION           = "0.35.1"
 	BLOCK_NODE_STORAGE_BASE_PATH = "/mnt/fast-storage"
-
 )

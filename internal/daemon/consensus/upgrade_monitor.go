@@ -5,6 +5,7 @@ package consensus
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -29,7 +30,13 @@ var networkUpgradeExecuteGVR = schema.GroupVersionResource{
 }
 
 const (
-	phaseReadyForProvisionerDaemon = "ReadyForProvisionerDaemon"
+	// NetworkUpgradeExecute status.phase values, as defined in the CRD.
+	executePhasePending                   = "Pending"
+	executePhaseReadyForProvisionerDaemon = "ReadyForProvisionerDaemon"
+	executePhasePendingInfraUpgrade       = "PendingInfraUpgrade"
+	executePhasePendingNodeUpgrade        = "PendingNodeUpgrade"
+	executePhaseSucceeded                 = "Succeeded"
+	executePhaseFailed                    = "Failed"
 
 	backoffInitial = 2 * time.Second
 	backoffMax     = 5 * time.Minute
@@ -102,8 +109,19 @@ type UpgradeMonitor struct {
 	cfg    UpgradeMonitorConfig
 	client dynamic.Interface
 
-	mu         sync.Mutex
-	activeOpID string // non-empty while handleExecute is running; guards the single execution slot
+	mu sync.Mutex
+	// activeOpID is non-empty while handleExecute is running; guards the single
+	// execution slot. No two active CRs with the same operationId can execute
+	// concurrently — historical reuse of an operationId is fine provided the prior
+	// CR is no longer in a terminal phase visible to the cluster List.
+	activeOpID string
+	// completedOpIDs holds operationIds that completed successfully in this process
+	// lifetime. It guards the patch round-trip window: the gap between when the
+	// execute goroutine finishes and when the CR's status.phase is observed as
+	// Succeeded/Failed by the watch loop. Seeded at every Run() entry from the
+	// cluster List so surviving restarts does not require disk persistence — the
+	// CR's phase is the durable source of truth.
+	completedOpIDs map[string]struct{}
 
 	// onExecute is called synchronously at the start of each handleExecute invocation.
 	// Nil in production; set in tests to observe invocations without sleeping.
@@ -117,13 +135,13 @@ func NewUpgradeMonitor(cfg UpgradeMonitorConfig) (*UpgradeMonitor, error) {
 	if err != nil {
 		return nil, ErrK8sClient.Wrap(err, "upgrade monitor: build k8s client")
 	}
-	return &UpgradeMonitor{cfg: cfg, client: client}, nil
+	return &UpgradeMonitor{cfg: cfg, client: client, completedOpIDs: make(map[string]struct{})}, nil
 }
 
 // NewUpgradeMonitorWithClient constructs an UpgradeMonitor with an injected
 // client — used in unit tests to avoid a real kubeconfig on disk.
 func NewUpgradeMonitorWithClient(cfg UpgradeMonitorConfig, client dynamic.Interface) *UpgradeMonitor {
-	return &UpgradeMonitor{cfg: cfg, client: client}
+	return &UpgradeMonitor{cfg: cfg, client: client, completedOpIDs: make(map[string]struct{})}
 }
 
 // Name implements daemon.MonitorRunner.
@@ -202,12 +220,13 @@ func (um *UpgradeMonitor) pruneUpgradeEventLogs() {
 	}
 }
 
-// Run blocks until ctx is cancelled. It continuously watches
-// NetworkUpgradeExecute CRs and triggers handleExecute on
-// ReadyForProvisionerDaemon transitions. Clean watch expiry (server-side
-// timeout) reconnects immediately without backoff; real errors retry with
-// exponential backoff; auth errors additionally rebuild the dynamic client
-// from the kubeconfig on disk before retrying.
+// Run blocks until ctx is cancelled. On every iteration it lists all
+// NetworkUpgradeExecute CRs to seed completedOpIDs and dispatch any CRs
+// already at ReadyForProvisionerDaemon (recovery after a crash or restart),
+// then watches from the List's ResourceVersion so no events are missed between
+// the two calls. Clean watch expiry reconnects after backoffInitial; real
+// errors retry with exponential backoff; auth errors additionally rebuild the
+// dynamic client from the kubeconfig on disk before retrying.
 func (um *UpgradeMonitor) Run(ctx context.Context) error {
 	// Prune stale upgrade event logs on every Run() entry — covers both the
 	// initial startup and any subsequent supervised restarts.
@@ -222,7 +241,28 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 
 	for {
 		logx.As().Debug().Str("reason", "UpgradeMonitorWatchAttempt").Msg("Starting watch attempt")
-		err := um.runWatch(ctx)
+
+		listRV, listErr := um.listAndSeed(ctx)
+		if ctx.Err() != nil {
+			logx.As().Info().Str("reason", "UpgradeMonitorStopped").Msg("Upgrade monitor stopped")
+			return nil
+		}
+		if listErr != nil {
+			logx.As().Warn().Err(listErr).
+				Str("reason", "UpgradeMonitorListError").
+				Dur("retry_in", backoff).
+				Msg("List error — retrying")
+			select {
+			case <-ctx.Done():
+				logx.As().Info().Str("reason", "UpgradeMonitorStopped").Msg("Upgrade monitor stopped")
+				return nil
+			case <-time.After(backoff):
+			}
+			backoff = minDuration(time.Duration(float64(backoff)*backoffFactor), backoffMax)
+			continue
+		}
+
+		err := um.runWatch(ctx, listRV)
 
 		if ctx.Err() != nil {
 			logx.As().Info().Str("reason", "UpgradeMonitorStopped").Msg("Upgrade monitor stopped")
@@ -293,11 +333,66 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 	}
 }
 
-// runWatch performs a single watch cycle. Returns nil when the watch channel
-// closes cleanly (server-side expiry or context cancellation), or an error
-// the caller should back off from and retry. Any panic is caught and converted
-// to an error so Run() applies backoff rather than crashing the daemon.
-func (um *UpgradeMonitor) runWatch(ctx context.Context) (retErr error) {
+// listAndSeed lists all NetworkUpgradeExecute CRs in the namespace, seeds
+// completedOpIDs from terminal-phase CRs, and dispatches any CR already at
+// ReadyForProvisionerDaemon so upgrades that arrived while the daemon was
+// offline are recovered without waiting for a new watch event. Returns the
+// List's ResourceVersion so the caller can start a gapless watch from that
+// point.
+func (um *UpgradeMonitor) listAndSeed(ctx context.Context) (string, error) {
+	resource := um.client.Resource(networkUpgradeExecuteGVR).Namespace(um.cfg.Namespace)
+	list, err := resource.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", ErrWatchFailed.Wrap(err, "list NetworkUpgradeExecute")
+	}
+
+	um.mu.Lock()
+	for i := range list.Items {
+		cr := &list.Items[i]
+		phase, _, _ := unstructured.NestedString(cr.Object, "status", "phase")
+		opID, _, _ := unstructured.NestedString(cr.Object, "spec", "operationId")
+		if opID == "" {
+			continue
+		}
+		switch phase {
+		case executePhaseSucceeded, executePhaseFailed:
+			um.completedOpIDs[opID] = struct{}{}
+		}
+	}
+	um.mu.Unlock()
+
+	// Collect and sort ReadyForProvisionerDaemon CRs oldest-first so that when
+	// multiple are pending (orchestrator bug, but handled defensively) the
+	// longest-waiting operation always acquires the single execution slot first.
+	// Newer ones are rejected by UpgradeMonitorBusy and retried on the next
+	// reconnect — still in chronological order.
+	var pending []*unstructured.Unstructured
+	for i := range list.Items {
+		cr := &list.Items[i]
+		phase, _, _ := unstructured.NestedString(cr.Object, "status", "phase")
+		if phase == executePhaseReadyForProvisionerDaemon {
+			pending = append(pending, cr)
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		ti := pending[i].GetCreationTimestamp()
+		tj := pending[j].GetCreationTimestamp()
+		return ti.Before(&tj)
+	})
+	for _, cr := range pending {
+		um.handleEvent(ctx, cr)
+	}
+
+	return list.GetResourceVersion(), nil
+}
+
+// runWatch performs a single watch cycle starting from resourceVersion (the RV
+// returned by listAndSeed). This guarantees no gap between the List snapshot
+// and the watch stream. Returns nil when the watch channel closes cleanly
+// (server-side expiry or context cancellation), or an error the caller should
+// back off from and retry. Any panic is caught and converted to an error so
+// Run() applies backoff rather than crashing the daemon.
+func (um *UpgradeMonitor) runWatch(ctx context.Context, resourceVersion string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logx.As().Error().
@@ -317,12 +412,10 @@ func (um *UpgradeMonitor) runWatch(ctx context.Context) (retErr error) {
 
 	timeoutSec := watchTimeoutSeconds
 	watcher, err := resource.Watch(ctx, metav1.ListOptions{
-		// ResourceVersion "0" serves from the watch cache and replays all existing CRs
-		// as ADDED events on every reconnect. This is intentional: NetworkUpgradeExecute
-		// CRs are long-lived, so any CR in ReadyForProvisionerDaemon at reconnect time
-		// is recovered automatically. The trade-off (no 410 Gone detection, full re-scan)
-		// is acceptable for a single-namespace watch on a small CR set.
-		ResourceVersion: "0",
+		// Start from the ResourceVersion of the preceding List call so there is no
+		// gap between the snapshot and the watch stream. Recovery of CRs already at
+		// ReadyForProvisionerDaemon is handled by listAndSeed, not by watch replay.
+		ResourceVersion: resourceVersion,
 		TimeoutSeconds:  &timeoutSec,
 	})
 	if err != nil {
@@ -361,10 +454,15 @@ func (um *UpgradeMonitor) runWatch(ctx context.Context) (retErr error) {
 }
 
 // handleEvent checks whether the CR has entered ReadyForProvisionerDaemon and,
-// if so, triggers handleExecute — deduplicated by operationId.
+// if so, triggers handleExecute — deduplicated by operationId across three layers:
+//  1. completedOpIDs: guards the CR patch round-trip window and CRs seeded from
+//     the cluster List; catches same-session re-delivery after completion.
+//  2. activeOpID: guards the single execution slot while handleExecute is in-flight.
+//  3. Upstream: the CR's status.phase (Succeeded/Failed) filters historical CRs
+//     that are no longer at ReadyForProvisionerDaemon, making (1) restart-safe.
 func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unstructured) {
 	phase, _, _ := unstructured.NestedString(cr.Object, "status", "phase")
-	if phase != phaseReadyForProvisionerDaemon {
+	if phase != executePhaseReadyForProvisionerDaemon {
 		return
 	}
 
@@ -380,6 +478,15 @@ func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unst
 	}
 
 	um.mu.Lock()
+	_, alreadyDone := um.completedOpIDs[operationID]
+	if alreadyDone {
+		um.mu.Unlock()
+		logx.As().Debug().
+			Str("reason", "UpgradeMonitorDuplicateEvent").
+			Str("operation_id", operationID).
+			Msg("Ignoring ReadyForProvisionerDaemon event — operationId already completed in this session")
+		return
+	}
 	if um.activeOpID != "" {
 		active := um.activeOpID
 		um.mu.Unlock()
@@ -408,6 +515,7 @@ func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unst
 		Msg("NetworkUpgradeExecute entered ReadyForProvisionerDaemon — triggering execute workflow")
 
 	go func() {
+		var execErr error
 		defer func() {
 			if r := recover(); r != nil {
 				logx.As().Error().
@@ -420,10 +528,29 @@ func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unst
 			if um.activeOpID == operationID {
 				um.activeOpID = ""
 			}
+			// Mark completed only on success so a failed operation can be retried.
+			// Retry in this process lifetime requires a new watch event or a
+			// listAndSeed reconnect — no automatic requeue is implemented. If
+			// handleExecute patched the CR to InProgress before failing (the
+			// intended first action once the stub is implemented), an external
+			// actor (orchestrator or operator) must re-advance the CR to
+			// ReadyForProvisionerDaemon before this daemon will pick it up again.
+			// Panic edge case: a panic after the InProgress patch leaves the CR
+			// stuck in InProgress across restarts — listAndSeed does not seed
+			// InProgress CRs and they are not ReadyForProvisionerDaemon, so
+			// recovery requires an external patch to a retryable phase.
+			// Manual operator remedy:
+			//   kubectl patch networkupgradeexecute <name> -n <namespace> \
+			//     --subresource=status --type=merge \
+			//     -p '{"status":{"phase":"ReadyForProvisionerDaemon"}}'
+			if execErr == nil {
+				um.completedOpIDs[operationID] = struct{}{}
+			}
 			um.mu.Unlock()
 		}()
-		if err := um.handleExecute(ctx, cr); err != nil {
-			logx.As().Error().Err(err).
+		execErr = um.handleExecute(ctx, cr)
+		if execErr != nil {
+			logx.As().Error().Err(execErr).
 				Str("reason", "ExecuteWorkflowFailed").
 				Str("operation_id", operationID).
 				Msg("Execute workflow failed")
@@ -449,6 +576,10 @@ func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unst
 // files from paths.DaemonEventsDir (FilenameTimestampStrategy, maxAge=365d, keep=50).
 // Pruning at startup covers the initial case; pruning here covers long-running daemons
 // where startup pruning never re-runs. See pkg/filepruner and #555.
+//
+// Once implemented handleExecute must:
+//   - Patch CR to InProgress immediately
+//   - Patch to Succeeded or Failed on terminal outcome
 func (um *UpgradeMonitor) handleExecute(_ context.Context, cr *unstructured.Unstructured) error {
 	operationID, _, _ := unstructured.NestedString(cr.Object, "spec", "operationId")
 	if um.onExecute != nil {
