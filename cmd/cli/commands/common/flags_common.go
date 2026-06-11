@@ -5,7 +5,6 @@ package common
 import (
 	"fmt"
 
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
@@ -275,36 +274,24 @@ func FlagDaemonFromConfig() FlagDefinition[string] {
 
 // FlagDaemonBin is the optional path to a locally-built solo-provisioner-daemon
 // binary. When omitted the binary is auto-downloaded from the official GitHub
-// Releases URL embedded in pkg/deps/daemon_config.yaml.
+// Releases URL embedded in the infrastructure catalog.
 func FlagDaemonBin() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "daemon-bin",
 		ShortName:   "",
-		Description: fmt.Sprintf("Path to the solo-provisioner-daemon binary to install (version %s); omit to auto-download", deps.PROVISIONER_DAEMON_VERSION),
+		Description: "Path to a locally-built solo-provisioner-daemon binary to install; omit to auto-download from the embedded catalog",
 		Default:     "",
 	}
 }
 
 // FlagDaemonChecksum is an optional sha256 hex digest used to verify a binary
-// supplied via --daemon-bin. Ignored when --daemon-bin is not set (the
-// embedded checksum from daemon_config.yaml is used for auto-downloaded binaries).
+// supplied via --daemon-bin. Ignored when --daemon-bin is not set (the catalog
+// checksum is used for auto-downloaded binaries).
 func FlagDaemonChecksum() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "daemon-checksum",
 		ShortName:   "",
 		Description: "SHA-256 hex digest of the binary supplied via --daemon-bin (e.g. the value from a .sha256 release asset)",
-		Default:     "",
-	}
-}
-
-// FlagDaemonCommit is an optional git commit SHA used to verify a binary
-// supplied via --daemon-bin. The provisioner runs `<bin> --version` and
-// compares the reported commit field against this value.
-func FlagDaemonCommit() FlagDefinition[string] {
-	return FlagDefinition[string]{
-		Name:        "daemon-commit",
-		ShortName:   "",
-		Description: "Git commit SHA the binary at --daemon-bin must report via `--version` (e.g. 2ca3fe9...)",
 		Default:     "",
 	}
 }
