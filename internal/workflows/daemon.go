@@ -95,7 +95,7 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 
 	wfSteps = append(wfSteps,
 		steps.InstallDaemonServiceStep(paths),
-		steps.AddOperatorToWeaverGroupStep(),
+		//steps.AddOperatorToWeaverGroupStep(),
 	)
 
 	return automa.NewWorkflowBuilder().WithId("daemon-service-install-workflow").Steps(wfSteps...), nil
@@ -144,6 +144,7 @@ func NewDaemonServiceStopWorkflow() *automa.WorkflowBuilder {
 func NewDaemonServiceCheckWorkflow() *automa.WorkflowBuilder {
 	paths := models.Paths()
 	return automa.NewWorkflowBuilder().WithId("daemon-service-check-workflow").Steps(
+		CheckPrivilegesStep(),
 		steps.CheckDaemonServiceStep(paths, paths.DaemonSockPath),
 	)
 }
