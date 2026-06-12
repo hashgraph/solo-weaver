@@ -5,13 +5,13 @@ package daemon
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 )
 
@@ -102,12 +102,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	logx.As().Info().Str("reason", "ServerStarted").Str("sock", sockPath).Msg("Daemon socket server listening")
+	slog.Info("Daemon socket server listening", "reason", "ServerStarted", "sock", sockPath)
 
 	serveErr := make(chan error, 1)
 	go func() {
 		if err := s.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logx.As().Error().Err(err).Str("reason", "ServerStopped").Msg("Daemon socket server exited with error")
+			slog.Error("Daemon socket server exited with error", "error", err, "reason", "ServerStopped")
 			serveErr <- err
 		}
 		close(serveErr)
@@ -115,7 +115,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		logx.As().Info().Str("reason", "ServerStopped").Msg("Daemon socket server shutting down")
+		slog.Info("Daemon socket server shutting down", "reason", "ServerStopped")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		shutdownErr := s.srv.Shutdown(shutdownCtx)

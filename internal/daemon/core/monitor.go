@@ -5,10 +5,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/automa-saga/logx"
 )
 
 // Back-off and degradation parameters for SupervisedMonitor. Declared as
@@ -164,42 +163,40 @@ func SupervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTrac
 		// ctx cancelled → clean shutdown, do not restart.
 		if ctx.Err() != nil {
 			setState("stopped")
-			logx.As().Info().
-				Str("reason", "MonitorStopped").
-				Str("monitor", m.Name()).
-				Msg("Monitor stopped cleanly")
+			slog.Info("Monitor stopped cleanly",
+				"reason", "MonitorStopped",
+				"monitor", m.Name())
 			return
 		}
 
 		// nil return without ctx cancellation → also clean exit.
 		if err == nil {
 			setState("stopped")
-			logx.As().Info().
-				Str("reason", "MonitorExited").
-				Str("monitor", m.Name()).
-				Msg("Monitor exited without error and without context cancellation — not restarting")
+			slog.Info("Monitor exited without error and without context cancellation — not restarting",
+				"reason", "MonitorExited",
+				"monitor", m.Name())
 			return
 		}
 
 		// Crash path.
 		consecutiveCrashes++
 
-		logx.As().Error().Err(err).
-			Str("reason", "MonitorCrash").
-			Str("monitor", m.Name()).
-			Int("consecutive_crashes", consecutiveCrashes).
-			Dur("backoff", backoff).
-			Msg("Monitor crashed — restarting after back-off")
+		slog.Error("Monitor crashed — restarting after back-off",
+			"error", err,
+			"reason", "MonitorCrash",
+			"monitor", m.Name(),
+			"consecutive_crashes", consecutiveCrashes,
+			"backoff", backoff)
 
 		// Emit MonitorDegraded at every supervisedDegradedThreshold consecutive
 		// crashes so ops is alerted at crash #5, #10, #15, …
 		if consecutiveCrashes%supervisedDegradedThreshold == 0 {
-			logx.As().Error().Err(err).
-				Str("reason", "MonitorDegraded").
-				Str("monitor", m.Name()).
-				Int("consecutive_crashes", consecutiveCrashes).
-				Dur("current_backoff", backoff).
-				Msg("Monitor is crashing repeatedly — operator intervention may be required")
+			slog.Error("Monitor is crashing repeatedly — operator intervention may be required",
+				"error", err,
+				"reason", "MonitorDegraded",
+				"monitor", m.Name(),
+				"consecutive_crashes", consecutiveCrashes,
+				"current_backoff", backoff)
 		}
 
 		// A stable run resets both the back-off and the consecutive-crash counter.
@@ -213,10 +210,9 @@ func SupervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTrac
 		select {
 		case <-ctx.Done():
 			setState("stopped")
-			logx.As().Info().
-				Str("reason", "MonitorStopped").
-				Str("monitor", m.Name()).
-				Msg("Monitor restart cancelled — context done")
+			slog.Info("Monitor restart cancelled — context done",
+				"reason", "MonitorStopped",
+				"monitor", m.Name())
 			return
 		case <-time.After(backoff):
 		}

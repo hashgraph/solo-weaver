@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path"
@@ -200,6 +201,14 @@ func initConfig(ctx context.Context) {
 	if err := logx.Initialize(logConfig); err != nil {
 		doctor.CheckErr(ctx, err)
 	}
+
+	// Install the slog→logx bridge so the daemon kernel (which logs via the
+	// stdlib log/slog seam, in preparation for the pkg/daemonkit extraction)
+	// emits to the same zerolog sinks logx just configured — console, the
+	// rotating file, and journald. Must run after logx.Initialize so the
+	// bridge resolves the fully configured logger. CLI/workflows keep using
+	// logx directly.
+	slog.SetDefault(slog.New(logx.NewSlogHandler()))
 
 	activateProxy(ctx)
 }
