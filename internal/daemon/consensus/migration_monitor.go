@@ -128,22 +128,27 @@ func (mm *MigrationMonitor) WithCriteria(criteria ...SoakCriterion) *MigrationMo
 	return mm
 }
 
+// soakPollIntervalFloor is the minimum accepted value for SOLO_SOAK_POLL_INTERVAL.
+// Values below this floor would hammer the K8s API in production environments.
+const soakPollIntervalFloor = 5 * time.Second
+
 // pollInterval returns the configured poll interval. Priority order:
-//  1. mm.cfg.PollInterval (set programmatically in tests)
-//  2. SOLO_SOAK_POLL_INTERVAL env var (UAT short-poll builds — parse error falls through)
+//  1. mm.cfg.PollInterval (set programmatically in tests — floor not enforced)
+//  2. SOLO_SOAK_POLL_INTERVAL env var (UAT short-poll builds — must be ≥ 5 s)
 //  3. 900 s (HIP-specified production default)
 func (mm *MigrationMonitor) pollInterval() time.Duration {
 	if mm.cfg.PollInterval > 0 {
 		return mm.cfg.PollInterval
 	}
 	if s := os.Getenv("SOLO_SOAK_POLL_INTERVAL"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		if d, err := time.ParseDuration(s); err == nil && d >= soakPollIntervalFloor {
 			return d
 		}
 		logx.As().Warn().
 			Str("reason", "InvalidSoakPollInterval").
 			Str("value", s).
-			Msg("SOLO_SOAK_POLL_INTERVAL is not a valid duration — using default 900s")
+			Dur("floor", soakPollIntervalFloor).
+			Msg("SOLO_SOAK_POLL_INTERVAL is not a valid duration or is below the 5s floor — using default 900s")
 	}
 	return 900 * time.Second
 }
