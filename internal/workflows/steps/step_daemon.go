@@ -435,6 +435,36 @@ func RemoveDaemonBinaryStep(paths models.WeaverPaths) *automa.StepBuilder {
 		})
 }
 
+// RemoveDaemonConfigStep removes daemon.yaml from the config directory.
+// Deleted on uninstall so a subsequent install with different --components
+// starts from a clean slate rather than inheriting stale component entries.
+func RemoveDaemonConfigStep(paths models.WeaverPaths) *automa.StepBuilder {
+	cfgPath := paths.DaemonConfigPath
+
+	return automa.NewStepBuilder().WithId("remove-daemon-config").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if err := os.Remove(cfgPath); err != nil && !os.IsNotExist(err) {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to remove daemon config at %s", cfgPath).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Remove manually: sudo rm " + cfgPath,
+						})))
+			}
+			logx.As().Info().Str("path", cfgPath).Msg("Daemon config removed")
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Removing daemon config")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove daemon config")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Daemon config removed")
+		})
+}
+
 // StartDaemonServiceStep starts the solo-provisioner-daemon systemd service.
 func StartDaemonServiceStep() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("start-daemon-service").
