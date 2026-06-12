@@ -690,6 +690,24 @@ func FetchDaemonStatus(sockPath string) *daemon.StatusResponse {
 	return &status
 }
 
+// CheckDaemonComponentPrerequisitesStep wraps CheckDaemonComponentPrerequisites
+// as a workflow step so that install (and any future workflow) can surface probe
+// failures in the TUI without post-workflow logic in the command RunE.
+// The step succeeds immediately when no probe errors are present.
+func CheckDaemonComponentPrerequisitesStep(sockPath string) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("check-daemon-component-prerequisites").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if warning := CheckDaemonComponentPrerequisites(sockPath); warning != "" {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.IllegalState.New(
+						"daemon installed but component prerequisites are not satisfied — "+
+							"fix the issues listed above and re-run: solo-provisioner daemon service check").
+						WithProperty(models.ErrPropertyResolution, []string{warning})))
+			}
+			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{"status": "all prerequisites satisfied"}))
+		})
+}
+
 // CheckDaemonComponentPrerequisites queries GET /status on the daemon socket at
 // sockPath and returns a human-readable warning string when any component probe
 // errors are present, or an empty string when all prerequisites are satisfied.
