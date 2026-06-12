@@ -31,18 +31,21 @@ autoDirectNodeRoutes: true
 #ipv4NativeRoutingCIDR: 10.128.0.0/20
 
 # Load Balancer Configuration
-# acceleration is intentionally "disabled" (tc-eBPF), NOT "best-effort". With
-# best-effort, Cilium attaches an XDP program to every auto-detected native
-# device, including the host's public/default-route NIC. On ixgbe NICs (e.g.
-# Intel X550) the driver resets the PHY on XDP attach/reconcile, which flaps the
-# link; sustained flapping can get the upstream switch port err-disabled, taking
-# the host offline until the provider re-enables the port (survives reboot).
-# tc-eBPF performs the same load balancing without touching the PHY. See #669.
+# acceleration uses generic (SKB) XDP via Cilium's "testing-only" value, NOT
+# "native"/"best-effort". With native XDP, Cilium attaches the XDP program in the
+# driver's early receive path on every auto-detected native device, including the
+# host's public/default-route NIC. On ixgbe NICs (e.g. Intel X550) the driver
+# resets the PHY on XDP attach/reconcile, which flaps the link; sustained flapping
+# can get the upstream switch port err-disabled, taking the host offline until the
+# provider re-enables it (survives reboot). Generic XDP runs the program in the
+# network stack (SKB) instead of the driver, so the PHY is never reset, while
+# keeping an XDP-based LB datapath. Cilium names this value "testing-only"
+# (XDPModeGeneric in pkg/option). See #669.
 loadBalancer:
   mode: dsr
   dsrDispatch: opt
   algorithm: maglev
-  acceleration: "disabled"
+  acceleration: "testing-only"
   l7:
     backend: disabled
 
