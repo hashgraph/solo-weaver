@@ -4,7 +4,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -329,7 +328,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Preflight: each enabled component's kubeconfig must exist and be parseable.
 	if cn := d.cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
 		if _, err := clientcmd.BuildConfigFromFlags("", cn.Kubeconfig); err != nil {
-			return fmt.Errorf("consensus-node kubeconfig preflight failed — daemon cannot start: %w", err)
+			return errorx.ExternalError.Wrap(err, "consensus-node kubeconfig preflight failed — daemon cannot start")
 		}
 	}
 	// block-node kubeconfig preflight is deferred until the traffic-shaper monitor

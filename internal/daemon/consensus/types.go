@@ -3,8 +3,9 @@
 package consensus
 
 import (
-	"errors"
 	"time"
+
+	"github.com/joomcode/errorx"
 )
 
 // SoakStartRequest is the payload for POST /consensus_node/migration/soak/start.
@@ -19,13 +20,13 @@ type SoakStartRequest struct {
 // activating a watcher from a persisted request.
 func (r SoakStartRequest) Validate() error {
 	if r.NodeID == "" {
-		return errors.New("node_id is required")
+		return errorx.IllegalArgument.New("node_id is required")
 	}
 	if r.MigrationPlanPath == "" {
-		return errors.New("migration_plan_path is required")
+		return errorx.IllegalArgument.New("migration_plan_path is required")
 	}
 	if r.CutoverTimestamp.IsZero() {
-		return errors.New("cutover_timestamp is required")
+		return errorx.IllegalArgument.New("cutover_timestamp is required")
 	}
 	return nil
 }

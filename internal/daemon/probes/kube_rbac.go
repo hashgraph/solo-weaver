@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/joomcode/errorx"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -83,12 +84,12 @@ func (p *KubeRBACProbe) Probe(ctx context.Context) error {
 func (p *KubeRBACProbe) once(ctx context.Context) error {
 	restCfg, err := clientcmd.BuildConfigFromFlags("", p.KubeconfigPath)
 	if err != nil {
-		return fmt.Errorf("build kubeconfig: %w", err)
+		return errorx.ExternalError.Wrap(err, "build kubeconfig")
 	}
 	restCfg.Timeout = kubeRBACRESTTimeout
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
-		return fmt.Errorf("build kube client: %w", err)
+		return errorx.ExternalError.Wrap(err, "build kube client")
 	}
 	for _, verb := range p.Verbs {
 		review := &authorizationv1.SelfSubjectAccessReview{
@@ -103,10 +104,10 @@ func (p *KubeRBACProbe) once(ctx context.Context) error {
 		}
 		result, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
 		if err != nil {
-			return fmt.Errorf("SelfSubjectAccessReview(%s): %w", verb, err)
+			return errorx.ExternalError.Wrap(err, "SelfSubjectAccessReview(%s)", verb)
 		}
 		if !result.Status.Allowed {
-			return fmt.Errorf("RBAC denied: verb=%s resource=%s.%s namespace=%s",
+			return errorx.IllegalState.New("RBAC denied: verb=%s resource=%s.%s namespace=%s",
 				verb, p.Resource, p.Group, p.Namespace)
 		}
 	}

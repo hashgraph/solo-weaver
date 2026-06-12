@@ -51,7 +51,7 @@ func Test_SoakStartRequest_Validate(t *testing.T) {
 			if tc.wantErr == "" {
 				assert.NoError(t, err)
 			} else {
-				assert.EqualError(t, err, tc.wantErr)
+				assert.ErrorContains(t, err, tc.wantErr)
 			}
 		})
 	}
