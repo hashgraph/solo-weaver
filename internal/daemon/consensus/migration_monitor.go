@@ -124,10 +124,22 @@ func (mm *MigrationMonitor) WithCriteria(criteria ...SoakCriterion) *MigrationMo
 	return mm
 }
 
-// pollInterval returns the configured poll interval, defaulting to 900s.
+// pollInterval returns the configured poll interval. Priority order:
+//  1. mm.cfg.PollInterval (set programmatically in tests)
+//  2. SOLO_SOAK_POLL_INTERVAL env var (UAT short-poll builds — parse error falls through)
+//  3. 900 s (HIP-specified production default)
 func (mm *MigrationMonitor) pollInterval() time.Duration {
 	if mm.cfg.PollInterval > 0 {
 		return mm.cfg.PollInterval
+	}
+	if s := os.Getenv("SOLO_SOAK_POLL_INTERVAL"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			return d
+		}
+		logx.As().Warn().
+			Str("reason", "InvalidSoakPollInterval").
+			Str("value", s).
+			Msg("SOLO_SOAK_POLL_INTERVAL is not a valid duration — using default 900s")
 	}
 	return 900 * time.Second
 }
@@ -310,6 +322,12 @@ func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
 		OperationID: opID,
 		NodeID:      req.NodeID,
 	})
+	logx.As().Info().
+		Str("reason", ReasonSoakStarted).
+		Str("node_id", req.NodeID).
+		Time("cutover_ts", req.CutoverTimestamp).
+		Dur("poll_interval", mm.pollInterval()).
+		Msg("Soak watcher started")
 
 	mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &req})
 
@@ -522,6 +540,13 @@ func (mm *MigrationMonitor) resumeIfNeeded(ctx context.Context) {
 		OperationID: migrationOperationID(req),
 		NodeID:      req.NodeID,
 	})
+	logx.As().Info().
+		Str("reason", ReasonSoakResumed).
+		Str("node_id", req.NodeID).
+		Time("cutover_ts", req.CutoverTimestamp).
+		Float64("elapsed_hours", time.Since(req.CutoverTimestamp).Hours()).
+		Dur("poll_interval", mm.pollInterval()).
+		Msg("Soak watcher resumed after daemon restart")
 
 	mm.soakActive.Store(true)
 	mm.soakWg.Add(1)
