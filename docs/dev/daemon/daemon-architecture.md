@@ -34,7 +34,8 @@ graph TD
         run["daemon.Run(ctx)"]
         run -->|errgroup| http["HTTP control plane\n(Unix socket)"]
         run -->|errgroup| sup["componentSupervisor"]
-        run -->|goroutine| probe["runCompositeProbe"]
+        run -->|"sd_notify READY=1\n(socket up)"| sdnotify["systemd: service active"]
+        run -->|goroutine| probe["runComponentProbes\n(async — does not gate READY)"]
 
         subgraph sup["componentSupervisor"]
             direction TB
@@ -45,7 +46,7 @@ graph TD
             bn_comp -->|supervised goroutine| bn_mon["blockNodeUpgradeMonitor (stub)"]
         end
 
-        probe -->|all pass| sdnotify["sd_notify READY=1"]
+        probe -->|results stored in| probeErrors["probeErrors atomic\nsurfaced via GET /status"]
     end
 
     http -->|"GET /health\nGET /status"| cli["solo-provisioner CLI\ndaemon service check"]
@@ -133,7 +134,7 @@ main.go
     │   ├── supervisedMonitor(ctx, UpgradeMonitor,   tracker)  # per monitor goroutine
     │   ├── supervisedMonitor(ctx, MigrationMonitor, tracker)
     │   └── supervisedMonitor(ctx, blockNodeUpgradeMonitor, tracker)  # stub
-    └── go runCompositeProbe(ctx)                # fires sd_notify READY=1 when all probes pass
+    └── go runComponentProbes(ctx)              # async probe loop — results in probeErrors, does NOT gate READY=1
 ```
 
 The top-level `errgroup` cancels the context if **either** `server.Start` or `componentSupervisor`
@@ -222,24 +223,36 @@ stateDiagram-v2
 > **Crash counter**: increments on every restart. Every 5th crash emits a `MonitorDegraded` error
 > log. The counter and back-off delay both reset after a stable run lasting more than 60 s.
 
-## Startup Probe
+## Component Readiness Probes
 
-Each component can declare a `ComponentProbe` composed of one or more `Probe` leaf implementations.
-The daemon runs all component probes concurrently in `runCompositeProbe`. Only when every probe
-returns nil is `sd_notify READY=1` sent to systemd. If any probe fails (or ctx is cancelled by
-systemd's `TimeoutStartSec`), READY is never sent and systemd marks the service failed.
+Each component can declare a `ComponentProbe` composed of one or more `Probe` leaf implementations
+(e.g. `KubeRBACProbe`, `DiskOwnershipProbe`, `DiskWriteTestProbe`). These probes run **after**
+`READY=1` is sent — they do **not** gate systemd startup.
 
-Currently the consensus-node component uses a `KubeRBACProbe` that verifies the SA token can
-`list` and `watch` `networkupgradeexecutes` in the orbit namespace. The block-node stub declares
-no probe (`nil`) and is treated as immediately ready.
+### Why probes are async
+
+`sd_notify READY=1` is sent as soon as the HTTP socket is up and accepting connections. This
+means systemd marks the service `active` immediately, regardless of probe results. Component
+prerequisite health (kubeconfig RBAC, upgrade-dir ownership, write access) is tracked separately
+in `runComponentProbes` and surfaced via `GET /status`. Operators use `solo-provisioner daemon
+service check` to inspect it.
+
+This design intentionally avoids a race where missing disk prerequisites (e.g. the CN upgrade
+staging directory not yet created) would cause systemd to time out the start and mark the service
+`failed` before the operator has a chance to act.
 
 ```mermaid
 flowchart TD
     start(["daemon.Run starts"]) --> preflight
     preflight["kubeconfig preflight\n(build REST config for each enabled component)"] -->|fail| abort(["return error\ndaemon exits, systemd restarts"])
-    preflight -->|pass| rcp
+    preflight -->|pass| ready
 
-    subgraph rcp["runCompositeProbe (concurrent)"]
+    ready["sd_notify READY=1\nsystemd marks service active\n(socket is up)"] --> monitors
+    ready --> probeloop
+
+    monitors["monitors running\nHTTP API accepting"]
+
+    subgraph probeloop["runComponentProbes (async background loop)"]
         direction LR
         p1["KubeRBACProbe (CN)"]
         p2["DiskOwnershipProbe (CN upgrade_dir)"]
@@ -247,11 +260,14 @@ flowchart TD
         p4["nil probe (BN — immediately ready)"]
     end
 
-    rcp -->|all pass| ready["sd_notify READY=1\nsystemd marks service active"]
-    rcp -->|"any fail or TimeoutStartSec expires"| noready["READY never sent\nsystemd marks service failed"]
-
-    ready --> monitors["monitors running\nHTTP API accepting"]
+    probeloop -->|"any fail → retry every 30 s\nresult stored in probeErrors"| status["GET /status\nshows component probe failures"]
+    probeloop -->|all pass| allready["probeErrors cleared\nlog: AllComponentProbesReady"]
 ```
+
+Currently the consensus-node component uses a `KubeRBACProbe` that verifies the SA token can
+`list` and `watch` `networkupgradeexecutes` in the orbit namespace. The block-node stub declares
+no probe (`nil`) and is treated as immediately ready. If a probe keeps failing, the daemon remains
+`active` in systemd but `solo-provisioner daemon service check` will report the failure.
 
 ## HTTP Control Plane
 

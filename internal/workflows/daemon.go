@@ -96,6 +96,8 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 	wfSteps = append(wfSteps,
 		steps.InstallDaemonServiceStep(paths),
 		//steps.AddOperatorToWeaverGroupStep(),
+		steps.CheckDaemonServiceStep(paths, paths.DaemonSockPath),
+		steps.CheckDaemonComponentPrerequisitesStep(paths.DaemonSockPath),
 	)
 
 	return automa.NewWorkflowBuilder().WithId("daemon-service-install-workflow").Steps(wfSteps...), nil

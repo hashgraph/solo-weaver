@@ -945,8 +945,14 @@ sudo solo-provisioner daemon service check
 ## TC-19 — Startup probe failure: missing or misconfigured upgrade directory
 
 **Goal**: verify that when the consensus-node upgrade staging directory is absent or has wrong
-ownership, the daemon fails to reach `READY`, the probe failure is clearly logged, the operator
-can diagnose from logs, fix the issue, and recover by reinstalling.
+ownership, the daemon starts and becomes `active` (socket is up) but logs probe failures, the
+operator can diagnose from logs and `/status`, fix the issue, and recover by reinstalling.
+
+> **Design note**: component readiness probes run asynchronously after `READY=1` is sent to
+> systemd (see [daemon-architecture.md § Component Readiness Probes](daemon-architecture.md)).
+> A missing or misconfigured upgrade directory does **not** prevent the service from reaching
+> `active` state — it is surfaced as a probe failure in the journal and via `GET /status`.
+> This test verifies that failure path is visible and actionable, not that systemd rejects startup.
 
 > This test intentionally puts the node into a broken state. Read all steps before starting.
 
@@ -973,12 +979,13 @@ can diagnose from logs, fix the issue, and recover by reinstalling.
      --cn-orbit $ORBIT
    ```
    The install workflow itself should succeed (it provisions RBAC and writes config before
-   starting the service). The service starts but will fail its readiness probe.
+   starting the service). The service will start and reach `active` because `READY=1` is sent
+   when the HTTP socket is up — component probes run asynchronously.
 
-2. Check service state — it should be stuck in `activating` or transition to `failed`:
+2. Check service state — it should be `active` despite the broken prerequisite:
    ```bash
    systemctl status solo-provisioner-daemon.service
-   # expected: activating (start) or failed
+   # expected: active (running)
    ```
 
 3. Inspect the journal for the probe failure:
@@ -986,13 +993,20 @@ can diagnose from logs, fix the issue, and recover by reinstalling.
    journalctl -u solo-provisioner-daemon.service -n 60
    ```
    Look for log lines containing any of:
-   - `ComponentProbeAborted` — the composite probe gave up
+   - `ComponentProbeNotReady` — a component probe iteration failed
    - `DiskOwnershipProbe` / `DiskWriteTestProbe` — the specific failing leaf probe
-   - `reason=ComponentProbeAborted` with `component=consensus-node`
+   - `reason=ComponentProbeNotReady` with `component=consensus-node`
 
-4. Identify the fix from the log message (missing dir, wrong owner, no write access).
+4. Confirm probe failure is surfaced via the HTTP API:
+   ```bash
+   SOCK=/opt/solo/weaver/daemon/daemon.sock
+   sudo curl --unix-socket $SOCK http://localhost/status | python3 -m json.tool
+   ```
+   The response should show a non-empty `probe_errors` field for `consensus-node`.
 
-5. Fix the issue:
+5. Identify the fix from the log message (missing dir, wrong owner, no write access).
+
+6. Fix the issue:
    ```bash
    # If you renamed the directory:
    sudo mv /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.bak \
@@ -1003,7 +1017,7 @@ can diagnose from logs, fix the issue, and recover by reinstalling.
    sudo chmod 0775 /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
    ```
 
-6. Reinstall to restart the daemon with the corrected environment:
+7. Reinstall to restart the daemon with the corrected environment:
    ```bash
    sudo solo-provisioner daemon service uninstall
    sudo solo-provisioner daemon service install \
@@ -1012,7 +1026,7 @@ can diagnose from logs, fix the issue, and recover by reinstalling.
      --cn-orbit $ORBIT
    ```
 
-7. Confirm recovery:
+8. Confirm recovery:
    ```bash
    systemctl is-active solo-provisioner-daemon.service
    # expected: active
@@ -1021,17 +1035,18 @@ can diagnose from logs, fix the issue, and recover by reinstalling.
    # expected: {"status":"ok"}
 
    sudo curl --unix-socket $SOCK http://localhost/status | python3 -m json.tool
-   # expected: consensus-node / upgrade-monitor: "running"
+   # expected: consensus-node / upgrade-monitor: "running", probe_errors absent or empty
    ```
 
 ### Expected results
 
-- [ ] After bad install: service is **not** active; `journalctl` shows a probe failure log line
-  with `reason=ComponentProbeAborted` and `component=consensus-node`
+- [ ] After bad install: service is **active** (not failed); `journalctl` shows a probe failure
+  log line with `reason=ComponentProbeNotReady` and `component=consensus-node`
+- [ ] `GET /status` shows a non-empty `probe_errors` entry for `consensus-node`
 - [ ] The log message is specific enough to identify the root cause without external knowledge
   (wrong owner, missing dir, or no write access)
-- [ ] After fix + reinstall: service reaches `active`, `/health` returns 200,
-  `/status` shows `upgrade-monitor: running`
+- [ ] After fix + reinstall: service remains `active`, `/health` returns 200,
+  `/status` shows `upgrade-monitor: running` and no `probe_errors`
 - [ ] No `MonitorDegraded` entries in the log after successful recovery
 
 ### Teardown
