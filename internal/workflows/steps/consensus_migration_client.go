@@ -5,11 +5,11 @@ package steps
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
+	"github.com/joomcode/errorx"
 )
 
 // SoakStart sends POST /consensus_node/migration/soak/start to the daemon socket
@@ -18,7 +18,7 @@ import (
 func SoakStart(sockPath string, req consensus.SoakStartRequest) (*consensus.SoakStartResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal soak start request: %w", err)
+		return nil, errorx.InternalError.Wrap(err, "marshal soak start request")
 	}
 
 	resp, err := socketClient(sockPath).Post(
@@ -27,7 +27,7 @@ func SoakStart(sockPath string, req consensus.SoakStartRequest) (*consensus.Soak
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("soak start: %w", err)
+		return nil, errorx.ExternalError.Wrap(err, "soak start")
 	}
 	defer resp.Body.Close()
 
@@ -37,7 +37,7 @@ func SoakStart(sockPath string, req consensus.SoakStartRequest) (*consensus.Soak
 
 	var out consensus.SoakStartResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode soak start response: %w", err)
+		return nil, errorx.IllegalFormat.Wrap(err, "decode soak start response")
 	}
 	return &out, nil
 }
@@ -54,12 +54,12 @@ func SoakStop(sockPath string, keepState bool) error {
 
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
-		return fmt.Errorf("build soak stop request: %w", err)
+		return errorx.InternalError.Wrap(err, "build soak stop request")
 	}
 
 	resp, err := soakSocketClient(sockPath).Do(req)
 	if err != nil {
-		return fmt.Errorf("soak stop: %w", err)
+		return errorx.ExternalError.Wrap(err, "soak stop")
 	}
 	defer resp.Body.Close()
 
@@ -93,9 +93,9 @@ func decodeAPIError(resp *http.Response) error {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if body.Error != "" {
-		return fmt.Errorf("daemon returned %d: %s", resp.StatusCode, body.Error)
+		return errorx.ExternalError.New("daemon returned %d: %s", resp.StatusCode, body.Error)
 	}
-	return fmt.Errorf("daemon returned unexpected status %d", resp.StatusCode)
+	return errorx.ExternalError.New("daemon returned unexpected status %d", resp.StatusCode)
 }
 
 // soakClientTimeout is used by the soak client calls. Longer than the default
