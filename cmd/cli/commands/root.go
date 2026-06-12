@@ -123,6 +123,7 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, state.NewUnifiedStateMigration())
 	migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
 	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
+	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
 
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
