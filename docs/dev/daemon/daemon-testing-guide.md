@@ -500,26 +500,48 @@ daemon will fail to start (systemd marks it failed after `TimeoutStartSec`).
 
 ## TC-04 — Re-install with flag override
 
-**Goal**: verify that running install on an existing `daemon.yaml` applies flag overrides and
-updates the file without re-prompting.
+**Goal**: verify that flag overrides are applied to `daemon.yaml` and the service starts cleanly
+when `install` is re-run against an existing (stopped) installation.
+
+> **Note**: `daemon service install` is intentionally blocked while the daemon is running —
+> see TC-18. The service must be stopped before re-installing so that neither `daemon.yaml`
+> nor the binary are touched while the service holds them open.
 
 ### Steps
 
-1. Ensure the daemon is already installed (TC-01 or TC-02).
-2. Run:
+1. Ensure the daemon is installed and running (TC-01 or TC-02).
+2. Stop the service:
+   ```bash
+   sudo solo-provisioner daemon service stop
+   ```
+3. Re-run install with the new flag value:
    ```bash
    sudo solo-provisioner daemon service install --cn-orbit new-orbit
+   ```
+4. Verify:
+   ```bash
+   sudo solo-provisioner daemon service check
    ```
 
 ### Expected results
 
-- [ ] No prompts appear
+- [ ] `daemon service stop` exits 0 and service is inactive
+- [ ] `daemon service install` exits 0 with no prompts
 - [ ] `daemon.yaml` now has `orbit: new-orbit`:
   ```bash
   grep orbit /opt/solo/weaver/config/daemon.yaml
   # expected: orbit: new-orbit
   ```
-- [ ] Service restarted and is active
+- [ ] Service is active after re-install
+
+### Negative check — attempt install while running
+
+1. Ensure daemon is running: `sudo solo-provisioner daemon service check`
+2. Run install without stopping first:
+   ```bash
+   sudo solo-provisioner daemon service install --cn-orbit another-orbit
+   ```
+3. Expected: command exits non-zero with "already running" message; `daemon.yaml` is **unchanged**
 
 ---
 
@@ -905,9 +927,10 @@ consensus-node block.
 ## TC-18 — Install blocked when daemon is already running
 
 **Goal**: verify that `daemon service install` exits with a clear, actionable error when the
-daemon service is already running, rather than attempting to overwrite an in-use binary.
-This is intentional behaviour — `copyBinaryFile` uses `O_TRUNC` which fails with
-"text file busy" on an active executable. The operator must stop the service first.
+daemon service is already running, leaving both the service and `daemon.yaml` completely
+unchanged. This is intentional behaviour — the guard runs before any files are touched to
+prevent partial-update state (config changed on disk while the service is still running with
+old in-memory config). The operator must stop the service first.
 
 ### Steps
 
@@ -928,6 +951,7 @@ This is intentional behaviour — `copyBinaryFile` uses `O_TRUNC` which fails wi
 - [ ] Command exits non-zero with a message containing "already running"
 - [ ] Resolution hint directs operator to `daemon service stop` then `daemon service install`
 - [ ] Service remains running and unmodified after the failed attempt
+- [ ] `daemon.yaml` is unchanged (no flag overrides were applied)
 
 ### Correct operator flow when re-install is needed
 
