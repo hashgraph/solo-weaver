@@ -45,13 +45,15 @@ func NewConsensusNodeHandler(mm *MigrationMonitor, migrationStateFn func() core.
 //
 // Current routes:
 //
-//	GET  /consensus_node/migration/status       — combined: monitor health + soak state
-//	GET  /consensus_node/migration/soak/status  — soak-run state only
-//	POST /consensus_node/migration/soak/start   — enqueue a new soak run
+//	GET    /consensus_node/migration/status       — combined: monitor health + soak state
+//	GET    /consensus_node/migration/soak/status  — soak-run state only
+//	POST   /consensus_node/migration/soak/start   — enqueue a new soak run
+//	DELETE /consensus_node/migration/soak         — stop the running soak watcher
 func (h *ConsensusNodeHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /consensus_node/migration/status", h.handleConsensusMigrationStatus)
 	mux.HandleFunc("GET /consensus_node/migration/soak/status", h.handleConsensusSoakStatus)
 	mux.HandleFunc("POST /consensus_node/migration/soak/start", h.handleConsensusSoakStart)
+	mux.HandleFunc("DELETE /consensus_node/migration/soak", h.handleConsensusSoakStop)
 }
 
 // handleConsensusMigrationStatus returns the combined view of the migration
@@ -117,6 +119,30 @@ func (h *ConsensusNodeHandler) handleConsensusSoakStart(w http.ResponseWriter, r
 		Msg("Soak start request accepted")
 
 	writeJSON(w, http.StatusAccepted, SoakStartResponse{Accepted: true})
+}
+
+// handleConsensusSoakStop stops the running soak watcher.
+// Query param: delete_state=false preserves cutover-state.jsonl so the daemon
+// resumes the soak on the next restart (default: true — state is deleted).
+func (h *ConsensusNodeHandler) handleConsensusSoakStop(w http.ResponseWriter, r *http.Request) {
+	if h.mm == nil {
+		writeError(w, http.StatusServiceUnavailable, "migration monitor not enabled")
+		return
+	}
+
+	deleteState := r.URL.Query().Get("delete_state") != "false"
+
+	if !h.mm.TryStop(deleteState) {
+		writeError(w, http.StatusConflict, "no soak watcher is currently active")
+		return
+	}
+
+	logx.As().Info().
+		Str("reason", "SoakStopAccepted").
+		Bool("delete_state", deleteState).
+		Msg("Soak stop request accepted")
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeJSON serialises v as JSON and writes it with the given status code.

@@ -1452,12 +1452,19 @@ returns HTTP 202, and immediately reflects `active: true` in the status endpoint
     }
   }
   ```
-- [ ] Migration events JSONL contains `reason=SoakStarted` with the `node_id` and `cutover_timestamp`:
+- [ ] Migration events JSONL contains `reason=SoakStarted`:
   ```json
   {"reason":"SoakStarted","msg":"Soak started for node 0; cutover at 2024-01-15T00:00:00Z", ...}
   ```
-  > **Note**: the systemd journal logs `reason=SoakStartAccepted`; the canonical `SoakStarted` event
-  > lives in the JSONL file at `/opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl`.
+- [ ] Journal also contains `reason=SoakStarted` (with `poll_interval` field so you can verify
+  the daemon is using the expected poll interval):
+  ```bash
+  journalctl -u solo-provisioner-daemon.service -g SoakStarted -n 5
+  # expected line contains: reason=SoakStarted node_id=... cutover_ts=... poll_interval=15m0s
+  ```
+  > **Note**: the journal additionally logs `reason=SoakStartAccepted` when the HTTP request is
+  > first received (before the watcher goroutine starts). `SoakStarted` appears slightly later,
+  > once the watcher is running.
 
 ---
 
@@ -1516,12 +1523,18 @@ resumes automatically from the persisted `cutover-state.jsonl` without losing el
 ### Expected results
 
 - [ ] After restart, status shows `"active": true` with the **original** `cutover_timestamp`
-- [ ] Migration events JSONL contains `reason=SoakResumed` with `elapsed_hours` reflecting real elapsed time:
+- [ ] Migration events JSONL contains `reason=SoakResumed` with `elapsed_hours`:
   ```json
   {"reason":"SoakResumed","msg":"Soak resumed after daemon restart for node 0; cutover at 2024-01-15T00:00:00Z; ...h elapsed", ...}
   ```
-  > **Note**: the systemd journal logs `reason=SoakResuming`; the canonical `SoakResumed` event is
-  > in the JSONL events file, not the journal.
+- [ ] Journal also contains `reason=SoakResumed` with `poll_interval` so you can verify the
+  correct interval is active after restart:
+  ```bash
+  journalctl -u solo-provisioner-daemon.service -g SoakResumed -n 5
+  # expected line contains: reason=SoakResumed node_id=... elapsed_hours=... poll_interval=15m0s
+  ```
+  > **Note**: the journal additionally logs `reason=SoakResuming` immediately before the watcher
+  > goroutine is re-spawned. `SoakResumed` appears once the goroutine is running.
 - [ ] Journal does **not** contain `reason=SoakStateCorrupted`
 - [ ] The state file is present on disk:
   ```bash
@@ -1788,7 +1801,239 @@ field returns HTTP 400 and does not activate a soak.
 
 ---
 
+---
+
+## TC-35 — `consensus migration soak start` CLI command
+
+**Goal**: verify that the CLI `soak start` command starts the soak watcher via the daemon HTTP API,
+shows TUI step output, and exits 0.
+
+### Prerequisites
+
+- Daemon installed and running with `migration: true`.
+- No soak currently active.
+
+### Steps
+
+1. Run:
+   ```bash
+   sudo solo-provisioner consensus migration soak start \
+     --node-id $NODE_ID \
+     --cutover-ts 2024-01-15T00:00:00Z \
+     --migration-plan /tmp/plan.yaml
+   ```
+2. Check the journal:
+   ```bash
+   journalctl -u solo-provisioner-daemon.service -g SoakStarted -n 5
+   ```
+
+### Expected results
+
+- [ ] Command exits 0
+- [ ] TUI shows a step completion line: `Consensus-node migration soak watcher started (node_id=...)`
+  (or in `--non-interactive` mode: structured log line with the same message)
+- [ ] Journal contains `reason=SoakStarted` with `poll_interval`
+- [ ] `consensus migration soak status` shows `"active": true`
+
+### Negative check — missing required flag
+
+```bash
+sudo solo-provisioner consensus migration soak start --node-id $NODE_ID --cutover-ts 2024-01-15T00:00:00Z
+# missing --migration-plan
+```
+
+Expected: exits non-zero with a Cobra "required flag" error; no HTTP call is made.
+
+---
+
+## TC-36 — `consensus migration soak stop` CLI command (default: delete state)
+
+**Goal**: verify that `soak stop` stops the watcher, deletes `cutover-state.jsonl`, and exits 0.
+
+### Prerequisites
+
+- Active soak (run TC-35 or TC-27 first).
+
+### Steps
+
+1. Confirm soak is active:
+   ```bash
+   sudo solo-provisioner consensus migration soak status
+   # expected: "active": true
+   ```
+2. Stop without `--keep-state`:
+   ```bash
+   sudo solo-provisioner consensus migration soak stop
+   ```
+3. Confirm soak is stopped:
+   ```bash
+   sudo solo-provisioner consensus migration soak status
+   # expected: "active": false
+   ```
+4. Confirm state file is deleted:
+   ```bash
+   sudo ls /opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl
+   # expected: No such file or directory
+   ```
+
+### Expected results
+
+- [ ] Command exits 0
+- [ ] TUI shows: `Consensus-node migration soak watcher stopped (state deleted — daemon will NOT resume on next restart)`
+- [ ] `soak status` returns `"active": false`
+- [ ] `cutover-state.jsonl` is absent — daemon will NOT auto-resume on next restart
+
+---
+
+## TC-37 — `consensus migration soak stop --keep-state`
+
+**Goal**: verify that `soak stop --keep-state` stops the watcher but preserves
+`cutover-state.jsonl`, so the daemon resumes the soak on the next restart.
+
+### Prerequisites
+
+- Active soak.
+
+### Steps
+
+1. Stop with `--keep-state`:
+   ```bash
+   sudo solo-provisioner consensus migration soak stop --keep-state
+   ```
+2. Confirm state file is present:
+   ```bash
+   sudo ls -la /opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl
+   # expected: file present
+   ```
+3. Restart the daemon:
+   ```bash
+   sudo systemctl restart solo-provisioner-daemon.service
+   sleep 5
+   ```
+4. Check status:
+   ```bash
+   sudo solo-provisioner consensus migration soak status
+   ```
+
+### Expected results
+
+- [ ] Stop exits 0; TUI shows: `...state preserved — daemon WILL resume on next restart`
+- [ ] `cutover-state.jsonl` is present after stop
+- [ ] After restart, `soak status` shows `"active": true` with the original `cutover_timestamp`
+- [ ] Journal contains `reason=SoakResumed` with `poll_interval`
+
+---
+
+## TC-38 — `consensus migration soak status` CLI command
+
+**Goal**: verify that `soak status` prints the current soak state as indented JSON and exits 0.
+
+### Steps
+
+1. With no active soak:
+   ```bash
+   sudo solo-provisioner consensus migration soak status
+   ```
+   Expected: JSON with `"active": false`; exit 0.
+
+2. Start a soak (TC-35) then re-run:
+   ```bash
+   sudo solo-provisioner consensus migration soak status
+   ```
+   Expected: JSON with `"active": true` and the `request` block.
+
+### Negative check — daemon not running
+
+1. Stop the daemon: `sudo systemctl stop solo-provisioner-daemon.service`
+2. Run: `sudo solo-provisioner consensus migration soak status`
+3. Expected: exits non-zero with resolution hints including:
+   - `Verify daemon is running: sudo systemctl status solo-provisioner-daemon`
+   - `Check daemon journal: sudo journalctl -u solo-provisioner-daemon -n 20 --no-pager`
+   - `If not installed: sudo solo-provisioner daemon service install`
+
+---
+
+## TC-39 — `DELETE /consensus_node/migration/soak` API: 409 when no soak active
+
+**Goal**: verify that the stop endpoint returns HTTP 409 when no soak watcher is running.
+
+### Prerequisites
+
+- Daemon running; no active soak (`soak status` returns `"active": false`).
+
+### Steps
+
+```bash
+sudo curl -s -w "\nHTTP %{http_code}\n" \
+  -X DELETE --unix-socket $SOCK \
+  http://localhost/consensus_node/migration/soak
+# expected: HTTP 409 with body {"error":"no soak watcher is currently active"}
+```
+
+### Expected result
+
+- [ ] HTTP 409; body `{"error":"no soak watcher is currently active"}`
+
+---
+
+## TC-40 — Reconfigure poll interval without data loss (full flow)
+
+**Goal**: verify the operator flow for changing `SOLO_SOAK_POLL_INTERVAL` while a soak is in
+progress, without losing elapsed soak time.
+
+> This test combines TC-37 (stop --keep-state) with poll-interval reconfiguration.
+
+### Steps
+
+1. Start a soak with the default interval (TC-35).
+2. Confirm `poll_interval=15m0s` in the journal:
+   ```bash
+   journalctl -u solo-provisioner-daemon.service -g SoakStarted -n 3
+   ```
+3. Stop the watcher but preserve state:
+   ```bash
+   sudo solo-provisioner consensus migration soak stop --keep-state
+   ```
+4. Set a short poll interval via systemd override:
+   ```bash
+   sudo systemctl edit solo-provisioner-daemon.service
+   # Add: [Service]
+   #      Environment="SOLO_SOAK_POLL_INTERVAL=30s"
+   sudo systemctl daemon-reload
+   ```
+5. Restart the daemon:
+   ```bash
+   sudo systemctl restart solo-provisioner-daemon.service
+   sleep 5
+   ```
+6. Confirm resumed with new interval:
+   ```bash
+   journalctl -u solo-provisioner-daemon.service -g SoakResumed -n 3
+   # expected: poll_interval=30s
+   ```
+7. Confirm status shows active soak with original `cutover_timestamp`:
+   ```bash
+   sudo solo-provisioner consensus migration soak status
+   ```
+
+### Expected results
+
+- [ ] Step 3: stop exits 0; state file preserved
+- [ ] Step 6: journal shows `reason=SoakResumed` with `poll_interval=30s`
+- [ ] Step 7: `"active": true`; original `cutover_timestamp` unchanged
+
+### Teardown
+
+```bash
+sudo systemctl revert solo-provisioner-daemon.service
+sudo systemctl daemon-reload
+sudo solo-provisioner consensus migration soak stop
+```
+
+---
+
 ## Reporting Results
+
 
 For each test case, record:
 

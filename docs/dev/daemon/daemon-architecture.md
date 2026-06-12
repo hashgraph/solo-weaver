@@ -283,14 +283,71 @@ add their own sub-trees without touching existing paths.
 | `GET` | `/status` | Full daemon view: all components and their monitor states |
 | `GET` | `/consensus_node/migration/status` | Combined view: migration monitor health + soak state (`ConsensusMigrationStatusResponse`) |
 | `GET` | `/consensus_node/migration/soak/status` | Soak-run state only (`SoakStatusResponse`) |
-| `POST` | `/consensus_node/migration/soak/start` | Enqueue a new soak run (idempotent; 409 if already active) |
+| `POST`   | `/consensus_node/migration/soak/start` | Enqueue a new soak run (idempotent; 409 if already active) |
+| `DELETE` | `/consensus_node/migration/soak`       | Stop the running soak watcher. Query param `delete_state=false` preserves `cutover-state.jsonl` so the daemon resumes on next restart (default: true — state is deleted). Returns 204 on success, 409 if no soak is active. |
 
 > **Extensibility**: future block-node endpoints follow the same pattern:
 > `GET /block_node/upgrade/status`, `POST /block_node/upgrade/execute`, etc.
 > A planned `GET /consensus_node/migration/monitor/status` will expose monitor
 > health independently of soak state.
 
+### Soak stop flow
+
+`DELETE /consensus_node/migration/soak` calls `MigrationMonitor.TryStop(deleteState)` which:
+
+1. Calls the per-watcher cancel func stored in `soakCancel` (set when the watcher goroutine starts).
+2. Waits for the watcher to drain via `soakWg.Wait()`.
+3. Optionally removes `cutover-state.jsonl` (controlled by the `delete_state` query param).
+
+This is the safe way to stop a soak and reconfigure the poll interval without a full daemon restart:
+
+```bash
+# Stop soak and delete state (clean stop — daemon will NOT auto-resume)
+curl -X DELETE --unix-socket $SOCK http://localhost/consensus_node/migration/soak
+
+# Stop soak but keep state (daemon WILL auto-resume on next restart)
+curl -X DELETE --unix-socket $SOCK 'http://localhost/consensus_node/migration/soak?delete_state=false'
+```
+
 The socket path is used directly by `solo-provisioner daemon service check` via `curl --unix-socket`.
+
+## CLI Commands for Soak Management
+
+The consensus-node migration soak watcher is managed through the `solo-provisioner consensus migration soak` command group (not `daemon service` — that tree is scoped to daemon lifecycle only):
+
+```
+solo-provisioner consensus migration soak start \
+  --node-id <id> --cutover-ts <RFC-3339> --migration-plan <path>
+solo-provisioner consensus migration soak stop   [--keep-state]
+solo-provisioner consensus migration soak status
+```
+
+Each mutating command (`start`, `stop`) runs through the standard automa workflow + `notify` pipeline, producing TUI step output in interactive mode and structured log lines in `--non-interactive` mode. Resolution hints are embedded in every error path.
+
+| Command | Underlying API | Notes |
+|---|---|---|
+| `soak start` | `POST /consensus_node/migration/soak/start` | Requires `--node-id`, `--cutover-ts`, `--migration-plan` |
+| `soak stop` | `DELETE /consensus_node/migration/soak` | `--keep-state` sends `?delete_state=false` |
+| `soak status` | `GET /consensus_node/migration/soak/status` | Plain JSON fetch; no TUI workflow |
+
+### Reconfigure poll interval without data loss
+
+```bash
+# 1. Stop the watcher (keep state so elapsed time is preserved)
+sudo solo-provisioner consensus migration soak stop --keep-state
+
+# 2. Set new poll interval via systemd drop-in
+sudo systemctl edit solo-provisioner-daemon.service
+# add: [Service]
+#      Environment="SOLO_SOAK_POLL_INTERVAL=30s"
+
+# 3. Reload and restart — daemon reads env var at startup and resumes the soak
+sudo systemctl daemon-reload
+sudo systemctl restart solo-provisioner-daemon.service
+
+# 4. Confirm poll_interval in journal
+sudo journalctl -u solo-provisioner-daemon.service -g SoakResumed -n 5
+```
 
 ## Consensus-Node Monitors
 
@@ -310,6 +367,13 @@ The socket path is used directly by `solo-provisioner daemon service check` via 
   `NoPodRestarts`, `ConsensusParticipationNominal`.
 - Idempotency: `TryEnqueue()` uses an atomic `soakActive` flag + 1-capacity channel;
   duplicate `POST /consensus_node/migration/soak/start` returns HTTP 409.
+- `TryStop(deleteState bool)` cancels the running watcher goroutine (via a per-watcher context
+  stored in `soakCancel`) and waits for drain. Optionally removes `cutover-state.jsonl`.
+  Returns false if no watcher is active (caller responds 409).
+- Journal log lines: both `reason=SoakStarted` and `reason=SoakResumed` are emitted to the
+  daemon journal **and** to the JSONL event log — journal entries include `poll_interval` so
+  operators can immediately verify whether the daemon is using the default 15-minute interval
+  or an overridden test value.
 - Writes a structured JSONL event log to `paths.DaemonConsensusMigrateEventsDir`.
 
 ## Install Workflow
