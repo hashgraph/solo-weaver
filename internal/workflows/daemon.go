@@ -108,7 +108,8 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 //  2. Stop + disable + remove systemd service unit
 //  3. Remove the daemon binary from paths.BinDir
 //  4. Remove per-component kubeconfig files
-//  5. Delete per-component RBAC resources (CRB + CR + Secret + SA)
+//  5. Remove daemon.yaml so a fresh install with different --components starts clean
+//  6. Delete per-component RBAC resources (CRB + CR + Secret + SA)
 func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 	paths := models.Paths()
 	componentSpecs, err := loadComponentSpecs(paths)
@@ -120,6 +121,7 @@ func NewDaemonServiceUninstallWorkflow() (*automa.WorkflowBuilder, error) {
 		steps.RemoveDaemonServiceStep(paths),
 		steps.RemoveDaemonBinaryStep(paths),
 		steps.RemoveDaemonKubeconfigStep(componentSpecs),
+		steps.RemoveDaemonConfigStep(paths),
 		steps.DeleteDaemonRBACStep(componentSpecs),
 	), nil
 }
