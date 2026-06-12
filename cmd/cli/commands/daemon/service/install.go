@@ -16,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -48,6 +49,22 @@ var installCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var rootFlags common.RootFlags
 		_ = common.ExtractRootFlags(cmd, args, &rootFlags)
+
+		// ── 0. Fail fast if the service is already running ────────────────────
+		// copyBinaryFile uses O_TRUNC which raises "text file busy" on an active
+		// executable, but we also refuse to touch daemon.yaml while the service is
+		// running to avoid leaving a partial-update state (config changed on disk,
+		// service still running with old in-memory config).
+		if running, _ := pkgos.IsServiceRunning(cmd.Context(), "solo-provisioner-daemon"); running {
+			return errorx.IllegalState.New(
+				"daemon service 'solo-provisioner-daemon' is already running — stop it before installing").
+				WithProperty(models.ErrPropertyResolution, []string{
+					"Stop the service, re-run install, then verify:",
+					"  sudo solo-provisioner daemon service stop",
+					"  sudo solo-provisioner daemon service install [flags]",
+					"  sudo solo-provisioner daemon service check",
+				})
+		}
 
 		paths := models.Paths()
 
