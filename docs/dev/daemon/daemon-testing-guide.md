@@ -1530,20 +1530,76 @@ resumes automatically from the persisted `cutover-state.jsonl` without losing el
 
 ---
 
+## Short-poll daemon for UAT
+
+TC-30, TC-31, and TC-33 require the soak watcher to fire within seconds rather than the
+production default of 15 minutes. The daemon reads `SOLO_SOAK_POLL_INTERVAL` at startup;
+set it to a short duration before starting (or restarting) the service.
+
+**Recommended values per test case:**
+
+| Test | Recommended interval |
+|------|----------------------|
+| TC-30 (SoakCheck heartbeat) | `30s` |
+| TC-31 (FleetThresholdReached) | `30s` |
+| TC-33 (CriterionMet edge trigger) | `10s` |
+
+**How to set the env var for a systemd-managed daemon:**
+
+```bash
+# Create an override drop-in (do NOT edit the main unit file):
+sudo systemctl edit solo-provisioner-daemon.service
+```
+
+Add the following in the editor that opens and save:
+
+```ini
+[Service]
+Environment="SOLO_SOAK_POLL_INTERVAL=30s"
+```
+
+Then reload and restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart solo-provisioner-daemon.service
+# Verify it took effect:
+sudo systemctl show solo-provisioner-daemon.service | grep SOLO_SOAK
+```
+
+**Restore production defaults** when UAT is complete:
+
+```bash
+sudo systemctl revert solo-provisioner-daemon.service
+sudo systemctl daemon-reload
+sudo systemctl restart solo-provisioner-daemon.service
+```
+
+> If the value of `SOLO_SOAK_POLL_INTERVAL` cannot be parsed as a Go duration (e.g. a
+> typo), the daemon logs a warning (`reason=InvalidSoakPollInterval`) and falls back to
+> the 900 s production default.
+
+---
+
 ## TC-30 — Migration monitor: `SoakCheck` heartbeat emitted each poll tick
 
 **Goal**: verify that the migration monitor emits a `SoakCheck` JSONL event on every
 poll interval — the absence of this event is the failure signal for external monitoring.
 
-> The production poll interval is 15 minutes. For manual testing, the daemon must be
-> built with a shorter poll interval override (e.g. 60 seconds) or the tester must
-> wait the full interval.
+> The production poll interval is 15 minutes. Set `SOLO_SOAK_POLL_INTERVAL=30s` when
+> starting the daemon to shorten the interval for this test (see
+> [Short-poll daemon for UAT](#short-poll-daemon-for-uat) below).
+
+### Prerequisites
+
+- The daemon is running with `SOLO_SOAK_POLL_INTERVAL=30s` (see
+  [Short-poll daemon for UAT](#short-poll-daemon-for-uat)).
 
 ### Steps
 
 1. Start a soak (TC-27 steps).
 2. Note the current time.
-3. Wait one poll interval (default 15 min; use a test build with a short interval if available).
+3. Wait one poll interval (30 s with the env var set).
 4. Check the migration events log (not journald — this goes to the JSONL event file):
    ```bash
    # The migrate events JSONL lives at:
@@ -1573,6 +1629,8 @@ a `FleetThresholdReached` event on the next poll tick.
 
 ### Prerequisites
 
+- The daemon is running with `SOLO_SOAK_POLL_INTERVAL=30s` (see
+  [Short-poll daemon for UAT](#short-poll-daemon-for-uat)).
 - An active soak (TC-27).
 - Flag file does **not** already exist:
   ```bash
@@ -1587,7 +1645,7 @@ a `FleetThresholdReached` event on the next poll tick.
    sudo mkdir -p /opt/solo/weaver/migration
    sudo touch /opt/solo/weaver/migration/fleet-threshold-reached
    ```
-2. Wait one poll interval.
+2. Wait one poll interval (30 s with `SOLO_SOAK_POLL_INTERVAL=30s`).
 3. Check the migration events JSONL:
    ```bash
    sudo cat /opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl | python3 -m json.tool
@@ -1667,11 +1725,16 @@ restarts, the monitor logs `SoakStateCorrupted`, deletes the bad file, and start
 emits exactly one `CriterionMet` event for that criterion — not one per tick.
 
 > `SoakDuration` is the only criterion that can be verified without external stubs,
-> because it transitions to green after a fixed time period. Use a test daemon build
-> with a short soak period (e.g. 30 seconds) and a short poll interval (e.g. 10 seconds)
-> to make this test tractable in a manual session.
+> because it transitions to green after a fixed time period. Set
+> `SOLO_SOAK_POLL_INTERVAL=10s` when starting the daemon and use a `cutover_timestamp`
+> in the past so `SoakDuration` fires within the first few ticks.
 
-### Steps (using a short-soak test build)
+### Prerequisites
+
+- The daemon is running with `SOLO_SOAK_POLL_INTERVAL=10s` (see
+  [Short-poll daemon for UAT](#short-poll-daemon-for-uat)).
+
+### Steps
 
 1. Start a soak with a `cutover_timestamp` 60 seconds in the past:
    ```bash
