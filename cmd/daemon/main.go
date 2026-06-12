@@ -53,12 +53,19 @@ var (
 
 			paths := models.Paths()
 
+			// --config overrides the default daemon config path so operators can
+			// test a specific daemon.yaml without touching the installed one.
+			daemonConfigPath := paths.DaemonConfigPath
+			if flagConfig != "" {
+				daemonConfigPath = flagConfig
+			}
+
 			// Load daemon.yaml; apply any CLI flag overrides; re-validate.
-			cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
+			cfg, err := daemon.LoadDaemonConfig(daemonConfigPath)
 			if err != nil {
 				if ex := errorx.Cast(err); ex != nil {
 					return ex.WithProperty(models.ErrPropertyResolution, []string{
-						"Verify the config exists: ls -la " + paths.DaemonConfigPath,
+						"Verify the config exists: ls -la " + daemonConfigPath,
 						"Reinstall the daemon to recreate the config: sudo solo-provisioner daemon service install",
 					})
 				}
@@ -80,7 +87,7 @@ var (
 			if err := cfg.Validate(); err != nil {
 				if ex := errorx.Cast(err); ex != nil {
 					return ex.WithProperty(models.ErrPropertyResolution, []string{
-						"Check the config: cat " + paths.DaemonConfigPath,
+						"Check the config: cat " + daemonConfigPath,
 						"Fix missing fields or reinstall: sudo solo-provisioner daemon service install",
 					})
 				}
@@ -91,7 +98,7 @@ var (
 			if err != nil {
 				if ex := errorx.Cast(err); ex != nil {
 					return ex.WithProperty(models.ErrPropertyResolution, []string{
-						"Check the daemon config: cat " + paths.DaemonConfigPath,
+						"Check the daemon config: cat " + daemonConfigPath,
 						"Check the kubeconfig: ls -la " + paths.DaemonCNKubeconfigPath,
 						"Reinstall the daemon: sudo solo-provisioner daemon service install",
 					})
@@ -116,7 +123,7 @@ var (
 )
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "Path to config file")
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "Path to daemon.yaml (overrides the default /opt/solo/weaver/config/daemon.yaml)")
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Set log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Print version and exit")
 	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "json", "Output format (json, yaml)")
@@ -138,7 +145,11 @@ func init() {
 // the daemon binary does not import anything under cmd/cli, satisfying the
 // epic's attack-surface constraint.
 func initConfig(ctx context.Context) {
-	if err := config.Initialize(flagConfig); err != nil {
+	// The daemon does not use the CLI-style config file (models.Config); --config
+	// on this binary points to daemon.yaml which is loaded separately in RunE.
+	// Always initialise with defaults so log/proxy settings come from flags and
+	// built-in defaults, not a file that would fail to decode as models.Config.
+	if err := config.Initialize(""); err != nil {
 		doctor.CheckErr(ctx, err)
 	}
 
