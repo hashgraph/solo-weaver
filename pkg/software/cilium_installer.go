@@ -3,6 +3,7 @@
 package software
 
 import (
+	"os"
 	"path"
 
 	"github.com/hashgraph/solo-weaver/internal/network"
@@ -86,11 +87,13 @@ func (ci *ciliumInstaller) getConfigurationDir() string {
 	return path.Join(models.Paths().SandboxDir, "etc", "weaver")
 }
 
-// createCiliumConfigFile creates the cilium configuration file from template
-func (ci *ciliumInstaller) createCiliumConfigFile() error {
+// renderCiliumConfig renders the embedded cilium-config template with the host's
+// machine IP and sandbox dir. Shared by install-time Configure() and the startup
+// migration that re-applies the template to already-provisioned clusters.
+func renderCiliumConfig() (string, error) {
 	machineIp, err := network.GetMachineIP()
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to get machine IP address")
+		return "", errorx.IllegalState.Wrap(err, "failed to get machine IP address")
 	}
 
 	tmplData := struct {
@@ -103,7 +106,46 @@ func (ci *ciliumInstaller) createCiliumConfigFile() error {
 
 	rendered, err := templates.Render(ciliumTemplateFile, tmplData)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to render cilium configuration template")
+		return "", errorx.IllegalState.Wrap(err, "failed to render cilium configuration template")
+	}
+
+	return rendered, nil
+}
+
+// CiliumConfigPath returns the canonical path of the rendered cilium-config.yaml
+// in the weaver sandbox.
+func CiliumConfigPath() string {
+	return path.Join(models.Paths().SandboxDir, "etc", "weaver", ciliumConfigFileName)
+}
+
+// ReconfigureCiliumConfig re-renders cilium-config.yaml from the embedded template
+// to its canonical sandbox path and returns that path. Used by the startup
+// migration that re-applies the updated template to already-provisioned clusters
+// whose Configure()/IsConfigured guard would otherwise skip it.
+func ReconfigureCiliumConfig() (string, error) {
+	rendered, err := renderCiliumConfig()
+	if err != nil {
+		return "", err
+	}
+
+	configurationDir := path.Join(models.Paths().SandboxDir, "etc", "weaver")
+	if err := os.MkdirAll(configurationDir, 0o755); err != nil {
+		return "", errorx.IllegalState.Wrap(err, "failed to create cilium configuration directory %s", configurationDir)
+	}
+
+	configPath := CiliumConfigPath()
+	if err := os.WriteFile(configPath, []byte(rendered), 0o644); err != nil {
+		return "", errorx.IllegalState.Wrap(err, "failed to write cilium configuration file %s", configPath)
+	}
+
+	return configPath, nil
+}
+
+// createCiliumConfigFile creates the cilium configuration file from template
+func (ci *ciliumInstaller) createCiliumConfigFile() error {
+	rendered, err := renderCiliumConfig()
+	if err != nil {
+		return err
 	}
 
 	configurationDir := ci.getConfigurationDir()
