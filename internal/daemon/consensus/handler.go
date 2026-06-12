@@ -8,6 +8,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/joomcode/errorx"
 )
 
 // ConsensusMigrationStatusResponse is the combined view returned by
@@ -102,7 +103,13 @@ func (h *ConsensusNodeHandler) handleConsensusSoakStart(w http.ResponseWriter, r
 	}
 
 	if err := req.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		// Surface the plain validation message in the HTTP 400 body; the errorx
+		// namespace prefix is internal and should not leak to API clients.
+		msg := err.Error()
+		if ex := errorx.Cast(err); ex != nil {
+			msg = ex.Message()
+		}
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 

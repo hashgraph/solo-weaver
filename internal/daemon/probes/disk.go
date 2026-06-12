@@ -4,11 +4,12 @@ package probes
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/user"
 	"strconv"
 	"syscall"
+
+	"github.com/joomcode/errorx"
 )
 
 // DiskPermissionProbe verifies that Path exists and has at least the declared
@@ -32,11 +33,11 @@ type DiskPermissionProbe struct {
 func (p *DiskPermissionProbe) Probe(_ context.Context) error {
 	info, err := os.Stat(p.Path)
 	if err != nil {
-		return fmt.Errorf("disk probe: cannot access %s: %w", p.Path, err)
+		return errorx.ExternalError.Wrap(err, "disk probe: cannot access %s", p.Path)
 	}
 	actual := info.Mode().Perm()
 	if actual&p.Permission != p.Permission {
-		return fmt.Errorf("disk probe: %s has permissions %04o, need at least %04o",
+		return errorx.IllegalState.New("disk probe: %s has permissions %04o, need at least %04o",
 			p.Path, actual, p.Permission)
 	}
 	return nil
@@ -59,7 +60,7 @@ type DiskWriteTestProbe struct {
 func (p *DiskWriteTestProbe) Probe(_ context.Context) error {
 	f, err := os.CreateTemp(p.Dir, ".probe-*")
 	if err != nil {
-		return fmt.Errorf("disk write-test probe: cannot write to %s: %w", p.Dir, err)
+		return errorx.ExternalError.Wrap(err, "disk write-test probe: cannot write to %s", p.Dir)
 	}
 	_ = f.Close()
 	_ = os.Remove(f.Name())
@@ -103,22 +104,22 @@ type DiskOwnershipProbe struct {
 func (p *DiskOwnershipProbe) Probe(_ context.Context) error {
 	info, err := os.Stat(p.Path)
 	if err != nil {
-		return fmt.Errorf("disk ownership probe: cannot access %s: %w", p.Path, err)
+		return errorx.ExternalError.Wrap(err, "disk ownership probe: cannot access %s", p.Path)
 	}
 
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("disk ownership probe: cannot read inode info for %s", p.Path)
+		return errorx.IllegalState.New("disk ownership probe: cannot read inode info for %s", p.Path)
 	}
 
 	if p.User != "" {
 		u, err := user.Lookup(p.User)
 		if err != nil {
-			return fmt.Errorf("disk ownership probe: user %q not found: %w", p.User, err)
+			return errorx.ExternalError.Wrap(err, "disk ownership probe: user %q not found", p.User)
 		}
 		wantUID, _ := strconv.ParseUint(u.Uid, 10, 32)
 		if uint32(wantUID) != stat.Uid {
-			return fmt.Errorf("disk ownership probe: %s owned by uid %d, want user %q (uid %d)",
+			return errorx.IllegalState.New("disk ownership probe: %s owned by uid %d, want user %q (uid %d)",
 				p.Path, stat.Uid, p.User, wantUID)
 		}
 	}
@@ -126,11 +127,11 @@ func (p *DiskOwnershipProbe) Probe(_ context.Context) error {
 	if p.Group != "" {
 		g, err := user.LookupGroup(p.Group)
 		if err != nil {
-			return fmt.Errorf("disk ownership probe: group %q not found: %w", p.Group, err)
+			return errorx.ExternalError.Wrap(err, "disk ownership probe: group %q not found", p.Group)
 		}
 		wantGID, _ := strconv.ParseUint(g.Gid, 10, 32)
 		if uint32(wantGID) != stat.Gid {
-			return fmt.Errorf("disk ownership probe: %s owned by gid %d, want group %q (gid %d)",
+			return errorx.IllegalState.New("disk ownership probe: %s owned by gid %d, want group %q (gid %d)",
 				p.Path, stat.Gid, p.Group, wantGID)
 		}
 	}
@@ -138,7 +139,7 @@ func (p *DiskOwnershipProbe) Probe(_ context.Context) error {
 	if p.Permission != 0 {
 		actual := info.Mode().Perm()
 		if actual&p.Permission != p.Permission {
-			return fmt.Errorf("disk ownership probe: %s has permissions %04o, need at least %04o",
+			return errorx.IllegalState.New("disk ownership probe: %s has permissions %04o, need at least %04o",
 				p.Path, actual, p.Permission)
 		}
 	}
