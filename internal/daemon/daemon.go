@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
 	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -48,9 +50,9 @@ type Daemon struct {
 	server     *Server
 	components []component
 	// probeErrors holds the last probe result per component name.
-	// nil = probe passed (or no probe). Written by runComponentProbes,
+	// nil = all probes passed (or no probes). Written by runComponentProbes,
 	// read by statusSnapshot — both via atomic.Pointer to avoid locks.
-	probeErrors atomic.Pointer[map[string]string]
+	probeErrors atomic.Pointer[map[string]core.StatusError]
 }
 
 // New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
@@ -180,8 +182,12 @@ func (d *Daemon) runComponentProbes(ctx context.Context) {
 		return
 	}
 
+	// firstFailedAt records when each component's probe first started failing
+	// so that StatusError.Since reflects the outage start, not the last check.
+	firstFailedAt := make(map[string]time.Time, len(componentProbes))
+
 	for {
-		errs := make(map[string]string, len(componentProbes))
+		errs := make(map[string]core.StatusError, len(componentProbes))
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
@@ -194,11 +200,35 @@ func (d *Daemon) runComponentProbes(ctx context.Context) {
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
-					errs[p.ComponentName()] = err.Error()
+					// Preserve the original failure timestamp across retries.
+					if _, seen := firstFailedAt[p.ComponentName()]; !seen {
+						firstFailedAt[p.ComponentName()] = time.Now()
+					}
+					se := core.StatusError{
+						Reason:  "ComponentProbeError",
+						Message: err.Error(),
+						Since:   firstFailedAt[p.ComponentName()].UTC().Format(time.RFC3339),
+					}
+					// Extract reason and resolution attached by TaggedProbe via errorx properties.
+					if ex := errorx.Cast(err); ex != nil {
+						if r, ok := errorx.ExtractProperty(ex, models.ErrPropertyReason); ok {
+							if s, ok := r.(string); ok {
+								se.Reason = s
+							}
+						}
+						if res, ok := errorx.ExtractProperty(ex, models.ErrPropertyResolution); ok {
+							if ss, ok := res.([]string); ok && len(ss) > 0 {
+								se.Resolution = strings.Join(ss, "; ")
+							}
+						}
+					}
+					errs[p.ComponentName()] = se
 					logx.As().Warn().Err(err).
 						Str("reason", "ComponentProbeNotReady").
 						Str("component", p.ComponentName()).
 						Msg("Component prerequisites not yet satisfied — run: solo-provisioner daemon service check")
+				} else {
+					delete(firstFailedAt, p.ComponentName())
 				}
 			}()
 		}
@@ -234,6 +264,20 @@ func (d *Daemon) statusSnapshot() StatusResponse {
 		if comp.tracker != nil {
 			for name, state := range comp.tracker.Snapshot() {
 				cs.Monitors[name] = state
+			}
+		}
+		// Overlay connectivity errors from any monitor that implements
+		// ConnectivityMonitor. The tracker only knows whether the goroutine
+		// is alive ("running"); this step surfaces watch-loop failures that
+		// are invisible to the supervisor (the goroutine is alive and retrying).
+		for _, m := range comp.monitors {
+			if cm, ok := m.(core.ConnectivityMonitor); ok {
+				if cerr := cm.ConnectivityError(); cerr != nil {
+					ms := cs.Monitors[m.Name()]
+					ms.State = "degraded"
+					ms.Error = cerr
+					cs.Monitors[m.Name()] = ms
+				}
 			}
 		}
 		resp.Components[comp.name] = cs

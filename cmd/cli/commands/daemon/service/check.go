@@ -37,11 +37,11 @@ var checkCmd = &cobra.Command{
 			}
 		}
 
-		// Exit non-zero if any component probe is still failing.
+		// Exit non-zero if any component probe or monitor is unhealthy.
 		if warning := steps.CheckDaemonComponentPrerequisites(paths.DaemonSockPath); warning != "" {
 			logx.As().Warn().Msg(warning)
 			return errorx.IllegalState.New(
-				"daemon is running but component prerequisites are not satisfied — " +
+				"daemon is running but component health issues detected — " +
 					"fix the issues listed above and re-run: solo-provisioner daemon service check")
 		}
 

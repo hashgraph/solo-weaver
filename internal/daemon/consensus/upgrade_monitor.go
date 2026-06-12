@@ -4,12 +4,15 @@ package consensus
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 	"github.com/hashgraph/solo-weaver/internal/daemon/probes"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -123,6 +126,12 @@ type UpgradeMonitor struct {
 	// CR's phase is the durable source of truth.
 	completedOpIDs map[string]struct{}
 
+	// connectivityErr holds the last connectivity error from the watch loop.
+	// nil = healthy. Set on any listAndSeed or watch error; cleared immediately
+	// after a successful listAndSeed so that recovery (RBAC restored) is visible
+	// within one watch cycle. Written by Run(), read by ConnectivityError().
+	connectivityErr atomic.Pointer[core.StatusError]
+
 	// onExecute is called synchronously at the start of each handleExecute invocation.
 	// Nil in production; set in tests to observe invocations without sleeping.
 	onExecute func(operationID string)
@@ -144,8 +153,39 @@ func NewUpgradeMonitorWithClient(cfg UpgradeMonitorConfig, client dynamic.Interf
 	return &UpgradeMonitor{cfg: cfg, client: client, completedOpIDs: make(map[string]struct{})}
 }
 
-// Name implements daemon.MonitorRunner.
+// Name implements core.MonitorRunner.
 func (um *UpgradeMonitor) Name() string { return "upgrade-monitor" }
+
+// ConnectivityError implements core.ConnectivityMonitor. Returns the current
+// connectivity failure (list or watch error), or nil when the last cycle
+// completed without error. The monitor continues retrying automatically;
+// callers use this for observability only.
+func (um *UpgradeMonitor) ConnectivityError() *core.StatusError {
+	return um.connectivityErr.Load()
+}
+
+// setConnectivityError records a watch-loop failure in connectivityErr.
+// The Since timestamp is preserved from the previous entry when the same kind
+// of failure persists across multiple backoff cycles so the field shows when
+// the outage first started, not when it was last observed.
+func (um *UpgradeMonitor) setConnectivityError(reason, message, resolution string) {
+	since := time.Now().UTC().Format(time.RFC3339)
+	if prev := um.connectivityErr.Load(); prev != nil {
+		since = prev.Since
+	}
+	um.connectivityErr.Store(&core.StatusError{
+		Reason:     reason,
+		Message:    message,
+		Resolution: resolution,
+		Since:      since,
+	})
+}
+
+// clearConnectivityError marks the monitor as healthy. Called after a
+// successful listAndSeed so that RBAC recovery is visible within one cycle.
+func (um *UpgradeMonitor) clearConnectivityError() {
+	um.connectivityErr.Store(nil)
+}
 
 // RequiredProbe implements daemon.ProbableMonitor. It returns a composite probe
 // that verifies the disk prerequisites that must be correct before the first
@@ -169,22 +209,22 @@ func (um *UpgradeMonitor) RequiredProbe() probes.Probe {
 
 	return probes.NewCompositeProbe(
 		// 1. Parent dir: hedera installer must have created this with 0755.
-		&probes.DiskOwnershipProbe{
-			Path:       upgradeRoot,
-			User:       "hedera",
-			Group:      "hedera",
-			Permission: 0o755,
+		&probes.TaggedProbe{
+			Inner:      &probes.DiskOwnershipProbe{Path: upgradeRoot, User: "hedera", Group: "hedera", Permission: 0o755},
+			Reason:     "UpgradeRootOwnershipCheckFailed",
+			Resolution: fmt.Sprintf("Fix ownership and permissions: sudo chown hedera:hedera %s && sudo chmod 755 %s", upgradeRoot, upgradeRoot),
 		},
 		// 2. Current dir ownership: cluster install must have run chmod g+rwx.
-		&probes.DiskOwnershipProbe{
-			Path:       upgradeDir,
-			User:       "hedera",
-			Group:      "hedera",
-			Permission: 0o775,
+		&probes.TaggedProbe{
+			Inner:      &probes.DiskOwnershipProbe{Path: upgradeDir, User: "hedera", Group: "hedera", Permission: 0o775},
+			Reason:     "UpgradeDirOwnershipCheckFailed",
+			Resolution: fmt.Sprintf("Fix ownership and permissions: sudo chown hedera:hedera %s && sudo chmod 775 %s", upgradeDir, upgradeDir),
 		},
 		// 3. Write test: proves effective write access under real process credentials.
-		&probes.DiskWriteTestProbe{
-			Dir: upgradeDir,
+		&probes.TaggedProbe{
+			Inner:      &probes.DiskWriteTestProbe{Dir: upgradeDir},
+			Reason:     "UpgradeDirWriteTestFailed",
+			Resolution: fmt.Sprintf("Add weaver to hedera group and restart: sudo usermod -aG hedera weaver && sudo systemctl restart solo-provisioner-daemon"),
 		},
 	)
 }
@@ -248,6 +288,11 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 			return nil
 		}
 		if listErr != nil {
+			um.setConnectivityError(
+				"UpgradeMonitorListError",
+				listErr.Error(),
+				fmt.Sprintf("Verify RBAC for NetworkUpgradeExecute resources in namespace %s: kubectl get clusterrolebinding solo-provisioner-daemon-cn", um.cfg.Namespace),
+			)
 			logx.As().Warn().Err(listErr).
 				Str("reason", "UpgradeMonitorListError").
 				Dur("retry_in", backoff).
@@ -261,6 +306,10 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 			backoff = minDuration(time.Duration(float64(backoff)*backoffFactor), backoffMax)
 			continue
 		}
+
+		// Successful list: clear any prior connectivity error so recovery is
+		// visible within this cycle before the watch starts.
+		um.clearConnectivityError()
 
 		err := um.runWatch(ctx, listRV)
 
@@ -292,6 +341,11 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 		}
 
 		if isAuthError(err) {
+			um.setConnectivityError(
+				"UpgradeMonitorAuthError",
+				err.Error(),
+				fmt.Sprintf("Restore RBAC and rotate credentials: sudo solo-provisioner daemon service install --components consensus-node --cn-node-id %s --cn-orbit %s", um.cfg.NodeID, um.cfg.Namespace),
+			)
 			logx.As().Warn().Err(err).
 				Str("reason", "UpgradeMonitorAuthError").
 				Str("kubeconfig", um.cfg.KubeconfigPath).
@@ -316,6 +370,11 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 					Msg("K8s client rebuilt with refreshed kubeconfig")
 			}
 		} else {
+			um.setConnectivityError(
+				"UpgradeMonitorWatchError",
+				err.Error(),
+				"Check network connectivity to the Kubernetes API server and inspect daemon logs: sudo journalctl -u solo-provisioner-daemon -n 50 --no-pager",
+			)
 			logx.As().Warn().Err(err).
 				Str("reason", "UpgradeMonitorWatchError").
 				Dur("retry_in", backoff).
