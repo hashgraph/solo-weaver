@@ -16,8 +16,9 @@ import (
 )
 
 var checkCmd = &cobra.Command{
-	Use:   "check",
-	Short: "Check the health of the solo-provisioner-daemon service",
+	Use:     "check",
+	Aliases: []string{"status"},
+	Short:   "Check the health of the solo-provisioner-daemon service",
 	Long: "Verify the daemon installation: unit file present, service enabled and running, " +
 		"binary exists, sudoers entry in place, Unix socket responding to /health, and all " +
 		"component prerequisites satisfied. Exits non-zero if the daemon is running but " +
