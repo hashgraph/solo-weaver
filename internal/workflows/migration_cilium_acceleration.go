@@ -25,10 +25,10 @@ package workflows
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -40,18 +40,15 @@ import (
 // upgrading from a version below this boundary to this version or later.
 const ciliumAccelerationMinVersion = "0.19.1"
 
-// adminKubeconfigPath is the kubeadm-written admin kubeconfig used to read the
-// live cilium-config ConfigMap.
-const adminKubeconfigPath = "/etc/kubernetes/admin.conf"
-
 // disabledAcceleration is the target bpf-lb-acceleration value (tc-eBPF, no XDP).
 const disabledAcceleration = "disabled"
 
-// runShell and reconfigureCiliumConfig are seams so tests can stub shell
-// execution and the on-disk config re-render.
+// Seams so tests can stub the live-config read, the on-disk re-render, and shell
+// execution without touching a cluster or the filesystem.
 var (
 	runShell                = automa_steps.RunBashScript
 	reconfigureCiliumConfig = software.ReconfigureCiliumConfig
+	readCiliumAcceleration  = liveCiliumAcceleration
 )
 
 // CiliumAccelerationMigration re-renders cilium-config.yaml and runs `cilium upgrade`
@@ -80,14 +77,15 @@ func NewCiliumAccelerationMigration() *CiliumAccelerationMigration {
 // (the migration already ran). Applies() only gates on the CLI version boundary,
 // so these checks make repeated invocations within the upgrade window harmless.
 func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-	acc, err := liveCiliumAcceleration()
+	acc, err := readCiliumAcceleration(ctx)
 	if err != nil {
 		logx.As().Debug().Err(err).
-			Msg("cilium acceleration migration: no reachable cilium-config (no cluster on this node?); skipping")
+			Msg("cilium acceleration migration: cilium-config not reachable (no cluster on this node?); skipping")
 		return nil
 	}
-	if acc == disabledAcceleration {
-		logx.As().Info().Msg("cilium acceleration migration: bpf-lb-acceleration already 'disabled'; nothing to do")
+	if acc == "" || acc == disabledAcceleration {
+		logx.As().Info().Str("acceleration", acc).
+			Msg("cilium acceleration migration: nothing to do (no cilium-config or already disabled)")
 		return nil
 	}
 
@@ -122,15 +120,13 @@ func (m *CiliumAccelerationMigration) Rollback(ctx context.Context, mctx *migrat
 }
 
 // liveCiliumAcceleration reads bpf-lb-acceleration from the live cilium-config
-// ConfigMap. Returns an error when the ConfigMap cannot be read (e.g. no cluster).
-func liveCiliumAcceleration() (string, error) {
-	cmd := []string{
-		fmt.Sprintf("/usr/bin/sudo env KUBECONFIG=%s /usr/local/bin/kubectl -n kube-system get configmap cilium-config -o jsonpath='{.data.bpf-lb-acceleration}'",
-			adminKubeconfigPath),
-	}
-	out, err := runShell(cmd, "")
+// ConfigMap via the Kubernetes API (the provisioner's own client, which resolves
+// the in-cluster config or the admin kubeconfig). Returns ("", nil) when the
+// ConfigMap is absent, and ("", err) when the cluster is not reachable.
+func liveCiliumAcceleration(ctx context.Context) (string, error) {
+	kc, err := kube.NewClient()
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	return kc.GetResourceNestedString(ctx, "v1", "ConfigMap", "kube-system", "cilium-config", "data", "bpf-lb-acceleration")
 }

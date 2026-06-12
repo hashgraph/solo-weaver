@@ -51,57 +51,65 @@ func TestCiliumAccelerationMigration_Applies(t *testing.T) {
 }
 
 func TestCiliumAccelerationMigration_Execute(t *testing.T) {
-	orig := runShell
-	t.Cleanup(func() { runShell = orig })
+	origRead, origReconfigure, origShell := readCiliumAcceleration, reconfigureCiliumConfig, runShell
+	t.Cleanup(func() {
+		readCiliumAcceleration, reconfigureCiliumConfig, runShell = origRead, origReconfigure, origShell
+	})
 
 	m := NewCiliumAccelerationMigration()
 	mctx := newMctx("0.18.1", ciliumAccelerationMinVersion)
 
-	t.Run("skips upgrade when acceleration already disabled", func(t *testing.T) {
-		var upgraded bool
+	// trackUpgrade records whether `cilium upgrade` was shelled out and its command.
+	trackUpgrade := func(cmd *string, ran *bool) {
 		runShell = func(scripts []string, _ string) (string, error) {
 			joined := strings.Join(scripts, " ")
 			if strings.Contains(joined, "cilium upgrade") {
-				upgraded = true
-				return "", nil
+				*ran = true
+				*cmd = joined
 			}
-			return "disabled", nil // live cilium-config read
+			return "", nil
 		}
+	}
+
+	t.Run("skips upgrade when acceleration already disabled", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		readCiliumAcceleration = func(context.Context) (string, error) { return "disabled", nil }
+		trackUpgrade(&cmd, &ran)
 		require.NoError(t, m.Execute(context.Background(), mctx))
-		assert.False(t, upgraded, "cilium upgrade must not run when already disabled")
+		assert.False(t, ran, "cilium upgrade must not run when already disabled")
 	})
 
-	t.Run("no-ops when cilium-config is unreachable", func(t *testing.T) {
-		var upgraded bool
-		runShell = func(scripts []string, _ string) (string, error) {
-			joined := strings.Join(scripts, " ")
-			if strings.Contains(joined, "cilium upgrade") {
-				upgraded = true
-				return "", nil
-			}
-			return "", assert.AnError // read fails: no cluster
-		}
+	t.Run("skips upgrade when cilium-config is absent (empty value)", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		readCiliumAcceleration = func(context.Context) (string, error) { return "", nil }
+		trackUpgrade(&cmd, &ran)
 		require.NoError(t, m.Execute(context.Background(), mctx))
-		assert.False(t, upgraded, "cilium upgrade must not run when there is no live cluster")
+		assert.False(t, ran, "cilium upgrade must not run when there is no cilium-config")
+	})
+
+	t.Run("no-ops when the cluster is unreachable", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		readCiliumAcceleration = func(context.Context) (string, error) { return "", assert.AnError }
+		trackUpgrade(&cmd, &ran)
+		require.NoError(t, m.Execute(context.Background(), mctx))
+		assert.False(t, ran, "cilium upgrade must not run when the cluster is unreachable")
 	})
 
 	t.Run("runs cilium upgrade when acceleration is best-effort", func(t *testing.T) {
-		origReconfigure := reconfigureCiliumConfig
-		t.Cleanup(func() { reconfigureCiliumConfig = origReconfigure })
-		reconfigureCiliumConfig = func() (string, error) { return "/opt/solo/weaver/sandbox/etc/weaver/cilium-config.yaml", nil }
-
-		var upgradeCmd string
-		runShell = func(scripts []string, _ string) (string, error) {
-			joined := strings.Join(scripts, " ")
-			if strings.Contains(joined, "cilium upgrade") {
-				upgradeCmd = joined
-				return "", nil
-			}
-			return "best-effort", nil
+		var ran bool
+		var cmd string
+		readCiliumAcceleration = func(context.Context) (string, error) { return "best-effort", nil }
+		reconfigureCiliumConfig = func() (string, error) {
+			return "/opt/solo/weaver/sandbox/etc/weaver/cilium-config.yaml", nil
 		}
+		trackUpgrade(&cmd, &ran)
 		require.NoError(t, m.Execute(context.Background(), mctx))
-		assert.Contains(t, upgradeCmd, "cilium upgrade")
-		assert.Contains(t, upgradeCmd, "--values")
-		assert.Contains(t, upgradeCmd, "--wait")
+		require.True(t, ran, "cilium upgrade must run when acceleration is best-effort")
+		assert.Contains(t, cmd, "cilium upgrade")
+		assert.Contains(t, cmd, "--values")
+		assert.Contains(t, cmd, "--wait")
 	})
 }
