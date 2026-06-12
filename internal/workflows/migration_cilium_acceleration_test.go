@@ -51,9 +51,11 @@ func TestCiliumAccelerationMigration_Applies(t *testing.T) {
 }
 
 func TestCiliumAccelerationMigration_Execute(t *testing.T) {
-	origK8s, origState, origReconfigure, origShell := kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell
+	origK8s, origState, origReconfigure, origShell, origRestart :=
+		kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell, restartCiliumAgents
 	t.Cleanup(func() {
-		kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell = origK8s, origState, origReconfigure, origShell
+		kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell, restartCiliumAgents =
+			origK8s, origState, origReconfigure, origShell, origRestart
 	})
 
 	m := NewCiliumAccelerationMigration()
@@ -73,59 +75,82 @@ func TestCiliumAccelerationMigration_Execute(t *testing.T) {
 	stateReturns := func(installed bool, acc string, err error) {
 		readCiliumState = func(context.Context) (bool, string, error) { return installed, acc, err }
 	}
+	trackRestart := func(restarted *bool) {
+		restartCiliumAgents = func(context.Context) error { *restarted = true; return nil }
+	}
 
 	t.Run("skips when Kubernetes is not installed", func(t *testing.T) {
-		var ran bool
+		var ran, restarted bool
 		var cmd string
 		kubernetesInstalled = func() bool { return false }
 		stateReturns(true, "best-effort", nil) // must not even be consulted
 		trackUpgrade(&cmd, &ran)
+		trackRestart(&restarted)
 		require.NoError(t, m.Execute(context.Background(), mctx))
 		assert.False(t, ran, "must not run before Kubernetes is installed")
+		assert.False(t, restarted, "must not restart Cilium before Kubernetes is installed")
 	})
 
 	// Remaining cases assume Kubernetes is present.
 	kubernetesInstalled = func() bool { return true }
 
 	t.Run("skips when Cilium is not installed", func(t *testing.T) {
-		var ran bool
+		var ran, restarted bool
 		var cmd string
 		stateReturns(false, "", nil) // no cilium-config
 		trackUpgrade(&cmd, &ran)
+		trackRestart(&restarted)
 		require.NoError(t, m.Execute(context.Background(), mctx))
 		assert.False(t, ran, "must not run before Cilium is installed")
+		assert.False(t, restarted, "must not restart Cilium before it is installed")
 	})
 
 	t.Run("no-ops when the cluster is unreachable", func(t *testing.T) {
-		var ran bool
+		var ran, restarted bool
 		var cmd string
 		stateReturns(false, "", assert.AnError)
 		trackUpgrade(&cmd, &ran)
+		trackRestart(&restarted)
 		require.NoError(t, m.Execute(context.Background(), mctx))
 		assert.False(t, ran, "must not run when the cluster is unreachable")
+		assert.False(t, restarted, "must not restart Cilium when the cluster is unreachable")
 	})
 
-	t.Run("skips upgrade when acceleration already disabled", func(t *testing.T) {
-		var ran bool
+	t.Run("skips upgrade and restart when acceleration already disabled", func(t *testing.T) {
+		var ran, restarted bool
 		var cmd string
 		stateReturns(true, "disabled", nil)
 		trackUpgrade(&cmd, &ran)
+		trackRestart(&restarted)
 		require.NoError(t, m.Execute(context.Background(), mctx))
 		assert.False(t, ran, "cilium upgrade must not run when already disabled")
+		assert.False(t, restarted, "must not restart Cilium when already disabled")
 	})
 
-	t.Run("runs cilium upgrade when acceleration is best-effort", func(t *testing.T) {
-		var ran bool
+	t.Run("upgrades then restarts agents when acceleration is best-effort", func(t *testing.T) {
+		var ran, restarted bool
 		var cmd string
 		stateReturns(true, "best-effort", nil)
 		reconfigureCiliumConfig = func() (string, error) {
 			return "/opt/solo/weaver/sandbox/etc/weaver/cilium-config.yaml", nil
 		}
 		trackUpgrade(&cmd, &ran)
+		trackRestart(&restarted)
 		require.NoError(t, m.Execute(context.Background(), mctx))
 		require.True(t, ran, "cilium upgrade must run when acceleration is best-effort")
 		assert.Contains(t, cmd, "cilium upgrade")
 		assert.Contains(t, cmd, "--values")
 		assert.Contains(t, cmd, "--wait")
+		assert.True(t, restarted, "Cilium agents must be restarted so the new config applies")
+	})
+
+	t.Run("fails when the agent restart fails", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		stateReturns(true, "best-effort", nil)
+		reconfigureCiliumConfig = func() (string, error) { return "/tmp/cilium-config.yaml", nil }
+		trackUpgrade(&cmd, &ran)
+		restartCiliumAgents = func(context.Context) error { return assert.AnError }
+		require.Error(t, m.Execute(context.Background(), mctx))
 	})
 }

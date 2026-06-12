@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
@@ -34,6 +35,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // ciliumAccelerationMinVersion is the CLI release that ships the disabled-acceleration
@@ -48,13 +50,21 @@ const disabledAcceleration = "disabled"
 // marker that Kubernetes has been provisioned on this host.
 const adminKubeconfigPath = "/etc/kubernetes/admin.conf"
 
-// Seams so tests can stub the install preconditions, the on-disk re-render, and
-// shell execution without touching a cluster or the filesystem.
+// Cilium agent DaemonSet coordinates and the rollout-wait budget.
+const (
+	ciliumNamespace      = "kube-system"
+	ciliumDaemonSet      = "cilium"
+	ciliumRolloutTimeout = 5 * time.Minute
+)
+
+// Seams so tests can stub the install preconditions, the on-disk re-render, the
+// agent restart, and shell execution without touching a cluster or the filesystem.
 var (
 	runShell                = automa_steps.RunBashScript
 	reconfigureCiliumConfig = software.ReconfigureCiliumConfig
 	kubernetesInstalled     = defaultKubernetesInstalled
 	readCiliumState         = defaultReadCiliumState
+	restartCiliumAgents     = defaultRestartCiliumAgents
 )
 
 // CiliumAccelerationMigration re-renders cilium-config.yaml and runs `cilium upgrade`
@@ -125,6 +135,15 @@ func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migrati
 		return errorx.IllegalState.Wrap(err, "failed to run 'cilium upgrade' to apply disabled LB acceleration")
 	}
 
+	// `cilium upgrade` updates the cilium-config ConfigMap, but the Cilium chart's
+	// agent pod template carries no config checksum, so a ConfigMap-only change
+	// does not roll the DaemonSet. The agent reads bpf-lb-acceleration only at
+	// startup, so restart the agents to actually drop the XDP program from the NICs.
+	logx.As().Info().Msg("Restarting Cilium agents so disabled acceleration takes effect (detaches XDP)")
+	if err := restartCiliumAgents(ctx); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to restart Cilium agents after disabling acceleration")
+	}
+
 	return nil
 }
 
@@ -166,4 +185,35 @@ func defaultReadCiliumState(ctx context.Context) (installed bool, acceleration s
 		return true, "", err
 	}
 	return true, acc, nil
+}
+
+// defaultRestartCiliumAgents rolls the Cilium DaemonSet and waits for the rollout
+// to finish, so the agents re-read bpf-lb-acceleration and detach XDP from the
+// NICs. `cilium upgrade` only updates the ConfigMap; the chart does not roll the
+// agents on a ConfigMap-only change, so the new value is otherwise never applied.
+func defaultRestartCiliumAgents(ctx context.Context) error {
+	kc, err := kube.NewClient()
+	if err != nil {
+		return err
+	}
+	if err := kc.RolloutRestart(ctx, kube.KindDaemonSet, ciliumNamespace, ciliumDaemonSet); err != nil {
+		return err
+	}
+	return kc.WaitForResource(ctx, kube.KindDaemonSet, ciliumNamespace, ciliumDaemonSet, daemonSetRolledOut, ciliumRolloutTimeout)
+}
+
+// daemonSetRolledOut is a kube.CheckFunc that reports true once a DaemonSet's
+// restart has fully rolled out: the controller has observed the latest spec and
+// every scheduled pod is updated and ready. Transient get errors keep it polling
+// (detaching XDP can briefly blip the NIC the API server rides on).
+func daemonSetRolledOut(obj *unstructured.Unstructured, err error) (bool, error) {
+	if err != nil || obj == nil {
+		return false, nil
+	}
+	generation, _, _ := unstructured.NestedInt64(obj.Object, "metadata", "generation")
+	observed, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
+	desired, _, _ := unstructured.NestedInt64(obj.Object, "status", "desiredNumberScheduled")
+	updated, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedNumberScheduled")
+	ready, _, _ := unstructured.NestedInt64(obj.Object, "status", "numberReady")
+	return observed >= generation && desired > 0 && updated == desired && ready == desired, nil
 }

@@ -48,6 +48,7 @@ const (
 	KindPod         ResourceKind = "Pod"
 	KindDeployment  ResourceKind = "Deployment"
 	KindStatefulSet ResourceKind = "StatefulSet"
+	KindDaemonSet   ResourceKind = "DaemonSet"
 	KindJob         ResourceKind = "Job"
 	KindPVC         ResourceKind = "PersistentVolumeClaim"
 	KindPV          ResourceKind = "PersistentVolume"
@@ -62,6 +63,7 @@ var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
 	KindPod:         {Group: "", Version: "v1", Resource: "pods"},
 	KindDeployment:  {Group: "apps", Version: "v1", Resource: "deployments"},
 	KindStatefulSet: {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	KindDaemonSet:   {Group: "apps", Version: "v1", Resource: "daemonsets"},
 	KindJob:         {Group: "batch", Version: "v1", Resource: "jobs"},
 	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	KindPV:          {Group: "", Version: "v1", Resource: "persistentvolumes"},
@@ -1182,6 +1184,33 @@ func (c *Client) patchReplicas(ctx context.Context, gvr schema.GroupVersionResou
 	)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to scale %s: %s/%s", gvr.Resource, namespace, name)
+	}
+
+	return nil
+}
+
+// RolloutRestart triggers a rolling restart of a Deployment/StatefulSet/DaemonSet
+// by stamping the pod template's kubectl.kubernetes.io/restartedAt annotation —
+// the same mechanism as `kubectl rollout restart`. The controller then recreates
+// the pods, which is required to apply config that pods only read at startup.
+func (c *Client) RolloutRestart(ctx context.Context, kind ResourceKind, namespace, name string) error {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return err
+	}
+
+	patch := []byte(`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"` +
+		time.Now().UTC().Format(time.RFC3339) + `"}}}}}`)
+
+	_, err = c.Dyn.Resource(gvr).Namespace(namespace).Patch(
+		ctx,
+		name,
+		types.MergePatchType,
+		patch,
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to rollout restart %s: %s/%s", kind, namespace, name)
 	}
 
 	return nil
