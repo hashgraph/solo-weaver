@@ -1143,20 +1143,17 @@ kubectl delete networkupgradeexecute test-upgrade-01 -n $ORBIT
 
 ---
 
-## TC-25 — Upgrade monitor: RBAC revocation triggers list-error backoff and recovery
+## TC-25 — Upgrade monitor: RBAC revocation surfaces degraded state and recovers
 
 **Goal**: verify that revoking the daemon's ClusterRoleBinding produces a `UpgradeMonitorListError`
-log with backoff, the daemon stays alive, and restoring RBAC allows the monitor to recover
-without a daemon restart.
+log with backoff, the daemon reports a `degraded` state with actionable details via `/status`,
+and restoring RBAC clears the degraded state within one watch cycle — without a daemon restart.
 
 > **How errors surface**: when RBAC is revoked the upgrade monitor's `listAndSeed` call fails
 > first (`UpgradeMonitorListError`). `UpgradeMonitorAuthError` fires only if the watch stream
 > itself returns a 403 after a successful list — this is less likely to be observed when the
-> ClusterRoleBinding is deleted outright. Both paths lead to the same backoff/retry behaviour.
->
-> **`/status` during RBAC failure**: `daemon service check` still reports
-> `upgrade-monitor: running` because the goroutine is alive in its retry loop. The watch
-> connectivity error is only visible in the journal — this is a known limitation.
+> ClusterRoleBinding is deleted outright. Both paths set the monitor's state to `degraded` in
+> `/status` with a reason code, the error message, a resolution hint, and a `since` timestamp.
 
 ### Steps
 
@@ -1181,16 +1178,44 @@ without a daemon restart.
    WRN List error — retrying error="...networkupgradeexecutes.hedera.com is forbidden..." reason=UpgradeMonitorListError
    ```
 
-4. Confirm the daemon is still alive and `/health` still responds:
+4. Confirm the daemon is still alive and `/health` still responds, and that `/status` and
+   `daemon service check` now report a `degraded` state with actionable details:
    ```bash
    systemctl is-active solo-provisioner-daemon.service
    # expected: active
 
    sudo curl --unix-socket $SOCK http://localhost/health
    # expected: {"status":"ok"}
+
+   sudo curl --unix-socket $SOCK http://localhost/status | python3 -m json.tool
    ```
-   > `daemon service check` will show `upgrade-monitor: running` — this is correct; the goroutine
-   > is alive. The RBAC error only appears in the journal, not in `/status`.
+   Expected `/status` output (abbreviated):
+   ```json
+   {
+     "components": {
+       "consensus-node": {
+         "monitors": {
+           "upgrade-monitor": {
+             "state": "degraded",
+             "error": {
+               "reason": "UpgradeMonitorListError",
+               "message": "...: networkupgradeexecutes.hedera.com is forbidden: ...",
+               "resolution": "Verify RBAC for NetworkUpgradeExecute resources in namespace <orbit>: kubectl get clusterrolebinding solo-provisioner-daemon-cn",
+               "since": "<RFC3339 timestamp>"
+             }
+           }
+         }
+       }
+     }
+   }
+   ```
+   And `daemon service check` should exit non-zero with:
+   ```bash
+   sudo solo-provisioner daemon service check
+   # [DEGRADED] consensus-node/upgrade-monitor (UpgradeMonitorListError): ...
+   #   Resolution: Verify RBAC for NetworkUpgradeExecute resources in namespace <orbit>: ...
+   #   Since: <timestamp>
+   ```
 
 5. Restore RBAC without restarting the daemon:
    ```bash
@@ -1216,7 +1241,7 @@ without a daemon restart.
    sudo systemctl restart solo-provisioner-daemon.service
    TEST_START=$(date --utc +"%Y-%m-%d %H:%M:%S")   # reset window after restart
    ```
-   Then confirm recovery:
+   Then confirm recovery in the journal:
    ```bash
    journalctl -u solo-provisioner-daemon.service --since "$TEST_START" --no-pager \
      | grep "reason=UpgradeMonitorWatchEstablished"
@@ -1224,6 +1249,14 @@ without a daemon restart.
    Expected output:
    ```
    DBG Watch established on NetworkUpgradeExecute CRs namespace=<orbit> reason=UpgradeMonitorWatchEstablished
+   ```
+   And confirm `/status` and `daemon service check` report healthy:
+   ```bash
+   sudo curl --unix-socket $SOCK http://localhost/status | python3 -m json.tool
+   # upgrade-monitor.state should be "running" (no "error" field)
+
+   sudo solo-provisioner daemon service check
+   # expected: exits 0 with "solo-provisioner-daemon service is healthy"
    ```
    `UpgradeMonitorWatchEstablished` is the definitive recovery signal — it fires only after
    `listAndSeed` succeeds **and** the watch stream is open. If it does not appear, check for
@@ -1237,8 +1270,12 @@ without a daemon restart.
 ### Expected results
 
 - [ ] Step 3: `reason=UpgradeMonitorListError` appears with the `forbidden` error message within ~10s of revocation
-- [ ] Step 4: daemon remains `active`; `/health` returns `{"status":"ok"}`; `/status` shows `upgrade-monitor: running`
+- [ ] Step 4: daemon remains `active`; `/health` returns `{"status":"ok"}`
+- [ ] Step 4: `/status` shows `upgrade-monitor.state == "degraded"` with `reason`, `message`, `resolution`, and `since` fields populated
+- [ ] Step 4: `daemon service check` exits non-zero and prints `[DEGRADED] consensus-node/upgrade-monitor` with the resolution hint
 - [ ] Step 6: `reason=UpgradeMonitorWatchEstablished` appears after RBAC is restored (no further `ListError` lines follow)
+- [ ] Step 6: `/status` shows `upgrade-monitor.state == "running"` with no `error` field
+- [ ] Step 6: `daemon service check` exits 0
 - [ ] Daemon process never restarted (same PID throughout — check `systemctl status solo-provisioner-daemon.service`)
 
 ---

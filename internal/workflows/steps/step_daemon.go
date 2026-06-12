@@ -740,25 +740,65 @@ func CheckDaemonComponentPrerequisitesStep(sockPath string) *automa.StepBuilder 
 
 // CheckDaemonComponentPrerequisites queries GET /status on the daemon socket at
 // sockPath and returns a human-readable warning string when any component probe
-// errors are present, or an empty string when all prerequisites are satisfied.
-// It is called by `daemon service check` after the main health workflow passes,
-// to surface disk prerequisite failures as a distinct non-zero exit.
+// errors or degraded monitor states are present, or an empty string when
+// everything is healthy.
+//
+// Two classes of issue are reported:
+//   - Probe errors (disk prerequisites): the component's required directories
+//     are missing, wrongly owned, or not writable. Operator must act.
+//   - Degraded monitors: a monitor's last watch/list cycle failed (e.g. RBAC
+//     revoked). The monitor retries automatically; operator should investigate.
+//
+// It is called by `daemon service check` after the main health workflow passes.
 func CheckDaemonComponentPrerequisites(sockPath string) string {
 	status := FetchDaemonStatus(sockPath)
-	if status == nil || len(status.ProbeErrors) == 0 {
+	if status == nil {
 		return ""
 	}
 
-	components := make([]string, 0, len(status.ProbeErrors))
-	for c := range status.ProbeErrors {
-		components = append(components, c)
-	}
-	sort.Strings(components)
-
 	var sb strings.Builder
-	sb.WriteString("Component prerequisites not yet satisfied — automation will not run until resolved:\n")
-	for _, c := range components {
-		sb.WriteString(fmt.Sprintf("  [NOT READY] %s: %s\n", c, status.ProbeErrors[c]))
+	hasIssues := false
+
+	// Disk prerequisite failures — keyed by component name.
+	if len(status.ProbeErrors) > 0 {
+		hasIssues = true
+		components := make([]string, 0, len(status.ProbeErrors))
+		for c := range status.ProbeErrors {
+			components = append(components, c)
+		}
+		sort.Strings(components)
+		sb.WriteString("Component prerequisites not yet satisfied — automation will not run until resolved:\n")
+		for _, c := range components {
+			pe := status.ProbeErrors[c]
+			sb.WriteString(fmt.Sprintf("  [NOT READY] %s (%s): %s\n", c, pe.Reason, pe.Message))
+			if pe.Resolution != "" {
+				sb.WriteString(fmt.Sprintf("    Resolution: %s\n", pe.Resolution))
+			}
+			if pe.Since != "" {
+				sb.WriteString(fmt.Sprintf("    Since: %s\n", pe.Since))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// Degraded monitors — connectivity failures visible inside a running goroutine.
+	for compName, cs := range status.Components {
+		for monName, ms := range cs.Monitors {
+			if ms.State == "degraded" && ms.Error != nil {
+				hasIssues = true
+				sb.WriteString(fmt.Sprintf("  [DEGRADED] %s/%s (%s): %s\n", compName, monName, ms.Error.Reason, ms.Error.Message))
+				if ms.Error.Resolution != "" {
+					sb.WriteString(fmt.Sprintf("    Resolution: %s\n", ms.Error.Resolution))
+				}
+				if ms.Error.Since != "" {
+					sb.WriteString(fmt.Sprintf("    Since: %s\n", ms.Error.Since))
+				}
+			}
+		}
+	}
+
+	if !hasIssues {
+		return ""
 	}
 	sb.WriteString("\nFix the issues above then re-run: solo-provisioner daemon service check")
 	return sb.String()

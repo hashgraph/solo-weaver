@@ -28,13 +28,51 @@ var (
 
 const supervisedBackoffMultiplier = 2.0
 
+// StatusError is a rich, operator-facing error descriptor used in /status for
+// both monitor connectivity failures and component probe (disk prerequisite)
+// failures. Every populated field gives the operator enough context to act
+// without opening journalctl.
+type StatusError struct {
+	// Reason is a stable, machine-readable key matching the log reason field
+	// (e.g. "UpgradeMonitorListError", "UpgradeDirOwnershipCheckFailed").
+	Reason string `json:"reason"`
+
+	// Message is the human-readable error string.
+	Message string `json:"message"`
+
+	// Resolution is an actionable command or instruction the operator should
+	// run to resolve the issue. Empty when no specific remediation is known.
+	Resolution string `json:"resolution,omitempty"`
+
+	// Since is the RFC 3339 timestamp of when this error was first observed.
+	Since string `json:"since"`
+}
+
 // MonitorState describes the runtime state of a single supervised monitor.
 // State values:
 //   - "running"         — monitor is executing normally
-//   - "backoff:<dur>"   — monitor crashed and is waiting before restart
+//   - "degraded"        — monitor is running but its last operation failed;
+//     see Error for details; the monitor continues retrying automatically
+//   - "backoff:<dur>"   — monitor crashed (Run returned non-nil) and is
+//     waiting before restart
 //   - "stopped"         — monitor exited cleanly (ctx cancelled or nil return)
 type MonitorState struct {
-	State string `json:"state"`
+	State string       `json:"state"`
+	Error *StatusError `json:"error,omitempty"`
+}
+
+// ConnectivityMonitor is optionally implemented by monitors that maintain an
+// in-process record of their last connectivity error (e.g. a K8s watch failure).
+// statusSnapshot overlays ConnectivityError onto the tracker state so failures
+// are visible via /status even while the goroutine is alive and retrying inside
+// Run() — a goroutine in a retry loop is "running" by the supervisor's
+// definition, but operators need to see the connectivity problem.
+type ConnectivityMonitor interface {
+	MonitorRunner
+	// ConnectivityError returns the current connectivity failure, or nil when
+	// the monitor's last operation completed successfully. Recovery (a
+	// successful list + watch cycle) must clear the error within one cycle.
+	ConnectivityError() *StatusError
 }
 
 // StatusTracker holds the latest observed state for a set of monitors. It is
