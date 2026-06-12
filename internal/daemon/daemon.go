@@ -238,6 +238,11 @@ func (d *Daemon) runComponentProbes(ctx context.Context) {
 			d.probeErrors.Store(nil)
 			logx.As().Info().Str("reason", "AllComponentProbesReady").
 				Msg("All component prerequisites satisfied")
+			// Intentional one-shot exit: once all probes pass we stop re-checking.
+			// The assumption is that RBAC and disk permissions are stable after
+			// initial setup. If a prerequisite is later revoked, the monitor's own
+			// ConnectivityError / crash path surfaces the failure via /status —
+			// we do not need a separate background re-probe cycle for that.
 			return
 		}
 		d.probeErrors.Store(&errs)

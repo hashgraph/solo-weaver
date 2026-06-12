@@ -222,6 +222,13 @@ func SupervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTrac
 		}
 
 		// Grow backoff for the next potential crash (capped).
+		// Note: the updated value takes effect on the *next* crash, not the current
+		// one. So the wait sequence for consecutive crashes is:
+		//   crash 1 → sleep 5s  (initial)
+		//   crash 2 → sleep 10s
+		//   crash 3 → sleep 20s … up to 5 min cap
+		// This is intentional: the first sleep gives the system a moment to recover;
+		// subsequent sleeps grow to reduce pressure during sustained failures.
 		nextBackoff := time.Duration(float64(backoff) * supervisedBackoffMultiplier)
 		if nextBackoff > supervisedBackoffCap {
 			nextBackoff = supervisedBackoffCap
