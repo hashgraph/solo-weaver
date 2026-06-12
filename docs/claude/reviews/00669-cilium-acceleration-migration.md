@@ -23,14 +23,23 @@ exposed to the flap until manually fixed.
 Add a startup-scoped `CLIVersionMigration` (`CiliumAccelerationMigration`,
 `internal/workflows/migration_cilium_acceleration.go`) that runs on the first
 provisioner invocation after upgrading across the version boundary and brings
-existing clusters onto the new template:
+existing clusters onto the new template. The provisioner can run before anything
+is deployed, so it checks both install preconditions before touching Cilium:
 
-1. Read `bpf-lb-acceleration` from the live `cilium-config` ConfigMap.
-2. No-op if it can't be read (node has no cluster) or is already `disabled`
-   (migration already ran) — this makes it safely idempotent/one-shot regardless
-   of when the on-disk provisioner version advances past the boundary.
-3. Otherwise re-render `cilium-config.yaml` (`software.ReconfigureCiliumConfig`)
+1. **Kubernetes installed?** — the kubeadm admin kubeconfig
+   (`/etc/kubernetes/admin.conf`) exists. If not, skip.
+2. **Cilium installed?** — the `cilium-config` ConfigMap exists (read via the
+   provisioner's own `kube.Client`). If the API is unreachable or the ConfigMap is
+   absent, skip.
+3. **Already done?** — if `bpf-lb-acceleration` is already `disabled`, skip. This
+   makes the migration idempotent/one-shot regardless of when the on-disk
+   provisioner version advances past the boundary.
+4. Otherwise re-render `cilium-config.yaml` (`software.ReconfigureCiliumConfig`)
    and apply it with `cilium upgrade --values <config> --wait`.
+
+The live-state reads use the provisioner's `internal/kube` client
+(`kube.NewClient` + `ResourceExists` / `GetResourceNestedString`), not a `kubectl`
+shell-out.
 
 `Applies()` is inherited from `CLIVersionMigration` and gates purely on the CLI
 version boundary (`minVersion = 0.19.1`, the release shipping #674 + this
@@ -57,8 +66,10 @@ config to its canonical sandbox path; the existing install path
       only `fix:`/`ci:` commits present). If a `feat:` lands first, bump to the
       resulting minor.
 - [ ] Migration is registered under `ScopeStartup` after `LegacyBinaryMigration`.
-- [ ] `Execute` no-ops when the ConfigMap read errors or returns `disabled`
-      (idempotent / one-shot; safe across repeated invocations in the window).
+- [ ] `Execute` no-ops when Kubernetes is not installed (no admin.conf), when
+      Cilium is not installed (no `cilium-config`), when the API is unreachable,
+      or when acceleration is already `disabled` (idempotent / one-shot; safe
+      across repeated invocations in the window and on undeployed hosts).
 - [ ] `cilium upgrade` uses `--values <rendered config>` and `--wait`.
 - [ ] No change to install-time behaviour (`createCiliumConfigFile` still renders
       via the shared helper and writes through the fileManager).

@@ -25,6 +25,7 @@ package workflows
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
@@ -43,12 +44,17 @@ const ciliumAccelerationMinVersion = "0.19.1"
 // disabledAcceleration is the target bpf-lb-acceleration value (tc-eBPF, no XDP).
 const disabledAcceleration = "disabled"
 
-// Seams so tests can stub the live-config read, the on-disk re-render, and shell
-// execution without touching a cluster or the filesystem.
+// adminKubeconfigPath is the kubeadm-written admin kubeconfig; its presence is the
+// marker that Kubernetes has been provisioned on this host.
+const adminKubeconfigPath = "/etc/kubernetes/admin.conf"
+
+// Seams so tests can stub the install preconditions, the on-disk re-render, and
+// shell execution without touching a cluster or the filesystem.
 var (
 	runShell                = automa_steps.RunBashScript
 	reconfigureCiliumConfig = software.ReconfigureCiliumConfig
-	readCiliumAcceleration  = liveCiliumAcceleration
+	kubernetesInstalled     = defaultKubernetesInstalled
+	readCiliumState         = defaultReadCiliumState
 )
 
 // CiliumAccelerationMigration re-renders cilium-config.yaml and runs `cilium upgrade`
@@ -77,15 +83,26 @@ func NewCiliumAccelerationMigration() *CiliumAccelerationMigration {
 // (the migration already ran). Applies() only gates on the CLI version boundary,
 // so these checks make repeated invocations within the upgrade window harmless.
 func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migration.Context) error {
-	acc, err := readCiliumAcceleration(ctx)
-	if err != nil {
-		logx.As().Debug().Err(err).
-			Msg("cilium acceleration migration: cilium-config not reachable (no cluster on this node?); skipping")
+	// The provisioner can run before anything is deployed, so reconfigure only
+	// when both Kubernetes and Cilium are actually installed on this host.
+	if !kubernetesInstalled() {
+		logx.As().Debug().Msg("cilium acceleration migration: Kubernetes not installed on this host; skipping")
 		return nil
 	}
-	if acc == "" || acc == disabledAcceleration {
+
+	installed, acc, err := readCiliumState(ctx)
+	if err != nil {
+		logx.As().Debug().Err(err).
+			Msg("cilium acceleration migration: Kubernetes API not reachable; skipping")
+		return nil
+	}
+	if !installed {
+		logx.As().Debug().Msg("cilium acceleration migration: Cilium not installed (no cilium-config); skipping")
+		return nil
+	}
+	if acc == disabledAcceleration || acc == "" {
 		logx.As().Info().Str("acceleration", acc).
-			Msg("cilium acceleration migration: nothing to do (no cilium-config or already disabled)")
+			Msg("cilium acceleration migration: nothing to do (already disabled)")
 		return nil
 	}
 
@@ -119,14 +136,34 @@ func (m *CiliumAccelerationMigration) Rollback(ctx context.Context, mctx *migrat
 	return nil
 }
 
-// liveCiliumAcceleration reads bpf-lb-acceleration from the live cilium-config
-// ConfigMap via the Kubernetes API (the provisioner's own client, which resolves
-// the in-cluster config or the admin kubeconfig). Returns ("", nil) when the
-// ConfigMap is absent, and ("", err) when the cluster is not reachable.
-func liveCiliumAcceleration(ctx context.Context) (string, error) {
+// defaultKubernetesInstalled reports whether Kubernetes has been provisioned on
+// this host (the kubeadm admin kubeconfig exists).
+func defaultKubernetesInstalled() bool {
+	_, err := os.Stat(adminKubeconfigPath)
+	return err == nil
+}
+
+// defaultReadCiliumState reports whether Cilium is installed (its cilium-config
+// ConfigMap exists) and, if so, its bpf-lb-acceleration value. It uses the
+// provisioner's own Kubernetes client (resolving the in-cluster config or admin
+// kubeconfig). A non-nil error means the cluster/API is not reachable.
+func defaultReadCiliumState(ctx context.Context) (installed bool, acceleration string, err error) {
 	kc, err := kube.NewClient()
 	if err != nil {
-		return "", err
+		return false, "", err
 	}
-	return kc.GetResourceNestedString(ctx, "v1", "ConfigMap", "kube-system", "cilium-config", "data", "bpf-lb-acceleration")
+
+	exists, err := kc.ResourceExists(ctx, "v1", "ConfigMap", "kube-system", "cilium-config")
+	if err != nil {
+		return false, "", err
+	}
+	if !exists {
+		return false, "", nil
+	}
+
+	acc, err := kc.GetResourceNestedString(ctx, "v1", "ConfigMap", "kube-system", "cilium-config", "data", "bpf-lb-acceleration")
+	if err != nil {
+		return true, "", err
+	}
+	return true, acc, nil
 }
