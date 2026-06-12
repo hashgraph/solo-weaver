@@ -2,7 +2,7 @@
 
 > This document is the living architectural reference for the daemon. It is written
 > for two audiences: developers extending the daemon, and reviewers assessing it for
-> **robustness**, **design elegance**, and **production readiness**. Where a design
+> **robustness** and **production readiness**. Where a design
 > choice exists to satisfy one of those criteria, the rationale is called out inline.
 >
 > For operator testing instructions see [daemon-testing-guide.md](daemon-testing-guide.md).
@@ -15,16 +15,15 @@
 
 ### The problem it eliminates
 
-Hedera node upgrades and migrations have historically been a manual, high-stakes ritual: a human SSHes
-into a box at exactly the right moment, runs the right commands in the right order, watches logs, and
-hopes nothing hangs. That approach does not scale to a fleet, does not survive an unattended maintenance
-window, and turns every routine change into an opportunity for human error on a system that secures real
-value. A mistimed or half-applied upgrade on a consensus node is not a cosmetic bug — it can corrupt
-state, break consensus participation, or strand a node mid-migration.
+Hedera node upgrades and migrations are high-stakes operations that demand precision and minimal human intervention. A
+manual, coordinated approach does not scale to a geographically distributed fleet, cannot survive an unattended
+maintenance window, and turns every routine change into an opportunity for human error on a system that secures real
+value. A mistimed or partially applied upgrade on a consensus node is not a cosmetic bug — it can corrupt state, break
+consensus participation, or leave a node stranded mid-migration.
 
-The daemon replaces that ritual with a supervised, observable, restart-safe machine. The operator
-expresses *intent* (a `NetworkUpgradeExecute` CR, a soak-start request); the daemon turns intent into
-*correct, exactly-once action* and reports continuously on what it is doing and why.
+The daemon replaces that manual ritual with a supervised, observable, and restart-safe automation layer. The node
+operator expresses intent; the daemon translates that intent into correct, exactly-once action — and reports
+continuously on what it is doing and why.
 
 ### Why it matters
 
@@ -62,15 +61,15 @@ through the CLI's `daemon service` sub-commands.
 
 ### Design principles (and why they matter for review)
 
-| Principle | What it means | Why it matters |
-|---|---|---|
-| **Fail-fast startup** | The daemon refuses to start if `daemon.yaml` is missing, malformed, or has an unsupported schema version; each enabled component's kubeconfig must build. | A misconfigured daemon never half-runs. systemd surfaces the failure immediately instead of the daemon silently doing nothing. |
-| **Isolated component credentials** | Each component (consensus-node, block-node) carries its own scoped kubeconfig + RBAC, written at install time. | Blast-radius containment: a compromised or over-broad block-node credential cannot touch consensus-node resources. |
-| **Supervised, never-crashing monitors** | Every monitor goroutine is wrapped in `core.SupervisedMonitor` — crashes are absorbed with exponential back-off; a single monitor failure never takes down the process. | The daemon stays up and serving `/status` even while one subsystem is broken — operators can always introspect. |
-| **Monitors are init-time only** | Monitors start once at startup and run until shutdown. The HTTP API triggers *actions within* running monitors, never monitor lifecycle. | No dynamic goroutine churn; the goroutine set is fully determined by `daemon.yaml`. Easy to reason about. |
-| **Local-only control plane** | The HTTP API binds a Unix socket (`0660`), never a TCP port. | No network attack surface; access is gated by filesystem permissions (owner `weaver`, group `weaver`). |
-| **Durable source of truth lives in the cluster / on disk** | Upgrade idempotency keys off the CR `status.phase`; soak progress is persisted to disk. | The daemon is restart-safe and crash-safe without an embedded database. |
-| **Minimal attack surface** | The daemon binary does **not** import anything under `cmd/cli/`. | Enforced separation keeps the long-running privileged process small and auditable. |
+| Principle                                                  | What it means                                                                                                                                                           | Why it matters                                                                                                                 |
+|------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| **Fail-fast startup**                                      | The daemon refuses to start if `daemon.yaml` is missing, malformed, or has an unsupported schema version; each enabled component's kubeconfig must build.               | A misconfigured daemon never half-runs. systemd surfaces the failure immediately instead of the daemon silently doing nothing. |
+| **Isolated component credentials**                         | Each component (consensus-node, block-node) carries its own scoped kubeconfig + RBAC, written at install time.                                                          | Blast-radius containment: a compromised or over-broad block-node credential cannot touch consensus-node resources.             |
+| **Supervised, never-crashing monitors**                    | Every monitor goroutine is wrapped in `core.SupervisedMonitor` — crashes are absorbed with exponential back-off; a single monitor failure never takes down the process. | The daemon stays up and serving `/status` even while one subsystem is broken — operators can always introspect.                |
+| **Monitors are init-time only**                            | Monitors start once at startup and run until shutdown. The HTTP API triggers *actions within* running monitors, never monitor lifecycle.                                | No dynamic goroutine churn; the goroutine set is fully determined by `daemon.yaml`. Easy to reason about.                      |
+| **Local-only control plane**                               | The HTTP API binds a Unix socket (`0660`), never a TCP port.                                                                                                            | No network attack surface; access is gated by filesystem permissions (owner `weaver`, group `weaver`).                         |
+| **Durable source of truth lives in the cluster / on disk** | Upgrade idempotency keys off the CR `status.phase`; soak progress is persisted to disk.                                                                                 | The daemon is restart-safe and crash-safe without an embedded database.                                                        |
+| **Minimal attack surface**                                 | The daemon binary does **not** import anything under `cmd/cli/` (a `depguard`-enforced compile-time boundary); shared actions are reached by invoking the CLI binary, not linking it. | Keeps the long-running privileged process small and auditable. See [CLI invocation & the import boundary](#cli-invocation--the-import-boundary) for the runtime trade-off. |
 
 ### System Overview
 
@@ -84,7 +83,7 @@ graph TD
         run["daemon.Run(ctx)"]
         run -->|errgroup| http["HTTP control plane\n(Unix socket)"]
         run -->|errgroup| sup["componentSupervisor"]
-        run -->|"sd_notify READY=1\n(socket up)"| sdnotify["systemd: service active"]
+        run -->|" sd_notify READY=1\n(socket up) "| sdnotify["systemd: service active"]
         run -->|goroutine| probe["runComponentProbes\n(async — does NOT gate READY)"]
 
         subgraph sup["componentSupervisor"]
@@ -99,8 +98,8 @@ graph TD
         probe -->|results stored in| probeErrors["probeErrors (atomic)\nsurfaced via GET /status"]
     end
 
-    http -->|"GET /health\nGET /status"| cli["solo-provisioner CLI\ndaemon service check"]
-    http -->|"POST /consensus_node/migration/soak/start"| mig_mon
+    http -->|" GET /health\nGET /status "| cli["solo-provisioner CLI\ndaemon service check"]
+    http -->|" POST /consensus_node/migration/soak/start "| mig_mon
     up_mon -->|watch CRs| k8s[("Kubernetes API")]
     mig_mon -->|list pods / read flag file| k8s
 ```
@@ -114,6 +113,38 @@ cmd/daemon/main.go          # entry point; loads config, applies CLI flag overri
 The daemon binary has its own minimal Cobra root and **does not import any package under `cmd/cli/`**
 (an epic-level attack-surface constraint). Logging, config, and proxy bootstrap are re-implemented
 self-contained in `cmd/daemon/` rather than shared with the CLI.
+
+### CLI invocation & the import boundary
+
+The no-import rule is a **compile-time** boundary, not a statement that the daemon is fully decoupled
+from the CLI. The current design assumption is that, to perform certain provisioning actions whose
+logic already lives in the CLI, **the daemon invokes the `solo-provisioner` CLI binary as a
+subprocess** rather than re-linking that logic into its own address space. Sharing happens at the
+*process* level (exec), not the *package* level (import).
+
+This is a deliberate trade-off:
+
+| Sharing model                   | Avoids                                                                                | Residual risk                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Invoke CLI binary** (current) | Code duplication; linking the CLI's large dependency tree into the privileged process | Runtime coupling to an external artifact — the CLI binary may be missing, version-skewed, or corrupted |
+| Import CLI packages             | The external-binary dependency (everything verified at build time)                    | The entire CLI surface is linked into the privileged daemon process, undermining the small-surface goal |
+
+Optimizing for a **small privileged binary with no duplicated logic** means the daemon accepts
+**CLI-binary integrity** as the residual risk. The intended mitigation (not yet implemented) is for
+the daemon to **verify the CLI binary before invoking it** — computing its hash (and/or checking the
+signature produced by `sign:cli:all`) and comparing it against the expected value so the daemon only
+execs a binary it recognises. Exec failures (not found, signature/hash mismatch, non-zero exit,
+version skew) should surface through the existing `core.StatusError` reason/resolution pattern so
+`/status` tells the operator exactly what is wrong and how to fix it.
+
+> If we ever decide the external-binary risk is unacceptable, the alternative is to drop the no-import
+> rule and have the daemon import the CLI packages directly — accepting the larger linked surface in
+> exchange for build-time verification. For now the responsibility and code are intentionally
+> segregated.
+
+The import boundary is enforced mechanically by a `depguard` rule (see `.golangci.yml`) that forbids
+any `cmd/cli/...` import from `cmd/daemon` and `internal/daemon`, so the promise above cannot be
+broken by accident — sharing must go through invocation, not linkage.
 
 Persistent flags: `--config`/`-c`, `--log-level`, `--version`/`-v`, `--output`/`-o`.
 
@@ -251,10 +282,10 @@ the `component` struct in `daemon.go`:
 
 ```go
 type component struct {
-    name     string
-    monitors []core.MonitorRunner   // one supervised goroutine per entry
-    probe    core.ComponentProbe    // nil = immediately ready (no external deps)
-    tracker  *core.StatusTracker    // per-monitor state feeding GET /status
+name     string
+monitors []core.MonitorRunner // one supervised goroutine per entry
+probe    core.ComponentProbe // nil = immediately ready (no external deps)
+tracker  *core.StatusTracker    // per-monitor state feeding GET /status
 }
 ```
 
@@ -272,18 +303,16 @@ graph LR
         cn_comp --- mig_mon2["MigrationMonitor"]
         cn_comp --- cn_probe["CompositeProbe\n(disk ownership + write test)"]
         cn_comp --- cn_tracker["StatusTracker"]
-
         bn_comp["component: block-node"]
         bn_comp --- bn_mon2["trafficShaperMonitor (stub)"]
         bn_comp --- bn_probe["nil (immediately ready)"]
         bn_comp --- bn_tracker["StatusTracker"]
     end
 
-    cn_cfg -->|"consensus.NewComponent"| cn_comp
-    bn_cfg -->|"blocknode.NewComponent"| bn_comp
-
-    cn_tracker -->|"GET /status"| http2["HTTP /status"]
-    bn_tracker -->|"GET /status"| http2
+    cn_cfg -->|" consensus.NewComponent "| cn_comp
+    bn_cfg -->|" blocknode.NewComponent "| bn_comp
+    cn_tracker -->|" GET /status "| http2["HTTP /status"]
+    bn_tracker -->|" GET /status "| http2
 ```
 
 ### Component HTTP routing — extensible by construction
@@ -292,7 +321,7 @@ Components that expose endpoints implement `core.ComponentHandler`:
 
 ```go
 type ComponentHandler interface {
-    RegisterRoutes(mux *http.ServeMux)
+RegisterRoutes(mux *http.ServeMux)
 }
 ```
 
@@ -323,19 +352,20 @@ Currently only `consensus.ConsensusNodeHandler` registers routes. The block-node
 `core.SupervisedMonitor` is the heart of the daemon's robustness. It runs a `MonitorRunner` in a
 restart loop and absorbs crashes so the process survives indefinitely.
 
-| Parameter | Default | Notes |
-|---|---|---|
-| Initial back-off | 5 s | Delay before the first restart after a crash |
-| Back-off multiplier | 2× | Applied to the *next* crash, not the current one |
-| Back-off cap | 5 min | Maximum delay between restarts |
-| Stable threshold | 60 s | A run longer than this resets both back-off and the crash counter |
-| Degraded threshold | 5 crashes | Emits a `MonitorDegraded` error log at crash #5, #10, #15, … |
+| Parameter           | Default   | Notes                                                             |
+|---------------------|-----------|-------------------------------------------------------------------|
+| Initial back-off    | 5 s       | Delay before the first restart after a crash                      |
+| Back-off multiplier | 2×        | Applied to the *next* crash, not the current one                  |
+| Back-off cap        | 5 min     | Maximum delay between restarts                                    |
+| Stable threshold    | 60 s      | A run longer than this resets both back-off and the crash counter |
+| Degraded threshold  | 5 crashes | Emits a `MonitorDegraded` error log at crash #5, #10, #15, …      |
 
 All thresholds are package-level `var`s (not `const`) in `core/monitor.go` so unit tests override them
 to run in milliseconds instead of sleeping for real durations — the back-off logic is fully tested
 without slow tests.
 
 Return-value contract for `MonitorRunner.Run`:
+
 - `nil` + ctx cancelled → clean shutdown, no restart.
 - `nil` without ctx cancellation → treated as a clean exit (logged `MonitorExited`), no restart.
 - non-nil error → crash path: log, back off, restart.
@@ -344,14 +374,12 @@ Return-value contract for `MonitorRunner.Run`:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Running : start goroutine
-    Running --> Backoff : Run() returns non-nil error
-    Running --> Stopped : ctx cancelled / clean nil return
-    Running --> Running : ran > 60s (stable)\nreset backoff + crash count
-
-    Backoff --> Running : sleep expires (5s → 10s → 20s … cap 5min)
-    Backoff --> Stopped : ctx cancelled during sleep
-
+    [*] --> Running: start goroutine
+    Running --> Backoff: Run() returns non-nil error
+    Running --> Stopped: ctx cancelled / clean nil return
+    Running --> Running: ran > 60s (stable)\nreset backoff + crash count
+    Backoff --> Running: sleep expires (5s → 10s → 20s … cap 5min)
+    Backoff --> Stopped: ctx cancelled during sleep
     Stopped --> [*]
 ```
 
@@ -368,8 +396,8 @@ internally (e.g. a K8s watch that keeps failing) — to the supervisor that is s
 
 ```go
 type ConnectivityMonitor interface {
-    MonitorRunner
-    ConnectivityError() *StatusError   // nil when healthy; set on watch/list/auth failure
+MonitorRunner
+ConnectivityError() *StatusError // nil when healthy; set on watch/list/auth failure
 }
 ```
 
@@ -392,14 +420,14 @@ Two distinct probe concerns, deliberately separated:
 
 Leaf probes (`internal/daemon/probes/`):
 
-| Probe | Checks | Notes |
-|---|---|---|
-| `KubeRBACProbe` | SA can perform given verbs on a group/resource in a namespace | One `SelfSubjectAccessReview` per verb; retries every 2 s until allowed or ctx done |
-| `DiskOwnershipProbe` | Path owner UID/GID + minimum permission bits (via `syscall.Stat_t`) | Any of User/Group/Permission left zero is skipped |
-| `DiskPermissionProbe` | Minimum mode bits on the inode | Declared permissions, not effective access |
-| `DiskWriteTestProbe` | The *running process* can actually create+remove a file in a dir | Exercises ownership, ACLs, mount flags, SELinux/AppArmor implicitly |
-| `TaggedProbe` | Wraps any leaf probe; attaches `reason` + `resolution` errorx properties | Lets `/status` render context-specific remediation per failure |
-| `CompositeProbe` | Fans out to N leaf probes concurrently (errgroup); first failure cancels siblings | Nestable to arbitrary depth (it satisfies `Probe` itself) |
+| Probe                 | Checks                                                                            | Notes                                                                               |
+|-----------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
+| `KubeRBACProbe`       | SA can perform given verbs on a group/resource in a namespace                     | One `SelfSubjectAccessReview` per verb; retries every 2 s until allowed or ctx done |
+| `DiskOwnershipProbe`  | Path owner UID/GID + minimum permission bits (via `syscall.Stat_t`)               | Any of User/Group/Permission left zero is skipped                                   |
+| `DiskPermissionProbe` | Minimum mode bits on the inode                                                    | Declared permissions, not effective access                                          |
+| `DiskWriteTestProbe`  | The *running process* can actually create+remove a file in a dir                  | Exercises ownership, ACLs, mount flags, SELinux/AppArmor implicitly                 |
+| `TaggedProbe`         | Wraps any leaf probe; attaches `reason` + `resolution` errorx properties          | Lets `/status` render context-specific remediation per failure                      |
+| `CompositeProbe`      | Fans out to N leaf probes concurrently (errgroup); first failure cancels siblings | Nestable to arbitrary depth (it satisfies `Probe` itself)                           |
 
 The consensus-node `UpgradeMonitor.RequiredProbe()` composes three tagged disk probes — upgrade-root
 ownership (`hedera:hedera 0755`), current-dir ownership (`hedera:hedera 0775`), and a write-test — each
@@ -422,10 +450,8 @@ flowchart TD
     start(["daemon.Run starts"]) --> preflight
     preflight["kubeconfig preflight\n(build REST config for each enabled component)"] -->|fail| abort(["return error\ndaemon exits, systemd restarts"])
     preflight -->|pass| ready
-
     ready["sd_notify READY=1\nsystemd marks service active\n(socket is up)"] --> monitors
     ready --> probeloop
-
     monitors["monitors running\nHTTP API accepting"]
 
     subgraph probeloop["runComponentProbes (async background loop)"]
@@ -436,7 +462,7 @@ flowchart TD
         p4["nil probe (BN — immediately ready)"]
     end
 
-    probeloop -->|"any fail → retry every 30 s\nresult stored in probeErrors"| status["GET /status\nshows component probe failures + resolution"]
+    probeloop -->|" any fail → retry every 30 s\nresult stored in probeErrors "| status["GET /status\nshows component probe failures + resolution"]
     probeloop -->|all pass| allready["probeErrors cleared\nlog: AllComponentProbesReady\n(loop exits — see note)"]
 ```
 
@@ -459,14 +485,14 @@ gracefully (5 s drain) on context cancellation, removing the socket file on exit
 Route scheme: `/<component>/<monitor>/<sub-resource>/<verb>` — partitioned so new monitors never
 collide with existing paths.
 
-| Method | Path | Handler | Description |
-|---|---|---|---|
-| `GET` | `/health` | `handlers.go` | Liveness — always `{"status":"ok"}` while the process is alive |
-| `GET` | `/status` | `handlers.go` | Full view: every component, per-monitor state, connectivity errors, and probe failures |
-| `GET` | `/consensus_node/migration/status` | `consensus/handler.go` | Combined: migration-monitor supervisor health + soak state |
-| `GET` | `/consensus_node/migration/soak/status` | `consensus/handler.go` | Soak-run state only (`SoakStatusResponse`) |
-| `POST` | `/consensus_node/migration/soak/start` | `consensus/handler.go` | Enqueue a soak run. Body capped at 16 KiB, validated. 202 on accept, 409 if already active, 400 on bad body, 503 if monitor disabled |
-| `DELETE` | `/consensus_node/migration/soak` | `consensus/handler.go` | Stop the running soak watcher. `?delete_state=false` preserves `cutover-state.jsonl` so the daemon resumes on next restart (default deletes it). 204 on success, 409 if none active |
+| Method   | Path                                    | Handler                | Description                                                                                                                                                                         |
+|----------|-----------------------------------------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET`    | `/health`                               | `handlers.go`          | Liveness — always `{"status":"ok"}` while the process is alive                                                                                                                      |
+| `GET`    | `/status`                               | `handlers.go`          | Full view: every component, per-monitor state, connectivity errors, and probe failures                                                                                              |
+| `GET`    | `/consensus_node/migration/status`      | `consensus/handler.go` | Combined: migration-monitor supervisor health + soak state                                                                                                                          |
+| `GET`    | `/consensus_node/migration/soak/status` | `consensus/handler.go` | Soak-run state only (`SoakStatusResponse`)                                                                                                                                          |
+| `POST`   | `/consensus_node/migration/soak/start`  | `consensus/handler.go` | Enqueue a soak run. Body capped at 16 KiB, validated. 202 on accept, 409 if already active, 400 on bad body, 503 if monitor disabled                                                |
+| `DELETE` | `/consensus_node/migration/soak`        | `consensus/handler.go` | Stop the running soak watcher. `?delete_state=false` preserves `cutover-state.jsonl` so the daemon resumes on next restart (default deletes it). 204 on success, 409 if none active |
 
 > **Extensibility**: future block-node endpoints follow the same pattern, e.g.
 > `GET /block_node/traffic_shaper/status`. A planned `GET /consensus_node/migration/monitor/status`
@@ -495,11 +521,11 @@ The socket path is consumed directly by `solo-provisioner daemon service check` 
 Managed via `solo-provisioner consensus migration soak` (not `daemon service` — that tree is scoped to
 daemon lifecycle only):
 
-| Command | Underlying API | Notes |
-|---|---|---|
-| `soak start --node-id <id> --cutover-ts <RFC-3339> --migration-plan <path>` | `POST …/soak/start` | All three flags required |
-| `soak stop [--keep-state]` | `DELETE …/soak` | `--keep-state` sends `?delete_state=false` |
-| `soak status` | `GET …/soak/status` | Plain JSON fetch; no TUI workflow |
+| Command                                                                     | Underlying API      | Notes                                      |
+|-----------------------------------------------------------------------------|---------------------|--------------------------------------------|
+| `soak start --node-id <id> --cutover-ts <RFC-3339> --migration-plan <path>` | `POST …/soak/start` | All three flags required                   |
+| `soak stop [--keep-state]`                                                  | `DELETE …/soak`     | `--keep-state` sends `?delete_state=false` |
+| `soak status`                                                               | `GET …/soak/status` | Plain JSON fetch; no TUI workflow          |
 
 `start`/`stop` run through the standard automa workflow + `notify` pipeline (TUI step output
 interactively, structured logs in `--non-interactive`), with resolution hints on every error path.
@@ -537,13 +563,14 @@ The same upgrade can be delivered more than once (watch re-delivery, a `listAndS
 restart that re-lists the cluster). Exactly-once execution per `spec.operationId` is enforced by
 **three layers**:
 
-| Layer | Mechanism | Window it guards |
-|---|---|---|
-| 1. Terminal phase (upstream, durable) | The CR's own `status.phase` — `listAndSeed` only dispatches `ReadyForProvisionerDaemon`; `Succeeded`/`Failed` are filtered out | Historical CRs after a restart. **The CR phase is the durable source of truth**, so restart-safety needs no disk persistence. |
-| 2. `completedOpIDs` (in-process set) | Seeded from terminal CRs at each `Run()`; an opID is added only on **successful** completion | The patch round-trip gap — between the execute goroutine finishing and the watch loop observing the CR flip to terminal. Also absorbs same-session re-delivery. |
-| 3. `activeOpID` (mutex-guarded slot) | Single execution slot. Same opID → silently re-acked (`UpgradeMonitorDuplicateEvent`); a *different* opID → rejected (`UpgradeMonitorBusy`) | Concurrent execution while `handleExecute` is in flight. |
+| Layer                                 | Mechanism                                                                                                                                   | Window it guards                                                                                                                                                |
+|---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1. Terminal phase (upstream, durable) | The CR's own `status.phase` — `listAndSeed` only dispatches `ReadyForProvisionerDaemon`; `Succeeded`/`Failed` are filtered out              | Historical CRs after a restart. **The CR phase is the durable source of truth**, so restart-safety needs no disk persistence.                                   |
+| 2. `completedOpIDs` (in-process set)  | Seeded from terminal CRs at each `Run()`; an opID is added only on **successful** completion                                                | The patch round-trip gap — between the execute goroutine finishing and the watch loop observing the CR flip to terminal. Also absorbs same-session re-delivery. |
+| 3. `activeOpID` (mutex-guarded slot)  | Single execution slot. Same opID → silently re-acked (`UpgradeMonitorDuplicateEvent`); a *different* opID → rejected (`UpgradeMonitorBusy`) | Concurrent execution while `handleExecute` is in flight.                                                                                                        |
 
 Additional guarantees:
+
 - **Failures stay retryable**: `completedOpIDs` is populated only on `handleExecute` success, so a
   failed op can be re-picked-up by a fresh watch event or reconnect (no automatic in-process requeue).
 - **Oldest-first dispatch**: when `listAndSeed` finds multiple pending CRs (orchestrator bug, handled
@@ -622,7 +649,7 @@ flowchart LR
     logs -->|stdout| journald["journald\n(systemd Type=notify foreground)"]
     logs -->|lumberjack| logfile["solo-provisioner-daemon.log\n(50MB × 3, 30d)"]
     events --> jsonl["events/consensus/{upgrade,migrate}/*.jsonl\nfsync per write, pruned by filepruner"]
-    api -->|curl --unix-socket| check["daemon service check"]
+    api -->|curl - - unix - socket| check["daemon service check"]
 
     subgraph alloy["Alloy observability cluster (separate install)"]
         journalscrape["loki.source.journal\n/host/var/log/journal"]
@@ -630,9 +657,9 @@ flowchart LR
     end
 
     journald --> journalscrape
-    journalscrape -->|loki.write| loki["remote Loki\n(Grafana)"]
-    metricscrape -->|prometheus.remote_write| prom["remote Prometheus"]
-    jsonl -.->|"future: loki.source.file"| loki
+    journalscrape -->|loki . write| loki["remote Loki\n(Grafana)"]
+    metricscrape -->|prometheus . remote_write| prom["remote Prometheus"]
+    jsonl -.->|" future: loki.source.file "| loki
 ```
 
 ### 1. Operational logs (debugging)
@@ -737,7 +764,6 @@ flowchart TD
     bin -->|pass| svc["7. InstallDaemonServiceStep\nunit + symlink + reload + enable + start"]
     svc -->|fail| rb_svc["rollback: disable & stop, remove unit"]
     svc -->|pass| done(["daemon running"])
-
     rb_svc --> rb_bin --> rb_wc --> rb_kc --> rb_rbac --> failed(["install failed (cleaned up)"])
 ```
 
@@ -753,29 +779,29 @@ which requires setuid escalation.
 
 ## Files on Disk (production paths)
 
-| Path | Description |
-|---|---|
-| `/opt/solo/weaver/config/daemon.yaml` | Main config (schema-versioned) |
-| `/opt/solo/weaver/config/daemon-cn.kubeconfig` | Consensus-node scoped kubeconfig |
-| `/opt/solo/weaver/config/daemon-bn.kubeconfig` | Block-node scoped kubeconfig |
-| `/opt/solo/weaver/daemon/daemon.sock` | Unix socket (HTTP control plane, `0660`) |
-| `/opt/solo/weaver/bin/solo-provisioner-daemon` | Daemon binary (symlink target) |
-| `$HOME/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service` | Unit file (sandbox) |
-| `/usr/lib/systemd/system/solo-provisioner-daemon.service` | Symlink to the sandbox unit |
-| `/opt/solo/weaver/logs/solo-provisioner-daemon.log` | Rotated operational log |
-| `/opt/solo/weaver/daemon/events/consensus/upgrade/consensus-upgrade-<ts>.jsonl` | Per-operation upgrade audit log |
-| `/opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl` | Append-only soak audit log |
-| `/opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl` | Soak resume state (deleted on clean stop) |
+| Path                                                                              | Description                               |
+|-----------------------------------------------------------------------------------|-------------------------------------------|
+| `/opt/solo/weaver/config/daemon.yaml`                                             | Main config (schema-versioned)            |
+| `/opt/solo/weaver/config/daemon-cn.kubeconfig`                                    | Consensus-node scoped kubeconfig          |
+| `/opt/solo/weaver/config/daemon-bn.kubeconfig`                                    | Block-node scoped kubeconfig              |
+| `/opt/solo/weaver/daemon/daemon.sock`                                             | Unix socket (HTTP control plane, `0660`)  |
+| `/opt/solo/weaver/bin/solo-provisioner-daemon`                                    | Daemon binary (symlink target)            |
+| `$HOME/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service`            | Unit file (sandbox)                       |
+| `/usr/lib/systemd/system/solo-provisioner-daemon.service`                         | Symlink to the sandbox unit               |
+| `/opt/solo/weaver/logs/solo-provisioner-daemon.log`                               | Rotated operational log                   |
+| `/opt/solo/weaver/daemon/events/consensus/upgrade/consensus-upgrade-<ts>.jsonl`   | Per-operation upgrade audit log           |
+| `/opt/solo/weaver/daemon/events/consensus/migrate/consensus-migrate-events.jsonl` | Append-only soak audit log                |
+| `/opt/solo/weaver/daemon/events/consensus/migrate/cutover-state.jsonl`            | Soak resume state (deleted on clean stop) |
 
 ## Error Types
 
 `internal/daemon/errors.go` (all `joomcode/errorx`):
 
-| Error type | When |
-|---|---|
-| `ErrConfig` | I/O error reading or writing config |
-| `ErrConfigNotFound` | Config file does not exist (use `daemon.IsConfigNotFound(err)` to distinguish) |
-| `ErrConfigMalformed` | YAML parse error, validation failure, or unsupported schema version |
+| Error type           | When                                                                           |
+|----------------------|--------------------------------------------------------------------------------|
+| `ErrConfig`          | I/O error reading or writing config                                            |
+| `ErrConfigNotFound`  | Config file does not exist (use `daemon.IsConfigNotFound(err)` to distinguish) |
+| `ErrConfigMalformed` | YAML parse error, validation failure, or unsupported schema version            |
 
 `consensus/errors.go`: `ErrK8sClient`, `ErrWatchFailed`, `ErrSoakWatcher`. `eventlog`/`filepruner` carry
 their own `ErrInvalidEvent` / `ErrPruneFailed`. Errors surfaced to operators carry an
@@ -783,26 +809,27 @@ their own `ErrInvalidEvent` / `ErrPruneFailed`. Errors surfaced to operators car
 
 ## Production-Readiness Summary (review checklist)
 
-| Concern | Status | Where |
-|---|---|---|
-| Process never dies on a subsystem fault | ✅ | `SupervisedMonitor`, top-level `recover()` + `Restart=always` |
-| Crash-safe / restart-safe state | ✅ | CR `status.phase` (upgrades), atomic `cutover-state.jsonl` (soak) |
-| Exactly-once side effects | ✅ | 3-layer operationId dedup; single-flight soak activation |
-| Fail-fast on bad config | ✅ | `LoadDaemonConfig` + `Validate` + schema-version guard |
-| Forward-compatible config | ✅ | Sealed versioned structs + single-step migration chain |
-| Self-healing on transient/auth failures | ✅ | Watch back-off + client rebuild from kubeconfig |
-| Operator visibility without log spelunking | ✅ | `/status` with reason/message/resolution/since |
-| Bounded disk usage | ✅ | `filepruner` (age + hard-cap, protected files) |
-| Durable audit trail | ✅ | `eventlog` fsync-per-write JSONL, HIP-stable reasons |
-| Remote log/metric shipping | ✅ (logs/metrics via Alloy→Loki/Prometheus) | `internal/alloy/`, journald scrape |
-| Minimal attack surface | ✅ | Unix socket only; no `cmd/cli` import; scoped per-component RBAC |
-| Bounded blocking I/O | ✅ | 30 s REST timeout, 5 s read-header timeout, 5 s graceful drain |
-| **JSONL events shipped remotely** | ⚠️ not yet | Future `loki.source.file` over events dir |
-| **Continuous prerequisite re-check** | ⚠️ one-shot | `runComponentProbes` exits after first all-pass |
-| **Native OTLP/OpenTelemetry** | ⚠️ via Alloy only | No in-process OTLP exporter |
-| **`handleExecute` upgrade workflow** | ⚠️ stub | Lands in subsequent stories (machinery around it complete) |
-| **`Decommissioner`** | ⚠️ Noop | Real implementation in a later story |
-| **Soak criteria** | ⚠️ partial | `SoakDuration` + `NoPodRestarts` real; uploader/participation stubbed |
+| Concern                                 | Status                                     | Where                                                                 |
+|-----------------------------------------|--------------------------------------------|-----------------------------------------------------------------------|
+| Process never dies on a subsystem fault | ✅                                          | `SupervisedMonitor`, top-level `recover()` + `Restart=always`         |
+| Crash-safe / restart-safe state         | ✅                                          | CR `status.phase` (upgrades), atomic `cutover-state.jsonl` (soak)     |
+| Exactly-once side effects               | ✅                                          | 3-layer operationId dedup; single-flight soak activation              |
+| Fail-fast on bad config                 | ✅                                          | `LoadDaemonConfig` + `Validate` + schema-version guard                |
+| Forward-compatible config               | ✅                                          | Sealed versioned structs + single-step migration chain                |
+| Self-healing on transient/auth failures | ✅                                          | Watch back-off + client rebuild from kubeconfig                       |
+| Operator visibility without log digging | ✅                                          | `/status` with reason/message/resolution/since                        |
+| Bounded disk usage                      | ✅                                          | `filepruner` (age + hard-cap, protected files)                        |
+| Durable audit trail                     | ✅                                          | `eventlog` fsync-per-write JSONL, HIP-stable reasons                  |
+| Remote log/metric shipping              | ✅ (logs/metrics via Alloy→Loki/Prometheus) | `internal/alloy/`, journald scrape                                    |
+| Minimal attack surface                  | ✅                                          | Unix socket only; no `cmd/cli` import; scoped per-component RBAC      |
+| Bounded blocking I/O                    | ✅                                          | 30 s REST timeout, 5 s read-header timeout, 5 s graceful drain        |
+| **JSONL events shipped remotely**       | ⚠️ not yet                                 | Future `loki.source.file` over events dir                             |
+| **Continuous prerequisite re-check**    | ⚠️ one-shot                                | `runComponentProbes` exits after first all-pass                       |
+| **Native OTLP/OpenTelemetry**           | ⚠️ via Alloy only                          | No in-process OTLP exporter                                           |
+| **CLI-binary verification before exec** | ⚠️ not yet                                 | Daemon should hash/verify `solo-provisioner` before invoking it      |
+| **`handleExecute` upgrade workflow**    | ⚠️ stub                                    | Lands in subsequent stories (machinery around it complete)            |
+| **`Decommissioner`**                    | ⚠️ Noop                                    | Real implementation in a later story                                  |
+| **Soak criteria**                       | ⚠️ partial                                 | `SoakDuration` + `NoPodRestarts` real; uploader/participation stubbed |
 
 ## Testing
 
@@ -815,14 +842,17 @@ task vm:test:unit
 ```
 
 Key test files:
-- `internal/daemon/core/monitor_test.go` — `SupervisedMonitor` back-off, degradation, stable-reset (var-override makes it fast)
+
+- `internal/daemon/core/monitor_test.go` — `SupervisedMonitor` back-off, degradation, stable-reset (var-override makes
+  it fast)
 - `internal/daemon/core/probe_test.go` — composite probe fan-out, first-failure cancellation
 - `internal/daemon/composite_probe_test.go` — component-level probe wiring
 - `internal/daemon/server_test.go` — HTTP routing + handler status codes
 - `internal/daemon/config_test.go` — load/validate/migrate, schema-version guards
 - `internal/daemon/sdnotify_test.go` — notify socket no-op + datagram path
 - `internal/daemon/consensus/upgrade_monitor_test.go` — list-then-watch, the 3-layer dedup, auth-error client rebuild
-- `internal/daemon/consensus/migration_monitor_test.go` — single-flight, stop/resume, corrupted-state recovery, poll-interval floor
+- `internal/daemon/consensus/migration_monitor_test.go` — single-flight, stop/resume, corrupted-state recovery,
+  poll-interval floor
 - `internal/daemon/consensus/criteria_test.go` — each soak criterion
 - `pkg/eventlog/logger_test.go` — fsync append, field validation, path-traversal rejection
 - `pkg/filepruner/pruner_test.go` — age filter, hard-cap, protected-file safety
