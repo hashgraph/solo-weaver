@@ -81,6 +81,10 @@ type MigrationMonitor struct {
 	// quiescence before returning.
 	soakWg sync.WaitGroup
 
+	// soakCancel cancels the per-watcher context. Set atomically when a watcher
+	// goroutine starts; cleared when it exits. Used by TryStop.
+	soakCancel atomic.Pointer[context.CancelFunc]
+
 	nodeID         string
 	logger         *eventlog.EventLogger // nil-safe; logMigrateEvent checks before use
 	decommissioner Decommissioner
@@ -248,6 +252,27 @@ func (mm *MigrationMonitor) Status() *SoakStatusResponse {
 	return idleSoakStatus
 }
 
+// TryStop cancels the running soak watcher and waits for it to drain.
+// Returns false when no watcher is currently active (caller should 409).
+// When deleteState is true the persisted cutover-state.jsonl is removed so the
+// daemon does not auto-resume the soak on the next restart.
+func (mm *MigrationMonitor) TryStop(deleteState bool) bool {
+	cancelPtr := mm.soakCancel.Load()
+	if cancelPtr == nil {
+		return false
+	}
+	(*cancelPtr)()
+	mm.soakWg.Wait()
+	if deleteState && mm.stateFilePath != "" {
+		if err := os.Remove(mm.stateFilePath); err != nil && !os.IsNotExist(err) {
+			logx.As().Warn().Err(err).
+				Str("reason", reasonSoakStateDeleteFailed).
+				Msg("Failed to remove soak state file — daemon will resume soak on next restart")
+		}
+	}
+	return true
+}
+
 // Name implements daemon.MonitorRunner.
 func (mm *MigrationMonitor) Name() string { return "migration-monitor" }
 
@@ -288,9 +313,16 @@ func (mm *MigrationMonitor) Run(ctx context.Context) error {
 // run is the per-activation watcher goroutine. It is not inside the errgroup
 // so a watcher failure does not cancel the whole daemon.
 func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
+	// Give TryStop a handle to cancel this specific watcher goroutine without
+	// tearing down the whole daemon context.
+	watchCtx, cancel := context.WithCancel(ctx)
+	mm.soakCancel.Store(&cancel)
+
 	// Single outermost defer: recovery wraps all cleanup so a panic in the
 	// cleanup path is caught rather than silently replacing the original panic.
 	defer func() {
+		cancel() // no-op if already called; prevents a goroutine leak
+		mm.soakCancel.Store(nil)
 		if r := recover(); r != nil {
 			logx.As().Error().Str("reason", reasonSoakPanic).
 				Str("node_id", req.NodeID).
@@ -310,6 +342,8 @@ func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
 		logx.As().Info().Str("reason", reasonSoakStopped).Str("node_id", req.NodeID).Msg("Soak watcher stopped")
 		mm.soakWg.Done()
 	}()
+
+	ctx = watchCtx
 
 	opID := migrationOperationID(req)
 
