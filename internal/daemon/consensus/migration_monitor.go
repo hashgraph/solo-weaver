@@ -318,7 +318,7 @@ func (mm *MigrationMonitor) Run(ctx context.Context) error {
 			// soakWg.Add before goroutine start so the deferred soakWg.Wait()
 			// above accounts for it.
 			mm.soakWg.Add(1)
-			go mm.run(ctx, req)
+			go mm.run(ctx, req, false)
 		case <-ctx.Done():
 			// Intentional: if soakStartCh has a buffered item at the same time
 			// ctx is cancelled, Go's select may pick either case. The spawned
@@ -331,7 +331,12 @@ func (mm *MigrationMonitor) Run(ctx context.Context) error {
 
 // run is the per-activation watcher goroutine. It is not inside the errgroup
 // so a watcher failure does not cancel the whole daemon.
-func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
+// resumed is true when this watcher is being restarted from persisted state
+// after a daemon restart (see resumeIfNeeded). In that case the SoakResumed
+// audit event has already been emitted by the caller, so run() must NOT emit a
+// second SoakStarted — external tooling (Alloy/Loki) counts SoakStarted per
+// migration and would otherwise double-count across every daemon restart.
+func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest, resumed bool) {
 	// Give TryStop a handle to cancel this specific watcher goroutine without
 	// tearing down the whole daemon context.
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -366,21 +371,25 @@ func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
 
 	opID := migrationOperationID(req)
 
-	// Emit SoakStarted
-	mm.logMigrateEvent(eventlog.Event{
-		Ts:          time.Now().UTC(),
-		Level:       eventlog.LevelInfo,
-		Reason:      ReasonSoakStarted,
-		Msg:         fmt.Sprintf("Soak started for node %s; cutover at %s", req.NodeID, req.CutoverTimestamp.UTC().Format(time.RFC3339)),
-		OperationID: opID,
-		NodeID:      req.NodeID,
-	})
-	logx.As().Info().
-		Str("reason", ReasonSoakStarted).
-		Str("node_id", req.NodeID).
-		Time("cutover_ts", req.CutoverTimestamp).
-		Dur("poll_interval", mm.pollInterval()).
-		Msg("Soak watcher started")
+	// Emit SoakStarted only on a fresh activation. On resume, resumeIfNeeded has
+	// already emitted SoakResumed (with the preserved elapsed time), so emitting
+	// SoakStarted here too would double-count the migration in external tooling.
+	if !resumed {
+		mm.logMigrateEvent(eventlog.Event{
+			Ts:          time.Now().UTC(),
+			Level:       eventlog.LevelInfo,
+			Reason:      ReasonSoakStarted,
+			Msg:         fmt.Sprintf("Soak started for node %s; cutover at %s", req.NodeID, req.CutoverTimestamp.UTC().Format(time.RFC3339)),
+			OperationID: opID,
+			NodeID:      req.NodeID,
+		})
+		logx.As().Info().
+			Str("reason", ReasonSoakStarted).
+			Str("node_id", req.NodeID).
+			Time("cutover_ts", req.CutoverTimestamp).
+			Dur("poll_interval", mm.pollInterval()).
+			Msg("Soak watcher started")
+	}
 
 	mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &req})
 
@@ -621,5 +630,5 @@ func (mm *MigrationMonitor) resumeIfNeeded(ctx context.Context) {
 	mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &reqCopy})
 	mm.soakActive.Store(true)
 	mm.soakWg.Add(1)
-	go mm.run(ctx, req)
+	go mm.run(ctx, req, true)
 }

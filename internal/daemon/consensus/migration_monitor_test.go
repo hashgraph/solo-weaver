@@ -307,7 +307,7 @@ func Test_MigrationMonitor_EmitsCriterionMet(t *testing.T) {
 // Test_MigrationMonitor_ResumesOnRestart verifies that a valid cutover-state.jsonl
 // causes resumeIfNeeded to spawn a watcher goroutine (soakActive becomes true).
 func Test_MigrationMonitor_ResumesOnRestart(t *testing.T) {
-	logger, _ := newTestLogger(t)
+	logger, logPath := newTestLogger(t)
 	defer logger.Close()
 	stateDir := t.TempDir()
 
@@ -326,6 +326,15 @@ func Test_MigrationMonitor_ResumesOnRestart(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return mm.Status().Active
 	}, 500*time.Millisecond, 10*time.Millisecond, "soak watcher should be active after resume")
+
+	// A resumed soak must emit SoakResumed and must NOT emit a second SoakStarted —
+	// external tooling counts SoakStarted per migration and would double-count
+	// across daemon restarts.
+	require.Eventually(t, func() bool {
+		return hasReason(readEvents(t, logPath), consensus.ReasonSoakResumed)
+	}, 500*time.Millisecond, 10*time.Millisecond, "SoakResumed event not emitted")
+	assert.Equal(t, 0, countReason(readEvents(t, logPath), consensus.ReasonSoakStarted),
+		"SoakStarted must not be emitted on resume")
 }
 
 // Test_MigrationMonitor_ResumeIgnoresInvalidState verifies that a malformed
