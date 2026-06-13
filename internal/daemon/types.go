@@ -2,7 +2,7 @@
 
 package daemon
 
-import "github.com/hashgraph/solo-weaver/internal/daemon/core"
+import "github.com/hashgraph/solo-weaver/pkg/daemonkit"
 
 // HealthResponse is returned by GET /health.
 type HealthResponse struct {
@@ -23,10 +23,10 @@ type StatusResponse struct {
 	// whose disk prerequisites are not yet satisfied. Empty when all probes pass.
 	// Each entry includes a Reason code, the error Message, an operator-actionable
 	// Resolution hint, and the Since timestamp of when the failure was first seen.
-	ProbeErrors map[string]core.StatusError `json:"probe_errors,omitempty"`
+	ProbeErrors map[string]daemonkit.StatusError `json:"probe_errors,omitempty"`
 }
 
 // ComponentStatus holds the per-monitor states for one component.
 type ComponentStatus struct {
-	Monitors map[string]core.MonitorState `json:"monitors"`
+	Monitors map[string]daemonkit.MonitorState `json:"monitors"`
 }

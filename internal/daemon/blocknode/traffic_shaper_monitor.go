@@ -8,17 +8,17 @@ import (
 	"github.com/automa-saga/logx"
 )
 
-// trafficShaperMonitor is a stub implementation of core.MonitorRunner for the
+// trafficShaperMonitor is a stub implementation of daemonkit.MonitorRunner for the
 // block-node traffic-shaper workflow.
 //
 // It blocks on ctx to keep the supervised goroutine alive, logging once on
 // start so operators can confirm the component is running.
 type trafficShaperMonitor struct{}
 
-// Name implements core.MonitorRunner.
+// Name implements daemonkit.MonitorRunner.
 func (m *trafficShaperMonitor) Name() string { return "bn-traffic-shaper-monitor" }
 
-// Run implements core.MonitorRunner. Blocks until ctx is cancelled.
+// Run implements daemonkit.MonitorRunner. Blocks until ctx is cancelled.
 func (m *trafficShaperMonitor) Run(ctx context.Context) error {
 	logx.As().Info().
 		Str("reason", "MonitorStubRunning").

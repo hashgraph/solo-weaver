@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,14 +26,14 @@ type fakeLeafProbe struct {
 
 func (p *fakeLeafProbe) Probe(ctx context.Context) error { return p.fn(ctx) }
 
-func blockingProbe() core.Probe {
+func blockingProbe() daemonkit.Probe {
 	return &fakeLeafProbe{fn: func(ctx context.Context) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
 }
 
-func unblockedBy(ch <-chan struct{}) core.Probe {
+func unblockedBy(ch <-chan struct{}) daemonkit.Probe {
 	return &fakeLeafProbe{fn: func(ctx context.Context) error {
 		select {
 		case <-ch:
@@ -81,7 +81,7 @@ func TestRunCompositeProbe_BlocksUntilAllPass(t *testing.T) {
 	d := &Daemon{
 		components: []component{{
 			name:  "slow",
-			probe: core.NewCompositeProbe("slow", unblockedBy(unblock)),
+			probe: daemonkit.NewCompositeProbe("slow", unblockedBy(unblock)),
 		}},
 	}
 
@@ -109,7 +109,7 @@ func TestRunCompositeProbe_CtxCancelAborts(t *testing.T) {
 	d := &Daemon{
 		components: []component{{
 			name:  "blocking",
-			probe: core.NewCompositeProbe("blocking", blockingProbe()),
+			probe: daemonkit.NewCompositeProbe("blocking", blockingProbe()),
 		}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,7 +131,7 @@ func TestRunCompositeProbe_MixedProbes(t *testing.T) {
 	d := &Daemon{
 		components: []component{
 			{name: "host-only", probe: nil},
-			{name: "k8s", probe: core.NewCompositeProbe("k8s", unblockedBy(unblock))},
+			{name: "k8s", probe: daemonkit.NewCompositeProbe("k8s", unblockedBy(unblock))},
 		},
 	}
 

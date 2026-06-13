@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 	"github.com/hashgraph/solo-weaver/internal/daemon/probes"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -130,7 +130,7 @@ type UpgradeMonitor struct {
 	// nil = healthy. Set on any listAndSeed or watch error; cleared immediately
 	// after a successful listAndSeed so that recovery (RBAC restored) is visible
 	// within one watch cycle. Written by Run(), read by ConnectivityError().
-	connectivityErr atomic.Pointer[core.StatusError]
+	connectivityErr atomic.Pointer[daemonkit.StatusError]
 
 	// onExecute is called synchronously at the start of each handleExecute invocation.
 	// Nil in production; set in tests to observe invocations without sleeping.
@@ -153,14 +153,14 @@ func NewUpgradeMonitorWithClient(cfg UpgradeMonitorConfig, client dynamic.Interf
 	return &UpgradeMonitor{cfg: cfg, client: client, completedOpIDs: make(map[string]struct{})}
 }
 
-// Name implements core.MonitorRunner.
+// Name implements daemonkit.MonitorRunner.
 func (um *UpgradeMonitor) Name() string { return "upgrade-monitor" }
 
-// ConnectivityError implements core.ConnectivityMonitor. Returns the current
+// ConnectivityError implements daemonkit.ConnectivityMonitor. Returns the current
 // connectivity failure (list or watch error), or nil when the last cycle
 // completed without error. The monitor continues retrying automatically;
 // callers use this for observability only.
-func (um *UpgradeMonitor) ConnectivityError() *core.StatusError {
+func (um *UpgradeMonitor) ConnectivityError() *daemonkit.StatusError {
 	return um.connectivityErr.Load()
 }
 
@@ -173,7 +173,7 @@ func (um *UpgradeMonitor) setConnectivityError(reason, message, resolution strin
 	if prev := um.connectivityErr.Load(); prev != nil {
 		since = prev.Since
 	}
-	um.connectivityErr.Store(&core.StatusError{
+	um.connectivityErr.Store(&daemonkit.StatusError{
 		Reason:     reason,
 		Message:    message,
 		Resolution: resolution,

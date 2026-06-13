@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -21,23 +21,23 @@ import (
 
 // ---- test doubles ----------------------------------------------------------
 
-// blockingMonitor implements core.MonitorRunner and blocks until ctx is done.
+// blockingMonitor implements daemonkit.MonitorRunner and blocks until ctx is done.
 type blockingMonitor struct{ name string }
 
 func (m *blockingMonitor) Run(ctx context.Context) error { <-ctx.Done(); return nil }
 func (m *blockingMonitor) Name() string                  { return m.name }
 
-// connMonitor implements core.ConnectivityMonitor with a fixed error.
+// connMonitor implements daemonkit.ConnectivityMonitor with a fixed error.
 type connMonitor struct {
 	name string
-	cerr *core.StatusError
+	cerr *daemonkit.StatusError
 }
 
-func (m *connMonitor) Run(ctx context.Context) error        { <-ctx.Done(); return nil }
-func (m *connMonitor) Name() string                         { return m.name }
-func (m *connMonitor) ConnectivityError() *core.StatusError { return m.cerr }
+func (m *connMonitor) Run(ctx context.Context) error             { <-ctx.Done(); return nil }
+func (m *connMonitor) Name() string                              { return m.name }
+func (m *connMonitor) ConnectivityError() *daemonkit.StatusError { return m.cerr }
 
-// seqProbe implements core.ComponentProbe returning a scripted sequence of
+// seqProbe implements daemonkit.ComponentProbe returning a scripted sequence of
 // errors on successive Probe calls; after the sequence is exhausted it returns
 // the final element forever (so a trailing nil means "passes from then on").
 type seqProbe struct {
@@ -64,21 +64,21 @@ func (p *seqProbe) Probe(_ context.Context) error {
 
 // seedTracker returns a StatusTracker with name recorded in the "stopped" state
 // by driving a no-op monitor through SupervisedMonitor with a cancelled ctx.
-func seedTracker(t *testing.T, name string) *core.StatusTracker {
+func seedTracker(t *testing.T, name string) *daemonkit.StatusTracker {
 	t.Helper()
-	tr := core.NewStatusTracker()
+	tr := daemonkit.NewStatusTracker()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	core.SupervisedMonitor(ctx, &blockingMonitor{name: name}, tr)
+	daemonkit.SupervisedMonitor(ctx, &blockingMonitor{name: name}, tr)
 	require.Equal(t, "stopped", tr.Snapshot()[name].State)
 	return tr
 }
 
 func TestStatusSnapshot_ConnectivityOverlay_Degrades(t *testing.T) {
-	cerr := &core.StatusError{Reason: "WatchFailed", Message: "boom"}
+	cerr := &daemonkit.StatusError{Reason: "WatchFailed", Message: "boom"}
 	d := &Daemon{components: []component{{
 		name:     "consensus-node",
-		monitors: []core.MonitorRunner{&connMonitor{name: "upgrade-monitor", cerr: cerr}},
+		monitors: []daemonkit.MonitorRunner{&connMonitor{name: "upgrade-monitor", cerr: cerr}},
 		tracker:  seedTracker(t, "upgrade-monitor"),
 	}}}
 
@@ -92,7 +92,7 @@ func TestStatusSnapshot_ConnectivityOverlay_Degrades(t *testing.T) {
 func TestStatusSnapshot_ConnectivityOverlay_NoErrorPreservesState(t *testing.T) {
 	d := &Daemon{components: []component{{
 		name:     "consensus-node",
-		monitors: []core.MonitorRunner{&connMonitor{name: "upgrade-monitor", cerr: nil}},
+		monitors: []daemonkit.MonitorRunner{&connMonitor{name: "upgrade-monitor", cerr: nil}},
 		tracker:  seedTracker(t, "upgrade-monitor"),
 	}}}
 
@@ -106,7 +106,7 @@ func TestStatusSnapshot_ConnectivityOverlay_NoErrorPreservesState(t *testing.T) 
 func TestStatusSnapshot_NonConnectivityMonitorUntouched(t *testing.T) {
 	d := &Daemon{components: []component{{
 		name:     "block-node",
-		monitors: []core.MonitorRunner{&blockingMonitor{name: "traffic-shaper"}},
+		monitors: []daemonkit.MonitorRunner{&blockingMonitor{name: "traffic-shaper"}},
 		tracker:  seedTracker(t, "traffic-shaper"),
 	}}}
 
@@ -118,13 +118,13 @@ func TestStatusSnapshot_NonConnectivityMonitorUntouched(t *testing.T) {
 }
 
 func TestStatusSnapshot_ProbeErrorsOverlay(t *testing.T) {
-	d := &Daemon{components: []component{{name: "consensus-node", tracker: core.NewStatusTracker()}}}
+	d := &Daemon{components: []component{{name: "consensus-node", tracker: daemonkit.NewStatusTracker()}}}
 
 	// No probe errors stored → ProbeErrors omitted.
 	assert.Empty(t, d.statusSnapshot().ProbeErrors)
 
 	// Stored probe errors → surfaced in the response.
-	errs := map[string]core.StatusError{
+	errs := map[string]daemonkit.StatusError{
 		"consensus-node": {Reason: "DiskBoom", Message: "no perms", Resolution: "chown"},
 	}
 	d.probeErrors.Store(&errs)
@@ -133,7 +133,7 @@ func TestStatusSnapshot_ProbeErrorsOverlay(t *testing.T) {
 	assert.Equal(t, errs["consensus-node"], got["consensus-node"])
 
 	// An empty (non-nil) map must not surface.
-	empty := map[string]core.StatusError{}
+	empty := map[string]daemonkit.StatusError{}
 	d.probeErrors.Store(&empty)
 	assert.Empty(t, d.statusSnapshot().ProbeErrors)
 }

@@ -7,18 +7,18 @@ import (
 	"net/http"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/joomcode/errorx"
 )
 
 // ConsensusMigrationStatusResponse is the combined view returned by
 // GET /consensus_node/migration/status: supervisor health + current soak state.
 type ConsensusMigrationStatusResponse struct {
-	Monitor core.MonitorState  `json:"monitor"`
-	Soak    SoakStatusResponse `json:"soak"`
+	Monitor daemonkit.MonitorState `json:"monitor"`
+	Soak    SoakStatusResponse     `json:"soak"`
 }
 
-// ConsensusNodeHandler implements core.ComponentHandler for all consensus-node
+// ConsensusNodeHandler implements daemonkit.ComponentHandler for all consensus-node
 // HTTP routes under the /consensus_node/ prefix.
 //
 // To add a new monitor for the consensus-node component:
@@ -32,16 +32,16 @@ type ConsensusNodeHandler struct {
 
 	// migrationStateFn returns the supervisor-level health of the migration
 	// monitor goroutine (from its StatusTracker). May be nil when mm is nil.
-	migrationStateFn func() core.MonitorState
+	migrationStateFn func() daemonkit.MonitorState
 }
 
 // NewConsensusNodeHandler constructs a ConsensusNodeHandler.
 // mm and migrationStateFn may be nil when the migration monitor is disabled.
-func NewConsensusNodeHandler(mm *MigrationMonitor, migrationStateFn func() core.MonitorState) *ConsensusNodeHandler {
+func NewConsensusNodeHandler(mm *MigrationMonitor, migrationStateFn func() daemonkit.MonitorState) *ConsensusNodeHandler {
 	return &ConsensusNodeHandler{mm: mm, migrationStateFn: migrationStateFn}
 }
 
-// RegisterRoutes implements core.ComponentHandler.
+// RegisterRoutes implements daemonkit.ComponentHandler.
 // All routes are prefixed with /consensus_node/.
 //
 // Current routes:
@@ -69,7 +69,7 @@ func (h *ConsensusNodeHandler) handleConsensusMigrationStatus(w http.ResponseWri
 		return
 	}
 
-	var state core.MonitorState
+	var state daemonkit.MonitorState
 	if h.migrationStateFn != nil {
 		state = h.migrationStateFn()
 	}

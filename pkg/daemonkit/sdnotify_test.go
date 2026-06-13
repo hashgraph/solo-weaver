@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+//go:build !integration
+
+package daemonkit
 
 import (
 	"net"
@@ -23,13 +25,13 @@ func tempSockPath(t *testing.T) string {
 	return filepath.Join(dir, "n.sock")
 }
 
-func Test_sdNotify_NoopWhenSocketUnset(t *testing.T) {
+func Test_NotifyReady_NoopWhenSocketUnset(t *testing.T) {
 	t.Setenv("NOTIFY_SOCKET", "")
-	err := sdNotify(sdReady)
+	err := NotifyReady()
 	assert.NoError(t, err)
 }
 
-func Test_sdNotify_WritesToSocket(t *testing.T) {
+func Test_NotifyReady_WritesToSocket(t *testing.T) {
 	sockPath := tempSockPath(t)
 
 	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sockPath, Net: "unixgram"})
@@ -38,7 +40,7 @@ func Test_sdNotify_WritesToSocket(t *testing.T) {
 
 	t.Setenv("NOTIFY_SOCKET", sockPath)
 
-	err = sdNotify(sdReady)
+	err = NotifyReady()
 	require.NoError(t, err)
 
 	buf := make([]byte, 64)
@@ -47,7 +49,7 @@ func Test_sdNotify_WritesToSocket(t *testing.T) {
 	assert.Equal(t, sdReady, string(buf[:n]))
 }
 
-func Test_sdNotify_StoppingPayload(t *testing.T) {
+func Test_NotifyStopping_WritesPayload(t *testing.T) {
 	sockPath := tempSockPath(t)
 
 	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sockPath, Net: "unixgram"})
@@ -56,7 +58,7 @@ func Test_sdNotify_StoppingPayload(t *testing.T) {
 
 	t.Setenv("NOTIFY_SOCKET", sockPath)
 
-	err = sdNotify(sdStopping)
+	err = NotifyStopping()
 	require.NoError(t, err)
 
 	buf := make([]byte, 64)
@@ -65,9 +67,9 @@ func Test_sdNotify_StoppingPayload(t *testing.T) {
 	assert.Equal(t, sdStopping, string(buf[:n]))
 }
 
-// Verify that sdNotify is a no-op when env var is empty string (not just unset).
-func Test_sdNotify_NoopWhenSocketEmpty(t *testing.T) {
+// Verify that notify is a no-op when env var is empty string (not just unset).
+func Test_NotifyReady_NoopWhenSocketEmpty(t *testing.T) {
 	t.Setenv("NOTIFY_SOCKET", "")
-	err := sdNotify(sdReady)
+	err := NotifyReady()
 	assert.NoError(t, err)
 }

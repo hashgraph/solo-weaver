@@ -33,7 +33,7 @@ type TaggedProbe struct {
 
 // Probe implements Probe. Delegates to Inner; on failure wraps the error as an
 // errorx.ExternalError carrying ErrPropertyReason and ErrPropertyResolution so
-// that runComponentProbes can build a rich core.StatusError without additional
+// that runComponentProbes can build a rich daemonkit.StatusError without additional
 // type assertions.
 func (p *TaggedProbe) Probe(ctx context.Context) error {
 	if err := p.Inner.Probe(ctx); err != nil {

@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+package daemonkit
 
 import (
 	"context"
 
-	"github.com/hashgraph/solo-weaver/internal/daemon/probes"
+	"golang.org/x/sync/errgroup"
 )
 
-// Probe is a type alias for probes.Probe — re-exported here so callers can use
-// core.Probe without importing the probes sub-package directly.
-type Probe = probes.Probe
+// Probe is the minimal leaf interface for a single prerequisite check.
+// Concrete implementations (e.g. a disk-permission or RBAC probe) satisfy this
+// interface. Probe should block and retry internally until success or ctx
+// cancellation; returning ctx.Err() on cancellation is the expected exit path.
+type Probe interface {
+	Probe(ctx context.Context) error
+}
 
 // ComponentProbe is the component-boundary interface seen by the supervisor.
 // A component with no external dependencies sets its probe field to nil and is
@@ -34,25 +38,40 @@ type ProbableMonitor interface {
 	RequiredProbe() Probe
 }
 
-// CompositeProbe implements ComponentProbe at the component boundary.
+// CompositeProbe implements ComponentProbe at the component boundary. It fans
+// out to a set of leaf Probe instances concurrently and returns nil only when
+// every sub-probe passes. The first failure cancels sibling probes via errgroup
+// context cancellation so the composite exits as fast as possible.
+//
+// Sub-probes may themselves be CompositeProbe instances — since CompositeProbe
+// satisfies the Probe interface, probes can be nested to arbitrary depth.
+//
 // Use NewCompositeProbe to construct.
 type CompositeProbe struct {
-	name  string
-	inner *probes.CompositeProbe
+	name   string
+	probes []Probe
 }
 
 // NewCompositeProbe returns a CompositeProbe that runs all provided leaf probes
 // concurrently under the given component name.
 func NewCompositeProbe(componentName string, leafProbes ...Probe) *CompositeProbe {
-	return &CompositeProbe{name: componentName, inner: probes.NewCompositeProbe(leafProbes...)}
+	return &CompositeProbe{name: componentName, probes: leafProbes}
 }
 
 // ComponentName implements ComponentProbe.
 func (c *CompositeProbe) ComponentName() string { return c.name }
 
-// Probe implements ComponentProbe. Delegates to the inner probes.CompositeProbe
-// which fans out to all sub-probes concurrently via errgroup.
-func (c *CompositeProbe) Probe(ctx context.Context) error { return c.inner.Probe(ctx) }
+// Probe implements ComponentProbe (and the Probe interface). It fans out to all
+// sub-probes concurrently; the first failure cancels the rest via the errgroup
+// context.
+func (c *CompositeProbe) Probe(ctx context.Context) error {
+	eg, ctx := errgroup.WithContext(ctx)
+	for _, p := range c.probes {
+		p := p // pin loop variable
+		eg.Go(func() error { return p.Probe(ctx) })
+	}
+	return eg.Wait()
+}
 
 // BuildComponentProbe collects RequiredProbe() from every ProbableMonitor in
 // monitors and wraps them in a CompositeProbe named componentName. Returns nil

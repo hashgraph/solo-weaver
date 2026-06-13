@@ -2,16 +2,14 @@
 
 package probes
 
-import "context"
+import "github.com/hashgraph/solo-weaver/pkg/daemonkit"
 
-// Probe is the minimal leaf interface for a single prerequisite check.
-// Concrete implementations (KubeRBACProbe, DiskPermissionProbe, …) satisfy
-// this interface. Probe should block and retry internally until success or ctx
-// cancellation; returning ctx.Err() on cancellation is the expected exit path.
+// Probe is a type alias for daemonkit.Probe — re-exported here so the leaf probe
+// implementations and their callers can reference probes.Probe while remaining
+// assignment-compatible with the daemonkit supervisor's probe wiring.
 //
-// This interface is defined here (in the probes package) rather than in the
-// parent daemon package so that consensus and other sub-packages can reference
-// it without creating an import cycle.
-type Probe interface {
-	Probe(ctx context.Context) error
-}
+// This alias is defined here (in the probes package) rather than forcing every
+// caller to import daemonkit directly so that consensus and other sub-packages
+// can compose probes without an extra import. The leaf implementations and the
+// pkg/models coupling move out of this package in a follow-up issue.
+type Probe = daemonkit.Probe

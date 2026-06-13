@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 )
 
@@ -30,7 +30,7 @@ type ComponentConfig struct {
 // with the per-component StatusTracker closure after the component is assembled.
 type ComponentResult struct {
 	// Monitors is the ordered slice of monitors to run under the supervisor.
-	Monitors []core.MonitorRunner
+	Monitors []daemonkit.MonitorRunner
 
 	// MigrationMonitor is non-nil when the migration monitor is enabled.
 	// daemon.go uses this to construct ConsensusNodeHandler with the correct
@@ -43,7 +43,7 @@ type ComponentResult struct {
 // It is the single entry point for consensus-node component assembly — daemon.go
 // only needs to call this and wire the result into the Daemon struct.
 func NewComponent(cfg ComponentConfig) (ComponentResult, error) {
-	var monitors []core.MonitorRunner
+	var monitors []daemonkit.MonitorRunner
 
 	if cfg.UpgradeEnabled {
 		um, err := NewUpgradeMonitor(UpgradeMonitorConfig{

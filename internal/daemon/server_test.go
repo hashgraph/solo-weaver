@@ -17,7 +17,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,7 @@ import (
 // client pre-configured to dial that socket plus a cancel func.
 func startTestDaemon(t *testing.T) (*http.Client, context.CancelFunc) {
 	t.Helper()
-	client, _, cancel := startTestDaemonWithConfig(t, daemon.ServerConfig{})
+	client, _, cancel := startTestDaemonWithConfig(t, daemonkit.ServerConfig{})
 	return client, cancel
 }
 
@@ -35,7 +35,7 @@ func startTestDaemon(t *testing.T) (*http.Client, context.CancelFunc) {
 //
 // Only the HTTP server is started — not the full Daemon — so tests are not
 // coupled to K8s client initialisation or the RBAC probe goroutine.
-func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Client, string, context.CancelFunc) {
+func startTestDaemonWithConfig(t *testing.T, cfg daemonkit.ServerConfig) (*http.Client, string, context.CancelFunc) {
 	t.Helper()
 
 	// Use /tmp directly to keep the Unix socket path under the 104-char macOS
@@ -49,8 +49,8 @@ func startTestDaemonWithConfig(t *testing.T, cfg daemon.ServerConfig) (*http.Cli
 	ctx, cancel := context.WithCancel(context.Background())
 	mm := consensus.NewMigrationMonitor()
 	cnHandler := consensus.NewConsensusNodeHandler(mm, nil)
-	srv := daemon.NewServer(sockPath, daemon.ServerOptions{
-		ComponentHandlers: []core.ComponentHandler{cnHandler},
+	srv := daemonkit.NewServer(sockPath, daemonkit.ServerOptions{
+		ComponentHandlers: []daemonkit.ComponentHandler{cnHandler},
 	}, cfg)
 
 	errCh := make(chan error, 1)
@@ -310,7 +310,7 @@ func Test_SoakStart_OversizedBody(t *testing.T) {
 }
 
 func Test_ReadHeaderTimeout(t *testing.T) {
-	_, sockPath, cancel := startTestDaemonWithConfig(t, daemon.ServerConfig{
+	_, sockPath, cancel := startTestDaemonWithConfig(t, daemonkit.ServerConfig{
 		ReadHeaderTimeout: 50 * time.Millisecond,
 	})
 	defer cancel()

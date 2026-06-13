@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+package daemonkit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -11,8 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
 )
 
 const defaultReadHeaderTimeout = 5 * time.Second
@@ -26,19 +25,21 @@ type ServerConfig struct {
 
 // ServerOptions groups all injectable dependencies for NewServer.
 type ServerOptions struct {
-	// StatusFn returns the full daemon status for GET /status.
-	// Nil disables the endpoint (returns an empty components map).
-	StatusFn func() StatusResponse
+	// StatusFn returns the full daemon status for GET /status. The returned
+	// value is serialised to JSON verbatim, so the concrete status payload type
+	// stays in the consuming daemon. Nil disables the endpoint (returns an
+	// empty JSON object).
+	StatusFn func() any
 
 	// ComponentHandlers registers per-component route sub-trees.
 	// Each entry owns its own /<component>/ prefix.
-	ComponentHandlers []core.ComponentHandler
+	ComponentHandlers []ComponentHandler
 }
 
-// Server is the Unix socket HTTP control plane for solo-provisioner-daemon.
+// Server is the Unix socket HTTP control plane for a daemon.
 type Server struct {
 	sockPath string
-	statusFn func() StatusResponse
+	statusFn func() any
 	srv      *http.Server
 }
 
@@ -125,4 +126,28 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = os.Remove(sockPath)
 		return err
 	}
+}
+
+// writeJSON serialises v as JSON and writes it with the given status code.
+// All handlers must use this helper to guarantee a consistent Content-Type.
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleHealth is the process-level liveness probe.
+// Always returns 200 {"status":"ok"} as long as the process is alive.
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleStatus returns the full daemon status as provided by the injected
+// StatusFn. When no StatusFn is configured it returns an empty JSON object.
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.statusFn == nil {
+		writeJSON(w, http.StatusOK, struct{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.statusFn())
 }

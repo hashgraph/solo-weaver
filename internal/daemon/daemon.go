@@ -13,7 +13,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
-	"github.com/hashgraph/solo-weaver/internal/daemon/core"
+	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"golang.org/x/sync/errgroup"
@@ -29,9 +29,9 @@ import (
 // tracker records per-monitor state for the /status endpoint.
 type component struct {
 	name     string
-	monitors []core.MonitorRunner
-	probe    core.ComponentProbe
-	tracker  *core.StatusTracker
+	monitors []daemonkit.MonitorRunner
+	probe    daemonkit.ComponentProbe
+	tracker  *daemonkit.StatusTracker
 }
 
 // Daemon is the controller for solo-provisioner-daemon. It composes the
@@ -46,12 +46,12 @@ type component struct {
 type Daemon struct {
 	paths      models.WeaverPaths
 	cfg        DaemonConfig
-	server     *Server
+	server     *daemonkit.Server
 	components []component
 	// probeErrors holds the last probe result per component name.
 	// nil = all probes passed (or no probes). Written by runComponentProbes,
 	// read by statusSnapshot — both via atomic.Pointer to avoid locks.
-	probeErrors atomic.Pointer[map[string]core.StatusError]
+	probeErrors atomic.Pointer[map[string]daemonkit.StatusError]
 }
 
 // New constructs a Daemon from WeaverPaths. It reads daemon.yaml from
@@ -69,7 +69,7 @@ func New(paths models.WeaverPaths) (*Daemon, error) {
 // within a component are skipped when their toggle is false.
 func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) {
 	var components []component
-	var componentHandlers []core.ComponentHandler
+	var componentHandlers []daemonkit.ComponentHandler
 
 	cn := cfg.Components.ConsensusNode
 	if cn != nil && cn.Enabled {
@@ -91,15 +91,15 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			comp := component{
 				name:     "consensus-node",
 				monitors: result.Monitors,
-				probe:    core.BuildComponentProbe("consensus-node", result.Monitors),
-				tracker:  core.NewStatusTracker(),
+				probe:    daemonkit.BuildComponentProbe("consensus-node", result.Monitors),
+				tracker:  daemonkit.NewStatusTracker(),
 			}
 			components = append(components, comp)
 
 			if result.MigrationMonitor != nil {
 				// migrationStateFn captures comp.tracker by reference — safe because
 				// comp is appended to the slice and never moved after this point.
-				migrationStateFn := func() core.MonitorState {
+				migrationStateFn := func() daemonkit.MonitorState {
 					return comp.tracker.Snapshot()[result.MigrationMonitor.Name()]
 				}
 				componentHandlers = append(componentHandlers,
@@ -121,7 +121,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 				name:     "block-node",
 				monitors: result.Monitors,
 				probe:    nil,
-				tracker:  core.NewStatusTracker(),
+				tracker:  daemonkit.NewStatusTracker(),
 			})
 		}
 	}
@@ -131,10 +131,10 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		cfg:        cfg,
 		components: components,
 	}
-	d.server = NewServer(paths.DaemonSockPath, ServerOptions{
-		StatusFn:          d.statusSnapshot,
+	d.server = daemonkit.NewServer(paths.DaemonSockPath, daemonkit.ServerOptions{
+		StatusFn:          func() any { return d.statusSnapshot() },
 		ComponentHandlers: componentHandlers,
-	}, ServerConfig{})
+	}, daemonkit.ServerConfig{})
 	return d, nil
 }
 
@@ -149,7 +149,7 @@ func (d *Daemon) componentSupervisor(ctx context.Context) error {
 			m := m
 			go func() {
 				defer wg.Done()
-				core.SupervisedMonitor(ctx, m, tracker)
+				daemonkit.SupervisedMonitor(ctx, m, tracker)
 			}()
 		}
 	}
@@ -171,7 +171,7 @@ var componentProbeInterval = 30 * time.Second
 // This loop does not gate READY=1 — the daemon is functional (socket listening)
 // as soon as it starts; component readiness is a separate concern.
 func (d *Daemon) runComponentProbes(ctx context.Context) {
-	componentProbes := make([]core.ComponentProbe, 0, len(d.components))
+	componentProbes := make([]daemonkit.ComponentProbe, 0, len(d.components))
 	for _, comp := range d.components {
 		if comp.probe != nil {
 			componentProbes = append(componentProbes, comp.probe)
@@ -186,7 +186,7 @@ func (d *Daemon) runComponentProbes(ctx context.Context) {
 	firstFailedAt := make(map[string]time.Time, len(componentProbes))
 
 	for {
-		errs := make(map[string]core.StatusError, len(componentProbes))
+		errs := make(map[string]daemonkit.StatusError, len(componentProbes))
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
@@ -203,7 +203,7 @@ func (d *Daemon) runComponentProbes(ctx context.Context) {
 					if _, seen := firstFailedAt[p.ComponentName()]; !seen {
 						firstFailedAt[p.ComponentName()] = time.Now()
 					}
-					se := core.StatusError{
+					se := daemonkit.StatusError{
 						Reason:  "ComponentProbeError",
 						Message: err.Error(),
 						Since:   firstFailedAt[p.ComponentName()].UTC().Format(time.RFC3339),
@@ -263,7 +263,7 @@ func (d *Daemon) statusSnapshot() StatusResponse {
 	}
 	for _, comp := range d.components {
 		cs := ComponentStatus{
-			Monitors: make(map[string]core.MonitorState),
+			Monitors: make(map[string]daemonkit.MonitorState),
 		}
 		if comp.tracker != nil {
 			for name, state := range comp.tracker.Snapshot() {
@@ -275,7 +275,7 @@ func (d *Daemon) statusSnapshot() StatusResponse {
 		// is alive ("running"); this step surfaces watch-loop failures that
 		// are invisible to the supervisor (the goroutine is alive and retrying).
 		for _, m := range comp.monitors {
-			if cm, ok := m.(core.ConnectivityMonitor); ok {
+			if cm, ok := m.(daemonkit.ConnectivityMonitor); ok {
 				if cerr := cm.ConnectivityError(); cerr != nil {
 					ms := cs.Monitors[m.Name()]
 					ms.State = "degraded"
@@ -295,7 +295,7 @@ func (d *Daemon) statusSnapshot() StatusResponse {
 // Run starts all sub-systems and blocks until ctx is cancelled or a critical
 // sub-system exits with an error.
 func (d *Daemon) Run(ctx context.Context) error {
-	defer func() { _ = sdNotify(sdStopping) }()
+	defer func() { _ = daemonkit.NotifyStopping() }()
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -303,7 +303,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				Str("reason", "DaemonPanic").
 				Interface("panic", r).
 				Msg("Unhandled panic in daemon — exiting for systemd restart")
-			_ = sdNotify(sdStopping)
+			_ = daemonkit.NotifyStopping()
 			os.Exit(2)
 		}
 	}()
@@ -339,7 +339,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// and surfaced via GET /status — operators use `daemon service check` to
 	// inspect it. This keeps systemd's start timeout from firing on environments
 	// where disk prerequisites (upgrade dir, permissions) are not yet in place.
-	if err := sdNotify(sdReady); err != nil {
+	if err := daemonkit.NotifyReady(); err != nil {
 		logx.As().Warn().Err(err).Str("reason", "SdNotifyReadyFailed").Msg("Failed to send READY=1 to systemd")
 	}
 

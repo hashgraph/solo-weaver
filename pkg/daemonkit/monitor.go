@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+// Package daemonkit provides a reusable kernel for long-running daemons: a
+// supervised-monitor restart loop, a Unix-socket HTTP control plane, and
+// sd_notify integration. It depends only on the standard library, errorx, and
+// golang.org/x/sync/errgroup, and intentionally imports nothing under
+// internal/... or cmd/... so it can be shared across daemons (e.g. the
+// solo-provisioner daemon and a future solo-operator daemon).
+package daemonkit
 
 import (
 	"context"
