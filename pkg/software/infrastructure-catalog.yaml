@@ -244,21 +244,6 @@ host:
               algorithm: 'sha256'
               checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'
 
-- name: solo-provisioner-daemon
-  default: "0.0.0"
-  versions:
-    0.0.0:
-      binaries:
-        - name: 'solo-provisioner-daemon'
-          url: 'https://github.com/hashgraph/solo-weaver/releases/download/daemon-v{{.VERSION}}/solo-provisioner-daemon-{{.OS}}-{{.ARCH}}'
-          linux:
-            amd64:
-              algorithm: 'sha256'
-              checksum: ''
-            arm64:
-              algorithm: 'sha256'
-              checksum: ''
-
 - name: teleport
   default: "18.6.4"
   versions:

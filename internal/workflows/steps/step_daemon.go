@@ -89,8 +89,10 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 					return automa.StepFailureReport(stp.Id(),
 						automa.WithError(errorx.InternalError.Wrap(err, "failed to initialise daemon installer").
 							WithProperty(models.ErrPropertyResolution, []string{
-								"The provisioner binary may be built without a catalog entry for solo-provisioner-daemon",
-								"Re-install the provisioner: sudo solo-provisioner install",
+								"Auto-download is unavailable until an official solo-provisioner-daemon release is published",
+								"Build the daemon locally and install it with --daemon-bin:",
+								"  task build:daemon GOOS=linux GOARCH=<arch>",
+								"  sudo solo-provisioner daemon service install --daemon-bin=<path-to-binary>",
 							})))
 				}
 
