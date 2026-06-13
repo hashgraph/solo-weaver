@@ -7,6 +7,8 @@ package daemonkit
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +28,51 @@ func (f *fakeMonitor) Name() string { return f.name }
 func (f *fakeMonitor) Run(ctx context.Context) error {
 	run := int(f.runs.Add(1))
 	return f.behavior(ctx, run)
+}
+
+// reasonCapture is a slog.Handler that records the "reason" attribute of every
+// record so tests can assert which structured events were (or were not) emitted.
+type reasonCapture struct {
+	mu      sync.Mutex
+	reasons []string
+}
+
+func (c *reasonCapture) Enabled(context.Context, slog.Level) bool { return true }
+func (c *reasonCapture) WithAttrs([]slog.Attr) slog.Handler       { return c }
+func (c *reasonCapture) WithGroup(string) slog.Handler            { return c }
+func (c *reasonCapture) Handle(_ context.Context, r slog.Record) error {
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "reason" {
+			c.mu.Lock()
+			c.reasons = append(c.reasons, a.Value.String())
+			c.mu.Unlock()
+		}
+		return true
+	})
+	return nil
+}
+
+func (c *reasonCapture) count(reason string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, r := range c.reasons {
+		if r == reason {
+			n++
+		}
+	}
+	return n
+}
+
+// captureSlogReasons installs a reasonCapture as the default slog logger for the
+// duration of the test and returns it.
+func captureSlogReasons(t *testing.T) *reasonCapture {
+	t.Helper()
+	cap := &reasonCapture{}
+	orig := slog.Default()
+	slog.SetDefault(slog.New(cap))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	return cap
 }
 
 // ---- tests ----
@@ -188,6 +235,13 @@ func TestSupervisedMonitor_DegradedCounterResetsAfterStableRun(t *testing.T) {
 		supervisedDegradedThreshold = origThreshold
 	})
 
+	cap := captureSlogReasons(t)
+
+	// threshold=3. Crashes 1,2 are fast. Run 3 is stable (>= threshold) then
+	// crashes: the stable run must reset the streak so this crash is #1 of a new
+	// streak — NOT crash #3 — and must therefore NOT fire MonitorDegraded. Run 4
+	// is a fast crash (streak #2). At no point does the streak reach 3, so
+	// MonitorDegraded must never fire.
 	const wantRuns = 5
 	m := &fakeMonitor{
 		name: "test-monitor",
@@ -219,6 +273,9 @@ func TestSupervisedMonitor_DegradedCounterResetsAfterStableRun(t *testing.T) {
 
 	cancel()
 	<-done
+
+	assert.Equal(t, 0, cap.count("MonitorDegraded"),
+		"a crash ending a stable run must start a fresh streak and not trip the degraded threshold")
 }
 
 func TestSupervisedMonitor_BackoffCapAtMax(t *testing.T) {

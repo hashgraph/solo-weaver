@@ -192,6 +192,19 @@ func SupervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTrac
 		}
 
 		// Crash path.
+		//
+		// A stable run before this crash means the previous failure streak
+		// recovered: reset both the back-off and the consecutive-crash counter
+		// BEFORE counting this crash, so the crash that ended a stable period is
+		// counted as #1 of a fresh streak. Doing this after the increment would
+		// (a) let a post-stable crash spuriously trip the degraded threshold when
+		// its pre-reset count happened to land on a multiple of it, and (b) drop
+		// that crash from the new streak's count entirely.
+		if time.Since(start) >= supervisedStableThreshold {
+			backoff = supervisedBackoffInitial
+			consecutiveCrashes = 0
+		}
+
 		consecutiveCrashes++
 
 		slog.Error("Monitor crashed — restarting after back-off",
@@ -210,12 +223,6 @@ func SupervisedMonitor(ctx context.Context, m MonitorRunner, tracker *StatusTrac
 				"monitor", m.Name(),
 				"consecutive_crashes", consecutiveCrashes,
 				"current_backoff", backoff)
-		}
-
-		// A stable run resets both the back-off and the consecutive-crash counter.
-		if time.Since(start) >= supervisedStableThreshold {
-			backoff = supervisedBackoffInitial
-			consecutiveCrashes = 0
 		}
 
 		setState(fmt.Sprintf("backoff:%s", backoff))
