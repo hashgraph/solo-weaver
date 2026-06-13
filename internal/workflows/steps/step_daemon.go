@@ -203,6 +203,21 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 							"Ensure the parent directory is writable: ls -la " + filepath.Dir(paths.BinDir),
 						})))
 			}
+			// Reassert root:root 0755 on BinDir. The sudoers policy grants weaver
+			// passwordless root to exec the solo-provisioner CLI living here; if the
+			// directory is group-writable by weaver (older installs provisioned it
+			// root:weaver 2775), any weaver-group member could replace the binary and
+			// escalate to root. MkdirAll is a no-op on an existing dir and does not
+			// fix its mode/owner, so enforce it explicitly here — daemon install runs
+			// as root, so only root can ever write this dir afterwards.
+			if err := os.Chmod(paths.BinDir, 0o755); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to set bin directory permissions on %s", paths.BinDir)))
+			}
+			if err := os.Chown(paths.BinDir, 0, 0); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to set root:root ownership on bin directory %s", paths.BinDir)))
+			}
 			if err := copyBinaryFile(src.BinPath, dstPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary to %s", dstPath).
