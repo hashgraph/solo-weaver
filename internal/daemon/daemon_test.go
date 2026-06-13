@@ -186,10 +186,13 @@ func startProbeLoop(t *testing.T, d *Daemon) (stop func()) {
 	}
 }
 
-func TestRunComponentProbes_ExtractsErrorxProperties(t *testing.T) {
-	tagged := errorx.ExternalError.New("disk not writable").
-		WithProperty(models.ErrPropertyReason, "UpgradeDirOwnership").
-		WithProperty(models.ErrPropertyResolution, []string{"chown hedera:hedera /x", "chmod 0700 /x"})
+func TestRunComponentProbes_ExtractsProbeErrorFields(t *testing.T) {
+	tagged := &daemonkit.ProbeError{
+		Reason:     "UpgradeDirOwnership",
+		Resolution: "chown hedera:hedera /x; chmod 0700 /x",
+		Message:    "disk not writable",
+		Err:        errorx.ExternalError.New("disk not writable"),
+	}
 
 	d := &Daemon{components: []component{
 		{name: "consensus-node", probe: &seqProbe{name: "consensus-node", errs: []error{tagged}}},
@@ -202,8 +205,8 @@ func TestRunComponentProbes_ExtractsErrorxProperties(t *testing.T) {
 	}, time.Second, 2*time.Millisecond, "probe error was never recorded")
 
 	se := (*d.probeErrors.Load())["consensus-node"]
-	assert.Equal(t, "UpgradeDirOwnership", se.Reason, "Reason must come from the errorx property, not the default")
-	assert.Equal(t, "chown hedera:hedera /x; chmod 0700 /x", se.Resolution, "Resolution must join the property slice")
+	assert.Equal(t, "UpgradeDirOwnership", se.Reason, "Reason must come from the ProbeError field, not the default")
+	assert.Equal(t, "chown hedera:hedera /x; chmod 0700 /x", se.Resolution, "Resolution must come from the ProbeError field")
 	assert.Contains(t, se.Message, "disk not writable")
 	assert.NotEmpty(t, se.Since)
 }

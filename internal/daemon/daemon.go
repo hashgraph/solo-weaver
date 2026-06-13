@@ -4,8 +4,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -208,17 +208,17 @@ func (d *Daemon) runComponentProbes(ctx context.Context) {
 						Message: err.Error(),
 						Since:   firstFailedAt[p.ComponentName()].UTC().Format(time.RFC3339),
 					}
-					// Extract reason and resolution attached by TaggedProbe via errorx properties.
-					if ex := errorx.Cast(err); ex != nil {
-						if r, ok := errorx.ExtractProperty(ex, models.ErrPropertyReason); ok {
-							if s, ok := r.(string); ok {
-								se.Reason = s
-							}
+					// Read reason and resolution attached by daemonkit.TaggedProbe
+					// directly from the kit-native ProbeError fields. The kit carries
+					// these as plain struct fields (no errorx property registry), so
+					// the shared pkg/models registry stays untouched.
+					var pe *daemonkit.ProbeError
+					if errors.As(err, &pe) {
+						if pe.Reason != "" {
+							se.Reason = pe.Reason
 						}
-						if res, ok := errorx.ExtractProperty(ex, models.ErrPropertyResolution); ok {
-							if ss, ok := res.([]string); ok && len(ss) > 0 {
-								se.Resolution = strings.Join(ss, "; ")
-							}
+						if pe.Resolution != "" {
+							se.Resolution = pe.Resolution
 						}
 					}
 					errs[p.ComponentName()] = se

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package probes
+package daemonkit
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // permission bits set on the inode. It checks the file mode returned by
 // os.Stat — i.e. declared permissions, not actual process-level access.
 //
-// Use WriteTestProbe when you need to confirm the running process can actually
+// Use DiskWriteTestProbe when you need to confirm the running process can actually
 // write to a directory (takes side effects into account: ownership, ACLs, etc.).
 type DiskPermissionProbe struct {
 	// Path is the file or directory to inspect.
@@ -27,7 +27,7 @@ type DiskPermissionProbe struct {
 	Permission os.FileMode
 }
 
-// Probe implements daemon.Probe. Returns nil when Path exists and its
+// Probe implements Probe. Returns nil when Path exists and its
 // permission bits include all bits in Permission. Returns an error immediately
 // on any failure — callers supply their own retry loop if needed.
 func (p *DiskPermissionProbe) Probe(_ context.Context) error {
@@ -55,7 +55,7 @@ type DiskWriteTestProbe struct {
 	Dir string
 }
 
-// Probe implements daemon.Probe. Creates a temporary file in Dir and removes it
+// Probe implements Probe. Creates a temporary file in Dir and removes it
 // immediately. Returns nil on success, an error if the write fails for any reason.
 func (p *DiskWriteTestProbe) Probe(_ context.Context) error {
 	f, err := os.CreateTemp(p.Dir, ".probe-*")
@@ -100,7 +100,7 @@ type DiskOwnershipProbe struct {
 	Permission os.FileMode
 }
 
-// Probe implements daemon.Probe.
+// Probe implements Probe.
 func (p *DiskOwnershipProbe) Probe(_ context.Context) error {
 	info, err := os.Stat(p.Path)
 	if err != nil {

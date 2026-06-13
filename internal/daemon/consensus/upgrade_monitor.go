@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/daemon/probes"
 	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -203,26 +202,27 @@ func (um *UpgradeMonitor) clearConnectivityError() {
 //  3. Current dir write access — the running daemon process can actually write to
 //     UpgradeDir, proving `usermod -aG hedera weaver` was applied and mount flags,
 //     ACLs, and SELinux/AppArmor policies all allow writes.
-func (um *UpgradeMonitor) RequiredProbe() probes.Probe {
+func (um *UpgradeMonitor) RequiredProbe() daemonkit.Probe {
 	upgradeDir := um.cfg.UpgradeDir         // e.g. .../data/upgrade/current
 	upgradeRoot := filepath.Dir(upgradeDir) // e.g. .../data/upgrade
 
-	return probes.NewCompositeProbe(
+	return daemonkit.NewCompositeProbe(
+		"consensus-upgrade",
 		// 1. Parent dir: hedera installer must have created this with 0755.
-		&probes.TaggedProbe{
-			Inner:      &probes.DiskOwnershipProbe{Path: upgradeRoot, User: "hedera", Group: "hedera", Permission: 0o755},
+		&daemonkit.TaggedProbe{
+			Inner:      &daemonkit.DiskOwnershipProbe{Path: upgradeRoot, User: "hedera", Group: "hedera", Permission: 0o755},
 			Reason:     "UpgradeRootOwnershipCheckFailed",
 			Resolution: fmt.Sprintf("Fix ownership and permissions: sudo chown hedera:hedera %s && sudo chmod 755 %s", upgradeRoot, upgradeRoot),
 		},
 		// 2. Current dir ownership: cluster install must have run chmod g+rwx.
-		&probes.TaggedProbe{
-			Inner:      &probes.DiskOwnershipProbe{Path: upgradeDir, User: "hedera", Group: "hedera", Permission: 0o775},
+		&daemonkit.TaggedProbe{
+			Inner:      &daemonkit.DiskOwnershipProbe{Path: upgradeDir, User: "hedera", Group: "hedera", Permission: 0o775},
 			Reason:     "UpgradeDirOwnershipCheckFailed",
 			Resolution: fmt.Sprintf("Fix ownership and permissions: sudo chown hedera:hedera %s && sudo chmod 775 %s", upgradeDir, upgradeDir),
 		},
 		// 3. Write test: proves effective write access under real process credentials.
-		&probes.TaggedProbe{
-			Inner:      &probes.DiskWriteTestProbe{Dir: upgradeDir},
+		&daemonkit.TaggedProbe{
+			Inner:      &daemonkit.DiskWriteTestProbe{Dir: upgradeDir},
 			Reason:     "UpgradeDirWriteTestFailed",
 			Resolution: fmt.Sprintf("Add weaver to hedera group and restart: sudo usermod -aG hedera weaver && sudo systemctl restart solo-provisioner-daemon"),
 		},

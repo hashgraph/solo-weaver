@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package probes provides reusable leaf Probe implementations that can be
-// composed via daemon.CompositeProbe to express a monitor's prerequisites.
-// Each probe is single-responsibility: it checks one external dependency and
-// retries with a fixed interval until success or ctx cancellation.
+// Package probes holds the Kubernetes-specific leaf probe(s) that cannot live in
+// the lightweight pkg/daemonkit because they pull in k8s.io/client-go. The
+// generic, dependency-light probes (disk, composite, tagged) live in
+// pkg/daemonkit and satisfy daemonkit.Probe, so they compose freely with
+// KubeRBACProbe inside a daemonkit.CompositeProbe.
 package probes
 
 import (
