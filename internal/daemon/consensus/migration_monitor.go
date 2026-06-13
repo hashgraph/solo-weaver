@@ -222,25 +222,6 @@ func writeSoakState(path string, req SoakStartRequest) error {
 	return nil
 }
 
-// allCriteriaGreen returns true only when every registered criterion returns
-// (true, nil). On error, logs a warning and treats that criterion as not-green
-// — a flaky check never triggers decommission.
-func (mm *MigrationMonitor) allCriteriaGreen(ctx context.Context, req SoakStartRequest) bool {
-	for _, c := range mm.criteria {
-		ok, err := c.Check(ctx, req)
-		if err != nil {
-			logx.As().Warn().Err(err).
-				Str("criterion", c.Name()).
-				Msg("Soak criterion check error — treating as not-green")
-			return false
-		}
-		if !ok {
-			return false
-		}
-	}
-	return true
-}
-
 // TryEnqueue queues a soak activation request. Returns false if the request
 // cannot be accepted; the caller should respond with 409 Conflict. Two
 // conditions both map to false:
@@ -286,6 +267,14 @@ func (mm *MigrationMonitor) Status() *SoakStatusResponse {
 // Returns false when no watcher is currently active (caller should 409).
 // When deleteState is true the persisted cutover-state.jsonl is removed so the
 // daemon does not auto-resume the soak on the next restart.
+//
+// Transient false: soakActive is set (by TryEnqueue/resumeIfNeeded) before the
+// watcher goroutine runs and stores soakCancel. A stop that lands in that brief
+// accept→spawn window sees a nil soakCancel and returns false even though a soak
+// is logically active. Stop is idempotent, so the documented client behaviour is
+// to retry; the window closes as soon as the scheduled goroutine reaches its
+// soakCancel.Store. We intentionally do not block here to wait for it — that
+// would couple TryStop to goroutine scheduling for a sub-millisecond race.
 func (mm *MigrationMonitor) TryStop(deleteState bool) bool {
 	cancelPtr := mm.soakCancel.Load()
 	if cancelPtr == nil {
@@ -432,14 +421,23 @@ func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
 			soakHours := time.Since(req.CutoverTimestamp).Hours()
 			pollSecs := int(mm.pollInterval().Seconds())
 
-			// Evaluate each criterion; emit CriterionMet on first green transition.
+			// Evaluate each criterion once per tick; emit CriterionMet on first
+			// green transition and accumulate allGreenThisTick so the decommission
+			// gate below can reuse the result. Re-running Check() a second time
+			// in this tick would double the K8s API load per poll and open a
+			// TOCTOU window between the gate decision and the values observed here.
 			uploaderCleared := false
 			podRestarts := 0
+			allGreenThisTick := true
 			for _, c := range mm.criteria {
 				ok, err := c.Check(ctx, req)
 				if err != nil {
 					logx.As().Warn().Err(err).Str("criterion", c.Name()).Msg("Soak criterion check error — treating as not-green")
+					allGreenThisTick = false
 					continue
+				}
+				if !ok {
+					allGreenThisTick = false
 				}
 				// Capture per-criterion values for SoakCheck payload.
 				switch c.Name() {
@@ -496,7 +494,9 @@ func (mm *MigrationMonitor) run(ctx context.Context, req SoakStartRequest) {
 			})
 
 			// Decommission gate: all criteria green AND fleet threshold reached.
-			if fleetThresholdEmitted && mm.allCriteriaGreen(ctx, req) {
+			// Reuses allGreenThisTick from the single evaluation above — see the
+			// comment there for why we do not re-run Check() here.
+			if fleetThresholdEmitted && allGreenThisTick {
 				mm.logMigrateEvent(eventlog.Event{
 					Ts:          time.Now().UTC(),
 					Level:       eventlog.LevelInfo,
@@ -612,6 +612,13 @@ func (mm *MigrationMonitor) resumeIfNeeded(ctx context.Context) {
 		Dur("poll_interval", mm.pollInterval()).
 		Msg("Soak watcher resumed after daemon restart")
 
+	// Store soakStatus synchronously (mirrors TryEnqueue) so GET /status reflects
+	// the resumed soak immediately. Without this there is a startup window after
+	// soakActive=true but before run() stores the status where /status would
+	// report idle even though a soak is active. run() stores it again
+	// (idempotent) and clears it on exit.
+	reqCopy := req
+	mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &reqCopy})
 	mm.soakActive.Store(true)
 	mm.soakWg.Add(1)
 	go mm.run(ctx, req)

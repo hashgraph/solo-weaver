@@ -77,6 +77,13 @@ type ConnectivityMonitor interface {
 	// ConnectivityError returns the current connectivity failure, or nil when
 	// the monitor's last operation completed successfully. Recovery (a
 	// successful list + watch cycle) must clear the error within one cycle.
+	//
+	// Concurrency: implementations MUST make this safe for concurrent read.
+	// The daemon's HTTP server goroutine calls ConnectivityError (via
+	// statusSnapshot) while the monitor's own Run goroutine is writing the
+	// underlying field. Guard the field with an atomic (e.g.
+	// atomic.Pointer[StatusError]) or a mutex; a plain field read/written
+	// from both goroutines is a data race.
 	ConnectivityError() *StatusError
 }
 

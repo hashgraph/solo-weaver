@@ -213,6 +213,22 @@ func CreateDaemonRBACStep(specs []DaemonComponentSpec) *automa.StepBuilder {
 
 				// 4. Long-lived token Secret — annotated with the SA name so the
 				// token controller populates it automatically.
+				//
+				// DESIGN: deliberately a non-expiring SecretTypeServiceAccountToken
+				// rather than a bounded TokenRequest token. The daemon is a
+				// long-running, unattended process on a node where the design goal
+				// is zero human intervention. A bounded token would require the
+				// daemon to refresh it before expiry; any gap in that refresh path
+				// (daemon down during the window, API unreachable, clock skew) would
+				// silently break automation and demand exactly the manual recovery
+				// we are trying to eliminate. A standing credential trades a larger
+				// blast radius for unattended reliability.
+				//
+				// The blast radius is bounded by the ClusterRole granted to this SA
+				// (see step 2 above) — the credential is only as powerful as that
+				// RBAC, and it lives in the orbit namespace readable by the daemon.
+				// The token is revoked by deleting this Secret + SA (DeleteDaemonRBACStep),
+				// which is how rotation is performed: re-provision to mint a fresh one.
 				secret := &corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      spec.tokenSecretName(),
