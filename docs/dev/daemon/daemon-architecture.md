@@ -156,6 +156,64 @@ everything comes from `daemon.yaml`): `--node-id`, `--kubeconfig`, `--orbit`, `-
 Each takes precedence over the corresponding `daemon.yaml` field, and `cfg.Validate()` is re-run
 after overrides are applied.
 
+## Security posture
+
+This section is the reference for the daemon's privilege and trust model. Review it whenever
+the sudoers grant, the socket permissions, or the SA credential change.
+
+**Runs unprivileged.** The daemon process runs as `User=weaver` / `Group=weaver` (see the
+systemd unit), never as root. It holds no Linux capabilities of its own.
+
+**Privilege via exec-delegation, not raw tools.** When the daemon needs to perform a
+privileged action it execs the root `solo-provisioner` CLI (see "CLI invocation & the import
+boundary" above) — it does **not** invoke `kubectl`/`helm`/`kubeadm`/`systemctl` directly.
+This is verified, not aspirational: the daemon binary imports `os/exec` nowhere in its
+transitive closure, talks to Kubernetes via client-go, and talks to systemd via the
+go-systemd dbus API. Its only privileged-escalation path is the sudoers grant below.
+
+**Sudoers grant (`internal/templates/files/weaver/sudoers`).** Weaver is granted passwordless
+sudo to the `solo-provisioner` binary as a whole (any subcommand), at both its install paths:
+
+```
+weaver ALL=(root) NOPASSWD: /opt/solo/weaver/bin/solo-provisioner, \
+  /opt/solo/weaver/bin/solo-provisioner *, \
+  /usr/local/bin/solo-provisioner, /usr/local/bin/solo-provisioner *
+```
+
+The grant is intentionally the whole binary, not an enumerated subcommand list: each
+delegated action (self-upgrade today; upgrade-execute, migration decommission, and future
+node-level workflows) maps to a different subcommand, and enumerating them would couple the
+template to in-progress daemon code and break automation each time one is added. There are
+deliberately **no** raw-binary entries (`kubectl`/`helm`/`kubeadm`/`systemctl`/`mkdir`) —
+those were removed because nothing consumed them (the daemon execs none of them, and the CLI
+already runs as root so its internal `sudo` calls never consult NOPASSWD), and they would
+have granted arbitrary root (`kubectl exec`, `systemctl <any-unit>`, `mkdir <anywhere>`).
+
+**Trust boundary.** The boundary is **weaver-group membership** — the same boundary that
+guards the control socket (`/opt/solo/weaver/daemon/daemon.sock`, chmod `0660`, group
+`weaver`). Any weaver-group member can both reach the socket and run any `solo-provisioner`
+subcommand as root, including destructive ones (`uninstall`, `reset`). Treat weaver-group
+membership as **equivalent to root on this host**. The grant is still strictly tighter than
+raw tool access because the privileged surface is the auditable, signed `solo-provisioner`
+binary and its workflows rather than arbitrary primitives.
+
+**CLI-binary integrity (residual risk, mitigation pending).** Because privilege flows through
+exec'ing an on-disk binary, a tampered `solo-provisioner` is the residual risk. The intended
+mitigation — verifying the CLI's hash/signature before exec — is documented in "CLI invocation
+& the import boundary" and is **not yet implemented**. Until it is, on-disk integrity of the
+CLI binary (root-owned, `0755`) is the de facto control.
+
+**Service-account credential.** Each component's Kubernetes access uses a long-lived
+`ServiceAccountToken` Secret rather than a bounded TokenRequest token — a deliberate choice for
+an unattended daemon (a refresh gap would break automation and demand the manual intervention
+the daemon exists to avoid). Its blast radius is bounded by the SA's ClusterRole; rotation is
+performed by re-provisioning (delete + recreate the SA/Secret). See
+`internal/workflows/steps/step_daemon_provision.go`.
+
+**Socket exposure.** The control plane is a Unix socket only (no TCP listener), `0660`
+root:weaver, with a `ReadHeaderTimeout` and graceful-drain shutdown. There is no
+authentication beyond filesystem permissions — consistent with the weaver-group trust boundary.
+
 ## Package Layout
 
 The package tree is deliberately layered to keep import direction acyclic. The reusable kernel now
