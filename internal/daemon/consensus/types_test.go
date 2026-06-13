@@ -43,6 +43,24 @@ func Test_SoakStartRequest_Validate(t *testing.T) {
 			req:     consensus.SoakStartRequest{NodeID: validReq.NodeID, MigrationPlanPath: validReq.MigrationPlanPath},
 			wantErr: "cutover_timestamp is required",
 		},
+		{
+			name: "plan path with traversal escapes base dir",
+			req: consensus.SoakStartRequest{
+				NodeID:            validReq.NodeID,
+				MigrationPlanPath: "/opt/solo/weaver/migration/consensus/../../../etc/shadow",
+				CutoverTimestamp:  validReq.CutoverTimestamp,
+			},
+			wantErr: "migration_plan_path is invalid",
+		},
+		{
+			name: "plan path outside base dir",
+			req: consensus.SoakStartRequest{
+				NodeID:            validReq.NodeID,
+				MigrationPlanPath: "/etc/shadow",
+				CutoverTimestamp:  validReq.CutoverTimestamp,
+			},
+			wantErr: "migration_plan_path is invalid",
+		},
 	}
 
 	for _, tc := range tests {

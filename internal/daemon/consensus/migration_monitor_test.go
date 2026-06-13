@@ -77,7 +77,7 @@ func testRequest(cutoverOffset time.Duration) consensus.SoakStartRequest {
 	return consensus.SoakStartRequest{
 		NodeID:            "node0",
 		CutoverTimestamp:  time.Now().Add(cutoverOffset),
-		MigrationPlanPath: "/tmp/migration-plan.yaml",
+		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/migration-plan.yaml",
 	}
 }
 

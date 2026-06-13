@@ -23,7 +23,7 @@ func buildNoPodRestartsReq(cutover time.Time) consensus.SoakStartRequest {
 	return consensus.SoakStartRequest{
 		NodeID:            "0.0.3",
 		CutoverTimestamp:  cutover,
-		MigrationPlanPath: "/tmp/plan.yaml",
+		MigrationPlanPath: "/opt/solo/weaver/migration/consensus/plan.yaml",
 	}
 }
 
