@@ -673,8 +673,13 @@ sudo solo-provisioner daemon service uninstall
 
 #### Check Daemon Service Health
 
+Prints the full `/status` response (per-component monitor state, connectivity errors, and prerequisite
+probe failures). `status` is an alias for `check`.
+
 ```bash
 sudo solo-provisioner daemon service check
+# or, equivalently:
+sudo solo-provisioner daemon service status
 ```
 
 #### Start / Stop Daemon Service
@@ -682,6 +687,55 @@ sudo solo-provisioner daemon service check
 ```bash
 sudo solo-provisioner daemon service start
 sudo solo-provisioner daemon service stop
+```
+
+---
+
+### Consensus Migration Soak Commands
+
+Drive the consensus-node migration **soak watcher** that runs inside `solo-provisioner-daemon`. These
+commands talk to the running daemon over its Unix socket; the daemon must already be installed and
+running (see [Daemon Service Commands](#daemon-service-commands)). Soak lifecycle lives under
+`consensus migration soak`, separate from the `daemon service` tree (which is scoped to daemon lifecycle
+only).
+
+#### Start a Soak
+
+```bash
+sudo solo-provisioner consensus migration soak start \
+  --node-id=0.0.3 \
+  --cutover-ts=2025-09-01T00:00:00Z \
+  --migration-plan=/path/to/migration-plan.yaml
+```
+
+**Required Flags**:
+
+| Flag               | Description                                                        |
+|--------------------|--------------------------------------------------------------------|
+| `--node-id`        | Consensus node ID                                                  |
+| `--cutover-ts`     | Cutover timestamp in RFC-3339 format (e.g. `2025-09-01T00:00:00Z`) |
+| `--migration-plan` | Path to the migration plan file on the host                        |
+
+#### Stop a Soak
+
+```bash
+# Stop and delete state (clean stop — daemon will NOT auto-resume)
+sudo solo-provisioner consensus migration soak stop
+
+# Stop but preserve elapsed soak time (daemon WILL auto-resume on next restart)
+sudo solo-provisioner consensus migration soak stop --keep-state
+```
+
+**Additional Flags**:
+
+| Flag           | Description                                                                       | Default |
+|----------------|-----------------------------------------------------------------------------------|---------|
+| `--keep-state` | Preserve `cutover-state.jsonl` so the daemon resumes the soak on its next restart | `false` |
+
+#### Show Soak Status
+
+```bash
+sudo solo-provisioner consensus migration soak status
 ```
 
 ---
@@ -983,9 +1037,14 @@ sudo solo-provisioner alloy cluster uninstall
 sudo solo-provisioner daemon service install [--components=<list>] [--cn-node-id=<id>] [--cn-orbit=<ns>] [--cn-upgrade-dir=<path>]
 sudo solo-provisioner daemon service install --from-config=<path>
 sudo solo-provisioner daemon service uninstall
-sudo solo-provisioner daemon service check
+sudo solo-provisioner daemon service check          # alias: status
 sudo solo-provisioner daemon service start
 sudo solo-provisioner daemon service stop
+
+# CONSENSUS MIGRATION SOAK
+sudo solo-provisioner consensus migration soak start  --node-id=<id> --cutover-ts=<RFC-3339> --migration-plan=<path>
+sudo solo-provisioner consensus migration soak stop   [--keep-state]
+sudo solo-provisioner consensus migration soak status
 
 # UTILITIES
 solo-provisioner version [--output=json|yaml]
@@ -994,5 +1053,5 @@ solo-provisioner --help
 
 ---
 
-*Document Version: 1.2.0 | Last Updated: March 2026*
+*Document Version: 1.3.0 | Last Updated: June 2026*
 

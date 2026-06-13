@@ -65,11 +65,10 @@ through the CLI's `daemon service` sub-commands.
 |------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
 | **Fail-fast startup**                                      | The daemon refuses to start if `daemon.yaml` is missing, malformed, or has an unsupported schema version; each enabled component's kubeconfig must build.               | A misconfigured daemon never half-runs. systemd surfaces the failure immediately instead of the daemon silently doing nothing. |
 | **Isolated component credentials**                         | Each component (consensus-node, block-node) carries its own scoped kubeconfig + RBAC, written at install time.                                                          | Blast-radius containment: a compromised or over-broad block-node credential cannot touch consensus-node resources.             |
-| **Supervised, never-crashing monitors**                    | Every monitor goroutine is wrapped in `core.SupervisedMonitor` — crashes are absorbed with exponential back-off; a single monitor failure never takes down the process. | The daemon stays up and serving `/status` even while one subsystem is broken — operators can always introspect.                |
+| **Supervised, never-crashing monitors**                    | Every monitor goroutine is wrapped in `daemonkit.SupervisedMonitor` — crashes are absorbed with exponential back-off; a single monitor failure never takes down the process. | The daemon stays up and serving `/status` even while one subsystem is broken — operators can always introspect.                |
 | **Monitors are init-time only**                            | Monitors start once at startup and run until shutdown. The HTTP API triggers *actions within* running monitors, never monitor lifecycle.                                | No dynamic goroutine churn; the goroutine set is fully determined by `daemon.yaml`. Easy to reason about.                      |
 | **Local-only control plane**                               | The HTTP API binds a Unix socket (`0660`), never a TCP port.                                                                                                            | No network attack surface; access is gated by filesystem permissions (owner `weaver`, group `weaver`).                         |
 | **Durable source of truth lives in the cluster / on disk** | Upgrade idempotency keys off the CR `status.phase`; soak progress is persisted to disk.                                                                                 | The daemon is restart-safe and crash-safe without an embedded database.                                                        |
-| **Minimal attack surface**                                 | The daemon binary does **not** import anything under `cmd/cli/` (a `depguard`-enforced compile-time boundary); shared actions are reached by invoking the CLI binary, not linking it. | Keeps the long-running privileged process small and auditable. See [CLI invocation & the import boundary](#cli-invocation--the-import-boundary) for the runtime trade-off. |
 
 ### System Overview
 
@@ -114,6 +113,10 @@ The daemon binary has its own minimal Cobra root and **does not import any packa
 (an epic-level attack-surface constraint). Logging, config, and proxy bootstrap are re-implemented
 self-contained in `cmd/daemon/` rather than shared with the CLI.
 
+There is a second, independent boundary in the other direction: the reusable kernel in `pkg/daemonkit`
+imports nothing under `internal/...` or `cmd/...` so it can be shared by a future daemon — see
+[daemonkit — reusable daemon foundation](#daemonkit--reusable-daemon-foundation).
+
 ### CLI invocation & the import boundary
 
 The no-import rule is a **compile-time** boundary, not a statement that the daemon is fully decoupled
@@ -134,7 +137,7 @@ Optimizing for a **small privileged binary with no duplicated logic** means the 
 the daemon to **verify the CLI binary before invoking it** — computing its hash (and/or checking the
 signature produced by `sign:cli:all`) and comparing it against the expected value so the daemon only
 execs a binary it recognises. Exec failures (not found, signature/hash mismatch, non-zero exit,
-version skew) should surface through the existing `core.StatusError` reason/resolution pattern so
+version skew) should surface through the existing `daemonkit.StatusError` reason/resolution pattern so
 `/status` tells the operator exactly what is wrong and how to fix it.
 
 > If we ever decide the external-binary risk is unacceptable, the alternative is to drop the no-import
@@ -155,39 +158,39 @@ after overrides are applied.
 
 ## Package Layout
 
-The package tree is deliberately layered to keep import direction acyclic: leaf packages
-(`probes`, `core`) know nothing about components; component packages (`consensus`, `blocknode`)
-depend on `core`/`probes`; the top-level `daemon` package wires everything together.
+The package tree is deliberately layered to keep import direction acyclic. The reusable kernel now
+lives in **`pkg/daemonkit`** (supervision, the Unix-socket server, sd_notify, the probe framework) and
+knows nothing about components or `internal/...`; the daemon-local `probes` package holds only the
+K8s-specific leaf probe; component packages (`consensus`, `blocknode`) depend on `daemonkit`; and the
+top-level `daemon` package wires everything together. See
+[daemonkit — reusable daemon foundation](#daemonkit--reusable-daemon-foundation) for the kernel itself.
 
 ```
+pkg/daemonkit/                 # Reusable daemon kernel — stdlib + errorx + errgroup only; no internal/... or cmd/... imports
+├── monitor.go                 # MonitorRunner, ConnectivityMonitor, StatusTracker, SupervisedMonitor, StatusError, MonitorState
+├── probe.go                   # Probe, ComponentProbe, ProbableMonitor, CompositeProbe, BuildComponentProbe
+├── tagged.go                  # TaggedProbe + ProbeError (reason/resolution as plain struct fields — no errorx registry)
+├── disk.go                    # DiskPermissionProbe, DiskWriteTestProbe, DiskOwnershipProbe
+├── component.go               # ComponentHandler interface (RegisterRoutes)
+├── server.go                  # Unix-socket HTTP control plane (Server, ServerOptions, ServerConfig) + /health, /status
+└── sdnotify.go                # NotifyReady / NotifyStopping (no-op when NOTIFY_SOCKET unset)
+
 internal/daemon/
 ├── config.go                  # DaemonConfig + typed component configs; Load/Write/Validate; schema-version dispatch
 ├── config_v1.go               # Sealed v1 on-disk structs + migrateToLatest() chain terminal
-├── daemon.go                  # Daemon struct, New/NewFromConfig, Run, componentSupervisor, runComponentProbes
-├── server.go                  # Unix-socket HTTP control plane (Server, ServerOptions, route registration)
-├── handlers.go                # Process-level handlers: GET /health, GET /status
-├── types.go                   # HealthResponse, StatusResponse, ComponentStatus, ErrorResponse
-├── sdnotify.go                # sd_notify READY=1 / STOPPING=1 (no-op when NOTIFY_SOCKET unset)
+├── daemon.go                  # Daemon struct, New/NewFromConfig, Run, componentSupervisor, runComponentProbes, statusSnapshot
+├── types.go                   # HealthResponse, StatusResponse, ComponentStatus, ErrorResponse (status payload returned by StatusFn)
 ├── errors.go                  # errorx types: ErrConfig, ErrConfigNotFound, ErrConfigMalformed
 │
-├── core/                      # Shared interfaces & primitives — no component-specific imports
-│   ├── monitor.go             # MonitorRunner, ConnectivityMonitor, StatusTracker, SupervisedMonitor, StatusError, MonitorState
-│   ├── probe.go               # ComponentProbe, ProbableMonitor, CompositeProbe, BuildComponentProbe (Probe = probes.Probe alias)
-│   └── component_handler.go   # ComponentHandler interface (RegisterRoutes)
-│
-├── probes/                    # Reusable leaf Probe implementations — no import of daemon/consensus (cycle-free)
-│   ├── probe.go               # Probe interface (defined here on purpose to break the cycle)
-│   ├── composite.go           # CompositeProbe — concurrent fan-out via errgroup, first-failure cancels siblings
-│   ├── disk.go                # DiskPermissionProbe, DiskWriteTestProbe, DiskOwnershipProbe
-│   ├── kube_rbac.go           # KubeRBACProbe — SelfSubjectAccessReview per verb, retries until allowed
-│   └── tagged.go              # TaggedProbe — attaches reason + resolution errorx properties to failures
+├── probes/                    # Daemon-local leaf probe (the only one that needs k8s.io/client-go)
+│   └── kube_rbac.go           # KubeRBACProbe — SelfSubjectAccessReview per verb, retries until allowed
 │
 ├── consensus/                 # Consensus-node component
 │   ├── component.go           # NewComponent — assembles UpgradeMonitor + MigrationMonitor
 │   ├── upgrade_monitor.go     # UpgradeMonitor — watches NetworkUpgradeExecute CRs (list-then-watch)
 │   ├── migration_monitor.go   # MigrationMonitor — soak lifecycle, criteria evaluation, crash-safe state
 │   ├── criteria.go            # SoakDuration, UploaderBacklogCleared, NoPodRestarts, ConsensusParticipationNominal
-│   ├── handler.go             # ConsensusNodeHandler — implements core.ComponentHandler
+│   ├── handler.go             # ConsensusNodeHandler — implements daemonkit.ComponentHandler
 │   ├── decommission.go        # Decommissioner interface + NoopDecommissioner
 │   ├── types.go               # SoakStartRequest/Response, SoakStatusResponse
 │   └── errors.go              # ErrK8sClient, ErrWatchFailed, ErrSoakWatcher
@@ -206,6 +209,72 @@ pkg/filepruner/    # Pruner — strategy-driven retention (age filter + hard-cap
 
 `pkg/eventlog` is the structured audit trail used by both consensus-node monitors. `pkg/filepruner`
 bounds disk usage of the JSONL event directories. Both are reusable and independently unit-tested.
+
+## daemonkit — reusable daemon foundation
+
+`pkg/daemonkit` is the daemon's **reusable kernel**: everything that is "long-running supervised process
+on a Linux host" rather than "Hedera consensus-node logic". It was extracted from `internal/daemon/core`
++ `internal/daemon/probes` so a second daemon (e.g. a future solo-operator daemon) can be built on the
+same supervision, control-plane, and prerequisite-probe machinery without copying code or dragging in
+solo-weaver internals.
+
+### What it provides
+
+| Primitive | Type(s) | Responsibility |
+|-----------|---------|----------------|
+| **Supervision** | `SupervisedMonitor`, `MonitorRunner` | Runs a monitor in a never-crashing restart loop: exponential back-off (5 s → 2× → 5 min cap), reset after a ≥ 60 s stable run, and a `MonitorDegraded` log every 5th consecutive crash. Absorbs crashes so the process survives indefinitely; clean `nil`/ctx-cancelled return exits without restart. |
+| **Status tracking** | `StatusTracker`, `MonitorState`, `StatusError`, `ConnectivityMonitor` | Concurrency-safe per-monitor state (`running` / `degraded` / `backoff:<dur>` / `stopped`). `StatusError` is the operator-facing `{reason, message, resolution, since}` descriptor serialised into `/status`. `ConnectivityMonitor` lets a monitor that is alive-but-retrying surface its live connectivity failure (the supervisor only sees "running"). |
+| **Control plane** | `Server`, `ServerOptions`, `ServerConfig`, `ComponentHandler` | Unix-socket HTTP server. Registers process-level `GET /health` and `GET /status` itself; delegates component sub-trees to each `ComponentHandler.RegisterRoutes`. Removes any stale socket, chmods it `0660`, applies a `ReadHeaderTimeout` (default 5 s), and shuts down gracefully (5 s drain) on ctx cancel, removing the socket on exit. `StatusFn func() any` keeps the concrete status payload type in the consuming daemon. |
+| **systemd integration** | `NotifyReady`, `NotifyStopping` | `sd_notify` `READY=1` / `STOPPING=1` over `NOTIFY_SOCKET`; a no-op (never an error) when the env var is unset, so manual runs and tests work unchanged. |
+| **Probe framework** | `Probe`, `ComponentProbe`, `ProbableMonitor`, `CompositeProbe`, `BuildComponentProbe` | `Probe` is the minimal leaf interface (`Probe(ctx) error`). `CompositeProbe` fans out to N leaf probes concurrently via `errgroup`; the first failure cancels its siblings, and because it satisfies `Probe` itself it nests to arbitrary depth. `BuildComponentProbe` collects `RequiredProbe()` from every `ProbableMonitor` in a component and returns `nil` (= immediately ready) when none declare a prerequisite. |
+| **Error tagging** | `TaggedProbe`, `ProbeError` | `TaggedProbe` wraps a leaf probe and, on failure, returns a `*ProbeError` carrying a stable `Reason` code and an actionable `Resolution` hint. |
+| **Disk probes** | `DiskPermissionProbe`, `DiskWriteTestProbe`, `DiskOwnershipProbe` | Host-only prerequisite checks: declared mode bits, real process-level writability (create+remove a temp file — exercises ownership/ACL/SELinux), and inode owner UID/GID + minimum mode (via `syscall.Stat_t`, any zero field skipped). |
+
+### Dependency philosophy
+
+The kernel is deliberately **dependency-light** so it stays cheap to vendor and trivial to audit:
+
+- **Org-standard deps only.** It imports nothing beyond the standard library, `github.com/joomcode/errorx`
+  (the org error convention), and `golang.org/x/sync/errgroup`. The package doc comment states this
+  contract, and it imports nothing under `internal/...` or `cmd/...`.
+- **`log/slog` is the logging seam.** The kernel logs through the stdlib `log/slog` facade, never through
+  `logx` directly. solo-weaver bridges the two at the binary boundary: `cmd/daemon/main.go` calls
+  `slog.SetDefault(slog.New(logx.NewSlogHandler()))` after `logx.Initialize`, so kernel log lines land in
+  the same zerolog sinks (console, rotating file, journald) as the rest of the daemon. A different
+  consumer can install any other `slog.Handler` and the kernel is none the wiser.
+- **`k8s.io/client-go` is deliberately excluded.** The kernel ships disk probes (which need only the
+  stdlib) but no Kubernetes probe. Consumers that need RBAC/CRD readiness implement their own leaf probe
+  against the `daemonkit.Probe` interface — solo-weaver's `KubeRBACProbe` lives in
+  `internal/daemon/probes/kube_rbac.go`, the one daemon-local probe that pulls in client-go. Keeping
+  client-go out of the kernel means a daemon with no K8s dependency pays nothing for it.
+
+### The `pkg/models` property-registry boundary
+
+solo-weaver attaches operator-facing remediation to errors using **errorx property singletons**
+registered once in `pkg/models` (`ErrPropertyReason`, `ErrPropertyResolution`). Those are process-global
+registrations — a reusable kernel must not depend on them, or every consumer would inherit solo-weaver's
+registry.
+
+`TaggedProbe` therefore carries `Reason` and `Resolution` as **plain `ProbeError` struct fields**, not
+errorx properties. The daemon reads those fields back at its own boundary: `runComponentProbes` does
+`errors.As(err, &pe)` on a `*daemonkit.ProbeError` and copies `pe.Reason` / `pe.Resolution` into the
+`daemonkit.StatusError` it surfaces via `/status` — no property extraction, no shared registry touched.
+Code that wants doctor-layer styling re-wraps into errorx with `pkg/models` keys at the solo-weaver
+boundary; the kernel stays registry-free. (The leaf disk probes still build their *underlying* errors
+with errorx namespaces — `ExternalError`, `IllegalState` — which is fine: that is plain errorx wrapping,
+not property-registry coupling.)
+
+### Planned standalone-module extraction
+
+`daemonkit` is **in-repo first**. The intended end state bundles it with the other two reusable daemon
+support packages — `pkg/eventlog` (fsync-per-line JSONL audit trail) and `pkg/filepruner` (strategy-driven
+retention) — into a single standalone Go module that a second daemon can import directly.
+
+The split is deferred on purpose: **extract to a separate module only when a second consumer is real.**
+Living in-repo keeps the API malleable while solo-weaver is still the only caller (no cross-repo version
+churn, no premature stable surface), while the strict import discipline above (stdlib + errorx + errgroup,
+slog seam, no client-go, no `internal/...`) keeps the eventual cut a mechanical move rather than a
+redesign.
 
 ## Configuration (`daemon.yaml`)
 
@@ -261,9 +330,9 @@ main.go
 └── daemon.Run(ctx)
     ├── errgroup.Go → server.Start(ctx)          # Unix-socket HTTP; fatal on exit (only path that ends the process)
     ├── errgroup.Go → componentSupervisor(ctx)    # never returns non-nil; absorbs all monitor crashes
-    │   ├── core.SupervisedMonitor(ctx, UpgradeMonitor,       tracker)   # one goroutine per monitor
-    │   ├── core.SupervisedMonitor(ctx, MigrationMonitor,     tracker)
-    │   └── core.SupervisedMonitor(ctx, trafficShaperMonitor, tracker)   # stub
+    │   ├── daemonkit.SupervisedMonitor(ctx, UpgradeMonitor,       tracker)   # one goroutine per monitor
+    │   ├── daemonkit.SupervisedMonitor(ctx, MigrationMonitor,     tracker)
+    │   └── daemonkit.SupervisedMonitor(ctx, trafficShaperMonitor, tracker)   # stub
     └── go runComponentProbes(ctx)               # async probe loop; results → probeErrors; does NOT gate READY=1
 ```
 
@@ -283,9 +352,9 @@ the `component` struct in `daemon.go`:
 ```go
 type component struct {
 name     string
-monitors []core.MonitorRunner // one supervised goroutine per entry
-probe    core.ComponentProbe // nil = immediately ready (no external deps)
-tracker  *core.StatusTracker    // per-monitor state feeding GET /status
+monitors []daemonkit.MonitorRunner // one supervised goroutine per entry
+probe    daemonkit.ComponentProbe // nil = immediately ready (no external deps)
+tracker  *daemonkit.StatusTracker    // per-monitor state feeding GET /status
 }
 ```
 
@@ -317,7 +386,7 @@ graph LR
 
 ### Component HTTP routing — extensible by construction
 
-Components that expose endpoints implement `core.ComponentHandler`:
+Components that expose endpoints implement `daemonkit.ComponentHandler`:
 
 ```go
 type ComponentHandler interface {
@@ -338,10 +407,11 @@ Currently only `consensus.ConsensusNodeHandler` registers routes. The block-node
    unreleased) or create `config_v2.go` with a migration step (if v1 has shipped).
 2. Create `internal/daemon/foo/component.go` with
    `NewComponent(cfg ComponentConfig) (ComponentResult, error)` following the consensus/blocknode pattern.
-3. Implement each `FooMonitor` as a `core.MonitorRunner`. If it needs prerequisites verified before it
-   runs, also implement `core.ProbableMonitor` and return a `probes.Probe` from `RequiredProbe()`.
-   If it should surface live connectivity failures in `/status`, implement `core.ConnectivityMonitor`.
-4. If it exposes HTTP endpoints, add `FooHandler` implementing `core.ComponentHandler` and append it to
+3. Implement each `FooMonitor` as a `daemonkit.MonitorRunner`. If it needs prerequisites verified before
+   it runs, also implement `daemonkit.ProbableMonitor` and return a `daemonkit.Probe` from
+   `RequiredProbe()`. If it should surface live connectivity failures in `/status`, implement
+   `daemonkit.ConnectivityMonitor`.
+4. If it exposes HTTP endpoints, add `FooHandler` implementing `daemonkit.ComponentHandler` and append it to
    `componentHandlers` in `NewFromConfig`.
 5. Wire it into `NewFromConfig` (skip when `!Enabled`; skip individual monitors when their toggle is off).
 6. Register the component constant in `internal/ui/prompt/daemon.go` and wire the CLI flag + prompt in
@@ -349,7 +419,7 @@ Currently only `consensus.ConsensusNodeHandler` registers routes. The block-node
 
 ## Resilience: SupervisedMonitor — Back-off & Degradation
 
-`core.SupervisedMonitor` is the heart of the daemon's robustness. It runs a `MonitorRunner` in a
+`daemonkit.SupervisedMonitor` (in `pkg/daemonkit`) is the heart of the daemon's robustness. It runs a `MonitorRunner` in a
 restart loop and absorbs crashes so the process survives indefinitely.
 
 | Parameter           | Default   | Notes                                                             |
@@ -360,7 +430,7 @@ restart loop and absorbs crashes so the process survives indefinitely.
 | Stable threshold    | 60 s      | A run longer than this resets both back-off and the crash counter |
 | Degraded threshold  | 5 crashes | Emits a `MonitorDegraded` error log at crash #5, #10, #15, …      |
 
-All thresholds are package-level `var`s (not `const`) in `core/monitor.go` so unit tests override them
+All thresholds are package-level `var`s (not `const`) in `pkg/daemonkit/monitor.go` so unit tests override them
 to run in milliseconds instead of sleeping for real durations — the back-off logic is fully tested
 without slow tests.
 
@@ -392,7 +462,7 @@ stateDiagram-v2
 
 The supervisor only knows whether a goroutine is *alive*. But a monitor can be alive and retrying
 internally (e.g. a K8s watch that keeps failing) — to the supervisor that is still `"running"`.
-`core.ConnectivityMonitor` closes this gap:
+`daemonkit.ConnectivityMonitor` closes this gap:
 
 ```go
 type ConnectivityMonitor interface {
@@ -410,7 +480,7 @@ preserved across back-off cycles so it reflects when the outage *started*, not t
 
 Two distinct probe concerns, deliberately separated:
 
-1. **Blocking startup probe** (`core.ProbableMonitor.RequiredProbe`) — disk prerequisites that must be
+1. **Blocking startup probe** (`daemonkit.ProbableMonitor.RequiredProbe`) — disk prerequisites that must be
    correct before the monitor's automation can possibly succeed. Verified by the async probe loop and
    surfaced in `/status`. Catching these early avoids silent failures mid-automation when human
    intervention is no longer practical.
@@ -418,7 +488,7 @@ Two distinct probe concerns, deliberately separated:
    the blocking probe, because the watch loop already retries them on its own back-off. A CRD that is
    not yet installed at startup resolves itself once installed; it should not be a startup gate.
 
-Leaf probes (`internal/daemon/probes/`):
+Leaf probes (`KubeRBACProbe` in `internal/daemon/probes/`; the disk and composite/tagged probes in `pkg/daemonkit`):
 
 | Probe                 | Checks                                                                            | Notes                                                                               |
 |-----------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
@@ -426,7 +496,7 @@ Leaf probes (`internal/daemon/probes/`):
 | `DiskOwnershipProbe`  | Path owner UID/GID + minimum permission bits (via `syscall.Stat_t`)               | Any of User/Group/Permission left zero is skipped                                   |
 | `DiskPermissionProbe` | Minimum mode bits on the inode                                                    | Declared permissions, not effective access                                          |
 | `DiskWriteTestProbe`  | The *running process* can actually create+remove a file in a dir                  | Exercises ownership, ACLs, mount flags, SELinux/AppArmor implicitly                 |
-| `TaggedProbe`         | Wraps any leaf probe; attaches `reason` + `resolution` errorx properties          | Lets `/status` render context-specific remediation per failure                      |
+| `TaggedProbe`         | Wraps any leaf probe; attaches `reason` + `resolution` as `ProbeError` struct fields | Daemon reads the fields back (no errorx registry) to render remediation in `/status` |
 | `CompositeProbe`      | Fans out to N leaf probes concurrently (errgroup); first failure cancels siblings | Nestable to arbitrary depth (it satisfies `Probe` itself)                           |
 
 The consensus-node `UpgradeMonitor.RequiredProbe()` composes three tagged disk probes — upgrade-root
@@ -467,8 +537,8 @@ flowchart TD
 ```
 
 The probe loop preserves the *first* failure timestamp across retries (`StatusError.Since` reflects the
-outage start), and extracts `reason`/`resolution` from `TaggedProbe` errorx properties so `/status` is
-self-explanatory.
+outage start), and extracts `reason`/`resolution` from the `daemonkit.ProbeError` struct fields attached
+by `TaggedProbe` so `/status` is self-explanatory.
 
 > **Known limitation (flagged for reviewers)**: `runComponentProbes` is a **one-shot** loop — once all
 > probes pass it returns and does not re-check. The assumption is that RBAC and disk permissions are
@@ -835,7 +905,7 @@ their own `ErrInvalidEvent` / `ErrPruneFailed`. Errors surfaced to operators car
 
 ```bash
 # Unit tests (macOS — no Linux-only deps in the daemon packages)
-go test -race -cover -tags='!integration' ./internal/daemon/... ./pkg/eventlog/... ./pkg/filepruner/...
+go test -race -cover -tags='!integration' ./pkg/daemonkit/... ./internal/daemon/... ./pkg/eventlog/... ./pkg/filepruner/...
 
 # Full suite in the UTM VM
 task vm:test:unit
@@ -843,9 +913,10 @@ task vm:test:unit
 
 Key test files:
 
-- `internal/daemon/core/monitor_test.go` — `SupervisedMonitor` back-off, degradation, stable-reset (var-override makes
+- `pkg/daemonkit/monitor_test.go` — `SupervisedMonitor` back-off, degradation, stable-reset (var-override makes
   it fast)
-- `internal/daemon/core/probe_test.go` — composite probe fan-out, first-failure cancellation
+- `pkg/daemonkit/probe_test.go` — composite probe fan-out, first-failure cancellation
+- `pkg/daemonkit/server_test.go` — Unix-socket routing + handler status codes; `pkg/daemonkit/sdnotify_test.go` — notify no-op + datagram path
 - `internal/daemon/composite_probe_test.go` — component-level probe wiring
 - `internal/daemon/server_test.go` — HTTP routing + handler status codes
 - `internal/daemon/config_test.go` — load/validate/migrate, schema-version guards
