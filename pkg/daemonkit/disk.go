@@ -117,7 +117,10 @@ func (p *DiskOwnershipProbe) Probe(_ context.Context) error {
 		if err != nil {
 			return errorx.ExternalError.Wrap(err, "disk ownership probe: user %q not found", p.User)
 		}
-		wantUID, _ := strconv.ParseUint(u.Uid, 10, 32)
+		wantUID, err := strconv.ParseUint(u.Uid, 10, 32)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "disk ownership probe: user %q has non-numeric uid %q", p.User, u.Uid)
+		}
 		if uint32(wantUID) != stat.Uid {
 			return errorx.IllegalState.New("disk ownership probe: %s owned by uid %d, want user %q (uid %d)",
 				p.Path, stat.Uid, p.User, wantUID)
@@ -129,7 +132,10 @@ func (p *DiskOwnershipProbe) Probe(_ context.Context) error {
 		if err != nil {
 			return errorx.ExternalError.Wrap(err, "disk ownership probe: group %q not found", p.Group)
 		}
-		wantGID, _ := strconv.ParseUint(g.Gid, 10, 32)
+		wantGID, err := strconv.ParseUint(g.Gid, 10, 32)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "disk ownership probe: group %q has non-numeric gid %q", p.Group, g.Gid)
+		}
 		if uint32(wantGID) != stat.Gid {
 			return errorx.IllegalState.New("disk ownership probe: %s owned by gid %d, want group %q (gid %d)",
 				p.Path, stat.Gid, p.Group, wantGID)

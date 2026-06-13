@@ -158,6 +158,13 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 				logx.As().Info().Str("path", src.BinPath).Msg("Daemon binary sha256 verified")
 			}
 
+			// TOCTOU note: the checksum above (when supplied) verifies src.BinPath,
+			// then this exec and the copyBinaryFile below independently re-open the
+			// same path — a swap between verify and use is theoretically possible.
+			// Accepted: the path is an operator-supplied local file on a root-gated
+			// install command (see DaemonBinarySource doc), so an attacker able to
+			// swap it could equally replace the installed binary directly.
+			//
 			// Run --version to confirm the binary executes on this host's platform.
 			// A wrong-arch binary (e.g. amd64 binary on arm64 host) will fail here
 			// with a clear error rather than silently installing an unusable binary.
