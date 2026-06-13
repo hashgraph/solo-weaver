@@ -181,18 +181,43 @@ func migrationOperationID(req SoakStartRequest) string {
 	return "migration-" + req.CutoverTimestamp.UTC().Format("20060102T150405Z")
 }
 
-// writeSoakState atomically writes req to path via a .tmp file + rename.
+// writeSoakState atomically and durably writes req to path via a .tmp file +
+// fsync + rename + parent-dir fsync. The fsyncs are required for crash recovery:
+// without them a power loss between write and rename can expose a zero-length or
+// truncated state file, defeating resume-after-reboot (the watcher relies on this
+// file to restore elapsed soak time across daemon restarts).
 func writeSoakState(path string, req SoakStartRequest) error {
 	b, err := json.Marshal(req)
 	if err != nil {
 		return ErrSoakWatcher.Wrap(err, "marshal soak state")
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o640); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o640)
+	if err != nil {
+		return ErrSoakWatcher.Wrap(err, "open soak state tmp file")
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
 		return ErrSoakWatcher.Wrap(err, "write soak state tmp file")
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return ErrSoakWatcher.Wrap(err, "fsync soak state tmp file")
+	}
+	if err := f.Close(); err != nil {
+		return ErrSoakWatcher.Wrap(err, "close soak state tmp file")
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return ErrSoakWatcher.Wrap(err, "rename soak state file")
+	}
+	// fsync the parent dir so the rename itself is durable across power loss.
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return ErrSoakWatcher.Wrap(err, "open soak state dir for fsync")
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Sync(); err != nil {
+		return ErrSoakWatcher.Wrap(err, "fsync soak state dir")
 	}
 	return nil
 }
