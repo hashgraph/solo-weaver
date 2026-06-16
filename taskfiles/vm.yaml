@@ -115,7 +115,28 @@ tasks:
         echo "VM Golden Name: {{.VM_GOLDEN_NAME}}"
         echo "UTM VMs Directory: {{.UTM_VMS_DIR}}"
         echo 'Force Download: {{ eq .FORCE "true" }}'
-        
+
+        # Quit and relaunch UTM so it reloads its VM registry from disk. UTM does
+        # not live-watch its Documents dir, so VM bundles copied in underneath a
+        # running UTM stay invisible until it is bounced.
+        reload_utm() {
+          echo "Reloading UTM so it picks up VM changes on disk..."
+          osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
+          sleep 3
+          pkill -f "UTM.app/Contents/MacOS/UTM" >/dev/null 2>&1 || true
+          sleep 2
+          open -g -a UTM || true
+          # Wait until UTM is scriptable again before relying on utmctl.
+          for _ in $(seq 1 10); do
+            if osascript -e 'with timeout of 5 seconds' \
+                 -e 'tell application "UTM" to get name of every virtual machine' \
+                 -e 'end timeout' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+        }
+
         if [ "{{.FORCE}}" = "true" ]; then
          echo "Force flag is set, re-downloading golden VM image..."
         else
@@ -128,9 +149,15 @@ tasks:
           # if the .utm file exists in UTM_VMS_DIR, skip download
           echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
           if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
-            echo "✓ Golden VM already exists in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-            echo "👉 Please restart UTM to reload VMs ('open -a UTM'), then run 'task vm:start'."
-            exit 1 # non zero would stop further steps
+            echo "✓ Golden VM exists on disk but UTM hasn't loaded it: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+            reload_utm
+            if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
+              echo "✓ UTM reloaded and now sees the golden VM."
+              exit 0
+            fi
+            echo "❌ UTM still doesn't see {{.VM_GOLDEN_NAME}} after a reload."
+            echo "   Open UTM and import it manually, then re-run."
+            exit 1
           else
             echo "✓ No existing golden VM found, proceeding to download."
           fi
@@ -193,10 +220,18 @@ tasks:
         
         # Copy the VM to UTM directory and rename
         cp -r "$TEMP_DIR/golden-image.utm" "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-        
-        echo "✓ Golden VM downloaded successfully and placed in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-        echo "👉 Please restart UTM to reload VMs ('open -a UTM'), then run 'task vm:start'."
-        exit 1 # non zero would stop further steps
+        echo "✓ Golden VM placed in UTM directory: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
+
+        # We just wrote a VM bundle under a running UTM; reload it so it registers
+        # the new golden VM, then let the caller (vm:reset) continue.
+        reload_utm
+        if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
+          echo "✓ UTM reloaded and now sees the golden VM."
+          exit 0
+        fi
+        echo "❌ UTM still doesn't see {{.VM_GOLDEN_NAME}} after a reload."
+        echo "   Open UTM and import it manually, then re-run."
+        exit 1
   
   vm:reset:
     desc: "Clone the golden VM to create a working instance with passwordless SSH"
@@ -231,15 +266,27 @@ tasks:
         if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
           echo "Stopping and removing existing working VM..."
           utmctl stop "{{.VM_NAME}}" 2>/dev/null || true
-          sleep 2
           utmctl delete "{{.VM_NAME}}" 2>/dev/null || true
-          sleep 1
+          # Wait until UTM drops the VM from its registry (status goes non-zero =
+          # not found) so the clone below doesn't race a half-deleted entry.
+          for _ in $(seq 1 10); do
+            utmctl status "{{.VM_NAME}}" >/dev/null 2>&1 || break
+            sleep 1
+          done
         fi
-        
+
         # Clone the golden VM
         echo "Cloning '{{.VM_GOLDEN_NAME}}' to '{{.VM_NAME}}'..."
         utmctl clone "{{.VM_GOLDEN_NAME}}" --name "{{.VM_NAME}}"
-        
+
+        # Wait until UTM has registered the clone as a stopped VM before starting it.
+        # Starting immediately after a clone can wedge UTM's Apple Event handler.
+        echo "Waiting for UTM to register the cloned VM..."
+        for _ in $(seq 1 15); do
+          [ "$(utmctl status "{{.VM_NAME}}" 2>/dev/null)" = "stopped" ] && break
+          sleep 1
+        done
+
         echo "✓ VM cloned. Now starting it for initial configuration..."
       - task: vm:start
       - task: vm:configure:ssh
@@ -265,19 +312,27 @@ tasks:
     deps:
       - vm:ensure-exists
     cmds:
-      - utmctl start --hide "{{.VM_NAME}}"
       - |
-        echo "Waiting for VM to boot (checking every 5 seconds)..."
-        
+        echo "Starting VM and waiting for it to boot (checking every 5 seconds)..."
+
         # Poll for VM to be ready with timeout
         MAX_ATTEMPTS=24  # 24 * 5 seconds = 2 minutes max wait
         ATTEMPT=0
+        # utmctl start can exit 0 yet not launch the VM, so we verify run state
+        # and re-issue the start while still stopped, up to this many times.
+        MAX_START_ATTEMPTS=3
+        START_ATTEMPTS=0
+
+        utmctl start --hide "{{.VM_NAME}}" 2>&1 || true
+        START_ATTEMPTS=1
 
         while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
           ATTEMPT=$((ATTEMPT + 1))
 
-          # Check if VM is running
-          if utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
+          # Gate on the reported state: utmctl status exits 0 even when stopped
+          # (only "not found" is non-zero), so the exit code can't gate this.
+          STATE=$(utmctl status "{{.VM_NAME}}" 2>/dev/null)
+          if [ "$STATE" = "started" ]; then
             echo "✓ VM is running, checking if network is ready..."
 
             VM_IP=$({{.GET_VM_IP}} get_vm_ip)
@@ -287,8 +342,41 @@ tasks:
             else
               echo "VM is running but network not ready yet (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
             fi
+          elif [ "$STATE" = "stopped" ]; then
+            # Start didn't take. A plain retry clears a transient glitch; the final
+            # attempt relaunches UTM.app, which clears a wedged start path.
+            if [ $START_ATTEMPTS -lt $MAX_START_ATTEMPTS ]; then
+              START_ATTEMPTS=$((START_ATTEMPTS + 1))
+              if [ $START_ATTEMPTS -eq $MAX_START_ATTEMPTS ]; then
+                # Bounce UTM.app; safe since the target VM is stopped.
+                echo "VM still stopped; relaunching UTM.app to clear a stuck start path..."
+                osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
+                sleep 3
+                pkill -f "UTM.app/Contents/MacOS/UTM" >/dev/null 2>&1 || true
+                sleep 2
+                open -g -a UTM || true
+                # Wait until UTM is scriptable again before re-issuing the start.
+                for _ in $(seq 1 10); do
+                  if osascript -e 'with timeout of 5 seconds' \
+                       -e 'tell application "UTM" to get name of every virtual machine' \
+                       -e 'end timeout' >/dev/null 2>&1; then
+                    break
+                  fi
+                  sleep 2
+                done
+              else
+                echo "VM still stopped; re-issuing start (try $START_ATTEMPTS/$MAX_START_ATTEMPTS)..."
+              fi
+              utmctl start --hide "{{.VM_NAME}}" 2>&1 || true
+            else
+              echo "❌ VM is still 'stopped' after $MAX_START_ATTEMPTS start attempts (including a UTM relaunch)."
+              echo "   Try manually: quit UTM (⌘Q), reopen it, then 'task vm:start'."
+              echo "   If it still fails, open the VM in the UTM GUI and start it there"
+              echo "   to surface any blocking dialog or boot error. Aborting."
+              exit 1
+            fi
           else
-            echo "VM is starting... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+            echo "VM is starting (state: ${STATE:-unknown}, attempt $ATTEMPT/$MAX_ATTEMPTS)..."
           fi
 
           if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
