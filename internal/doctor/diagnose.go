@@ -68,11 +68,21 @@ func toErrorMessage(err error) (string, string) {
 }
 
 func findResolution(err error) []string {
-	if resolution, ok := errorx.ExtractProperty(err, ErrPropertyResolution); ok {
-		if resSteps, ok := resolution.([]string); ok {
-			return resSteps
+	// Walk the full cause chain first: a resolution hint attached to an inner
+	// error must not be lost when outer layers (e.g. illegal_state wrappers in
+	// root.go) do not carry the property themselves.
+	for e := err; e != nil; {
+		if resolution, ok := errorx.ExtractProperty(e, ErrPropertyResolution); ok {
+			if resSteps, ok := resolution.([]string); ok {
+				return resSteps
+			}
+			return []string{fmt.Sprintf("%s", resolution)}
 		}
-		return []string{fmt.Sprintf("%s", resolution)}
+		ex := errorx.Cast(e)
+		if ex == nil {
+			break
+		}
+		e = ex.Cause()
 	}
 
 	switch {

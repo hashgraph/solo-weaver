@@ -7,16 +7,45 @@ import (
 )
 
 type WeaverPaths struct {
-	HomeDir        string
-	BinDir         string
-	LogsDir        string
-	UtilsDir       string
-	ConfigDir      string
-	BackupDir      string
-	TempDir        string
-	DownloadsDir   string
-	DiagnosticsDir string
-	StateDir       string
+	HomeDir                string
+	BinDir                 string
+	LogsDir                string
+	UtilsDir               string
+	ConfigDir              string
+	BackupDir              string
+	TempDir                string
+	DownloadsDir           string
+	DiagnosticsDir         string
+	StateDir               string
+	DaemonDir              string
+	DaemonSockPath         string
+	DaemonConfigPath       string
+	DaemonKubeconfigPath   string // /opt/solo/weaver/config/daemon.kubeconfig — legacy; prefer per-component paths
+	DaemonCNKubeconfigPath string // /opt/solo/weaver/config/daemon-cn.kubeconfig
+	DaemonBNKubeconfigPath string // /opt/solo/weaver/config/daemon-bn.kubeconfig
+
+	// InfraVersionsPath is the optional infrastructure-versions.yaml manifest dropped
+	// into the config directory by the build.zip deployment package (HIP XXXX0).
+	// When present, solo-provisioner validates its declared versions against the
+	// embedded catalog and uses its provisioner.daemon section to drive daemon install.
+	// Path: /opt/solo/weaver/config/infrastructure-versions.yaml
+	InfraVersionsPath string
+
+	// DaemonServiceSandboxPath is the canonical unit file location inside the
+	// weaver sandbox: $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
+	// DaemonServiceSymlinkPath is the system-wide symlink that points to it:
+	// /usr/lib/systemd/system/solo-provisioner-daemon.service
+	DaemonServiceSandboxPath string
+	DaemonServiceSymlinkPath string
+
+	DaemonEventsDir string // $home/daemon/events
+
+	// Consensus event subdirectories — scoped so future components (block-node, relay) get sibling dirs.
+	DaemonConsensusEventsDir        string // $home/daemon/events/consensus
+	DaemonConsensusUpgradeEventsDir string // $home/daemon/events/consensus/upgrade
+	DaemonConsensusMigrateEventsDir string // $home/daemon/events/consensus/migrate
+
+	DaemonConsensusMigrateEventsPath string // $home/daemon/events/consensus/migrate/consensus-migrate-events.jsonl
 
 	AllDirectories []string
 
@@ -40,11 +69,27 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		DownloadsDir:   path.Join(home, "downloads"),
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 		StateDir:       path.Join(home, "state"),
+		DaemonDir:      path.Join(home, "daemon"),
 	}
+
+	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
+	pp.DaemonConfigPath = path.Join(pp.ConfigDir, "daemon.yaml")
+	pp.InfraVersionsPath = path.Join(pp.ConfigDir, "infrastructure-versions.yaml")
+	pp.DaemonKubeconfigPath = path.Join(pp.ConfigDir, "daemon.kubeconfig")
+	pp.DaemonCNKubeconfigPath = path.Join(pp.ConfigDir, "daemon-cn.kubeconfig")
+	pp.DaemonBNKubeconfigPath = path.Join(pp.ConfigDir, "daemon-bn.kubeconfig")
+	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
+	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
+	pp.DaemonConsensusUpgradeEventsDir = path.Join(pp.DaemonConsensusEventsDir, "upgrade")
+	pp.DaemonConsensusMigrateEventsDir = path.Join(pp.DaemonConsensusEventsDir, "migrate")
+	pp.DaemonConsensusMigrateEventsPath = path.Join(pp.DaemonConsensusMigrateEventsDir, "consensus-migrate-events.jsonl")
 
 	pp.SandboxDir = path.Join(pp.HomeDir, "sandbox")
 	pp.SandboxBinDir = path.Join(pp.SandboxDir, "bin")
 	pp.SandboxLocalBinDir = path.Join(pp.SandboxDir, "usr", "local", "bin")
+
+	pp.DaemonServiceSandboxPath = path.Join(pp.SandboxDir, "usr", "lib", "systemd", "system", "solo-provisioner-daemon.service")
+	pp.DaemonServiceSymlinkPath = "/usr/lib/systemd/system/solo-provisioner-daemon.service"
 
 	pp.SandboxDirectories = []string{
 		pp.SandboxDir,
@@ -69,6 +114,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		path.Join(pp.SandboxDir, "var/logs/crio/pods"),
 		path.Join(pp.SandboxDir, "run/runc"),
 		path.Join(pp.SandboxDir, "usr/libexec/crio"),
+		path.Join(pp.SandboxDir, "usr/lib/systemd/system"),
 		path.Join(pp.SandboxDir, "usr/lib/systemd/system/kubelet.service.d"),
 		path.Join(pp.SandboxDir, "usr/local/share/man"),
 		path.Join(pp.SandboxDir, "usr/local/share/oci-umount/oci-umount.d"),
@@ -91,6 +137,11 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		pp.DownloadsDir,
 		pp.DiagnosticsDir,
 		pp.StateDir,
+		pp.DaemonDir,
+		pp.DaemonEventsDir,
+		pp.DaemonConsensusEventsDir,
+		pp.DaemonConsensusUpgradeEventsDir,
+		pp.DaemonConsensusMigrateEventsDir,
 	}
 	pp.AllDirectories = append(pp.AllDirectories, pp.SandboxDirectories...)
 

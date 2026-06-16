@@ -98,9 +98,44 @@ func IsServiceEnabled(ctx context.Context, name string) (bool, error) {
 	return unitFiles[0].Type == "enabled", nil
 }
 
-// RestartService starts the specified service.
+// StartService starts the specified service if it is not already running.
+// If the service is already active, systemd returns immediately without
+// interrupting it (no-op on a running unit). This is equivalent to
+// running "systemctl start <service>".
+// The service name can be provided with or without the .service suffix.
+func StartService(ctx context.Context, name string) error {
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return ErrSystemdConnection.Wrap(err, "failed to connect to systemd")
+	}
+	defer conn.Close()
+
+	serviceName := ensureServiceSuffix(name)
+	jobChan := make(chan string, 1)
+
+	_, err = conn.StartUnitContext(ctx, serviceName, "replace", jobChan)
+	if err != nil {
+		return ErrSystemdOperation.Wrap(err, "failed to start service %s", serviceName).
+			WithProperty(errorx.RegisterProperty("service"), serviceName)
+	}
+
+	select {
+	case result := <-jobChan:
+		if result != "done" {
+			return ErrSystemdOperation.New("service %s start failed: %s", serviceName, result).
+				WithProperty(errorx.RegisterProperty("service"), serviceName).
+				WithProperty(errorx.RegisterProperty("job_result"), result)
+		}
+		return nil
+	case <-ctx.Done():
+		return ErrSystemdOperation.Wrap(ctx.Err(), "timeout waiting for service %s to start", serviceName).
+			WithProperty(errorx.RegisterProperty("service"), serviceName)
+	}
+}
+
+// RestartService restarts the specified service, stopping it first if running.
 // This function waits until the service is fully started.
-// It is equivalent to running "systemctl start <service>".
+// It is equivalent to running "systemctl restart <service>".
 // The service name can be provided with or without the .service suffix.
 func RestartService(ctx context.Context, name string) error {
 	conn, err := dbus.NewSystemConnectionContext(ctx)

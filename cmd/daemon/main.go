@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/google/uuid"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/pkg/config"
@@ -27,6 +30,14 @@ var (
 	flagVersion      bool
 	flagOutputFormat string
 
+	// Optional overrides — each takes precedence over the corresponding daemon.yaml
+	// field when set. The service file stays flag-free; these flags are for
+	// operator debugging and integration testing without editing daemon.yaml.
+	flagNodeID     string
+	flagKubeconfig string
+	flagOrbit      string
+	flagUpgradeDir string
+
 	rootCmd = &cobra.Command{
 		Use:   "solo-provisioner-daemon",
 		Short: "Long-running daemon for Solo Provisioner host-level work",
@@ -38,26 +49,93 @@ var (
 
 			logx.As().Info().Msg("Solo Provisioner daemon started")
 
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
+			defer stop()
 
-			select {
-			case sig := <-sigChan:
-				logx.As().Info().Str("signal", sig.String()).Msg("Solo Provisioner daemon shutting down")
-			case <-cmd.Context().Done():
-				logx.As().Info().Msg("Solo Provisioner daemon context cancelled")
+			paths := models.Paths()
+
+			// --config overrides the default daemon config path so operators can
+			// test a specific daemon.yaml without touching the installed one.
+			daemonConfigPath := paths.DaemonConfigPath
+			if flagConfig != "" {
+				daemonConfigPath = flagConfig
 			}
 
+			// Load daemon.yaml; apply any CLI flag overrides; re-validate.
+			cfg, err := daemon.LoadDaemonConfig(daemonConfigPath)
+			if err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Verify the config exists: ls -la " + daemonConfigPath,
+						"Reinstall the daemon to recreate the config: sudo solo-provisioner daemon service install",
+					})
+				}
+				return err
+			}
+			cn := cfg.Components.ConsensusNode
+			if flagNodeID != "" {
+				cn.NodeID = flagNodeID
+			}
+			if flagKubeconfig != "" {
+				cn.Kubeconfig = flagKubeconfig
+			}
+			if flagOrbit != "" {
+				cn.Orbit = flagOrbit
+			}
+			if flagUpgradeDir != "" {
+				cn.UpgradeDir = flagUpgradeDir
+			}
+			if err := cfg.Validate(); err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Check the config: cat " + daemonConfigPath,
+						"Fix missing fields or reinstall: sudo solo-provisioner daemon service install",
+					})
+				}
+				return err
+			}
+
+			d, err := daemon.NewFromConfig(paths, cfg)
+			if err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Check the daemon config: cat " + daemonConfigPath,
+						"Check the kubeconfig: ls -la " + paths.DaemonCNKubeconfigPath,
+						"Reinstall the daemon: sudo solo-provisioner daemon service install",
+					})
+				}
+				return err
+			}
+			if err := d.Run(ctx); err != nil {
+				if ex := errorx.Cast(err); ex != nil {
+					return ex.WithProperty(models.ErrPropertyResolution, []string{
+						"Check daemon logs: sudo journalctl -u solo-provisioner-daemon -n 100 --no-pager",
+						"Check service status: sudo systemctl status solo-provisioner-daemon",
+						"Restart the daemon: sudo solo-provisioner daemon service stop && sudo solo-provisioner daemon service start",
+					})
+				}
+				return err
+			}
+
+			logx.As().Info().Msg("Solo Provisioner daemon stopped")
 			return nil
 		},
 	}
 )
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "Path to config file")
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "Path to daemon.yaml (overrides the default /opt/solo/weaver/config/daemon.yaml)")
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Set log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Print version and exit")
 	rootCmd.PersistentFlags().StringVarP(&flagOutputFormat, "output", "o", "json", "Output format (json, yaml)")
+
+	// Optional overrides for daemon.yaml fields. When set, each flag takes
+	// precedence over the corresponding value in daemon.yaml. The normal
+	// production deployment sets no flags — everything comes from daemon.yaml.
+	rootCmd.Flags().StringVar(&flagNodeID, "node-id", "", "Override node_id from daemon.yaml (e.g. 0.0.3)")
+	rootCmd.Flags().StringVar(&flagKubeconfig, "kubeconfig", "", "Override kubeconfig path from daemon.yaml")
+	rootCmd.Flags().StringVar(&flagOrbit, "orbit", "", "Override orbit (K8s namespace) from daemon.yaml")
+	rootCmd.Flags().StringVar(&flagUpgradeDir, "upgrade-dir", "", "Override upgrade_dir from daemon.yaml")
 
 	rootCmd.AddCommand(version.Cmd())
 }
@@ -68,7 +146,11 @@ func init() {
 // the daemon binary does not import anything under cmd/cli, satisfying the
 // epic's attack-surface constraint.
 func initConfig(ctx context.Context) {
-	if err := config.Initialize(flagConfig); err != nil {
+	// The daemon does not use the CLI-style config file (models.Config); --config
+	// on this binary points to daemon.yaml which is loaded separately in RunE.
+	// Always initialise with defaults so log/proxy settings come from flags and
+	// built-in defaults, not a file that would fail to decode as models.Config.
+	if err := config.Initialize(""); err != nil {
 		doctor.CheckErr(ctx, err)
 	}
 
@@ -120,6 +202,14 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
+	// Install the slog→logx bridge so the daemon kernel (which logs via the
+	// stdlib log/slog seam, in preparation for the pkg/daemonkit extraction)
+	// emits to the same zerolog sinks logx just configured — console, the
+	// rotating file, and journald. Must run after logx.Initialize so the
+	// bridge resolves the fully configured logger. CLI/workflows keep using
+	// logx directly.
+	slog.SetDefault(slog.New(logx.NewSlogHandler()))
+
 	activateProxy(ctx)
 }
 
@@ -136,6 +226,24 @@ func activateProxy(ctx context.Context) {
 func main() {
 	traceId := uuid.NewString()
 	ctx := context.WithValue(context.Background(), "traceId", traceId)
+
+	// Handle --version / -v before cobra initialises anything (config, logging,
+	// proxy). This keeps the output clean — exactly one JSON line on stdout —
+	// which the CLI's daemon-install step parses with exec.Command.Output().
+	// Write directly to os.Stdout (not via cobra's cmd.Println) so that the
+	// output is captured correctly when invoked via exec.Command.Output().
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" {
+			info := version.Get()
+			out, err := info.Format("json")
+			if err != nil {
+				os.Exit(1)
+			}
+			fmt.Fprintln(os.Stdout, out)
+			os.Stdout.Sync() //nolint:errcheck // best-effort flush before os.Exit
+			os.Exit(0)
+		}
+	}
 
 	cobra.OnInitialize(func() {
 		initConfig(ctx)

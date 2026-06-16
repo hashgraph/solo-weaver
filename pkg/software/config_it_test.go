@@ -130,6 +130,29 @@ func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
 	require.Error(t, err, "Should return error for non-existent software")
 }
 
+// Test_Config_DaemonAutoDownloadUnavailable_Integration locks in the contract that
+// the solo-provisioner-daemon binary has no embedded catalog entry. There is no
+// published daemon release yet, so the auto-download path (used when no --daemon-bin
+// is supplied) must fail rather than attempt a broken download. NewDaemonInstaller
+// resolves the catalog entry up front, so a missing entry surfaces as an error here.
+//
+// If/when a real daemon release with checksums is published and re-added to the
+// catalog, this test should be replaced with one asserting the entry resolves.
+func Test_Config_DaemonAutoDownloadUnavailable_Integration(t *testing.T) {
+	config, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+
+	_, err = config.GetHostArtifact(DaemonBinaryName)
+	require.Error(t, err,
+		"solo-provisioner-daemon must NOT have a catalog entry until a real release exists; "+
+			"its presence would re-enable a broken auto-download path")
+
+	_, err = NewDaemonInstaller()
+	require.Error(t, err,
+		"NewDaemonInstaller must fail without a catalog entry so the install step fails "+
+			"cleanly when no --daemon-bin is supplied")
+}
+
 // Test_Config_GetDefaultVersion_Integration tests getting the default version from actual artifacts
 func Test_Config_GetDefaultVersion_Integration(t *testing.T) {
 	config, err := LoadInfrastructureCatalog()

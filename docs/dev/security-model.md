@@ -76,15 +76,37 @@ pm.AddUserToGroup("weaver", "hedera")
 
 ## Privilege Escalation
 
-The `weaver` user has a passwordless sudoers entry for specific binaries:
+The `weaver` user has a passwordless sudoers entry for the `solo-provisioner` CLI
+binary (any subcommand) — **not** for raw tool binaries:
 
 ```
-weaver ALL=(root) NOPASSWD: /usr/bin/helm, /usr/bin/kubectl, /usr/sbin/kubeadm, \\
-  /bin/systemctl, /usr/bin/systemctl, /bin/mkdir
+weaver ALL=(root) NOPASSWD: /opt/solo/weaver/bin/solo-provisioner, \\
+  /opt/solo/weaver/bin/solo-provisioner *, \\
+  /usr/local/bin/solo-provisioner, \\
+  /usr/local/bin/solo-provisioner *
 ```
 
-This covers Kubernetes and Helm operations that require elevated privileges. It does
-**not** grant a general root shell — only the listed binaries are accessible.
+This follows the daemon's **exec-delegation** model (see
+`docs/dev/daemon/daemon-architecture.md`, "CLI invocation & the import boundary"): the
+daemon runs as the unprivileged `weaver` user and performs privileged work by exec'ing the
+root `solo-provisioner` CLI, which already encapsulates the provisioning workflows — it
+does **not** call `kubectl`/`helm`/`kubeadm`/`systemctl` directly. The grant covers the
+whole binary because each delegated action (self-upgrade today; upgrade-execute, migration
+decommission, and future workflows) maps to a different subcommand; enumerating them would
+couple this entry to in-progress daemon code.
+
+There are deliberately **no raw-binary entries**: the daemon imports `os/exec` nowhere
+(Kubernetes via client-go, systemd via the go-systemd dbus API), and the CLI runs as root
+so its internal `sudo` calls never consult NOPASSWD. The grant is strictly tighter than raw
+tool access — the privileged surface is the auditable, signed `solo-provisioner` binary and
+its workflows, not arbitrary primitives like `kubectl exec` / `systemctl <any-unit>` /
+`mkdir <anywhere>`.
+
+The trust boundary is **weaver-group membership** — the same boundary that guards the
+daemon socket (chmod `0660`, group `weaver`). Any weaver-group member can run any
+`solo-provisioner` subcommand as root, including destructive ones; weaver-group membership
+is therefore effectively root on this host. The daemon is expected to verify the CLI
+binary's hash/signature before exec'ing it.
 
 ## Key Code Locations
 

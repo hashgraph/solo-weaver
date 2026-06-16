@@ -15,7 +15,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/hashgraph/solo-weaver/pkg/security/sudoers"
 	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
@@ -211,9 +210,6 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 const (
 	sudoersTemplatePath = "files/weaver/sudoers"
 	sudoersDstPath      = "/etc/sudoers.d/solo-provisioner"
-	serviceTemplatePath = "files/weaver/solo-provisioner.service"
-	serviceDstPath      = "/etc/systemd/system/solo-provisioner.service"
-	weaverServiceName   = "solo-provisioner"
 )
 
 // InstallSudoersStep writes the weaver sudoers entry to /etc/sudoers.d/solo-provisioner.
@@ -270,91 +266,6 @@ func RemoveSudoersStep() *automa.StepBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Sudoers entry removed")
-		})
-}
-
-// InstallWeaverServiceStep installs the solo-provisioner systemd service unit file,
-// runs daemon-reload, and enables the service.
-func InstallWeaverServiceStep() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("install-weaver-service").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			content, err := templates.Files.ReadFile(serviceTemplatePath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to read service template")))
-			}
-
-			if err := os.WriteFile(serviceDstPath, content, 0o644); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to write service file to %s", serviceDstPath)))
-			}
-
-			if err := pkgos.DaemonReload(ctx); err != nil {
-				_ = os.Remove(serviceDstPath)
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "daemon-reload failed after writing service file")))
-			}
-
-			if err := pkgos.EnableService(ctx, weaverServiceName); err != nil {
-				_ = pkgos.DaemonReload(ctx)
-				_ = os.Remove(serviceDstPath)
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to enable service %s", weaverServiceName)))
-			}
-
-			if err := pkgos.RestartService(ctx, weaverServiceName); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to start service %s", weaverServiceName)))
-			}
-
-			logx.As().Info().Str("path", serviceDstPath).Msg("Solo Provisioner service installed, enabled, and started")
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing solo-provisioner systemd service")
-			return ctx, nil
-		}).
-		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			_ = pkgos.DisableService(ctx, weaverServiceName)
-			_ = pkgos.DaemonReload(ctx)
-			_ = os.Remove(serviceDstPath)
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install solo-provisioner service")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner service installed and enabled")
-		})
-}
-
-// RemoveWeaverServiceStep disables and removes the solo-provisioner systemd service unit file.
-func RemoveWeaverServiceStep() *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("remove-weaver-service").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			_ = pkgos.DisableService(ctx, weaverServiceName)
-
-			if err := os.Remove(serviceDstPath); err != nil && !os.IsNotExist(err) {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to remove service file %s", serviceDstPath)))
-			}
-
-			if err := pkgos.DaemonReload(ctx); err != nil {
-				logx.As().Warn().Err(err).Msg("daemon-reload failed after removing service file")
-			}
-
-			logx.As().Info().Str("path", serviceDstPath).Msg("Solo Provisioner service removed")
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Removing solo-provisioner systemd service")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove solo-provisioner service")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner service removed")
 		})
 }
 

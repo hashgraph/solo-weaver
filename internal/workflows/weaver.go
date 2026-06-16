@@ -20,16 +20,14 @@ func NewSelfInstallWorkflow() *automa.WorkflowBuilder {
 		steps.EnsureWeaverOwnerStep(),
 		steps.SetupHomeDirectoryStructure(models.Paths()),
 		steps.InstallWeaver(models.Paths().BinDir),
-		//steps.InstallSudoersStep(),
-		//steps.InstallWeaverServiceStep(),
+		steps.InstallSudoersStep(),
 	)
 }
 
 func NewSelfUninstallWorkflow() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("self-uninstall-workflow").Steps(
 		CheckPrivilegesStep(),
-		//steps.RemoveWeaverServiceStep(),
-		//steps.RemoveSudoersStep(),
+		steps.RemoveSudoersStep(),
 		steps.UninstallWeaver(models.Paths().BinDir),
 	)
 }

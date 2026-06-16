@@ -14,6 +14,8 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/alloy"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/block"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
@@ -97,10 +99,12 @@ func init() {
 	rootCmd.AddCommand(selfUninstallCmd)
 	rootCmd.AddCommand(kube.GetCmd())
 	rootCmd.AddCommand(block.GetCmd())
+	rootCmd.AddCommand(consensus.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
+	rootCmd.AddCommand(daemon.GetCmd())
 
 	if common.DetectShortNameCollisions(rootCmd) {
 		logx.As().Warn().Msg("flag short name collisions detected among commands; consider using unique short names " +
@@ -264,7 +268,11 @@ func isPrivilegeExemptInvocation(args []string) bool {
 	// Only the leading subcommand word can be exempt; flag values and nested
 	// subcommands after it are not checked because they may follow a
 	// flag=value pair whose value looks like a word (e.g. --log-level debug).
-	return args[0] == "version" || args[0] == "help"
+	if args[0] == "version" || args[0] == "help" {
+		return true
+	}
+
+	return false
 }
 
 func activateProxy(ctx context.Context) {

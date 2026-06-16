@@ -198,3 +198,100 @@ func FlagVerbose() CountFlagDefinition {
 		Description: "Show expanded step-by-step output",
 	}
 }
+
+// ── Daemon service install flags ─────────────────────────────────────────────
+
+// FlagDaemonComponents selects which daemon components to enable.
+// Accepts a comma-separated list of component names: "consensus-node", "block-node".
+// When omitted the operator is prompted interactively.
+func FlagDaemonComponents() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "components",
+		ShortName:   "",
+		Description: `Comma-separated list of daemon components to enable (choices: "consensus-node", "block-node")`,
+		Default:     "",
+	}
+}
+
+// FlagDaemonCNNodeID is the numeric node identifier written into daemon.yaml as
+// the consensus-node node_id. Required when daemon.yaml does not already exist
+// and consensus-node is enabled.
+func FlagDaemonCNNodeID() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "cn-node-id",
+		ShortName:   "",
+		Description: `Numeric node identifier for the consensus node (e.g. "0", "1", "2")`,
+		Default:     "",
+	}
+}
+
+// FlagDaemonCNOrbit is the Kubernetes namespace (orbit) for the consensus-node
+// component written into daemon.yaml. Required when daemon.yaml does not already
+// exist and consensus-node is enabled.
+func FlagDaemonCNOrbit() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "cn-orbit",
+		ShortName:   "",
+		Description: "Kubernetes namespace (orbit) where consensus-node NetworkUpgradeExecute CRs are watched",
+		Default:     "",
+	}
+}
+
+// FlagDaemonCNUpgradeDir is an optional override for the consensus-node upgrade
+// staging directory.
+// Defaults to /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.
+func FlagDaemonCNUpgradeDir() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "cn-upgrade-dir",
+		ShortName:   "",
+		Description: "Path to the consensus-node upgrade staging directory (default: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current)",
+		Default:     "",
+	}
+}
+
+// FlagDaemonBNOrbit is the Kubernetes namespace (orbit) for the block-node
+// component written into daemon.yaml. Required when daemon.yaml does not already
+// exist and block-node is enabled.
+func FlagDaemonBNOrbit() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "bn-orbit",
+		ShortName:   "",
+		Description: "Kubernetes namespace (orbit) for the block-node component",
+		Default:     "",
+	}
+}
+
+// FlagDaemonFromConfig is an optional path to an existing daemon.yaml to copy
+// into place before running the install workflow.
+func FlagDaemonFromConfig() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "from-config",
+		ShortName:   "",
+		Description: "Path to an existing daemon.yaml to copy into /opt/solo/weaver/config/daemon.yaml",
+		Default:     "",
+	}
+}
+
+// FlagDaemonBin is the optional path to a locally-built solo-provisioner-daemon
+// binary. When omitted the binary is auto-downloaded from the official GitHub
+// Releases URL embedded in the infrastructure catalog.
+func FlagDaemonBin() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "daemon-bin",
+		ShortName:   "",
+		Description: "Path to a locally-built solo-provisioner-daemon binary to install; omit to auto-download from the embedded catalog",
+		Default:     "",
+	}
+}
+
+// FlagDaemonChecksum is an optional sha256 hex digest used to verify a binary
+// supplied via --daemon-bin. Ignored when --daemon-bin is not set (the catalog
+// checksum is used for auto-downloaded binaries).
+func FlagDaemonChecksum() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "daemon-checksum",
+		ShortName:   "",
+		Description: "SHA-256 hex digest of the binary supplied via --daemon-bin (e.g. the value from a .sha256 release asset)",
+		Default:     "",
+	}
+}

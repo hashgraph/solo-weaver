@@ -22,13 +22,27 @@ func SetupHomeDirectoryStructure(pp models.WeaverPaths) *automa.StepBuilder {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
-			// Sandbox dirs are bind-mounted into system containers (e.g. cilium's
-			// mount-cgroup init container writes to SandboxBinDir via /hostbin).
-			// Those containers run as root but are not in the hedera group, so
-			// sandbox dirs must stay root:root 0755 — not hedera:hedera 2775.
-			sandboxSet := make(map[string]struct{}, len(pp.SandboxDirectories))
+			// rootOwnedSet holds dirs that must stay root:root 0755 — never the
+			// root:weaver 2775 (setgid, group-writable) treatment used for the
+			// provisioner home dirs.
+			//
+			// Two distinct reasons land dirs here:
+			//   - Sandbox dirs are bind-mounted into system containers (e.g. cilium's
+			//     mount-cgroup init container writes to SandboxBinDir via /hostbin).
+			//     Those containers run as root but are not in the hedera group.
+			//   - BinDir holds the solo-provisioner CLI, which sudoers grants weaver
+			//     passwordless root to exec. If BinDir were group-writable by weaver,
+			//     any weaver-group member could unlink the root-owned binary and drop
+			//     a replacement, turning the NOPASSWD grant into a local root
+			//     escalation. Only root writes here (install/upgrade/self-upgrade all
+			//     run as root), so root:root 0755 is correct and loses nothing.
+			//
+			// Enforcing this on every run also remediates existing installations that
+			// were provisioned before BinDir was excluded from the root:weaver bucket.
+			rootOwnedSet := make(map[string]struct{}, len(pp.SandboxDirectories)+1)
+			rootOwnedSet[pp.BinDir] = struct{}{}
 			for _, d := range pp.SandboxDirectories {
-				sandboxSet[d] = struct{}{}
+				rootOwnedSet[d] = struct{}{}
 			}
 
 			for _, dir := range pp.AllDirectories {
@@ -46,12 +60,17 @@ func SetupHomeDirectoryStructure(pp models.WeaverPaths) *automa.StepBuilder {
 				// Always enforce permissions, even on pre-existing dirs.
 				// Each dir is processed individually by this loop, so recursive=false is
 				// correct — it avoids bluntly chmod-ing file contents to a directory mode.
-				_, isSandbox := sandboxSet[dir]
-				if isSandbox {
+				_, isRootOwned := rootOwnedSet[dir]
+				if isRootOwned {
 					if err = mg.WritePermissions(dir, models.DefaultDirOrExecPerm, false); err != nil {
 						return automa.FailureReport(stp, automa.WithError(err))
 					}
-					// No chown — sandbox dirs must stay root:root.
+					// Explicitly reassert root:root — a pre-existing dir (e.g. BinDir
+					// from an older install) may currently be root:weaver, and leaving
+					// the group ownership in place would keep the escalation open.
+					if err = mg.WriteOwnerByName(dir, "root", "root", false); err != nil {
+						return automa.FailureReport(stp, automa.WithError(err))
+					}
 				} else {
 					// Provisioner home dirs are owned root:weaver with setgid so the
 					// weaver service can write and new files inherit the weaver group.

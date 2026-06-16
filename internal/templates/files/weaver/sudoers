@@ -1,3 +1,19 @@
-# Solo-provisioner: allow weaver to run privileged commands without a password
-weaver ALL=(root) NOPASSWD: /usr/bin/helm, /usr/bin/kubectl, /usr/sbin/kubeadm, \
-  /bin/systemctl, /usr/bin/systemctl, /bin/mkdir
+# Let the unprivileged weaver daemon run privileged work as root — but only by exec'ing
+# the solo-provisioner CLI, never raw tools. The daemon never shells out to
+# kubectl/helm/kubeadm/systemctl (Kubernetes via client-go, systemd via dbus), so there are
+# deliberately no raw-binary entries; re-adding them would grant root-equivalent access for
+# no consumer. The whole binary is granted (any subcommand) because each delegated action
+# maps to a different subcommand and the set is still growing — enumerating them would couple
+# this template to in-progress daemon code.
+#
+# Blast radius: any weaver-group member can run any subcommand as root, including destructive
+# ones — weaver-group membership is effectively root here. Still tighter than raw tool access
+# (surface is the signed CLI, not arbitrary kubectl/systemctl). See "Security posture" in
+# docs/dev/daemon/daemon-architecture.md.
+#
+# Both bare and "<path> *" forms are needed: a trailing * requires >=1 argument, so the
+# no-arg invocation must be permitted separately.
+weaver ALL=(root) NOPASSWD: /opt/solo/weaver/bin/solo-provisioner, \
+  /opt/solo/weaver/bin/solo-provisioner *, \
+  /usr/local/bin/solo-provisioner, \
+  /usr/local/bin/solo-provisioner *
