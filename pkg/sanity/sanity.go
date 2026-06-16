@@ -80,6 +80,17 @@ func isValidUsernameChar(b byte) bool {
 	return isValidIdentifierChar(b) || b == '.'
 }
 
+// isValidOperationIDChar checks if a byte is a valid character for an upgrade
+// operationId. The set is the identifier set plus '.', because operationIds may
+// embed dotted version strings (e.g. "upgrade-v0.76.0-20060102T150405Z"). It is a
+// separate predicate from isValidUsernameChar even though the set is identical
+// today, so the two domains can diverge without affecting each other (issue #602
+// convention). The '..' traversal sequence is rejected upstream in
+// ValidateOperationID.
+func isValidOperationIDChar(b byte) bool {
+	return isValidIdentifierChar(b) || b == '.'
+}
+
 // SanitizeIdentifier strips any non-identifier characters from s and returns
 // the cleaned form. Identifier characters are alphanumerics, underscore, and
 // hyphen ([A-Za-z0-9_-]). Returns ErrInvalidName when no valid characters
@@ -266,6 +277,39 @@ func ValidateUsername(s string) error {
 	for i := 0; i < len(s); i++ {
 		if !isValidUsernameChar(s[i]) {
 			return errorx.IllegalArgument.New("username contains invalid characters: %s", s)
+		}
+	}
+
+	return nil
+}
+
+// ValidateOperationID validates a consensus-node operationId. The id is either
+// authored by the orbit reconciler (NetworkUpgradeExecute CR spec.operationId) or
+// constructed by solo-weaver itself (e.g. the migration flow derives
+// "migration-<timestamp>"). Either way it flows into .bak archive filenames
+// written by the self-upgrade swap as root, so it must be safe to embed in a
+// path: [A-Za-z0-9_.-], non-empty, no ".." traversal sequence, no shell
+// metacharacters. The '.' is permitted so operationIds can embed dotted version
+// strings (e.g. "upgrade-v0.76.0-20060102T150405Z").
+func ValidateOperationID(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("operationId cannot be empty")
+	}
+
+	// Check for path traversal attempts before the per-char loop.
+	if strings.Contains(s, "..") {
+		return errorx.IllegalArgument.New("operationId contains path traversal sequences: %s", s)
+	}
+
+	// Check for shell metacharacters (narrower, more specific message).
+	if shellMetachars.MatchString(s) {
+		return errorx.IllegalArgument.New("operationId contains shell metacharacters: %s", s)
+	}
+
+	// Every byte must be a valid operationId character.
+	for i := 0; i < len(s); i++ {
+		if !isValidOperationIDChar(s[i]) {
+			return errorx.IllegalArgument.New("operationId contains invalid characters: %s", s)
 		}
 	}
 

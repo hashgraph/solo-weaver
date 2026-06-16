@@ -2,16 +2,23 @@
 
 package daemon
 
-// daemonConfigV1 is the on-disk representation for schema_version: 1.
+// daemonConfigV1 is the on-disk representation for schemaVersion: 1.
+//
+// Backward compatibility: the daemon loader is non-strict (plain yaml.Unmarshal,
+// not KnownFields), and the schema version is resolved by the probe in
+// LoadDaemonConfig, not by this struct's tag. A pre-rename file carrying the
+// legacy `schema_version` key therefore still loads correctly: the unknown key
+// is ignored, the probe sees no `schemaVersion` and normalises the absent value
+// to 1. No migration step is required for the key rename.
 // This struct is sealed — never modify it after it ships. When a breaking
 // structural change is needed, add daemonConfigV2 and write
 // daemonConfigV1.migrate() → daemonConfigV2, then update migrateToLatest()
 // to delegate down the chain.
 //
 // Field layout must match the YAML written by WriteDaemonConfig at the time
-// schema_version 1 was current.
+// schemaVersion 1 was current.
 type daemonConfigV1 struct {
-	SchemaVersion int                `yaml:"schema_version"`
+	SchemaVersion int                `yaml:"schemaVersion"`
 	Components    daemonComponentsV1 `yaml:"components"`
 }
 
