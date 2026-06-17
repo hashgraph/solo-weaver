@@ -24,6 +24,12 @@ type WeaverPaths struct {
 	DaemonCNKubeconfigPath string // /opt/solo/weaver/config/daemon-cn.kubeconfig
 	DaemonBNKubeconfigPath string // /opt/solo/weaver/config/daemon-bn.kubeconfig
 
+	// SelfUpgradeYAMLPath is the HIP-authoritative state file for the daemon's
+	// binary self-upgrade protocol: /opt/solo/weaver/daemon/self-upgrade.yaml.
+	// Written by the old daemon before spawning the detached upgrader; consumed
+	// by `consensus node upgrade-recover`. See internal/selfupgrade.
+	SelfUpgradeYAMLPath string
+
 	// InfraVersionsPath is the optional infrastructure-versions.yaml manifest dropped
 	// into the config directory by the build.zip deployment package (HIP XXXX0).
 	// When present, solo-provisioner validates its declared versions against the
@@ -78,6 +84,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	pp.DaemonKubeconfigPath = path.Join(pp.ConfigDir, "daemon.kubeconfig")
 	pp.DaemonCNKubeconfigPath = path.Join(pp.ConfigDir, "daemon-cn.kubeconfig")
 	pp.DaemonBNKubeconfigPath = path.Join(pp.ConfigDir, "daemon-bn.kubeconfig")
+	pp.SelfUpgradeYAMLPath = path.Join(pp.DaemonDir, "self-upgrade.yaml")
 	pp.DaemonEventsDir = path.Join(pp.DaemonDir, "events")
 	pp.DaemonConsensusEventsDir = path.Join(pp.DaemonEventsDir, "consensus")
 	pp.DaemonConsensusUpgradeEventsDir = path.Join(pp.DaemonConsensusEventsDir, "upgrade")

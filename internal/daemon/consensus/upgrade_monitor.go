@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	cn "github.com/hashgraph/solo-weaver/internal/consensus"
 	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -32,13 +33,10 @@ var networkUpgradeExecuteGVR = schema.GroupVersionResource{
 }
 
 const (
-	// NetworkUpgradeExecute status.phase values, as defined in the CRD.
-	executePhasePending                   = "Pending"
-	executePhaseReadyForProvisionerDaemon = "ReadyForProvisionerDaemon"
-	executePhasePendingInfraUpgrade       = "PendingInfraUpgrade"
-	executePhasePendingNodeUpgrade        = "PendingNodeUpgrade"
-	executePhaseSucceeded                 = "Succeeded"
-	executePhaseFailed                    = "Failed"
+	// NetworkUpgradeExecute status.phase values are defined as the shared
+	// contract in internal/consensus (cn.Phase*). They are referenced directly
+	// at the call sites; only the phases this monitor actually compares against
+	// are used here.
 
 	backoffInitial = 2 * time.Second
 	backoffMax     = 5 * time.Minute
@@ -414,7 +412,7 @@ func (um *UpgradeMonitor) listAndSeed(ctx context.Context) (string, error) {
 			continue
 		}
 		switch phase {
-		case executePhaseSucceeded, executePhaseFailed:
+		case string(cn.PhaseSucceeded), string(cn.PhaseFailed):
 			um.completedOpIDs[opID] = struct{}{}
 		}
 	}
@@ -429,7 +427,7 @@ func (um *UpgradeMonitor) listAndSeed(ctx context.Context) (string, error) {
 	for i := range list.Items {
 		cr := &list.Items[i]
 		phase, _, _ := unstructured.NestedString(cr.Object, "status", "phase")
-		if phase == executePhaseReadyForProvisionerDaemon {
+		if phase == string(cn.PhaseReadyForProvisionerDaemon) {
 			pending = append(pending, cr)
 		}
 	}
@@ -521,7 +519,7 @@ func (um *UpgradeMonitor) runWatch(ctx context.Context, resourceVersion string) 
 //     that are no longer at ReadyForProvisionerDaemon, making (1) restart-safe.
 func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unstructured) {
 	phase, _, _ := unstructured.NestedString(cr.Object, "status", "phase")
-	if phase != executePhaseReadyForProvisionerDaemon {
+	if phase != string(cn.PhaseReadyForProvisionerDaemon) {
 		return
 	}
 

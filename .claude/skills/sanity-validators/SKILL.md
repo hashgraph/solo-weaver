@@ -49,6 +49,7 @@ All sanitizers return `ErrInvalidName` when filtering leaves nothing.
 |---|---|---|
 | `ValidateIdentifier` | `[A-Za-z0-9_-]`, non-empty | Namespace / release / profile names; anything that flows into Kubernetes object names. |
 | `ValidateUsername` | `[A-Za-z0-9_.-]`, non-empty, no `..`, no shell metachars | POSIX/Linux usernames (`SUDO_USER`, owner accounts). Permits `.` for `firstname.lastname` accounts. |
+| `ValidateOperationID` | `[A-Za-z0-9_.-]`, non-empty, no `..`, no shell metachars | Network-upgrade `operationId` (CR `spec.operationId`). Flows into `.bak` archive paths written as root. Permits `.` for dotted version strings (e.g. `upgrade-v0.76.0-20060102T150405Z`). |
 | `ValidateDNSName` | `[A-Za-z0-9.-]` matching RFC 952/1123 host pattern | Hostnames, FQDNs, cluster names derived from DNS. |
 | `ValidateHexToken` | `[0-9a-fA-F]`, length ≤ 4096 | Teleport join tokens and similar hex secrets. |
 | `ValidateHostPort` | hostname or hostname:port; no path components, no shell metachars | `host:port` style endpoints. Use `ValidateURL` for full URLs. |
@@ -63,6 +64,7 @@ Match by what the string represents in the real world, not by what it looks like
 
 - **Kubernetes namespace / release / profile name** → `ValidateIdentifier`
 - **Linux user account** (SUDO_USER, file owner, sudoers principal) → `ValidateUsername`
+- **Network-upgrade operationId** (CR `spec.operationId`, embedded in `.bak` paths) → `ValidateOperationID`
 - **Kernel module name** → `SanitizeModuleName` (current callers want the sanitized form for the modprobe call)
 - **Helm chart reference** → `ValidateChartReference`
 - **Hostname / FQDN / cluster DNS name** → `ValidateDNSName`

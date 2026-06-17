@@ -25,11 +25,11 @@ func writeTempConfig(t *testing.T, content string) string {
 }
 
 func TestLoadDaemonConfig_NewerSchemaVersion(t *testing.T) {
-	// A daemon.yaml written by a future binary — schema_version 99 with unknown
+	// A daemon.yaml written by a future binary — schemaVersion 99 with unknown
 	// top-level keys (components) that would cause a strict-decode error if the
 	// version guard ran after the full unmarshal.
 	yaml := `
-schema_version: 99
+schemaVersion: 99
 components:
   consensus_node:
     enabled: true
@@ -58,7 +58,7 @@ components:
 
 func TestLoadDaemonConfig_ValidV1(t *testing.T) {
 	yaml := `
-schema_version: 1
+schemaVersion: 1
 components:
   consensus_node:
     enabled: true
@@ -88,7 +88,7 @@ func TestLoadDaemonConfig_MissingFile(t *testing.T) {
 }
 
 func TestLoadDaemonConfig_MalformedYAML(t *testing.T) {
-	path := writeTempConfig(t, "schema_version: [not a number}")
+	path := writeTempConfig(t, "schemaVersion: [not a number}")
 	_, err := daemon.LoadDaemonConfig(path)
 	require.Error(t, err)
 	assert.True(t, errorx.IsOfType(err, daemon.ErrConfigMalformed),
@@ -96,7 +96,7 @@ func TestLoadDaemonConfig_MalformedYAML(t *testing.T) {
 }
 
 func TestLoadDaemonConfig_NoSchemaVersionTreatedAsV1(t *testing.T) {
-	// Files predating schema versioning have no schema_version field.
+	// Files predating schema versioning have no schemaVersion field.
 	// They must be accepted as version 1.
 	yaml := `
 components:
@@ -118,11 +118,36 @@ components:
 		"migrated config should carry the current schema version")
 }
 
+func TestLoadDaemonConfig_LegacySchemaVersionKeyStillLoads(t *testing.T) {
+	// A daemon.yaml written before the schema_version -> schemaVersion rename
+	// must still load. The legacy key is ignored (non-strict decode); the probe
+	// sees no schemaVersion and normalises the absent value to v1.
+	yaml := `
+schema_version: 1
+components:
+  consensus_node:
+    enabled: true
+    kubeconfig: /opt/solo/weaver/config/daemon.kubeconfig
+    node_id: "5"
+    orbit: hedera-network
+    monitors:
+      upgrade: true
+      migration: true
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := daemon.LoadDaemonConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Components.ConsensusNode)
+	assert.Equal(t, "5", cfg.Components.ConsensusNode.NodeID)
+	assert.Equal(t, daemon.CurrentSchemaVersion, cfg.SchemaVersion)
+}
+
 func TestLoadDaemonConfig_NewerVersionErrorIsErrConfigMalformed(t *testing.T) {
 	// Confirm the error type is precisely ErrConfigMalformed (not a sub-type of
 	// ErrConfig or any other namespace) so the doctor layer applies the right
 	// exit-code mapping.
-	yaml := "schema_version: 99\ncomponents: {}\n"
+	yaml := "schemaVersion: 99\ncomponents: {}\n"
 	path := writeTempConfig(t, yaml)
 
 	_, err := daemon.LoadDaemonConfig(path)

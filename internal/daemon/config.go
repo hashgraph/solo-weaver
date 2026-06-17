@@ -22,7 +22,7 @@ const (
 //
 // Example daemon.yaml:
 //
-//	schema_version: 1
+//	schemaVersion: 1
 //	components:
 //	  consensus_node:
 //	    enabled: true
@@ -43,7 +43,7 @@ type DaemonConfig struct {
 	// SchemaVersion identifies the config file format. Always written as
 	// CurrentSchemaVersion by WriteDaemonConfig. A value of 0 means the file
 	// predates schema versioning and is treated as version 1 for compatibility.
-	SchemaVersion int `yaml:"schema_version"`
+	SchemaVersion int `yaml:"schemaVersion"`
 
 	Components DaemonComponents `yaml:"components"`
 }
@@ -179,7 +179,7 @@ func WriteDaemonConfig(path string, cfg DaemonConfig) error {
 // in cmd/daemon/main.go; call Validate() again after overrides are applied.
 //
 // Loading uses a two-phase approach:
-//  1. Probe: unmarshal only schema_version to determine the on-disk format.
+//  1. Probe: unmarshal only schemaVersion to determine the on-disk format.
 //  2. Parse + migrate: unmarshal into the versioned struct for that version,
 //     then walk the migration chain (vN.migrateToLatest()) to produce the
 //     current DaemonConfig. Each step in the chain is a pure field transform
@@ -197,7 +197,7 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 
 	// Phase 1: probe the schema version only.
 	var probe struct {
-		SchemaVersion int `yaml:"schema_version"`
+		SchemaVersion int `yaml:"schemaVersion"`
 	}
 	if err := yaml.Unmarshal(data, &probe); err != nil {
 		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid daemon config at %s", path)
@@ -208,7 +208,7 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 	}
 	if version > CurrentSchemaVersion {
 		return DaemonConfig{}, ErrConfigMalformed.New(
-			"daemon config %s was written by a newer binary (schema_version %d > supported %d); "+
+			"daemon config %s was written by a newer binary (schemaVersion %d > supported %d); "+
 				"upgrade solo-provisioner-daemon to a compatible version",
 			path, version, CurrentSchemaVersion)
 	}
@@ -229,7 +229,7 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 	default:
 		// Should never reach here given the version > CurrentSchemaVersion guard above.
 		return DaemonConfig{}, ErrConfigMalformed.New(
-			"unsupported daemon config schema_version %d at %s", version, path)
+			"unsupported daemon config schemaVersion %d at %s", version, path)
 	}
 
 	if err := cfg.Validate(); err != nil {
