@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/daemonkit/eventlog"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
-	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

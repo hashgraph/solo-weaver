@@ -26,6 +26,8 @@ github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
 github.com/automa-saga/automa v0.10.0 h1:K3cBRwVl7MgHFre4FYmnLZMYsphoUOnoGJ50hjDe4NY=
 github.com/automa-saga/automa v0.10.0/go.mod h1:AVzNGE+ci5sAJ7ao3ZkmC+CMe4kpwJhE6AloBJv3Udc=
+github.com/automa-saga/daemonkit v0.1.0 h1:/ph77RqJnBAsx79oROEmlgZ63/aFNg0Tiy5GsdckI4M=
+github.com/automa-saga/daemonkit v0.1.0/go.mod h1:SljBxNkAAfJMfnC2hurv+NRZzwC2LRf2QZJR/waHwQA=
 github.com/automa-saga/logx v0.5.0 h1:yuFC7JlEQRbEKr+6t9eg1kXAvRIIgzdu9Bz7a0gSJYo=
 github.com/automa-saga/logx v0.5.0/go.mod h1:8S9d499t8uro8yO3blI1hruXLEYWzrBp9ndCI/Ik/88=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=

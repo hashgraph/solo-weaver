@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/automa-saga/daemonkit"
+	"github.com/automa-saga/daemonkit/filepruner"
 	"github.com/automa-saga/logx"
 	cn "github.com/hashgraph/solo-weaver/internal/consensus"
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
-	"github.com/hashgraph/solo-weaver/pkg/filepruner"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"

@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/automa-saga/daemonkit/eventlog"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 )
 
 // HIP-defined JSONL event reasons — written verbatim to consensus-migrate-events.jsonl.
