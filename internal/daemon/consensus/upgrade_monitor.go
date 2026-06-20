@@ -5,6 +5,7 @@ package consensus
 import (
 	"context"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -47,6 +48,18 @@ const (
 	// after backoffInitial. Any premature close (network blip, proxy idle timeout) is
 	// also subject to the same backoffInitial delay rather than an immediate hot-loop.
 	watchTimeoutSeconds = int64(5 * 60)
+
+	// listTimeout bounds a single List call. It is applied per-call via
+	// context.WithTimeout and must NOT be applied to the watch (its lifetime is
+	// governed by watchTimeoutSeconds server-side); see buildDynamicClient for
+	// why a client-wide rest.Config.Timeout is unsafe for watches.
+	listTimeout = 30 * time.Second
+
+	// dialTimeout bounds TCP connection establishment (the SYN-no-reply case) and
+	// is applied via rest.Config.Dial. Unlike rest.Config.Timeout it does NOT cap
+	// an established stream, so it protects against connect hangs without killing
+	// a long-lived watch mid-flight.
+	dialTimeout = 30 * time.Second
 
 	// Upgrade event log retention policy — applied at Run() start and after each
 	// handleExecute so that both startup pruning and long-running daemon pruning
@@ -398,7 +411,14 @@ func (um *UpgradeMonitor) Run(ctx context.Context) error {
 // point.
 func (um *UpgradeMonitor) listAndSeed(ctx context.Context) (string, error) {
 	resource := um.client.Resource(networkUpgradeExecuteGVR).Namespace(um.cfg.Namespace)
-	list, err := resource.List(ctx, metav1.ListOptions{})
+	// Bound the List with a per-call deadline. The dynamic client has no
+	// client-wide request timeout (see buildDynamicClient), so without this a
+	// stalled List would block the Run loop indefinitely. Scoped to the List
+	// only — handleEvent below keeps the parent ctx so a triggered execute is
+	// not cancelled after listTimeout.
+	listCtx, cancel := context.WithTimeout(ctx, listTimeout)
+	defer cancel()
+	list, err := resource.List(listCtx, metav1.ListOptions{})
 	if err != nil {
 		return "", ErrWatchFailed.Wrap(err, "list NetworkUpgradeExecute")
 	}
@@ -650,16 +670,22 @@ func (um *UpgradeMonitor) handleExecute(_ context.Context, cr *unstructured.Unst
 }
 
 // buildDynamicClient builds a dynamic Kubernetes client from the kubeconfig at path.
-// restCfg.Timeout is set to 30 s to bound the client-side HTTP request dial.
-// Without it, a TCP-level hang (SYN sent, no reply) blocks Watch() for the OS
-// TCP timeout (~20 min) regardless of ListOptions.TimeoutSeconds, which is
-// server-side only.
+//
+// We bound TCP connection establishment with a dial timeout (rest.Config.Dial),
+// NOT rest.Config.Timeout. rest.Config.Timeout maps to http.Client.Timeout, which
+// caps the entire request — including reading the response body. A watch is a
+// long-lived body read, so a client-wide Timeout would terminate Watch() early
+// (regardless of ListOptions.TimeoutSeconds, which is server-side), driving the
+// monitor into needless reconnect/backoff churn. The dial timeout bounds only
+// connection establishment (the SYN-sent/no-reply hang), and KeepAlive detects a
+// silently-dead established connection — neither limits a healthy watch's lifetime.
+// List calls are bounded separately via context.WithTimeout (see listAndSeed).
 func buildDynamicClient(kubeconfigPath string) (dynamic.Interface, error) {
 	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, ErrK8sClient.Wrap(err, "load kubeconfig %s", kubeconfigPath)
 	}
-	restCfg.Timeout = 30 * time.Second
+	restCfg.Dial = (&net.Dialer{Timeout: dialTimeout, KeepAlive: dialTimeout}).DialContext
 	client, err := dynamic.NewForConfig(restCfg)
 	if err != nil {
 		return nil, ErrK8sClient.Wrap(err, "build dynamic client")
