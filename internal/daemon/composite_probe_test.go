@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
+	"github.com/automa-saga/daemonkit"
 	"github.com/stretchr/testify/assert"
 )
 
