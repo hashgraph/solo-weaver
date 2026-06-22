@@ -133,6 +133,7 @@ func RegisterMigrations() {
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
 	migration.Register(migration.ScopeBlockNode, blocknode.NewPluginsStorageMigration())
+	migration.Register(migration.ScopeBlockNode, blocknode.NewApplicationStateMigration())
 }
 
 // Execute executes the root command.

@@ -58,6 +58,26 @@ func NewStorageMigration(optStorage OptionalStorage) *StorageMigration {
 	}
 }
 
+// Applies extends VersionMigration.Applies with a MaxVersion guard: a storage
+// that has been retired in newer chart versions must not be re-created when an
+// operator skips across the retirement boundary. Concretely, if a cluster
+// installed at 0.25.0 upgrades directly to >=0.36.0, the generic VersionMigration
+// check (installed < 0.26.2 && target >= 0.26.2) reports the verification
+// migration as applicable, but at target=0.36.0 verification has been retired
+// (MaxVersion=0.36.0) and creating its PV/PVC would leave an orphan resource.
+// The OptionalStorage's RequiredByVersion captures the [MinVersion, MaxVersion)
+// range; AND-ing it in keeps the migration registry version-correct without
+// duplicating the bound on every individual migration.
+func (m *StorageMigration) Applies(mctx *migration.Context) (bool, error) {
+	applies, err := m.VersionMigration.Applies(mctx)
+	if err != nil || !applies {
+		return applies, err
+	}
+
+	targetVersion, _ := mctx.Data.String(migration.CtxKeyTargetVersion)
+	return m.storage.RequiredByVersion(targetVersion), nil
+}
+
 // Execute creates the storage directory on the host and the PV/PVC in Kubernetes.
 // It does NOT perform a Helm upgrade — that is handled once after all migrations
 // complete, by the upgrade step appended in BuildMigrationWorkflow.
@@ -153,4 +173,21 @@ func NewPluginsStorageMigration() *StorageMigration {
 		}
 	}
 	panic("plugins storage not found in optional storage registry")
+}
+
+// NewApplicationStateMigration creates the application-state storage migration.
+//
+// At BlockNodeApplicationStateRequiredVersion (0.37.0) the Helm chart starts
+// mounting the applicationStateFacility volume (hiero-ledger/hiero-block-node#3025)
+// and stops mounting the verification volume in lockstep. The migration creates
+// the new PV/PVC; existing verification PV/PVC objects are left in place — the
+// chart no longer references them so they become orphan state, and cleanup is
+// a manual operator step.
+func NewApplicationStateMigration() *StorageMigration {
+	for _, optStor := range optionalStorages {
+		if optStor.Name == "application-state" {
+			return NewStorageMigration(optStor)
+		}
+	}
+	panic("application-state storage not found in optional storage registry")
 }

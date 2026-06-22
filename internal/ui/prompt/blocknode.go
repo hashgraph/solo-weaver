@@ -243,18 +243,37 @@ func pluginsPathInputPrompt(eff string, target *string, required bool) InputProm
 	}
 }
 
+func applicationStatePathInputPrompt(eff string, target *string, required bool) InputPrompt {
+	validate := validateOptionalPath
+	desc := "Path for application-state storage. Optional when --base-path is set; required if base-path is empty."
+	if required {
+		validate = validateRequiredPath
+		desc = "Path for application-state storage."
+	}
+	return InputPrompt{
+		FlagName:       "application-state-path",
+		Title:          "Application-State Storage Path",
+		Description:    desc,
+		Placeholder:    eff,
+		EffectiveValue: eff,
+		Target:         target,
+		Validate:       validate,
+	}
+}
+
 // ── Public prompt builders ────────────────────────────────────────────────────
 
 // StoragePathTargets holds pointers to the Cobra flag variables for all storage
 // path flags. It is used by RunStoragePathPrompts to keep the parameter count
 // within linter limits.
 type StoragePathTargets struct {
-	BasePath         *string
-	ArchivePath      *string
-	LivePath         *string
-	LogPath          *string
-	VerificationPath *string
-	PluginsPath      *string
+	BasePath             *string
+	ArchivePath          *string
+	LivePath             *string
+	LogPath              *string
+	VerificationPath     *string
+	PluginsPath          *string
+	ApplicationStatePath *string
 }
 
 // RunStoragePathPrompts presents a two-pass interactive storage path prompt.
@@ -272,18 +291,24 @@ type StoragePathTargets struct {
 // the command line — the caller's flag values are respected as-is.
 //
 // Parameters:
-//   - cmd:      the Cobra command (used for flag-changed detection)
-//   - defaults: prompt defaults read from the on-disk state file
-//   - targets:  pointers to the six storage path flag variables
-//   - cv:       chosen-values collector for summary printing
+//   - cmd:          the Cobra command (used for flag-changed detection)
+//   - defaults:     prompt defaults read from the on-disk state file
+//   - chartVersion: the target chart version, used to filter optional-storage prompts
+//   - targets:      pointers to the seven storage path flag variables
+//   - cv:           chosen-values collector for summary printing
+//
+// The optional-storage prompts (verification, plugins, application-state) are
+// gated on the registry's GetApplicableOptionalStorages(chartVersion) so the
+// operator only sees the storages the target chart actually needs.
 func RunStoragePathPrompts(
 	cmd *cobra.Command,
 	defaults state.PromptDefaults,
+	chartVersion string,
 	targets StoragePathTargets,
 	cv *ChosenValues,
 ) error {
 	// If the user already supplied any storage flag on the CLI, respect it and skip prompts.
-	for _, f := range []string{"base-path", "archive-path", "live-path", "log-path", "verification-path", "plugins-path"} {
+	for _, f := range []string{"base-path", "archive-path", "live-path", "log-path", "verification-path", "plugins-path", "application-state-path"} {
 		if flagWasSet(cmd, f) {
 			return nil
 		}
@@ -292,6 +317,24 @@ func RunStoragePathPrompts(
 	cfg := config.Get()
 	stor := defaults.BlockNode.Storage
 	cfgStor := cfg.BlockNode.Storage
+
+	// Determine which optional storages apply to the target chart version.
+	applicable := blocknode.GetApplicableOptionalStorages(chartVersion)
+	includeVerification := false
+	includePlugins := false
+	includeApplicationState := false
+	optionalLabels := make([]string, 0, len(applicable))
+	for _, optStor := range applicable {
+		switch optStor.Name {
+		case "verification":
+			includeVerification = true
+		case "plugins":
+			includePlugins = true
+		case "application-state":
+			includeApplicationState = true
+		}
+		optionalLabels = append(optionalLabels, optStor.Name)
+	}
 
 	// Determine the default mode from persisted state.
 	stateInBasepathMode := strings.TrimSpace(stor.BasePath) != ""
@@ -302,13 +345,18 @@ func RunStoragePathPrompts(
 
 	// ── Pass 1: mode select ───────────────────────────────────────────────────
 	selectedMode := defaultMode
+	individualLabel := "Individual paths  (archive, live, log"
+	for _, n := range optionalLabels {
+		individualLabel += ", " + n
+	}
+	individualLabel += " must all be provided)"
 	modeField := huh.NewSelect[string]().
 		Key("storage-mode").
 		Title("Storage Path Mode").
 		Description("Choose how to configure storage paths for this block node").
 		Options(
 			huh.NewOption("Single base path  (subdirectories are created automatically)", storagePathModeBasePath),
-			huh.NewOption("Individual paths  (archive, live, log, verification, plugins must all be provided)", storagePathModeIndividual),
+			huh.NewOption(individualLabel, storagePathModeIndividual),
 		).
 		Value(&selectedMode)
 
@@ -341,8 +389,18 @@ func RunStoragePathPrompts(
 			archivePathInputPrompt(resolveEffective(stor.ArchivePath, cfgStor.ArchivePath, indivDefault("archive")), targets.ArchivePath, true),
 			livePathInputPrompt(resolveEffective(stor.LivePath, cfgStor.LivePath, indivDefault("live")), targets.LivePath, true),
 			logPathInputPrompt(resolveEffective(stor.LogPath, cfgStor.LogPath, indivDefault("logs")), targets.LogPath, true),
-			verificationPathInputPrompt(resolveEffective(stor.VerificationPath, cfgStor.VerificationPath, indivDefault("verification")), targets.VerificationPath, true),
-			pluginsPathInputPrompt(resolveEffective(stor.PluginsPath, cfgStor.PluginsPath, indivDefault("plugins")), targets.PluginsPath, true),
+		}
+		if includeVerification {
+			inputPrompts = append(inputPrompts,
+				verificationPathInputPrompt(resolveEffective(stor.VerificationPath, cfgStor.VerificationPath, indivDefault("verification")), targets.VerificationPath, true))
+		}
+		if includePlugins {
+			inputPrompts = append(inputPrompts,
+				pluginsPathInputPrompt(resolveEffective(stor.PluginsPath, cfgStor.PluginsPath, indivDefault("plugins")), targets.PluginsPath, true))
+		}
+		if includeApplicationState {
+			inputPrompts = append(inputPrompts,
+				applicationStatePathInputPrompt(resolveEffective(stor.ApplicationStatePath, cfgStor.ApplicationStatePath, indivDefault("application-state")), targets.ApplicationStatePath, true))
 		}
 	}
 

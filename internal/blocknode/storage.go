@@ -68,10 +68,13 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 	applicable := GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion)
 	includeVerification := false
 	includePlugins := false
+	includeApplicationState := false
 	verificationPath := ""
 	pluginsPath := ""
+	applicationStatePath := ""
 	verificationSize := ""
 	pluginsSize := ""
+	applicationStateSize := ""
 
 	for i, optStor := range applicable {
 		p := ""
@@ -88,6 +91,10 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 			includePlugins = true
 			pluginsPath = p
 			pluginsSize = s
+		case "application-state":
+			includeApplicationState = true
+			applicationStatePath = p
+			applicationStateSize = s
 		}
 	}
 
@@ -97,40 +104,48 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 		Str("logPath", logPath).
 		Str("verificationPath", verificationPath).
 		Str("pluginsPath", pluginsPath).
+		Str("applicationStatePath", applicationStatePath).
 		Bool("includeVerification", includeVerification).
 		Bool("includePlugins", includePlugins).
+		Bool("includeApplicationState", includeApplicationState).
 		Msg("Storage paths computed")
 
 	data := struct {
-		Namespace           string
-		Release             string
-		LivePath            string
-		ArchivePath         string
-		LogPath             string
-		VerificationPath    string
-		PluginsPath         string
-		LiveSize            string
-		ArchiveSize         string
-		LogSize             string
-		VerificationSize    string
-		PluginsSize         string
-		IncludeVerification bool
-		IncludePlugins      bool
+		Namespace               string
+		Release                 string
+		LivePath                string
+		ArchivePath             string
+		LogPath                 string
+		VerificationPath        string
+		PluginsPath             string
+		ApplicationStatePath    string
+		LiveSize                string
+		ArchiveSize             string
+		LogSize                 string
+		VerificationSize        string
+		PluginsSize             string
+		ApplicationStateSize    string
+		IncludeVerification     bool
+		IncludePlugins          bool
+		IncludeApplicationState bool
 	}{
-		Namespace:           m.blockNodeInputs.Namespace,
-		Release:             m.blockNodeInputs.Release,
-		LivePath:            livePath,
-		ArchivePath:         archivePath,
-		LogPath:             logPath,
-		VerificationPath:    verificationPath,
-		PluginsPath:         pluginsPath,
-		LiveSize:            m.blockNodeInputs.Storage.LiveSize,
-		ArchiveSize:         m.blockNodeInputs.Storage.ArchiveSize,
-		LogSize:             m.blockNodeInputs.Storage.LogSize,
-		VerificationSize:    verificationSize,
-		PluginsSize:         pluginsSize,
-		IncludeVerification: includeVerification,
-		IncludePlugins:      includePlugins,
+		Namespace:               m.blockNodeInputs.Namespace,
+		Release:                 m.blockNodeInputs.Release,
+		LivePath:                livePath,
+		ArchivePath:             archivePath,
+		LogPath:                 logPath,
+		VerificationPath:        verificationPath,
+		PluginsPath:             pluginsPath,
+		ApplicationStatePath:    applicationStatePath,
+		LiveSize:                m.blockNodeInputs.Storage.LiveSize,
+		ArchiveSize:             m.blockNodeInputs.Storage.ArchiveSize,
+		LogSize:                 m.blockNodeInputs.Storage.LogSize,
+		VerificationSize:        verificationSize,
+		PluginsSize:             pluginsSize,
+		ApplicationStateSize:    applicationStateSize,
+		IncludeVerification:     includeVerification,
+		IncludePlugins:          includePlugins,
+		IncludeApplicationState: includeApplicationState,
 	}
 
 	m.logger.Debug().Str("template", StorageConfigPath).Msg("Rendering storage config template")

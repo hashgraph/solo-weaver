@@ -119,13 +119,19 @@ sudo solo-provisioner block node install \
   --values=/path/to/custom-values.yaml
 
 # With custom storage configuration
+# Note: --verification-size applies to chart versions below 0.37.0;
+# --application-state-size applies to chart versions 0.37.0 and above
+# (verification retires and application-state appears in the same chart cutover,
+# hiero-ledger/hiero-block-node#3025). The flag for the inactive storage is
+# silently ignored outside its applicable range.
 sudo solo-provisioner block node install \
   --profile=mainnet \
   --base-path=/mnt/nvme \
   --live-size=50Gi \
   --archive-size=500Gi \
   --verification-size=50Gi \
-  --log-size=10Gi
+  --log-size=10Gi \
+  --application-state-size=500Mi
 
 # With specific chart version
 sudo solo-provisioner block node install \
@@ -146,12 +152,14 @@ sudo solo-provisioner block node install \
 | `--base-path`             | Base path for all storage                                                                                                             |
 | `--archive-path`          | Archive storage path                                                                                                                  |
 | `--live-path`             | Live storage path                                                                                                                     |
-| `--verification-path`     | Verification storage path                                                                                                             |
+| `--verification-path`     | Verification storage path (chart versions below 0.37.0)                                                                               |
 | `--log-path`              | Log storage path                                                                                                                      |
+| `--application-state-path` | Application-state storage path (chart versions 0.37.0 and above; introduced by hiero-ledger/hiero-block-node#3025)                   |
 | `--live-size`             | Live storage size (e.g., 10Gi)                                                                                                        |
 | `--archive-size`          | Archive storage size                                                                                                                  |
-| `--verification-size`     | Verification storage size                                                                                                             |
+| `--verification-size`     | Verification storage size (chart versions below 0.37.0)                                                                               |
 | `--log-size`              | Log storage size                                                                                                                      |
+| `--application-state-size` | PV/PVC size for application-state storage (e.g., `500Mi`, `1Gi`); chart versions 0.37.0 and above                                    |
 | `--plugin-preset`         | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); prompts interactively when omitted                                   |
 | `--plugins`               | Comma-separated plugin list; overrides `--plugin-preset` when set                                                                     |
 | `--plugins-size`          | PV/PVC size for plugins storage (e.g., `5Gi`, `10Gi`)                                                                                 |
@@ -207,7 +215,7 @@ sudo solo-provisioner block node reset \
 
 1. Scales down the Block Node StatefulSet to 0 replicas
 2. Waits for all pods to terminate
-3. Clears all storage directories (archive, live, log, verification)
+3. Clears all storage directories (archive, live, log, plus the version-specific optional storages: `verification` on chart versions below 0.37.0, `application-state` on chart versions 0.37.0 and above, and `plugins` on chart versions 0.28.1 and above)
 4. Scales the StatefulSet back up to 1 replica
 5. Waits for pods to become ready
 

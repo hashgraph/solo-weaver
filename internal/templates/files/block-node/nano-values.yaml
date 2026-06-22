@@ -36,7 +36,9 @@ blockNode:
           chown 2000:2000 /verification-pvc && \
           chmod 700 /verification-pvc{{ end }}{{ if .IncludePlugins }} && \
           chown 2000:2000 /plugins-pvc && \
-          chmod 700 /plugins-pvc{{ end }}
+          chmod 700 /plugins-pvc{{ end }}{{ if .IncludeApplicationState }} && \
+          chown 2000:2000 /application-state-pvc && \
+          chmod 700 /application-state-pvc{{ end }}
       volumeMounts:
         - name: live-storage
           mountPath: /live-pvc
@@ -51,6 +53,10 @@ blockNode:
 {{- if .IncludePlugins }}
         - name: plugins-storage
           mountPath: /plugins-pvc
+{{- end }}
+{{- if .IncludeApplicationState }}
+        - name: application-state-storage
+          mountPath: /application-state-pvc
 {{- end }}
   persistence:
     live:
@@ -75,6 +81,12 @@ blockNode:
     plugins:
       create: false
       existingClaim: plugins-storage-pvc
+      subPath: ""
+{{- end }}
+{{- if .IncludeApplicationState }}
+    applicationStateFacility:
+      create: false
+      existingClaim: application-state-storage-pvc
       subPath: ""
 {{- end }}
 

@@ -155,13 +155,14 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 
 	// Storage path prompts: two-pass (mode select → conditional path inputs).
 	// Applied to all block node commands that configure storage (install, upgrade, reconfigure).
-	if err := prompt.RunStoragePathPrompts(cmd, defaults, prompt.StoragePathTargets{
-		BasePath:         &flagBasePath,
-		ArchivePath:      &flagArchivePath,
-		LivePath:         &flagLivePath,
-		LogPath:          &flagLogPath,
-		VerificationPath: &flagVerificationPath,
-		PluginsPath:      &flagPluginsPath,
+	if err := prompt.RunStoragePathPrompts(cmd, defaults, flagChartVersion, prompt.StoragePathTargets{
+		BasePath:             &flagBasePath,
+		ArchivePath:          &flagArchivePath,
+		LivePath:             &flagLivePath,
+		LogPath:              &flagLogPath,
+		VerificationPath:     &flagVerificationPath,
+		PluginsPath:          &flagPluginsPath,
+		ApplicationStatePath: &flagApplicationStatePath,
 	}, cv); err != nil {
 		return err
 	}
@@ -261,17 +262,19 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			Chart:        flagChartRepo,
 			ChartVersion: flagChartVersion,
 			Storage: models.BlockNodeStorage{
-				BasePath:         flagBasePath,
-				ArchivePath:      flagArchivePath,
-				ArchiveSize:      flagArchiveSize,
-				LivePath:         flagLivePath,
-				LiveSize:         flagLiveSize,
-				LogPath:          flagLogPath,
-				LogSize:          flagLogSize,
-				VerificationPath: flagVerificationPath,
-				VerificationSize: flagVerificationSize,
-				PluginsPath:      flagPluginsPath,
-				PluginsSize:      flagPluginsSize,
+				BasePath:             flagBasePath,
+				ArchivePath:          flagArchivePath,
+				ArchiveSize:          flagArchiveSize,
+				LivePath:             flagLivePath,
+				LiveSize:             flagLiveSize,
+				LogPath:              flagLogPath,
+				LogSize:              flagLogSize,
+				VerificationPath:     flagVerificationPath,
+				VerificationSize:     flagVerificationSize,
+				PluginsPath:          flagPluginsPath,
+				PluginsSize:          flagPluginsSize,
+				ApplicationStatePath: flagApplicationStatePath,
+				ApplicationStateSize: flagApplicationStateSize,
 			},
 			Profile:             parentFlags.Profile,
 			ValuesFile:          validatedValuesFile,
