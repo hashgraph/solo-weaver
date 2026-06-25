@@ -5,15 +5,16 @@ package daemon
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/automa-saga/daemonkit"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"golang.org/x/sync/errgroup"
@@ -134,6 +135,9 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 	d.server = daemonkit.NewServer(paths.DaemonSockPath, daemonkit.ServerOptions{
 		StatusFn:          func() any { return d.statusSnapshot() },
 		ComponentHandlers: componentHandlers,
+		// daemonkit is silent by default; route its logs through the global
+		// slog default, which cmd/daemon/main.go binds to the logx handler.
+		Logger: slog.Default(),
 	}, daemonkit.ServerConfig{})
 	return d, nil
 }
@@ -149,7 +153,10 @@ func (d *Daemon) componentSupervisor(ctx context.Context) error {
 			m := m
 			go func() {
 				defer wg.Done()
-				daemonkit.SupervisedMonitor(ctx, m, tracker)
+				daemonkit.SupervisedMonitor(ctx, m, daemonkit.SupervisorOptions{
+					Tracker: tracker,
+					Logger:  slog.Default(),
+				})
 			}()
 		}
 	}

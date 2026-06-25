@@ -26,6 +26,8 @@ github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
 github.com/automa-saga/automa v0.10.0 h1:K3cBRwVl7MgHFre4FYmnLZMYsphoUOnoGJ50hjDe4NY=
 github.com/automa-saga/automa v0.10.0/go.mod h1:AVzNGE+ci5sAJ7ao3ZkmC+CMe4kpwJhE6AloBJv3Udc=
+github.com/automa-saga/daemonkit v0.1.0 h1:/ph77RqJnBAsx79oROEmlgZ63/aFNg0Tiy5GsdckI4M=
+github.com/automa-saga/daemonkit v0.1.0/go.mod h1:SljBxNkAAfJMfnC2hurv+NRZzwC2LRf2QZJR/waHwQA=
 github.com/automa-saga/logx v0.5.0 h1:yuFC7JlEQRbEKr+6t9eg1kXAvRIIgzdu9Bz7a0gSJYo=
 github.com/automa-saga/logx v0.5.0/go.mod h1:8S9d499t8uro8yO3blI1hruXLEYWzrBp9ndCI/Ik/88=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
@@ -84,8 +86,8 @@ github.com/clipperhouse/stringish v0.1.1 h1:+NSqMOr3GR6k1FdRhhnXrLfztGzuG+VuFDfa
 github.com/clipperhouse/stringish v0.1.1/go.mod h1:v/WhFtE1q0ovMta2+m+UbpZ+2/HEXNWYXQgCt4hdOzA=
 github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJv2v7Vk=
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
-github.com/containerd/containerd v1.7.32 h1:S54xuVcPxeLaYgaRABtpJ2VyVUVsy0IGf7qHBs+sbY8=
-github.com/containerd/containerd v1.7.32/go.mod h1:jdwD6s/BhV4XVJGrvtziNPVA+83n66TwptVaPKprq4E=
+github.com/containerd/containerd v1.7.33 h1:iAkYGC/ifR/V+0eR4iXWHNGYUF0DF2PmGV5iz4Irj5M=
+github.com/containerd/containerd v1.7.33/go.mod h1:gSbSCVjPCdkfJCjyrzz7aRC+xFlqVbatNpfHfVCYGUM=
 github.com/containerd/errdefs v1.0.0 h1:tg5yIfIlQIrxYtu9ajqY42W3lpS19XqdxRQeEwYG8PI=
 github.com/containerd/errdefs v1.0.0/go.mod h1:+YBYIdtsnF4Iw6nWZhJcqGSg/dwvV7tyJ/kCkyJ2k+M=
 github.com/containerd/log v0.1.0 h1:TCJt7ioM2cr/tfR8GPbGf9/VRAX8D2B4PjzCpfX540I=

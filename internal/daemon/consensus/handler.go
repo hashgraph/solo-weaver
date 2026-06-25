@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/automa-saga/daemonkit"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/joomcode/errorx"
 )
 

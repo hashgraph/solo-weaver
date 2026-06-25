@@ -5,9 +5,9 @@ package consensus
 import (
 	"fmt"
 
+	"github.com/automa-saga/daemonkit"
+	"github.com/automa-saga/daemonkit/eventlog"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
-	"github.com/hashgraph/solo-weaver/pkg/eventlog"
 )
 
 // ComponentConfig holds all inputs needed to build the consensus-node component.

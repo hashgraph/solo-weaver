@@ -3,7 +3,7 @@
 package blocknode
 
 import (
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
+	"github.com/automa-saga/daemonkit"
 )
 
 // ComponentConfig holds inputs needed to build the block-node component.
