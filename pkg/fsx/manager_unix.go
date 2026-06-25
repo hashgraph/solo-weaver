@@ -5,6 +5,7 @@
 package fsx
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -26,6 +27,8 @@ const (
 	// DefaultROPermissions is the default permissions used when creating read-only files and directories.
 	// TODO - set to 0500 for testing, bash version sets it to 0400 which can only be done with sudo as-is
 	DefaultROPermissions = 0500
+	// removeContentsBatchSize is how many directory entries RemoveContents reads per batch.
+	removeContentsBatchSize = 256
 )
 
 type Option func(*unixManager) error
@@ -594,15 +597,27 @@ func (m *unixManager) RemoveContents(path string) error {
 
 	// Remove all entries inside the directory while preserving the directory itself,
 	// including its inode, ownership, ACLs, extended attributes, and special mode bits.
-	entries, err := os.ReadDir(path)
+	// Entries are streamed in bounded batches rather than read all at once
+	dir, err := os.Open(path)
 	if err != nil {
-		return FileSystemError.New("failed to list directory contents for %q", path).WithUnderlyingErrors(err)
+		return FileSystemError.New("failed to open directory %q", path).WithUnderlyingErrors(err)
 	}
+	defer Close(dir)
 
-	for _, entry := range entries {
-		childPath := filepath.Join(path, entry.Name())
-		if err := os.RemoveAll(childPath); err != nil {
-			return FileSystemError.New("failed to remove directory entry %q", childPath).WithUnderlyingErrors(err)
+	for {
+		entries, readErr := dir.ReadDir(removeContentsBatchSize)
+		for _, entry := range entries {
+			childPath := filepath.Join(path, entry.Name())
+			if err := os.RemoveAll(childPath); err != nil {
+				return FileSystemError.New("failed to remove directory entry %q", childPath).WithUnderlyingErrors(err)
+			}
+		}
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return FileSystemError.New("failed to list directory contents for %q", path).WithUnderlyingErrors(readErr)
 		}
 	}
 
