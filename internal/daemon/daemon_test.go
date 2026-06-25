@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
+	"github.com/automa-saga/daemonkit"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -69,7 +69,7 @@ func seedTracker(t *testing.T, name string) *daemonkit.StatusTracker {
 	tr := daemonkit.NewStatusTracker()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	daemonkit.SupervisedMonitor(ctx, &blockingMonitor{name: name}, tr)
+	daemonkit.SupervisedMonitor(ctx, &blockingMonitor{name: name}, daemonkit.SupervisorOptions{Tracker: tr})
 	require.Equal(t, "stopped", tr.Snapshot()[name].State)
 	return tr
 }

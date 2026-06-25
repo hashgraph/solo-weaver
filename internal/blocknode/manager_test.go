@@ -943,7 +943,9 @@ func TestInjectServiceAnnotations_CreatesServiceAndAnnotationsPath(t *testing.T)
 }
 
 // TestInjectServiceAnnotations_PreservesExistingAnnotation tests that a pre-existing
-// metallb.io/address-pool value in the operator's values file is not clobbered.
+// metallb.io/address-pool value in the operator's values file is not clobbered. The
+// input also pre-sets service.type so the byte-identical assertion is meaningful —
+// nothing needs to mutate.
 func TestInjectServiceAnnotations_PreservesExistingAnnotation(t *testing.T) {
 	manager := &Manager{
 		blockNodeInputs: models.BlockNodeInputs{
@@ -953,6 +955,7 @@ func TestInjectServiceAnnotations_PreservesExistingAnnotation(t *testing.T) {
 	}
 
 	input := []byte(`service:
+  type: LoadBalancer
   annotations:
     metallb.io/address-pool: my-custom-pool
 `)
@@ -960,7 +963,7 @@ func TestInjectServiceAnnotations_PreservesExistingAnnotation(t *testing.T) {
 	result, err := manager.injectServiceAnnotations(input)
 	require.NoError(t, err)
 
-	// The returned bytes must be identical to the input — no rewrite occurred.
+	// Both fields already correct → byte-identical short-circuit, no rewrite.
 	assert.Equal(t, input, result)
 	assert.Contains(t, string(result), "my-custom-pool")
 	assert.NotContains(t, string(result), "public-address-pool")
@@ -997,4 +1000,192 @@ func TestInjectServiceAnnotations_PreservesOtherAnnotations(t *testing.T) {
 	// Sibling annotations preserved.
 	assert.Equal(t, "my-tag", annotations["custom.io/tag"])
 	assert.Equal(t, "some-value", annotations["another.io/key"])
+}
+
+// TestInjectServiceAnnotations_SetsLoadBalancerType tests that service.type: LoadBalancer
+// is injected when LoadBalancerEnabled is true and the operator left the type unset.
+// This is the defense-in-depth fix for #702: even if the values pipeline ever produced
+// a values document missing service.type, this step would restore it.
+func TestInjectServiceAnnotations_SetsLoadBalancerType(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  port: 40840
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+
+	service := vals["service"].(map[string]interface{})
+	assert.Equal(t, "LoadBalancer", service["type"])
+	// Port preserved.
+	assert.EqualValues(t, 40840, service["port"])
+}
+
+// TestInjectServiceAnnotations_PreservesExistingType tests that an explicit non-LoadBalancer
+// service.type set by the operator is not clobbered. Weaver warns about the mismatch but
+// honors the operator's choice — clobbering would silently override intent.
+func TestInjectServiceAnnotations_PreservesExistingType(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: ClusterIP
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+
+	service := vals["service"].(map[string]interface{})
+	assert.Equal(t, "ClusterIP", service["type"], "operator-set service.type must not be clobbered")
+}
+
+// TestMergeValues_OperatorWinsOnScalar verifies the deep-merge contract: operator scalars
+// override base scalars at the same path.
+func TestMergeValues_OperatorWinsOnScalar(t *testing.T) {
+	base := []byte(`service:
+  type: LoadBalancer
+  port: 40840
+`)
+	operator := []byte(`service:
+  port: 12345
+`)
+
+	merged, err := mergeValues(base, operator)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(merged, &vals))
+
+	service := vals["service"].(map[string]interface{})
+	assert.EqualValues(t, 12345, service["port"], "operator port should win")
+	assert.Equal(t, "LoadBalancer", service["type"], "base service.type should survive — operator didn't set it")
+}
+
+// TestMergeValues_BaseSurvivesWhereOperatorSilent verifies the central #702 invariant:
+// when an operator file omits service.type entirely, the base's service.type: LoadBalancer
+// survives the merge. Pre-fix this is the value that disappeared and caused
+// verify-block-node-reachable to fail.
+func TestMergeValues_BaseSurvivesWhereOperatorSilent(t *testing.T) {
+	base := []byte(`service:
+  type: LoadBalancer
+  port: 40840
+blockNode:
+  config:
+    BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"
+`)
+	operator := []byte(`service:
+  annotations:
+    metallb.io/allow-shared-ip: shared
+`)
+
+	merged, err := mergeValues(base, operator)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(merged, &vals))
+
+	service := vals["service"].(map[string]interface{})
+	assert.Equal(t, "LoadBalancer", service["type"], "base service.type: LoadBalancer must survive — this is the #702 bug")
+	assert.EqualValues(t, 40840, service["port"], "base service.port must survive")
+
+	annotations := service["annotations"].(map[string]interface{})
+	assert.Equal(t, "shared", annotations["metallb.io/allow-shared-ip"], "operator annotation merged in")
+
+	blockNode := vals["blockNode"].(map[string]interface{})
+	config := blockNode["config"].(map[string]interface{})
+	assert.Equal(t, "100000000", config["BLOCK_NODE_EARLIEST_MANAGED_BLOCK"], "base blockNode.config must survive")
+}
+
+// TestMergeValues_DeepMergeNestedMaps verifies that nested maps deep-merge (not replace):
+// adding a sibling key under blockNode.config keeps the base's existing keys at the same path.
+func TestMergeValues_DeepMergeNestedMaps(t *testing.T) {
+	base := []byte(`blockNode:
+  config:
+    BLOCK_NODE_EARLIEST_MANAGED_BLOCK: "100000000"
+    MESSAGING_BLOCK_NOTIFICATION_QUEUE_SIZE: "512"
+`)
+	operator := []byte(`blockNode:
+  config:
+    CUSTOM_OPERATOR_KEY: "custom-value"
+`)
+
+	merged, err := mergeValues(base, operator)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(merged, &vals))
+
+	config := vals["blockNode"].(map[string]interface{})["config"].(map[string]interface{})
+	assert.Equal(t, "100000000", config["BLOCK_NODE_EARLIEST_MANAGED_BLOCK"], "base config keys preserved")
+	assert.Equal(t, "512", config["MESSAGING_BLOCK_NOTIFICATION_QUEUE_SIZE"], "base config keys preserved")
+	assert.Equal(t, "custom-value", config["CUSTOM_OPERATOR_KEY"], "operator config keys merged in")
+}
+
+// TestMergeValues_ListsReplaceNotConcatenate pins down helm's documented merge contract:
+// sequences are replaced wholesale by the operator (no element-wise concatenation). The
+// merge primitive's behavior on lists is the part most likely to surprise operators and
+// the part most likely to drift silently if the merge implementation is ever swapped, so
+// it deserves its own regression test.
+func TestMergeValues_ListsReplaceNotConcatenate(t *testing.T) {
+	base := []byte(`blockNode:
+  initContainers:
+    - name: init-storage-dirs
+      image: docker.io/library/busybox:latest
+    - name: init-config
+      image: docker.io/library/busybox:latest
+`)
+	operator := []byte(`blockNode:
+  initContainers:
+    - name: operator-init
+      image: my.registry/operator:latest
+`)
+
+	merged, err := mergeValues(base, operator)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(merged, &vals))
+
+	blockNode := vals["blockNode"].(map[string]interface{})
+	initContainers, ok := blockNode["initContainers"].([]interface{})
+	require.True(t, ok, "blockNode.initContainers should still be a sequence")
+
+	require.Len(t, initContainers, 1, "operator's sequence must replace the base's wholesale (no concat)")
+	first := initContainers[0].(map[string]interface{})
+	assert.Equal(t, "operator-init", first["name"], "operator's element survives; base's elements are dropped")
+}
+
+// TestMergeValues_EmptyOperator returns the base verbatim (semantically — keys all present).
+func TestMergeValues_EmptyOperator(t *testing.T) {
+	base := []byte(`service:
+  type: LoadBalancer
+  port: 40840
+`)
+	operator := []byte(``)
+
+	merged, err := mergeValues(base, operator)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(merged, &vals))
+
+	service := vals["service"].(map[string]interface{})
+	assert.Equal(t, "LoadBalancer", service["type"])
+	assert.EqualValues(t, 40840, service["port"])
 }

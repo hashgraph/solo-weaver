@@ -13,32 +13,47 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/chartutil"
 )
 
 // ComputeValuesFile generates the values file for helm installation based on profile and version.
 // It writes the result to a temp file and returns the path.
 //
-// When no custom values file is provided, the appropriate built-in template is rendered.
-// When a custom values file is provided, persistence settings are injected to ensure
-// weaver-managed PVCs are referenced (create: false + existingClaim) rather than letting
-// the chart create its own.
+// The profile's embedded base template is always rendered first; when an operator --values
+// file is provided, it is deep-merged on top of the base (operator keys win on conflict)
+// using the same semantics as `helm install -f`. This preserves base defaults such as
+// service.type: LoadBalancer, blockNode.config, initContainers, and persistence wiring
+// that an operator file would otherwise drop by replacing the base entirely.
 //
-// In both cases, effective retention thresholds are merged into blockNode.config.
+// Persistence overrides are then applied unconditionally so that weaver-managed PVCs are
+// referenced (create: false + existingClaim) regardless of what the operator file specified.
+// Retention thresholds and plugin/service-annotation injections follow.
 //
 // NOTE: Defense-in-depth path validation is applied even though the CLI layer also validates.
 func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, error) {
-	var (
-		valuesContent []byte
-		err           error
-	)
-
-	if valuesFile == "" {
-		valuesContent, err = m.renderDefaultValues(profile)
-	} else {
-		valuesContent, err = m.readCustomValues(valuesFile)
-	}
+	valuesContent, err := m.renderDefaultValues(profile)
 	if err != nil {
 		return "", err
+	}
+
+	if valuesFile != "" {
+		operatorContent, err := m.readCustomValues(valuesFile)
+		if err != nil {
+			return "", err
+		}
+		// Return mergeValues' typed error directly so an IllegalFormat from a malformed
+		// operator YAML stays IllegalFormat — wrapping it as InternalError would
+		// misattribute the failure to weaver instead of the operator's --values file.
+		valuesContent, err = mergeValues(valuesContent, operatorContent)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Force weaver-managed PVC references regardless of what the operator file said.
+	valuesContent, err = m.injectPersistenceOverrides(valuesContent)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to inject persistence overrides into values file")
 	}
 
 	// Merge effective retention thresholds into blockNode.config when non-empty.
@@ -120,9 +135,10 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 	return []byte(rendered), nil
 }
 
-// readCustomValues reads and validates a user-supplied values file, then injects persistence
-// overrides to ensure weaver-managed PVCs are always referenced (create: false + existingClaim).
-// Defense-in-depth validation is applied even though the CLI layer also validates the path.
+// readCustomValues reads and validates a user-supplied values file and returns its raw
+// bytes. The caller is responsible for merging it on top of the profile base and applying
+// any post-merge invariants (persistence overrides, etc.). Defense-in-depth validation
+// is applied even though the CLI layer also validates the path.
 func (m *Manager) readCustomValues(valuesFile string) ([]byte, error) {
 	sanitizedPath, err := sanity.ValidateInputFile(valuesFile)
 	if err != nil {
@@ -136,15 +152,34 @@ func (m *Manager) readCustomValues(valuesFile string) ([]byte, error) {
 
 	logx.As().Info().Str("path", sanitizedPath).Msg("Using custom values file")
 
-	// Inject/override persistence settings to ensure weaver-managed PVCs are used.
-	// Since weaver creates PVs and PVCs outside of Helm, the chart must always use
-	// create: false with existingClaim pointing to the pre-created PVCs.
-	content, err = m.injectPersistenceOverrides(content)
-	if err != nil {
-		return nil, errorx.InternalError.Wrap(err, "failed to inject persistence overrides into custom values file")
+	return content, nil
+}
+
+// mergeValues deep-merges an operator-supplied values document on top of the profile
+// base using helm's own coalescing rules (the same logic that `helm install -f` applies):
+// nested maps are merged recursively, while scalars and sequences from the operator
+// replace whatever the base had. Operator keys win on conflict; base defaults survive
+// where the operator stays silent.
+func mergeValues(base, operator []byte) ([]byte, error) {
+	baseMap := map[string]interface{}{}
+	if err := yaml.Unmarshal(base, &baseMap); err != nil {
+		// The base is rendered from an embedded template, never operator input;
+		// a parse failure here is a developer bug, not malformed user input.
+		return nil, errorx.InternalError.Wrap(err, "failed to parse embedded base values YAML")
 	}
 
-	return content, nil
+	operatorMap := map[string]interface{}{}
+	if err := yaml.Unmarshal(operator, &operatorMap); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse custom values YAML")
+	}
+
+	merged := chartutil.CoalesceTables(operatorMap, baseMap)
+
+	result, err := yaml.Marshal(merged)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to marshal merged values YAML")
+	}
+	return result, nil
 }
 
 // persistenceEntry represents the required persistence settings for a storage type.
@@ -317,12 +352,14 @@ func (m *Manager) injectPluginsConfig(valuesContent []byte) ([]byte, error) {
 	return result, nil
 }
 
-// injectServiceAnnotations merges the MetalLB address-pool annotation into service.annotations
-// in the Helm values when LoadBalancerEnabled is true. This ensures the annotation is managed
-// natively by Helm across install and upgrade without requiring a post-deploy kubectl patch.
+// injectServiceAnnotations ensures the merged values express a LoadBalancer service when
+// LoadBalancerEnabled is true. It (a) sets service.type to LoadBalancer if absent — defense
+// in depth so the type can never go missing regardless of which values path is taken — and
+// (b) merges the MetalLB address-pool annotation into service.annotations.
 //
-// When the operator's values file already contains metallb.io/address-pool (e.g. pointing at a
-// custom pool), that value is left untouched — weaver never clobbers an explicitly set annotation.
+// When the operator's values file already contains either field, the existing value is
+// left untouched. An explicit non-LoadBalancer service.type triggers a warning so the
+// mismatch is visible in logs without weaver clobbering an explicit operator choice.
 // When LoadBalancerEnabled is false the values are returned unchanged.
 func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error) {
 	if !m.blockNodeInputs.LoadBalancerEnabled {
@@ -334,31 +371,56 @@ func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error)
 		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for service annotation injection")
 	}
 
-	// Navigate to service.annotations, creating the path if needed.
 	service, ok := vals["service"].(map[string]interface{})
 	if !ok {
 		service = make(map[string]interface{})
 		vals["service"] = service
 	}
 
+	const (
+		typeKey       = "type"
+		typeLB        = "LoadBalancer"
+		annotationKey = "metallb.io/address-pool"
+		defaultPool   = "public-address-pool"
+	)
+
+	mutated := false
+
+	switch t := service[typeKey].(type) {
+	case nil:
+		service[typeKey] = typeLB
+		logx.As().Info().Msg("Injecting service.type: LoadBalancer (LoadBalancerEnabled=true and no operator override)")
+		mutated = true
+	case string:
+		if t != typeLB {
+			logx.As().Warn().
+				Str("service.type", t).
+				Msg("LoadBalancerEnabled=true but operator values set service.type to a non-LoadBalancer value; leaving as-is — verify-block-node-reachable will fail")
+		}
+	default:
+		logx.As().Warn().
+			Str("service.type", fmt.Sprintf("%v", t)).
+			Msg("LoadBalancerEnabled=true but operator values set service.type to a non-string value; leaving as-is")
+	}
+
 	annotations, ok := service["annotations"].(map[string]interface{})
 	if !ok {
 		annotations = make(map[string]interface{})
 	}
-
-	const annotationKey = "metallb.io/address-pool"
 	if existing, alreadySet := annotations[annotationKey]; alreadySet {
-		// Operator has explicitly set this annotation — leave it untouched.
 		logx.As().Debug().
 			Str(annotationKey, fmt.Sprintf("%v", existing)).
 			Msg("metallb.io/address-pool already set in values file; skipping injection")
-		return valuesContent, nil
+	} else {
+		annotations[annotationKey] = defaultPool
+		service["annotations"] = annotations
+		logx.As().Info().Msg("Injecting MetalLB address-pool annotation into service.annotations")
+		mutated = true
 	}
 
-	annotations[annotationKey] = "public-address-pool"
-	service["annotations"] = annotations
-
-	logx.As().Info().Msg("Injecting MetalLB address-pool annotation into service.annotations")
+	if !mutated {
+		return valuesContent, nil
+	}
 
 	result, err := yaml.Marshal(vals)
 	if err != nil {

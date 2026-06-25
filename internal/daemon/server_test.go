@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/daemonkit"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
-	"github.com/hashgraph/solo-weaver/pkg/daemonkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

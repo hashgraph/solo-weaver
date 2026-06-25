@@ -2,7 +2,7 @@
 
 package daemon
 
-import "github.com/hashgraph/solo-weaver/pkg/daemonkit"
+import "github.com/automa-saga/daemonkit"
 
 // HealthResponse is returned by GET /health.
 type HealthResponse struct {

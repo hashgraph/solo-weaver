@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/automa-saga/automa v0.10.0
+	github.com/automa-saga/daemonkit v0.1.0
 	github.com/automa-saga/logx v0.5.0
 	github.com/bluet/syspkg v0.1.7
 	github.com/charmbracelet/bubbles v1.0.0
@@ -23,9 +24,11 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zcalusic/sysinfo v1.1.3
+	golang.org/x/sync v0.21.0
 	golang.org/x/text v0.38.0
 	helm.sh/helm/v3 v3.21.0
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
+	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
 	k8s.io/client-go v0.36.1
 	pault.ag/go/modprobe v0.2.0
@@ -53,7 +56,7 @@ require (
 	github.com/clipperhouse/displaywidth v0.9.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/containerd/containerd v1.7.32 // indirect
+	github.com/containerd/containerd v1.7.33 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
@@ -136,7 +139,6 @@ require (
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
@@ -146,7 +148,6 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	honnef.co/go/tools v0.7.0 // indirect
-	k8s.io/api v0.36.1 // indirect
 	k8s.io/apiextensions-apiserver v0.36.1 // indirect
 	k8s.io/apiserver v0.36.1 // indirect
 	k8s.io/cli-runtime v0.36.1 // indirect
