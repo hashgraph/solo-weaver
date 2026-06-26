@@ -59,7 +59,11 @@ ipMasqAgent:
     nonMasqueradeCIDRs: []
 bpf:
   masquerade: true
-  hostLegacyRouting: false
+  # hostLegacyRouting must be true for the BN traffic shaper: it forces traffic
+  # through the host legacy routing path so nft/tc in the host netns can set and
+  # preserve skb->priority across reboots. Renders to the cilium-config ConfigMap
+  # key `enable-host-legacy-routing: "true"`.
+  hostLegacyRouting: true
   lbExternalClusterIP: true
   preallocateMaps: true
 

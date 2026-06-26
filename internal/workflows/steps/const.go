@@ -24,4 +24,9 @@ const (
 
 	IsReady   = "isReady"
 	IsPending = "isPending"
+
+	// BandwidthManagerStatus reports the raw Cilium "enable-bandwidth-manager"
+	// cilium-config ConfigMap value ("true"/"false"/"" when unset) recorded by
+	// the guard step in StartCilium.
+	BandwidthManagerStatus = "bandwidthManagerStatus"
 )
