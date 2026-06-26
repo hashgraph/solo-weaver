@@ -9,8 +9,12 @@ vars:
   GO_VERSION: 1.26.0
   # Build metadata stamped into github.com/automa-saga/version at link time via -X.
   # Override VERSION on the command line or in CI (e.g. `task build:cli VERSION=0.20.0`);
-  # COMMIT and DATE are derived automatically. Unstamped builds report "dev"/"none".
-  VERSION: '{{.VERSION | default "dev"}}'
+  # COMMIT and DATE are derived automatically.
+  # Unstamped default is 0.0.0 (a valid semver), not the library's "dev" sentinel:
+  # the startup CLI-version migration parses this string via pkg/semver, and a
+  # non-semver value ("dev") makes `solo-provisioner install` fail. 0.0.0 also
+  # matches the pre-automa behavior (the old generate script defaulted VERSION to 0.0.0).
+  VERSION: '{{.VERSION | default "0.0.0"}}'
   COMMIT:
     sh: 'git rev-parse HEAD 2>/dev/null || echo none'
   DATE:
