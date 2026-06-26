@@ -7,8 +7,8 @@ import (
 	"path"
 
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/version"
 	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -250,7 +250,7 @@ func NewState(stateFile string) State {
 		StateRecord: StateRecord{
 			Version: ModelVersion,
 			ProvisionerState: ProvisionerInfo{
-				Version:    versionInfo.Number,
+				Version:    versionInfo.Version,
 				Commit:     versionInfo.Commit,
 				GoVersion:  versionInfo.GoVersion,
 				Executable: exePath,

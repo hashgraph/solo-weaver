@@ -24,11 +24,10 @@
     { "breaking": true, "release": "minor" }
   ],
   "verifyRelease": [
-    ["@semantic-release/exec", { "cmd": "printf \"%s\" \"${nextRelease.version}\" > pkg/version/daemon/VERSION" }],
-    ["@semantic-release/exec", { "cmd": "task hash:daemon:all" }]
+    ["@semantic-release/exec", { "cmd": "task hash:daemon:all VERSION=${nextRelease.version}" }]
   ],
   "prepare": [
-    ["@semantic-release/exec", { "cmd": "task sign:daemon:all" }]
+    ["@semantic-release/exec", { "cmd": "task sign:daemon:all VERSION=${nextRelease.version}" }]
   ],
   "success": [
     ["@semantic-release/exec", { "cmd": "gh release edit ${nextRelease.gitTag} --repo \"$GITHUB_REPOSITORY\" --latest=false" }]

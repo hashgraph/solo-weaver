@@ -27,7 +27,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	version "github.com/hashgraph/solo-weaver/pkg/version/cli"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -57,7 +56,12 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
-				return version.Print(cmd, flagOutputFormat)
+				out, err := renderVersion(flagOutputFormat)
+				if err != nil {
+					return err
+				}
+				cmd.Println(out)
+				return nil
 			}
 
 			return cmd.Help()
@@ -91,7 +95,7 @@ func init() {
 
 	// `version` must be invokable on an uninstalled host (it's the no-install
 	// sanity check reviewers run), so it opts out of the global checks too.
-	versionCmd := version.Cmd()
+	versionCmd := newVersionCmd()
 	common.SkipGlobalChecks(versionCmd)
 
 	// add subcommands

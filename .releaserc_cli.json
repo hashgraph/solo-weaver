@@ -24,11 +24,10 @@
     { "breaking": true, "release": "minor" }
   ],
   "verifyRelease": [
-    ["@semantic-release/exec", { "cmd": "printf \"%s\" \"${nextRelease.version}\" > pkg/version/cli/VERSION" }],
-    ["@semantic-release/exec", { "cmd": "task hash:cli:all" }]
+    ["@semantic-release/exec", { "cmd": "task hash:cli:all VERSION=${nextRelease.version}" }]
   ],
   "prepare": [
-    ["@semantic-release/exec", { "cmd": "task sign:cli:all" }]
+    ["@semantic-release/exec", { "cmd": "task sign:cli:all VERSION=${nextRelease.version}" }]
   ],
   "branches": [
     { "name": "main" },

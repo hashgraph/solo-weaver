@@ -13,13 +13,13 @@ import (
 	"syscall"
 
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	"github.com/google/uuid"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	version "github.com/hashgraph/solo-weaver/pkg/version/daemon"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -44,7 +44,12 @@ var (
 		Long:  "Long-lived foreground process started by the solo-provisioner-daemon.service systemd unit.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
-				return version.Print(cmd, flagOutputFormat)
+				out, err := renderVersion(flagOutputFormat)
+				if err != nil {
+					return err
+				}
+				cmd.Println(out)
+				return nil
 			}
 
 			logx.As().Info().Msg("Solo Provisioner daemon started")
@@ -137,7 +142,7 @@ func init() {
 	rootCmd.Flags().StringVar(&flagOrbit, "orbit", "", "Override orbit (K8s namespace) from daemon.yaml")
 	rootCmd.Flags().StringVar(&flagUpgradeDir, "upgrade-dir", "", "Override upgrade_dir from daemon.yaml")
 
-	rootCmd.AddCommand(version.Cmd())
+	rootCmd.AddCommand(newVersionCmd())
 }
 
 // initConfig wires up config, logging, and proxy for the daemon. Mirrors the
@@ -235,7 +240,7 @@ func main() {
 	for _, arg := range os.Args[1:] {
 		if arg == "--version" || arg == "-v" {
 			info := version.Get()
-			out, err := info.Format("json")
+			out, err := info.Format(version.FormatJSON)
 			if err != nil {
 				os.Exit(1)
 			}

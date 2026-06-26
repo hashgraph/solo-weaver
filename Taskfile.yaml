@@ -6,8 +6,16 @@ output: prefixed
 vars:
   OS: [ linux ]
   ARCH: [ amd64, arm64 ]
-  GO_VERSION: 1.25.2
-  LDFLAGS: "-w -s"
+  GO_VERSION: 1.26.0
+  # Build metadata stamped into github.com/automa-saga/version at link time via -X.
+  # Override VERSION on the command line or in CI (e.g. `task build:cli VERSION=0.20.0`);
+  # COMMIT and DATE are derived automatically. Unstamped builds report "dev"/"none".
+  VERSION: '{{.VERSION | default "dev"}}'
+  COMMIT:
+    sh: 'git rev-parse HEAD 2>/dev/null || echo none'
+  DATE:
+    sh: 'date -u +%Y-%m-%dT%H:%M:%SZ'
+  LDFLAGS: '-w -s -X github.com/automa-saga/version.Version={{.VERSION}} -X github.com/automa-saga/version.Commit={{.COMMIT}} -X github.com/automa-saga/version.Date={{.DATE}}'
   # VM configuration
   VM_OS_TYPE: '{{.VM_OS_TYPE | default "debian"}}'  # Options: debian, ubuntu
   VM_NAME: "solo-weaver-{{.VM_OS_TYPE}}"
@@ -91,10 +99,8 @@ tasks:
     desc: "Enforce errorx over errors.New / fmt.Errorf in production code (only lines new vs origin/main)"
     deps:
       - task: setup:golangci-lint
-      # `generate` produces the embedded VERSION/COMMIT files under pkg/version/{cli,daemon};
-      # `mocks` produces *_generated.go test mocks. Both are required by forbidigo's
+      # `mocks` produces *_generated.go test mocks, required by forbidigo's
       # type-aware analysis (analyze-types: true) to typecheck the tree cleanly.
-      - task: generate
       - task: mocks
     env:
       # Run as Linux so platform-tagged files (e.g. internal/mount/*_unix.go, pkg/kernel
@@ -140,8 +146,6 @@ tasks:
       - "vendor"
     cmds:
       - task: "clean"
-      # `generate` runs via build:cli:all / build:daemon:all's deps; declared
-      # `run: once` so it only fires once across all callers in this invocation.
       - task: "build:cli:all"
       - task: "build:daemon:all"
     sources:
@@ -191,8 +195,8 @@ tasks:
       - "source /etc/profile.d/go.sh"
       - "source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@latest"
       # Set the Go toolchain to auto-upgrade to the latest version due to https://github.com/golang/go/issues/75031
-      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.2+auto"
-      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.25.2+auto"
+      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.26.0+auto"
+      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.26.0+auto"
     generates:
       - "/usr/local/go/**"
   

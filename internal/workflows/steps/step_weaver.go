@@ -12,11 +12,11 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/security/sudoers"
-	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 )
 
@@ -57,8 +57,8 @@ func CheckWeaverInstallation(binDir string) *automa.StepBuilder {
 
 			meta := map[string]string{
 				"weaver_path":       exePath,
-				"installed_version": version.Number(),
-				"installed_commit":  version.Commit(),
+				"installed_version": version.Get().Version,
+				"installed_commit":  version.Get().Commit,
 			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))

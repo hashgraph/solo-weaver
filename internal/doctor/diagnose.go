@@ -20,7 +20,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
-	"github.com/hashgraph/solo-weaver/pkg/version"
+	"github.com/automa-saga/version"
 	"github.com/joomcode/errorx"
 )
 
@@ -238,6 +238,7 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 	}
 
 	msg, cause := toErrorMessage(ex)
+	vinfo := version.Get()
 	return &ErrorDiagnosis{
 		Error:      ex,
 		ErrorType:  errorx.GetTypeName(ex),
@@ -245,8 +246,8 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 		Cause:      cause,
 		TraceId:    traceId,
 		Code:       toErrorCode(ex),
-		Commit:     version.Commit(),
-		Version:    version.Number(),
+		Commit:     vinfo.Commit,
+		Version:    vinfo.Version,
 		GoVersion:  runtime.Version(),
 		Pid:        os.Getpid(),
 		Logfile:    config.Get().Log.Filename,

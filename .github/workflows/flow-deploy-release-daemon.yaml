@@ -142,10 +142,15 @@ jobs:
               echo "::notice::Dry-run mode - no daemon release would be created"
             fi
           else
-            if [[ -f "pkg/version/daemon/VERSION" ]]; then
-              echo "number=$(cat pkg/version/daemon/VERSION | tr -d '[:space:]')" >> "${GITHUB_OUTPUT}"
+            # Version is stamped into the binary via -ldflags at build time; there is
+            # no longer a VERSION file to read. Recover the released version from the
+            # semantic-release log (printed in both dry-run and real runs).
+            VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\(-[0-9A-Za-z.-]\{1,\}\)\{0,1\}\).*/\1/p' semantic-release-output.txt || echo "")
+            if [[ -n "$VERSION" ]]; then
+              echo "number=${VERSION}" >> "${GITHUB_OUTPUT}"
+              echo "::notice::Released daemon version: ${VERSION}"
             else
-              echo "::error::pkg/version/daemon/VERSION file not found after release"
-              exit 1
+              echo "number=no-release" >> "${GITHUB_OUTPUT}"
+              echo "::notice::No new daemon release was created"
             fi
           fi
