@@ -354,12 +354,6 @@ secring.*
 dist/
 /bin/
 
-### Application Version Info ###
-pkg/version/cli/COMMIT
-pkg/version/cli/VERSION
-pkg/version/daemon/COMMIT
-pkg/version/daemon/VERSION
-
 ### Generated Files ###
 **/mocks_generated.go
 unit-test-report.md

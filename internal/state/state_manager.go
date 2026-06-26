@@ -13,8 +13,8 @@ import (
 	"sync"
 
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
-	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -204,8 +204,8 @@ func (m *stateManager) Refresh() error {
 	// always reflects the binary that last ran, establishing the two-value
 	// invariant used by startup migrations:
 	//   lastCLIVersion  = the version read from disk before this Refresh()
-	//   currentCLIVersion = version.Number() (the running binary)
-	newState.ProvisionerState.Version = version.Number()
+	//   currentCLIVersion = version.Get().Version (the running binary)
+	newState.ProvisionerState.Version = version.Get().Version
 
 	newState.LastAction = m.state.LastAction
 

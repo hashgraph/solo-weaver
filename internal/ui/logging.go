@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -111,7 +111,7 @@ func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 	return zerolog.New(fileWriter).With().
 		Timestamp().
 		Int("pid", pid).
-		Str("version", version.Number()).
+		Str("version", version.Get().Version).
 		Logger()
 }
 

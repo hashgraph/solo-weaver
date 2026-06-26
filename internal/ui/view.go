@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/version"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hashgraph/solo-weaver/pkg/version"
 	"github.com/muesli/termenv"
 )
 
@@ -281,7 +281,7 @@ func RenderVersionHeader() string {
 	}
 	return fmt.Sprintf("%s %s %s %s\n",
 		versionNameStyle.Render("solo-provisioner"),
-		versionValueStyle.Render(info.Number),
+		versionValueStyle.Render(info.Version),
 		versionDetailStyle.Render("("+commit+")"),
 		versionDetailStyle.Render(info.GoVersion))
 }

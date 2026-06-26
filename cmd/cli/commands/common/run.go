@@ -17,6 +17,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 
+	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -26,7 +27,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	pkgconfig "github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	version "github.com/hashgraph/solo-weaver/pkg/version/cli"
 )
 
 const KeyRequireGlobalChecks = "requireGlobalChecks"
@@ -278,7 +278,7 @@ func RunStartupMigrations(ctx context.Context) error {
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedCLIVersion)
-	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Number())
+	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Get().Version)
 
 	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 	if err != nil {
