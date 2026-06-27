@@ -29,7 +29,7 @@ tasks:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
     interactive: true
     vars:
-      BN_VERSION: '{{.BN_VERSION | default "0.26.0"}}'
+      BN_VERSION: '{{.BN_VERSION | default "0.26.2"}}'
       PLUGIN_PRESET: '{{.PLUGIN_PRESET | default ""}}'
       NON_INTERACTIVE: '{{.NON_INTERACTIVE | default "false"}}'
     cmds:
@@ -60,6 +60,32 @@ tasks:
         kubectl get pods -n block-node
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
+
+        echo -e "\n▶ Verify optional storage PV/PVC inventory (chart version $CHART_VER)"
+        # PVC inventory follows the OptionalStorage registry in internal/blocknode/optional_storage.go:
+        #   - live/archive/log are always required (3 pairs)
+        #   - verification is required for 0.26.2 <= chart < 0.37.0
+        #   - plugins is required for chart >= 0.28.1
+        #   - application-state is required for chart >= 0.37.0 (introduced by
+        #     hiero-ledger/hiero-block-node#3025 in lockstep with verification retirement)
+        EXPECTED_PVCS="live-storage-pvc archive-storage-pvc logging-storage-pvc"
+        SORT_CHART=$(printf '%s\n%s\n' "$CHART_VER" "0.37.0" | sort -V | head -1)
+        if [ "$SORT_CHART" = "$CHART_VER" ] && [ "$CHART_VER" != "0.37.0" ]; then
+          EXPECTED_PVCS="$EXPECTED_PVCS verification-storage-pvc"
+        fi
+        SORT_CHART=$(printf '%s\n%s\n' "$CHART_VER" "0.28.1" | sort -V | head -1)
+        if [ "$SORT_CHART" = "0.28.1" ]; then
+          EXPECTED_PVCS="$EXPECTED_PVCS plugins-storage-pvc"
+        fi
+        SORT_CHART=$(printf '%s\n%s\n' "$CHART_VER" "0.37.0" | sort -V | head -1)
+        if [ "$SORT_CHART" = "0.37.0" ]; then
+          EXPECTED_PVCS="$EXPECTED_PVCS application-state-storage-pvc"
+        fi
+        for pvc in $EXPECTED_PVCS; do
+          PHASE=$(kubectl get pvc -n block-node "$pvc" -o jsonpath='{.status.phase}' 2>/dev/null || echo "MISSING")
+          [ "$PHASE" = "Bound" ] || { echo "FAIL: expected PVC $pvc to be Bound at chart $CHART_VER, got: $PHASE"; exit 1; }
+          echo "   ✓ $pvc (Bound)"
+        done
 
         echo ''
         echo '✅ UAT Setup: PASSED'
@@ -158,6 +184,21 @@ tasks:
         ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
         [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.35.1 upgrade, got: '$ANNOTATION'"; exit 1; }
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
+
+
+        echo -e '\n▶ Verify application-state PVC is NOT created on the upgrade path to 0.35.1'
+        # The application-state registry MinVersion is BlockNodeApplicationStateRequiredVersion
+        # = 0.37.0 — the chart version where hiero-ledger/hiero-block-node#3025 introduces the
+        # new volume in lockstep with verification retirement. An existing cluster upgraded
+        # through 0.29.0 → 0.30.2 → 0.35.1 never crosses 0.37.0, so neither the registry's
+        # CreatePersistentVolumes nor the migration creates the PVC here. Once a tagged
+        # release containing #3025 is published, extend this chain with a step to that
+        # release and flip the assertion.
+        if kubectl get pvc -n block-node application-state-storage-pvc >/dev/null 2>&1; then
+          echo "FAIL: application-state-storage-pvc should not be created on the upgrade path to 0.35.1 (MinVersion is 0.37.0)"
+          exit 1
+        fi
+        echo "   ✓ application-state PVC absent (MinVersion correctly at 0.37.0)"
 
 
         echo -e '\n▶ Block node reset'

@@ -67,17 +67,19 @@ type Config struct {
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.
 type BlockNodeStorage struct {
-	BasePath         string `yaml:"basePath" json:"basePath"`
-	ArchivePath      string `yaml:"archivePath" json:"archivePath"`
-	LivePath         string `yaml:"livePath" json:"livePath"`
-	LogPath          string `yaml:"logPath" json:"logPath"`
-	VerificationPath string `yaml:"verificationPath" json:"verificationPath"`
-	PluginsPath      string `yaml:"pluginsPath" json:"pluginsPath"`
-	LiveSize         string `yaml:"liveSize" json:"liveSize"`
-	ArchiveSize      string `yaml:"archiveSize" json:"archiveSize"`
-	LogSize          string `yaml:"logSize" json:"logSize"`
-	VerificationSize string `yaml:"verificationSize" json:"verificationSize"`
-	PluginsSize      string `yaml:"pluginsSize" json:"pluginsSize"`
+	BasePath             string `yaml:"basePath" json:"basePath"`
+	ArchivePath          string `yaml:"archivePath" json:"archivePath"`
+	LivePath             string `yaml:"livePath" json:"livePath"`
+	LogPath              string `yaml:"logPath" json:"logPath"`
+	VerificationPath     string `yaml:"verificationPath" json:"verificationPath"`
+	PluginsPath          string `yaml:"pluginsPath" json:"pluginsPath"`
+	ApplicationStatePath string `yaml:"applicationStatePath" json:"applicationStatePath"`
+	LiveSize             string `yaml:"liveSize" json:"liveSize"`
+	ArchiveSize          string `yaml:"archiveSize" json:"archiveSize"`
+	LogSize              string `yaml:"logSize" json:"logSize"`
+	VerificationSize     string `yaml:"verificationSize" json:"verificationSize"`
+	PluginsSize          string `yaml:"pluginsSize" json:"pluginsSize"`
+	ApplicationStateSize string `yaml:"applicationStateSize" json:"applicationStateSize"`
 }
 
 // IsEmpty returns true when all BlockNodeStorage fields are empty (after trimming).
@@ -95,7 +97,7 @@ func (b *BlockNodeStorage) IsEmpty() bool {
 // overwriting fields already set in b.
 //
 // Individual path fields (ArchivePath, LivePath, LogPath, VerificationPath,
-// PluginsPath) are only merged when b has no BasePath at call time. When b
+// PluginsPath, ApplicationStatePath) are only merged when b has no BasePath at call time. When b
 // already carries a BasePath, those fields are intentionally empty — they will
 // be derived from BasePath at resolution time — so lower-priority individual
 // paths must not fill them in. BasePath itself and all size fields are always
@@ -124,6 +126,9 @@ func (b *BlockNodeStorage) MergeFrom(other BlockNodeStorage) {
 		if strings.TrimSpace(b.PluginsPath) == "" && strings.TrimSpace(other.PluginsPath) != "" {
 			b.PluginsPath = other.PluginsPath
 		}
+		if strings.TrimSpace(b.ApplicationStatePath) == "" && strings.TrimSpace(other.ApplicationStatePath) != "" {
+			b.ApplicationStatePath = other.ApplicationStatePath
+		}
 	}
 	if strings.TrimSpace(b.LiveSize) == "" && strings.TrimSpace(other.LiveSize) != "" {
 		b.LiveSize = other.LiveSize
@@ -139,6 +144,9 @@ func (b *BlockNodeStorage) MergeFrom(other BlockNodeStorage) {
 	}
 	if strings.TrimSpace(b.PluginsSize) == "" && strings.TrimSpace(other.PluginsSize) != "" {
 		b.PluginsSize = other.PluginsSize
+	}
+	if strings.TrimSpace(b.ApplicationStateSize) == "" && strings.TrimSpace(other.ApplicationStateSize) != "" {
+		b.ApplicationStateSize = other.ApplicationStateSize
 	}
 }
 
@@ -188,6 +196,13 @@ func (b *BlockNodeStorage) Validate() error {
 		}
 	}
 
+	// Validate ApplicationStatePath if provided
+	if b.ApplicationStatePath != "" {
+		if _, err := sanity.SanitizePath(b.ApplicationStatePath); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid application-state path: %s", b.ApplicationStatePath)
+		}
+	}
+
 	// Validate storage sizes if provided
 	if b.LiveSize != "" {
 		if err := sanity.ValidateStorageSize(b.LiveSize); err != nil {
@@ -216,6 +231,12 @@ func (b *BlockNodeStorage) Validate() error {
 	if b.PluginsSize != "" {
 		if err := sanity.ValidateStorageSize(b.PluginsSize); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid plugins storage size: %s", b.PluginsSize)
+		}
+	}
+
+	if b.ApplicationStateSize != "" {
+		if err := sanity.ValidateStorageSize(b.ApplicationStateSize); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid application-state storage size: %s", b.ApplicationStateSize)
 		}
 	}
 

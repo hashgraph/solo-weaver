@@ -76,7 +76,7 @@ func FlagVerificationPath() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "verification-path",
 		ShortName:   "",
-		Description: "Path for verification storage",
+		Description: "Path for verification storage (chart versions below 0.37.0)",
 		Default:     "",
 	}
 }
@@ -86,6 +86,15 @@ func FlagPluginsPath() FlagDefinition[string] {
 		Name:        "plugins-path",
 		ShortName:   "",
 		Description: "Path for plugins storage",
+		Default:     "",
+	}
+}
+
+func FlagApplicationStatePath() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "application-state-path",
+		ShortName:   "",
+		Description: "Path for application-state storage (chart versions 0.37.0 and above)",
 		Default:     "",
 	}
 }
@@ -121,7 +130,7 @@ func FlagVerificationSize() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "verification-size",
 		ShortName:   "",
-		Description: "Size for verification storage PV/PVC (e.g., 5Gi, 10Gi)",
+		Description: "Size for verification storage PV/PVC, e.g., 5Gi, 10Gi (chart versions below 0.37.0)",
 		Default:     "",
 	}
 }
@@ -131,6 +140,15 @@ func FlagPluginsSize() FlagDefinition[string] {
 		Name:        "plugins-size",
 		ShortName:   "",
 		Description: "Size for plugins storage PV/PVC (e.g., 5Gi, 10Gi)",
+		Default:     "",
+	}
+}
+
+func FlagApplicationStateSize() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "application-state-size",
+		ShortName:   "",
+		Description: "Size for application-state storage PV/PVC, e.g., 500Mi, 1Gi (chart versions 0.37.0 and above)",
 		Default:     "",
 	}
 }

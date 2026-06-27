@@ -107,35 +107,41 @@ func TestCreatePersistentVolumes_ValidYAMLOutput(t *testing.T) {
 
 			// Prepare template data
 			data := struct {
-				Namespace           string
-				Release             string
-				LivePath            string
-				ArchivePath         string
-				LogPath             string
-				VerificationPath    string
-				PluginsPath         string
-				LiveSize            string
-				ArchiveSize         string
-				LogSize             string
-				VerificationSize    string
-				PluginsSize         string
-				IncludeVerification bool
-				IncludePlugins      bool
+				Namespace               string
+				Release                 string
+				LivePath                string
+				ArchivePath             string
+				LogPath                 string
+				VerificationPath        string
+				PluginsPath             string
+				ApplicationStatePath    string
+				LiveSize                string
+				ArchiveSize             string
+				LogSize                 string
+				VerificationSize        string
+				PluginsSize             string
+				ApplicationStateSize    string
+				IncludeVerification     bool
+				IncludePlugins          bool
+				IncludeApplicationState bool
 			}{
-				Namespace:           manager.blockNodeInputs.Namespace,
-				Release:             manager.blockNodeInputs.Release,
-				LivePath:            livePath,
-				ArchivePath:         archivePath,
-				LogPath:             logPath,
-				VerificationPath:    verificationPath,
-				PluginsPath:         pluginsPath,
-				LiveSize:            manager.blockNodeInputs.Storage.LiveSize,
-				ArchiveSize:         manager.blockNodeInputs.Storage.ArchiveSize,
-				LogSize:             manager.blockNodeInputs.Storage.LogSize,
-				VerificationSize:    manager.blockNodeInputs.Storage.VerificationSize,
-				PluginsSize:         manager.blockNodeInputs.Storage.PluginsSize,
-				IncludeVerification: true, // Include verification storage in tests
-				IncludePlugins:      true, // Include plugins storage in tests
+				Namespace:            manager.blockNodeInputs.Namespace,
+				Release:              manager.blockNodeInputs.Release,
+				LivePath:             livePath,
+				ArchivePath:          archivePath,
+				LogPath:              logPath,
+				VerificationPath:     verificationPath,
+				PluginsPath:          pluginsPath,
+				LiveSize:             manager.blockNodeInputs.Storage.LiveSize,
+				ArchiveSize:          manager.blockNodeInputs.Storage.ArchiveSize,
+				LogSize:              manager.blockNodeInputs.Storage.LogSize,
+				VerificationSize:     manager.blockNodeInputs.Storage.VerificationSize,
+				PluginsSize:          manager.blockNodeInputs.Storage.PluginsSize,
+				ApplicationStateSize: manager.blockNodeInputs.Storage.ApplicationStateSize,
+				IncludeVerification:  true, // Include verification storage in tests
+				IncludePlugins:       true, // Include plugins storage in tests
+				// IncludeApplicationState left false — these matrix cases exercise the pre-0.36 storage layout
+				// (chart version 0.28.1). Application-state coverage lives in TestOptionalStorages_ApplicationState.
 			}
 
 			// Render the storage config template
@@ -243,35 +249,40 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 
 	// Prepare template data
 	data := struct {
-		Namespace           string
-		Release             string
-		LivePath            string
-		ArchivePath         string
-		LogPath             string
-		VerificationPath    string
-		PluginsPath         string
-		LiveSize            string
-		ArchiveSize         string
-		LogSize             string
-		VerificationSize    string
-		PluginsSize         string
-		IncludeVerification bool
-		IncludePlugins      bool
+		Namespace               string
+		Release                 string
+		LivePath                string
+		ArchivePath             string
+		LogPath                 string
+		VerificationPath        string
+		PluginsPath             string
+		ApplicationStatePath    string
+		LiveSize                string
+		ArchiveSize             string
+		LogSize                 string
+		VerificationSize        string
+		PluginsSize             string
+		ApplicationStateSize    string
+		IncludeVerification     bool
+		IncludePlugins          bool
+		IncludeApplicationState bool
 	}{
-		Namespace:           manager.blockNodeInputs.Namespace,
-		Release:             manager.blockNodeInputs.Release,
-		LivePath:            livePath,
-		ArchivePath:         archivePath,
-		LogPath:             logPath,
-		VerificationPath:    verificationPath,
-		PluginsPath:         pluginsPath,
-		LiveSize:            manager.blockNodeInputs.Storage.LiveSize,
-		ArchiveSize:         manager.blockNodeInputs.Storage.ArchiveSize,
-		LogSize:             manager.blockNodeInputs.Storage.LogSize,
-		VerificationSize:    manager.blockNodeInputs.Storage.VerificationSize,
-		PluginsSize:         manager.blockNodeInputs.Storage.PluginsSize,
-		IncludeVerification: true,
-		IncludePlugins:      true,
+		Namespace:            manager.blockNodeInputs.Namespace,
+		Release:              manager.blockNodeInputs.Release,
+		LivePath:             livePath,
+		ArchivePath:          archivePath,
+		LogPath:              logPath,
+		VerificationPath:     verificationPath,
+		PluginsPath:          pluginsPath,
+		LiveSize:             manager.blockNodeInputs.Storage.LiveSize,
+		ArchiveSize:          manager.blockNodeInputs.Storage.ArchiveSize,
+		LogSize:              manager.blockNodeInputs.Storage.LogSize,
+		VerificationSize:     manager.blockNodeInputs.Storage.VerificationSize,
+		PluginsSize:          manager.blockNodeInputs.Storage.PluginsSize,
+		ApplicationStateSize: manager.blockNodeInputs.Storage.ApplicationStateSize,
+		IncludeVerification:  true,
+		IncludePlugins:       true,
+		// IncludeApplicationState left false — this test covers the pre-0.36 storage layout.
 	}
 
 	// Render the storage config template
@@ -316,47 +327,113 @@ func TestStorageConfigNoCorruption(t *testing.T) {
 // path depends on this being true.
 func TestStorageConfigRendersLabels(t *testing.T) {
 	data := struct {
-		Namespace           string
-		Release             string
-		LivePath            string
-		ArchivePath         string
-		LogPath             string
-		VerificationPath    string
-		PluginsPath         string
-		LiveSize            string
-		ArchiveSize         string
-		LogSize             string
-		VerificationSize    string
-		PluginsSize         string
-		IncludeVerification bool
-		IncludePlugins      bool
+		Namespace               string
+		Release                 string
+		LivePath                string
+		ArchivePath             string
+		LogPath                 string
+		VerificationPath        string
+		PluginsPath             string
+		ApplicationStatePath    string
+		LiveSize                string
+		ArchiveSize             string
+		LogSize                 string
+		VerificationSize        string
+		PluginsSize             string
+		ApplicationStateSize    string
+		IncludeVerification     bool
+		IncludePlugins          bool
+		IncludeApplicationState bool
 	}{
-		Namespace:           "block-node-ns",
-		Release:             "my-release",
-		LivePath:            "/mnt/live",
-		ArchivePath:         "/mnt/archive",
-		LogPath:             "/mnt/log",
-		VerificationPath:    "/mnt/verification",
-		PluginsPath:         "/mnt/plugins",
-		LiveSize:            "5Gi",
-		ArchiveSize:         "5Gi",
-		LogSize:             "5Gi",
-		VerificationSize:    "5Gi",
-		PluginsSize:         "5Gi",
-		IncludeVerification: true,
-		IncludePlugins:      true,
+		Namespace:               "block-node-ns",
+		Release:                 "my-release",
+		LivePath:                "/mnt/live",
+		ArchivePath:             "/mnt/archive",
+		LogPath:                 "/mnt/log",
+		VerificationPath:        "/mnt/verification",
+		PluginsPath:             "/mnt/plugins",
+		ApplicationStatePath:    "/mnt/application-state",
+		LiveSize:                "5Gi",
+		ArchiveSize:             "5Gi",
+		LogSize:                 "5Gi",
+		VerificationSize:        "5Gi",
+		PluginsSize:             "5Gi",
+		ApplicationStateSize:    "500Mi",
+		IncludeVerification:     true,
+		IncludePlugins:          true,
+		IncludeApplicationState: true,
 	}
 
 	rendered, err := templates.Render("files/block-node/storage-config.yaml", data)
 	require.NoError(t, err)
 
-	// 5 PV + 5 PVC = 10 metadata blocks. Each must carry all three labels.
-	assert.Equal(t, 10, strings.Count(rendered, "app.kubernetes.io/managed-by: solo-provisioner"),
+	// 6 PV + 6 PVC = 12 metadata blocks (live + archive + log + verification + plugins + application-state).
+	// Each must carry all three labels.
+	assert.Equal(t, 12, strings.Count(rendered, "app.kubernetes.io/managed-by: solo-provisioner"),
 		"expected one managed-by label per PV/PVC")
-	assert.Equal(t, 10, strings.Count(rendered, "app.kubernetes.io/component: block-node-storage"),
+	assert.Equal(t, 12, strings.Count(rendered, "app.kubernetes.io/component: block-node-storage"),
 		"expected one component label per PV/PVC")
-	assert.Equal(t, 10, strings.Count(rendered, "app.kubernetes.io/instance: my-release"),
+	assert.Equal(t, 12, strings.Count(rendered, "app.kubernetes.io/instance: my-release"),
 		"expected one instance=my-release label per PV/PVC")
+}
+
+// TestStorageConfigRendersApplicationState verifies the storage-config template
+// emits the application-state PV/PVC pair only when IncludeApplicationState is true,
+// uses the correct claim/volume names, defaults to a 500Mi capacity when no size is
+// provided, and omits the verification block when IncludeVerification is false
+// (the 0.36.0-rc.0+ layout).
+func TestStorageConfigRendersApplicationState(t *testing.T) {
+	data := struct {
+		Namespace               string
+		Release                 string
+		LivePath                string
+		ArchivePath             string
+		LogPath                 string
+		VerificationPath        string
+		PluginsPath             string
+		ApplicationStatePath    string
+		LiveSize                string
+		ArchiveSize             string
+		LogSize                 string
+		VerificationSize        string
+		PluginsSize             string
+		ApplicationStateSize    string
+		IncludeVerification     bool
+		IncludePlugins          bool
+		IncludeApplicationState bool
+	}{
+		Namespace:            "block-node",
+		Release:              "my-release",
+		LivePath:             "/mnt/live",
+		ArchivePath:          "/mnt/archive",
+		LogPath:              "/mnt/log",
+		PluginsPath:          "/mnt/plugins",
+		ApplicationStatePath: "/mnt/application-state",
+		LiveSize:             "5Gi",
+		ArchiveSize:          "5Gi",
+		LogSize:              "5Gi",
+		PluginsSize:          "5Gi",
+		// ApplicationStateSize intentionally left empty to exercise the template default.
+		IncludeVerification:     false, // post-0.36 layout
+		IncludePlugins:          true,
+		IncludeApplicationState: true,
+	}
+
+	rendered, err := templates.Render("files/block-node/storage-config.yaml", data)
+	require.NoError(t, err)
+
+	assert.Contains(t, rendered, "name: application-state-storage-pv",
+		"application-state PV must be emitted when IncludeApplicationState=true")
+	assert.Contains(t, rendered, "name: application-state-storage-pvc",
+		"application-state PVC must be emitted when IncludeApplicationState=true")
+	assert.Contains(t, rendered, "volumeName: application-state-storage-pv",
+		"application-state PVC must bind to the matching PV name")
+	assert.Contains(t, rendered, "storage: 500Mi",
+		"application-state PV/PVC must fall back to the 500Mi default when no size is set")
+	assert.NotContains(t, rendered, "name: verification-storage-pv",
+		"verification PV must NOT be emitted when IncludeVerification=false (post-0.36 layout)")
+	assert.NotContains(t, rendered, "name: verification-storage-pvc",
+		"verification PVC must NOT be emitted when IncludeVerification=false (post-0.36 layout)")
 }
 
 // TestOptionalStorageRendersLabels checks the same invariant on the per-storage

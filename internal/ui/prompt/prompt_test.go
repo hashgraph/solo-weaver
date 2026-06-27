@@ -271,28 +271,30 @@ func TestRunStoragePathPrompts_SkipsWhenBasePathFlagSet(t *testing.T) {
 	child := &cobra.Command{Use: "reconfigure", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
 	parent.AddCommand(child)
 
-	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath string
+	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath, applicationStatePath string
 	parent.PersistentFlags().StringVar(&basePath, "base-path", "", "")
 	parent.PersistentFlags().StringVar(&archivePath, "archive-path", "", "")
 	parent.PersistentFlags().StringVar(&livePath, "live-path", "", "")
 	parent.PersistentFlags().StringVar(&logPath, "log-path", "", "")
 	parent.PersistentFlags().StringVar(&verificationPath, "verification-path", "", "")
 	parent.PersistentFlags().StringVar(&pluginsPath, "plugins-path", "", "")
+	parent.PersistentFlags().StringVar(&applicationStatePath, "application-state-path", "", "")
 	_ = child.ParseFlags([]string{})
 
 	// Simulate --base-path provided on CLI.
 	_ = parent.PersistentFlags().Set("base-path", "/data")
 
 	targets := StoragePathTargets{
-		BasePath:         &basePath,
-		ArchivePath:      &archivePath,
-		LivePath:         &livePath,
-		LogPath:          &logPath,
-		VerificationPath: &verificationPath,
-		PluginsPath:      &pluginsPath,
+		BasePath:             &basePath,
+		ArchivePath:          &archivePath,
+		LivePath:             &livePath,
+		LogPath:              &logPath,
+		VerificationPath:     &verificationPath,
+		PluginsPath:          &pluginsPath,
+		ApplicationStatePath: &applicationStatePath,
 	}
 	cv := NewChosenValues()
-	if err := RunStoragePathPrompts(child, state.PromptDefaults{}, targets, cv); err != nil {
+	if err := RunStoragePathPrompts(child, state.PromptDefaults{}, "0.35.1", targets, cv); err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 	if len(cv.pairs) != 0 {
@@ -307,28 +309,30 @@ func TestRunStoragePathPrompts_SkipsWhenIndividualFlagSet(t *testing.T) {
 	child := &cobra.Command{Use: "install", RunE: func(cmd *cobra.Command, args []string) error { return nil }}
 	parent.AddCommand(child)
 
-	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath string
+	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath, applicationStatePath string
 	parent.PersistentFlags().StringVar(&basePath, "base-path", "", "")
 	parent.PersistentFlags().StringVar(&archivePath, "archive-path", "", "")
 	parent.PersistentFlags().StringVar(&livePath, "live-path", "", "")
 	parent.PersistentFlags().StringVar(&logPath, "log-path", "", "")
 	parent.PersistentFlags().StringVar(&verificationPath, "verification-path", "", "")
 	parent.PersistentFlags().StringVar(&pluginsPath, "plugins-path", "", "")
+	parent.PersistentFlags().StringVar(&applicationStatePath, "application-state-path", "", "")
 	_ = child.ParseFlags([]string{})
 
 	// Simulate --archive-path provided on CLI.
 	_ = parent.PersistentFlags().Set("archive-path", "/archive")
 
 	targets := StoragePathTargets{
-		BasePath:         &basePath,
-		ArchivePath:      &archivePath,
-		LivePath:         &livePath,
-		LogPath:          &logPath,
-		VerificationPath: &verificationPath,
-		PluginsPath:      &pluginsPath,
+		BasePath:             &basePath,
+		ArchivePath:          &archivePath,
+		LivePath:             &livePath,
+		LogPath:              &logPath,
+		VerificationPath:     &verificationPath,
+		PluginsPath:          &pluginsPath,
+		ApplicationStatePath: &applicationStatePath,
 	}
 	cv := NewChosenValues()
-	if err := RunStoragePathPrompts(child, state.PromptDefaults{}, targets, cv); err != nil {
+	if err := RunStoragePathPrompts(child, state.PromptDefaults{}, "0.35.1", targets, cv); err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 	if len(cv.pairs) != 0 {

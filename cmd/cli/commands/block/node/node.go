@@ -15,27 +15,29 @@ var (
 	flagRollbackOnError bool
 	flagContinueOnError bool
 
-	flagValuesFile          string
-	flagChartVersion        string
-	flagChartRepo           string
-	flagNamespace           string
-	flagReleaseName         string
-	flagBasePath            string
-	flagArchivePath         string
-	flagLivePath            string
-	flagLogPath             string
-	flagVerificationPath    string
-	flagPluginsPath         string
-	flagLiveSize            string
-	flagArchiveSize         string
-	flagLogSize             string
-	flagVerificationSize    string
-	flagPluginsSize         string
-	flagHistoricRetention   string
-	flagRecentRetention     string
-	flagPluginPreset        string
-	flagPlugins             string
-	flagLoadBalancerEnabled bool
+	flagValuesFile           string
+	flagChartVersion         string
+	flagChartRepo            string
+	flagNamespace            string
+	flagReleaseName          string
+	flagBasePath             string
+	flagArchivePath          string
+	flagLivePath             string
+	flagLogPath              string
+	flagVerificationPath     string
+	flagPluginsPath          string
+	flagApplicationStatePath string
+	flagLiveSize             string
+	flagArchiveSize          string
+	flagLogSize              string
+	flagVerificationSize     string
+	flagPluginsSize          string
+	flagApplicationStateSize string
+	flagHistoricRetention    string
+	flagRecentRetention      string
+	flagPluginPreset         string
+	flagPlugins              string
+	flagLoadBalancerEnabled  bool
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -74,6 +76,7 @@ func init() {
 	common.FlagLogPath().SetVarP(nodeCmd, &flagLogPath, false)
 	common.FlagVerificationPath().SetVarP(nodeCmd, &flagVerificationPath, false)
 	common.FlagPluginsPath().SetVarP(nodeCmd, &flagPluginsPath, false)
+	common.FlagApplicationStatePath().SetVarP(nodeCmd, &flagApplicationStatePath, false)
 
 	// Storage size configuration flags
 	common.FlagLiveSize().SetVarP(nodeCmd, &flagLiveSize, false)
@@ -81,6 +84,7 @@ func init() {
 	common.FlagLogSize().SetVarP(nodeCmd, &flagLogSize, false)
 	common.FlagVerificationSize().SetVarP(nodeCmd, &flagVerificationSize, false)
 	common.FlagPluginsSize().SetVarP(nodeCmd, &flagPluginsSize, false)
+	common.FlagApplicationStateSize().SetVarP(nodeCmd, &flagApplicationStateSize, false)
 
 	// Block retention configuration flags
 	common.FlagHistoricRetention().SetVarP(nodeCmd, &flagHistoricRetention, false)

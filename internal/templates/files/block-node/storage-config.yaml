@@ -187,3 +187,42 @@ spec:
       storage: {{ or .PluginsSize "5Gi" }}
   volumeName: plugins-storage-pv
 {{- end }}
+{{- if .IncludeApplicationState }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: application-state-storage-pv
+  labels:
+    app.kubernetes.io/managed-by: solo-provisioner
+    app.kubernetes.io/component: block-node-storage
+    app.kubernetes.io/instance: {{ or .Release "block-node" }}
+spec:
+  claimRef:
+    name: application-state-storage-pvc
+    namespace: {{ or .Namespace "block-node" }}
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: {{ or .ApplicationStateSize "500Mi" }}
+  hostPath:
+    path: {{ or .ApplicationStatePath "/opt/weaver/block-node-storage/application-state" }}
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: application-state-storage-pvc
+  namespace: {{ or .Namespace "block-node" }}
+  labels:
+    app.kubernetes.io/managed-by: solo-provisioner
+    app.kubernetes.io/component: block-node-storage
+    app.kubernetes.io/instance: {{ or .Release "block-node" }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ or .ApplicationStateSize "500Mi" }}
+  volumeName: application-state-storage-pv
+{{- end }}

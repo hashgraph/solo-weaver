@@ -71,6 +71,32 @@ func TestVerificationStorageMigration_Applies(t *testing.T) {
 			expectApplies:    false,
 		},
 		{
+			// 0.36.x still requires verification: the volume retires only at
+			// 0.37.0. The Applies override defers to RequiredByVersion which
+			// returns true for [0.26.2, 0.37.0).
+			name:             "upgrade from 0.25.0 to 0.36.0 SHOULD apply (verification still present)",
+			installedVersion: "0.25.0",
+			targetVersion:    "0.36.0",
+			expectApplies:    true,
+		},
+		{
+			// Regression for the MaxVersion guard on StorageMigration.Applies.
+			// Without it, the generic VersionMigration check would report this
+			// upgrade as applicable (installed < 0.26.2 && target >= 0.26.2),
+			// creating an orphan verification PV/PVC at a chart version that
+			// has truly retired the verification volume (>= 0.37.0).
+			name:             "upgrade across retirement boundary (0.25.0 -> 0.37.0) should NOT apply",
+			installedVersion: "0.25.0",
+			targetVersion:    "0.37.0",
+			expectApplies:    false,
+		},
+		{
+			name:             "upgrade across retirement boundary (0.25.0 -> 1.0.0) should NOT apply",
+			installedVersion: "0.25.0",
+			targetVersion:    "1.0.0",
+			expectApplies:    false,
+		},
+		{
 			name:             "not installed (empty version) should NOT apply",
 			installedVersion: "",
 			targetVersion:    "0.26.2",
@@ -227,12 +253,95 @@ func TestPluginsStorageMigration_Applies(t *testing.T) {
 	}
 }
 
+// TestApplicationStateMigration_Applies tests the version boundary detection
+// for the application-state storage migration. The boundary is
+// BlockNodeApplicationStateRequiredVersion (0.37.0) — the chart version where
+// the new volume first appears (and verification simultaneously retires).
+func TestApplicationStateMigration_Applies(t *testing.T) {
+	m := NewApplicationStateMigration()
+
+	tests := []struct {
+		name             string
+		installedVersion string
+		targetVersion    string
+		expectApplies    bool
+		expectError      bool
+	}{
+		{
+			name:             "upgrade from 0.36.0 to 0.37.0 should apply (cutover crossed)",
+			installedVersion: "0.36.0",
+			targetVersion:    "0.37.0",
+			expectApplies:    true,
+		},
+		{
+			name:             "upgrade from 0.28.1 to 0.37.0 should apply",
+			installedVersion: "0.28.1",
+			targetVersion:    "0.37.0",
+			expectApplies:    true,
+		},
+		{
+			name:             "upgrade from 0.35.1 to 0.37.0 should apply",
+			installedVersion: "0.35.1",
+			targetVersion:    "0.37.0",
+			expectApplies:    true,
+		},
+		{
+			name:             "upgrade from 0.35.1 to 0.36.0 should NOT apply (still pre-cutover)",
+			installedVersion: "0.35.1",
+			targetVersion:    "0.36.0",
+			expectApplies:    false,
+		},
+		{
+			name:             "upgrade from 0.37.0 to 0.37.5 should NOT apply (already past boundary)",
+			installedVersion: "0.37.0",
+			targetVersion:    "0.37.5",
+			expectApplies:    false,
+		},
+		{
+			name:             "no-version-change upgrade at 0.37.0 should NOT apply",
+			installedVersion: "0.37.0",
+			targetVersion:    "0.37.0",
+			expectApplies:    false,
+		},
+		{
+			name:             "downgrade from 0.37.0 to 0.36.0 should NOT apply",
+			installedVersion: "0.37.0",
+			targetVersion:    "0.36.0",
+			expectApplies:    false,
+		},
+		{
+			name:             "fresh install at 0.37.0 (empty installed) should NOT apply",
+			installedVersion: "",
+			targetVersion:    "0.37.0",
+			expectApplies:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &migration.Context{Data: &automa.SyncStateBag{}}
+			ctx.Data.Set(migration.CtxKeyInstalledVersion, tt.installedVersion)
+			ctx.Data.Set(migration.CtxKeyTargetVersion, tt.targetVersion)
+			applies, err := m.Applies(ctx)
+
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectApplies, applies)
+		})
+	}
+}
+
 // TestGetApplicable_BlockNode tests finding applicable migrations using global registry
 func TestGetApplicable_BlockNode(t *testing.T) {
 	// Clear and register to ensure clean state
 	migration.ClearRegistry()
 	migration.Register(migration.ScopeBlockNode, NewVerificationStorageMigration())
 	migration.Register(migration.ScopeBlockNode, NewPluginsStorageMigration())
+	migration.Register(migration.ScopeBlockNode, NewApplicationStateMigration())
 	defer migration.ClearRegistry()
 
 	tests := []struct {
@@ -271,6 +380,41 @@ func TestGetApplicable_BlockNode(t *testing.T) {
 			installedVersion: "0.28.1",
 			targetVersion:    "0.28.2",
 			expectCount:      0,
+		},
+		{
+			name:             "upgrade from 0.35.1 to 0.36.0 requires no migration (still pre-cutover)",
+			installedVersion: "0.35.1",
+			targetVersion:    "0.36.0",
+			expectCount:      0,
+		},
+		{
+			name:             "upgrade from 0.35.1 to 0.37.0 requires application-state migration only",
+			installedVersion: "0.35.1",
+			targetVersion:    "0.37.0",
+			expectCount:      1,
+		},
+		{
+			name:             "upgrade from 0.27.0 to 0.36.0 requires plugins migration only",
+			installedVersion: "0.27.0",
+			targetVersion:    "0.36.0",
+			expectCount:      1,
+		},
+		{
+			// Skip from pre-verification to 0.36.x triggers verification + plugins
+			// (application-state isn't yet at 0.36.x).
+			name:             "skip from 0.25.0 to 0.36.0 requires verification + plugins migrations",
+			installedVersion: "0.25.0",
+			targetVersion:    "0.36.0",
+			expectCount:      2,
+		},
+		{
+			// Regression: skipping past the 0.37.0 cutover must NOT pull in the
+			// verification migration (it has retired) but MUST pull in plugins
+			// and application-state.
+			name:             "skip across cutover (0.25.0 -> 0.37.0) requires plugins + application-state",
+			installedVersion: "0.25.0",
+			targetVersion:    "0.37.0",
+			expectCount:      2,
 		},
 		{
 			name:             "fresh install (no installed version)",

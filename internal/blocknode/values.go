@@ -85,18 +85,21 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 }
 
 // renderDefaultValues selects and renders the built-in Helm values template for the given profile.
-// The template includes conditional sections for optional storages (verification, plugins) based
-// on the target chart version.
+// The template includes conditional sections for optional storages (verification, plugins,
+// application-state) gated on the chart's target version via the registry.
 func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 	applicable := GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion)
 	includeVerification := false
 	includePlugins := false
+	includeApplicationState := false
 	for _, optStor := range applicable {
 		switch optStor.Name {
 		case "verification":
 			includeVerification = true
 		case "plugins":
 			includePlugins = true
+		case "application-state":
+			includeApplicationState = true
 		}
 	}
 
@@ -106,20 +109,24 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		logx.As().Info().
 			Bool("includeVerification", includeVerification).
 			Bool("includePlugins", includePlugins).
+			Bool("includeApplicationState", includeApplicationState).
 			Msg("Using nano values configuration for local profile")
 	} else {
 		logx.As().Info().
 			Bool("includeVerification", includeVerification).
 			Bool("includePlugins", includePlugins).
+			Bool("includeApplicationState", includeApplicationState).
 			Msg("Using full values configuration")
 	}
 
 	rendered, err := templates.Render(valuesTemplatePath, struct {
-		IncludeVerification bool
-		IncludePlugins      bool
+		IncludeVerification     bool
+		IncludePlugins          bool
+		IncludeApplicationState bool
 	}{
-		IncludeVerification: includeVerification,
-		IncludePlugins:      includePlugins,
+		IncludeVerification:     includeVerification,
+		IncludePlugins:          includePlugins,
+		IncludeApplicationState: includeApplicationState,
 	})
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to render block node values template")
@@ -198,10 +205,19 @@ func (m *Manager) injectPersistenceOverrides(valuesContent []byte) ([]byte, erro
 		{name: "logging", claimName: "logging-storage-pvc"},
 	}
 
-	// Add applicable optional storage entries
+	// Add optional storage entries that apply at this chart version. Key each by
+	// the chart's persistence key, not the kebab-case Name — application-state's
+	// chart key is camelCase "applicationState", so keying by Name would write
+	// blockNode.persistence.application-state, which the chart never reads,
+	// leaving its StatefulSet to fall back to a volumeClaimTemplate (PVC stuck
+	// Pending). PersistenceKey defaults to Name when unset (verification, plugins).
 	for _, optStor := range GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion) {
+		key := optStor.PersistenceKey
+		if key == "" {
+			key = optStor.Name
+		}
 		entries = append(entries, persistenceEntry{
-			name:      optStor.Name,
+			name:      key,
 			claimName: optStor.PVCName,
 		})
 	}

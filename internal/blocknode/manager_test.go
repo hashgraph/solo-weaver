@@ -464,7 +464,12 @@ func TestOptionalStorageRequiredByVersion(t *testing.T) {
 			{"version exactly 0.26.2 should require verification storage", "0.26.2", true},
 			{"version 0.26.3 should require verification storage", "0.26.3", true},
 			{"version 0.27.0 should require verification storage", "0.27.0", true},
-			{"version 1.0.0 should require verification storage", "1.0.0", true},
+			{"version 0.35.1 (current default chart) requires verification storage", "0.35.1", true},
+			{"version 0.36.0 requires verification storage", "0.36.0", true},
+			{"version 0.36.5 requires verification storage", "0.36.5", true},
+			{"version exactly 0.37.0 NOT required (retirement boundary)", "0.37.0", false},
+			{"version 0.37.5 should NOT require verification storage (retired)", "0.37.5", false},
+			{"version 1.0.0 should NOT require verification storage (retired)", "1.0.0", false},
 			{"very old version 0.20.0 should not require verification storage", "0.20.0", false},
 			{"invalid version should default to false (backward compatible)", "invalid-version", false},
 			{"empty version should default to false", "", false},
@@ -514,7 +519,12 @@ func TestGetApplicableOptionalStorages(t *testing.T) {
 		{"between verification and plugins", "0.27.0", 1, []string{"verification"}},
 		{"0.28.0 still before plugins boundary", "0.28.0", 1, []string{"verification"}},
 		{"plugins boundary", "0.28.1", 2, []string{"verification", "plugins"}},
-		{"post-plugins version", "0.29.0", 2, []string{"verification", "plugins"}},
+		{"pre-application-state at 0.35.0 has verification + plugins only", "0.35.0", 2, []string{"verification", "plugins"}},
+		{"0.35.1 still has verification + plugins only (app-state not yet)", "0.35.1", 2, []string{"verification", "plugins"}},
+		{"0.36.0 still has verification + plugins only", "0.36.0", 2, []string{"verification", "plugins"}},
+		{"0.36.5 still has verification + plugins only", "0.36.5", 2, []string{"verification", "plugins"}},
+		{"0.37.0 retires verification, introduces application-state", "0.37.0", 2, []string{"plugins", "application-state"}},
+		{"1.0.0", "1.0.0", 2, []string{"plugins", "application-state"}},
 	}
 
 	for _, tt := range tests {
@@ -566,6 +576,18 @@ func TestComputeValuesFile_VersionAwareSelection(t *testing.T) {
 			profile:         "local",
 			shouldHaveVerif: true,
 		},
+		{
+			name:            "v0.36.0 still has verification (retires only at 0.37.0)",
+			targetVersion:   "0.36.0",
+			profile:         "full",
+			shouldHaveVerif: true,
+		},
+		{
+			name:            "v0.37.0 retires verification (application-state replaces it)",
+			targetVersion:   "0.37.0",
+			profile:         "full",
+			shouldHaveVerif: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -611,6 +633,23 @@ func TestVersionBoundaryScenarios(t *testing.T) {
 	t.Run("fresh install at older version", func(t *testing.T) {
 		assert.False(t, verificationStorage.RequiredByVersion("0.26.0"))
 	})
+
+	t.Run("verification retired at MaxVersion boundary", func(t *testing.T) {
+		assert.False(t, verificationStorage.RequiredByVersion(BlockNodeVerificationRetirementVersion))
+	})
+
+	t.Run("verification still required across the entire 0.36.x branch", func(t *testing.T) {
+		assert.True(t, verificationStorage.RequiredByVersion("0.36.0-rc.0"))
+		assert.True(t, verificationStorage.RequiredByVersion("0.36.0-rc.2"))
+		assert.True(t, verificationStorage.RequiredByVersion("0.36.0"))
+		assert.True(t, verificationStorage.RequiredByVersion("0.36.5"))
+	})
+
+	t.Run("verification retired for any version >= 0.37.0", func(t *testing.T) {
+		assert.False(t, verificationStorage.RequiredByVersion("0.37.0"))
+		assert.False(t, verificationStorage.RequiredByVersion("0.37.5"))
+		assert.False(t, verificationStorage.RequiredByVersion("1.0.0"))
+	})
 }
 
 // TestInvalidVersionHandling tests that invalid versions are handled gracefully
@@ -646,14 +685,94 @@ func TestInvalidVersionHandling(t *testing.T) {
 	}
 }
 
-// TestOptionalStorageRegistryConstants verifies the registry entries have correct min versions
+// TestOptionalStorageRegistryConstants verifies the registry entries have correct min/max versions
 func TestOptionalStorageRegistryConstants(t *testing.T) {
 	storages := GetOptionalStorages()
-	require.Len(t, storages, 2)
+	require.Len(t, storages, 3)
 	assert.Equal(t, "verification", storages[0].Name)
 	assert.Equal(t, "0.26.2", storages[0].MinVersion)
+	assert.Equal(t, BlockNodeVerificationRetirementVersion, storages[0].MaxVersion,
+		"verification is retired at 0.37.0")
 	assert.Equal(t, "plugins", storages[1].Name)
 	assert.Equal(t, "0.28.1", storages[1].MinVersion)
+	assert.Empty(t, storages[1].MaxVersion, "plugins has no upper bound")
+	assert.Equal(t, "application-state", storages[2].Name)
+	assert.Equal(t, "applicationState", storages[2].PersistenceKey,
+		"application-state's chart persistence key is camelCase 'applicationState', not the kebab-case Name")
+	assert.Empty(t, storages[0].PersistenceKey, "verification chart key matches Name (no override needed)")
+	assert.Empty(t, storages[1].PersistenceKey, "plugins chart key matches Name (no override needed)")
+	assert.Equal(t, BlockNodeApplicationStateRequiredVersion, storages[2].MinVersion,
+		"application-state is introduced at 0.37.0 in lockstep with verification retirement")
+	assert.Empty(t, storages[2].MaxVersion, "application-state has no upper bound")
+}
+
+// TestPrereleaseCutoverBoundary pins the 0.37.0 cutover behaviour across release
+// candidates. The "-0" prerelease floor on the registry constants is what makes
+// a prerelease like 0.37.0-rc1 satisfy the >= 0.37.0 boundary — semver §11 ranks
+// a prerelease BELOW its final tag, so a bare "0.37.0" min would wrongly exclude
+// every 0.37.0-rcN, skipping application-state and keeping verification alive.
+func TestPrereleaseCutoverBoundary(t *testing.T) {
+	var appState, verification OptionalStorage
+	for _, os := range GetOptionalStorages() {
+		switch os.Name {
+		case "application-state":
+			appState = os
+		case "verification":
+			verification = os
+		}
+	}
+
+	// At and beyond the cutover (including its release candidates): application
+	// state ON, verification retired — identical to the final 0.37.0 tag.
+	for _, v := range []string{"0.37.0-rc1", "0.37.0-rc2", "0.37.0", "0.37.1-rc1", "0.37.1"} {
+		assert.Truef(t, appState.RequiredByVersion(v), "application-state must be required at %s", v)
+		assert.Falsef(t, verification.RequiredByVersion(v), "verification must be retired at %s", v)
+
+		names := make([]string, 0)
+		for _, o := range GetApplicableOptionalStorages(v) {
+			names = append(names, o.Name)
+		}
+		assert.Equalf(t, []string{"plugins", "application-state"}, names, "applicable storages at %s", v)
+	}
+
+	// Just below the cutover (including the last 0.36 release candidate): the
+	// pre-0.37 layout still holds — verification ON, application-state OFF.
+	for _, v := range []string{"0.36.0-rc1", "0.36.0", "0.36.5"} {
+		assert.Falsef(t, appState.RequiredByVersion(v), "application-state must NOT be required at %s", v)
+		assert.Truef(t, verification.RequiredByVersion(v), "verification must still be required at %s", v)
+	}
+}
+
+// TestInjectPersistenceOverrides_ApplicationStateUsesChartKey guards the bug
+// where weaver wrote blockNode.persistence under the kebab-case Name
+// ("application-state") or the retired "applicationStateFacility" key. The chart
+// reads neither, so its StatefulSet fell back to a volumeClaimTemplate and the
+// generated PVC stayed Pending forever, timing out the atomic helm install.
+func TestInjectPersistenceOverrides_ApplicationStateUsesChartKey(t *testing.T) {
+	m := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{ChartVersion: "0.37.0"},
+		logger:          testLogger(),
+	}
+
+	out, err := m.injectPersistenceOverrides([]byte("blockNode:\n  persistence: {}\n"))
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(out, &vals))
+	blockNode, ok := vals["blockNode"].(map[string]interface{})
+	require.True(t, ok)
+	persistence, ok := blockNode["persistence"].(map[string]interface{})
+	require.True(t, ok)
+
+	appState, ok := persistence["applicationState"].(map[string]interface{})
+	require.True(t, ok, "persistence must use the chart key 'applicationState'")
+	assert.Equal(t, "application-state-storage-pvc", appState["existingClaim"])
+	assert.Equal(t, false, appState["create"])
+
+	_, hasKebab := persistence["application-state"]
+	assert.False(t, hasKebab, "must not key persistence by the kebab-case Name 'application-state'")
+	_, hasFacility := persistence["applicationStateFacility"]
+	assert.False(t, hasFacility, "must not key persistence by the retired 'applicationStateFacility'")
 }
 
 // TestGetStoragePaths_V0281_IncludesBothOptionalStorages tests that v0.28.1 includes both verification and plugins
