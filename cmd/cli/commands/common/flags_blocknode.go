@@ -2,8 +2,6 @@
 
 package common
 
-import "github.com/hashgraph/solo-weaver/internal/blocknode"
-
 // Flag descriptor factories for the `block node` command tree.
 //
 // Each factory returns a fresh FlagDefinition value so callers always receive an
@@ -78,7 +76,7 @@ func FlagVerificationPath() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "verification-path",
 		ShortName:   "",
-		Description: "Path for verification storage (chart versions below " + blocknode.BlockNodeVerificationRetirementVersion + ")",
+		Description: "Path for verification storage (chart versions below 0.37.0)",
 		Default:     "",
 	}
 }
@@ -96,7 +94,7 @@ func FlagApplicationStatePath() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "application-state-path",
 		ShortName:   "",
-		Description: "Path for application-state storage (chart versions " + blocknode.BlockNodeApplicationStateRequiredVersion + " and above)",
+		Description: "Path for application-state storage (chart versions 0.37.0 and above)",
 		Default:     "",
 	}
 }
@@ -132,7 +130,7 @@ func FlagVerificationSize() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "verification-size",
 		ShortName:   "",
-		Description: "Size for verification storage PV/PVC, e.g., 5Gi, 10Gi (chart versions below " + blocknode.BlockNodeVerificationRetirementVersion + ")",
+		Description: "Size for verification storage PV/PVC, e.g., 5Gi, 10Gi (chart versions below 0.37.0)",
 		Default:     "",
 	}
 }
@@ -150,7 +148,7 @@ func FlagApplicationStateSize() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "application-state-size",
 		ShortName:   "",
-		Description: "Size for application-state storage PV/PVC, e.g., 500Mi, 1Gi (chart versions " + blocknode.BlockNodeApplicationStateRequiredVersion + " and above)",
+		Description: "Size for application-state storage PV/PVC, e.g., 500Mi, 1Gi (chart versions 0.37.0 and above)",
 		Default:     "",
 	}
 }

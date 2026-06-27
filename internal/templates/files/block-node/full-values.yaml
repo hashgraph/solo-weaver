@@ -74,7 +74,7 @@ blockNode:
       subPath: ""
 {{- end }}
 {{- if .IncludeApplicationState }}
-    applicationStateFacility:
+    applicationState:
       create: false
       existingClaim: application-state-storage-pvc
       subPath: ""

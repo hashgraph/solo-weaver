@@ -37,7 +37,13 @@ import (
 // to 0.36.x, so the volume first ships in 0.37.0. If upstream changes course
 // and cherry-picks the volume into a 0.36.x release before 0.37.0 ships, bump
 // this constant to that cherry-pick tag — no other structural change is needed.
-const BlockNodeApplicationStateRequiredVersion = "0.37.0"
+//
+// The "-0" suffix is the lowest-possible prerelease per semver §11, so the
+// boundary is satisfied by every prerelease of 0.37.0 (0.37.0-rc1, -rc2, …) as
+// well as the final 0.37.0 tag. Without it, semver ranks `0.37.0-rc1 < 0.37.0`
+// and release candidates would be wrongly excluded from the cutover. This is a
+// comparison bound only — user-facing text (flag help, docs) should say "0.37.0".
+const BlockNodeApplicationStateRequiredVersion = "0.37.0-0"
 
 // BlockNodeVerificationRetirementVersion is the chart version at which the
 // dedicated verification volume is removed from the Helm chart (also
@@ -45,14 +51,27 @@ const BlockNodeApplicationStateRequiredVersion = "0.37.0"
 // BlockNodeApplicationStateRequiredVersion so a cherry-pick scenario that
 // introduces the new volume before retiring the old one can be expressed by
 // bumping only one of the two.
-const BlockNodeVerificationRetirementVersion = "0.37.0"
+//
+// Carries the same "-0" prerelease floor as
+// BlockNodeApplicationStateRequiredVersion so verification retires in lockstep
+// across the 0.37.0 release candidates, not just the final tag.
+const BlockNodeVerificationRetirementVersion = "0.37.0-0"
 
 // OptionalStorage describes an optional storage volume that is conditionally
 // required based on the target Block Node chart version.
 type OptionalStorage struct {
-	// Name is the human-readable name used in logs and template field names
-	// (e.g., "verification", "plugins"). Must match the Helm persistence key.
+	// Name is the kebab-case identifier used in logs, directory names, and CLI
+	// flag names (e.g., "verification", "plugins", "application-state"). It is
+	// NOT necessarily the Helm persistence key — see PersistenceKey, since some
+	// chart keys are camelCase (application-state → applicationState).
 	Name string
+
+	// PersistenceKey is the key under blockNode.persistence in the chart values
+	// that wires this volume's PVC. Set it only when the chart key differs from
+	// Name (application-state's chart key is camelCase "applicationState");
+	// callers fall back to Name when it is empty, which covers the common case
+	// where the chart key matches the kebab-case name (verification, plugins).
+	PersistenceKey string
 
 	// MinVersion is the minimum Block Node version at which solo-weaver
 	// provisions the PV/PVC. Drives `CreatePersistentVolumes` (install path)
@@ -110,14 +129,15 @@ var optionalStorages = []OptionalStorage{
 		GetSize:    func(s *models.BlockNodeStorage) string { return s.PluginsSize },
 	},
 	{
-		Name:       "application-state",
-		MinVersion: BlockNodeApplicationStateRequiredVersion,
-		PVName:     "application-state-storage-pv",
-		PVCName:    "application-state-storage-pvc",
-		DirName:    "application-state",
-		GetPath:    func(s *models.BlockNodeStorage) string { return s.ApplicationStatePath },
-		SetPath:    func(s *models.BlockNodeStorage, p string) { s.ApplicationStatePath = p },
-		GetSize:    func(s *models.BlockNodeStorage) string { return s.ApplicationStateSize },
+		Name:           "application-state",
+		PersistenceKey: "applicationState",
+		MinVersion:     BlockNodeApplicationStateRequiredVersion,
+		PVName:         "application-state-storage-pv",
+		PVCName:        "application-state-storage-pvc",
+		DirName:        "application-state",
+		GetPath:        func(s *models.BlockNodeStorage) string { return s.ApplicationStatePath },
+		SetPath:        func(s *models.BlockNodeStorage, p string) { s.ApplicationStatePath = p },
+		GetSize:        func(s *models.BlockNodeStorage) string { return s.ApplicationStateSize },
 	},
 }
 

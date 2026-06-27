@@ -697,9 +697,82 @@ func TestOptionalStorageRegistryConstants(t *testing.T) {
 	assert.Equal(t, "0.28.1", storages[1].MinVersion)
 	assert.Empty(t, storages[1].MaxVersion, "plugins has no upper bound")
 	assert.Equal(t, "application-state", storages[2].Name)
+	assert.Equal(t, "applicationState", storages[2].PersistenceKey,
+		"application-state's chart persistence key is camelCase 'applicationState', not the kebab-case Name")
+	assert.Empty(t, storages[0].PersistenceKey, "verification chart key matches Name (no override needed)")
+	assert.Empty(t, storages[1].PersistenceKey, "plugins chart key matches Name (no override needed)")
 	assert.Equal(t, BlockNodeApplicationStateRequiredVersion, storages[2].MinVersion,
 		"application-state is introduced at 0.37.0 in lockstep with verification retirement")
 	assert.Empty(t, storages[2].MaxVersion, "application-state has no upper bound")
+}
+
+// TestPrereleaseCutoverBoundary pins the 0.37.0 cutover behaviour across release
+// candidates. The "-0" prerelease floor on the registry constants is what makes
+// a prerelease like 0.37.0-rc1 satisfy the >= 0.37.0 boundary — semver §11 ranks
+// a prerelease BELOW its final tag, so a bare "0.37.0" min would wrongly exclude
+// every 0.37.0-rcN, skipping application-state and keeping verification alive.
+func TestPrereleaseCutoverBoundary(t *testing.T) {
+	var appState, verification OptionalStorage
+	for _, os := range GetOptionalStorages() {
+		switch os.Name {
+		case "application-state":
+			appState = os
+		case "verification":
+			verification = os
+		}
+	}
+
+	// At and beyond the cutover (including its release candidates): application
+	// state ON, verification retired — identical to the final 0.37.0 tag.
+	for _, v := range []string{"0.37.0-rc1", "0.37.0-rc2", "0.37.0", "0.37.1-rc1", "0.37.1"} {
+		assert.Truef(t, appState.RequiredByVersion(v), "application-state must be required at %s", v)
+		assert.Falsef(t, verification.RequiredByVersion(v), "verification must be retired at %s", v)
+
+		names := make([]string, 0)
+		for _, o := range GetApplicableOptionalStorages(v) {
+			names = append(names, o.Name)
+		}
+		assert.Equalf(t, []string{"plugins", "application-state"}, names, "applicable storages at %s", v)
+	}
+
+	// Just below the cutover (including the last 0.36 release candidate): the
+	// pre-0.37 layout still holds — verification ON, application-state OFF.
+	for _, v := range []string{"0.36.0-rc1", "0.36.0", "0.36.5"} {
+		assert.Falsef(t, appState.RequiredByVersion(v), "application-state must NOT be required at %s", v)
+		assert.Truef(t, verification.RequiredByVersion(v), "verification must still be required at %s", v)
+	}
+}
+
+// TestInjectPersistenceOverrides_ApplicationStateUsesChartKey guards the bug
+// where weaver wrote blockNode.persistence under the kebab-case Name
+// ("application-state") or the retired "applicationStateFacility" key. The chart
+// reads neither, so its StatefulSet fell back to a volumeClaimTemplate and the
+// generated PVC stayed Pending forever, timing out the atomic helm install.
+func TestInjectPersistenceOverrides_ApplicationStateUsesChartKey(t *testing.T) {
+	m := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{ChartVersion: "0.37.0"},
+		logger:          testLogger(),
+	}
+
+	out, err := m.injectPersistenceOverrides([]byte("blockNode:\n  persistence: {}\n"))
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(out, &vals))
+	blockNode, ok := vals["blockNode"].(map[string]interface{})
+	require.True(t, ok)
+	persistence, ok := blockNode["persistence"].(map[string]interface{})
+	require.True(t, ok)
+
+	appState, ok := persistence["applicationState"].(map[string]interface{})
+	require.True(t, ok, "persistence must use the chart key 'applicationState'")
+	assert.Equal(t, "application-state-storage-pvc", appState["existingClaim"])
+	assert.Equal(t, false, appState["create"])
+
+	_, hasKebab := persistence["application-state"]
+	assert.False(t, hasKebab, "must not key persistence by the kebab-case Name 'application-state'")
+	_, hasFacility := persistence["applicationStateFacility"]
+	assert.False(t, hasFacility, "must not key persistence by the retired 'applicationStateFacility'")
 }
 
 // TestGetStoragePaths_V0281_IncludesBothOptionalStorages tests that v0.28.1 includes both verification and plugins
