@@ -5,12 +5,15 @@ package steps
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -176,7 +179,7 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
 		installCiliumCNI("1.18.1"), // we cannot write in pure Go because we need to run cilium binary
-
+		guardBandwidthManagerDisabled(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Starting Cilium")
@@ -248,5 +251,103 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 			}
 
 			return automa.SuccessReport(stp)
+		})
+}
+
+// Cilium agent config surfaces the Bandwidth Manager guard inspects. The
+// cilium-config ConfigMap is created by `cilium install` and read by the agent.
+const (
+	ciliumConfigMapNamespace = "kube-system"
+	ciliumConfigMapName      = "cilium-config"
+	// bandwidthManagerConfigKey is the cilium-config data key set by the Cilium
+	// agent flag --enable-bandwidth-manager. "true" when enabled; "false" or
+	// absent when disabled.
+	bandwidthManagerConfigKey = "enable-bandwidth-manager"
+)
+
+// bandwidthManagerEnabled reports whether a cilium-config enable-bandwidth-manager
+// value means the Bandwidth Manager is on. An empty value (key absent) is disabled.
+func bandwidthManagerEnabled(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
+}
+
+// ciliumBandwidthManagerState reads the cilium-config ConfigMap via the Kubernetes
+// API (pure Go, no shell) and reports whether the Bandwidth Manager is enabled
+// along with the raw enable-bandwidth-manager value. Mirrors the cilium-config
+// read in migration_cilium_acceleration.go. It errors if cilium-config is absent,
+// since the guard cannot otherwise verify the precondition.
+func ciliumBandwidthManagerState(ctx context.Context, k *kube.Client) (enabled bool, value string, err error) {
+	exists, err := k.ResourceExists(ctx, "v1", "ConfigMap", ciliumConfigMapNamespace, ciliumConfigMapName)
+	if err != nil {
+		return false, "", errorx.ExternalError.Wrap(err, "failed to check for the %q ConfigMap in namespace %q", ciliumConfigMapName, ciliumConfigMapNamespace).
+			WithProperty(models.ErrPropertyResolution, []string{
+				"Ensure the cluster API is reachable (kubeconfig valid, API server up):",
+				"  kubectl -n kube-system get configmap cilium-config",
+			})
+	}
+	if !exists {
+		return false, "", errorx.IllegalState.New("Cilium ConfigMap %q not found in namespace %q", ciliumConfigMapName, ciliumConfigMapNamespace).
+			WithProperty(models.ErrPropertyResolution, []string{
+				"Confirm Cilium is installed and its ConfigMap exists:",
+				"  kubectl -n kube-system get configmap cilium-config -o yaml",
+			})
+	}
+
+	value, err = k.GetResourceNestedString(ctx, "v1", "ConfigMap", ciliumConfigMapNamespace, ciliumConfigMapName, "data", bandwidthManagerConfigKey)
+	if err != nil {
+		return false, "", errorx.ExternalError.Wrap(err, "failed to read %q from the %q ConfigMap", bandwidthManagerConfigKey, ciliumConfigMapName).
+			WithProperty(models.ErrPropertyResolution, []string{
+				"Ensure the cluster API is reachable (kubeconfig valid, API server up):",
+				"  kubectl -n kube-system get configmap cilium-config -o yaml",
+			})
+	}
+	return bandwidthManagerEnabled(value), value, nil
+}
+
+// guardBandwidthManagerDisabled fails fast if Cilium's Bandwidth Manager is
+// enabled. Bandwidth Manager is the only Cilium BPF writer of skb->priority, so
+// the BN traffic shaper's egress-priority survival guarantee is void whenever it
+// is on (traffic-shaper v4 design §10 risk 18). It reads cilium-config through the
+// Kubernetes API (pure Go, no shell) and is read-only, so there is no rollback.
+func guardBandwidthManagerDisabled() automa.Builder {
+	return automa.NewStepBuilder().WithId("guard-bandwidth-manager-disabled").
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepDetail(ctx, stp, "verifying Cilium Bandwidth Manager is disabled...")
+			return ctx, nil
+		}).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			enabled, value, err := ciliumBandwidthManagerState(ctx, k)
+			if err != nil {
+				// ciliumBandwidthManagerState types its errors: ExternalError for
+				// kube-API failures, IllegalState for a missing ConfigMap. Forward
+				// as-is so the classification (and resolution hints) are preserved.
+				return automa.FailureReport(stp,
+					automa.WithError(err),
+					automa.WithMetadata(meta))
+			}
+
+			meta[BandwidthManagerStatus] = value
+
+			if enabled {
+				return automa.FailureReport(stp,
+					automa.WithError(errorx.IllegalState.New(
+						"Cilium Bandwidth Manager is enabled (%s=%q) — it is the only Cilium BPF writer of skb->priority and would void the BN egress-priority guarantee; it must be Disabled", bandwidthManagerConfigKey, value).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Disable the Cilium Bandwidth Manager, then re-run the install:",
+							"  set 'bandwidthManager.enabled: false' in the Cilium Helm values and run 'cilium upgrade'",
+							"Verify with: kubectl -n kube-system get configmap cilium-config -o jsonpath='{.data.enable-bandwidth-manager}'",
+						})),
+					automa.WithMetadata(meta))
+			}
+
+			return automa.SuccessReport(stp,
+				automa.WithDetail("Cilium Bandwidth Manager is disabled"),
+				automa.WithMetadata(meta))
 		})
 }

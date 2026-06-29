@@ -37,6 +37,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    ```
 5. **Before committing or pushing**, always show the full commit message and the list of files to be committed/pushed, and wait for explicit user approval before proceeding.
 6. **When you add, rename, remove, or change the semantics of a CLI flag or subcommand** (under `cmd/cli/commands/...`), also update `docs/quickstart.md` — the relevant command's example block, its **Additional Flags** table, and any nearby explanatory text. Flag descriptions there must match the description string in `cmd/cli/commands/common/flags_common.go` and the `--help` output. CLI surface changes that miss this step ship docs that drift out of date.
+7. **When you change an embedded template or any config consumed at install time** (e.g. `internal/templates/files/**`), trace the **existing-cluster upgrade path** before assuming the change is fresh-install-only. Startup migrations (`internal/workflows/migration_*.go`, registered in `cmd/cli/commands/root.go` `RegisterMigrations()`) run on every CLI invocation and, when crossing their version boundary, **re-render the entire template and re-apply it** (e.g. `software.ReconfigureCiliumConfig()` + `cilium upgrade --values`). That means a template edit you intended only for new installs can **leak into already-provisioned clusters** that cross such a boundary. Confirm whether that application is intended, and call out any unintended/early application in the PR's **Risks** section.
 
 ## Writing Markdown Files
 
@@ -241,3 +242,4 @@ Detailed framework docs live in `docs/dev/`:
 - Deployment profiles: `local`, `perfnet`, `testnet`, `previewnet`, `mainnet`
 - PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/)
 - License headers (SPDX) are required on all source files — enforced by `task license:check`
+- Prefer pure-Go over shelling out to external binaries. Read cluster state through the Kubernetes API (`internal/kube` client, injected as `kube.ClientProviderFromContext` — pass `kube.ClientFromContext` at the call site) rather than execing tool binaries (`cilium`, `kubectl`, …) and parsing their stdout — running binaries from the sandbox bin dir is a malicious-binary risk (see `docs/dev/security-model.md`). Follow the `step_cluster_*` pattern: take a provider, resolve the client once in `Execute`, and read via a named helper
