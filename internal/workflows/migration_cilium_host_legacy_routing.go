@@ -93,12 +93,6 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 		logx.As().Debug().Msg("cilium host-legacy-routing migration: Cilium not installed (no cilium-config); skipping")
 		return nil
 	}
-	if strings.EqualFold(hlr, "true") {
-		logx.As().Info().Str(hostLegacyRoutingConfigKey, hlr).
-			Msg("cilium host-legacy-routing migration: nothing to do (already enabled)")
-		return nil
-	}
-
 	if strings.EqualFold(strings.TrimSpace(bm), "true") {
 		return errorx.IllegalState.New(
 			"Cilium Bandwidth Manager is enabled (%s=%q) — it is the only Cilium BPF writer of skb->priority "+
@@ -109,6 +103,11 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 				"  set 'bandwidthManager.enabled: false' in the Cilium Helm values and run 'cilium upgrade'",
 				"Verify with: kubectl -n kube-system get configmap cilium-config -o jsonpath='{.data.enable-bandwidth-manager}'",
 			})
+	}
+	if strings.EqualFold(strings.TrimSpace(hlr), "true") {
+		logx.As().Info().Str(hostLegacyRoutingConfigKey, hlr).
+			Msg("cilium host-legacy-routing migration: nothing to do (already enabled)")
+		return nil
 	}
 
 	configPath, err := reconfigureCiliumConfig()
