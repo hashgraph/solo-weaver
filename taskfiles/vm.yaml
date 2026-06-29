@@ -126,15 +126,19 @@ tasks:
           pkill -f "UTM.app/Contents/MacOS/UTM" >/dev/null 2>&1 || true
           sleep 2
           open -g -a UTM || true
-          # Wait until UTM is scriptable again before relying on utmctl.
+          # Return non-zero if UTM never becomes scriptable, so callers can tell
+          # "UTM never came back" from "UTM is up but doesn't see the VM".
           for _ in $(seq 1 10); do
             if osascript -e 'with timeout of 5 seconds' \
                  -e 'tell application "UTM" to get name of every virtual machine' \
                  -e 'end timeout' >/dev/null 2>&1; then
-              break
+              return 0
             fi
             sleep 2
           done
+          echo "❌ UTM did not become scriptable within ~20s after relaunch."
+          echo "   Open UTM manually, dismiss any prompt, then re-run."
+          return 1
         }
 
         if [ "{{.FORCE}}" = "true" ]; then
@@ -150,7 +154,7 @@ tasks:
           echo "Checking UTM VMs directory for existing golden VM...: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
           if [ -d "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ] || [ -f "{{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm" ]; then
             echo "✓ Golden VM exists on disk but UTM hasn't loaded it: {{.UTM_VMS_DIR}}/{{.VM_GOLDEN_NAME}}.utm"
-            reload_utm
+            reload_utm || exit 1
             if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
               echo "✓ UTM reloaded and now sees the golden VM."
               exit 0
@@ -224,7 +228,7 @@ tasks:
 
         # We just wrote a VM bundle under a running UTM; reload it so it registers
         # the new golden VM, then let the caller (vm:reset) continue.
-        reload_utm
+        reload_utm || exit 1
         if utmctl status "{{.VM_GOLDEN_NAME}}" >/dev/null 2>&1; then
           echo "✓ UTM reloaded and now sees the golden VM."
           exit 0
@@ -269,10 +273,21 @@ tasks:
           utmctl delete "{{.VM_NAME}}" 2>/dev/null || true
           # Wait until UTM drops the VM from its registry (status goes non-zero =
           # not found) so the clone below doesn't race a half-deleted entry.
-          for _ in $(seq 1 10); do
-            utmctl status "{{.VM_NAME}}" >/dev/null 2>&1 || break
+          deleted=false
+          for _ in $(seq 1 30); do
+            if ! utmctl status "{{.VM_NAME}}" >/dev/null 2>&1; then
+              deleted=true
+              break
+            fi
             sleep 1
           done
+          # Abort rather than cloning over a half-deleted registry entry, which
+          # leaves UTM in an inconsistent state that's hard to recover from.
+          if [ "$deleted" != "true" ]; then
+            echo "Error: working VM '{{.VM_NAME}}' still present after waiting for deletion." >&2
+            echo "UTM may be slow or wedged. Delete it manually in the UTM app and re-run 'task vm:reset'." >&2
+            exit 1
+          fi
         fi
 
         # Clone the golden VM
@@ -282,10 +297,21 @@ tasks:
         # Wait until UTM has registered the clone as a stopped VM before starting it.
         # Starting immediately after a clone can wedge UTM's Apple Event handler.
         echo "Waiting for UTM to register the cloned VM..."
+        registered=false
         for _ in $(seq 1 15); do
-          [ "$(utmctl status "{{.VM_NAME}}" 2>/dev/null)" = "stopped" ] && break
+          if [ "$(utmctl status "{{.VM_NAME}}" 2>/dev/null)" = "stopped" ]; then
+            registered=true
+            break
+          fi
           sleep 1
         done
+        # Abort rather than starting a clone UTM hasn't finished registering,
+        # which can wedge UTM's Apple Event handler (the race this wait avoids).
+        if [ "$registered" != "true" ]; then
+          echo "Error: cloned VM '{{.VM_NAME}}' not registered as 'stopped' after waiting." >&2
+          echo "UTM may still be registering the clone. Open the UTM app to confirm, then re-run 'task vm:reset'." >&2
+          exit 1
+        fi
 
         echo "✓ VM cloned. Now starting it for initial configuration..."
       - task: vm:start
@@ -356,14 +382,20 @@ tasks:
                 sleep 2
                 open -g -a UTM || true
                 # Wait until UTM is scriptable again before re-issuing the start.
+                UTM_BACK=false
                 for _ in $(seq 1 10); do
                   if osascript -e 'with timeout of 5 seconds' \
                        -e 'tell application "UTM" to get name of every virtual machine' \
                        -e 'end timeout' >/dev/null 2>&1; then
+                    UTM_BACK=true
                     break
                   fi
                   sleep 2
                 done
+                if [ "$UTM_BACK" != "true" ]; then
+                  echo "⚠️  UTM not scriptable ~20s after relaunch (possibly stuck on a permission prompt)."
+                  echo "    Trying one final start anyway; if the VM stays stopped this run will abort next."
+                fi
               else
                 echo "VM still stopped; re-issuing start (try $START_ATTEMPTS/$MAX_START_ATTEMPTS)..."
               fi
