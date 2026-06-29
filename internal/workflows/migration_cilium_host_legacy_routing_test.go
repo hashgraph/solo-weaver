@@ -133,6 +133,17 @@ func TestCiliumHostLegacyRoutingMigration_Execute(t *testing.T) {
 		assert.False(t, ran, "cilium upgrade must not run when Bandwidth Manager is enabled")
 	})
 
+	t.Run("fails fast when Bandwidth Manager is enabled even if host-legacy-routing is already true", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		stateReturns(true, "true", "true", nil)
+		trackUpgrade(&cmd, &ran)
+		err := m.Execute(context.Background(), mctx)
+		require.Error(t, err, "must fail fast when Bandwidth Manager is enabled")
+		assert.Contains(t, err.Error(), "Bandwidth Manager is enabled")
+		assert.False(t, ran, "cilium upgrade must not run when Bandwidth Manager is enabled")
+	})
+
 	t.Run("runs cilium upgrade when host-legacy-routing is absent", func(t *testing.T) {
 		var ran bool
 		var cmd string
