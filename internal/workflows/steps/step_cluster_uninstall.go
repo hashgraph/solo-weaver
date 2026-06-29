@@ -125,8 +125,14 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 			// Open the directory so its entries can be read in batches instead of all at once.
 			dir, err := os.Open(weaverHome)
 			if err != nil {
-				// Directory doesn't exist, nothing to clean
-				logx.As().Debug().Err(err).Msg("Weaver home directory doesn't exist, nothing to clean")
+				if errors.Is(err, os.ErrNotExist) {
+					// Directory doesn't exist, nothing to clean
+					logx.As().Debug().Err(err).Msg("Weaver home directory doesn't exist, nothing to clean")
+					return automa.SuccessReport(stp)
+				}
+
+				// Best-effort teardown: log and continue.
+				logx.As().Warn().Err(err).Msg("Failed to open weaver home directory, continuing with teardown")
 				return automa.SuccessReport(stp)
 			}
 			defer fsx.Close(dir)
