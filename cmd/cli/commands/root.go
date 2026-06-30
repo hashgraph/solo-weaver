@@ -17,6 +17,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
@@ -103,6 +104,7 @@ func init() {
 	rootCmd.AddCommand(selfUninstallCmd)
 	rootCmd.AddCommand(kube.GetCmd())
 	rootCmd.AddCommand(block.GetCmd())
+	rootCmd.AddCommand(network.GetCmd())
 	rootCmd.AddCommand(consensus.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())

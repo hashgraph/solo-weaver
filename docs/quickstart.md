@@ -371,6 +371,79 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 
 ---
 
+### Network Commands
+
+Manage node-level network state behind the traffic shaper. The `firewall` scope manages the node-agnostic `inet host` nftables table — the host's own SSH/management allowlist, ICMP policy, and in-cluster host-service ports. It is separate from the `inet weaver` workload plane and applies to every node type (block, consensus, mirror, relay).
+
+#### Create the Host Firewall
+
+create-if-missing: if the `inet host` table already exists, the command makes no changes unless `--force` is passed (which re-renders from the flags). Every mutation applies to the live kernel in one atomic `nft -f` transaction and atomically rewrites `/etc/solo-provisioner/network-host.nft`.
+
+```bash
+# Create with a management allowlist and the default in-cluster ports
+sudo solo-provisioner network firewall create \
+  --mgmt-cidrs 10.0.0.0/8 \
+  --ssh-port 22 \
+  --pod-cidr 10.4.0.0/24 \
+  --in-cluster-ports 6443,4244,10250
+
+# Re-render an existing table from new flags
+sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.0/16 --force
+```
+
+**Flags**:
+
+| Flag                 | Description                                                       | Default            |
+|----------------------|-------------------------------------------------------------------|--------------------|
+| `--mgmt-cidrs`       | Management/SSH allowlist CIDRs (comma-separated or repeated) — **omitting this flag leaves the SSH allow rule with an empty source set under the default-drop policy, which will lock you out of new SSH connections** | (none) |
+| `--in-cluster-ports` | Host-service ports reachable from the pod CIDR                     | `4244,6443,7472,10250` |
+| `--ssh-port`         | SSH/management TCP port accepted from the allowlist                | `22`               |
+| `--pod-cidr`         | Pod CIDR allowed to reach the in-cluster host-service ports        | auto-detected      |
+| `--force`            | Re-render the table even if it already exists (global flag)        | `false`            |
+
+When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API (the node is matched by hostname, or the sole node on a single-node host). Detection is best-effort: `network firewall create` is node-agnostic and may run before a cluster exists, so if no cluster is reachable the command logs a warning and **omits the in-cluster-ports rule** — pass `--pod-cidr` explicitly to render it anyway.
+
+ICMP is a fixed, safe ruleset (not configurable): full ICMP from the management allowlist, and from every other source the path-health subset — `destination-unreachable` (Path MTU Discovery) and `time-exceeded` (traceroute) always accepted, with `echo-request` (ping) rate-limited to 10/second. There are deliberately no ICMP flags: dropping ICMP errors would silently break PMTUD for legitimate clients.
+
+> There is no `--service-ports`: BN ports live only in `network policy --ports` (the host firewall is bypassed by the eBPF datapath).
+
+#### Modify the Allowlist / Ports
+
+`add`/`remove` operate on a single element; `set` atomically replaces the full list.
+
+```bash
+sudo solo-provisioner network firewall add    --mgmt-cidr 10.1.0.0/16
+sudo solo-provisioner network firewall remove --mgmt-cidr 10.0.0.0/8
+sudo solo-provisioner network firewall set    --mgmt-cidrs 10.0.0.0/8,192.168.0.0/16
+
+sudo solo-provisioner network firewall add    --in-cluster-port 9100
+sudo solo-provisioner network firewall remove --in-cluster-port 10250
+sudo solo-provisioner network firewall set    --in-cluster-ports 6443,4244
+```
+
+**Flags**:
+
+| Verb           | Flag                 | Description                                                          |
+|----------------|----------------------|----------------------------------------------------------------------|
+| `add`/`remove` | `--mgmt-cidr`        | A single management CIDR (mutually exclusive with `--in-cluster-port`) |
+| `add`/`remove` | `--in-cluster-port`  | A single in-cluster host-service port                                |
+| `set`          | `--mgmt-cidrs`       | Full management allowlist (replaces the existing list)               |
+| `set`          | `--in-cluster-ports` | Full in-cluster host-service port list (replaces the existing list)  |
+
+#### Show / Delete the Host Firewall
+
+```bash
+# Show the live inet host table
+sudo solo-provisioner network firewall show
+
+# Remove the table and /etc/solo-provisioner/network-host.nft
+sudo solo-provisioner network firewall delete
+```
+
+> `delete` removes the table and `/etc/solo-provisioner/network-host.nft` but does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver`); disable it manually if you need it off.
+
+---
+
 ### Teleport Commands
 
 Configure secure access using Teleport agents.

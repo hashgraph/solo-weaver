@@ -1,0 +1,46 @@
+add table inet host
+delete table inet host
+add table inet host
+table inet host {
+	set mgmt_addrs { type ipv4_addr; flags interval; elements = { 10.0.0.0/8, 192.168.0.0/16 }; }
+	set in_cluster_ports { type inet_service; elements = { 4244, 6443, 7472, 10250 }; }
+
+	chain input {
+		type filter hook input priority 0; policy drop;
+
+		# Drop invalid; admit loopback.
+		ct state invalid drop
+		iif "lo" accept
+
+		# ICMP is evaluated BEFORE the established/related fast-path. netfilter
+		# conntrack DOES track ICMP echo as a flow (keyed on the echo id), so a
+		# sustained ping shares one entry and every packet after the first would
+		# otherwise match `ct state established,related accept` and bypass the
+		# echo-request rate limit. Handling ICMP first keeps the limit effective.
+		# Explicit accepts are still required because the default-drop policy
+		# would otherwise break new-flow ping and path diagnostics (PMTUD,
+		# traceroute), which the established state does not cover for a NEW flow.
+
+		# Full ICMP from management sources (ping, traceroute, diagnostics) — no rate limit.
+		ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
+
+		# From everyone else: always allow the path-health subset (Path MTU
+		# Discovery + traceroute), and rate-limit echo-request to prevent floods.
+		# The trailing drop keeps over-budget echo from being rescued by the
+		# established accept below (a sustained ping is established after the
+		# first reply).
+		icmp type destination-unreachable accept
+		icmp type time-exceeded accept
+		icmp type echo-request limit rate 10/second accept
+		icmp type echo-request drop
+
+		# Conntrack fast-path for TCP/UDP (and solicited ICMP replies).
+		ct state established,related accept
+
+		# SSH / management access from the allowlist only.
+		ip saddr @mgmt_addrs tcp dport 22 accept
+
+		# In-cluster host-service ports, reachable from the pod CIDR only.
+		ip saddr 10.4.0.0/24 tcp dport @in_cluster_ports accept
+	}
+}
