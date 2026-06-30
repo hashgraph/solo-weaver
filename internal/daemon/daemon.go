@@ -118,12 +118,24 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			return nil, err
 		}
 		if len(result.Monitors) > 0 {
-			components = append(components, component{
+			comp := component{
 				name:     "block-node",
 				monitors: result.Monitors,
 				probe:    nil,
 				tracker:  daemonkit.NewStatusTracker(),
-			})
+			}
+			components = append(components, comp)
+
+			if result.TrafficShaperMonitor != nil {
+				// trafficShaperStateFn captures comp.tracker by reference — safe
+				// because comp is appended to the slice and never moved after
+				// this point.
+				trafficShaperStateFn := func() daemonkit.MonitorState {
+					return comp.tracker.Snapshot()[result.TrafficShaperMonitor.Name()]
+				}
+				componentHandlers = append(componentHandlers,
+					blocknode.NewBlockNodeHandler(result.TrafficShaperMonitor, trafficShaperStateFn))
+			}
 		}
 	}
 
