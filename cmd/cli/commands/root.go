@@ -133,6 +133,7 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
+	migration.Register(migration.ScopeStartup, workflows.NewCiliumHostLegacyRoutingMigration())
 
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
