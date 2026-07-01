@@ -201,14 +201,8 @@ func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
 		}
 	}
 
-	// Download the archive
-	err = b.downloader.Download(downloadURL, destinationFile)
-	if err != nil {
-		return err
-	}
-
-	// Verify the downloaded archive's checksum
-	err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
+	// Download the archive and verify its checksum, retrying transient corruption
+	err = b.downloader.DownloadAndVerify(downloadURL, destinationFile, checksum.Value, checksum.Algorithm)
 	if err != nil {
 		return err
 	}
@@ -285,14 +279,8 @@ func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
 		}
 	}
 
-	// Download the binary
-	err = b.downloader.Download(downloadURL, destinationFile)
-	if err != nil {
-		return err
-	}
-
-	// Verify the downloaded binary's checksum
-	err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
+	// Download the binary and verify its checksum, retrying transient corruption
+	err = b.downloader.DownloadAndVerify(downloadURL, destinationFile, checksum.Value, checksum.Algorithm)
 	if err != nil {
 		return err
 	}
@@ -328,14 +316,8 @@ func (b *baseInstaller) downloadConfigs() error {
 			}
 		}
 
-		// Download the config file
-		err = b.downloader.Download(config.URL, configFile)
-		if err != nil {
-			return err
-		}
-
-		// Verify the downloaded config file's checksum
-		err = VerifyChecksum(configFile, config.Value, config.Algorithm)
+		// Download the config file and verify its checksum, retrying transient corruption
+		err = b.downloader.DownloadAndVerify(config.URL, configFile, config.Value, config.Algorithm)
 		if err != nil {
 			return err
 		}

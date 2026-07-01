@@ -53,6 +53,9 @@ func Test_IntegrityChecker_VerifyChecksum(t *testing.T) {
 	err = VerifyChecksum(tmpFile.Name(), "wronghash", "sha256")
 	require.Error(t, err, "VerifyChecksum should fail with wrong checksum")
 	require.True(t, errorx.IsOfType(err, ChecksumError), "Error should be of type ChecksumError")
+	// The mismatch error must report the real algorithm, not "unknown".
+	require.Contains(t, err.Error(), "sha256", "Mismatch error should name the actual algorithm")
+	require.NotContains(t, err.Error(), "unknown", "Mismatch error should not report algorithm 'unknown'")
 
 	// Test with unsupported algorithm
 	err = VerifyChecksum(tmpFile.Name(), expectedSHA256, "sha1")
