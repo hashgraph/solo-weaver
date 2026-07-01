@@ -8,36 +8,84 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
-func TestRequirementsRegistry(t *testing.T) {
-	// Test that all expected combinations exist in the registry
-	nodeTypes := []string{models.NodeTypeBlock, models.NodeTypeConsensus}
-	profiles := []string{models.ProfileLocal, models.ProfilePerfnet, models.ProfileTestnet, models.ProfilePreviewnet, models.ProfileMainnet}
-
-	for _, nodeType := range nodeTypes {
-		for _, profile := range profiles {
-			t.Run(nodeType+"_"+profile, func(t *testing.T) {
-				reqs, found := GetRequirements(nodeType, profile)
-				if !found {
-					t.Errorf("Expected requirements for node type %q and profile %q to exist", nodeType, profile)
-				}
-				// Basic sanity checks
-				if reqs.MinCpuCores <= 0 {
-					t.Errorf("Expected MinCpuCores > 0 for %s/%s, got %d", nodeType, profile, reqs.MinCpuCores)
-				}
-				if reqs.MinMemoryGB <= 0 {
-					t.Errorf("Expected MinMemoryGB > 0 for %s/%s, got %d", nodeType, profile, reqs.MinMemoryGB)
-				}
-				// Storage can be either total or SSD+HDD
-				hasStorage := reqs.MinStorageGB > 0 || reqs.MinSSDStorageGB > 0 || reqs.MinHDDStorageGB > 0
-				if !hasStorage {
-					t.Errorf("Expected some storage requirement for %s/%s", nodeType, profile)
-				}
-				if len(reqs.MinSupportedOS) == 0 {
-					t.Errorf("Expected at least one supported OS for %s/%s", nodeType, profile)
-				}
-			})
-		}
+// getReqs is a test helper that looks up requirements via the provider registry.
+// It mirrors the old GetRequirements(nodeType, profile) call-site pattern.
+func getReqs(nodeType, profile string) (BaselineRequirements, bool) {
+	providers := Providers()
+	p, ok := providers[nodeType]
+	if !ok {
+		return BaselineRequirements{}, false
 	}
+	spec := DeploymentSpec{NodeType: nodeType, Profile: profile}
+	reqs, err := p.Compute(spec)
+	if err != nil {
+		return BaselineRequirements{}, false
+	}
+	// A valid profile must yield a non-zero CPU floor.
+	if reqs.MinCpuCores == 0 {
+		return BaselineRequirements{}, false
+	}
+	return reqs, true
+}
+
+func TestRequirementsRegistry(t *testing.T) {
+	// Consensus: every profile must return a non-zero floor.
+	for _, profile := range []string{models.ProfileLocal, models.ProfilePerfnet, models.ProfileTestnet, models.ProfilePreviewnet, models.ProfileMainnet} {
+		t.Run("consensus_"+profile, func(t *testing.T) {
+			reqs, found := getReqs(models.NodeTypeConsensus, profile)
+			if !found {
+				t.Errorf("Expected requirements for consensus/%s to exist", profile)
+				return
+			}
+			if reqs.MinCpuCores <= 0 {
+				t.Errorf("Expected MinCpuCores > 0 for consensus/%s, got %d", profile, reqs.MinCpuCores)
+			}
+			if reqs.MinMemoryGB <= 0 {
+				t.Errorf("Expected MinMemoryGB > 0 for consensus/%s, got %d", profile, reqs.MinMemoryGB)
+			}
+			hasStorage := reqs.MinStorageGB > 0 || reqs.MinSSDStorageGB > 0 || reqs.MinHDDStorageGB > 0
+			if !hasStorage {
+				t.Errorf("Expected some storage requirement for consensus/%s", profile)
+			}
+			if len(reqs.MinSupportedOS) == 0 {
+				t.Errorf("Expected at least one supported OS for consensus/%s", profile)
+			}
+		})
+	}
+
+	// Block: all profiles except mainnet (no preset) must return a non-zero floor.
+	// Mainnet with no preset = LFH bare metal, which is outside the scope of hardware checks
+	// (lfh_count=0 means the provisioner does not manage bare-metal LFH on mainnet).
+	for _, profile := range []string{models.ProfileLocal, models.ProfilePerfnet, models.ProfileTestnet, models.ProfilePreviewnet} {
+		t.Run("block_"+profile, func(t *testing.T) {
+			reqs, found := getReqs(models.NodeTypeBlock, profile)
+			if !found {
+				t.Errorf("Expected requirements for block/%s to exist", profile)
+				return
+			}
+			if reqs.MinCpuCores <= 0 {
+				t.Errorf("Expected MinCpuCores > 0 for block/%s, got %d", profile, reqs.MinCpuCores)
+			}
+			if reqs.MinMemoryGB <= 0 {
+				t.Errorf("Expected MinMemoryGB > 0 for block/%s, got %d", profile, reqs.MinMemoryGB)
+			}
+			hasStorage := reqs.MinStorageGB > 0 || reqs.MinSSDStorageGB > 0 || reqs.MinHDDStorageGB > 0
+			if !hasStorage {
+				t.Errorf("Expected some storage requirement for block/%s", profile)
+			}
+			if len(reqs.MinSupportedOS) == 0 {
+				t.Errorf("Expected at least one supported OS for block/%s", profile)
+			}
+		})
+	}
+
+	// Block mainnet with no preset → zero requirements (no-op check for bare-metal LFH).
+	t.Run("block_mainnet_no_preset_is_noop", func(t *testing.T) {
+		_, found := getReqs(models.NodeTypeBlock, models.ProfileMainnet)
+		if found {
+			t.Error("Expected block/mainnet with no preset to return zero requirements (no-op), but got non-zero")
+		}
+	})
 }
 
 func TestRequirementsNotFoundForInvalidInput(t *testing.T) {
@@ -53,7 +101,7 @@ func TestRequirementsNotFoundForInvalidInput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, found := GetRequirements(tt.nodeType, tt.profile)
+			_, found := getReqs(tt.nodeType, tt.profile)
 			if found {
 				t.Errorf("Expected requirements to NOT be found for node type %q and profile %q", tt.nodeType, tt.profile)
 			}
@@ -62,51 +110,51 @@ func TestRequirementsNotFoundForInvalidInput(t *testing.T) {
 }
 
 func TestPreviewnetRequirementsAreHigher(t *testing.T) {
-	// Previewnet should have higher requirements than other profiles
-	for _, nodeType := range []string{models.NodeTypeBlock, models.NodeTypeConsensus} {
-		previewnetReqs, _ := GetRequirements(nodeType, models.ProfilePreviewnet)
-		testnetReqs, _ := GetRequirements(nodeType, models.ProfileTestnet)
+	// For consensus nodes, previewnet has higher requirements than testnet.
+	// For block nodes, testnet and previewnet share the same machine shape (n2d-standard-16,
+	// 16 vCPU / 64 GB) — this is intentional per the BN team (Slack 2026-06-17). Testnet
+	// actually requires more local disk (5 TB LFH vs 3 TB LFH for previewnet) so no
+	// previewnet-vs-testnet ordering assertion is valid for block nodes.
+	previewnetReqs, _ := getReqs(models.NodeTypeConsensus, models.ProfilePreviewnet)
+	testnetReqs, _ := getReqs(models.NodeTypeConsensus, models.ProfileTestnet)
 
-		if previewnetReqs.MinCpuCores <= testnetReqs.MinCpuCores {
-			t.Errorf("Expected previewnet CPU cores (%d) > testnet CPU cores (%d) for %s",
-				previewnetReqs.MinCpuCores, testnetReqs.MinCpuCores, nodeType)
-		}
-		if previewnetReqs.MinMemoryGB <= testnetReqs.MinMemoryGB {
-			t.Errorf("Expected previewnet memory (%d) > testnet memory (%d) for %s",
-				previewnetReqs.MinMemoryGB, testnetReqs.MinMemoryGB, nodeType)
-		}
-
-		// For block nodes, previewnet uses SSD+HDD; for others, compare total storage
-		if nodeType == models.NodeTypeBlock {
-			// Block node previewnet uses SSD+HDD split
-			totalPreviewnet := previewnetReqs.MinSSDStorageGB + previewnetReqs.MinHDDStorageGB
-			if totalPreviewnet <= testnetReqs.MinStorageGB {
-				t.Errorf("Expected previewnet total storage (%d) > testnet storage (%d) for %s",
-					totalPreviewnet, testnetReqs.MinStorageGB, nodeType)
-			}
-		} else {
-			if previewnetReqs.MinStorageGB <= testnetReqs.MinStorageGB {
-				t.Errorf("Expected previewnet storage (%d) > testnet storage (%d) for %s",
-					previewnetReqs.MinStorageGB, testnetReqs.MinStorageGB, nodeType)
-			}
-		}
+	if previewnetReqs.MinCpuCores <= testnetReqs.MinCpuCores {
+		t.Errorf("Expected consensus previewnet CPU (%d) > testnet CPU (%d)",
+			previewnetReqs.MinCpuCores, testnetReqs.MinCpuCores)
+	}
+	if previewnetReqs.MinMemoryGB <= testnetReqs.MinMemoryGB {
+		t.Errorf("Expected consensus previewnet memory (%d) > testnet memory (%d)",
+			previewnetReqs.MinMemoryGB, testnetReqs.MinMemoryGB)
+	}
+	if previewnetReqs.MinStorageGB <= testnetReqs.MinStorageGB {
+		t.Errorf("Expected consensus previewnet storage (%d) > testnet storage (%d)",
+			previewnetReqs.MinStorageGB, testnetReqs.MinStorageGB)
 	}
 }
 
 func TestLocalProfileHasMinimalRequirements(t *testing.T) {
-	// Local profile should have minimal requirements for development
-	for _, nodeType := range []string{models.NodeTypeBlock, models.NodeTypeConsensus} {
-		localReqs, _ := GetRequirements(nodeType, models.ProfileLocal)
-		mainnetReqs, _ := GetRequirements(nodeType, models.ProfileMainnet)
+	// Block node: compare local vs testnet (mainnet LFH is bare metal — no floor check).
+	localBlockReqs, _ := getReqs(models.NodeTypeBlock, models.ProfileLocal)
+	testnetBlockReqs, _ := getReqs(models.NodeTypeBlock, models.ProfileTestnet)
+	if localBlockReqs.MinCpuCores >= testnetBlockReqs.MinCpuCores {
+		t.Errorf("Expected block local CPU (%d) < testnet CPU (%d)",
+			localBlockReqs.MinCpuCores, testnetBlockReqs.MinCpuCores)
+	}
+	if localBlockReqs.MinMemoryGB >= testnetBlockReqs.MinMemoryGB {
+		t.Errorf("Expected block local memory (%d) < testnet memory (%d)",
+			localBlockReqs.MinMemoryGB, testnetBlockReqs.MinMemoryGB)
+	}
 
-		if localReqs.MinCpuCores >= mainnetReqs.MinCpuCores {
-			t.Errorf("Expected local CPU cores (%d) < mainnet CPU cores (%d) for %s",
-				localReqs.MinCpuCores, mainnetReqs.MinCpuCores, nodeType)
-		}
-		if localReqs.MinMemoryGB >= mainnetReqs.MinMemoryGB {
-			t.Errorf("Expected local memory (%d) < mainnet memory (%d) for %s",
-				localReqs.MinMemoryGB, mainnetReqs.MinMemoryGB, nodeType)
-		}
+	// Consensus node: compare local vs mainnet.
+	localConsensusReqs, _ := getReqs(models.NodeTypeConsensus, models.ProfileLocal)
+	mainnetConsensusReqs, _ := getReqs(models.NodeTypeConsensus, models.ProfileMainnet)
+	if localConsensusReqs.MinCpuCores >= mainnetConsensusReqs.MinCpuCores {
+		t.Errorf("Expected consensus local CPU (%d) < mainnet CPU (%d)",
+			localConsensusReqs.MinCpuCores, mainnetConsensusReqs.MinCpuCores)
+	}
+	if localConsensusReqs.MinMemoryGB >= mainnetConsensusReqs.MinMemoryGB {
+		t.Errorf("Expected consensus local memory (%d) < mainnet memory (%d)",
+			localConsensusReqs.MinMemoryGB, mainnetConsensusReqs.MinMemoryGB)
 	}
 }
 
@@ -122,13 +170,15 @@ func TestNewNodeSpecWithRegistry(t *testing.T) {
 		{"Block node mainnet", models.NodeTypeBlock, models.ProfileMainnet, false},
 		{"Block node previewnet", models.NodeTypeBlock, models.ProfilePreviewnet, false},
 		{"Consensus node local", models.NodeTypeConsensus, models.ProfileLocal, false},
+		// NewNodeSpec only validates that a provider exists for the node type;
+		// profile validation (IsValidProfile) is the responsibility of CreateNodeSpec.
 		{"Invalid node type", "invalid", models.ProfileMainnet, true},
-		{"Invalid profile", models.NodeTypeBlock, "invalid", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := NewNodeSpec(tt.nodeType, tt.profile, mockHost)
+			spec := DeploymentSpec{NodeType: tt.nodeType, Profile: tt.profile}
+			nodeSpec, err := NewNodeSpec(spec, mockHost)
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for node type %q and profile %q", tt.nodeType, tt.profile)
@@ -137,7 +187,7 @@ func TestNewNodeSpecWithRegistry(t *testing.T) {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
-				if spec == nil {
+				if nodeSpec == nil {
 					t.Error("Expected non-nil spec")
 				}
 			}
@@ -162,7 +212,8 @@ func TestCreateNodeSpecValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := CreateNodeSpec(tt.nodeType, tt.profile, mockHost)
+			spec := DeploymentSpec{NodeType: tt.nodeType, Profile: tt.profile}
+			nodeSpec, err := CreateNodeSpec(spec, mockHost)
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for node type %q and profile %q", tt.nodeType, tt.profile)
@@ -171,7 +222,7 @@ func TestCreateNodeSpecValidation(t *testing.T) {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
-				if spec == nil {
+				if nodeSpec == nil {
 					t.Error("Expected non-nil spec")
 				}
 			}
@@ -185,6 +236,7 @@ func TestNodeSpecValidationWithDifferentProfiles(t *testing.T) {
 		name              string
 		nodeType          string
 		profile           string
+		options           map[string]any
 		actualHostProfile HostProfile
 		expectCPUPass     bool
 		expectMemPass     bool
@@ -200,28 +252,29 @@ func TestNodeSpecValidationWithDifferentProfiles(t *testing.T) {
 			expectStoragePass: true,
 		},
 		{
-			name:              "Block node mainnet - minimal resources should fail",
+			name:              "Block node mainnet RFH - minimal resources should fail",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfileMainnet,
+			options:           map[string]any{"preset": "tier1-rfh"},
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 4, 4, 10),
 			expectCPUPass:     false,
 			expectMemPass:     false,
 			expectStoragePass: false,
 		},
 		{
-			name:              "Block node previewnet - high resources should pass",
+			name:              "Block node previewnet LFH - adequate resources should pass",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfilePreviewnet,
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 322, 9000, 25000), // 9TB SSD, 25TB HDD
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 20, 90, 4000), // 20 vCPU / 72 GB available (90*0.8) / 4 TB
 			expectCPUPass:     true,
 			expectMemPass:     true,
 			expectStoragePass: true,
 		},
 		{
-			name:              "Block node previewnet - medium resources should fail",
+			name:              "Block node previewnet LFH - undersized host should fail",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfilePreviewnet,
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 16, 64, 5000, 10000), // insufficient
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 32, 100), // well under 16/64/3000
 			expectCPUPass:     false,
 			expectMemPass:     false,
 			expectStoragePass: false,
@@ -230,22 +283,23 @@ func TestNodeSpecValidationWithDifferentProfiles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := CreateNodeSpec(tt.nodeType, tt.profile, tt.actualHostProfile)
+			deploySpec := DeploymentSpec{NodeType: tt.nodeType, Profile: tt.profile, Options: tt.options}
+			nodeSpec, err := CreateNodeSpec(deploySpec, tt.actualHostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
 
-			cpuErr := spec.ValidateCPU()
+			cpuErr := nodeSpec.ValidateCPU()
 			if (cpuErr == nil) != tt.expectCPUPass {
 				t.Errorf("CPU validation: expected pass=%v, got error=%v", tt.expectCPUPass, cpuErr)
 			}
 
-			memErr := spec.ValidateMemory()
+			memErr := nodeSpec.ValidateMemory()
 			if (memErr == nil) != tt.expectMemPass {
 				t.Errorf("Memory validation: expected pass=%v, got error=%v", tt.expectMemPass, memErr)
 			}
 
-			storageErr := spec.ValidateStorage()
+			storageErr := nodeSpec.ValidateStorage()
 			if (storageErr == nil) != tt.expectStoragePass {
 				t.Errorf("Storage validation: expected pass=%v, got error=%v", tt.expectStoragePass, storageErr)
 			}
