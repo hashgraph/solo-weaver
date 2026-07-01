@@ -1153,3 +1153,43 @@ func TestUnixManager_RemoveContents_ManyFiles(t *testing.T) {
 	assert.NoError(err)
 	assert.Empty(entries)
 }
+
+func TestUnixManager_RemoveContents_MultipleBatches(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+	assert, manager := setupTest(t, pm)
+
+	tempDir := t.TempDir()
+	testDir := filepath.Join(tempDir, "test-batches")
+	assert.NoError(os.MkdirAll(testDir, 0755))
+
+	// Create more than two batches of entries, mixing files and subdirectories
+	const entryCount = 2*removeContentsBatchSize + 17
+	for i := 0; i < entryCount; i++ {
+		if i%2 == 0 {
+			file := filepath.Join(testDir, fmt.Sprintf("file%d.txt", i))
+			assert.NoError(os.WriteFile(file, []byte(fmt.Sprintf("content %d", i)), 0644))
+			continue
+		}
+
+		subDir := filepath.Join(testDir, fmt.Sprintf("dir%d", i))
+		assert.NoError(os.MkdirAll(subDir, 0755))
+		assert.NoError(os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("nested"), 0644))
+	}
+
+	// Verify entries exist
+	entries, err := os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Len(entries, entryCount)
+
+	// Remove contents
+	err = manager.RemoveContents(testDir)
+	assert.NoError(err)
+
+	// Verify directory still exists and is empty
+	assert.True(manager.IsDirectory(testDir))
+	entries, err = os.ReadDir(testDir)
+	assert.NoError(err)
+	assert.Empty(entries)
+}
