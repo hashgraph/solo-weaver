@@ -42,6 +42,7 @@ func kubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 
 		// kubelet
 		steps.SetupKubelet(mr),
+		steps.VerifyExecutablesStep("kubelet"),
 		steps.SetupSystemdService(software.KubeletServiceName),
 
 		// setup cli tools
@@ -51,6 +52,7 @@ func kubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 
 		// CRI-O
 		steps.SetupCrio(mr),
+		steps.VerifyExecutablesStep(software.CrioArtifactName),
 		steps.SetupSystemdService(software.CrioServiceName),
 
 		// kubeadm

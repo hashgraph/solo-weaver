@@ -87,6 +87,21 @@ type PromptDefaultsDoc struct {
 	} `yaml:"state"`
 }
 
+// SoftwareVersionsDoc is the minimal YAML shape for reading each installed host
+// component's recorded version from machineState.software. The map key (installer
+// key, e.g. "crio") and the nested name (catalog artifact name, e.g. "cri-o") may
+// differ, so softwareVersionFromDoc matches on either.
+type SoftwareVersionsDoc struct {
+	State struct {
+		MachineState struct {
+			Software map[string]struct {
+				Name    string `yaml:"name"`
+				Version string `yaml:"version"`
+			} `yaml:"software"`
+		} `yaml:"machineState"`
+	} `yaml:"state"`
+}
+
 // ReadProvisionerVersionFromDisk extracts the provisioner version from the on-disk state file
 // without loading the full state into memory. Returns an empty string when no state file exists.
 func ReadProvisionerVersionFromDisk() (string, error) {
@@ -101,6 +116,40 @@ func ReadProvisionerVersionFromDisk() (string, error) {
 	}
 
 	return doc.State.Provisioner.Version, nil
+}
+
+// ReadSoftwareVersionFromDisk reads a single host component's recorded version
+// (by catalog artifact name) from the on-disk state file without loading the
+// full state. Returns an empty string when the state file or component is absent.
+func ReadSoftwareVersionFromDisk(name string) (string, error) {
+	data, err := readStateFileBytes()
+	if err != nil || data == nil {
+		return "", err
+	}
+
+	var doc SoftwareVersionsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		return "", err
+	}
+
+	return softwareVersionFromDoc(doc, name), nil
+}
+
+// softwareVersionFromDoc resolves a component's recorded version, preferring a
+// direct map-key hit and falling back to matching an entry's recorded name (so a
+// lookup by artifact name finds an entry keyed by its installer key). Returns an
+// empty string when the component is not recorded.
+func softwareVersionFromDoc(doc SoftwareVersionsDoc, name string) string {
+	software := doc.State.MachineState.Software
+	if entry, ok := software[name]; ok {
+		return entry.Version
+	}
+	for _, entry := range software {
+		if entry.Name == name {
+			return entry.Version
+		}
+	}
+	return ""
 }
 
 // BlockNodeSummary holds the prompt-relevant fields from BlockNodeState

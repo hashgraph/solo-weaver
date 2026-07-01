@@ -51,9 +51,9 @@ func TestCiliumAccelerationMigration_Applies(t *testing.T) {
 }
 
 func TestCiliumAccelerationMigration_Execute(t *testing.T) {
-	origK8s, origState, origReconfigure, origShell := kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell
+	origK8s, origState, origReconfigure, origShell, origVerify := kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell, verifyCiliumExecutable
 	t.Cleanup(func() {
-		kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell = origK8s, origState, origReconfigure, origShell
+		kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell, verifyCiliumExecutable = origK8s, origState, origReconfigure, origShell, origVerify
 	})
 
 	m := NewCiliumAccelerationMigration()
@@ -84,8 +84,9 @@ func TestCiliumAccelerationMigration_Execute(t *testing.T) {
 		assert.False(t, ran, "must not run before Kubernetes is installed")
 	})
 
-	// Remaining cases assume Kubernetes is present.
+	// Remaining cases assume Kubernetes is present and cilium verification passes.
 	kubernetesInstalled = func() bool { return true }
+	verifyCiliumExecutable = func() error { return nil }
 
 	t.Run("skips when Cilium is not installed", func(t *testing.T) {
 		var ran bool
@@ -127,5 +128,20 @@ func TestCiliumAccelerationMigration_Execute(t *testing.T) {
 		assert.Contains(t, cmd, "cilium upgrade")
 		assert.Contains(t, cmd, "--values")
 		assert.Contains(t, cmd, "--wait")
+	})
+
+	t.Run("aborts before upgrade when the cilium binary fails verification", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		stateReturns(true, "best-effort", nil)
+		reconfigureCiliumConfig = func() (string, error) {
+			return "/opt/solo/weaver/sandbox/etc/weaver/cilium-config.yaml", nil
+		}
+		trackUpgrade(&cmd, &ran)
+		verifyCiliumExecutable = func() error { return assert.AnError }
+		t.Cleanup(func() { verifyCiliumExecutable = func() error { return nil } })
+
+		require.Error(t, m.Execute(context.Background(), mctx))
+		assert.False(t, ran, "cilium upgrade must not run when the binary fails checksum verification")
 	})
 }

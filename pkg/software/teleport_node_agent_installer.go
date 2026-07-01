@@ -180,6 +180,11 @@ func (ti *teleportNodeAgentInstaller) RemoveConfiguration() error {
 func (ti *teleportNodeAgentInstaller) runTeleportConfigure() error {
 	teleportBinary := ti.getSandboxTeleportBinPath()
 
+	// Verify the teleport binary before executing it (guards against tampering).
+	if err := verifyExecutables(TeleportServiceName); err != nil {
+		return err
+	}
+
 	// Build the configure command arguments
 	// Using teleport configure to set up the node agent
 	configureArgs := []string{
