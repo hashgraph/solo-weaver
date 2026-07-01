@@ -5,11 +5,13 @@ package software
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,6 +106,155 @@ func Test_Downloader_Timeout(t *testing.T) {
 	require.Error(t, err, "Download should fail with timeout")
 
 	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
+}
+
+func Test_Downloader_Download_ZeroByte(t *testing.T) {
+	// Server returns 200 with an empty body — a corrupt download.
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tmpFile, err := os.CreateTemp("", "test_zerobyte_*.txt")
+	require.NoError(t, err, "Failed to create temp file")
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	downloader := NewDownloader(
+		WithHTTPClient(server.Client()),
+		WithBasePath(filepath.Dir(tmpFile.Name())),
+		WithAllowedDomains([]string{"localhost", "127.0.0.1"}),
+	)
+
+	err = downloader.Download(server.URL, tmpFile.Name())
+	require.Error(t, err, "Download should reject a zero-byte body")
+	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
+}
+
+func Test_Downloader_Download_ContentLengthMismatch(t *testing.T) {
+	// Server advertises a larger Content-Length than the body it actually writes,
+	// simulating a truncated/reset transfer.
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("short body"))
+	}))
+	defer server.Close()
+
+	tmpFile, err := os.CreateTemp("", "test_truncated_*.txt")
+	require.NoError(t, err, "Failed to create temp file")
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	downloader := NewDownloader(
+		WithHTTPClient(server.Client()),
+		WithBasePath(filepath.Dir(tmpFile.Name())),
+		WithAllowedDomains([]string{"localhost", "127.0.0.1"}),
+	)
+
+	err = downloader.Download(server.URL, tmpFile.Name())
+	require.Error(t, err, "Download should reject a Content-Length mismatch")
+	require.True(t, errorx.IsOfType(err, DownloadError), "Error should be of type DownloadError")
+}
+
+func Test_Downloader_DownloadAndVerify_RetriesThenSucceeds(t *testing.T) {
+	goodContent := "the real payload"
+	goodSum := fmt.Sprintf("%x", sha256.Sum256([]byte(goodContent)))
+
+	var calls int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+		if n == 1 {
+			// First attempt: empty body (transient corruption).
+			return
+		}
+		_, _ = w.Write([]byte(goodContent))
+	}))
+	defer server.Close()
+
+	tmpFile, err := os.CreateTemp("", "test_retry_ok_*.txt")
+	require.NoError(t, err, "Failed to create temp file")
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	downloader := NewDownloader(
+		WithHTTPClient(server.Client()),
+		WithBasePath(filepath.Dir(tmpFile.Name())),
+		WithAllowedDomains([]string{"localhost", "127.0.0.1"}),
+		WithRetryDelay(0), // no sleeping in tests
+	)
+
+	err = downloader.DownloadAndVerify(server.URL, tmpFile.Name(), goodSum, "sha256")
+	require.NoError(t, err, "DownloadAndVerify should recover from a transient empty download")
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls), "Expected exactly one retry")
+
+	content, err := os.ReadFile(tmpFile.Name())
+	require.NoError(t, err, "Failed to read downloaded file")
+	require.Equal(t, goodContent, string(content), "Downloaded content mismatch")
+}
+
+func Test_Downloader_DownloadAndVerify_ExhaustsAttempts(t *testing.T) {
+	// Server always returns a non-empty body that never matches the expected checksum.
+	var calls int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("persistently wrong content"))
+	}))
+	defer server.Close()
+
+	tmpFile, err := os.CreateTemp("", "test_retry_fail_*.txt")
+	require.NoError(t, err, "Failed to create temp file")
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	downloader := NewDownloader(
+		WithHTTPClient(server.Client()),
+		WithBasePath(filepath.Dir(tmpFile.Name())),
+		WithAllowedDomains([]string{"localhost", "127.0.0.1"}),
+		WithMaxAttempts(3),
+		WithRetryDelay(0),
+	)
+
+	expectedSum := fmt.Sprintf("%x", sha256.Sum256([]byte("the content we wanted")))
+	err = downloader.DownloadAndVerify(server.URL, tmpFile.Name(), expectedSum, "sha256")
+	require.Error(t, err, "DownloadAndVerify should fail after exhausting attempts")
+	require.True(t, errorx.IsOfType(err, ChecksumError), "Final error should be the checksum mismatch")
+	require.Equal(t, int32(3), atomic.LoadInt32(&calls), "Expected exactly maxAttempts attempts")
+
+	// The corrupt file must not persist after the retries are exhausted.
+	_, statErr := os.Stat(tmpFile.Name())
+	require.True(t, os.IsNotExist(statErr), "Corrupt download should be removed")
+}
+
+func Test_Downloader_DownloadAndVerify_FailsFastOnUnsupportedAlgorithm(t *testing.T) {
+	// An unsupported algorithm can never verify, so DownloadAndVerify must fail
+	// before ever contacting the server or entering the retry loop.
+	var calls int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	tmpFile, err := os.CreateTemp("", "test_failfast_*.txt")
+	require.NoError(t, err, "Failed to create temp file")
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	downloader := NewDownloader(
+		WithHTTPClient(server.Client()),
+		WithBasePath(filepath.Dir(tmpFile.Name())),
+		WithAllowedDomains([]string{"localhost", "127.0.0.1"}),
+		WithRetryDelay(0),
+	)
+
+	err = downloader.DownloadAndVerify(server.URL, tmpFile.Name(), "abc123", "sha1")
+	require.Error(t, err, "DownloadAndVerify should reject an unsupported algorithm")
+	require.True(t, errorx.IsOfType(err, ChecksumError), "Error should be of type ChecksumError")
+	require.Equal(t, int32(0), atomic.LoadInt32(&calls), "No download should be attempted for an unsupported algorithm")
 }
 
 func Test_Downloader_Extract(t *testing.T) {

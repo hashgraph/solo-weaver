@@ -20,13 +20,22 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 )
 
+// Default retry settings for DownloadAndVerify.
+const (
+	defaultMaxAttempts = 3               // initial attempt + 2 retries
+	defaultRetryDelay  = 1 * time.Second // base delay; grows exponentially per attempt
+	maxRetryDelay      = 30 * time.Second
+)
+
 // Downloader is responsible for downloading a software package and checking its integrity.
 type Downloader struct {
 	client         *http.Client
 	timeout        time.Duration
-	basePath       string   // Base directory for validating download/extraction paths
-	allowedDomains []string // List of allowed domains for SSRF protection
-	insecureTLS    bool     // Skip TLS certificate verification (for local dev with self-signed certs)
+	basePath       string        // Base directory for validating download/extraction paths
+	allowedDomains []string      // List of allowed domains for SSRF protection
+	insecureTLS    bool          // Skip TLS certificate verification (for local dev with self-signed certs)
+	maxAttempts    int           // Number of download+verify attempts before giving up
+	retryDelay     time.Duration // Base backoff delay between attempts (0 disables sleeping)
 }
 
 // DownloaderOption is a function that configures a Downloader
@@ -60,6 +69,25 @@ func WithAllowedDomains(domains []string) DownloaderOption {
 func WithHTTPClient(client *http.Client) DownloaderOption {
 	return func(d *Downloader) {
 		d.client = client
+	}
+}
+
+// WithMaxAttempts sets the number of download+verify attempts before giving up.
+// Values below 1 are clamped to 1.
+func WithMaxAttempts(attempts int) DownloaderOption {
+	return func(d *Downloader) {
+		if attempts < 1 {
+			attempts = 1
+		}
+		d.maxAttempts = attempts
+	}
+}
+
+// WithRetryDelay sets the base backoff delay between download attempts.
+// A zero delay disables sleeping (useful for tests).
+func WithRetryDelay(delay time.Duration) DownloaderOption {
+	return func(d *Downloader) {
+		d.retryDelay = delay
 	}
 }
 
@@ -97,6 +125,8 @@ func NewDownloader(opts ...DownloaderOption) *Downloader {
 		basePath:       models.Paths().HomeDir,
 		allowedDomains: sanity.AllowedDomains(),
 		insecureTLS:    false,
+		maxAttempts:    defaultMaxAttempts,
+		retryDelay:     defaultRetryDelay,
 	}
 
 	// Apply options
@@ -160,12 +190,103 @@ func (fd *Downloader) Download(url, destination string) error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	written, err := io.Copy(out, resp.Body)
+	if err != nil {
+		_ = os.Remove(cleanDest)
+		return NewDownloadError(err, url, 0)
+	}
+
+	// Reject a zero-byte body: a 200-with-empty-response is a corrupt download,
+	// not a valid file. This is treated as a retryable download error.
+	if written == 0 {
+		_ = os.Remove(cleanDest)
+		return NewDownloadError(errorx.ExternalError.New("downloaded file is empty (0 bytes written)"), url, 0)
+	}
+
+	// When the response advertises a Content-Length, fail fast on a size mismatch
+	// (a truncated copy or mid-stream reset) rather than persisting a partial file.
+	// ContentLength is -1 when unknown (e.g. chunked transfer), so only check when >= 0.
+	if resp.ContentLength >= 0 && written != resp.ContentLength {
+		_ = os.Remove(cleanDest)
+		return NewDownloadError(
+			errorx.ExternalError.New("download truncated: wrote %d of %d advertised bytes", written, resp.ContentLength),
+			url, 0)
+	}
+
+	return nil
+}
+
+// DownloadAndVerify downloads a file from url to destination and verifies its
+// checksum, retrying transient corruption. Both download errors (network reset,
+// empty/truncated body) and a subsequent checksum mismatch are treated as
+// retryable: on failure the bad file is removed and the download is re-attempted
+// with capped exponential backoff, up to maxAttempts. The last error is returned
+// once attempts are exhausted.
+func (fd *Downloader) DownloadAndVerify(url, destination, expectedValue, algorithm string) error {
+	attempts := fd.maxAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	// Sanitize the destination once so the download, verification, and cleanup all
+	// operate on the exact same path (Download sanitizes internally, so a caller
+	// passing a relative/unclean path would otherwise write to one path and verify
+	// or remove another).
+	cleanDest, err := sanity.ValidatePathWithinBase(fd.basePath, destination)
 	if err != nil {
 		return NewDownloadError(err, url, 0)
 	}
 
-	return nil
+	// Fail fast on deterministic errors that no retry can fix: an invalid/unsafe URL
+	// and an unsupported checksum algorithm will fail identically on every attempt,
+	// so retrying them only adds backoff delay and log noise.
+	if err := sanity.ValidateURL(url, &sanity.ValidateURLOptions{AllowedDomains: fd.allowedDomains}); err != nil {
+		return NewInvalidURLError(err, url)
+	}
+	if !IsSupportedAlgorithm(algorithm) {
+		return NewChecksumError(cleanDest, algorithm, expectedValue, "")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		lastErr = fd.Download(url, cleanDest)
+		if lastErr == nil {
+			lastErr = VerifyChecksum(cleanDest, expectedValue, algorithm)
+			if lastErr == nil {
+				return nil
+			}
+		}
+
+		// Remove the corrupt/partial file so a bad download never persists and the
+		// next attempt (or a later run) starts clean.
+		_ = os.Remove(cleanDest)
+
+		if attempt < attempts {
+			logx.As().Warn().
+				Str("url", url).
+				Int("attempt", attempt).
+				Int("maxAttempts", attempts).
+				Err(lastErr).
+				Msg("Download or checksum verification failed; retrying after backoff")
+			fd.sleepBackoff(attempt)
+		}
+	}
+
+	return lastErr
+}
+
+// sleepBackoff sleeps for a capped exponential delay before the next attempt.
+// A zero base retryDelay disables sleeping.
+func (fd *Downloader) sleepBackoff(attempt int) {
+	if fd.retryDelay <= 0 {
+		return
+	}
+
+	delay := fd.retryDelay << (attempt - 1)
+	if delay > maxRetryDelay || delay < fd.retryDelay {
+		delay = maxRetryDelay
+	}
+	time.Sleep(delay)
 }
 
 // ExtractTarGz extracts a tar.gz file
