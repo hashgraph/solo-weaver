@@ -95,6 +95,12 @@ sudo solo-provisioner block node check --profile=mainnet
 
 # With custom config file
 sudo solo-provisioner block node check --profile=testnet --config=/path/to/config.yaml
+
+# Check hardware requirements for a specific plugin preset
+sudo solo-provisioner block node check --profile=mainnet --plugin-preset=tier1-lfh
+
+# Check with explicit plugin list
+sudo solo-provisioner block node check --profile=mainnet --plugins=com.hedera.block.suites.BlockStreamPublishing,com.hedera.block.suites.LocalFileSystemRecorder
 ```
 
 **What it checks**:
@@ -103,6 +109,13 @@ sudo solo-provisioner block node check --profile=testnet --config=/path/to/confi
 - Required dependencies
 - Network connectivity
 - Storage availability
+
+**Additional Flags**:
+
+| Flag              | Description                                                                                | Default |
+|-------------------|--------------------------------------------------------------------------------------------|---------|
+| `--plugin-preset` | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); used for hardware sizing | `""`    |
+| `--plugins`       | Comma-separated plugin list; overrides `--plugin-preset` when set                         | `""`    |
 
 #### Install Block Node
 

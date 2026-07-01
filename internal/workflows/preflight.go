@@ -20,13 +20,13 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// createNodeSpec creates the appropriate node spec based on node type, profile and host profile
-func createNodeSpec(nodeType string, profile string, hostProfile hardware.HostProfile) (hardware.Spec, error) {
-	return hardware.CreateNodeSpec(nodeType, profile, hostProfile)
+// createNodeSpec creates the appropriate node spec based on a DeploymentSpec and host profile
+func createNodeSpec(spec hardware.DeploymentSpec, hostProfile hardware.HostProfile) (hardware.Spec, error) {
+	return hardware.CreateNodeSpec(spec, hostProfile)
 }
 
 // CheckHostProfileStep retrieves host profile and validates node type and profile
-func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
+func CheckHostProfileStep(spec hardware.DeploymentSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-host-profile").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Use the new HostProfile abstraction
@@ -34,22 +34,22 @@ func CheckHostProfileStep(nodeType string, profile string) automa.Builder {
 			logx.As().Info().Msgf("host: %s", hostProfile.String())
 
 			// Validate node type is supported using centralized validation
-			if !hardware.IsValidNodeType(nodeType) {
+			if !hardware.IsValidNodeType(spec.NodeType) {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						errorx.IllegalArgument.New("unsupported node type: %q. Supported types: %v",
-							nodeType, hardware.SupportedNodeTypes())))
+							spec.NodeType, hardware.SupportedNodeTypes())))
 			}
 
 			// Validate profile
-			if !hardware.IsValidProfile(profile) {
+			if !hardware.IsValidProfile(spec.Profile) {
 				return automa.FailureReport(stp,
 					automa.WithError(
 						errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
-							profile, models.SupportedProfiles())))
+							spec.Profile, models.SupportedProfiles())))
 			}
 
-			logx.As().Info().Msgf("node type: %s, profile: %s", nodeType, profile)
+			logx.As().Info().Msgf("node type: %s, profile: %s", spec.NodeType, spec.Profile)
 			return automa.SuccessReport(stp)
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -239,11 +239,11 @@ func CheckWeaverUserStep() automa.Builder {
 }
 
 // CheckOSStep validates OS requirements for a specific node type
-func CheckOSStep(nodeType string, profile string) automa.Builder {
+func CheckOSStep(spec hardware.DeploymentSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-os").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
+			nodeSpec, err := createNodeSpec(spec, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -270,11 +270,11 @@ func CheckOSStep(nodeType string, profile string) automa.Builder {
 }
 
 // CheckCPUStep validates CPU requirements for a specific node type
-func CheckCPUStep(nodeType string, profile string) automa.Builder {
+func CheckCPUStep(spec hardware.DeploymentSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-cpu").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
+			nodeSpec, err := createNodeSpec(spec, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -283,9 +283,13 @@ func CheckCPUStep(nodeType string, profile string) automa.Builder {
 			logx.As().Info().Msgf("detected: %d cores, required: %d cores", hostProfile.GetCPUCores(), reqs.MinCpuCores)
 
 			if err := nodeSpec.ValidateCPU(); err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "CPU validation failed")))
+				baseErr := automa.StepExecutionError.Wrap(err, "CPU validation failed")
+				if p, ok := hardware.Providers()[spec.NodeType]; ok {
+					if _, whyMap, e := p.ComputeWithWhy(spec); e == nil && whyMap["cpu"] != "" {
+						baseErr = baseErr.WithProperty(models.ErrPropertyWhyFloor, whyMap["cpu"])
+					}
+				}
+				return automa.FailureReport(stp, automa.WithError(baseErr))
 			}
 			return automa.SuccessReport(stp)
 		}).
@@ -303,11 +307,11 @@ func CheckCPUStep(nodeType string, profile string) automa.Builder {
 }
 
 // CheckMemoryStep validates memory requirements for a specific node type
-func CheckMemoryStep(nodeType string, profile string) automa.Builder {
+func CheckMemoryStep(spec hardware.DeploymentSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-memory").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
+			nodeSpec, err := createNodeSpec(spec, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -316,7 +320,13 @@ func CheckMemoryStep(nodeType string, profile string) automa.Builder {
 			logx.As().Info().Msgf("detected: %d GB, required: %d GB", hostProfile.GetTotalMemoryGB(), reqs.MinMemoryGB)
 
 			if err := nodeSpec.ValidateMemory(); err != nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.IllegalState.Wrap(err, "memory validation failed")))
+				baseErr := errorx.IllegalState.Wrap(err, "memory validation failed")
+				if p, ok := hardware.Providers()[spec.NodeType]; ok {
+					if _, whyMap, e := p.ComputeWithWhy(spec); e == nil && whyMap["memory"] != "" {
+						baseErr = baseErr.WithProperty(models.ErrPropertyWhyFloor, whyMap["memory"])
+					}
+				}
+				return automa.FailureReport(stp, automa.WithError(baseErr))
 			}
 			return automa.SuccessReport(stp)
 		}).
@@ -333,12 +343,12 @@ func CheckMemoryStep(nodeType string, profile string) automa.Builder {
 }
 
 // CheckStorageStep validates storage requirements for a specific node type
-func CheckStorageStep(nodeType string, profile string) automa.Builder {
+func CheckStorageStep(spec hardware.DeploymentSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId("validate-storage").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 
 			hostProfile := hardware.GetHostProfile()
-			nodeSpec, err := createNodeSpec(nodeType, profile, hostProfile)
+			nodeSpec, err := createNodeSpec(spec, hostProfile)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
@@ -348,8 +358,13 @@ func CheckStorageStep(nodeType string, profile string) automa.Builder {
 				hostProfile.GetTotalStorageGB(), hostProfile.GetSSDStorageGB(), hostProfile.GetHDDStorageGB(), reqs.MinStorageGB)
 
 			if err := nodeSpec.ValidateStorage(); err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.Wrap(err, "storage validation failed")))
+				baseErr := errorx.IllegalState.Wrap(err, "storage validation failed")
+				if p, ok := hardware.Providers()[spec.NodeType]; ok {
+					if _, whyMap, e := p.ComputeWithWhy(spec); e == nil && whyMap["storage"] != "" {
+						baseErr = baseErr.WithProperty(models.ErrPropertyWhyFloor, whyMap["storage"])
+					}
+				}
+				return automa.FailureReport(stp, automa.WithError(baseErr))
 			}
 			return automa.SuccessReport(stp)
 		}).
@@ -367,26 +382,26 @@ func CheckStorageStep(nodeType string, profile string) automa.Builder {
 
 // NewNodeSafetyCheckWorkflow creates a safety check workflow for any node type.
 // If skipHardwareChecks is true, hardware validation steps (OS, CPU, memory, storage) are excluded.
-func NewNodeSafetyCheckWorkflow(nodeType string, profile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
+func NewNodeSafetyCheckWorkflow(spec hardware.DeploymentSpec, skipHardwareChecks bool) *automa.WorkflowBuilder {
 	preflightSteps := []automa.Builder{
 		CheckPrivilegesStep(),
 		CheckWeaverUserStep(),
-		CheckHostProfileStep(nodeType, profile),
+		CheckHostProfileStep(spec),
 	}
 
 	if skipHardwareChecks {
 		logx.As().Warn().Msg("Hardware validation steps (OS, CPU, memory, storage) will be skipped due to --skip-hardware-checks flag")
 	} else {
 		preflightSteps = append(preflightSteps,
-			CheckOSStep(nodeType, profile),
-			CheckCPUStep(nodeType, profile),
-			CheckMemoryStep(nodeType, profile),
-			CheckStorageStep(nodeType, profile),
+			CheckOSStep(spec),
+			CheckCPUStep(spec),
+			CheckMemoryStep(spec),
+			CheckStorageStep(spec),
 		)
 	}
 
 	return automa.NewWorkflowBuilder().
-		WithId(nodeType + "-node-preflight").
+		WithId(spec.NodeType + "-node-preflight").
 		Steps(preflightSteps...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Preflight Checks")

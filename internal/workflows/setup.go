@@ -8,18 +8,28 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 // NodeSetupWorkflow creates a comprehensive setup workflow for any node type
 // It runs preflight checks first, then performs the actual setup.
-func NodeSetupWorkflow(nodeType string, profile string, skipHardwareChecks bool) *automa.WorkflowBuilder {
+func NodeSetupWorkflow(nodeType string, profile string, pluginPreset string, skipHardwareChecks bool) *automa.WorkflowBuilder {
+	opts := map[string]any{}
+	if pluginPreset != "" {
+		opts["preset"] = pluginPreset
+	}
+	spec := hardware.DeploymentSpec{
+		NodeType: nodeType,
+		Profile:  profile,
+		Options:  opts,
+	}
 	return automa.NewWorkflowBuilder().
 		WithId(nodeType+"-node-setup").
 		Steps(
 			// First run preflight checks to ensure system readiness
-			NewNodeSafetyCheckWorkflow(nodeType, profile, skipHardwareChecks),
+			NewNodeSafetyCheckWorkflow(spec, skipHardwareChecks),
 			// Then perform the actual system setup (packages, kernel modules, etc.)
 			systemSetupWorkflow(nodeType),
 		)

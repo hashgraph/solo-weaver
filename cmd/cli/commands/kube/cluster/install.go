@@ -70,7 +70,7 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", sr.Runtime.MachineRuntime)
 		}
 
-		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile, skipHardwareChecks, mr), opts)
+		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(flagNodeType, flagProfile, "", skipHardwareChecks, mr), opts)
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
 		}
