@@ -22,11 +22,11 @@ func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
 }
 
 // InstallClusterWorkflow creates a workflow to set up a kubernetes cluster.
-func InstallClusterWorkflow(nodeType string, profile string, skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
+func InstallClusterWorkflow(nodeType string, profile string, pluginPreset string, skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
 		Steps(
-			NodeSetupWorkflow(nodeType, profile, skipHardwareChecks),
+			NodeSetupWorkflow(nodeType, profile, pluginPreset, skipHardwareChecks),
 			kubernetesSetupWorkflow(mr),
 		)
 }

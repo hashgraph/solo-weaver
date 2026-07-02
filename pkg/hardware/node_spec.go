@@ -10,7 +10,7 @@ import (
 	"golang.org/x/text/language"
 )
 
-// nodeSpec implements Spec by combining requirements from the registry
+// nodeSpec implements Spec by combining requirements from the provider registry
 // with the actual host profile for validation.
 type nodeSpec struct {
 	baseNode
@@ -21,22 +21,28 @@ type nodeSpec struct {
 // Ensure nodeSpec implements Spec
 var _ Spec = (*nodeSpec)(nil)
 
-// NewNodeSpec creates a node specification for the given node type, profile, and host profile.
-// Requirements are looked up from the registry based on (nodeType, profile).
-func NewNodeSpec(nodeType, profile string, hostProfile HostProfile) (Spec, error) {
-	requirements, found := GetRequirements(nodeType, profile)
-	if !found {
-		return nil, errorx.IllegalArgument.New("no requirements defined for node type %q with profile %q", nodeType, profile)
+// NewNodeSpec creates a node specification for the given DeploymentSpec and host profile.
+// Requirements are computed by the registered RequirementsProvider for the node type.
+func NewNodeSpec(spec DeploymentSpec, hostProfile HostProfile) (Spec, error) {
+	providers := Providers()
+	p, ok := providers[spec.NodeType]
+	if !ok {
+		return nil, errorx.IllegalArgument.New("no requirements provider registered for node type %q", spec.NodeType)
+	}
+
+	requirements, err := p.Compute(spec)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to compute requirements for node type %q with profile %q", spec.NodeType, spec.Profile)
 	}
 
 	return &nodeSpec{
 		baseNode: baseNode{
-			nodeType:            formatDisplayName(nodeType, profile),
+			nodeType:            formatDisplayName(spec.NodeType, spec.Profile),
 			actualHostProfile:   hostProfile,
 			minimalRequirements: requirements,
 		},
-		rawNodeType: nodeType,
-		profile:     profile,
+		rawNodeType: spec.NodeType,
+		profile:     spec.Profile,
 	}, nil
 }
 
