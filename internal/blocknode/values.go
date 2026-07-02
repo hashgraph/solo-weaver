@@ -6,6 +6,7 @@ import (
 	"fmt"
 	oslib "os"
 	"path"
+	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -180,6 +181,43 @@ func mergeValues(base, operator []byte) ([]byte, error) {
 		return nil, errorx.InternalError.Wrap(err, "failed to marshal merged values YAML")
 	}
 	return result, nil
+}
+
+// ValuesFileDefinesPlugins reports whether the operator-supplied values file sets a
+// non-empty plugins.names (either a scalar comma-separated string or a YAML sequence).
+// It is intentionally error-tolerant: an empty path, an unreadable file, or a parse
+// failure all return false rather than an error — the interactive prompt uses this only
+// to decide a smart default, and the deploy-time path (ComputeValuesFile) surfaces any
+// real read/parse error later.
+func ValuesFileDefinesPlugins(valuesFile string) bool {
+	if valuesFile == "" {
+		return false
+	}
+	sanitizedPath, err := sanity.ValidateInputFile(valuesFile)
+	if err != nil {
+		return false
+	}
+	content, err := oslib.ReadFile(sanitizedPath)
+	if err != nil {
+		return false
+	}
+
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(content, &vals); err != nil {
+		return false
+	}
+	plugins, ok := vals["plugins"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	switch names := plugins["names"].(type) {
+	case string:
+		return strings.TrimSpace(names) != ""
+	case []interface{}:
+		return len(names) > 0
+	default:
+		return false
+	}
 }
 
 // persistenceEntry represents the required persistence settings for a storage type.

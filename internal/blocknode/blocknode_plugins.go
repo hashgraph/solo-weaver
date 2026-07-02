@@ -28,6 +28,13 @@ const (
 
 	// PresetCustom indicates the operator selected a custom set of plugins.
 	PresetCustom = "custom"
+
+	// PresetNone means "do not override": the plugin list is left to the operator's
+	// --values file (if it sets plugins.names) or the chart's built-in default.
+	// It resolves to an empty plugin list, so injectPluginsConfig is a no-op.
+	// It is deliberately absent from every Presets map, so IsKnownPreset reports
+	// false and PluginListForPreset returns "".
+	PresetNone = "none"
 )
 
 // blockNodePluginConfig holds the canonical plugin configuration for a range of
@@ -106,10 +113,11 @@ var presetLabels = map[string]string{
 	PresetTier1LFH: "Tier 1 — Local Full History  (blocks stored on local disk)",
 	PresetTier1RFH: "Tier 1 — Remote Full History  (blocks stored in cloud storage)",
 	PresetCustom:   "Custom  (select individual plugins)",
+	PresetNone:     "None — use --values / chart default (no plugin override)",
 }
 
 // orderedPresets is the display order for the TUI select prompt.
-var orderedPresets = []string{PresetTier1LFH, PresetTier1RFH, PresetCustom}
+var orderedPresets = []string{PresetTier1LFH, PresetTier1RFH, PresetCustom, PresetNone}
 
 // configForVersion returns the plugin configuration applicable to the given
 // chart version. Empty or unparseable versions return the latest config.
