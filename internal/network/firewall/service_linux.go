@@ -25,36 +25,21 @@ func defaultApplyViaService(ctx context.Context) error {
 	return soos.RestartService(ctx, NetworkNftService)
 }
 
-// ensureNetworkNftUnit writes the embedded service unit and the nftables
-// drop-in on first call. Both are stat-and-skip independently so a partial
-// install (e.g. upgrading from a version that predates the drop-in) is
-// repaired on the next mutation without a full reinstall.
+// ensureNetworkNftUnit writes the embedded service unit on first call.
+// Stat-and-skip so repeated mutations don't re-write on every call.
 func ensureNetworkNftUnit(ctx context.Context) error {
-	_, unitErr := os.Stat(NetworkNftServiceUnitPath)
-	_, dropInErr := os.Stat(NftablesDropInPath)
-	if unitErr == nil && dropInErr == nil {
-		return nil // both already installed — fast path
+	if _, err := os.Stat(NetworkNftServiceUnitPath); err == nil {
+		return nil // already installed — fast path
 	}
 
-	if unitErr != nil {
-		if err := writeEmbedded(networkNftServiceTemplate, NetworkNftServiceUnitPath); err != nil {
-			return err
-		}
+	if err := writeEmbedded(networkNftServiceTemplate, NetworkNftServiceUnitPath); err != nil {
+		return err
 	}
-	if dropInErr != nil {
-		if err := writeEmbedded(nftablesDropInTemplate, NftablesDropInPath); err != nil {
-			return err
-		}
-	}
-
 	if err := soos.DaemonReload(ctx); err != nil {
 		return err
 	}
-	if unitErr != nil {
-		// Only enable at boot on first install; the drop-in alone doesn't need it.
-		if err := soos.EnableService(ctx, NetworkNftService); err != nil {
-			logx.As().Warn().Err(err).Str("service", NetworkNftService).Msg("could not enable service at boot")
-		}
+	if err := soos.EnableService(ctx, NetworkNftService); err != nil {
+		logx.As().Warn().Err(err).Str("service", NetworkNftService).Msg("could not enable service at boot")
 	}
 	return nil
 }
