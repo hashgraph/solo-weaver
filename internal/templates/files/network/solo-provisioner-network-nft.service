@@ -1,0 +1,15 @@
+[Unit]
+Description=Solo Provisioner Network Host Firewall (nftables)
+Documentation=https://github.com/hashgraph/solo-weaver
+DefaultDependencies=no
+After=nftables.service
+PartOf=nftables.service
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/solo-provisioner/network-host.nft
+
+[Install]
+WantedBy=multi-user.target

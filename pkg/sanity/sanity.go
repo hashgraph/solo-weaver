@@ -3,6 +3,7 @@
 package sanity
 
 import (
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -702,4 +703,49 @@ func Contains[T comparable](item T, slice []T) bool {
 		}
 	}
 	return false
+}
+
+// ValidateCIDR rejects any string that is not a syntactically valid IPv4 or
+// IPv6 CIDR (e.g. "10.0.0.0/8", "2001:db8::/32"). It is the boundary check for
+// management / in-cluster CIDRs that flow into the `inet host` nftables ruleset
+// rendered to disk and applied via `nft -f`; a malformed value must never reach
+// the renderer, where it could break the atomic transaction or smuggle in nft
+// syntax. A bare IP without a prefix length is rejected — callers must be
+// explicit about the mask.
+func ValidateCIDR(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("CIDR cannot be empty")
+	}
+
+	// Defensive: net.ParseCIDR already rejects these, but fail with a specific
+	// message so the operator sees "invalid characters" rather than a parser dump.
+	if shellMetachars.MatchString(s) {
+		return errorx.IllegalArgument.New("CIDR contains invalid characters: %s", s)
+	}
+
+	if _, _, err := net.ParseCIDR(s); err != nil {
+		return errorx.IllegalArgument.New("invalid CIDR: %s", s)
+	}
+
+	return nil
+}
+
+// ValidatePort rejects any string that is not a valid TCP/UDP port number in
+// the range 1–65535. It is the boundary check for `--in-cluster-port` values
+// before they are rendered into the `inet host` nftables ruleset.
+func ValidatePort(s string) error {
+	if s == "" {
+		return errorx.IllegalArgument.New("port cannot be empty")
+	}
+
+	port, err := strconv.Atoi(s)
+	if err != nil {
+		return errorx.IllegalArgument.New("invalid port number: %s", s)
+	}
+
+	if port < 1 || port > 65535 {
+		return errorx.IllegalArgument.New("port must be between 1 and 65535, got %d", port)
+	}
+
+	return nil
 }
