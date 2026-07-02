@@ -170,14 +170,12 @@ func stubReadSoftwareVersion(t *testing.T, fn func(string) (string, error)) {
 
 func TestVerifyExecutables_SkipsWhenRecordedVersionNotInCatalog(t *testing.T) {
 	// A host running a version the catalog no longer lists cannot be verified;
-	// the binaries (which do not exist on the test host) must never be hashed.
-	resolved := false
+	// verification must be skipped (nil error) rather than failing closed.
 	stubReadSoftwareVersion(t, func(string) (string, error) { return "0.0.0-delisted", nil })
 
 	// "cilium" is a real host artifact, so resolution reaches the version guard.
 	err := VerifyExecutables("cilium")
 	require.NoError(t, err, "verification must be skipped, not fail closed, for a delisted version")
-	require.False(t, resolved)
 }
 
 func TestVerifyExecutables_PropagatesStateReadError(t *testing.T) {
