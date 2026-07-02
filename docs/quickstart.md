@@ -462,6 +462,58 @@ sudo solo-provisioner network firewall delete
 
 > `delete` removes the table and `/etc/solo-provisioner/network-host.nft` but does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver`); disable it manually if you need it off.
 
+#### Create a Traffic Policy
+
+The `policy` scope is a generic, category-agnostic primitive that manages the `inet weaver` workload traffic plane: named per-category rules that classify traffic into an HTB priority class, or quarantine a set of CIDRs. It is not tied to any specific node type — the CLI takes CIDRs and class names directly (statusz-agnostic); the examples below use the block-node categories because `block node install` is the only caller today. Each `create` renders the rule(s) into the `inet weaver` forward chain, ensures the policy's nft set `@<name>` exists, writes a per-policy registry file under `/etc/solo-provisioner/policies/`, applies the full chain to the live kernel with `nft -f`, and atomically rewrites `/etc/solo-provisioner/network-weaver.nft`.
+
+`create` is create-if-missing, mirroring `network firewall create`: a policy that already exists is left untouched unless `--force` is passed, in which case its config and membership are **replaced** (not merged) from the given flags/`--cidrs`. Without `--force`, an existing policy warns and makes no changes — even if the flags/`--cidrs` given this time differ from before.
+
+Specify **exactly one** action: `--stamp <class>` (classify into an HTB priority class) or `--deny` (drop the CIDRs both directions). There is no `--direction` flag — every class has exactly one direction (see the class list below), so `--stamp <class>` determines it.
+
+```bash
+# Publisher: highest-priority ingress class on the publisher listener port
+sudo solo-provisioner network policy create --name bn-publisher \
+  --ports 40840 --stamp publisher
+
+# Subscriber ingress from any source (no IP-set clause): reserve class
+sudo solo-provisioner network policy create --name bn-subscriber-in \
+  --ports 40980,40981 --stamp reserve-ingress --from-entity world
+
+# Partner egress (specific destinations), curated CIDR list
+sudo solo-provisioner network policy create --name bn-partner-out \
+  --ports 40980,40981 --stamp partner --cidrs 10.20.0.0/16
+
+# Backfill egress with an asymmetric reply class (conntrack reply gets higher priority)
+sudo solo-provisioner network policy create --name bn-backfill \
+  --stamp reserve-egress --reply-stamp backfill-response \
+  --cidrs 10.30.5.7:43473
+
+# Quarantine: drop all traffic to/from a set of CIDRs, both directions
+sudo solo-provisioner network policy create --name bn-restricted \
+  --deny --cidrs 10.99.0.0/16
+```
+
+**Flags**:
+
+| Flag            | Description                                                                                          | Default       |
+|-----------------|------------------------------------------------------------------------------------------------------|---------------|
+| `--name`        | Policy name; also the nft set name `@<name>` (**required**)                                          | (none)        |
+| `--stamp`       | HTB class to classify matching packets into; also fixes the policy's direction (mutually exclusive with `--deny`) | (none) |
+| `--deny`        | Drop the `--cidrs` in both directions (mutually exclusive with `--stamp`)                            | `false`       |
+| `--reply-stamp` | Reply class for an asymmetric conntrack reply (requires `--stamp` to resolve to an egress class; `--reply-stamp` must resolve to the mirror ingress class) | (none) |
+| `--from-entity` | `world` — match any source/dest with no IP-set clause (mutually exclusive with `--cidrs`)            | (none)        |
+| `--ports`       | Workload listener ports for the match key (comma-separated or repeated)                              | (none)        |
+| `--cidrs`       | Initial set membership (comma-separated or repeated); `ip:port` entries for `--reply-stamp` policies | (none)        |
+| `--cidrs-file`  | Alternative to `--cidrs`: a file of CIDRs (one per line or comma-separated)                          | (none)        |
+| `--pod-cidr`    | Pod CIDR to scope classification to                                                                  | auto-detected |
+| `--force`       | Replace an existing policy's config and membership (root flag, `-y`); without it, an existing policy is left untouched | `false` |
+
+`--stamp` references a QoS class name — `publisher`, `reserve-ingress` (ingress); `partner`, `public`, `reserve-egress` (egress); `backfill-response` (ingress, `--reply-stamp` only) — referencing an unknown class is an error. Rule position in the chain is determined by action type and match specificity (deny → reply-restore → specific stamp → fallthrough stamp), never by creation order.
+
+When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
+
+> Set **membership** (the CIDRs) is never persisted to `network-weaver.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).
+
 ---
 
 ### Teleport Commands
