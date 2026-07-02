@@ -5,6 +5,8 @@
 package prompt
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
@@ -183,7 +185,7 @@ func TestAddPluginPresetPrompts_NonCustomClearsPlugins(t *testing.T) {
 	var preset, plugins string
 
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", NewChosenValues())
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", "", NewChosenValues())
 
 	// preset group + conditional custom group.
 	if len(w.groups) != 2 || len(w.afterRun) != 1 {
@@ -217,7 +219,7 @@ func TestAddPluginPresetPrompts_CustomJoinsSelection(t *testing.T) {
 
 	cv := NewChosenValues()
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, defaults, &preset, &plugins, "0.35.1", cv)
+	AddPluginPresetPrompts(w, cmd, defaults, &preset, &plugins, "0.35.1", "", cv)
 
 	if preset != blocknode.PresetCustom {
 		t.Fatalf("expected Custom preset pre-selected, got %q", preset)
@@ -233,6 +235,35 @@ func TestAddPluginPresetPrompts_CustomJoinsSelection(t *testing.T) {
 	}
 }
 
+func TestAddPluginPresetPrompts_SmartDefaultsToNoneWhenValuesFileDefinesPlugins(t *testing.T) {
+	valuesFile := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(valuesFile, []byte("plugins:\n  names: \"health,verification\"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write values file: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "install"}
+	var preset, plugins string
+
+	w := NewWizard()
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", valuesFile, NewChosenValues())
+
+	if preset != blocknode.PresetNone {
+		t.Fatalf("expected the values file to smart-default the preset to PresetNone, got %q", preset)
+	}
+}
+
+func TestAddPluginPresetPrompts_DefaultsToTier1LFHWhenNoValuesFile(t *testing.T) {
+	cmd := &cobra.Command{Use: "install"}
+	var preset, plugins string
+
+	w := NewWizard()
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", "", NewChosenValues())
+
+	if preset != blocknode.PresetTier1LFH {
+		t.Fatalf("expected the default tier1-lfh preset when no --values file is given, got %q", preset)
+	}
+}
+
 func TestAddPluginPresetPrompts_SkipsWhenPresetFlagSet(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	var preset, plugins string
@@ -241,7 +272,7 @@ func TestAddPluginPresetPrompts_SkipsWhenPresetFlagSet(t *testing.T) {
 	_ = cmd.Flags().Set("plugin-preset", "tier1-lfh")
 
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", NewChosenValues())
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", "", NewChosenValues())
 
 	if len(w.groups) != 0 {
 		t.Fatalf("expected no groups when --plugin-preset already set, got %d", len(w.groups))

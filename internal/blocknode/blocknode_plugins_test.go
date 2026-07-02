@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,6 +57,22 @@ func TestAvailablePresets_ContainsExpectedPresets(t *testing.T) {
 	assert.Contains(t, presets, PresetTier1LFH)
 	assert.Contains(t, presets, PresetTier1RFH)
 	assert.Contains(t, presets, PresetCustom)
+	assert.Contains(t, presets, PresetNone)
+}
+
+// TestPresetNone_ResolvesToEmptyList locks in the contract that the "no override"
+// preset is not a known preset and yields an empty plugin list, so injectPluginsConfig
+// leaves the merged --values/chart-default plugins.names untouched.
+func TestPresetNone_ResolvesToEmptyList(t *testing.T) {
+	assert.False(t, IsKnownPreset(PresetNone), "PresetNone must not be a known preset")
+	assert.Empty(t, PluginListForPreset(PresetNone, ""), "PresetNone must resolve to an empty plugin list")
+	assert.Empty(t, PluginListForPreset(PresetNone, "0.35.0"), "PresetNone must resolve empty at any version")
+	assert.NotEmpty(t, PresetLabel(PresetNone), "PresetNone must have a display label")
+	// It must be absent from every version entry's Presets map.
+	for i, cfg := range blockNodePluginHistory {
+		_, ok := cfg.Presets[PresetNone]
+		assert.False(t, ok, "entry %d (MinVersion=%q) must not define PresetNone", i, cfg.MinVersion)
+	}
 }
 
 func TestAvailablePresets_ReturnsACopy(t *testing.T) {
@@ -287,6 +305,45 @@ func TestInjectPluginsConfig_CustomListNoWhitespace(t *testing.T) {
 	for _, entry := range strings.Split(names, ",") {
 		assert.Equal(t, strings.TrimSpace(entry), entry, "no surrounding whitespace per plugin entry")
 	}
+}
+
+// ── ValuesFileDefinesPlugins ───────────────────────────────────────────────────
+
+func TestValuesFileDefinesPlugins(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"scalar string", "plugins:\n  names: \"health,verification\"\n", true},
+		{"yaml sequence", "plugins:\n  names:\n    - health\n    - verification\n", true},
+		// An explicit empty string, empty sequence, or null still counts as "defined":
+		// the operator touched the key, and Helm's CoalesceTables treats an operator
+		// null as an instruction to delete the chart's default plugins.names entirely
+		// (see ValuesFileDefinesPlugins doc comment) — that's deliberate operator intent,
+		// not "no opinion", so it must not be clobbered by a preset-derived list.
+		{"empty string", "plugins:\n  names: \"\"\n", true},
+		{"empty sequence", "plugins:\n  names: []\n", true},
+		{"explicit null", "plugins:\n  names: null\n", true},
+		{"names absent", "plugins:\n  mavenImage: img\n", false},
+		{"plugins absent", "blockNode:\n  config: {}\n", false},
+		{"unparseable yaml", "plugins: : :\n  - [\n", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "values.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o600))
+			assert.Equal(t, tc.want, ValuesFileDefinesPlugins(path))
+		})
+	}
+}
+
+func TestValuesFileDefinesPlugins_EmptyPathIsFalse(t *testing.T) {
+	assert.False(t, ValuesFileDefinesPlugins(""))
+}
+
+func TestValuesFileDefinesPlugins_MissingFileIsFalse(t *testing.T) {
+	assert.False(t, ValuesFileDefinesPlugins(filepath.Join(t.TempDir(), "does-not-exist.yaml")))
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
