@@ -55,6 +55,18 @@ func loadComponentSpecs(paths models.WeaverPaths) ([]steps.DaemonComponentSpec, 
 	return buildComponentSpecs(cfg, paths), nil
 }
 
+// daemonExtraReadWritePaths returns the set of host paths that must be added to
+// the service unit's ReadWritePaths beyond /opt/solo. Each component appends its
+// own data root only when that component is enabled — the paths must exist before
+// systemd sets up the mount namespace or the service fails with status=226/NAMESPACE.
+func daemonExtraReadWritePaths(cfg daemon.DaemonConfig) []string {
+	var paths []string
+	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
+		paths = append(paths, "/opt/hgcapp")
+	}
+	return paths
+}
+
 // NewDaemonServiceInstallWorkflow provisions the full daemon stack. The step
 // list is built dynamically from cfg so that only the preflight and RBAC steps
 // relevant to the enabled components are included:
@@ -94,7 +106,7 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 	}
 
 	wfSteps = append(wfSteps,
-		steps.InstallDaemonServiceStep(paths),
+		steps.InstallDaemonServiceStep(paths, daemonExtraReadWritePaths(cfg)),
 		//steps.AddOperatorToWeaverGroupStep(),
 		steps.CheckDaemonServiceStep(paths, paths.DaemonSockPath),
 		steps.CheckDaemonComponentPrerequisitesStep(paths.DaemonSockPath),

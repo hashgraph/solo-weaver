@@ -273,21 +273,32 @@ func copyBinaryFile(src, dst string) error {
 	return out.Sync()
 }
 
-// installDaemonServiceFiles writes the unit template to the sandbox path and
-// creates the /usr/lib/systemd/system symlink that points to it.
+// daemonServiceTemplateData is the rendering context for the daemon service unit template.
+type daemonServiceTemplateData struct {
+	// ExtraReadWritePaths lists additional paths to include in ReadWritePaths beyond
+	// /opt/solo. Only paths that exist on the host (created by the caller before
+	// rendering) should be listed; the systemd mount namespace setup fails with
+	// status=226/NAMESPACE for any listed path that is absent.
+	ExtraReadWritePaths []string
+}
+
+// installDaemonServiceFiles renders the unit template and writes it to the sandbox
+// path, then creates the /usr/lib/systemd/system symlink that points to it.
 // sandboxPath — $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
 // symlinkPath — /usr/lib/systemd/system/solo-provisioner-daemon.service
-func installDaemonServiceFiles(sandboxPath, symlinkPath string) error {
-	content, err := templates.Files.ReadFile(daemonServiceTemplatePath)
+func installDaemonServiceFiles(sandboxPath, symlinkPath string, extraPaths []string) error {
+	rendered, err := templates.Render(daemonServiceTemplatePath, daemonServiceTemplateData{
+		ExtraReadWritePaths: extraPaths,
+	})
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to read daemon service template")
+		return errorx.InternalError.Wrap(err, "failed to render daemon service template")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(sandboxPath), 0o755); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to create sandbox systemd directory %s", filepath.Dir(sandboxPath))
 	}
 
-	if err := os.WriteFile(sandboxPath, content, 0o644); err != nil {
+	if err := os.WriteFile(sandboxPath, []byte(rendered), 0o644); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to write daemon service file to %s", sandboxPath)
 	}
 
@@ -312,14 +323,23 @@ func removeDaemonServiceFiles(sandboxPath, symlinkPath string) {
 // InstallDaemonServiceStep installs the solo-provisioner-daemon systemd service
 // unit file into the weaver sandbox, creates a symlink at
 // /usr/lib/systemd/system/solo-provisioner-daemon.service, runs daemon-reload,
-// enables, and starts the service.
-func InstallDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
+// enables, and starts the service. extraReadWritePaths lists any additional paths
+// beyond /opt/solo that the service unit must be allowed to write; each path is
+// created with MkdirAll before the unit is rendered so the mount namespace setup
+// does not fail with status=226/NAMESPACE for an absent directory.
+func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []string) *automa.StepBuilder {
 	sandboxPath := paths.DaemonServiceSandboxPath
 	symlinkPath := paths.DaemonServiceSymlinkPath
 
 	return automa.NewStepBuilder().WithId("install-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if err := installDaemonServiceFiles(sandboxPath, symlinkPath); err != nil {
+			for _, p := range extraReadWritePaths {
+				if err := os.MkdirAll(p, 0o755); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						errorx.InternalError.Wrap(err, "failed to create ReadWritePaths directory %s", p)))
+				}
+			}
+			if err := installDaemonServiceFiles(sandboxPath, symlinkPath, extraReadWritePaths); err != nil {
 				// installDaemonServiceFiles already returns an *errorx.Error; cast so we
 				// can attach resolution hints without importing a second error package.
 				var errWithHints error = err
