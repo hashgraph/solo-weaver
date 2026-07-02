@@ -268,6 +268,18 @@ func OverrideTeleportConfig(overrides models.TeleportConfig) {
 	}
 }
 
+// OverrideHostConfig replaces the host firewall configuration with overrides.
+// The only caller (ResolveHostFirewallConfig) already resolves each field
+// through its full flag > prompt > config file > default precedence before
+// calling this, so overrides is always the complete desired state — including
+// a deliberately empty PodCIDR ("omit the rule") or InClusterPorts ("open no
+// ports"). Replacing wholesale (rather than skipping empty/nil fields) is what
+// lets an explicit `--pod-cidr=` / `--in-cluster-ports=` clear a value the
+// config file set.
+func OverrideHostConfig(overrides models.HostConfig) {
+	globalConfig.Host = overrides
+}
+
 // SetProxy updates the global proxy configuration.
 func SetProxy(cfg models.ProxyConfig) {
 	globalConfig.Proxy = cfg

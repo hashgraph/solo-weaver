@@ -15,6 +15,7 @@ type KubeadmInitData struct {
 	MachineIP          string
 	Hostname           string
 	KubernetesVersion  string
+	PodSubnet          string
 }
 
 type MetallbData struct {

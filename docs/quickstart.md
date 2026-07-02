@@ -167,6 +167,22 @@ sudo solo-provisioner block node install \
 | `--historic-retention`    | Historic block retention threshold (`0` = unlimited)                                                                                  |
 | `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`) |
+| `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Set to `false` for hosts managed by an external firewall (default: `true`) |
+| `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs. Empty skips the host firewall.                                                          |
+| `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
+| `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet)                                |
+| `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
+
+> **Host firewall**: `block node install` always lays down the node-level `inet
+> host` firewall (SSH/management allowlist, ICMP policy, in-cluster host-service
+> ports) — regardless of whether it's bootstrapping a bare-metal host or deploying
+> onto an already-existing cluster. This is a deliberate design choice: the
+> firewall is owned by the block-node workflow, not by the generic `kube cluster
+> install` (which provisions clusters for other purposes too and should not
+> unconditionally apply node-specific rules). The `--mgmt-cidrs` / `--ssh-port` /
+> `--pod-cidr` / `--in-cluster-ports` flags (and interactive prompts) configure
+> it. An empty management allowlist skips the firewall to avoid locking the host
+> out of SSH; `--firewall-enabled=false` opts out of it entirely.
 
 #### Upgrade Block Node
 
@@ -335,6 +351,8 @@ Sets up a complete single-node Kubernetes environment with all required componen
 - **k9s**: Terminal-based Kubernetes UI
 - **Metrics Server**: Resource metrics for pods and nodes
 
+`kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet host` nftables table) is owned by the block-node workflow instead (see [Install Block Node](#install-block-node) below), since forcing it onto every generic cluster install would be too invasive for deployments that use `kube cluster install` for other purposes.
+
 ```bash
 # Install full Kubernetes stack for block nodes
 sudo solo-provisioner kube cluster install \
@@ -350,9 +368,9 @@ sudo solo-provisioner kube cluster install \
 
 **Flags**:
 
-| Flag          | Short | Description                             | Required |
-|---------------|-------|-----------------------------------------|----------|
-| `--node-type` | `-n`  | Type of node (block\|consensus\|mirror) | Yes      |
+| Flag                 | Short | Description                                                                                                          | Required |
+|----------------------|-------|--------------------------------------------------------------------------------------------------------------------|----------|
+| `--node-type`        | `-n`  | Type of node (block\|consensus\|mirror)                                                                             | Yes      |
 
 #### Uninstall Kubernetes Cluster
 

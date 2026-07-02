@@ -21,6 +21,17 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
+		// Resolve the host firewall config (mgmt allowlist, SSH port, pod CIDR,
+		// in-cluster ports) and apply it to the global config so the
+		// NetworkFirewallCreate step (prepended to this handler's workflow) can
+		// render the inet host table. Always resolved here — regardless of
+		// whether this install bootstraps bare metal or deploys onto an existing
+		// cluster — since the block node is the node type that owns this
+		// firewall, not the generic cluster-provisioning path.
+		if err := common.ResolveHostFirewallConfig(cmd, args); err != nil {
+			return err
+		}
+
 		err = initializeDependencies()
 		if err != nil {
 			return err
@@ -56,4 +67,5 @@ var installCmd = &cobra.Command{
 func init() {
 	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
+	common.RegisterHostFirewallFlags(installCmd)
 }
