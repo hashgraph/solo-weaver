@@ -481,7 +481,9 @@ func BlockNodeReconfigureInputPrompts(
 // RunPluginPresetPrompts presents a two-pass interactive plugin preset prompt.
 //
 // Pass 1 — preset select: asks which preset to deploy, pre-selecting the last
-// used preset read from the on-disk state file.
+// used preset read from the on-disk state file. When the operator's --values file
+// defines plugins.names, the "no override" preset (PresetNone) is pre-selected instead
+// so the values file wins unless the operator actively picks a preset.
 //
 // Pass 2 — custom plugin multi-select (conditional): when the operator selects
 // the Custom preset, a multi-select is shown listing all known block-node
@@ -497,6 +499,8 @@ func BlockNodeReconfigureInputPrompts(
 //   - flagPluginPreset: pointer to the --plugin-preset flag variable
 //   - flagPlugins:     pointer to the --plugins flag variable
 //   - chartVersion:   target chart version (used to filter available plugins)
+//   - valuesFile:     path to the operator's --values file (empty when not supplied);
+//     used to smart-default the preset to "no override" when it defines plugins.names
 //   - cv:              chosen-values collector for summary printing
 func RunPluginPresetPrompts(
 	cmd *cobra.Command,
@@ -504,6 +508,7 @@ func RunPluginPresetPrompts(
 	flagPluginPreset *string,
 	flagPlugins *string,
 	chartVersion string,
+	valuesFile string,
 	cv *ChosenValues,
 ) error {
 	// If the operator already supplied --plugins, no prompting is needed.
@@ -517,6 +522,13 @@ func RunPluginPresetPrompts(
 
 	// ── Pass 1: preset selection ───────────────────────────────────────────────
 	effectivePreset := resolveEffective(defaults.BlockNode.PluginPreset, "", blocknode.PresetTier1LFH)
+	// Smart default: when the operator's --values file defines plugins.names, pre-select
+	// the "no override" option so their file wins unless they actively pick a preset.
+	// This overrides the tier1-lfh/state default (and is sticky when state already saved
+	// "none", since resolveEffective returns it and this just re-selects it).
+	if blocknode.ValuesFileDefinesPlugins(valuesFile) {
+		effectivePreset = blocknode.PresetNone
+	}
 	*flagPluginPreset = effectivePreset
 
 	var options []huh.Option[string]

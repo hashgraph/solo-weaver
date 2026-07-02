@@ -160,7 +160,7 @@ sudo solo-provisioner block node install \
 | `--verification-size`     | Verification storage size (chart versions below 0.37.0)                                                                               |
 | `--log-size`              | Log storage size                                                                                                                      |
 | `--application-state-size` | PV/PVC size for application-state storage (e.g., `500Mi`, `1Gi`); chart versions 0.37.0 and above                                    |
-| `--plugin-preset`         | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); prompts interactively when omitted                                   |
+| `--plugin-preset`         | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, `custom`, or `none` for no override — use `--values`/chart default); prompts interactively when omitted |
 | `--plugins`               | Comma-separated plugin list; overrides `--plugin-preset` when set                                                                     |
 | `--plugins-size`          | PV/PVC size for plugins storage (e.g., `5Gi`, `10Gi`)                                                                                 |
 | `--plugins-path`          | Path for plugins storage                                                                                                              |
