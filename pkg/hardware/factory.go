@@ -36,29 +36,34 @@ func IsValidProfile(profile string) bool {
 	return false
 }
 
-// CreateNodeSpec creates the appropriate node spec based on node type, profile and host profile.
-// This function uses a requirements registry that maps (nodeType, profile) combinations
-// to their specific hardware requirements, properly separating the concerns of
-// node type (what kind of node) and profile (deployment environment).
-func CreateNodeSpec(nodeType string, profile string, hostProfile HostProfile) (Spec, error) {
-	normalizedNodeType := strings.ToLower(nodeType)
-	normalizedProfile := strings.ToLower(profile)
+// CreateNodeSpec creates the appropriate node spec based on a DeploymentSpec and host profile.
+// This function uses the RequirementsProvider registry to look up requirements based on
+// the node type, separating the concerns of node type (what kind of node) and
+// profile (deployment environment).
+func CreateNodeSpec(spec DeploymentSpec, hostProfile HostProfile) (Spec, error) {
+	normalizedNodeType := strings.ToLower(spec.NodeType)
+	normalizedProfile := strings.ToLower(spec.Profile)
 
 	// Validate node type
 	if !IsValidNodeType(normalizedNodeType) {
-		return nil, errorx.IllegalArgument.New("unsupported node type: %q. Supported types: %v", nodeType, SupportedNodeTypes())
+		return nil, errorx.IllegalArgument.New("unsupported node type: %q. Supported types: %v", spec.NodeType, SupportedNodeTypes())
 	}
 
 	// Validate profile
 	if !IsValidProfile(normalizedProfile) {
-		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v", profile, models.SupportedProfiles())
+		return nil, errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v", spec.Profile, models.SupportedProfiles())
 	}
 
-	// Use the new unified node spec that looks up requirements from the registry
-	spec, err := NewNodeSpec(normalizedNodeType, normalizedProfile, hostProfile)
+	normalizedSpec := DeploymentSpec{
+		NodeType: normalizedNodeType,
+		Profile:  normalizedProfile,
+		Options:  spec.Options,
+	}
+
+	nodeSpec, err := NewNodeSpec(normalizedSpec, hostProfile)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create node spec")
 	}
 
-	return spec, nil
+	return nodeSpec, nil
 }
