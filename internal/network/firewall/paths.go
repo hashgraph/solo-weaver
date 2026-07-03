@@ -46,20 +46,6 @@ const (
 	// first mutation.
 	networkNftServiceTemplate = "files/network/solo-provisioner-network-nft.service"
 
-	// NftablesDropInDir is where the nftables.service drop-in is installed.
-	// Drop-ins in /etc/systemd/system/ take precedence and survive package
-	// upgrades of the nftables package itself.
-	NftablesDropInDir = "/etc/systemd/system/nftables.service.d"
-
-	// NftablesDropInPath is the drop-in file that makes nftables.service pull
-	// in solo-provisioner-network-nft.service whenever it activates — so a
-	// mid-run nftables flush (e.g. triggered by kube cluster install's preflight)
-	// is always followed by a re-apply of our inet host rules.
-	NftablesDropInPath = NftablesDropInDir + "/solo-provisioner.conf"
-
-	// nftablesDropInTemplate is the embedded drop-in file content.
-	nftablesDropInTemplate = "files/network/nftables-dropin.conf"
-
 	// LockDir holds the cross-command apply lock. It lives on tmpfs (/run) so it
 	// is auto-cleared on reboot and leaves nothing behind on uninstall.
 	LockDir = "/run/solo-provisioner/network"
