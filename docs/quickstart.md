@@ -95,6 +95,12 @@ sudo solo-provisioner block node check --profile=mainnet
 
 # With custom config file
 sudo solo-provisioner block node check --profile=testnet --config=/path/to/config.yaml
+
+# Check hardware requirements for a specific plugin preset
+sudo solo-provisioner block node check --profile=mainnet --plugin-preset=tier1-lfh
+
+# Check with explicit plugin list
+sudo solo-provisioner block node check --profile=mainnet --plugins=com.hedera.block.suites.BlockStreamPublishing,com.hedera.block.suites.LocalFileSystemRecorder
 ```
 
 **What it checks**:
@@ -103,6 +109,13 @@ sudo solo-provisioner block node check --profile=testnet --config=/path/to/confi
 - Required dependencies
 - Network connectivity
 - Storage availability
+
+**Additional Flags**:
+
+| Flag              | Description                                                                                | Default |
+|-------------------|--------------------------------------------------------------------------------------------|---------|
+| `--plugin-preset` | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); used for hardware sizing | `""`    |
+| `--plugins`       | Comma-separated plugin list; overrides `--plugin-preset` when set                         | `""`    |
 
 #### Install Block Node
 
@@ -351,7 +364,7 @@ Sets up a complete single-node Kubernetes environment with all required componen
 - **k9s**: Terminal-based Kubernetes UI
 - **Metrics Server**: Resource metrics for pods and nodes
 
-`kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet host` nftables table) is owned by the block-node workflow instead (see [Install Block Node](#install-block-node) below), since forcing it onto every generic cluster install would be too invasive for deployments that use `kube cluster install` for other purposes.
+`kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet host` nftables table) is applied by the block-node workflow instead (see [Install Block Node](#install-block-node) below).
 
 ```bash
 # Install full Kubernetes stack for block nodes

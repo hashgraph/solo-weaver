@@ -15,4 +15,10 @@ var (
 	// Mirrors the log-line reason= field convention so structured tooling can
 	// correlate /status JSON output with journal entries.
 	ErrPropertyReason = errorx.RegisterProperty("reason")
+
+	// ErrPropertyWhyFloor is the errorx property key used to attach the rule
+	// attribution string ("Why:") that produced the binding hardware floor for a
+	// failed hardware check. Set by hardware check workflow steps; consumed by
+	// doctor.checkErrCompact to display "Set by: <reason>" in the error panel.
+	ErrPropertyWhyFloor = errorx.RegisterProperty("whyFloor")
 )

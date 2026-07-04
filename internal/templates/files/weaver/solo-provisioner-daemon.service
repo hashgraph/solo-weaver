@@ -16,7 +16,7 @@ RestartSec=5s
 # via setuid; NoNewPrivileges=true would prevent that.
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/solo /opt/hgcapp
+ReadWritePaths=/opt/solo{{range .ExtraReadWritePaths}} {{.}}{{end}}
 
 [Install]
 WantedBy=multi-user.target

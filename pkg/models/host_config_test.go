@@ -48,6 +48,16 @@ func TestHostConfig_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "IPv6 management CIDR rejected",
+			cfg:     HostConfig{ManagementCIDRs: []string{"2001:db8::/32"}},
+			wantErr: true,
+		},
+		{
+			name:    "IPv6 pod CIDR rejected",
+			cfg:     HostConfig{PodCIDR: "2001:db8::/32"},
+			wantErr: true,
+		},
+		{
 			name:    "invalid in-cluster port",
 			cfg:     HostConfig{InClusterPorts: []int{6443, 99999}},
 			wantErr: true,

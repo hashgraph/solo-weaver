@@ -84,7 +84,7 @@ func (h *InstallHandler) BuildWorkflow(
 				// before InstallClusterWorkflow's preflight check validates it.
 				// Older binaries did not create this account during self-install.
 				steps.EnsureWeaverOwnerStep(),
-				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.SkipHardwareChecks, h.mr),
+				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks, h.mr),
 				// nftables was just installed/enabled by InstallClusterWorkflow's
 				// systemSetupWorkflow; apply the host firewall here rather than in
 				// that generic (node-type-agnostic) workflow.

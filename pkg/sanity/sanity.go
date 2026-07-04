@@ -730,6 +730,25 @@ func ValidateCIDR(s string) error {
 	return nil
 }
 
+// ValidateIPv4CIDR rejects any string that is not a syntactically valid CIDR,
+// or that is a valid CIDR but not IPv4. It is the boundary check for CIDRs
+// that flow into the `inet host` nftables ruleset (management allowlist, pod
+// CIDR): the table only supports ipv4_addr sets, so an IPv6 value must be
+// rejected at the earliest input point (CLI flag / TUI prompt / config load)
+// rather than surfacing later as a render-time failure after other work
+// (e.g. a full cluster bootstrap) has already run.
+func ValidateIPv4CIDR(s string) error {
+	if err := ValidateCIDR(s); err != nil {
+		return err
+	}
+	ip, _, _ := net.ParseCIDR(s)
+	if ip.To4() == nil {
+		return errorx.IllegalArgument.New(
+			"invalid CIDR %q: IPv6 CIDRs are not yet supported; the inet host table uses ipv4_addr sets", s)
+	}
+	return nil
+}
+
 // ValidatePort rejects any string that is not a valid TCP/UDP port number in
 // the range 1–65535. It is the boundary check for `--in-cluster-port` values
 // before they are rendered into the `inet host` nftables ruleset.

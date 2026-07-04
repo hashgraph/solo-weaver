@@ -39,6 +39,7 @@ type ErrorDiagnosis struct {
 	Logfile            string            `yaml:"log" json:"log"`
 	ProfilingSnapshots map[string]string `yaml:"ProfilingSnapshots" json:"profilingSnapshots"`
 	Resolution         []string          `yaml:"steps" json:"steps"`
+	WhyFloor           string            `yaml:"whyFloor" json:"whyFloor"`
 }
 
 func toErrorCode(err error) int {
@@ -103,6 +104,20 @@ func findResolution(err error) []string {
 	default:
 		return []string{"Check error message for details or contact support"}
 	}
+}
+
+func findWhyFloor(err error) string {
+	for e := err; e != nil; {
+		if why, ok := errorx.ExtractProperty(e, models.ErrPropertyWhyFloor); ok {
+			return fmt.Sprintf("%s", why)
+		}
+		ex := errorx.Cast(e)
+		if ex == nil {
+			break
+		}
+		e = ex.Cause()
+	}
+	return ""
 }
 
 func takeProfilingSnapshots(ex error) map[string]string {
@@ -252,6 +267,7 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 		Pid:        os.Getpid(),
 		Logfile:    config.Get().Log.Filename,
 		Resolution: findResolution(ex),
+		WhyFloor:   findWhyFloor(ex),
 	}
 }
 
@@ -282,6 +298,9 @@ func checkErrCompact(resp *ErrorDiagnosis, instructions ...string) {
 	fmt.Fprintf(os.Stderr, "\n  %s%s✗ Error:%s %s\n", Bold, Red, Reset, resp.Message)
 	if resp.Cause != "" {
 		fmt.Fprintf(os.Stderr, "  %s  Cause:%s %s\n", White, Reset, resp.Cause)
+	}
+	if resp.WhyFloor != "" {
+		fmt.Fprintf(os.Stderr, "  %s Set by:%s %s\n", White, Reset, resp.WhyFloor)
 	}
 
 	// Print resolution

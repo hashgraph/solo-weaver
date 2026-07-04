@@ -83,7 +83,7 @@ type HostConfig struct {
 // token can never reach the atomic nft transaction.
 func (c *HostConfig) Validate() error {
 	for _, cidr := range c.ManagementCIDRs {
-		if err := sanity.ValidateCIDR(cidr); err != nil {
+		if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid host managementCidr: %s", cidr)
 		}
 	}
@@ -93,7 +93,7 @@ func (c *HostConfig) Validate() error {
 		}
 	}
 	if c.PodCIDR != "" {
-		if err := sanity.ValidateCIDR(c.PodCIDR); err != nil {
+		if err := sanity.ValidateIPv4CIDR(c.PodCIDR); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid host podCidr: %s", c.PodCIDR)
 		}
 	}

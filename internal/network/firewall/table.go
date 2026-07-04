@@ -3,7 +3,6 @@
 package firewall
 
 import (
-	"net"
 	"sort"
 	"strconv"
 
@@ -58,22 +57,14 @@ func NewTable() *Table {
 // break the atomic transaction or smuggle in nft syntax.
 func (t *Table) Validate() error {
 	for _, c := range t.MgmtCIDRs {
-		if err := sanity.ValidateCIDR(c); err != nil {
+		if err := sanity.ValidateIPv4CIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", c)
-		}
-		if ip, _, _ := net.ParseCIDR(c); ip.To4() == nil {
-			return errorx.IllegalArgument.New(
-				"invalid --mgmt-cidr %q: IPv6 CIDRs are not yet supported; the inet host table uses ipv4_addr sets", c)
 		}
 	}
 
 	if t.PodCIDR != "" {
-		if err := sanity.ValidateCIDR(t.PodCIDR); err != nil {
+		if err := sanity.ValidateIPv4CIDR(t.PodCIDR); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --pod-cidr %q", t.PodCIDR)
-		}
-		if ip, _, _ := net.ParseCIDR(t.PodCIDR); ip.To4() == nil {
-			return errorx.IllegalArgument.New(
-				"invalid --pod-cidr %q: IPv6 CIDRs are not yet supported; the inet host table uses ipv4_addr sets", t.PodCIDR)
 		}
 	}
 
@@ -92,7 +83,7 @@ func (t *Table) Validate() error {
 
 // AddMgmtCIDR adds a single CIDR to the management allowlist (idempotent).
 func (t *Table) AddMgmtCIDR(cidr string) error {
-	if err := sanity.ValidateCIDR(cidr); err != nil {
+	if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", cidr)
 	}
 	if sanity.Contains(cidr, t.MgmtCIDRs) {
@@ -118,7 +109,7 @@ func (t *Table) RemoveMgmtCIDR(cidr string) {
 // SetMgmtCIDRs atomically replaces the full management allowlist.
 func (t *Table) SetMgmtCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
-		if err := sanity.ValidateCIDR(c); err != nil {
+		if err := sanity.ValidateIPv4CIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", c)
 		}
 	}

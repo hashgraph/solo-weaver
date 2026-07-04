@@ -113,6 +113,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 		name             string
 		nodeType         string
 		profile          string
+		options          map[string]any
 		hostProfile      HostProfile
 		nodeRunning      bool
 		expectValidation bool
@@ -137,10 +138,11 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			description:      "Should still validate hardware requirements even if node is running",
 		},
 		{
-			name:             "Block node mainnet validation when node is not running",
+			name:             "Block node mainnet RFH validation when node is not running",
 			nodeType:         models.NodeTypeBlock,
 			profile:          models.ProfileMainnet,
-			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 8, 22, 6000, false), // 8 cores, 16GB+ available, 5TB+
+			options:          map[string]any{"preset": "tier1-rfh"},
+			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 36, 322, 200, false), // 36 cores, 257GB available (322*0.8), 200GB storage
 			nodeRunning:      false,
 			expectValidation: true,
 			description:      "Should validate successfully when no node is running",
@@ -158,7 +160,8 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := NewNodeSpec(tt.nodeType, tt.profile, tt.hostProfile)
+			spec := DeploymentSpec{NodeType: tt.nodeType, Profile: tt.profile, Options: tt.options}
+			nodeSpec, err := NewNodeSpec(spec, tt.hostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
@@ -170,10 +173,10 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			}
 
 			// Test that hardware validation still works regardless of node running status
-			osErr := spec.ValidateOS()
-			cpuErr := spec.ValidateCPU()
-			memErr := spec.ValidateMemory()
-			storageErr := spec.ValidateStorage()
+			osErr := nodeSpec.ValidateOS()
+			cpuErr := nodeSpec.ValidateCPU()
+			memErr := nodeSpec.ValidateMemory()
+			storageErr := nodeSpec.ValidateStorage()
 
 			if tt.expectValidation {
 				if osErr != nil {
@@ -229,6 +232,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 		name              string
 		nodeType          string
 		profile           string
+		options           map[string]any
 		actualHostProfile HostProfile
 		expectedOS        bool
 		expectedCPU       bool
@@ -256,20 +260,22 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 			expectedStorage:   true,
 		},
 		{
-			name:              "Block node mainnet with sufficient resources",
+			name:              "Block node mainnet RFH with sufficient resources",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfileMainnet,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 22, 6000),
+			options:           map[string]any{"preset": "tier1-rfh"},
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 36, 322, 200), // 36 cores, 257GB available (322*0.8), 200GB storage
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
 			expectedStorage:   true,
 		},
 		{
-			name:              "Block node mainnet with insufficient memory",
+			name:              "Block node mainnet RFH with insufficient memory",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfileMainnet,
-			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 8, 8, 6000),
+			options:           map[string]any{"preset": "tier1-rfh"},
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 36, 32, 200), // sufficient CPU (36>=32) and storage, insufficient memory (25GB available < 256GB)
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       false,
@@ -309,27 +315,28 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := NewNodeSpec(tt.nodeType, tt.profile, tt.actualHostProfile)
+			spec := DeploymentSpec{NodeType: tt.nodeType, Profile: tt.profile, Options: tt.options}
+			nodeSpec, err := NewNodeSpec(spec, tt.actualHostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
 
-			osErr := spec.ValidateOS()
+			osErr := nodeSpec.ValidateOS()
 			if (osErr == nil) != tt.expectedOS {
 				t.Errorf("OS validation expected %v, got error: %v", tt.expectedOS, osErr)
 			}
 
-			cpuErr := spec.ValidateCPU()
+			cpuErr := nodeSpec.ValidateCPU()
 			if (cpuErr == nil) != tt.expectedCPU {
 				t.Errorf("CPU validation expected %v, got error: %v", tt.expectedCPU, cpuErr)
 			}
 
-			memErr := spec.ValidateMemory()
+			memErr := nodeSpec.ValidateMemory()
 			if (memErr == nil) != tt.expectedMem {
 				t.Errorf("Memory validation expected %v, got error: %v", tt.expectedMem, memErr)
 			}
 
-			storageErr := spec.ValidateStorage()
+			storageErr := nodeSpec.ValidateStorage()
 			if (storageErr == nil) != tt.expectedStorage {
 				t.Errorf("Storage validation expected %v, got error: %v", tt.expectedStorage, storageErr)
 			}
@@ -413,18 +420,20 @@ func TestNodeTypeAndProfileCombinations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.nodeType+"_"+tt.profile, func(t *testing.T) {
-			spec, err := NewNodeSpec(tt.nodeType, tt.profile, mockHostProfile)
+			spec := DeploymentSpec{NodeType: tt.nodeType, Profile: tt.profile}
+			nodeSpec, err := NewNodeSpec(spec, mockHostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
-			if spec.GetNodeType() != tt.expectedName {
-				t.Errorf("Expected node type '%s', got '%s'", tt.expectedName, spec.GetNodeType())
+			if nodeSpec.GetNodeType() != tt.expectedName {
+				t.Errorf("Expected node type '%s', got '%s'", tt.expectedName, nodeSpec.GetNodeType())
 			}
 		})
 	}
 }
 
 func TestPreviewnetNodeSpec(t *testing.T) {
+	// Previewnet LFH (no preset): n2d-standard-16 → 16 cores / 64 GB / 3000 GB.
 	tests := []struct {
 		name              string
 		actualHostProfile HostProfile
@@ -435,7 +444,7 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 	}{
 		{
 			name:              "Previewnet block node with sufficient resources",
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 322, 9000, 25000), // 9TB SSD, 25TB HDD
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 20, 90, 4000), // 20 cores, 72GB available (90*0.8), 4TB
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
@@ -443,7 +452,7 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 		},
 		{
 			name:              "Previewnet block node with insufficient CPU",
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 32, 322, 9000, 25000),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 12, 90, 4000), // 12 < 16
 			expectedOS:        true,
 			expectedCPU:       false,
 			expectedMem:       true,
@@ -451,23 +460,23 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 		},
 		{
 			name:              "Previewnet block node with insufficient memory",
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 128, 9000, 25000),
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 20, 50, 4000), // 40GB available (50*0.8) < 64GB
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       false,
 			expectedStorage:   true,
 		},
 		{
-			name:              "Previewnet block node with insufficient SSD",
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 322, 5000, 25000), // Only 5TB SSD
+			name:              "Previewnet block node with insufficient storage",
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 20, 90, 2000), // 2000 < 3000 GB
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
 			expectedStorage:   false,
 		},
 		{
-			name:              "Previewnet block node with insufficient HDD",
-			actualHostProfile: NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 322, 9000, 10000), // Only 10TB HDD
+			name:              "Previewnet block node barely under storage floor",
+			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 20, 90, 2999), // 2999 < 3000 GB
 			expectedOS:        true,
 			expectedCPU:       true,
 			expectedMem:       true,
@@ -477,27 +486,28 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, err := NewNodeSpec(models.NodeTypeBlock, models.ProfilePreviewnet, tt.actualHostProfile)
+			spec := DeploymentSpec{NodeType: models.NodeTypeBlock, Profile: models.ProfilePreviewnet}
+			nodeSpec, err := NewNodeSpec(spec, tt.actualHostProfile)
 			if err != nil {
 				t.Fatalf("Failed to create spec: %v", err)
 			}
 
-			osErr := spec.ValidateOS()
+			osErr := nodeSpec.ValidateOS()
 			if (osErr == nil) != tt.expectedOS {
 				t.Errorf("OS validation expected %v, got error: %v", tt.expectedOS, osErr)
 			}
 
-			cpuErr := spec.ValidateCPU()
+			cpuErr := nodeSpec.ValidateCPU()
 			if (cpuErr == nil) != tt.expectedCPU {
 				t.Errorf("CPU validation expected %v, got error: %v", tt.expectedCPU, cpuErr)
 			}
 
-			memErr := spec.ValidateMemory()
+			memErr := nodeSpec.ValidateMemory()
 			if (memErr == nil) != tt.expectedMem {
 				t.Errorf("Memory validation expected %v, got error: %v", tt.expectedMem, memErr)
 			}
 
-			storageErr := spec.ValidateStorage()
+			storageErr := nodeSpec.ValidateStorage()
 			if (storageErr == nil) != tt.expectedStorage {
 				t.Errorf("Storage validation expected %v, got error: %v", tt.expectedStorage, storageErr)
 			}
@@ -506,25 +516,23 @@ func TestPreviewnetNodeSpec(t *testing.T) {
 }
 
 func TestPreviewnetNodeRequirements(t *testing.T) {
-	mockHostProfile := NewMockHostProfileWithStorage("ubuntu", "20.04", 48, 322, 9000, 25000)
-	spec, err := NewNodeSpec(models.NodeTypeBlock, models.ProfilePreviewnet, mockHostProfile)
+	// Previewnet LFH (no preset): n2d-standard-16 → 16 cores / 64 GB / 3000 GB total.
+	mockHostProfile := NewMockHostProfile("ubuntu", "20.04", 20, 90, 4000)
+	spec := DeploymentSpec{NodeType: models.NodeTypeBlock, Profile: models.ProfilePreviewnet}
+	nodeSpec, err := NewNodeSpec(spec, mockHostProfile)
 	if err != nil {
 		t.Fatalf("Failed to create spec: %v", err)
 	}
 
-	requirements := spec.GetBaselineRequirements()
+	requirements := nodeSpec.GetBaselineRequirements()
 
-	// Verify previewnet requirements: 48 cores, 256GB RAM, 8TB SSD, 24TB HDD
-	if requirements.MinCpuCores != 48 {
-		t.Errorf("Expected 48 CPU cores, got %d", requirements.MinCpuCores)
+	if requirements.MinCpuCores != 16 {
+		t.Errorf("Expected 16 CPU cores, got %d", requirements.MinCpuCores)
 	}
-	if requirements.MinMemoryGB != 256 {
-		t.Errorf("Expected 256 GB memory, got %d", requirements.MinMemoryGB)
+	if requirements.MinMemoryGB != 64 {
+		t.Errorf("Expected 64 GB memory, got %d", requirements.MinMemoryGB)
 	}
-	if requirements.MinSSDStorageGB != 8000 {
-		t.Errorf("Expected 8000 GB SSD storage, got %d", requirements.MinSSDStorageGB)
-	}
-	if requirements.MinHDDStorageGB != 24000 {
-		t.Errorf("Expected 24000 GB HDD storage, got %d", requirements.MinHDDStorageGB)
+	if requirements.MinStorageGB != 3000 {
+		t.Errorf("Expected 3000 GB storage, got %d", requirements.MinStorageGB)
 	}
 }

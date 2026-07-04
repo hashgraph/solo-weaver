@@ -59,7 +59,7 @@ func Test_DaemonService_FilePlacement_Integration(t *testing.T) {
 	t.Cleanup(func() { cleanupDaemonService(t, paths) })
 
 	// Install files
-	err := installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
+	err := installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil)
 	require.NoError(t, err)
 
 	// Sandbox file must exist and be non-empty
@@ -96,7 +96,7 @@ func Test_DaemonService_EnableDisable_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Place files + daemon-reload
-	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil))
 	require.NoError(t, osx.DaemonReload(ctx))
 
 	// Enable
@@ -130,12 +130,12 @@ func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
 
 	// Simulate a partial install: files placed + daemon-reload + enabled,
 	// but service never started (as if RestartService had failed).
-	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil))
 	require.NoError(t, osx.DaemonReload(ctx))
 	require.NoError(t, osx.EnableService(ctx, daemonServiceName))
 
 	// Build and run the rollback
-	step, err := InstallDaemonServiceStep(paths).Build()
+	step, err := InstallDaemonServiceStep(paths, nil).Build()
 	require.NoError(t, err)
 
 	rollbackReport := step.Rollback(ctx)
@@ -167,7 +167,7 @@ func Test_RemoveDaemonServiceStep_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Simulate an installed (but not running) service
-	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil))
 	require.NoError(t, osx.DaemonReload(ctx))
 	require.NoError(t, osx.EnableService(ctx, daemonServiceName))
 

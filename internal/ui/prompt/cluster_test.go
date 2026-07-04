@@ -15,6 +15,7 @@ func TestValidateMgmtCIDRs(t *testing.T) {
 	require.NoError(t, validateMgmtCIDRs("10.0.0.0/8,"))                // trailing comma tolerated
 	require.Error(t, validateMgmtCIDRs("10.0.0.0"))                     // missing prefix
 	require.Error(t, validateMgmtCIDRs("not-a-cidr"))
+	require.Error(t, validateMgmtCIDRs("2001:db8::/32")) // IPv6 not supported by the inet host table
 }
 
 func TestValidatePodCIDR(t *testing.T) {
@@ -22,6 +23,7 @@ func TestValidatePodCIDR(t *testing.T) {
 	require.NoError(t, validatePodCIDR("10.4.0.0/14"))
 	require.Error(t, validatePodCIDR("10.4.0.0"))
 	require.Error(t, validatePodCIDR("garbage"))
+	require.Error(t, validatePodCIDR("2001:db8::/32")) // IPv6 not supported by the inet host table
 }
 
 func TestValidateSSHPort(t *testing.T) {

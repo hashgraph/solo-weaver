@@ -24,7 +24,7 @@ func validateMgmtCIDRs(s string) error {
 		if c == "" {
 			continue
 		}
-		if err := sanity.ValidateCIDR(c); err != nil {
+		if err := sanity.ValidateIPv4CIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid management CIDR %q", c)
 		}
 	}
@@ -38,7 +38,7 @@ func validatePodCIDR(s string) error {
 	if s == "" {
 		return nil
 	}
-	if err := sanity.ValidateCIDR(s); err != nil {
+	if err := sanity.ValidateIPv4CIDR(s); err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid pod CIDR %q", s)
 	}
 	return nil
