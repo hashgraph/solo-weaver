@@ -119,12 +119,51 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 		flagChartVersion = defaults.BlockNode.ChartVersion
 	}
 
-	// profileTarget is a local copy that the prompt writes to; after the prompt
+	// Build a single wizard so every prompt page is navigable back and forward
+	// (Shift+Tab / Tab) instead of committing each stage in its own form. Pages are
+	// added in order; each Add* is a no-op when its flag(s) were already supplied on
+	// the command line. Input prompts must be added before the storage and plugin
+	// prompts because they pre-fill flagChartVersion, which the storage and plugin
+	// builders read to filter their options.
+	w := prompt.NewWizard()
+
+	// profileTarget is a local copy the profile prompt writes to; after the wizard
 	// completes we propagate it into Cobra's persistent flag set so that
 	// common.FlagProfile().Value(cmd, args) returns the prompted value.
 	var profileTarget string
-	selectPrompts := prompt.BlockNodeSelectPrompts(defaults, &profileTarget)
-	if err := prompt.RunSelectPrompts(cmd, selectPrompts, cv); err != nil {
+	prompt.AddSelectPrompts(w, cmd, prompt.BlockNodeSelectPrompts(defaults, &profileTarget), cv)
+
+	// Text-input prompts. Reconfigure uses a tailored set that omits immutable
+	// fields (namespace, release-name, chart-version).
+	var inputPrompts []prompt.InputPrompt
+	if cmd.Name() == "reconfigure" {
+		inputPrompts = prompt.BlockNodeReconfigureInputPrompts(
+			defaults,
+			&flagHistoricRetention, &flagRecentRetention,
+		)
+	} else {
+		inputPrompts = prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
+	}
+	prompt.AddInputPrompts(w, cmd, inputPrompts, cv)
+
+	// Storage path prompts: mode select → conditional path inputs (single base
+	// path vs individual paths). Applied to all block node commands that configure
+	// storage (install, upgrade, reconfigure).
+	prompt.AddStoragePathPrompts(w, cmd, defaults, flagChartVersion, prompt.StoragePathTargets{
+		BasePath:             &flagBasePath,
+		ArchivePath:          &flagArchivePath,
+		LivePath:             &flagLivePath,
+		LogPath:              &flagLogPath,
+		VerificationPath:     &flagVerificationPath,
+		PluginsPath:          &flagPluginsPath,
+		ApplicationStatePath: &flagApplicationStatePath,
+	}, cv)
+
+	// Plugin preset prompt: preset select → conditional custom multi-select.
+	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, cv)
+
+	// Run all accumulated pages as a single navigable form.
+	if err := w.Run(cv); err != nil {
 		return err
 	}
 
@@ -135,41 +174,6 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 			_ = f.Value.Set(profileTarget)
 			f.Changed = true
 		}
-	}
-
-	// Run text-input prompts. Reconfigure uses a tailored set that omits
-	// immutable fields (namespace, release-name, chart-version). Storage path
-	// prompts are handled separately by RunStoragePathPrompts below.
-	var inputPrompts []prompt.InputPrompt
-	if cmd.Name() == "reconfigure" {
-		inputPrompts = prompt.BlockNodeReconfigureInputPrompts(
-			defaults,
-			&flagHistoricRetention, &flagRecentRetention,
-		)
-	} else {
-		inputPrompts = prompt.BlockNodeInputPrompts(defaults, &flagNamespace, &flagReleaseName, &flagChartVersion, &flagHistoricRetention, &flagRecentRetention)
-	}
-	if err := prompt.RunInputPrompts(cmd, inputPrompts, cv); err != nil {
-		return err
-	}
-
-	// Storage path prompts: two-pass (mode select → conditional path inputs).
-	// Applied to all block node commands that configure storage (install, upgrade, reconfigure).
-	if err := prompt.RunStoragePathPrompts(cmd, defaults, flagChartVersion, prompt.StoragePathTargets{
-		BasePath:             &flagBasePath,
-		ArchivePath:          &flagArchivePath,
-		LivePath:             &flagLivePath,
-		LogPath:              &flagLogPath,
-		VerificationPath:     &flagVerificationPath,
-		PluginsPath:          &flagPluginsPath,
-		ApplicationStatePath: &flagApplicationStatePath,
-	}, cv); err != nil {
-		return err
-	}
-
-	// Plugin preset prompt: two-pass (preset select → conditional custom multi-select).
-	if err := prompt.RunPluginPresetPrompts(cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, cv); err != nil {
-		return err
 	}
 
 	_, _ = fmt.Fprintln(cmd.ErrOrStderr())

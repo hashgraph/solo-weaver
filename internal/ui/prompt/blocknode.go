@@ -276,21 +276,40 @@ type StoragePathTargets struct {
 	ApplicationStatePath *string
 }
 
-// RunStoragePathPrompts presents a two-pass interactive storage path prompt.
-//
-// Pass 1 — mode select: asks whether the operator wants to configure a single
-// base directory or each path individually, pre-selecting the mode that matches
-// the current on-disk state.
-//
-// Pass 2 — path inputs: shows only the fields relevant to the chosen mode.
-// When base-path mode is selected, only the --base-path input is shown.
-// When individual mode is selected, the five individual path inputs are shown
-// (archive, live, log, verification, plugins).
+// storagePathField builds a huh input field from an InputPrompt whose validator
+// is suppressed while the field's group is hidden (active() == false). Because
+// huh only supports hiding at the group level, both storage-mode variants are
+// pre-built as separate groups; gating the validator on the active mode ensures a
+// pre-filled but not-currently-selected path never blocks form submission,
+// independent of huh's hidden-group validation semantics.
+func storagePathField(p InputPrompt, active func() bool) huh.Field {
+	validate := p.Validate
+	return huh.NewInput().
+		Key(p.FlagName).
+		Title(p.Title).
+		Description(p.Description).
+		Placeholder(p.Placeholder).
+		Value(p.Target).
+		Validate(func(s string) error {
+			if !active() || validate == nil {
+				return nil
+			}
+			return validate(s)
+		})
+}
+
+// AddStoragePathPrompts appends the storage-path wizard pages: a mode-select page
+// (single base path vs individual paths) followed by two mutually-exclusive path
+// pages, each shown via huh.Group.WithHideFunc based on the selected mode. Because
+// the mode select and the path groups live in the same wizard form, the operator
+// can navigate back to the mode page and switch modes — the path page re-renders
+// to match, including when navigating backward.
 //
 // The function is a no-op when any storage-related flag was already provided on
 // the command line — the caller's flag values are respected as-is.
 //
 // Parameters:
+//   - w:            the wizard accumulating pages
 //   - cmd:          the Cobra command (used for flag-changed detection)
 //   - defaults:     prompt defaults read from the on-disk state file
 //   - chartVersion: the target chart version, used to filter optional-storage prompts
@@ -299,18 +318,22 @@ type StoragePathTargets struct {
 //
 // The optional-storage prompts (verification, plugins, application-state) are
 // gated on the registry's GetApplicableOptionalStorages(chartVersion) so the
-// operator only sees the storages the target chart actually needs.
-func RunStoragePathPrompts(
+// operator only sees the storages the target chart actually needs. Because huh
+// cannot add or remove fields from a group mid-run, this applicable set is fixed
+// at construction from the effective chart version; editing the chart-version
+// input later in the same wizard does not re-shape the individual-path fields.
+func AddStoragePathPrompts(
+	w *Wizard,
 	cmd *cobra.Command,
 	defaults state.PromptDefaults,
 	chartVersion string,
 	targets StoragePathTargets,
 	cv *ChosenValues,
-) error {
+) {
 	// If the user already supplied any storage flag on the CLI, respect it and skip prompts.
 	for _, f := range []string{"base-path", "archive-path", "live-path", "log-path", "verification-path", "plugins-path", "application-state-path"} {
 		if flagWasSet(cmd, f) {
-			return nil
+			return
 		}
 	}
 
@@ -343,68 +366,110 @@ func RunStoragePathPrompts(
 		defaultMode = storagePathModeBasePath
 	}
 
-	// ── Pass 1: mode select ───────────────────────────────────────────────────
+	// selectedMode is shared by the mode-select field, the two path groups' hide
+	// funcs, and the afterRun callback below.
 	selectedMode := defaultMode
+
+	// ── Page: mode select ─────────────────────────────────────────────────────
 	individualLabel := "Individual paths  (archive, live, log"
 	for _, n := range optionalLabels {
 		individualLabel += ", " + n
 	}
 	individualLabel += " must all be provided)"
-	modeField := huh.NewSelect[string]().
-		Key("storage-mode").
-		Title("Storage Path Mode").
-		Description("Choose how to configure storage paths for this block node").
-		Options(
-			huh.NewOption("Single base path  (subdirectories are created automatically)", storagePathModeBasePath),
-			huh.NewOption(individualLabel, storagePathModeIndividual),
-		).
-		Value(&selectedMode)
+	modeGroup := huh.NewGroup(
+		huh.NewSelect[string]().
+			Key("storage-mode").
+			Title("Storage Path Mode").
+			Description("Choose how to configure storage paths for this block node").
+			Options(
+				huh.NewOption("Single base path  (subdirectories are created automatically)", storagePathModeBasePath),
+				huh.NewOption(individualLabel, storagePathModeIndividual),
+			).
+			Value(&selectedMode),
+	)
 
-	modeForm := huh.NewForm(huh.NewGroup(modeField)).
-		WithTheme(SoloTheme()).
-		WithShowHelp(true)
+	// ── Page: base-path input (shown only in single-base-path mode) ───────────
+	baseEff := resolveEffective(stor.BasePath, cfgStor.BasePath, deps.BLOCK_NODE_STORAGE_BASE_PATH)
+	basePrompt := basePathInputPrompt(baseEff, targets.BasePath)
+	*targets.BasePath = baseEff
+	inBaseMode := func() bool { return selectedMode == storagePathModeBasePath }
+	baseGroup := huh.NewGroup(storagePathField(basePrompt, inBaseMode)).
+		WithHideFunc(func() bool { return !inBaseMode() })
 
-	if err := modeForm.Run(); err != nil {
-		return wrapFormError(err)
+	// ── Page: individual path inputs (shown only in individual mode) ──────────
+	// Derive per-path defaults from the effective base path so individual inputs
+	// are pre-filled even when no explicit per-path config exists (fresh install
+	// or switching from base-path mode). Subdirectory names mirror those used by
+	// GetStoragePaths at workflow time.
+	indivDefault := func(subdir string) string { return path.Join(baseEff, subdir) }
+	individualPrompts := []InputPrompt{
+		archivePathInputPrompt(resolveEffective(stor.ArchivePath, cfgStor.ArchivePath, indivDefault("archive")), targets.ArchivePath, true),
+		livePathInputPrompt(resolveEffective(stor.LivePath, cfgStor.LivePath, indivDefault("live")), targets.LivePath, true),
+		logPathInputPrompt(resolveEffective(stor.LogPath, cfgStor.LogPath, indivDefault("logs")), targets.LogPath, true),
+	}
+	if includeVerification {
+		individualPrompts = append(individualPrompts,
+			verificationPathInputPrompt(resolveEffective(stor.VerificationPath, cfgStor.VerificationPath, indivDefault("verification")), targets.VerificationPath, true))
+	}
+	if includePlugins {
+		individualPrompts = append(individualPrompts,
+			pluginsPathInputPrompt(resolveEffective(stor.PluginsPath, cfgStor.PluginsPath, indivDefault("plugins")), targets.PluginsPath, true))
+	}
+	if includeApplicationState {
+		individualPrompts = append(individualPrompts,
+			applicationStatePathInputPrompt(resolveEffective(stor.ApplicationStatePath, cfgStor.ApplicationStatePath, indivDefault("application-state")), targets.ApplicationStatePath, true))
 	}
 
-	cv.add("Storage Path Mode", selectedMode)
+	inIndividualMode := func() bool { return selectedMode == storagePathModeIndividual }
+	individualFields := make([]huh.Field, len(individualPrompts))
+	for i := range individualPrompts {
+		p := individualPrompts[i]
+		*p.Target = p.EffectiveValue // pre-fill so the input shows the default
+		individualFields[i] = storagePathField(p, inIndividualMode)
+	}
+	individualGroup := huh.NewGroup(individualFields...).
+		WithHideFunc(func() bool { return !inIndividualMode() })
 
-	// ── Pass 2: path inputs based on chosen mode ──────────────────────────────
-	var inputPrompts []InputPrompt
-	if selectedMode == storagePathModeBasePath {
-		eff := resolveEffective(stor.BasePath, cfgStor.BasePath, deps.BLOCK_NODE_STORAGE_BASE_PATH)
-		inputPrompts = []InputPrompt{
-			basePathInputPrompt(eff, targets.BasePath),
-		}
-	} else {
-		// Derive per-path defaults from the effective base path so that individual
-		// path inputs are pre-filled even when no explicit per-path config exists
-		// (e.g. fresh install or switching from base-path mode).
-		// The subdirectory names mirror those used by GetStoragePaths at workflow time.
-		effectiveBase := resolveEffective(stor.BasePath, cfgStor.BasePath, deps.BLOCK_NODE_STORAGE_BASE_PATH)
-		indivDefault := func(subdir string) string { return path.Join(effectiveBase, subdir) }
-
-		inputPrompts = []InputPrompt{
-			archivePathInputPrompt(resolveEffective(stor.ArchivePath, cfgStor.ArchivePath, indivDefault("archive")), targets.ArchivePath, true),
-			livePathInputPrompt(resolveEffective(stor.LivePath, cfgStor.LivePath, indivDefault("live")), targets.LivePath, true),
-			logPathInputPrompt(resolveEffective(stor.LogPath, cfgStor.LogPath, indivDefault("logs")), targets.LogPath, true),
-		}
-		if includeVerification {
-			inputPrompts = append(inputPrompts,
-				verificationPathInputPrompt(resolveEffective(stor.VerificationPath, cfgStor.VerificationPath, indivDefault("verification")), targets.VerificationPath, true))
-		}
-		if includePlugins {
-			inputPrompts = append(inputPrompts,
-				pluginsPathInputPrompt(resolveEffective(stor.PluginsPath, cfgStor.PluginsPath, indivDefault("plugins")), targets.PluginsPath, true))
-		}
-		if includeApplicationState {
-			inputPrompts = append(inputPrompts,
-				applicationStatePathInputPrompt(resolveEffective(stor.ApplicationStatePath, cfgStor.ApplicationStatePath, indivDefault("application-state")), targets.ApplicationStatePath, true))
+	// afterRun records the mode, normalises targets so downstream storage-mode
+	// inference is unambiguous (both variants are pre-filled, so the unused one
+	// must be cleared), and records the chosen paths into the summary.
+	after := func() {
+		cv.add("Storage Path Mode", selectedMode)
+		if selectedMode == storagePathModeBasePath {
+			*targets.ArchivePath = ""
+			*targets.LivePath = ""
+			*targets.LogPath = ""
+			*targets.VerificationPath = ""
+			*targets.PluginsPath = ""
+			*targets.ApplicationStatePath = ""
+			cv.add(basePrompt.Title, *targets.BasePath)
+		} else {
+			*targets.BasePath = ""
+			for i := range individualPrompts {
+				p := individualPrompts[i]
+				cv.add(p.Title, *p.Target)
+			}
 		}
 	}
 
-	return RunInputPrompts(cmd, inputPrompts, cv)
+	w.addGroups(after, modeGroup, baseGroup, individualGroup)
+}
+
+// RunStoragePathPrompts presents the storage-path prompts as a standalone wizard.
+// It is retained for callers that run storage prompts in isolation; the block-node
+// install flow uses AddStoragePathPrompts to combine these pages with the rest of
+// the installation wizard into one navigable form. It is a no-op when any
+// storage-related flag was already provided on the command line.
+func RunStoragePathPrompts(
+	cmd *cobra.Command,
+	defaults state.PromptDefaults,
+	chartVersion string,
+	targets StoragePathTargets,
+	cv *ChosenValues,
+) error {
+	w := NewWizard()
+	AddStoragePathPrompts(w, cmd, defaults, chartVersion, targets, cv)
+	return w.Run(cv)
 }
 
 // BlockNodeSelectPrompts returns the select-type prompts for block node commands.
@@ -478,44 +543,47 @@ func BlockNodeReconfigureInputPrompts(
 	}
 }
 
-// RunPluginPresetPrompts presents a two-pass interactive plugin preset prompt.
-//
-// Pass 1 — preset select: asks which preset to deploy, pre-selecting the last
-// used preset read from the on-disk state file.
-//
-// Pass 2 — custom plugin multi-select (conditional): when the operator selects
-// the Custom preset, a multi-select is shown listing all known block-node
-// plugins for the given chartVersion. The resulting selection is joined as a
-// comma-separated string and written to *flagPlugins.
+// AddPluginPresetPrompts appends the plugin wizard pages: a preset-select page
+// and a conditional custom-plugin multi-select page shown via
+// huh.Group.WithHideFunc only when the Custom preset is selected. Because both
+// pages live in the same wizard form, the operator can navigate back to the preset
+// page and switch away from Custom — the multi-select page hides again and
+// --plugins is left empty (normalised in afterRun).
 //
 // The function is a no-op when either flag was already supplied on the command
 // line — the caller's values are respected as-is.
 //
 // Parameters:
+//   - w:               the wizard accumulating pages
 //   - cmd:             the Cobra command (used for flag-changed detection)
 //   - defaults:        prompt defaults read from the on-disk state file
 //   - flagPluginPreset: pointer to the --plugin-preset flag variable
 //   - flagPlugins:     pointer to the --plugins flag variable
 //   - chartVersion:   target chart version (used to filter available plugins)
 //   - cv:              chosen-values collector for summary printing
-func RunPluginPresetPrompts(
+//
+// Note: the custom multi-select's option list is fixed at construction from
+// chartVersion — huh cannot rebuild option lists mid-run, so editing the
+// chart-version input later in the same wizard does not re-shape the plugin list.
+func AddPluginPresetPrompts(
+	w *Wizard,
 	cmd *cobra.Command,
 	defaults state.PromptDefaults,
 	flagPluginPreset *string,
 	flagPlugins *string,
 	chartVersion string,
 	cv *ChosenValues,
-) error {
+) {
 	// If the operator already supplied --plugins, no prompting is needed.
 	if flagWasSet(cmd, "plugins") {
-		return nil
+		return
 	}
 	// If the operator already supplied --plugin-preset, no prompting is needed.
 	if flagWasSet(cmd, "plugin-preset") {
-		return nil
+		return
 	}
 
-	// ── Pass 1: preset selection ───────────────────────────────────────────────
+	// ── Page: preset selection ─────────────────────────────────────────────────
 	effectivePreset := resolveEffective(defaults.BlockNode.PluginPreset, "", blocknode.PresetTier1LFH)
 	*flagPluginPreset = effectivePreset
 
@@ -524,31 +592,19 @@ func RunPluginPresetPrompts(
 		options = append(options, huh.NewOption(blocknode.PresetLabel(id), id))
 	}
 
-	presetField := huh.NewSelect[string]().
-		Key("plugin-preset").
-		Title("Block Node Plugin Preset").
-		Description("Select the plugin set to deploy with this block node").
-		Options(options...).
-		Value(flagPluginPreset)
+	presetGroup := huh.NewGroup(
+		huh.NewSelect[string]().
+			Key("plugin-preset").
+			Title("Block Node Plugin Preset").
+			Description("Select the plugin set to deploy with this block node").
+			Options(options...).
+			Value(flagPluginPreset),
+	)
 
-	presetForm := huh.NewForm(huh.NewGroup(presetField)).
-		WithTheme(SoloTheme()).
-		WithShowHelp(true)
-
-	if err := presetForm.Run(); err != nil {
-		return wrapFormError(err)
-	}
-
-	cv.add("Plugin Preset", blocknode.PresetLabel(*flagPluginPreset))
-
-	// ── Pass 2: custom multi-select (only when Custom was chosen) ─────────────
-	if *flagPluginPreset != blocknode.PresetCustom {
-		return nil
-	}
-
-	// Pre-select the plugins from the last-used custom list (if any),
-	// but filter out any entries that no longer exist in the current
-	// available plugin list so the UI does not silently drop them.
+	// ── Page: custom multi-select (shown only when Custom is selected) ────────
+	// Pre-select the plugins from the last-used custom list (if any), but filter
+	// out any entries that no longer exist in the current available plugin list so
+	// the UI does not silently drop them.
 	versionedPlugins := blocknode.PluginsForVersion(chartVersion)
 	validPlugins := make(map[string]struct{}, len(versionedPlugins))
 	var pluginOptions []huh.Option[string]
@@ -584,31 +640,58 @@ func RunPluginPresetPrompts(
 		)
 	}
 
-	customField := huh.NewMultiSelect[string]().
-		Key("plugins").
-		Title("Select Plugins").
-		Description(description).
-		Options(pluginOptions...).
-		Value(&selectedPlugins).
-		Validate(func(selected []string) error {
-			if len(selected) == 0 {
-				return errorx.IllegalArgument.New("at least one plugin must be selected for the Custom preset")
-			}
-			return nil
-		})
+	isCustom := func() bool { return *flagPluginPreset == blocknode.PresetCustom }
+	customGroup := huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			Key("plugins").
+			Title("Select Plugins").
+			Description(description).
+			Options(pluginOptions...).
+			Value(&selectedPlugins).
+			Validate(func(selected []string) error {
+				// Only enforce a selection while the Custom preset is active; when
+				// the group is hidden this validator must not block submission.
+				if !isCustom() {
+					return nil
+				}
+				if len(selected) == 0 {
+					return errorx.IllegalArgument.New("at least one plugin must be selected for the Custom preset")
+				}
+				return nil
+			}),
+	).WithHideFunc(func() bool { return !isCustom() })
 
-	customForm := huh.NewForm(huh.NewGroup(customField)).
-		WithTheme(SoloTheme()).
-		WithShowHelp(true)
-
-	if err := customForm.Run(); err != nil {
-		return wrapFormError(err)
+	after := func() {
+		cv.add("Plugin Preset", blocknode.PresetLabel(*flagPluginPreset))
+		if isCustom() {
+			*flagPlugins = strings.Join(selectedPlugins, ",")
+			cv.add("Custom Plugins", *flagPlugins)
+		} else {
+			// Ensure a pre-selected-but-hidden multi-select never contaminates a
+			// non-custom preset.
+			*flagPlugins = ""
+		}
 	}
 
-	*flagPlugins = strings.Join(selectedPlugins, ",")
-	cv.add("Custom Plugins", *flagPlugins)
+	w.addGroups(after, presetGroup, customGroup)
+}
 
-	return nil
+// RunPluginPresetPrompts presents the plugin preset prompts as a standalone
+// wizard. It is retained for callers that run plugin prompts in isolation; the
+// block-node install flow uses AddPluginPresetPrompts to combine these pages with
+// the rest of the installation wizard. It is a no-op when either --plugins or
+// --plugin-preset was already provided on the command line.
+func RunPluginPresetPrompts(
+	cmd *cobra.Command,
+	defaults state.PromptDefaults,
+	flagPluginPreset *string,
+	flagPlugins *string,
+	chartVersion string,
+	cv *ChosenValues,
+) error {
+	w := NewWizard()
+	AddPluginPresetPrompts(w, cmd, defaults, flagPluginPreset, flagPlugins, chartVersion, cv)
+	return w.Run(cv)
 }
 
 // resolveEffective returns the first non-empty value from the priority chain:

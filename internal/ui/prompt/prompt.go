@@ -166,14 +166,62 @@ func flagWasSet(cmd *cobra.Command, name string) bool {
 	return f.Changed
 }
 
-// RunSelectPrompts presents interactive select prompts for any flags that were
-// not explicitly set on the command line. Returns nil if all flags are already
-// set or prompts are not applicable.
+// Wizard accumulates huh groups (one per wizard page) plus post-run callbacks,
+// then runs them all in a single huh.Form. Presenting every stage as one form is
+// what makes the pages navigable back and forward (Shift+Tab / Tab) — huh's
+// built-in navigation only crosses group boundaries within a single form.
 //
-// Each prompt's Target pointer is updated in-place so the caller's flag
-// variable receives the user's choice without any extra wiring.
-// Chosen values are collected into cv for unified summary printing.
-func RunSelectPrompts(cmd *cobra.Command, prompts []SelectPrompt, cv *ChosenValues) error {
+// Each stage's post-processing (recording chosen values into ChosenValues,
+// normalising flag targets, joining multi-selects) is deferred into an afterRun
+// callback because a field's value is only final once the shared form completes.
+type Wizard struct {
+	groups   []*huh.Group
+	afterRun []func()
+}
+
+// NewWizard returns an empty wizard ready to accumulate pages.
+func NewWizard() *Wizard {
+	return &Wizard{}
+}
+
+// addGroups appends one or more groups (pages) and an optional post-run callback.
+// The callback is fired, in add order, after the wizard's single form completes.
+func (w *Wizard) addGroups(after func(), groups ...*huh.Group) {
+	w.groups = append(w.groups, groups...)
+	if after != nil {
+		w.afterRun = append(w.afterRun, after)
+	}
+}
+
+// Run executes all accumulated groups in a single huh form, then fires the
+// afterRun callbacks. It is a no-op (returns nil) when no pages were added — the
+// same behaviour the per-stage runners had when every prompt was skipped.
+func (w *Wizard) Run(cv *ChosenValues) error {
+	if len(w.groups) == 0 {
+		return nil
+	}
+
+	form := huh.NewForm(w.groups...).
+		WithTheme(SoloTheme()).
+		WithShowHelp(true)
+
+	if err := form.Run(); err != nil {
+		return wrapFormError(err)
+	}
+
+	for _, fn := range w.afterRun {
+		fn()
+	}
+
+	return nil
+}
+
+// AddSelectPrompts appends a wizard page (one group) containing a select field for
+// each prompt whose flag was not already supplied on the command line. Nothing is
+// added when every prompt is skipped. Each prompt's Target pointer is pre-seeded
+// with its effective value so pressing Enter accepts it; chosen values are recorded
+// into cv by an afterRun callback once the wizard form completes.
+func AddSelectPrompts(w *Wizard, cmd *cobra.Command, prompts []SelectPrompt, cv *ChosenValues) {
 	var fields []huh.Field
 	var prompted []*SelectPrompt
 
@@ -207,29 +255,34 @@ func RunSelectPrompts(cmd *cobra.Command, prompts []SelectPrompt, cv *ChosenValu
 	}
 
 	if len(fields) == 0 {
-		return nil
+		return
 	}
 
-	form := huh.NewForm(huh.NewGroup(fields...)).
-		WithTheme(SoloTheme()).
-		WithShowHelp(true)
-
-	if err := form.Run(); err != nil {
-		return wrapFormError(err)
-	}
-
-	// Collect chosen values into the summary.
-	for _, p := range prompted {
-		cv.add(p.Title, *p.Target)
-	}
-
-	return nil
+	w.addGroups(func() {
+		for _, p := range prompted {
+			cv.add(p.Title, *p.Target)
+		}
+	}, huh.NewGroup(fields...))
 }
 
-// RunInputPrompts presents interactive text-input prompts for any flags that
-// were not explicitly set on the command line.
-// Chosen values are collected into cv for unified summary printing.
-func RunInputPrompts(cmd *cobra.Command, prompts []InputPrompt, cv *ChosenValues) error {
+// RunSelectPrompts presents interactive select prompts for any flags that were
+// not explicitly set on the command line. Returns nil if all flags are already
+// set or prompts are not applicable.
+//
+// It runs the selects as a single-page wizard; multi-stage callers should use
+// AddSelectPrompts to combine this page with others into one navigable form.
+func RunSelectPrompts(cmd *cobra.Command, prompts []SelectPrompt, cv *ChosenValues) error {
+	w := NewWizard()
+	AddSelectPrompts(w, cmd, prompts, cv)
+	return w.Run(cv)
+}
+
+// AddInputPrompts appends a wizard page (one group) containing a text-input field
+// for each prompt whose flag was not already supplied on the command line and is
+// registered on the command. Nothing is added when every prompt is skipped. Each
+// prompt's Target pointer is pre-filled with its effective value; chosen values are
+// recorded into cv by an afterRun callback once the wizard form completes.
+func AddInputPrompts(w *Wizard, cmd *cobra.Command, prompts []InputPrompt, cv *ChosenValues) {
 	var fields []huh.Field
 	var prompted []*InputPrompt
 
@@ -266,23 +319,25 @@ func RunInputPrompts(cmd *cobra.Command, prompts []InputPrompt, cv *ChosenValues
 	}
 
 	if len(fields) == 0 {
-		return nil
+		return
 	}
 
-	form := huh.NewForm(huh.NewGroup(fields...)).
-		WithTheme(SoloTheme()).
-		WithShowHelp(true)
+	w.addGroups(func() {
+		for _, p := range prompted {
+			cv.add(p.Title, *p.Target)
+		}
+	}, huh.NewGroup(fields...))
+}
 
-	if err := form.Run(); err != nil {
-		return wrapFormError(err)
-	}
-
-	// Collect chosen values into the summary.
-	for _, p := range prompted {
-		cv.add(p.Title, *p.Target)
-	}
-
-	return nil
+// RunInputPrompts presents interactive text-input prompts for any flags that
+// were not explicitly set on the command line.
+//
+// It runs the inputs as a single-page wizard; multi-stage callers should use
+// AddInputPrompts to combine this page with others into one navigable form.
+func RunInputPrompts(cmd *cobra.Command, prompts []InputPrompt, cv *ChosenValues) error {
+	w := NewWizard()
+	AddInputPrompts(w, cmd, prompts, cv)
+	return w.Run(cv)
 }
 
 // RunConfirm presents a styled confirmation prompt and returns the user's choice.
