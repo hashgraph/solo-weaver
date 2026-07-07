@@ -121,6 +121,11 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 		Str("to", "true").
 		Msg("Applying cilium-config (enable-host-legacy-routing=true) to existing cluster via 'cilium upgrade'")
 
+	// Verify the cilium binary before executing it.
+	if err := verifyCiliumExecutable(); err != nil {
+		return err
+	}
+
 	upgrade := []string{
 		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --values %s --wait",
 			models.Paths().SandboxBinDir, configPath),
