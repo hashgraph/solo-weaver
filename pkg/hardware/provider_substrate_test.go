@@ -58,6 +58,36 @@ func TestSubstrateProvider_IgnoresSpec(t *testing.T) {
 	}
 }
 
+func TestCreateSubstrateSpec_BypassesProfileAndNodeTypeGates(t *testing.T) {
+	// A host that clears the substrate floor (2/2/20) but carries no profile and
+	// a node type that is NOT in SupportedNodeTypes. CreateNodeSpec would reject it;
+	// CreateSubstrateSpec must not.
+	host := NewMockHostProfile("ubuntu", "20.04", 8, 16, 500)
+
+	spec, err := CreateSubstrateSpec(host)
+	if err != nil {
+		t.Fatalf("CreateSubstrateSpec returned error: %v", err)
+	}
+
+	reqs := spec.GetBaselineRequirements()
+	if reqs.MinCpuCores != 2 || reqs.MinMemoryGB != 2 || reqs.MinStorageGB != 20 {
+		t.Errorf("expected substrate floor 2/2/20, got %d/%d/%d",
+			reqs.MinCpuCores, reqs.MinMemoryGB, reqs.MinStorageGB)
+	}
+	if err := spec.ValidateCPU(); err != nil {
+		t.Errorf("expected CPU validation to pass on an 8-core host: %v", err)
+	}
+	if err := spec.ValidateStorage(); err != nil {
+		t.Errorf("expected storage validation to pass on a 500 GB host: %v", err)
+	}
+
+	// Sanity: the same host through CreateNodeSpec with the substrate key + empty
+	// profile must be rejected — proving the substrate helper is doing the bypass.
+	if _, err := CreateNodeSpec(DeploymentSpec{NodeType: NodeTypeSubstrate}, host); err == nil {
+		t.Error("expected CreateNodeSpec to reject the substrate node type / empty profile")
+	}
+}
+
 func TestSubstrateProvider_RegistryEntry(t *testing.T) {
 	providers := Providers()
 	p, ok := providers["k8s-substrate"]

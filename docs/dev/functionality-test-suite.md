@@ -94,9 +94,9 @@
 
 ### 3.1 Cluster Install
 
-- [ ] **TC-CL-INS-001** — As a node operator, when I run `kube cluster install`, the cluster is set up with the specified profile and node type.
+- [ ] **TC-CL-INS-001** — As a node operator, when I run `kube cluster install`, the cluster is set up after validating only the Kubernetes substrate hardware floor (no `--profile` / `--node-type` required).
 - [ ] **TC-CL-INS-002** — As a node operator, when I run `kube cluster install` and the cluster is already created (`ClusterState.Created = true`), the command should detect the existing setup and error if it is already installed.
-- [ ] **TC-CL-INS-003** — Invalid profile or node type is rejected with a clear error message.
+- [ ] **TC-CL-INS-003** — A host below the substrate floor (CPU/memory/disk/OS) is rejected with a clear error; a host that meets the substrate floor but not a later workload floor still installs the cluster.
 - [ ] **TC-CL-INS-004** — State manager is initialised, refreshed, and passed into the workflow correctly.
 
 ### 3.2 Cluster Uninstall
