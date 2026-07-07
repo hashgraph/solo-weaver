@@ -3,6 +3,7 @@
 package hardware
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -79,6 +80,12 @@ func TestCreateSubstrateSpec_BypassesProfileAndNodeTypeGates(t *testing.T) {
 	}
 	if err := spec.ValidateStorage(); err != nil {
 		t.Errorf("expected storage validation to pass on a 500 GB host: %v", err)
+	}
+
+	// The substrate spec has no profile; its display name must not render empty
+	// parentheses (e.g. "K8s-Substrate Node ()") in operator-facing errors.
+	if name := spec.GetNodeType(); strings.Contains(name, "()") {
+		t.Errorf("substrate display name should omit empty profile parentheses, got %q", name)
 	}
 
 	// Sanity: the same host through CreateNodeSpec with the substrate key + empty

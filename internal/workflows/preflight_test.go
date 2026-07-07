@@ -27,26 +27,32 @@ func substrateStepIDs(t *testing.T, skipHardwareChecks bool) []string {
 }
 
 // TestNewSubstrateSafetyCheckWorkflow_OmitsHostProfileStep verifies the substrate
-// preflight runs privilege + weaver-user + the single substrate hardware step, and
-// deliberately omits the node-type/profile host-profile validation.
+// preflight runs privilege + weaver-user + the same four per-resource hardware steps as
+// the node preflight, and deliberately omits the node-type/profile host-profile validation.
 func TestNewSubstrateSafetyCheckWorkflow_OmitsHostProfileStep(t *testing.T) {
 	ids := substrateStepIDs(t, false)
 
 	require.Contains(t, ids, "validate-privileges")
 	require.Contains(t, ids, "validate-weaver-user")
-	require.Contains(t, ids, "validate-substrate-hardware")
+	// Per-resource hardware steps, each surfacing independently (matches node preflight).
+	require.Contains(t, ids, "validate-os")
+	require.Contains(t, ids, "validate-cpu")
+	require.Contains(t, ids, "validate-memory")
+	require.Contains(t, ids, "validate-storage")
 	require.NotContains(t, ids, "validate-host-profile",
 		"substrate preflight must not validate node type / profile")
 }
 
 // TestNewSubstrateSafetyCheckWorkflow_SkipsHardwareWhenRequested verifies that
-// --skip-hardware-checks excludes the substrate hardware step while keeping the
+// --skip-hardware-checks excludes the per-resource hardware steps while keeping the
 // non-hardware safety checks.
 func TestNewSubstrateSafetyCheckWorkflow_SkipsHardwareWhenRequested(t *testing.T) {
 	ids := substrateStepIDs(t, true)
 
 	require.Contains(t, ids, "validate-privileges")
 	require.Contains(t, ids, "validate-weaver-user")
-	require.NotContains(t, ids, "validate-substrate-hardware",
-		"hardware step must be excluded when skipHardwareChecks is true")
+	for _, hw := range []string{"validate-os", "validate-cpu", "validate-memory", "validate-storage"} {
+		require.NotContains(t, ids, hw,
+			"hardware steps must be excluded when skipHardwareChecks is true")
+	}
 }
