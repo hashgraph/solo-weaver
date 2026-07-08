@@ -408,3 +408,37 @@ func Test_SoakDuration_FalseWhenNotElapsed(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
+
+// Test_MigrationMonitor_ConcurrentStartStop hammers TryEnqueue/TryStop from two
+// goroutines to race soakWg.Add against soakWg.Wait - panics pre-#697, clean after (run under -race).
+func Test_MigrationMonitor_ConcurrentStartStop(t *testing.T) {
+	mm := newMonitor(t, nil, &mockDecommissioner{}, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { _ = mm.Run(ctx); close(runDone) }()
+
+	const iterations = 2000
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			mm.TryEnqueue(testRequest(-time.Hour))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			mm.TryStop(true)
+		}
+	}()
+	wg.Wait()
+
+	cancel()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}

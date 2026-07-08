@@ -81,6 +81,9 @@ type MigrationMonitor struct {
 	// quiescence before returning.
 	soakWg sync.WaitGroup
 
+	// soakLifecycleMu serializes soakWg.Add (Run/resumeIfNeeded) against soakWg.Wait (TryStop)
+	soakLifecycleMu sync.Mutex
+
 	// soakCancel cancels the per-watcher context. Set atomically when a watcher
 	// goroutine starts; cleared when it exits. Used by TryStop.
 	soakCancel atomic.Pointer[context.CancelFunc]
@@ -281,7 +284,10 @@ func (mm *MigrationMonitor) TryStop(deleteState bool) bool {
 		return false
 	}
 	(*cancelPtr)()
+	// Serialize against the Add sites so Wait never overlaps a 0->1 Add
+	mm.soakLifecycleMu.Lock()
 	mm.soakWg.Wait()
+	mm.soakLifecycleMu.Unlock()
 	if deleteState && mm.stateFilePath != "" {
 		if err := os.Remove(mm.stateFilePath); err != nil && !os.IsNotExist(err) {
 			logx.As().Warn().Err(err).
@@ -315,9 +321,10 @@ func (mm *MigrationMonitor) Run(ctx context.Context) error {
 	for {
 		select {
 		case req := <-mm.soakStartCh:
-			// soakWg.Add before goroutine start so the deferred soakWg.Wait()
-			// above accounts for it.
+			// Add before spawn (accounted by the deferred Wait), locked so it can't race TryStop's Wait
+			mm.soakLifecycleMu.Lock()
 			mm.soakWg.Add(1)
+			mm.soakLifecycleMu.Unlock()
 			go mm.run(ctx, req, false)
 		case <-ctx.Done():
 			// Intentional: if soakStartCh has a buffered item at the same time
@@ -629,6 +636,9 @@ func (mm *MigrationMonitor) resumeIfNeeded(ctx context.Context) {
 	reqCopy := req
 	mm.soakStatus.Store(&SoakStatusResponse{Active: true, Request: &reqCopy})
 	mm.soakActive.Store(true)
+	// Locked so a concurrent startup TryStop can't race this 0->1 Add
+	mm.soakLifecycleMu.Lock()
 	mm.soakWg.Add(1)
+	mm.soakLifecycleMu.Unlock()
 	go mm.run(ctx, req, true)
 }
