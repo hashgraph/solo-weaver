@@ -186,6 +186,11 @@ func InitializeCluster() *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Kubernetes cluster initialized successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Verify the kubectl binary before executing it.
+			if err := verifyExecutables("kubectl"); err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
 			// Check if cluster is already initialized
 			scripts := []string{kubectlGetNodesCmd}
 			output, err := automa_steps.RunBashScript(scripts, "")
@@ -197,6 +202,11 @@ func InitializeCluster() *automa.StepBuilder {
 			}
 
 			// Cluster not initialized, proceed with full initialization
+
+			// Verify the kubeadm binary before executing it.
+			if err := verifyExecutables("kubeadm"); err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
 
 			// Step 1: Pull kubeadm images
 			logx.As().Info().Msg("Pulling kubeadm images, this may take a while...")
@@ -233,6 +243,11 @@ func InitializeCluster() *automa.StepBuilder {
 			return automa.SuccessReport(stp, automa.WithDetail("Cluster initialized successfully"))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Verify the kubeadm binary before executing it on rollback.
+			if err := verifyExecutables("kubeadm"); err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
 			scripts := []string{
 				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
 			}
@@ -260,6 +275,13 @@ func ResetCluster() *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Kubernetes cluster reset successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Teardown is best-effort: if the kubeadm binary fails verification,
+			// skip the reset and continue rather than execute a tampered binary.
+			if err := verifyExecutables("kubeadm"); err != nil {
+				logx.As().Warn().Err(err).Msg("kubeadm checksum verification failed, skipping kubeadm reset and continuing with teardown")
+				return automa.SuccessReport(stp)
+			}
+
 			scripts := []string{
 				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
 			}

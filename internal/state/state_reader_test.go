@@ -25,6 +25,42 @@ state:
 	}
 }
 
+func TestReadSoftwareVersion_ParsesRecordedVersion(t *testing.T) {
+	// cri-o is stored under the installer key "crio", not its artifact name.
+	data := []byte(`
+state:
+  machineState:
+    software:
+      cilium:
+        name: cilium
+        version: "0.18.7"
+        installed: true
+      crio:
+        name: cri-o
+        version: "1.30.0"
+`)
+	var doc SoftwareVersionsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	// Direct map-key hit.
+	if got := softwareVersionFromDoc(doc, "cilium"); got != "0.18.7" {
+		t.Fatalf("expected cilium version '0.18.7', got %q", got)
+	}
+	// Artifact name resolves via the name fallback despite the differing map key.
+	if got := softwareVersionFromDoc(doc, "cri-o"); got != "1.30.0" {
+		t.Fatalf("expected cri-o version '1.30.0' via name fallback, got %q", got)
+	}
+	// The installer key still resolves directly too.
+	if got := softwareVersionFromDoc(doc, "crio"); got != "1.30.0" {
+		t.Fatalf("expected cri-o version '1.30.0' via map key, got %q", got)
+	}
+	// Unrecorded component resolves to the empty string.
+	if got := softwareVersionFromDoc(doc, "teleport"); got != "" {
+		t.Fatalf("expected empty version for unrecorded component, got %q", got)
+	}
+}
+
 func TestReadPromptDefaults_ParsesProfile(t *testing.T) {
 	data := []byte(`
 state:

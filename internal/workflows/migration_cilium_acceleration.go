@@ -55,6 +55,7 @@ var (
 	reconfigureCiliumConfig = software.ReconfigureCiliumConfig
 	kubernetesInstalled     = defaultKubernetesInstalled
 	readCiliumState         = defaultReadCiliumState
+	verifyCiliumExecutable  = func() error { return software.VerifyExecutables("cilium") }
 )
 
 // CiliumAccelerationMigration re-renders cilium-config.yaml and runs `cilium upgrade`
@@ -116,6 +117,11 @@ func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migrati
 		Str("from", acc).
 		Str("to", disabledAcceleration).
 		Msg("Applying cilium-config (loadBalancer.acceleration=disabled) to existing cluster via 'cilium upgrade'")
+
+	// Verify the cilium binary before executing it.
+	if err := verifyCiliumExecutable(); err != nil {
+		return err
+	}
 
 	upgrade := []string{
 		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --values %s --wait",

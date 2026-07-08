@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,6 +88,27 @@ func TestTeleportNodeAgentInstaller_Version(t *testing.T) {
 	require.NotEmpty(t, version)
 	// Version should be a valid semver-like string
 	require.Regexp(t, `^\d+\.\d+\.\d+`, version)
+}
+
+func TestTeleportNodeAgentInstaller_RunConfigure_AbortsWhenVerificationFails(t *testing.T) {
+	// runTeleportConfigure verifies the teleport binary before exec'ing it. A
+	// failed checksum must surface as an error and stop before the configure
+	// command runs, so tampering can never launch the binary.
+	orig := verifyExecutables
+	verifyExecutables = func(string) error { return assert.AnError }
+	t.Cleanup(func() { verifyExecutables = orig })
+
+	installer, err := NewTeleportNodeAgentInstallerWithConfig(&TeleportNodeAgentConfigureOptions{
+		ProxyAddr: "example.teleport.sh:443",
+		JoinToken: "test-token-12345",
+	})
+	require.NoError(t, err)
+
+	ti, ok := installer.(*teleportNodeAgentInstaller)
+	require.True(t, ok, "expected the concrete teleport installer type")
+
+	err = ti.runTeleportConfigure()
+	require.ErrorIs(t, err, assert.AnError)
 }
 
 func TestTeleportNodeAgentInstaller_PatchServiceFile(t *testing.T) {
