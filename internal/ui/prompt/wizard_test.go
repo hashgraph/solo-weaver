@@ -15,7 +15,7 @@ import (
 func TestWizard_RunNoGroupsIsNoop(t *testing.T) {
 	// A wizard with no accumulated pages must not run a form — it returns nil,
 	// mirroring the per-stage no-op behaviour when every prompt is skipped.
-	if err := NewWizard().Run(NewChosenValues()); err != nil {
+	if err := NewWizard().Run(); err != nil {
 		t.Fatalf("expected nil error for empty wizard, got: %v", err)
 	}
 }

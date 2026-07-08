@@ -194,9 +194,10 @@ func (w *Wizard) addGroups(after func(), groups ...*huh.Group) {
 }
 
 // Run executes all accumulated groups in a single huh form, then fires the
-// afterRun callbacks. It is a no-op (returns nil) when no pages were added — the
-// same behaviour the per-stage runners had when every prompt was skipped.
-func (w *Wizard) Run(cv *ChosenValues) error {
+// afterRun callbacks (which is where all ChosenValues interaction happens). It is
+// a no-op (returns nil) when no pages were added — the same behaviour the
+// per-stage runners had when every prompt was skipped.
+func (w *Wizard) Run() error {
 	if len(w.groups) == 0 {
 		return nil
 	}
@@ -274,7 +275,7 @@ func AddSelectPrompts(w *Wizard, cmd *cobra.Command, prompts []SelectPrompt, cv 
 func RunSelectPrompts(cmd *cobra.Command, prompts []SelectPrompt, cv *ChosenValues) error {
 	w := NewWizard()
 	AddSelectPrompts(w, cmd, prompts, cv)
-	return w.Run(cv)
+	return w.Run()
 }
 
 // AddInputPrompts appends a wizard page (one group) containing a text-input field
@@ -337,7 +338,7 @@ func AddInputPrompts(w *Wizard, cmd *cobra.Command, prompts []InputPrompt, cv *C
 func RunInputPrompts(cmd *cobra.Command, prompts []InputPrompt, cv *ChosenValues) error {
 	w := NewWizard()
 	AddInputPrompts(w, cmd, prompts, cv)
-	return w.Run(cv)
+	return w.Run()
 }
 
 // RunConfirm presents a styled confirmation prompt and returns the user's choice.

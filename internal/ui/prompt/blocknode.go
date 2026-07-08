@@ -469,7 +469,7 @@ func RunStoragePathPrompts(
 ) error {
 	w := NewWizard()
 	AddStoragePathPrompts(w, cmd, defaults, chartVersion, targets, cv)
-	return w.Run(cv)
+	return w.Run()
 }
 
 // BlockNodeSelectPrompts returns the select-type prompts for block node commands.
@@ -691,7 +691,7 @@ func RunPluginPresetPrompts(
 ) error {
 	w := NewWizard()
 	AddPluginPresetPrompts(w, cmd, defaults, flagPluginPreset, flagPlugins, chartVersion, cv)
-	return w.Run(cv)
+	return w.Run()
 }
 
 // resolveEffective returns the first non-empty value from the priority chain:

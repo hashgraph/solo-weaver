@@ -163,7 +163,7 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, cv)
 
 	// Run all accumulated pages as a single navigable form.
-	if err := w.Run(cv); err != nil {
+	if err := w.Run(); err != nil {
 		return err
 	}
 
