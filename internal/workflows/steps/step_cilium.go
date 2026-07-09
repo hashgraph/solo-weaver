@@ -203,6 +203,11 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			logx.As().Info().Str("step_id", stp.Id()).Str("software", "cilium-cni").Str("version", version).Msgf("cilium-cni version: %s", version)
 
+			// Verify the cilium binary before executing it.
+			if err := verifyExecutables("cilium"); err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+
 			// Prepare metadata for reporting
 			meta := map[string]string{}
 
@@ -239,6 +244,11 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 			}
 			if !installedByThisStep {
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium CNI was not installed by this step, skipping rollback"))
+			}
+
+			// Verify the cilium binary before executing it on rollback.
+			if err := verifyExecutables("cilium"); err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
 			// Uninstall Cilium CNI

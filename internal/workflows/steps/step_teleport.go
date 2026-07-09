@@ -42,6 +42,7 @@ func SetupTeleportNodeAgent(mr software.MachineRuntime) *automa.WorkflowBuilder 
 		Steps(
 			installTeleportNodeAgent(newTeleportInstallerProvider(cfg, mr)),
 			configureTeleportNodeAgent(newTeleportInstallerProvider(cfg, mr)),
+			VerifyExecutablesStep("teleport"),
 			SetupSystemdService(software.TeleportServiceName),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

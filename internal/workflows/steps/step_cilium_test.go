@@ -3,9 +3,12 @@
 package steps
 
 import (
+	"context"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test_bandwidthManagerEnabled covers the decision the StartCilium guard makes on
@@ -31,4 +34,37 @@ func Test_bandwidthManagerEnabled(t *testing.T) {
 			assert.Equal(t, tt.want, bandwidthManagerEnabled(tt.value))
 		})
 	}
+}
+
+// The install-cilium-cni step verifies the cilium binary before shelling out to
+// it on both install and rollback. These cases pin that a failed checksum aborts
+// before the binary is executed.
+
+func TestInstallCiliumCNI_FailsWhenCiliumVerificationFails(t *testing.T) {
+	calls := stubVerifyExecutables(t, func(string) error { return assert.AnError })
+
+	step, err := installCiliumCNI("1.16.5").Build()
+	require.NoError(t, err)
+
+	report := step.Execute(context.Background())
+	require.Error(t, report.Error)
+	assert.Equal(t, automa.StatusFailed, report.Status)
+	require.ErrorIs(t, report.Error, assert.AnError)
+	assert.Equal(t, []string{"cilium"}, *calls)
+}
+
+func TestInstallCiliumCNI_RollbackFailsWhenCiliumVerificationFails(t *testing.T) {
+	stubVerifyExecutables(t, func(string) error { return assert.AnError })
+
+	step, err := installCiliumCNI("1.16.5").Build()
+	require.NoError(t, err)
+
+	// Rollback is a no-op unless this step performed the install; mark it so
+	// rollback proceeds past that guard and reaches the checksum verification.
+	step.State().Local().Set(InstalledByThisStep, true)
+
+	report := step.Rollback(context.Background())
+	require.Error(t, report.Error)
+	assert.Equal(t, automa.StatusFailed, report.Status)
+	require.ErrorIs(t, report.Error, assert.AnError)
 }

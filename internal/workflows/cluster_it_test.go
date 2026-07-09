@@ -37,7 +37,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
-	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +45,7 @@ import (
 func Test_ClusterSetup(t *testing.T) {
 	testutil.Reset(t)
 
-	installWf, err := InstallClusterWorkflow(models.NodeTypeBlock, models.ProfileLocal, "", false, nil).
+	installWf, err := InstallClusterWorkflow(false, nil).
 		WithExecutionMode(automa.StopOnError).
 		Build()
 	require.NoError(t, err)

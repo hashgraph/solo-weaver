@@ -81,11 +81,16 @@ func (h *InstallHandler) BuildWorkflow(
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(
 				// Same backwards-compat guard as above: ensure weaver:2500 exists
-				// before InstallClusterWorkflow's preflight check validates it.
-				// Older binaries did not create this account during self-install.
+				// before the preflight check validates it. Older binaries did not
+				// create this account during self-install.
 				steps.EnsureWeaverOwnerStep(),
-				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks, h.mr),
-				// nftables was just installed/enabled by InstallClusterWorkflow's
+				// Block node install owns its workload-sized preflight (block provider,
+				// profile, plugin preset) plus system setup, then stands up Kubernetes.
+				// InstallClusterWorkflow is intentionally not reused here: it validates
+				// only the substrate floor, which is weaker than the block-node floor.
+				workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
+				workflows.KubernetesSetupWorkflow(h.mr),
+				// nftables was just installed/enabled by NodeSetupWorkflow's
 				// systemSetupWorkflow; apply the host firewall here rather than in
 				// that generic (node-type-agnostic) workflow.
 				steps.NetworkFirewallCreate(),

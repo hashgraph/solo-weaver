@@ -49,6 +49,11 @@ func NewNodeSpec(spec DeploymentSpec, hostProfile HostProfile) (Spec, error) {
 // formatDisplayName creates a human-readable display name
 func formatDisplayName(nodeType, profile string) string {
 	caser := cases.Title(language.Und)
+	// The substrate spec carries no profile; omit the empty parentheses so
+	// operator-facing errors read "K8s-Substrate Node" rather than "K8s-Substrate Node ()".
+	if profile == "" {
+		return fmt.Sprintf("%s Node", caser.String(nodeType))
+	}
 	return fmt.Sprintf("%s Node (%s)", caser.String(nodeType), caser.String(profile))
 }
 

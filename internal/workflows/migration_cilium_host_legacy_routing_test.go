@@ -46,11 +46,13 @@ func TestCiliumHostLegacyRoutingMigration_Execute(t *testing.T) {
 	origState := readHostLegacyRoutingState
 	origReconfigure := reconfigureCiliumConfig
 	origShell := runShell
+	origVerify := verifyCiliumExecutable
 	t.Cleanup(func() {
 		kubernetesInstalled = origK8s
 		readHostLegacyRoutingState = origState
 		reconfigureCiliumConfig = origReconfigure
 		runShell = origShell
+		verifyCiliumExecutable = origVerify
 	})
 
 	m := NewCiliumHostLegacyRoutingMigration()
@@ -83,8 +85,10 @@ func TestCiliumHostLegacyRoutingMigration_Execute(t *testing.T) {
 		assert.False(t, ran, "must not run before Kubernetes is installed")
 	})
 
-	// Remaining cases assume Kubernetes is present.
+	// Remaining cases assume Kubernetes is present and the cilium binary passes
+	// checksum verification unless a case overrides it.
 	kubernetesInstalled = func() bool { return true }
+	verifyCiliumExecutable = func() error { return nil }
 
 	t.Run("skips when Cilium is not installed", func(t *testing.T) {
 		var ran bool
@@ -172,5 +176,20 @@ func TestCiliumHostLegacyRoutingMigration_Execute(t *testing.T) {
 		assert.Contains(t, cmd, "cilium upgrade")
 		assert.Contains(t, cmd, "--values")
 		assert.Contains(t, cmd, "--wait")
+	})
+
+	t.Run("aborts before upgrade when the cilium binary fails verification", func(t *testing.T) {
+		var ran bool
+		var cmd string
+		stateReturns(true, "", "", nil)
+		reconfigureCiliumConfig = func() (string, error) {
+			return "/opt/solo/weaver/sandbox/etc/weaver/cilium-config.yaml", nil
+		}
+		trackUpgrade(&cmd, &ran)
+		verifyCiliumExecutable = func() error { return assert.AnError }
+		t.Cleanup(func() { verifyCiliumExecutable = func() error { return nil } })
+
+		require.Error(t, m.Execute(context.Background(), mctx))
+		assert.False(t, ran, "cilium upgrade must not run when the binary fails checksum verification")
 	})
 }

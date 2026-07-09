@@ -366,24 +366,31 @@ Sets up a complete single-node Kubernetes environment with all required componen
 
 `kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet host` nftables table) is applied by the block-node workflow instead (see [Install Block Node](#install-block-node) below).
 
+Cluster install is **workload-agnostic**: it validates only the Kubernetes substrate
+hardware floor (what Kubernetes itself needs to run), not any per-workload sizing. It
+therefore takes **no `--profile` or `--node-type`**. Workload-sized hardware validation
+happens later, at `block node check` / `block node install`, where the deployment
+profile and plugin preset are known.
+
 ```bash
-# Install full Kubernetes stack for block nodes
-sudo solo-provisioner kube cluster install \
-  --profile=local \
-  --node-type=block
+# Install the full Kubernetes stack
+sudo solo-provisioner kube cluster install
 
 # With error handling
-sudo solo-provisioner kube cluster install \
-  --profile=mainnet \
-  --node-type=block \
-  --rollback-on-error
+sudo solo-provisioner kube cluster install --rollback-on-error
 ```
 
 **Flags**:
 
-| Flag                 | Short | Description                                                                                                          | Required |
-|----------------------|-------|--------------------------------------------------------------------------------------------------------------------|----------|
-| `--node-type`        | `-n`  | Type of node (block\|consensus\|mirror)                                                                             | Yes      |
+| Flag                 | Short | Description                                                        | Required |
+|----------------------|-------|-------------------------------------------------------------------|----------|
+| `--rollback-on-error`| —     | Roll back completed steps if a later step fails                   | No       |
+| `--stop-on-error`    | —     | Stop at the first failing step (default)                          | No       |
+| `--continue-on-error`| —     | Continue past failing steps                                       | No       |
+
+> **Deprecated:** `--profile` and `--node-type` are no longer used by `kube cluster install`.
+> They are still accepted (hidden) so existing scripts do not break, but their values are
+> **ignored** and a notice is printed if you pass them. Remove them from your invocations.
 
 #### Uninstall Kubernetes Cluster
 
@@ -1132,7 +1139,7 @@ sudo solo-provisioner block node reset       --profile=<profile>
 sudo solo-provisioner block node uninstall   --profile=<profile> [--with-reset]
 
 # KUBERNETES
-sudo solo-provisioner kube cluster install   --profile=<profile> --node-type=block
+sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
 
 # TELEPORT

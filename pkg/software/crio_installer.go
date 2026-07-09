@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	CrioBinaryName  = "crio"
-	CrioServiceName = "crio"
+	CrioBinaryName = "crio"
+	// CrioArtifactName is the cri-o catalog entry name (bundles crio, crun,
+	// conmon, runc, ...).
+	CrioArtifactName = "cri-o"
+	CrioServiceName  = "crio"
 
 	// File names - extracted as constants to avoid duplication
 	CrioConfFile          = "10-crio.conf"
@@ -82,7 +85,7 @@ type crioInstaller struct {
 }
 
 func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
-	bi, err := newBaseInstaller("cri-o", opts...)
+	bi, err := newBaseInstaller(CrioArtifactName, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +99,21 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 	ci.verifyConfigured = ci.verifySandboxConfigs
 
 	return ci, nil
+}
+
+// crioInstalledBinaryPaths maps each cri-o binary basename to its install path
+// under destDir: runtime helpers under libexec/crio, crio/pinns/crictl under the
+// bin dir. Shared by Install and VerifyExecutables so their layouts never drift.
+func crioInstalledBinaryPaths(destDir string) map[string]string {
+	return map[string]string{
+		"conmon":   filepath.Join(destDir, libexecCrioDir, "conmon"),
+		"conmonrs": filepath.Join(destDir, libexecCrioDir, "conmonrs"),
+		"crun":     filepath.Join(destDir, libexecCrioDir, "crun"),
+		"runc":     filepath.Join(destDir, libexecCrioDir, "runc"),
+		"crio":     filepath.Join(destDir, binDir, "crio"),
+		"pinns":    filepath.Join(destDir, binDir, "pinns"),
+		"crictl":   filepath.Join(destDir, binDir, "crictl"),
+	}
 }
 
 // Install installs cri-o emulating the same steps performed by the `install` file under the compressed file
@@ -184,15 +202,7 @@ func (ci *crioInstaller) Install() error {
 	//install $SELINUX -D -m 755 -t "$DESTDIR$BINDIR" bin/crio
 	//install $SELINUX -D -m 755 -t "$DESTDIR$BINDIR" bin/pinns
 	//install $SELINUX -D -m 755 -t "$DESTDIR$BINDIR" bin/crictl
-	binaries := map[string]string{
-		"conmon":   filepath.Join(destDir, libexecCrioDir, "conmon"),
-		"conmonrs": filepath.Join(destDir, libexecCrioDir, "conmonrs"),
-		"crun":     filepath.Join(destDir, libexecCrioDir, "crun"),
-		"runc":     filepath.Join(destDir, libexecCrioDir, "runc"),
-		"crio":     filepath.Join(destDir, binDir, "crio"),
-		"pinns":    filepath.Join(destDir, binDir, "pinns"),
-		"crictl":   filepath.Join(destDir, binDir, "crictl"),
-	}
+	binaries := crioInstalledBinaryPaths(destDir)
 	for src, dst := range binaries {
 		err := ci.installFile(filepath.Join(srcDir, "bin", src), dst, models.DefaultDirOrExecPerm)
 		if err != nil {

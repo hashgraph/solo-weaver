@@ -20,8 +20,14 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// createNodeSpec creates the appropriate node spec based on a DeploymentSpec and host profile
+// createNodeSpec creates the appropriate node spec based on a DeploymentSpec and host profile.
+// The Kubernetes substrate is resolved via CreateSubstrateSpec, which bypasses the
+// node-type/profile validation gates (the substrate is not a user-facing node type and
+// carries no profile); everything else goes through the standard CreateNodeSpec path.
 func createNodeSpec(spec hardware.DeploymentSpec, hostProfile hardware.HostProfile) (hardware.Spec, error) {
+	if spec.NodeType == hardware.NodeTypeSubstrate {
+		return hardware.CreateSubstrateSpec(hostProfile)
+	}
 	return hardware.CreateNodeSpec(spec, hostProfile)
 }
 
@@ -253,7 +259,11 @@ func CheckOSStep(spec hardware.DeploymentSpec) automa.Builder {
 
 			if err := nodeSpec.ValidateOS(); err != nil {
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.Wrap(err, "OS validation failed")))
+					automa.WithError(errorx.IllegalState.Wrap(err, "OS validation failed").
+						WithProperty(doctor.ErrPropertyResolution, []string{
+							fmt.Sprintf("Install or upgrade to a supported OS: %v.", reqs.MinSupportedOS),
+							"Or re-run with --skip-hardware-checks to bypass hardware validation (not recommended).",
+						})))
 			}
 			return automa.SuccessReport(stp)
 		}).
@@ -283,7 +293,11 @@ func CheckCPUStep(spec hardware.DeploymentSpec) automa.Builder {
 			logx.As().Info().Msgf("detected: %d cores, required: %d cores", hostProfile.GetCPUCores(), reqs.MinCpuCores)
 
 			if err := nodeSpec.ValidateCPU(); err != nil {
-				baseErr := automa.StepExecutionError.Wrap(err, "CPU validation failed")
+				baseErr := automa.StepExecutionError.Wrap(err, "CPU validation failed").
+					WithProperty(doctor.ErrPropertyResolution, []string{
+						fmt.Sprintf("Provision a host with at least %d CPU cores.", reqs.MinCpuCores),
+						"Or re-run with --skip-hardware-checks to bypass hardware validation (not recommended).",
+					})
 				if p, ok := hardware.Providers()[spec.NodeType]; ok {
 					if _, whyMap, e := p.ComputeWithWhy(spec); e == nil && whyMap["cpu"] != "" {
 						baseErr = baseErr.WithProperty(models.ErrPropertyWhyFloor, whyMap["cpu"])
@@ -320,7 +334,11 @@ func CheckMemoryStep(spec hardware.DeploymentSpec) automa.Builder {
 			logx.As().Info().Msgf("detected: %d GB, required: %d GB", hostProfile.GetTotalMemoryGB(), reqs.MinMemoryGB)
 
 			if err := nodeSpec.ValidateMemory(); err != nil {
-				baseErr := errorx.IllegalState.Wrap(err, "memory validation failed")
+				baseErr := errorx.IllegalState.Wrap(err, "memory validation failed").
+					WithProperty(doctor.ErrPropertyResolution, []string{
+						fmt.Sprintf("Provision a host with at least %d GB of RAM.", reqs.MinMemoryGB),
+						"Or re-run with --skip-hardware-checks to bypass hardware validation (not recommended).",
+					})
 				if p, ok := hardware.Providers()[spec.NodeType]; ok {
 					if _, whyMap, e := p.ComputeWithWhy(spec); e == nil && whyMap["memory"] != "" {
 						baseErr = baseErr.WithProperty(models.ErrPropertyWhyFloor, whyMap["memory"])
@@ -358,7 +376,11 @@ func CheckStorageStep(spec hardware.DeploymentSpec) automa.Builder {
 				hostProfile.GetTotalStorageGB(), hostProfile.GetSSDStorageGB(), hostProfile.GetHDDStorageGB(), reqs.MinStorageGB)
 
 			if err := nodeSpec.ValidateStorage(); err != nil {
-				baseErr := errorx.IllegalState.Wrap(err, "storage validation failed")
+				baseErr := errorx.IllegalState.Wrap(err, "storage validation failed").
+					WithProperty(doctor.ErrPropertyResolution, []string{
+						fmt.Sprintf("Provision a host with at least %d GB of total disk capacity.", reqs.MinStorageGB),
+						"Or re-run with --skip-hardware-checks to bypass hardware validation (not recommended).",
+					})
 				if p, ok := hardware.Providers()[spec.NodeType]; ok {
 					if _, whyMap, e := p.ComputeWithWhy(spec); e == nil && whyMap["storage"] != "" {
 						baseErr = baseErr.WithProperty(models.ErrPropertyWhyFloor, whyMap["storage"])
@@ -402,6 +424,48 @@ func NewNodeSafetyCheckWorkflow(spec hardware.DeploymentSpec, skipHardwareChecks
 
 	return automa.NewWorkflowBuilder().
 		WithId(spec.NodeType + "-node-preflight").
+		Steps(preflightSteps...).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().PhaseStart(ctx, stp, "Preflight Checks")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseFailure(ctx, stp, rpt, "Preflight Checks")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Preflight Checks")
+		})
+}
+
+// NewSubstrateSafetyCheckWorkflow creates a safety check workflow for the Kubernetes
+// substrate — the hardware floor Kubernetes itself needs, independent of any workload
+// node type or profile. It reuses the same per-resource hardware steps as the node
+// preflight (CheckOSStep, CheckCPUStep, CheckMemoryStep, CheckStorageStep) so each
+// resource gets its own TUI entry and failure report; it only omits CheckHostProfileStep
+// (there is no node type / profile to validate). The steps resolve the substrate floor
+// via createNodeSpec -> CreateSubstrateSpec. If skipHardwareChecks is true, the hardware
+// validation steps are excluded.
+func NewSubstrateSafetyCheckWorkflow(skipHardwareChecks bool) *automa.WorkflowBuilder {
+	spec := hardware.DeploymentSpec{NodeType: hardware.NodeTypeSubstrate}
+
+	preflightSteps := []automa.Builder{
+		CheckPrivilegesStep(),
+		CheckWeaverUserStep(),
+	}
+
+	if skipHardwareChecks {
+		logx.As().Warn().Msg("Substrate hardware validation (OS, CPU, memory, storage) will be skipped due to --skip-hardware-checks flag")
+	} else {
+		preflightSteps = append(preflightSteps,
+			CheckOSStep(spec),
+			CheckCPUStep(spec),
+			CheckMemoryStep(spec),
+			CheckStorageStep(spec),
+		)
+	}
+
+	return automa.NewWorkflowBuilder().
+		WithId("substrate-preflight").
 		Steps(preflightSteps...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Preflight Checks")
