@@ -365,8 +365,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return d.server.Start(ctx) })
 	eg.Go(func() error { return d.componentSupervisor(ctx) })
-
-	go d.runComponentProbes(ctx)
+	// Tracked in the errgroup so Run awaits it (nil return never cancels the group)
+	eg.Go(func() error {
+		d.runComponentProbes(ctx)
+		return nil
+	})
 
 	return eg.Wait()
 }
