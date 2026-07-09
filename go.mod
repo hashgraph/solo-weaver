@@ -25,8 +25,8 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zcalusic/sysinfo v1.1.3
-	golang.org/x/sync v0.21.0
-	golang.org/x/text v0.39.0
+	golang.org/x/sync v0.22.0
+	golang.org/x/text v0.40.0
 	helm.sh/helm/v3 v3.21.2
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
 	k8s.io/api v0.36.2
