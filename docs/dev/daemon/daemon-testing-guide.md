@@ -63,10 +63,7 @@ chmod +x /tmp/solo-provisioner-new
 sudo /tmp/solo-provisioner-new install --non-interactive
 
 # ── 3. Bootstrap a single-node Kubernetes cluster ─────────────────────────
-sudo solo-provisioner kube cluster install \
-  --profile local \
-  --node-type block \
-  --non-interactive
+sudo solo-provisioner kube cluster install --non-interactive
 
 # Verify:
 sudo kubectl get nodes

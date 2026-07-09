@@ -2,8 +2,14 @@
 
 package hardware
 
+// NodeTypeSubstrate is the provider key for the Kubernetes substrate floor —
+// the hardware Kubernetes itself needs to run, independent of any workload.
+// It is intentionally not part of SupportedNodeTypes(): it is never a user-facing
+// --node-type, only an internal provider key used by the cluster-install preflight.
+const NodeTypeSubstrate = "k8s-substrate"
+
 func init() {
-	registerProvider("k8s-substrate", &substrateProvider{})
+	registerProvider(NodeTypeSubstrate, &substrateProvider{})
 }
 
 type substrateProvider struct{}

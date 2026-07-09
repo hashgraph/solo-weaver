@@ -35,6 +35,21 @@ func NodeSetupWorkflow(nodeType string, profile string, pluginPreset string, ski
 		)
 }
 
+// SubstrateSetupWorkflow creates a setup workflow for the Kubernetes substrate —
+// workload-agnostic preflight (substrate-only hardware floor) followed by the same
+// system setup used by node setups. Used by cluster install, which no longer knows a
+// node type or profile.
+func SubstrateSetupWorkflow(skipHardwareChecks bool) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("substrate-node-setup").
+		Steps(
+			// Substrate-only preflight: no node type / profile involved.
+			NewSubstrateSafetyCheckWorkflow(skipHardwareChecks),
+			// Then perform the actual system setup (packages, kernel modules, etc.)
+			systemSetupWorkflow("substrate"),
+		)
+}
+
 // systemSetupWorkflow installs system-level dependencies, kernel modules, and
 // services required before Kubernetes can be set up. Rendered as the
 // "System Setup" phase in the TUI.
