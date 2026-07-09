@@ -4,9 +4,11 @@ package policy
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,11 +26,10 @@ import (
 // existing policy is left untouched (warn, no-op) unless --force is passed,
 // which replaces its config and membership from the given flags/--cidrs.
 //
-// The rendered chain always begins with `delete table; add table` (§8.3.1:
-// membership is never part of it), so every Apply() destroys and recreates
-// every policy's live set, not just the one being created. Create snapshots
-// every policy's membership first and restores it afterward -- see
-// snapshotMembership below.
+// The rendered chain always begins with `delete table; add table` (membership
+// is never part of it), so every Apply() destroys and recreates every policy's
+// live set, not just the one being created. Create snapshots every policy's
+// membership first and restores it afterward -- see snapshotMembership below.
 type Manager struct {
 	runner        Runner
 	weaverNftPath string
@@ -86,7 +87,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 // that already exists is left untouched (returns false) unless force is
 // true, in which case its config and membership are replaced (not merged)
 // from p and cidrs. cidrs is set membership, applied to the live kernel
-// only — never persisted (§8.3.1).
+// only — never persisted.
 func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR string, force bool) (bool, error) {
 	if err := p.Validate(cidrs); err != nil {
 		return false, err
@@ -129,8 +130,8 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 		target, newCIDRs := p, cidrs
 		if existing != nil && !force {
 			// nft tables don't survive a reboot, and the boot oneshot doesn't
-			// reload network-weaver.nft yet (#780) -- so "the registry has
-			// this policy" does not imply "the live table has it too".
+			// reload network-weaver.nft yet -- so "the registry has this
+			// policy" does not imply "the live table has it too".
 			tableExists, err := m.runner.Exists(ctx)
 			if err != nil {
 				return err
@@ -141,7 +142,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 				return nil
 			}
 			// The table is missing underneath an existing registry entry
-			// (manual `nft delete table`, or a reboot before #780). Self-heal
+			// (manual `nft delete table`, or a reboot). Self-heal
 			// by re-rendering, but without --force we must not apply the
 			// caller's new flags/cidrs -- only restore what was already
 			// registered. Membership itself can't be recovered this way: it
@@ -159,7 +160,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 
 		if existing != nil {
 			// Preserve the original creation timestamp across a config change so
-			// the tier tiebreaker (§8.4.7) stays stable.
+			// the tier tiebreaker stays stable.
 			target.CreatedAt = existing.CreatedAt
 		} else if target.CreatedAt.IsZero() {
 			target.CreatedAt = time.Now().UTC()
@@ -167,7 +168,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 
 		// Snapshot every policy's live membership BEFORE Apply(): the
 		// rendered document always does `delete table; add table` (set
-		// membership is never part of that document, §8.3.1), so applying it
+		// membership is never part of that document), so applying it
 		// destroys and recreates every set in the table, not just target's.
 		// Anything not explicitly restored afterward is gone -- permanently,
 		// for operator-curated policies the daemon doesn't reconcile.
@@ -269,8 +270,248 @@ func upsert(policies []*Policy, p *Policy) []*Policy {
 	return out
 }
 
+// Add appends cidrs to the live set for a named policy. The set is mutated
+// directly with `nft add element` — no chain re-render occurs, so
+// network-weaver.nft is not updated (membership is never persisted).
+// Returns an error if the policy does not exist, has no CIDR set
+// (--from-entity world), or the live kernel table is not present.
+func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
+	if len(cidrs) == 0 {
+		return errorx.IllegalArgument.New("at least one --cidr is required")
+	}
+	return m.withLock(func() error {
+		p, err := m.requirePolicyWithCIDRSet(name)
+		if err != nil {
+			return err
+		}
+		if err := p.validateCIDRs(cidrs); err != nil {
+			return err
+		}
+		if err := m.requireTableExists(ctx, name); err != nil {
+			return err
+		}
+		return m.runner.AddElements(ctx, name, setElements(p, cidrs))
+	})
+}
+
+// Remove deletes cidrs from the live set for a named policy. Like Add, only
+// the live kernel set is changed — no chain re-render and no .nft update.
+func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error {
+	if len(cidrs) == 0 {
+		return errorx.IllegalArgument.New("at least one --cidr is required")
+	}
+	return m.withLock(func() error {
+		p, err := m.requirePolicyWithCIDRSet(name)
+		if err != nil {
+			return err
+		}
+		if err := p.validateCIDRs(cidrs); err != nil {
+			return err
+		}
+		if err := m.requireTableExists(ctx, name); err != nil {
+			return err
+		}
+		return m.runner.DeleteElements(ctx, name, setElements(p, cidrs))
+	})
+}
+
+// Set atomically replaces the live set for a named policy with cidrs in a
+// single `flush set + add element` kernel transaction. An empty cidrs slice
+// clears the set. Like Add/Remove, only the live kernel set is changed.
+func (m *Manager) Set(ctx context.Context, name string, cidrs []string) error {
+	return m.withLock(func() error {
+		p, err := m.requirePolicyWithCIDRSet(name)
+		if err != nil {
+			return err
+		}
+		if err := p.validateCIDRs(cidrs); err != nil {
+			return err
+		}
+		if err := m.requireTableExists(ctx, name); err != nil {
+			return err
+		}
+		return m.runner.SetElements(ctx, name, setElements(p, cidrs))
+	})
+}
+
+// Show returns a human-readable summary of a named policy: its registry config
+// (action, class, ports, created_at) followed by the live set membership from
+// the kernel (`nft list set inet weaver <name>`). No lock is taken — Show is
+// read-only.
+func (m *Manager) Show(ctx context.Context, name string) (string, error) {
+	p, err := readEntry(m.registryDir, name)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
+		return "", errorx.IllegalState.New("policy %q not found", name)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "policy: %s\n", p.Name)
+	fmt.Fprintf(&b, "  action:  %s\n", p.Action)
+	if p.Stamp != "" {
+		fmt.Fprintf(&b, "  class:   %s\n", p.Stamp)
+	}
+	if p.ReplyStamp != "" {
+		fmt.Fprintf(&b, "  reply-class: %s\n", p.ReplyStamp)
+	}
+	if p.Direction != "" {
+		fmt.Fprintf(&b, "  direction: %s\n", p.Direction)
+	}
+	if len(p.Ports) > 0 {
+		fmt.Fprintf(&b, "  ports:   %s\n", strings.Join(p.Ports, ", "))
+	}
+	if p.FromEntityWorld {
+		b.WriteString("  from-entity: world\n")
+	}
+	fmt.Fprintf(&b, "  created: %s\n", p.CreatedAt.Format(time.RFC3339))
+
+	if !p.hasCIDRSet() {
+		b.WriteString("\nlive set: none (--from-entity world policy; any source/dest matches, no IP-set)\n")
+		return b.String(), nil
+	}
+
+	elements, err := m.runner.ListElements(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, "\nlive set @%s:\n", name)
+	if len(elements) == 0 {
+		b.WriteString("  (empty)\n")
+	} else {
+		for _, e := range elements {
+			fmt.Fprintf(&b, "  %s\n", e)
+		}
+	}
+	return b.String(), nil
+}
+
+// Delete removes a named policy: re-renders the `inet weaver` chain without
+// it, applies the result to the live kernel, restores the remaining policies'
+// live membership (which the destructive re-render wipes), removes the
+// registry file, and atomically rewrites network-weaver.nft.
+//
+// If this is the last policy, an empty chain (policy drop, no rules) is
+// applied and the boot oneshot is left enabled.
+func (m *Manager) Delete(ctx context.Context, name string) error {
+	return m.withLock(func() error {
+		policies, err := loadAll(m.registryDir)
+		if err != nil {
+			return err
+		}
+		if findByName(policies, name) == nil {
+			return errorx.IllegalState.New("policy %q not found", name)
+		}
+
+		remaining := make([]*Policy, 0, len(policies)-1)
+		for _, p := range policies {
+			if p.Name != name {
+				remaining = append(remaining, p)
+			}
+		}
+
+		// Re-validate sibling entries before rendering.
+		for _, lp := range remaining {
+			if err := lp.Validate(nil); err != nil {
+				return errorx.IllegalFormat.Wrap(err, "corrupt policy registry entry %s", registryPath(m.registryDir, lp.Name))
+			}
+		}
+
+		// Recover the pod CIDR from the existing .nft if any remaining policy
+		// is a --stamp (same pattern as Create).
+		podCIDR := ""
+		if needsPodCIDR(remaining) {
+			if existing, err := os.ReadFile(m.weaverNftPath); err == nil {
+				podCIDR = ExtractPodCIDR(string(existing))
+			}
+		}
+
+		// Snapshot remaining policies' membership BEFORE Apply(): the rendered
+		// document always does `delete table; add table`, which wipes every set
+		// in the table, not just the deleted policy's.
+		snapshot, err := m.snapshotMembership(ctx, remaining)
+		if err != nil {
+			return err
+		}
+
+		doc, err := Render(remaining, podCIDR)
+		if err != nil {
+			return err
+		}
+		if err := m.runner.Apply(ctx, doc); err != nil {
+			return err
+		}
+
+		// Restore remaining policies' membership.
+		for _, lp := range remaining {
+			if !lp.hasCIDRSet() {
+				continue
+			}
+			elements := snapshot[lp.Name]
+			if len(elements) == 0 {
+				continue
+			}
+			if err := m.runner.AddElements(ctx, lp.Name, elements); err != nil {
+				return errorx.Decorate(err,
+					"inet weaver chain re-rendered but restoring %q membership failed; re-run to reconcile", lp.Name)
+			}
+		}
+
+		// Write the .nft file before removing the registry so that a failed
+		// write leaves the registry intact and a re-run can find the policy.
+		if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
+			return errorx.Decorate(err,
+				"inet weaver chain re-rendered but persisting %s failed; re-run to reconcile", m.weaverNftPath)
+		}
+		if err := os.Remove(registryPath(m.registryDir, name)); err != nil && !os.IsNotExist(err) {
+			return errorx.Decorate(
+				errorx.ExternalError.Wrap(err, "failed to remove registry file for %q", name),
+				"inet weaver chain persisted but removing the registry file failed; re-run to reconcile",
+			)
+		}
+		logx.As().Info().Str("policy", name).Msg("network policy deleted")
+		return nil
+	})
+}
+
+// requirePolicyWithCIDRSet loads the named policy from the registry and
+// verifies it has a CIDR set (@<name>). Returns an error if the policy is
+// missing or uses --from-entity world (those policies match any source/dest
+// and render no IP-set, so element verbs do not apply).
+func (m *Manager) requirePolicyWithCIDRSet(name string) (*Policy, error) {
+	p, err := readEntry(m.registryDir, name)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errorx.IllegalState.New(
+			"policy %q not found; run `network policy create` with --name and the original policy flags first", name)
+	}
+	if !p.hasCIDRSet() {
+		return nil, errorx.IllegalArgument.New(
+			"policy %q has no CIDR set (it uses --from-entity world); element verbs do not apply", name)
+	}
+	return p, nil
+}
+
+// requireTableExists returns a clear error when the inet weaver table is
+// absent from the kernel, so element verbs (add/remove/set) surface a helpful
+// message instead of propagating the raw nft "No such file" error.
+func (m *Manager) requireTableExists(ctx context.Context, name string) error {
+	exists, err := m.runner.Exists(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errorx.IllegalState.New(
+			"policy table not found; run `network policy create` with --name and the original policy flags to restore")
+	}
+	return nil
+}
+
 // withLock serialises a mutation behind the shared cross-command flock so a
-// hand-run operator command and the daemon poll loop (#754) cannot interleave
+// hand-run operator command and the daemon poll loop cannot interleave
 // nft transactions on the shared network tables.
 func (m *Manager) withLock(fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(m.lockPath), 0o755); err != nil {

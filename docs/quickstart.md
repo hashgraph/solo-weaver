@@ -530,7 +530,83 @@ sudo solo-provisioner network policy create --name bn-restricted \
 
 When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
 
+
 > Set **membership** (the CIDRs) is never persisted to `network-weaver.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).
+
+#### Mutate Set Membership (add / remove / set)
+
+Use these verbs to modify a policy's live CIDR set after it has been created. **None of them re-render `network-weaver.nft`** — only the live kernel set changes (§8.3.1).
+
+```bash
+# Add one or more CIDRs to a policy's live set (repeatable or comma-separated)
+sudo solo-provisioner network policy add --name bn-publisher --cidr 10.1.0.1/32
+sudo solo-provisioner network policy add --name bn-publisher --cidr 10.1.0.2/32,10.1.0.3/32
+
+# Remove one or more CIDRs from a policy's live set
+sudo solo-provisioner network policy remove --name bn-publisher --cidr 10.1.0.1/32
+
+# Atomically replace the full membership list (flush + re-add in one kernel transaction)
+sudo solo-provisioner network policy set --name bn-publisher --cidrs 10.2.0.0/16
+# Or clear the set entirely (omit --cidrs):
+sudo solo-provisioner network policy set --name bn-publisher
+```
+
+**`add` / `remove` flags** (use `--cidr` for each CIDR; comma-separated lists are also accepted):
+
+| Flag     | Description                                        | Required |
+|----------|----------------------------------------------------|----------|
+| `--name` | Policy name                                        | yes      |
+| `--cidr` | CIDR to add or remove (repeatable or comma-separated) | yes   |
+
+**`set` flags**:
+
+| Flag           | Description                                                             | Required |
+|----------------|-------------------------------------------------------------------------|----------|
+| `--name`       | Policy name                                                             | yes      |
+| `--cidrs`      | Replacement membership (comma-separated or repeated); omit to clear     | no       |
+| `--cidrs-file` | Alternative to `--cidrs`: a file of CIDRs (one per line or comma-separated) | no  |
+
+For `--reply-stamp` policies the CIDR entries must be `ip:port` pairs for all three verbs, same as `create --cidrs`.
+
+#### Inspect a Policy (show)
+
+Print a policy's registry config and current live set membership:
+
+```bash
+sudo solo-provisioner network policy show --name bn-publisher
+```
+
+Output example:
+```
+policy: bn-publisher
+  action:  stamp
+  class:   publisher
+  direction: ingress
+  ports:   40840
+  created: 2026-01-01T00:00:00Z
+
+live set @bn-publisher:
+  10.1.0.1/32
+  10.1.0.2/32
+```
+
+| Flag     | Description     | Required |
+|----------|-----------------|----------|
+| `--name` | Policy name     | yes      |
+
+#### Remove a Policy (delete)
+
+Remove a policy's rules, set, and registry file, and re-render the `inet weaver` chain:
+
+```bash
+sudo solo-provisioner network policy delete --name bn-restricted
+```
+
+`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver.nft`. If this is the last policy, an empty chain (`policy drop`, no rules) is applied; the boot oneshot stays enabled.
+
+| Flag     | Description     | Required |
+|----------|-----------------|----------|
+| `--name` | Policy name     | yes      |
 
 ---
 

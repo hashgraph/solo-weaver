@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -17,33 +18,73 @@ import (
 )
 
 // fakeRunner satisfies pol.Runner without touching the kernel.
-type fakeRunner struct{ applied string }
+type fakeRunner struct {
+	applied  string
+	elements map[string][]string
+}
 
-func (f *fakeRunner) Apply(_ context.Context, doc string) error              { f.applied = doc; return nil }
-func (f *fakeRunner) AddElements(context.Context, string, []string) error    { return nil }
-func (f *fakeRunner) ListElements(context.Context, string) ([]string, error) { return nil, nil }
-func (f *fakeRunner) List(context.Context) (string, error)                   { return f.applied, nil }
-func (f *fakeRunner) Delete(context.Context) error                           { return nil }
-func (f *fakeRunner) Exists(context.Context) (bool, error)                   { return f.applied != "", nil }
+func newFakeRunner() *fakeRunner { return &fakeRunner{elements: map[string][]string{}} }
+
+func (f *fakeRunner) Apply(_ context.Context, doc string) error {
+	f.applied = doc
+	f.elements = map[string][]string{} // mirrors real nft: delete+recreate wipes membership
+	return nil
+}
+func (f *fakeRunner) AddElements(_ context.Context, set string, elems []string) error {
+	if f.applied == "" {
+		return errors.New("nft add element " + set + " failed: No such file or directory")
+	}
+	f.elements[set] = append(f.elements[set], elems...)
+	return nil
+}
+func (f *fakeRunner) DeleteElements(_ context.Context, set string, elems []string) error {
+	toDelete := make(map[string]bool, len(elems))
+	for _, e := range elems {
+		toDelete[e] = true
+	}
+	cur := f.elements[set]
+	filtered := cur[:0]
+	for _, e := range cur {
+		if !toDelete[e] {
+			filtered = append(filtered, e)
+		}
+	}
+	f.elements[set] = filtered
+	return nil
+}
+func (f *fakeRunner) SetElements(_ context.Context, set string, elems []string) error {
+	f.elements[set] = append([]string(nil), elems...)
+	return nil
+}
+func (f *fakeRunner) ListElements(_ context.Context, set string) ([]string, error) {
+	return append([]string(nil), f.elements[set]...), nil
+}
+func (f *fakeRunner) List(context.Context) (string, error) { return f.applied, nil }
+func (f *fakeRunner) Delete(context.Context) error {
+	f.applied = ""
+	f.elements = map[string][]string{}
+	return nil
+}
+func (f *fakeRunner) Exists(context.Context) (bool, error) { return f.applied != "", nil }
 
 func TestPolicyCmd_Structure(t *testing.T) {
 	cmd := GetCmd()
 	require.Equal(t, "policy", cmd.Use)
 
-	var hasCreate bool
+	subs := make(map[string]bool)
 	for _, sub := range cmd.Commands() {
-		if sub.Use == "create" {
-			hasCreate = true
-		}
+		subs[sub.Use] = true
 	}
-	require.True(t, hasCreate, "create verb not registered under policy")
+	for _, want := range []string{"create", "add", "remove", "set", "show", "delete"} {
+		require.True(t, subs[want], "verb %q not registered under policy", want)
+	}
 }
 
 func TestCreateCmd_Flags(t *testing.T) {
 	for _, name := range []string{"name", "stamp", "deny", "reply-stamp", "from-entity", "ports", "cidrs", "cidrs-file", "pod-cidr"} {
 		require.NotNil(t, createCmd.Flags().Lookup(name), "create is missing --%s", name)
 	}
-	// No --direction flag: direction is derived from --stamp's class (§5).
+	// No --direction flag: direction is derived from --stamp's class.
 	require.Nil(t, createCmd.Flags().Lookup("direction"), "create should not have a --direction flag")
 }
 
@@ -61,7 +102,7 @@ type testEnv struct {
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
-	return &testEnv{dir: dir, nftPath: filepath.Join(dir, "network-weaver.nft"), runner: &fakeRunner{}}
+	return &testEnv{dir: dir, nftPath: filepath.Join(dir, "network-weaver.nft"), runner: newFakeRunner()}
 }
 
 // runCreate executes the real create command against this env's manager and
@@ -114,19 +155,20 @@ func resetFlags() {
 	flagName, flagStamp = "", ""
 	flagDeny = false
 	flagReplyStamp, flagFromEntity = "", ""
-	flagPorts, flagCIDRs = nil, nil
+	flagPorts, flagCIDRs, flagCIDR = nil, nil, nil
 	flagCIDRsFile, flagPodCIDR = "", ""
-	// createCmd is a package singleton, so cobra's per-flag Changed state leaks
-	// across Execute() calls; clear it too or a prior test's --cidrs would trip
-	// the mutual-exclusion guard here.
-	createCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	// Command singletons share cobra flag state across Execute() calls; clear
+	// Changed so prior-test values don't trip mutual-exclusion guards.
+	for _, cmd := range []*cobra.Command{createCmd, addCmd, removeCmd, setCmd, showCmd, deleteCmd} {
+		cmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	}
 }
 
 func TestCreateCmd_StampIngress(t *testing.T) {
 	doc, err := runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840", "--cidrs", "10.1.0.1/32")
 	require.NoError(t, err)
 	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept")
-	// Membership is never persisted (§8.3.1).
+	// Membership is never persisted.
 	require.NotContains(t, doc, "10.1.0.1/32")
 }
 
@@ -198,4 +240,184 @@ func TestCreateCmd_CIDRsFile(t *testing.T) {
 	// Set schema present; membership not persisted.
 	require.Contains(t, doc, "set bn-restricted { type ipv4_addr; flags interval; }")
 	require.NotContains(t, doc, "10.99.0.0/16")
+}
+
+// runVerb executes a `policy <verb>` command against this env's manager stub.
+func (e *testEnv) runVerb(t *testing.T, verb string, args ...string) error {
+	t.Helper()
+	origMgr := newManager
+	newManager = func() *pol.Manager {
+		return pol.NewManagerWithConfig(pol.Config{
+			Runner:        e.runner,
+			WeaverNftPath: e.nftPath,
+			RegistryDir:   filepath.Join(e.dir, "policies"),
+			LockPath:      filepath.Join(e.dir, ".applying"),
+			EnsureService: func(context.Context) error { return nil },
+		})
+	}
+	defer func() { newManager = origMgr }()
+
+	resetFlags()
+	root := &cobra.Command{Use: "test"}
+	root.PersistentFlags().Bool("force", false, "force")
+	root.AddCommand(GetCmd())
+	root.SetArgs(append([]string{"policy", verb}, args...))
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	return root.Execute()
+}
+
+// runShow captures the output of `policy show`.
+func (e *testEnv) runShow(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	origMgr := newManager
+	newManager = func() *pol.Manager {
+		return pol.NewManagerWithConfig(pol.Config{
+			Runner:        e.runner,
+			WeaverNftPath: e.nftPath,
+			RegistryDir:   filepath.Join(e.dir, "policies"),
+			LockPath:      filepath.Join(e.dir, ".applying"),
+			EnsureService: func(context.Context) error { return nil },
+		})
+	}
+	defer func() { newManager = origMgr }()
+
+	resetFlags()
+	var buf bytes.Buffer
+	root := &cobra.Command{Use: "test"}
+	root.PersistentFlags().Bool("force", false, "force")
+	root.AddCommand(GetCmd())
+	root.SetArgs(append([]string{"policy", "show"}, args...))
+	root.SetOut(&buf)
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	return buf.String(), err
+}
+
+// --- add verb ---
+
+func TestAddCmd_Flags(t *testing.T) {
+	for _, name := range []string{"name", "cidr"} {
+		require.NotNil(t, addCmd.Flags().Lookup(name), "add is missing --%s", name)
+	}
+}
+
+func TestAddCmd_AddsCIDRs(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840")
+	require.NoError(t, err)
+
+	require.NoError(t, env.runVerb(t, "add", "--name", "bn-publisher", "--cidr", "10.1.0.1/32"))
+	require.Equal(t, []string{"10.1.0.1/32"}, env.runner.elements["bn-publisher"])
+}
+
+func TestAddCmd_PolicyNotFound(t *testing.T) {
+	env := newTestEnv(t)
+	err := env.runVerb(t, "add", "--name", "bn-nonexistent", "--cidr", "10.0.0.1/32")
+	require.ErrorContains(t, err, "not found")
+}
+
+func TestAddCmd_NoCIDRRejected(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840")
+	require.NoError(t, err)
+
+	err = env.runVerb(t, "add", "--name", "bn-publisher")
+	require.ErrorContains(t, err, "--cidr")
+}
+
+// --- remove verb ---
+
+func TestRemoveCmd_Flags(t *testing.T) {
+	for _, name := range []string{"name", "cidr"} {
+		require.NotNil(t, removeCmd.Flags().Lookup(name), "remove is missing --%s", name)
+	}
+}
+
+func TestRemoveCmd_RemovesCIDR(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840",
+		"--cidrs", "10.1.0.1/32,10.1.0.2/32")
+	require.NoError(t, err)
+
+	require.NoError(t, env.runVerb(t, "remove", "--name", "bn-publisher", "--cidr", "10.1.0.1/32"))
+	require.Equal(t, []string{"10.1.0.2/32"}, env.runner.elements["bn-publisher"])
+}
+
+// --- set verb ---
+
+func TestSetCmd_Flags(t *testing.T) {
+	for _, name := range []string{"name", "cidrs", "cidrs-file"} {
+		require.NotNil(t, setCmd.Flags().Lookup(name), "set is missing --%s", name)
+	}
+}
+
+func TestSetCmd_ReplacesMembership(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840",
+		"--cidrs", "10.1.0.1/32")
+	require.NoError(t, err)
+
+	require.NoError(t, env.runVerb(t, "set", "--name", "bn-publisher", "--cidrs", "10.5.0.0/24"))
+	require.Equal(t, []string{"10.5.0.0/24"}, env.runner.elements["bn-publisher"])
+}
+
+func TestSetCmd_CIDRsAndFileMutuallyExclusive(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840")
+	require.NoError(t, err)
+
+	f := filepath.Join(t.TempDir(), "cidrs.txt")
+	require.NoError(t, os.WriteFile(f, []byte("10.0.0.0/8\n"), 0o644))
+	err = env.runVerb(t, "set", "--name", "bn-publisher", "--cidrs", "10.1.0.0/16", "--cidrs-file", f)
+	require.ErrorContains(t, err, "mutually exclusive")
+}
+
+// --- show verb ---
+
+func TestShowCmd_Flags(t *testing.T) {
+	require.NotNil(t, showCmd.Flags().Lookup("name"), "show is missing --name")
+}
+
+func TestShowCmd_PrintsOutput(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840",
+		"--cidrs", "10.1.0.1/32")
+	require.NoError(t, err)
+
+	out, err := env.runShow(t, "--name", "bn-publisher")
+	require.NoError(t, err)
+	require.Contains(t, out, "policy: bn-publisher")
+	require.Contains(t, out, "action:  stamp")
+	require.Contains(t, out, "class:   publisher")
+}
+
+func TestShowCmd_PolicyNotFound(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runShow(t, "--name", "bn-nonexistent")
+	require.ErrorContains(t, err, "not found")
+}
+
+// --- delete verb ---
+
+func TestDeleteCmd_Flags(t *testing.T) {
+	require.NotNil(t, deleteCmd.Flags().Lookup("name"), "delete is missing --name")
+}
+
+func TestDeleteCmd_RemovesPolicy(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-restricted", "--deny", "--cidrs", "10.99.0.0/16")
+	require.NoError(t, err)
+
+	require.NoError(t, env.runVerb(t, "delete", "--name", "bn-restricted"))
+	// .nft no longer contains the policy.
+	onDisk, readErr := os.ReadFile(env.nftPath)
+	require.NoError(t, readErr)
+	require.NotContains(t, string(onDisk), "bn-restricted")
+}
+
+func TestDeleteCmd_PolicyNotFound(t *testing.T) {
+	env := newTestEnv(t)
+	err := env.runVerb(t, "delete", "--name", "bn-nonexistent")
+	require.ErrorContains(t, err, "not found")
 }

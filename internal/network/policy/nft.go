@@ -14,10 +14,9 @@ import (
 
 // Runner is the seam over the system `nft` binary. Unlike the firewall package
 // (which applies via a systemd service restart), `network policy` applies the
-// rendered chain directly with `nft -f` (design §8.4.5) — the shared boot
-// oneshot does not load network-weaver.nft until #780 extends it. Tests
-// substitute a fake so the package builds and unit-tests on any platform
-// (including macOS) without touching the kernel.
+// rendered chain directly with `nft -f` — the shared boot oneshot does not
+// load network-weaver.nft yet. Tests substitute a fake so the package builds
+// and unit-tests on any platform (including macOS) without touching the kernel.
 type Runner interface {
 	// Apply loads a full nft document into the kernel (`nft -f -`). The
 	// rendered document carries the idempotent `add table / delete table / add
@@ -25,8 +24,17 @@ type Runner interface {
 	Apply(ctx context.Context, doc string) error
 	// AddElements adds initial membership to a policy's set
 	// (`nft add element inet weaver <set> { … }`). Applied to the live kernel
-	// only — set membership is never persisted (§8.3.1).
+	// only — set membership is never persisted.
 	AddElements(ctx context.Context, set string, elements []string) error
+	// DeleteElements removes specific elements from a policy's set
+	// (`nft delete element inet weaver <set> { … }`). Applied to the live
+	// kernel only.
+	DeleteElements(ctx context.Context, set string, elements []string) error
+	// SetElements atomically replaces a policy's set membership
+	// (`flush set inet weaver <set>` followed by `add element … { … }` in a
+	// single nft document — one kernel transaction). An empty elements slice
+	// clears the set without adding any new entries.
+	SetElements(ctx context.Context, set string, elements []string) error
 	// ListElements returns one set's live elements
 	// (`nft list set inet weaver <set>`), or nil if the set has no elements
 	// or does not exist. Used by Manager.Create to snapshot every policy's
@@ -93,6 +101,37 @@ func (r *execRunner) AddElements(ctx context.Context, set string, elements []str
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return errorx.ExternalError.Wrap(err, "nft add element %s failed: %s", set, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func (r *execRunner) DeleteElements(ctx context.Context, set string, elements []string) error {
+	if len(elements) == 0 {
+		return nil
+	}
+	spec := "delete element " + TableName + " " + set + " { " + strings.Join(elements, ", ") + " }\n"
+	cmd := exec.CommandContext(ctx, r.bin, "-f", "-")
+	cmd.Stdin = strings.NewReader(spec)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return errorx.ExternalError.Wrap(err, "nft delete element %s failed: %s", set, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func (r *execRunner) SetElements(ctx context.Context, set string, elements []string) error {
+	var spec strings.Builder
+	spec.WriteString("flush set " + TableName + " " + set + "\n")
+	if len(elements) > 0 {
+		spec.WriteString("add element " + TableName + " " + set + " { " + strings.Join(elements, ", ") + " }\n")
+	}
+	cmd := exec.CommandContext(ctx, r.bin, "-f", "-")
+	cmd.Stdin = strings.NewReader(spec.String())
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return errorx.ExternalError.Wrap(err, "nft set elements %s failed: %s", set, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }

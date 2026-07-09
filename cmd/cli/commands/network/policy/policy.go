@@ -3,13 +3,10 @@
 // Package policy wires the `solo-provisioner network policy` verbs to the
 // internal/network/policy manager. It is a generic, category-agnostic primitive:
 // the verbs manage per-category classification and ACL rules in the `inet weaver`
-// nftables table (the workload traffic plane, design §7.2.4), keyed only on the
-// operator-supplied --name, --stamp/--deny, --ports, and --cidrs. It knows
-// nothing about block/consensus/mirror/relay nodes; today `block node install`
-// is its only caller, but nothing in this package assumes that.
-//
-// This story (#758) implements `create` only; the element verbs
-// (add/remove/set/show/delete) are Story 1.3 (#759).
+// nftables table (the workload traffic plane), keyed only on the operator-supplied
+// --name, --stamp/--deny, --ports, and --cidrs. It knows nothing about
+// block/consensus/mirror/relay nodes; today `block node install` is its only
+// caller, but nothing in this package assumes that.
 package policy
 
 import (
@@ -18,8 +15,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Shared flag binding targets for the create verb. Only one verb runs per
-// invocation, so reusing these across future verbs is safe.
+// Shared flag binding targets. Only one verb runs per invocation, so sharing
+// these across verbs is safe.
 var (
 	flagName       string
 	flagStamp      string
@@ -30,6 +27,10 @@ var (
 	flagCIDRs      []string
 	flagCIDRsFile  string
 	flagPodCIDR    string
+	// flagCIDR is used by add/remove (singular --cidr, repeatable) to match
+	// the element-verb flag name the issue specifies, distinct from create/set's
+	// --cidrs (which take a full list in one shot).
+	flagCIDR []string
 )
 
 var policyCmd = &cobra.Command{
@@ -43,6 +44,11 @@ var policyCmd = &cobra.Command{
 
 func init() {
 	policyCmd.AddCommand(createCmd)
+	policyCmd.AddCommand(addCmd)
+	policyCmd.AddCommand(removeCmd)
+	policyCmd.AddCommand(setCmd)
+	policyCmd.AddCommand(showCmd)
+	policyCmd.AddCommand(deleteCmd)
 }
 
 // GetCmd returns the root of the `network policy` command group.
