@@ -1,0 +1,14 @@
+[Unit]
+Description=Solo Provisioner TC Egress Shaper
+Documentation=https://github.com/hashgraph/solo-weaver
+DefaultDependencies=no
+After=network-pre.target
+Before=network.target solo-provisioner-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/solo-provisioner-tc-egress.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -3,9 +3,13 @@
 package node
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/network/shape"
+	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -16,20 +20,27 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		inputs, err := prepareBlocknodeInputs(cmd, args)
+		inputs, cv, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
 			return err
 		}
 
-		// Resolve the host firewall config (mgmt allowlist, SSH port, pod CIDR,
-		// in-cluster ports) and apply it to the global config so the
-		// NetworkFirewallCreate step (prepended to this handler's workflow) can
-		// render the inet host table. Always resolved here — regardless of
-		// whether this install bootstraps bare metal or deploys onto an existing
-		// cluster — since the block node is the node type that owns this
-		// firewall, not the generic cluster-provisioning path.
-		if err := common.ResolveHostFirewallConfig(cmd, args); err != nil {
+		// Resolve the host firewall config. The egress-interface prompt is
+		// prepended so it appears in the same TUI panel as the firewall fields.
+		// cv is passed so all values fold into the unified "Selected Inputs"
+		// summary rather than a separate section.
+		detectedNIC, _ := shape.DetectEgressInterface()
+		if err := common.ResolveHostFirewallConfig(cmd, args, cv,
+			prompt.EgressInterfaceInputPrompt(detectedNIC, &flagEgressInterface),
+		); err != nil {
 			return err
+		}
+
+		// Print the unified summary of all prompted values (block node inputs +
+		// firewall) now that both prompt sections have completed.
+		if cv != nil {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+			cv.Print("Selected Inputs")
 		}
 
 		err = initializeDependencies()
@@ -68,4 +79,7 @@ func init() {
 	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
 	common.RegisterHostFirewallFlags(installCmd)
+	installCmd.Flags().StringVar(&flagEgressInterface, "egress-interface", "",
+		"Physical NIC for the $EGRESS HTB traffic-shaper hierarchy (e.g. eth0). "+
+			"Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts.")
 }

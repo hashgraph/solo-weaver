@@ -185,6 +185,7 @@ sudo solo-provisioner block node install \
 | `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
 | `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet)                                |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
+| `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and installs `solo-provisioner-tc-egress.service` so the HTB hierarchy survives reboot. |
 
 > **Host firewall**: `block node install` always lays down the node-level `inet
 > host` firewall (SSH/management allowlist, ICMP policy, in-cluster host-service

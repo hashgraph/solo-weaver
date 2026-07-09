@@ -75,6 +75,10 @@ func (h *InstallHandler) BuildWorkflow(
 				// is already installed/enabled from that prior cluster provisioning,
 				// so it's safe to apply here.
 				steps.NetworkFirewallCreate(),
+				// Render and install the $EGRESS HTB boot-persistence script and
+				// oneshot unit (design §8.3.2). Skipped when no NIC is supplied;
+				// Story 2.2 (#744) will add automatic NIC detection.
+				steps.TcEgressPersist(ins.EgressInterface),
 				steps.SetupBlockNode(ins),
 			)
 	} else {
@@ -94,6 +98,10 @@ func (h *InstallHandler) BuildWorkflow(
 				// systemSetupWorkflow; apply the host firewall here rather than in
 				// that generic (node-type-agnostic) workflow.
 				steps.NetworkFirewallCreate(),
+				// Render and install the $EGRESS HTB boot-persistence script and
+				// oneshot unit (design §8.3.2). Skipped when no NIC is supplied;
+				// Story 2.2 (#744) will add automatic NIC detection.
+				steps.TcEgressPersist(ins.EgressInterface),
 				steps.SetupBlockNode(ins),
 			)
 	}
