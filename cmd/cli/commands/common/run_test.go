@@ -138,3 +138,42 @@ func TestDeepestFailureError_SkipsSkippedAndSuccessSiblings(t *testing.T) {
 	got := deepestFailureError(r)
 	require.ErrorIs(t, got, leafErr)
 }
+
+// TestResolveOutputFormat verifies the --output normalization: only an explicit
+// "json" (case-insensitively) selects machine output; every other value —
+// including empty, "yaml", and unknown — falls back to human-readable "text".
+func TestResolveOutputFormat(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"json", "json"},
+		{"JSON", "json"},
+		{"  json  ", "json"},
+		{"text", "text"},
+		{"TEXT", "text"},
+		{"", "text"},
+		{"yaml", "text"},
+		{"xml", "text"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			require.Equal(t, tc.want, resolveOutputFormat(tc.in))
+		})
+	}
+}
+
+// TestOutputIsJSON verifies the OutputIsJSON helper reflects the global flag.
+func TestOutputIsJSON(t *testing.T) {
+	orig := OutputFormat
+	t.Cleanup(func() { OutputFormat = orig })
+
+	OutputFormat = "json"
+	require.True(t, OutputIsJSON())
+
+	OutputFormat = "text"
+	require.False(t, OutputIsJSON())
+
+	OutputFormat = ""
+	require.False(t, OutputIsJSON())
+}
