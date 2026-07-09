@@ -5,6 +5,8 @@ package config
 import (
 	"os"
 	"testing"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 func TestInitialize_ChartVersionFromConfigFile(t *testing.T) {
@@ -159,5 +161,37 @@ func TestEnvConfig_ReadsEnvVars(t *testing.T) {
 	// unset fields must be empty
 	if cfg.BlockNode.Release != "" {
 		t.Errorf("Release: expected empty, got %q", cfg.BlockNode.Release)
+	}
+}
+
+// TestOverrideHostConfig_ExplicitEmptyClearsPreviousValue verifies that
+// OverrideHostConfig replaces the host config wholesale, so a deliberately
+// empty PodCIDR / nil InClusterPorts (e.g. from `--pod-cidr=` /
+// `--in-cluster-ports=` clearing a value the config file set) actually takes
+// effect instead of being silently skipped in favor of the prior value.
+func TestOverrideHostConfig_ExplicitEmptyClearsPreviousValue(t *testing.T) {
+	saved := globalConfig
+	t.Cleanup(func() { globalConfig = saved })
+
+	globalConfig.Host = models.HostConfig{
+		ManagementCIDRs: []string{"10.0.0.0/8"},
+		SSHPort:         22,
+		PodCIDR:         "10.4.0.0/14",
+		InClusterPorts:  []int{6443, 10250},
+	}
+
+	OverrideHostConfig(models.HostConfig{
+		ManagementCIDRs: []string{"10.0.0.0/8"},
+		SSHPort:         22,
+		PodCIDR:         "",
+		InClusterPorts:  nil,
+	})
+
+	got := Get().Host
+	if got.PodCIDR != "" {
+		t.Errorf("PodCIDR: expected cleared (empty), got %q", got.PodCIDR)
+	}
+	if len(got.InClusterPorts) != 0 {
+		t.Errorf("InClusterPorts: expected cleared (empty), got %v", got.InClusterPorts)
 	}
 }

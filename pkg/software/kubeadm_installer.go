@@ -167,6 +167,7 @@ func (ki *kubeadmInstaller) configureKubeadmInit(kubernetesVersion string) error
 		MachineIP:          machineIp,
 		Hostname:           hostname,
 		KubernetesVersion:  kubernetesVersion,
+		PodSubnet:          models.DefaultClusterPodCIDR,
 	}
 
 	rendered, err := templates.Render("files/kubeadm/kubeadm-init.yaml", tmplData)

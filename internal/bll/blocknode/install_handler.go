@@ -70,6 +70,11 @@ func (h *InstallHandler) BuildWorkflow(
 				// verifies the binary exists, not the user account. This step is
 				// idempotent and safe to repeat on up-to-date installations.
 				steps.EnsureWeaverOwnerStep(),
+				// The node-level host firewall (inet host table) is owned by the
+				// block-node workflow, not the generic kube cluster install — nftables
+				// is already installed/enabled from that prior cluster provisioning,
+				// so it's safe to apply here.
+				steps.NetworkFirewallCreate(),
 				steps.SetupBlockNode(ins),
 			)
 	} else {
@@ -85,6 +90,10 @@ func (h *InstallHandler) BuildWorkflow(
 				// only the substrate floor, which is weaker than the block-node floor.
 				workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
 				workflows.KubernetesSetupWorkflow(h.mr),
+				// nftables was just installed/enabled by NodeSetupWorkflow's
+				// systemSetupWorkflow; apply the host firewall here rather than in
+				// that generic (node-type-agnostic) workflow.
+				steps.NetworkFirewallCreate(),
 				steps.SetupBlockNode(ins),
 			)
 	}
