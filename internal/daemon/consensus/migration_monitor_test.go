@@ -23,13 +23,32 @@ import (
 // --- Test helpers ---
 
 // newTestLogger creates a real EventLogger writing to a temp file and returns
-// the logger and the file path. The caller must close the logger when done.
+// the logger and the file path. The logger is closed via t.Cleanup, which runs
+// after any cleanup registered later (e.g. startMonitor's goroutine join), so
+// the monitor goroutine is guaranteed to have stopped writing before Close.
 func newTestLogger(t *testing.T) (*eventlog.EventLogger, string) {
 	t.Helper()
 	dir := t.TempDir()
 	logger, err := eventlog.NewAppend(dir, "test-events.jsonl")
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = logger.Close() })
 	return logger, logger.Path()
+}
+
+// startMonitor runs mm.Run in a background goroutine and registers a cleanup
+// that cancels the context and waits for Run to return before the test's
+// t.TempDir directories are removed. The join is required: Run writes
+// cutover-state.jsonl into the state dir, and without waiting for it to exit the
+// goroutine can still be creating that file when TempDir's RemoveAll fires,
+// failing the test with "TempDir RemoveAll cleanup: ... directory not empty".
+// Registering the join with t.Cleanup after the t.TempDir() calls guarantees it
+// runs before their removal (cleanups run in reverse registration order).
+func startMonitor(t *testing.T, mm *consensus.MigrationMonitor) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = mm.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
 }
 
 // readEvents reads all JSON lines from the given JSONL file and returns them
@@ -136,15 +155,11 @@ func newMonitor(
 // Test_MigrationMonitor_EmitsSoakStarted verifies that run() emits a SoakStarted event.
 func Test_MigrationMonitor_EmitsSoakStarted(t *testing.T) {
 	logger, logPath := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	mm := newMonitor(t, logger, &consensus.NoopDecommissioner{}, stateDir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	req := testRequest(-50 * time.Hour)
 	require.True(t, mm.TryEnqueue(req))
@@ -158,15 +173,11 @@ func Test_MigrationMonitor_EmitsSoakStarted(t *testing.T) {
 // Test_MigrationMonitor_EmitsSoakCheck verifies that after one poll tick, a SoakCheck event is written.
 func Test_MigrationMonitor_EmitsSoakCheck(t *testing.T) {
 	logger, logPath := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	mm := newMonitor(t, logger, &consensus.NoopDecommissioner{}, stateDir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	req := testRequest(-1 * time.Hour)
 	require.True(t, mm.TryEnqueue(req))
@@ -181,7 +192,6 @@ func Test_MigrationMonitor_EmitsSoakCheck(t *testing.T) {
 // are green and the fleet threshold flag file exists, decommission is triggered.
 func Test_MigrationMonitor_DecommissionsWhenAllCriteriaGreen(t *testing.T) {
 	logger, logPath := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	// Create fleet threshold flag file.
@@ -204,10 +214,7 @@ func Test_MigrationMonitor_DecommissionsWhenAllCriteriaGreen(t *testing.T) {
 		alwaysTrueCriterion{"UploaderBacklogCleared"},
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	req := testRequest(-50 * time.Hour)
 	require.True(t, mm.TryEnqueue(req))
@@ -225,7 +232,6 @@ func Test_MigrationMonitor_DecommissionsWhenAllCriteriaGreen(t *testing.T) {
 // is NOT triggered.
 func Test_MigrationMonitor_DoesNotDecommissionUntilFleetThreshold(t *testing.T) {
 	logger, logPath := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	// Fleet flag file does NOT exist.
@@ -246,10 +252,7 @@ func Test_MigrationMonitor_DoesNotDecommissionUntilFleetThreshold(t *testing.T) 
 		alwaysTrueCriterion{"SoakDuration"},
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	req := testRequest(-50 * time.Hour)
 	require.True(t, mm.TryEnqueue(req))
@@ -268,7 +271,6 @@ func Test_MigrationMonitor_DoesNotDecommissionUntilFleetThreshold(t *testing.T) 
 // exactly once when a criterion transitions false→true.
 func Test_MigrationMonitor_EmitsCriterionMet(t *testing.T) {
 	logger, logPath := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	// Fleet flag file does NOT exist so we don't trigger decommission.
@@ -286,10 +288,7 @@ func Test_MigrationMonitor_EmitsCriterionMet(t *testing.T) {
 		stateDir,
 	).WithCriteria(consensus.SoakDuration{})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	req := testRequest(-50 * time.Hour)
 	require.True(t, mm.TryEnqueue(req))
@@ -308,7 +307,6 @@ func Test_MigrationMonitor_EmitsCriterionMet(t *testing.T) {
 // causes resumeIfNeeded to spawn a watcher goroutine (soakActive becomes true).
 func Test_MigrationMonitor_ResumesOnRestart(t *testing.T) {
 	logger, logPath := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	req := testRequest(-10 * time.Hour)
@@ -318,10 +316,7 @@ func Test_MigrationMonitor_ResumesOnRestart(t *testing.T) {
 
 	mm := newMonitor(t, logger, &consensus.NoopDecommissioner{}, stateDir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	require.Eventually(t, func() bool {
 		return mm.Status().Active
@@ -341,7 +336,6 @@ func Test_MigrationMonitor_ResumesOnRestart(t *testing.T) {
 // cutover-state.jsonl causes resumeIfNeeded to delete the file and not spawn a goroutine.
 func Test_MigrationMonitor_ResumeIgnoresInvalidState(t *testing.T) {
 	logger, _ := newTestLogger(t)
-	defer logger.Close()
 	stateDir := t.TempDir()
 
 	stateFile := filepath.Join(stateDir, "cutover-state.jsonl")
@@ -349,10 +343,7 @@ func Test_MigrationMonitor_ResumeIgnoresInvalidState(t *testing.T) {
 
 	mm := newMonitor(t, logger, &consensus.NoopDecommissioner{}, stateDir)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() { _ = mm.Run(ctx) }()
+	startMonitor(t, mm)
 
 	// Give the resume a moment to run.
 	time.Sleep(50 * time.Millisecond)
