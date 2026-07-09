@@ -175,7 +175,7 @@ func FlagPluginPreset() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "plugin-preset",
 		ShortName:   "",
-		Description: "Plugin preset to deploy (tier1-lfh, tier1-rfh, or custom); prompts interactively when omitted",
+		Description: "Plugin preset to deploy (tier1-lfh, tier1-rfh, custom, or none for no override — use --values/chart default); prompts interactively when omitted",
 		Default:     "",
 	}
 }

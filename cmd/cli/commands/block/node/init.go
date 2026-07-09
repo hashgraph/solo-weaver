@@ -160,7 +160,7 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	}, cv)
 
 	// Plugin preset prompt: preset select → conditional custom multi-select.
-	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, cv)
+	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, flagValuesFile, cv)
 
 	// Run all accumulated pages as a single navigable form.
 	if err := w.Run(); err != nil {
@@ -239,7 +239,10 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	// --plugin-preset is not prompted, so flagPluginPreset stays empty. Re-resolve
 	// from the stored preset to ensure plugin names are updated when crossing chart
 	// version boundaries (e.g. the 0.35 s3-archive → cloud-storage-* rename).
-	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" {
+	// Skip this when the operator manages plugins via their --values file (it defines
+	// plugins.names): re-resolving from the saved preset would clobber the values file.
+	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" &&
+		!bnpkg.ValuesFileDefinesPlugins(validatedValuesFile) {
 		if stateDefaults, defErr := state.ReadPromptDefaultsFromDisk(); defErr == nil {
 			if bnpkg.IsKnownPreset(stateDefaults.BlockNode.PluginPreset) {
 				pluginPreset = stateDefaults.BlockNode.PluginPreset

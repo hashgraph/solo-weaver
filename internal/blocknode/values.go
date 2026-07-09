@@ -182,6 +182,43 @@ func mergeValues(base, operator []byte) ([]byte, error) {
 	return result, nil
 }
 
+// ValuesFileDefinesPlugins reports whether the operator-supplied values file manages
+// plugins.names at all — i.e. the key is present under plugins, regardless of its value.
+// This includes an explicit empty string, an empty sequence, or null: Helm's
+// chartutil.CoalesceTables treats an operator-set null as an instruction to delete the
+// chart's default plugins.names entirely (see coalesceTablesFullKey's "nullifying a
+// chart default" branch), which is just as much a deliberate operator choice as setting
+// a concrete list. Callers (the prompt smart-default and the upgrade re-resolve guard)
+// must not clobber any of these with a preset-derived list.
+// It is intentionally error-tolerant: an empty path, an unreadable file, or a parse
+// failure all return false rather than an error — the interactive prompt uses this only
+// to decide a smart default, and the deploy-time path (ComputeValuesFile) surfaces any
+// real read/parse error later.
+func ValuesFileDefinesPlugins(valuesFile string) bool {
+	if valuesFile == "" {
+		return false
+	}
+	sanitizedPath, err := sanity.ValidateInputFile(valuesFile)
+	if err != nil {
+		return false
+	}
+	content, err := oslib.ReadFile(sanitizedPath)
+	if err != nil {
+		return false
+	}
+
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(content, &vals); err != nil {
+		return false
+	}
+	plugins, ok := vals["plugins"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	_, ok = plugins["names"]
+	return ok
+}
+
 // persistenceEntry represents the required persistence settings for a storage type.
 type persistenceEntry struct {
 	name      string
