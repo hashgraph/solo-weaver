@@ -268,13 +268,19 @@ func TestNewFromConfig_DisabledComponentSkipped(t *testing.T) {
 }
 
 func TestNewFromConfig_BlockNodeOnly(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "bn.kubeconfig")
+	require.NoError(t, os.WriteFile(kubeconfig, []byte(minimalKubeconfig), 0o600))
+
 	cfg := DaemonConfig{Components: DaemonComponents{
 		BlockNode: &BlockNodeComponentConfig{
-			Enabled:  true,
-			Monitors: BlockNodeMonitors{TrafficShaper: true},
+			Enabled:    true,
+			Kubeconfig: kubeconfig,
+			Orbit:      "hedera-block-node",
+			Monitors:   BlockNodeMonitors{TrafficShaper: true},
 		},
 	}}
-	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: "/tmp/x.sock"}, cfg)
+	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
 	require.NoError(t, err)
 	require.Len(t, d.components, 1)
 	assert.Equal(t, "block-node", d.components[0].name)

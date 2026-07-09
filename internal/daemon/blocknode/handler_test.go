@@ -19,7 +19,7 @@ import (
 // returns 200 with the supervisor-reported monitor state when the monitor is
 // enabled.
 func TestBlockNodeHandler_TrafficShaperStatus_Enabled(t *testing.T) {
-	mon := NewTrafficShaperMonitor()
+	mon := NewTrafficShaperMonitor(nil)
 	stateFn := func() daemonkit.MonitorState { return daemonkit.MonitorState{State: "running"} }
 	h := NewBlockNodeHandler(mon, stateFn)
 
