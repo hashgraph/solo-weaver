@@ -57,7 +57,7 @@ var createCmd = &cobra.Command{
 			// An explicit --pod-cidr works offline; only auto-detection needs a
 			// reachable cluster. Unlike `network firewall create` (best-effort,
 			// node-agnostic), `network policy create` is expected to run against a
-			// live cluster (design §7.2.4), so a detection failure with no
+			// live cluster, so a detection failure with no
 			// --pod-cidr is a hard error rather than a warning.
 			detected, derr := detectPodCIDR(cmd.Context())
 			if derr != nil {

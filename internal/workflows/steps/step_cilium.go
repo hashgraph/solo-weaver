@@ -317,7 +317,7 @@ func ciliumBandwidthManagerState(ctx context.Context, k *kube.Client) (enabled b
 // guardBandwidthManagerDisabled fails fast if Cilium's Bandwidth Manager is
 // enabled. Bandwidth Manager is the only Cilium BPF writer of skb->priority, so
 // the BN traffic shaper's egress-priority survival guarantee is void whenever it
-// is on (traffic-shaper v4 design §10 risk 18). It reads cilium-config through the
+// is on (its BPF writes to skb->priority void the traffic shaper's egress guarantee). It reads cilium-config through the
 // Kubernetes API (pure Go, no shell) and is read-only, so there is no rollback.
 func guardBandwidthManagerDisabled() automa.Builder {
 	return automa.NewStepBuilder().WithId("guard-bandwidth-manager-disabled").

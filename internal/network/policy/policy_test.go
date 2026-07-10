@@ -16,9 +16,9 @@ import (
 
 // fakeRunner is an in-memory Runner for tests: it records the applied document
 // and the elements added per set without touching the kernel. Apply clears
-// elements to mirror the real `nft -f` delete+recreate of the whole table
-// (§8.3.1) -- without that, tests wouldn't exercise the membership loss
-// Manager.Create's snapshot/restore is meant to prevent.
+// elements to mirror the real `nft -f` delete+recreate of the whole table --
+// without that, tests wouldn't exercise the membership loss Manager.Create's
+// snapshot/restore is meant to prevent.
 type fakeRunner struct {
 	applied     string
 	applyCount  int
@@ -47,6 +47,39 @@ func (f *fakeRunner) AddElements(_ context.Context, set string, elements []strin
 		return errors.New("nft add element " + set + " failed: No such file or directory")
 	}
 	f.elements[set] = append(f.elements[set], elements...)
+	return nil
+}
+func (f *fakeRunner) DeleteElements(_ context.Context, set string, elements []string) error {
+	if !f.exists {
+		return errors.New("nft delete element " + set + " failed: No such file or directory")
+	}
+	toDelete := make(map[string]bool, len(elements))
+	for _, e := range elements {
+		toDelete[e] = true
+	}
+	current := f.elements[set]
+	filtered := current[:0]
+	for _, e := range current {
+		if !toDelete[e] {
+			filtered = append(filtered, e)
+		}
+	}
+	if len(filtered) == 0 {
+		delete(f.elements, set)
+	} else {
+		f.elements[set] = filtered
+	}
+	return nil
+}
+func (f *fakeRunner) SetElements(_ context.Context, set string, elements []string) error {
+	if !f.exists {
+		return errors.New("nft flush set " + set + " failed: No such file or directory")
+	}
+	if len(elements) == 0 {
+		delete(f.elements, set)
+	} else {
+		f.elements[set] = append([]string(nil), elements...)
+	}
 	return nil
 }
 func (f *fakeRunner) ListElements(_ context.Context, set string) ([]string, error) {
@@ -83,7 +116,7 @@ func newTestManager(t *testing.T, r *fakeRunner) (*Manager, string, string) {
 
 func fixedTime() time.Time { return time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC) }
 
-// sampleBNPolicies mirrors the BN install policy set from design §8.4.2.
+// sampleBNPolicies mirrors the BN install policy set.
 func sampleBNPolicies() []*Policy {
 	at := fixedTime()
 	return []*Policy{
@@ -124,16 +157,16 @@ func TestRender_TierOrderInvariants(t *testing.T) {
 	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
 	require.NoError(t, err)
 
-	// Load-bearing ordering (design §7.2.4): quarantine drops and the reply
-	// restore must both precede `ct state established,related accept`, otherwise
-	// open connections survive a quarantine and reply packets are misclassified.
+	// Quarantine drops and the reply restore must both precede `ct state
+	// established,related accept`, otherwise open connections survive a
+	// quarantine and reply packets are misclassified.
 	estIdx := strings.Index(doc, "ct state established,related accept")
 	require.Positive(t, estIdx)
 	require.Less(t, strings.Index(doc, "ip saddr @bn-restricted drop"), estIdx, "deny must precede est,rel accept")
 	require.Less(t, strings.Index(doc, "ct direction reply ct mark 0x20"), estIdx, "reply restore must precede est,rel accept")
 
 	// Specific (partner) must precede the fallthrough (public) so partner-bound
-	// replies hit 1:40 and everyone else 1:50 (§7.2.4 property 3).
+	// replies hit 1:40 and everyone else 1:50.
 	require.Less(t, strings.Index(doc, "@bn-partner-out"), strings.Index(doc, "@bn-public-out_ports"))
 
 	// Chain must default-drop and end with a trailing drop.
@@ -145,14 +178,14 @@ func TestRender_WorkedExamples(t *testing.T) {
 	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
 	require.NoError(t, err)
 
-	// §8.4.6 publisher stamp.
+	// publisher stamp.
 	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept")
-	// §8.4.6 from-entity world fallthrough (no @set clause).
+	// from-entity world fallthrough (no @set clause).
 	require.Contains(t, doc, "ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept")
-	// §8.4.6 deny (both directions).
+	// deny (both directions).
 	require.Contains(t, doc, "ip saddr @bn-restricted drop")
 	require.Contains(t, doc, "ip daddr @bn-restricted drop")
-	// §8.4.6 reply-stamp compound-key forward rule + ct mark write.
+	// reply-stamp compound-key forward rule + ct mark write.
 	require.Contains(t, doc, "ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill ct mark set 0x20 meta priority set 0x10060 accept")
 	// compound set schema, no `flags interval`.
 	require.Contains(t, doc, "set bn-backfill { type ipv4_addr . inet_service; }")
@@ -184,7 +217,7 @@ func TestCreate_PersistsAndSeedsMembership(t *testing.T) {
 	require.FileExists(t, nftPath)
 	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
 
-	// Persisted .nft must NOT contain the membership element (§8.3.1).
+	// Persisted .nft must NOT contain the membership element.
 	onDisk, err := os.ReadFile(nftPath)
 	require.NoError(t, err)
 	require.NotContains(t, string(onDisk), "10.1.0.1/32")
@@ -267,7 +300,7 @@ func TestCreate_PreservesSiblingMembershipAcrossRerender(t *testing.T) {
 	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
 
 	// Creating a second, different (brand-new) policy forces a full
-	// re-render, which applies `delete table; add table` (§8.3.1) --
+	// re-render, which applies `delete table; add table` --
 	// bn-publisher's live membership must survive that, not just its
 	// rendered rule.
 	_, err = m.Create(context.Background(),
@@ -290,9 +323,8 @@ func TestCreate_SelfHealsMissingTableWithoutForce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, r.applyCount)
 
-	// Simulate `nft delete table inet weaver` (or a reboot before #780):
-	// the registry still says bn-publisher exists, but the live kernel
-	// table is gone.
+	// Simulate `nft delete table inet weaver` (or a reboot): the registry
+	// still says bn-publisher exists, but the live kernel table is gone.
 	require.NoError(t, r.Delete(context.Background()))
 
 	// Re-run WITHOUT --force, deliberately with DIFFERENT flags/cidrs: since

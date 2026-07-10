@@ -17,8 +17,8 @@ func registryPath(dir, name string) string {
 	return filepath.Join(dir, name+".json")
 }
 
-// writeEntry atomically writes a policy's registry JSON (design §8.4.7). The
-// daemon poll loop never calls this — the registry is operator/CLI-owned.
+// writeEntry atomically writes a policy's registry JSON. The daemon poll loop
+// never calls this — the registry is operator/CLI-owned.
 func writeEntry(dir string, p *Policy) error {
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {

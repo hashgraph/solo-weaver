@@ -27,8 +27,8 @@ const (
 // Direction selects which half of the forward chain a stamp rule renders into.
 // It is empty for deny policies (which always apply to both directions). For
 // stamp policies it is not a caller-supplied value: Validate derives it from
-// the --stamp class (every class in the §5 mark map has exactly one
-// direction), so it can never contradict the class it names.
+// the --stamp class (every class in the mark map has exactly one direction),
+// so it can never contradict the class it names.
 type Direction string
 
 const (
@@ -41,11 +41,10 @@ const (
 )
 
 // Policy is the static definition of one named category, mirroring the registry
-// JSON schema (design §8.4.7). CIDR membership is deliberately NOT a field: it
-// lives in the live nft set and is owned by the daemon poll loop, never
-// persisted to the registry or the .nft file (§8.3.1). The initial `--cidrs`
-// membership supplied at create time is applied to the live kernel separately
-// (see Manager.Create).
+// JSON schema. CIDR membership is deliberately NOT a field: it lives in the
+// live nft set and is owned by the daemon poll loop, never persisted to the
+// registry or the .nft file. The initial `--cidrs` membership supplied at
+// create time is applied to the live kernel separately (see Manager.Create).
 type Policy struct {
 	Name            string    `json:"name"`
 	Action          Action    `json:"action"`
@@ -58,10 +57,9 @@ type Policy struct {
 }
 
 // Validate rejects any policy + initial-CIDR combination that would be unsafe
-// or nonsensical to render, per the flag-validity rules in design §8.4.2 /
-// §8.4.6. It is the single gate before the renderer; every untrusted token
-// (name, class, ports, CIDRs) is checked so a malformed value can never break
-// the atomic nft transaction or smuggle in nft syntax.
+// or nonsensical to render. It is the single gate before the renderer; every
+// untrusted token (name, class, ports, CIDRs) is checked so a malformed value
+// can never break the atomic nft transaction or smuggle in nft syntax.
 func (p *Policy) Validate(cidrs []string) error {
 	if err := sanity.ValidateIdentifier(p.Name); err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid --name %q", p.Name)
@@ -99,8 +97,8 @@ func (p *Policy) Validate(cidrs []string) error {
 }
 
 // validateStamp resolves --stamp to its class and derives p.Direction from it
-// (design §5: every class has exactly one direction, so there is no
-// independent --direction flag to validate against). For --reply-stamp, the
+// (every class has exactly one direction, so there is no independent
+// --direction flag to validate against). For --reply-stamp, the
 // reply class must be the mirror direction of the forward class — e.g. an
 // egress --stamp pairs only with an ingress --reply-stamp — since a reply is
 // definitionally the reverse leg of the forward flow.
@@ -171,7 +169,7 @@ func (p *Policy) validateCIDRs(cidrs []string) error {
 
 // isCompoundSet reports whether the policy's nft set is a compound
 // `ipv4_addr . inet_service` key set — true only for --reply-stamp policies,
-// whose --cidrs entries are ip:port destination pairs (design §8.4.6).
+// whose --cidrs entries are ip:port destination pairs.
 func (p *Policy) isCompoundSet() bool {
 	return p.ReplyStamp != ""
 }

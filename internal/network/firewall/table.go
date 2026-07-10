@@ -10,7 +10,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// Default flag values per design §8.4.1.
+// Default flag values.
 const (
 	DefaultSSHPort = 22
 )

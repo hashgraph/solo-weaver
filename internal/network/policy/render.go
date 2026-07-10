@@ -13,11 +13,11 @@ import (
 )
 
 // Render produces the full `inet weaver` nft document for the given set of
-// registry policies, in tier order (design §8.4.7). The same output feeds both
-// the kernel apply (`nft -f`) and the on-disk artifact, so the live table and
-// the persisted file can never diverge. Set *membership* is deliberately not
-// rendered here — only set schemas and the static `--ports` elements — because
-// membership is owned by the daemon poll loop and never persisted (§8.3.1).
+// registry policies, in tier order. The same output feeds both the kernel apply
+// (`nft -f`) and the on-disk artifact, so the live table and the persisted file
+// can never diverge. Set *membership* is deliberately not rendered here — only
+// set schemas and the static `--ports` elements — because membership is owned
+// by the daemon poll loop and never persisted.
 //
 // Rule position is determined by action type and match specificity, never by
 // creation order:
@@ -91,8 +91,8 @@ func sortedByName(policies []*Policy) []*Policy {
 }
 
 // renderSetDecls emits the schema for each policy's sets, name-sorted for a
-// deterministic render. Membership set elements are omitted (§8.3.1); only the
-// static `--ports` set carries elements.
+// deterministic render. Membership set elements are omitted; only the static
+// `--ports` set carries elements.
 func renderSetDecls(policies []*Policy) ([]string, error) {
 	var lines []string
 	for _, p := range policies {
@@ -207,7 +207,7 @@ func renderStampRule(p *Policy, podCIDR string) (string, error) {
 
 	if p.isCompoundSet() {
 		// --reply-stamp forward rule: egress, compound ip:port destination key,
-		// ct mark write for the reply restore to read back (design §8.4.6).
+		// ct mark write for the reply restore to read back.
 		reply, err := lookupClass(p.ReplyStamp)
 		if err != nil {
 			return "", err

@@ -708,7 +708,7 @@ func TestOptionalStorageRegistryConstants(t *testing.T) {
 
 // TestPrereleaseCutoverBoundary pins the 0.37.0 cutover behaviour across release
 // candidates. The "-0" prerelease floor on the registry constants is what makes
-// a prerelease like 0.37.0-rc1 satisfy the >= 0.37.0 boundary — semver §11 ranks
+// a prerelease like 0.37.0-rc1 satisfy the >= 0.37.0 boundary — semver ranks
 // a prerelease BELOW its final tag, so a bare "0.37.0" min would wrongly exclude
 // every 0.37.0-rcN, skipping application-state and keeping verification alive.
 func TestPrereleaseCutoverBoundary(t *testing.T) {
