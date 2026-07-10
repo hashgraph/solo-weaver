@@ -28,14 +28,14 @@ func SetupPrometheusOperatorCRDs() *automa.WorkflowBuilder {
 		isPrometheusOperatorCRDsReady(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up Prometheus Operator CRDs")
+			notify.As().PhaseStart(ctx, stp, "Prometheus Operator CRDs")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Prometheus Operator CRDs")
+			notify.As().PhaseFailure(ctx, stp, rpt, "Prometheus Operator CRDs")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Prometheus Operator CRDs setup successfully")
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Prometheus Operator CRDs")
 		})
 }
 

@@ -26,6 +26,7 @@ import (
 
 const (
 	SetupAlloyStepId                = "setup-alloy"
+	PreflightAlloyPhaseId           = "preflight-alloy"
 	PreCheckAlloyStepId             = "precheck-alloy"
 	InstallAlloyStepId              = "install-alloy"
 	InstallNodeExporterStepId       = "install-node-exporter"
@@ -40,22 +41,16 @@ const (
 // This includes Prometheus Operator CRDs and Grafana Alloy.
 // K8s secrets containing passwords for remote endpoints must be pre-created before running this.
 // Secrets can be created manually, via ESO/Vault, Terraform, or any other mechanism.
+//
+// It is a bare container that composes three top-level phases, each of which emits
+// phase-level TUI progress (see PreflightAlloy, SetupPrometheusOperatorCRDs, SetupAlloy).
+// Mirrors InstallClusterWorkflow in internal/workflows/cluster.go.
 func SetupAlloyStack() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-alloy-stack").Steps(
-		preCheckAlloy(),               // Verify prerequisites (K8s secrets, remote endpoints)
-		SetupPrometheusOperatorCRDs(), // Install CRDs for ServiceMonitor/PodMonitor
-		SetupAlloy(),                  // Install Alloy with Node Exporter
-	).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up Alloy observability stack")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Alloy observability stack")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Alloy observability stack setup successfully")
-		})
+		PreflightAlloy(),              // Phase 1: verify prerequisites (cluster reachable, K8s secrets, remotes)
+		SetupPrometheusOperatorCRDs(), // Phase 2: install CRDs for ServiceMonitor/PodMonitor
+		SetupAlloy(),                  // Phase 3: install Alloy with Node Exporter
+	)
 }
 
 // TeardownAlloyStack returns a workflow builder that tears down the complete Alloy observability stack.
@@ -78,8 +73,28 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 		})
 }
 
+// PreflightAlloy returns the preflight phase for the Alloy install workflow.
+// It wraps the preCheckAlloy prerequisite check as a top-level, phase-level builder so
+// the TUI renders it as a named phase boundary (mirrors SetupBlockNode's phase pattern).
+func PreflightAlloy() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId(PreflightAlloyPhaseId).Steps(
+		preCheckAlloy(),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().PhaseStart(ctx, stp, "Preflight Checks")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseFailure(ctx, stp, rpt, "Preflight Checks")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Preflight Checks")
+		})
+}
+
 // preCheckAlloy verifies that all prerequisites are in place before installing Alloy.
-// This includes verifying that required K8s secrets exist and that remote endpoints are reachable.
+// This includes verifying that the Kubernetes cluster is reachable, that required K8s
+// secrets exist, and that remote endpoints are reachable.
 func preCheckAlloy() automa.Builder {
 	spec := chartSpec("alloy")
 	return automa.NewStepBuilder().WithId(PreCheckAlloyStepId).
@@ -88,6 +103,31 @@ func preCheckAlloy() automa.Builder {
 			l := logx.As()
 
 			meta := map[string]string{}
+
+			// Fail fast if the Kubernetes cluster is not reachable. Alloy is a
+			// deploy-into-existing-cluster command (like teleport cluster) — it does not
+			// bootstrap the cluster. Without this gate a missing/unreachable cluster only
+			// surfaces later as a cryptic Helm "Kubernetes cluster unreachable" error.
+			clusterExists, err := kube.ClusterExists()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					errorx.ExternalError.Wrap(err, "failed to probe Kubernetes cluster reachability").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Ensure the cluster is installed and its API server is reachable:",
+							"  solo-provisioner kube cluster install",
+							"  kubectl cluster-info",
+						})))
+			}
+			if !clusterExists {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					errorx.IllegalState.New("Kubernetes cluster is not reachable").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Install/verify the cluster before installing Alloy:",
+							"  solo-provisioner kube cluster install",
+							"Confirm the API server is reachable:",
+							"  kubectl cluster-info",
+						})))
+			}
 
 			// Check if any remotes are configured
 			hasRemotes := len(cfg.PrometheusRemotes) > 0 || len(cfg.LokiRemotes) > 0 ||
@@ -212,14 +252,14 @@ func SetupAlloy() *automa.WorkflowBuilder {
 		isAlloyPodsReady(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Setting up Grafana Alloy")
+			notify.As().PhaseStart(ctx, stp, "Alloy Deployment")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to setup Grafana Alloy")
+			notify.As().PhaseFailure(ctx, stp, rpt, "Alloy Deployment")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Grafana Alloy setup successfully")
+			notify.As().PhaseCompletion(ctx, stp, rpt, "Alloy Deployment")
 		})
 }
 

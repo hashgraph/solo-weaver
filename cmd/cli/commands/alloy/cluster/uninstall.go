@@ -18,7 +18,14 @@ var uninstallCmd = &cobra.Command{
 			Strs("args", args).
 			Msg("Uninstalling Alloy observability stack")
 
-		wb := workflows.NewAlloyUninstallWorkflow()
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return err
+		}
+		opts := workflows.DefaultWorkflowExecutionOptions()
+		opts.ExecutionMode = execMode
+
+		wb := workflows.WithWorkflowExecutionMode(workflows.NewAlloyUninstallWorkflow(), opts)
 
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err

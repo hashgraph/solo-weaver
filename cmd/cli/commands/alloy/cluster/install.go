@@ -9,7 +9,6 @@ import (
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
@@ -100,7 +99,14 @@ Examples:
 			l.Warn().Msg("--prometheus-url, --prometheus-username, --loki-url, and --loki-username flags are deprecated; please use --add-prometheus-remote and --add-loki-remote instead")
 		}
 
-		wb := workflows.NewAlloyInstallWorkflow()
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return err
+		}
+		opts := workflows.DefaultWorkflowExecutionOptions()
+		opts.ExecutionMode = execMode
+
+		wb := workflows.WithWorkflowExecutionMode(workflows.NewAlloyInstallWorkflow(), opts)
 
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
@@ -110,6 +116,3 @@ Examples:
 		return nil
 	},
 }
-
-// Verify that the required step functions are accessible
-var _ = steps.SetupAlloyStack
