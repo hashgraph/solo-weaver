@@ -122,9 +122,9 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	// Build a single wizard so every prompt page is navigable back and forward
 	// (Shift+Tab / Tab) instead of committing each stage in its own form. Pages are
 	// added in order; each Add* is a no-op when its flag(s) were already supplied on
-	// the command line. Input prompts must be added before the storage and plugin
-	// prompts because they pre-fill flagChartVersion, which the storage and plugin
-	// builders read to filter their options.
+	// the command line. The storage and plugin builders take &flagChartVersion (by
+	// pointer), so their version-dependent pages react to edits made on the earlier
+	// chart-version input page as the operator navigates forward.
 	w := prompt.NewWizard()
 
 	// profileTarget is a local copy the profile prompt writes to; after the wizard
@@ -149,7 +149,7 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	// Storage path prompts: mode select → conditional path inputs (single base
 	// path vs individual paths). Applied to all block node commands that configure
 	// storage (install, upgrade, reconfigure).
-	prompt.AddStoragePathPrompts(w, cmd, defaults, flagChartVersion, prompt.StoragePathTargets{
+	prompt.AddStoragePathPrompts(w, cmd, defaults, &flagChartVersion, prompt.StoragePathTargets{
 		BasePath:             &flagBasePath,
 		ArchivePath:          &flagArchivePath,
 		LivePath:             &flagLivePath,
@@ -160,7 +160,7 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	}, cv)
 
 	// Plugin preset prompt: preset select → conditional custom multi-select.
-	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, flagValuesFile, cv)
+	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, &flagChartVersion, flagValuesFile, cv)
 
 	// Run all accumulated pages as a single navigable form.
 	if err := w.Run(); err != nil {
