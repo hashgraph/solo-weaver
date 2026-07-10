@@ -143,15 +143,47 @@ func recentRetentionInputPrompt(eff string, target *string) InputPrompt {
 
 // EgressInterfaceInputPrompt returns the interactive prompt for --egress-interface.
 // eff is the auto-detected NIC name used as the placeholder/effective value;
-// pass an empty string when detection is unavailable or unsupported.
-func EgressInterfaceInputPrompt(eff string, target *string) InputPrompt {
+// speedHint is a tc-style bandwidth string (e.g. "1gbit") derived from the
+// detected NIC's link speed — pass an empty string when the speed is unavailable.
+func EgressInterfaceInputPrompt(eff, speedHint string, target *string) InputPrompt {
+	desc := "Physical NIC for the $EGRESS HTB traffic-shaper hierarchy. Leave blank to auto-detect from the default route."
+	if speedHint != "" {
+		desc += " Detected link speed: " + speedHint + "."
+	}
 	return InputPrompt{
 		FlagName:       "egress-interface",
 		Title:          "Egress Network Interface",
-		Description:    "Physical NIC for the $EGRESS HTB traffic-shaper hierarchy. Leave blank to auto-detect from the default route.",
+		Description:    desc,
 		Placeholder:    eff,
 		EffectiveValue: eff,
 		Target:         target,
+	}
+}
+
+// LinkRateInputPrompt returns the interactive prompt for --link-rate.
+// speedHint is the auto-detected link speed (e.g. "1gbit") used as the pre-filled
+// default; pass an empty string when detection was unavailable. The operator may
+// leave the field blank to keep runtime auto-detection from sysfs.
+func LinkRateInputPrompt(speedHint string, target *string) InputPrompt {
+	desc := "NIC line rate in tc-style format (e.g. 1gbit, 100mbit). " +
+		"Leave blank to auto-detect at boot from /sys/class/net/<nic>/speed (falls back to 1000mbit on virtual NICs)."
+	return InputPrompt{
+		FlagName:       "link-rate",
+		Title:          "NIC Link Rate",
+		Description:    desc,
+		Placeholder:    speedHint,
+		EffectiveValue: speedHint,
+		Target:         target,
+		Validate: func(s string) error {
+			if s == "" {
+				return nil
+			}
+			sl := strings.ToLower(strings.TrimSpace(s))
+			if !strings.HasSuffix(sl, "gbit") && !strings.HasSuffix(sl, "mbit") {
+				return errorx.IllegalArgument.New("must be a tc-style rate (e.g. 1gbit, 100mbit)")
+			}
+			return nil
+		},
 	}
 }
 

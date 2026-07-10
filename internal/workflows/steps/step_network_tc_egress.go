@@ -17,16 +17,20 @@ import (
 const TcEgressPersistStepId = "tc-egress-persist"
 
 // TcEgressPersist renders /usr/local/sbin/solo-provisioner-tc-egress.sh with
-// the egress NIC name interpolated, installs and enables the
-// solo-provisioner-tc-egress.service oneshot unit, and executes the script
-// immediately so the kernel HTB hierarchy is live without waiting for a reboot
-// (design §8.3.2).
+// the egress NIC name and optional link speed interpolated, installs and
+// enables the solo-provisioner-tc-egress.service oneshot unit, and executes
+// the script immediately so the kernel HTB hierarchy is live without waiting
+// for a reboot.
 //
 // When nicName is empty the NIC is auto-detected from the default route via
-// DetectEgressInterface (single-NIC hosts, §4.1). Pass --egress-interface to
-// override on multi-NIC hosts or when the default route does not identify the
-// correct physical interface.
-func TcEgressPersist(nicName string) *automa.StepBuilder {
+// DetectEgressInterface. Pass --egress-interface to override on multi-NIC
+// hosts or when the default route does not identify the correct physical
+// interface.
+//
+// speedMbit sets the link rate in Mbit/s directly in the rendered script.
+// Pass 0 to keep the auto-detect behaviour (reads /sys/class/net/<nic>/speed
+// at boot, falls back to 1000 Mbit/s).
+func TcEgressPersist(nicName string, speedMbit int) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcEgressPersistStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Persisting tc-egress HTB hierarchy for reboot")
@@ -47,14 +51,14 @@ func TcEgressPersist(nicName string) *automa.StepBuilder {
 						errorx.Decorate(err, "failed to auto-detect egress interface").
 							WithProperty(models.ErrPropertyResolution, []string{
 								"Specify the physical NIC explicitly: block node install --egress-interface <nic>",
-								"To find the correct NIC: ip route get 8.8.8.8 (look for 'dev <nic>')",
+								"To find the correct NIC: ip route get 8.8.8.8 | grep dev",
 							})))
 				}
 				logx.As().Info().Str("nic", detected).Msg("auto-detected egress interface from default route")
 				nic = detected
 			}
 
-			if err := shape.RenderTcEgressScript(nic); err != nil {
+			if err := shape.RenderTcEgressScript(nic, speedMbit); err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
 			if err := shape.EnsureTcEgressUnit(ctx); err != nil {

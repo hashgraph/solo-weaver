@@ -39,6 +39,7 @@ var (
 	flagPlugins              string
 	flagLoadBalancerEnabled  bool
 	flagEgressInterface      string
+	flagLinkRate             string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",

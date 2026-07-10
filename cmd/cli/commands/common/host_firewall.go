@@ -58,11 +58,8 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 // summary after all prompt sections complete. When cv is nil a local collector
 // is used and printed as "Host Firewall" immediately.
 //
-// extraInputPrompts are prepended to the firewall input prompts so callers can
-// place related prompts (e.g. egress interface) in the same TUI panel.
-//
 // It requires RegisterHostFirewallFlags to have been called on cmd.
-func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, extraInputPrompts ...prompt.InputPrompt) error {
+func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues) error {
 	force, err := FlagForce().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", FlagForce().Name)
@@ -112,15 +109,12 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 		if localCV == nil {
 			localCV = prompt.NewChosenValues()
 		}
-		allPrompts := make([]prompt.InputPrompt, 0, len(extraInputPrompts)+4)
-		allPrompts = append(allPrompts, extraInputPrompts...)
-		allPrompts = append(allPrompts,
+		if err := prompt.RunInputPrompts(cmd, []prompt.InputPrompt{
 			prompt.MgmtCIDRsInputPrompt(mgmtStr, &mgmtStr),
 			prompt.SSHPortInputPrompt(sshStr, &sshStr),
 			prompt.PodCIDRInputPrompt(podStr, &podStr),
 			prompt.InClusterPortsInputPrompt(portsStr, &portsStr),
-		)
-		if err := prompt.RunInputPrompts(cmd, allPrompts, localCV); err != nil {
+		}, localCV); err != nil {
 			return err
 		}
 		if cv == nil {
