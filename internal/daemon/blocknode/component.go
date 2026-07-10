@@ -9,6 +9,14 @@ import (
 // ComponentConfig holds inputs needed to build the block-node component.
 type ComponentConfig struct {
 	TrafficShaperEnabled bool
+
+	// KubeconfigPath is the path to the BN-scoped kubeconfig. Required when
+	// TrafficShaperEnabled is true (used to exec into BN pods to resolve veths).
+	KubeconfigPath string
+
+	// Namespace is the Kubernetes namespace (orbit) where BN pods run.
+	// Required when TrafficShaperEnabled is true.
+	Namespace string
 }
 
 // ComponentResult contains the monitors built by NewComponent and a reference
@@ -32,7 +40,13 @@ func NewComponent(cfg ComponentConfig) (ComponentResult, error) {
 
 	var tsm *TrafficShaperMonitor
 	if cfg.TrafficShaperEnabled {
-		tsm = NewTrafficShaperMonitor()
+		resolver, err := NewVethResolver(VethResolverConfig{
+			KubeconfigPath: cfg.KubeconfigPath,
+		})
+		if err != nil {
+			return ComponentResult{}, err
+		}
+		tsm = NewTrafficShaperMonitor(resolver)
 		monitors = append(monitors, tsm)
 	}
 

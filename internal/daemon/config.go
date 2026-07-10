@@ -107,9 +107,15 @@ type BlockNodeMonitors struct {
 }
 
 // Validate checks that all required fields within the block-node block are present.
-// Kubeconfig and Orbit are optional while the traffic-shaper monitor is stubbed
-// (it polls a remote API and does not watch K8s resources).
 func (bn BlockNodeComponentConfig) Validate() error {
+	if bn.Enabled && bn.Monitors.TrafficShaper {
+		if bn.Kubeconfig == "" {
+			return ErrConfigMalformed.New("components.block_node.kubeconfig is required when monitors.traffic_shaper is true")
+		}
+		if bn.Orbit == "" {
+			return ErrConfigMalformed.New("components.block_node.orbit is required when monitors.traffic_shaper is true")
+		}
+	}
 	return nil
 }
 

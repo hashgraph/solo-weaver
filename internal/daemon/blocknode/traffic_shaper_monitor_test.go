@@ -17,7 +17,7 @@ import (
 // TestTrafficShaperMonitor_RunReturnsOnContextCancel verifies Run starts both
 // responsibilities and returns nil promptly once ctx is cancelled.
 func TestTrafficShaperMonitor_RunReturnsOnContextCancel(t *testing.T) {
-	m := NewTrafficShaperMonitor()
+	m := NewTrafficShaperMonitor(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
@@ -46,7 +46,7 @@ func TestSuperviseResponsibility_RetriesFaultsWithoutPropagating(t *testing.T) {
 		responsibilityBackoffMax = origMax
 	})
 
-	m := NewTrafficShaperMonitor()
+	m := NewTrafficShaperMonitor(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var calls atomic.Int32
@@ -77,7 +77,7 @@ func TestSuperviseResponsibility_RetriesFaultsWithoutPropagating(t *testing.T) {
 // path: a responsibility that returns without error (and without ctx being
 // cancelled) is re-entered immediately, and the loop exits once ctx is done.
 func TestSuperviseResponsibility_ResetsBackoffAndExitsOnCancel(t *testing.T) {
-	m := NewTrafficShaperMonitor()
+	m := NewTrafficShaperMonitor(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var calls atomic.Int32
