@@ -660,7 +660,7 @@ sudo solo-provisioner alloy cluster install \
 | `--prometheus-username`   | Prometheus authentication username *(deprecated)*                                                                                 |
 | `--loki-url`              | Loki remote write URL *(deprecated: use `--add-loki-remote`)*                                                                     |
 | `--loki-username`         | Loki authentication username *(deprecated)*                                                                                       |
-| `--stop-on-error`         | Stop execution on first error (default behaviour when no execution-mode flag is set)                                             |
+| `--stop-on-error`         | Stop execution on first error (default behavior when no execution-mode flag is set)                                             |
 | `--rollback-on-error`     | Rollback executed steps on error                                                                                                 |
 | `--continue-on-error`     | Continue executing steps even if some steps fail                                                                                 |
 
