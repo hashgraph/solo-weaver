@@ -1,0 +1,37 @@
+#!/bin/sh
+# Rendered by solo-provisioner at install time. Do not edit — changes are
+# overwritten by `block node install --force`.
+#
+# Replays the $EGRESS HTB hierarchy at boot. Idempotent: delete the root qdisc
+# first (cascades to all classes and leaf qdiscs), then add everything fresh.
+# fq_codel does not support tc's change() operation, so replace/change is not
+# viable for leaf qdiscs.
+set -e
+
+NIC={{.NIC}}
+
+# Detect link speed in Mbit/s. The kernel uses -1 for "unknown" (common on
+# virtual NICs and at early boot before the link is established). Suppress
+# any read error so set -e never fires here (e.g. udev may not have renamed
+# the NIC yet if the service starts very early). Fall back to 1000 Mbit/s.
+SPEED=$(cat /sys/class/net/"$NIC"/speed 2>/dev/null || echo -1)
+[ "${SPEED:-0}" -gt 0 ] 2>/dev/null || SPEED=1000
+
+# Remove any existing root qdisc (and all its children). Silent no-op if absent.
+tc qdisc del dev "$NIC" root 2>/dev/null || true
+
+# Root HTB qdisc: unmatched traffic falls to default class 1:60 (reserve).
+tc qdisc add dev "$NIC" root handle 1: htb default 60
+
+# Trunk class: full link rate as the ceiling for the whole hierarchy.
+tc class  add dev "$NIC" parent 1:   classid 1:1  htb rate "${SPEED}mbit" ceil "${SPEED}mbit"
+
+# Per-class leaf nodes (partner / public / reserve-egress).
+tc class  add dev "$NIC" parent 1:1  classid 1:40 htb rate "$(( SPEED * 40 / 100 ))mbit" ceil "$(( SPEED * 70 / 100 ))mbit" prio 0
+tc class  add dev "$NIC" parent 1:1  classid 1:50 htb rate "$(( SPEED * 30 / 100 ))mbit" ceil "$(( SPEED * 70 / 100 ))mbit" prio 5
+tc class  add dev "$NIC" parent 1:1  classid 1:60 htb rate "$(( SPEED * 30 / 100 ))mbit" ceil "${SPEED}mbit" prio 1
+
+# fq_codel leaf qdiscs: per-class fair-queuing with active queue management.
+tc qdisc  add dev "$NIC" parent 1:40 handle 140: fq_codel
+tc qdisc  add dev "$NIC" parent 1:50 handle 150: fq_codel
+tc qdisc  add dev "$NIC" parent 1:60 handle 160: fq_codel

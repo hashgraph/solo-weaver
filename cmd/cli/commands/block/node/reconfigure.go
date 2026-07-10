@@ -3,6 +3,8 @@
 package node
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
@@ -18,9 +20,13 @@ var (
 		Short: "Reconfigure a Hedera Block Node",
 		Long:  "Re-apply configuration to an existing Hedera Block Node deployment without changing its chart version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			inputs, err := prepareBlocknodeInputs(cmd, args)
+			inputs, cv, err := prepareBlocknodeInputs(cmd, args)
 			if err != nil {
 				return err
+			}
+			if cv != nil {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+				cv.Print("Selected Inputs")
 			}
 
 			err = initializeDependencies()

@@ -141,6 +141,20 @@ func recentRetentionInputPrompt(eff string, target *string) InputPrompt {
 	}
 }
 
+// EgressInterfaceInputPrompt returns the interactive prompt for --egress-interface.
+// eff is the auto-detected NIC name used as the placeholder/effective value;
+// pass an empty string when detection is unavailable or unsupported.
+func EgressInterfaceInputPrompt(eff string, target *string) InputPrompt {
+	return InputPrompt{
+		FlagName:       "egress-interface",
+		Title:          "Egress Network Interface",
+		Description:    "Physical NIC for the $EGRESS HTB traffic-shaper hierarchy. Leave blank to auto-detect from the default route.",
+		Placeholder:    eff,
+		EffectiveValue: eff,
+		Target:         target,
+	}
+}
+
 func basePathInputPrompt(eff string, target *string) InputPrompt {
 	return InputPrompt{
 		FlagName:       "base-path",

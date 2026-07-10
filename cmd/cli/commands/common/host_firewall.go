@@ -53,8 +53,16 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 // allowlist is allowed — the step then skips firewall creation rather than
 // rendering a lock-out (default-drop) ruleset.
 //
+// When cv is non-nil the prompted values are recorded into it and no separate
+// summary is printed — the caller is responsible for printing the unified
+// summary after all prompt sections complete. When cv is nil a local collector
+// is used and printed as "Host Firewall" immediately.
+//
+// extraInputPrompts are prepended to the firewall input prompts so callers can
+// place related prompts (e.g. egress interface) in the same TUI panel.
+//
 // It requires RegisterHostFirewallFlags to have been called on cmd.
-func ResolveHostFirewallConfig(cmd *cobra.Command, args []string) error {
+func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, extraInputPrompts ...prompt.InputPrompt) error {
 	force, err := FlagForce().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", FlagForce().Name)
@@ -100,16 +108,24 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string) error {
 	podStr := effectiveStr(cmd, FlagNamePodCIDR, cfg.PodCIDR, models.DefaultClusterPodCIDR)
 
 	if prompt.ShouldPrompt(force) {
-		cv := prompt.NewChosenValues()
-		if err := prompt.RunInputPrompts(cmd, []prompt.InputPrompt{
+		localCV := cv
+		if localCV == nil {
+			localCV = prompt.NewChosenValues()
+		}
+		allPrompts := make([]prompt.InputPrompt, 0, len(extraInputPrompts)+4)
+		allPrompts = append(allPrompts, extraInputPrompts...)
+		allPrompts = append(allPrompts,
 			prompt.MgmtCIDRsInputPrompt(mgmtStr, &mgmtStr),
 			prompt.SSHPortInputPrompt(sshStr, &sshStr),
 			prompt.PodCIDRInputPrompt(podStr, &podStr),
 			prompt.InClusterPortsInputPrompt(portsStr, &portsStr),
-		}, cv); err != nil {
+		)
+		if err := prompt.RunInputPrompts(cmd, allPrompts, localCV); err != nil {
 			return err
 		}
-		cv.Print("Host Firewall")
+		if cv == nil {
+			localCV.Print("Host Firewall")
+		}
 	}
 
 	sshPort, err := strconv.Atoi(strings.TrimSpace(sshStr))
