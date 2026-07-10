@@ -1,6 +1,5 @@
 #!/bin/sh
-# Rendered by solo-provisioner at install time. Do not edit — changes are
-# overwritten by `block node install --force`.
+# Managed by solo-provisioner. Re-rendered by `network shape create`; do not edit.
 #
 # Replays the $EGRESS HTB hierarchy at boot. Idempotent: delete the root qdisc
 # first (cascades to all classes and leaf qdiscs), then add everything fresh.
@@ -20,18 +19,12 @@ SPEED=$(cat /sys/class/net/"$NIC"/speed 2>/dev/null || echo -1)
 # Remove any existing root qdisc (and all its children). Silent no-op if absent.
 tc qdisc del dev "$NIC" root 2>/dev/null || true
 
-# Root HTB qdisc: unmatched traffic falls to default class 1:60 (reserve).
-tc qdisc add dev "$NIC" root handle 1: htb default 60
+# Root HTB qdisc: unmatched traffic falls to default class 1:{{.Device.DefaultMinor}}.
+tc qdisc add dev "$NIC" root handle 1: htb default {{.Device.DefaultMinor}}
 
 # Trunk class: full link rate as the ceiling for the whole hierarchy.
-tc class  add dev "$NIC" parent 1:   classid 1:1  htb rate "${SPEED}mbit" ceil "${SPEED}mbit"
-
-# Per-class leaf nodes (partner / public / reserve-egress).
-tc class  add dev "$NIC" parent 1:1  classid 1:40 htb rate "$(( SPEED * 40 / 100 ))mbit" ceil "$(( SPEED * 70 / 100 ))mbit" prio 0
-tc class  add dev "$NIC" parent 1:1  classid 1:50 htb rate "$(( SPEED * 30 / 100 ))mbit" ceil "$(( SPEED * 70 / 100 ))mbit" prio 5
-tc class  add dev "$NIC" parent 1:1  classid 1:60 htb rate "$(( SPEED * 30 / 100 ))mbit" ceil "${SPEED}mbit" prio 1
-
-# fq_codel leaf qdiscs: per-class fair-queuing with active queue management.
-tc qdisc  add dev "$NIC" parent 1:40 handle 140: fq_codel
-tc qdisc  add dev "$NIC" parent 1:50 handle 150: fq_codel
-tc qdisc  add dev "$NIC" parent 1:60 handle 160: fq_codel
+tc class  add dev "$NIC" parent 1:   classid 1:1  htb rate "{{.Device.Rate}}" ceil "{{.Device.Rate}}"
+{{range .Classes}}
+tc class  add dev "$NIC" parent 1:1  classid 1:{{.Minor}} htb rate "{{.Rate}}" ceil "{{.Ceil}}" prio {{.Prio}}
+tc qdisc  add dev "$NIC" parent 1:{{.Minor}} handle {{.Handle}}: fq_codel
+{{end}}
