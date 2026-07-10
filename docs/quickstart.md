@@ -530,6 +530,41 @@ sudo solo-provisioner teleport cluster uninstall
 
 ---
 
+### External Secrets Operator (ESO) Commands
+
+Manage the External Secrets Operator (ESO), which syncs secrets from external stores into Kubernetes. Installing ESO is the prerequisite for syncing secrets used by other components (e.g. the `grafana-alloy-secrets` Secret consumed by `alloy cluster install`).
+
+#### Prerequisites
+
+| Prerequisite              | Description                                            |
+|---------------------------|--------------------------------------------------------|
+| **Root privileges**       | The install command requires `sudo`                    |
+| **Reachable K8s cluster** | The cluster must be reachable via the admin kubeconfig |
+
+#### Install External Secrets Operator
+
+Install the `external-secrets/external-secrets` Helm chart into the cluster. The command is idempotent: if ESO is already installed in the target namespace, installation is skipped with a clear message.
+
+```bash
+# Install with defaults (namespace: external-secrets, catalog default version)
+sudo solo-provisioner eso operator install
+
+# Install into a custom namespace
+sudo solo-provisioner eso operator install --namespace my-eso
+
+# Pin a specific catalog-declared chart version
+sudo solo-provisioner eso operator install --chart-version 0.20.2
+```
+
+**Additional Flags**:
+
+| Flag              | Default            | Description                                                                                                          |
+|-------------------|--------------------|----------------------------------------------------------------------------------------------------------------------|
+| `--namespace`     | `external-secrets` | Kubernetes namespace to install the External Secrets Operator into                                                   |
+| `--chart-version` | _(catalog default)_ | External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default) |
+
+---
+
 ### Alloy Commands
 
 Manage Grafana Alloy observability stack for metrics and logs.
@@ -1122,6 +1157,9 @@ sudo solo-provisioner teleport node install    --token=<token> --proxy=<addr>
 sudo solo-provisioner teleport node uninstall
 sudo solo-provisioner teleport cluster install --values=<file>
 sudo solo-provisioner teleport cluster uninstall
+
+# EXTERNAL SECRETS OPERATOR (ESO)
+sudo solo-provisioner eso operator install    [--namespace=<ns>] [--chart-version=<version>]
 
 # ALLOY
 sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-name=<name>]
