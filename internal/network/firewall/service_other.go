@@ -17,3 +17,6 @@ func defaultApplyViaService(_ context.Context) error {
 	logx.As().Debug().Str("service", NetworkNftService).Msg("service apply is a no-op on non-Linux builds")
 	return nil
 }
+
+// EnsureNetworkNftUnit is a no-op on non-Linux platforms.
+func EnsureNetworkNftUnit(_ context.Context) error { return nil }

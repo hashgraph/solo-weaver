@@ -76,6 +76,12 @@ func (h *InstallHandler) BuildWorkflow(
 				// is already installed/enabled from that prior cluster provisioning,
 				// so it's safe to apply here.
 				steps.NetworkFirewallCreate(),
+				// Re-render network-weaver.nft from the policy registry and restart
+				// the shared oneshot so systemd's RemainAfterExit state reflects both
+				// the host and weaver tables.
+				steps.NftWeaverPersist(),
+				// Render and install the $EGRESS HTB boot-persistence script and
+				// oneshot unit.
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 			)
@@ -96,6 +102,12 @@ func (h *InstallHandler) BuildWorkflow(
 				// systemSetupWorkflow; apply the host firewall here rather than in
 				// that generic (node-type-agnostic) workflow.
 				steps.NetworkFirewallCreate(),
+				// Re-render network-weaver.nft from the policy registry and restart
+				// the shared oneshot so systemd's RemainAfterExit state reflects both
+				// the host and weaver tables.
+				steps.NftWeaverPersist(),
+				// Render and install the $EGRESS HTB boot-persistence script and
+				// oneshot unit.
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 			)

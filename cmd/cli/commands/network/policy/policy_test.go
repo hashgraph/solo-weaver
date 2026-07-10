@@ -410,10 +410,11 @@ func TestDeleteCmd_RemovesPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, env.runVerb(t, "delete", "--name", "bn-restricted"))
-	// .nft no longer contains the policy.
-	onDisk, readErr := os.ReadFile(env.nftPath)
-	require.NoError(t, readErr)
-	require.NotContains(t, string(onDisk), "bn-restricted")
+	// Deleting the last policy tears the table down rather than persisting an
+	// empty policy-drop chain: the .nft file is removed (boot replays nothing)
+	// and the live inet weaver table is deleted.
+	require.NoFileExists(t, env.nftPath)
+	require.Empty(t, env.runner.applied, "live inet weaver table must be torn down after the last policy is deleted")
 }
 
 func TestDeleteCmd_PolicyNotFound(t *testing.T) {

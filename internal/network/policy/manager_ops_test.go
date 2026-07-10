@@ -268,22 +268,20 @@ func TestDelete_PreservesSiblingMembership(t *testing.T) {
 	require.Empty(t, r.elements["bn-publisher"], "deleted policy's set no longer present")
 }
 
-func TestDelete_LastPolicy_AppliesEmptyChain(t *testing.T) {
+func TestDelete_LastPolicy_TearsDownTable(t *testing.T) {
 	r := newFakeRunner()
-	m, nftPath, _ := newTestManager(t, r)
+	m, nftPath, regDir := newTestManager(t, r)
 	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
 
 	require.NoError(t, m.Delete(context.Background(), "bn-restricted"))
 
-	// The table is still live (empty chain, policy drop, no rules).
-	require.True(t, r.exists, "table must still exist after last policy is deleted")
-
-	// The .nft file was updated and no longer contains the deleted policy.
-	onDisk, err := os.ReadFile(nftPath)
-	require.NoError(t, err)
-	require.NotContains(t, string(onDisk), "bn-restricted")
-	// Chain structure is intact with policy drop.
-	require.Contains(t, string(onDisk), "policy drop")
+	// Deleting the last policy tears the whole table down rather than applying
+	// an empty policy-drop chain that would blackhole all forwarded traffic.
+	require.False(t, r.exists, "inet weaver table must be deleted after the last policy is removed")
+	// The persisted file is removed so the boot oneshot replays nothing.
+	require.NoFileExists(t, nftPath)
+	// The registry entry is gone.
+	require.NoFileExists(t, filepath.Join(regDir, "bn-restricted.json"))
 }
 
 func TestDelete_PolicyNotFound(t *testing.T) {

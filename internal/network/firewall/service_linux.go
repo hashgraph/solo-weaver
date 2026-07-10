@@ -19,15 +19,16 @@ import (
 // it for boot, and restarts it so the kernel picks up the just-written
 // network-host.nft immediately — all via DBus, no nft exec for the apply path.
 func defaultApplyViaService(ctx context.Context) error {
-	if err := ensureNetworkNftUnit(ctx); err != nil {
+	if err := EnsureNetworkNftUnit(ctx); err != nil {
 		return err
 	}
 	return soos.RestartService(ctx, NetworkNftService)
 }
 
-// ensureNetworkNftUnit writes the embedded service unit on first call.
-// Stat-and-skip so repeated mutations don't re-write on every call.
-func ensureNetworkNftUnit(ctx context.Context) error {
+// EnsureNetworkNftUnit writes the embedded service unit file to
+// NetworkNftServiceUnitPath if it is absent, then daemon-reloads and enables
+// the unit for boot. Stat-and-skip so repeated calls are a fast no-op.
+func EnsureNetworkNftUnit(ctx context.Context) error {
 	if _, err := os.Stat(NetworkNftServiceUnitPath); err == nil {
 		return nil // already installed — fast path
 	}
