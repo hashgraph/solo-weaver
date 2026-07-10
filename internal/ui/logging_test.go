@@ -3,14 +3,51 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/automa-saga/logx"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestNewJSONConsoleLogger_EmitsJSON verifies the --output json logger writes a
+// parseable single-line JSON object (NDJSON) to stdout with the level, message,
+// and structured fields intact.
+func TestNewJSONConsoleLogger_EmitsJSON(t *testing.T) {
+	origLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
+
+	cfg := logx.LoggingConfig{Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
+
+	// Capture stdout: newJSONConsoleLogger binds os.Stdout at construction, so
+	// swap it before building the logger, then restore before reading.
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	logger := newJSONConsoleLogger(cfg)
+	os.Stdout = old
+
+	logger.Info().Str("step_id", "validate-cpu").Msg("hello")
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	line := strings.TrimSpace(buf.String())
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(line), &m), "stdout is not JSON: %q", line)
+	assert.Equal(t, "hello", m["message"])
+	assert.Equal(t, "validate-cpu", m["step_id"])
+	assert.Equal(t, "info", m["level"])
+}
 
 func TestSanitizeDetail_TruncatesLongMessages(t *testing.T) {
 	long := strings.Repeat("a", 250)

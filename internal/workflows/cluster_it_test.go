@@ -54,7 +54,7 @@ func Test_ClusterSetup(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error)
 
-	steps.PrintWorkflowReport(report, "")
+	require.NoError(t, steps.PrintWorkflowReport(report, ""))
 	require.Equal(t, automa.StatusSuccess, report.Status)
 }
 
@@ -70,7 +70,7 @@ func Test_ClusterTeardown(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error)
 
-	steps.PrintWorkflowReport(report, "")
+	require.NoError(t, steps.PrintWorkflowReport(report, ""))
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
 	// Verify system is clean after uninstall

@@ -8,27 +8,21 @@ import (
 	"github.com/automa-saga/version"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // renderVersion renders the running binary's build metadata (stamped at build
 // time via -ldflags -X into github.com/automa-saga/version) in the requested
-// output format. JSON is the historical default. YAML is produced by marshaling
-// the yaml-tagged Info directly, as documented by automa-saga/version (whose
-// Format only marshals json/text to stay dependency-free).
+// output format. Text is the default; "json" produces machine-readable JSON.
+// These mirror the global --output values (text, json).
 func renderVersion(format string) (string, error) {
 	info := version.Get()
 	switch strings.ToLower(format) {
-	case "", version.FormatJSON:
+	case version.FormatJSON:
 		return info.Format(version.FormatJSON)
-	case "yaml":
-		out, err := yaml.Marshal(info)
-		if err != nil {
-			return "", errorx.IllegalFormat.Wrap(err, "Error marshaling version info to YAML")
-		}
-		return string(out), nil
+	case "", version.FormatText:
+		return info.Format(version.FormatText)
 	default:
-		return "", errorx.IllegalFormat.New("unsupported format: %s", format)
+		return "", errorx.IllegalFormat.New("unsupported format %q (want text or json)", format)
 	}
 }
 

@@ -43,8 +43,8 @@ func FlagOutputFormat() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "output",
 		ShortName:   "o",
-		Description: "Output format (json, yaml)",
-		Default:     "json",
+		Description: "Output format (text, json)",
+		Default:     "text",
 	}
 }
 

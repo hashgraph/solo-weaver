@@ -43,7 +43,6 @@ var (
 	// Used for flags.
 	flagConfig             string
 	flagVersion            bool
-	flagOutputFormat       string
 	flagSkipHardwareChecks bool
 	flagForce              bool
 	flagLogLevel           string
@@ -57,7 +56,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
-				out, err := renderVersion(flagOutputFormat)
+				out, err := renderVersion(common.OutputFormat)
 				if err != nil {
 					return err
 				}
@@ -77,7 +76,7 @@ func init() {
 	common.FlagConfig().SetVarP(rootCmd, &flagConfig, false)
 	// support '--version', '-v' to show version information
 	common.FlagVersion().SetVarP(rootCmd, &flagVersion, false)
-	common.FlagOutputFormat().SetVarP(rootCmd, &flagOutputFormat, false)
+	common.FlagOutputFormat().SetVarP(rootCmd, &common.OutputFormat, false)
 
 	// Verbose output flag — -V enables expanded step-by-step output
 	common.FlagVerbose().SetVarP(rootCmd, &ui.VerboseLevel)
@@ -160,7 +159,11 @@ func Execute(ctx context.Context) error {
 
 	cobra.OnInitialize(func() {
 		initConfig(ctx)
-		fmt.Print(ui.RenderVersionHeader())
+		// The styled version header is human chrome; suppress it in JSON mode so
+		// it never pollutes the NDJSON stdout stream (e.g. with -o json -V).
+		if !common.OutputIsJSON() {
+			fmt.Print(ui.RenderVersionHeader())
+		}
 	})
 
 	// execute the root command
@@ -239,13 +242,25 @@ func initConfig(ctx context.Context) {
 		logConfig.MaxAge = 30 // 30 days
 	}
 
-	if ui.IsUnformatted() {
+	switch {
+	case common.OutputIsJSON():
+		// Machine-readable mode (--output json): force non-interactive so the
+		// TUI never owns stdout, and emit NDJSON log lines to stdout (and the
+		// log file) instead of the human-readable ConsoleWriter.
+		ui.NonInteractive = true
+		logConfig.ConsoleLogging = false
+		err = logx.Initialize(logConfig)
+		if err != nil {
+			doctor.CheckErr(ctx, err)
+		}
+		ui.SetJSONConsoleLogging(logConfig)
+	case ui.IsUnformatted():
 		// Raw mode: let zerolog write directly to the console (no suppression).
 		err = logx.Initialize(logConfig)
 		if err != nil {
 			doctor.CheckErr(ctx, err)
 		}
-	} else {
+	default:
 		// Suppress console logging — the TUI owns stdout, not zerolog.
 		// Raw log lines go only to the log file.
 		logConfig.ConsoleLogging = false

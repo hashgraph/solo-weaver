@@ -46,10 +46,26 @@ These flags are available for all commands:
 |---------------------|-------|----------------------------------------------------------|----------------------------|
 | `--config`          | `-c`  | Path to configuration file                               | None                       |
 | `--profile`         | `-p`  | Deployment profile                                       | Required for most commands |
-| `--output`          | `-o`  | Output format (yaml\|json)                               | `yaml`                     |
+| `--output`          | `-o`  | Output format (text, json)                               | `text`                     |
 | `--non-interactive` | —     | Disable TUI and output raw logs; useful for CI/pipelines | `false`                    |
 | `--version`         | `-v`  | Show version                                             | -                          |
 | `--help`            | `-h`  | Show help                                                | -                          |
+
+> **About `--output`:** selects the **stdout format**.
+> - **`text`** (default) — human-readable output: the interactive TUI on a
+>   terminal, or plain console log lines when piped / `--non-interactive`.
+> - **`json`** — machine-readable output for automation (Ansible, `jq`, CI).
+>   Emits one JSON object per log event (NDJSON) on stdout, followed by a final
+>   tagged summary object `{"type":"summary","status":…,"report_path":…,"report":{…}}`.
+>   Select it with `jq 'select(.type=="summary")'` (a trailing log line may
+>   follow, so filter by the tag rather than assuming it is the last line).
+>   Passing `-o json` **forces non-interactive mode** (the TUI never renders),
+>   matching common tooling (`kubectl -o json`, `terraform -json`). Human error
+>   panels still go to **stderr**, so the stdout JSON stream stays clean.
+>
+> The YAML workflow report file (`setup_report_<timestamp>.yaml`) is written in
+> both modes regardless of `-o`; its path is reported in the `report_path=…`
+> field (and in the JSON summary object).
 
 ### Error Handling Flags
 
@@ -992,7 +1008,7 @@ sudo solo-provisioner consensus migration soak status
 #### Show Version
 
 ```bash
-# Default YAML output
+# Default human-readable text output
 solo-provisioner version
 
 # JSON output
@@ -1294,7 +1310,7 @@ sudo solo-provisioner consensus migration soak stop   [--keep-state]
 sudo solo-provisioner consensus migration soak status
 
 # UTILITIES
-solo-provisioner version [--output=json|yaml]
+solo-provisioner version [--output=text|json]
 solo-provisioner --help
 ```
 

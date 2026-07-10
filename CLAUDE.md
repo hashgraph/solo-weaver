@@ -22,6 +22,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - A code review checklist (one bullet per key invariant to verify)
    - Commands to run unit and integration tests for the changed code
    - Step-by-step manual UAT instructions (with expected output snippets)
+
+   **This guide is for local use only.** The `docs/claude/` folder is gitignored (`.gitignore`), so the guide stays on your machine and must **never** be committed or `git add -f`'d — it must not appear in any PR or in this public repository.
 3. **Every commit** must use a [Conventional Commits](https://www.conventionalcommits.org/) subject line (e.g. `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`) and be created with both `-s` (sign-off) and `-S` (GPG sign) flags:
    ```bash
    git commit -sS -m "type(scope): short description"
