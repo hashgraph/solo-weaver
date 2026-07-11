@@ -330,14 +330,17 @@ func storagePathField(p InputPrompt, active func() bool) huh.Field {
 //   - targets:      pointers to the seven storage path flag variables
 //   - cv:           chosen-values collector for summary printing
 //
-// The optional-storage prompts (verification, plugins, application-state) are
-// gated on the registry's RequiredByVersion for the *live* chart version. Each
-// optional path lives in its own huh group whose WithHideFunc re-reads
-// *chartVersion (huh can hide only whole groups, not individual fields), so
-// editing the chart-version input earlier in the same wizard re-shapes which
-// optional paths are shown — and the individual-paths label — when the operator
-// navigates forward. chartVersion is taken by pointer so huh's dynamic-func
-// bindings observe those later edits.
+// All individual paths — the always-present core paths (archive, live, log) plus
+// the optional paths (verification, plugins, application-state) — live on a single
+// wizard page (one huh group). The optional paths are gated on the registry's
+// RequiredByVersion for the *live* chart version: each optional input is wrapped in
+// a hidableField whose hidden func re-reads *chartVersion, so huh skips and renders
+// it empty when it does not apply. Because huh can hide only whole groups (not
+// individual fields) yet recomputes field positions on every keypress, this keeps
+// every applicable path on one page while still re-shaping which optional paths are
+// shown — and the individual-paths label — as the operator edits the chart-version
+// input earlier in the same wizard. chartVersion is taken by pointer so huh's
+// dynamic-func bindings observe those later edits.
 func AddStoragePathPrompts(
 	w *Wizard,
 	cmd *cobra.Command,
@@ -417,13 +420,14 @@ func AddStoragePathPrompts(
 	baseGroup := huh.NewGroup(storagePathField(basePrompt, inBaseMode)).
 		WithHideFunc(func() bool { return !inBaseMode() })
 
-	// ── Pages: individual path inputs (shown only in individual mode) ─────────
-	// Core paths (archive, live, log) apply to every chart version and share one
-	// group. Each optional path lives in its own group whose visibility tracks the
-	// live chart version, because huh can hide only whole groups, not fields.
-	// Per-path defaults derive from the effective base path so inputs are pre-filled
-	// even without explicit per-path config; subdirectory names mirror those used by
-	// GetStoragePaths at workflow time.
+	// ── Page: individual path inputs (shown only in individual mode) ──────────
+	// All individual paths share a single group (one page). Core paths (archive,
+	// live, log) apply to every chart version; each optional path is wrapped in a
+	// hidableField whose visibility tracks the live chart version, because huh can
+	// hide only whole groups, not fields. Per-path defaults derive from the
+	// effective base path so inputs are pre-filled even without explicit per-path
+	// config; subdirectory names mirror those used by GetStoragePaths at workflow
+	// time.
 	indivDefault := func(subdir string) string { return path.Join(baseEff, subdir) }
 
 	// indivEntry couples an individual-path prompt with the optional-storage name it
@@ -454,21 +458,22 @@ func AddStoragePathPrompts(
 		}
 	}
 
-	var coreFields []huh.Field
-	var optGroups []*huh.Group
+	// All individual-path fields go into one group. Core paths render whenever the
+	// group is shown; each optional path is wrapped in a hidableField so it is
+	// skipped and rendered empty when it does not apply to the live chart version —
+	// letting a single page carry a version-dependent set of fields.
+	var indivFields []huh.Field
 	for i := range entries {
 		e := entries[i]
 		*e.prompt.Target = e.prompt.EffectiveValue // pre-fill so the input shows the default
 		active := visible(e)
 		field := storagePathField(e.prompt, active)
-		if e.optName == "" {
-			coreFields = append(coreFields, field)
-			continue
+		if e.optName != "" {
+			field = newHidableField(field, func() bool { return !active() })
 		}
-		// One group per optional path so its visibility can track the live version.
-		optGroups = append(optGroups, huh.NewGroup(field).WithHideFunc(func() bool { return !active() }))
+		indivFields = append(indivFields, field)
 	}
-	coreGroup := huh.NewGroup(coreFields...).
+	indivGroup := huh.NewGroup(indivFields...).
 		WithHideFunc(func() bool { return !inIndividualMode() })
 
 	// afterRun records the mode, normalises targets so downstream storage-mode
@@ -496,8 +501,7 @@ func AddStoragePathPrompts(
 		}
 	}
 
-	groups := append([]*huh.Group{modeGroup, baseGroup, coreGroup}, optGroups...)
-	w.addGroups(after, groups...)
+	w.addGroups(after, modeGroup, baseGroup, indivGroup)
 }
 
 // RunStoragePathPrompts presents the storage-path prompts as a standalone wizard.
