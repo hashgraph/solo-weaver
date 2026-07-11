@@ -177,6 +177,17 @@ func flagWasSet(cmd *cobra.Command, name string) bool {
 type Wizard struct {
 	groups   []*huh.Group
 	afterRun []func()
+	// themeOverrides holds groups that need a theme distinct from the wizard's
+	// shared SoloTheme, re-applied after the form's base theme in Run because
+	// huh.Form.WithTheme overwrites every group's theme with the shared one.
+	themeOverrides []themedGroup
+}
+
+// themedGroup pairs a group with the theme that must win over the wizard's
+// shared theme.
+type themedGroup struct {
+	group *huh.Group
+	theme *huh.Theme
 }
 
 // NewWizard returns an empty wizard ready to accumulate pages.
@@ -193,6 +204,13 @@ func (w *Wizard) addGroups(after func(), groups ...*huh.Group) {
 	}
 }
 
+// overrideTheme records a per-group theme that must be re-applied after the
+// form's shared theme (huh.Form.WithTheme clobbers each group's theme, so a
+// theme set at group-construction time would otherwise be lost).
+func (w *Wizard) overrideTheme(g *huh.Group, t *huh.Theme) {
+	w.themeOverrides = append(w.themeOverrides, themedGroup{group: g, theme: t})
+}
+
 // Run executes all accumulated groups in a single huh form, then fires the
 // afterRun callbacks (which is where all ChosenValues interaction happens). It is
 // a no-op (returns nil) when no pages were added — the same behaviour the
@@ -205,6 +223,12 @@ func (w *Wizard) Run() error {
 	form := huh.NewForm(w.groups...).
 		WithTheme(SoloTheme()).
 		WithShowHelp(true)
+
+	// Re-apply per-group theme overrides: WithTheme above set the shared theme on
+	// every group, so any group needing a different theme must be re-themed here.
+	for _, to := range w.themeOverrides {
+		to.group.WithTheme(to.theme)
+	}
 
 	if err := form.Run(); err != nil {
 		return wrapFormError(err)

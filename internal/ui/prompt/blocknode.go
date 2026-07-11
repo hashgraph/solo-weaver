@@ -330,14 +330,23 @@ func storagePathField(p InputPrompt, active func() bool) huh.Field {
 //   - targets:      pointers to the seven storage path flag variables
 //   - cv:           chosen-values collector for summary printing
 //
-// The optional-storage prompts (verification, plugins, application-state) are
-// gated on the registry's RequiredByVersion for the *live* chart version. Each
-// optional path lives in its own huh group whose WithHideFunc re-reads
-// *chartVersion (huh can hide only whole groups, not individual fields), so
-// editing the chart-version input earlier in the same wizard re-shapes which
-// optional paths are shown — and the individual-paths label — when the operator
-// navigates forward. chartVersion is taken by pointer so huh's dynamic-func
-// bindings observe those later edits.
+// All individual paths — the always-present core paths (archive, live, log) plus
+// the optional paths (verification, plugins, application-state) — live on a single
+// wizard page (one huh group). Every input is wrapped in a spacedField, and the
+// optional ones are gated on the registry's RequiredByVersion for the *live* chart
+// version: an optional field whose hidden func (re-reading *chartVersion) reports
+// not-applicable is skipped and rendered empty. Because huh can hide only whole
+// groups (not individual fields) yet recomputes field positions on every keypress,
+// this keeps every applicable path on one page while still re-shaping which
+// optional paths are shown — and the individual-paths label — as the operator edits
+// the chart-version input earlier in the same wizard. chartVersion is taken by
+// pointer so huh's dynamic-func bindings observe those later edits.
+//
+// The group runs with huh's built-in field separator zeroed
+// (soloThemeNoFieldSeparator, applied via the wizard's per-group theme override);
+// each spacedField instead prepends its own leading gap when an earlier field is
+// visible, so a hidden field in the middle leaves no doubled blank line and spacing
+// stays even no matter which optional paths are hidden.
 func AddStoragePathPrompts(
 	w *Wizard,
 	cmd *cobra.Command,
@@ -417,18 +426,19 @@ func AddStoragePathPrompts(
 	baseGroup := huh.NewGroup(storagePathField(basePrompt, inBaseMode)).
 		WithHideFunc(func() bool { return !inBaseMode() })
 
-	// ── Pages: individual path inputs (shown only in individual mode) ─────────
-	// Core paths (archive, live, log) apply to every chart version and share one
-	// group. Each optional path lives in its own group whose visibility tracks the
-	// live chart version, because huh can hide only whole groups, not fields.
-	// Per-path defaults derive from the effective base path so inputs are pre-filled
-	// even without explicit per-path config; subdirectory names mirror those used by
-	// GetStoragePaths at workflow time.
+	// ── Page: individual path inputs (shown only in individual mode) ──────────
+	// All individual paths share a single group (one page). Core paths (archive,
+	// live, log) apply to every chart version; each optional path is wrapped in a
+	// hidableField whose visibility tracks the live chart version, because huh can
+	// hide only whole groups, not fields. Per-path defaults derive from the
+	// effective base path so inputs are pre-filled even without explicit per-path
+	// config; subdirectory names mirror those used by GetStoragePaths at workflow
+	// time.
 	indivDefault := func(subdir string) string { return path.Join(baseEff, subdir) }
 
 	// indivEntry couples an individual-path prompt with the optional-storage name it
 	// represents ("" for a core path that always applies). optName drives both the
-	// per-group hide func and the afterRun applicability filter.
+	// per-field hide predicate (via hidableField) and the afterRun applicability filter.
 	type indivEntry struct {
 		prompt  InputPrompt
 		optName string
@@ -454,22 +464,42 @@ func AddStoragePathPrompts(
 		}
 	}
 
-	var coreFields []huh.Field
-	var optGroups []*huh.Group
+	// Pre-compute a visibility predicate per entry so each field can decide both
+	// its own visibility and whether any earlier field is already visible (which is
+	// when it must render a leading gap).
+	visFns := make([]func() bool, len(entries))
 	for i := range entries {
-		e := entries[i]
-		*e.prompt.Target = e.prompt.EffectiveValue // pre-fill so the input shows the default
-		active := visible(e)
-		field := storagePathField(e.prompt, active)
-		if e.optName == "" {
-			coreFields = append(coreFields, field)
-			continue
-		}
-		// One group per optional path so its visibility can track the live version.
-		optGroups = append(optGroups, huh.NewGroup(field).WithHideFunc(func() bool { return !active() }))
+		visFns[i] = visible(entries[i])
 	}
-	coreGroup := huh.NewGroup(coreFields...).
+
+	// All individual-path fields go into a single group (one page). Every field is
+	// wrapped in a spacedField: an optional path that does not apply to the live
+	// chart version renders empty and is skipped, and each shown field owns exactly
+	// one leading gap so spacing stays even regardless of which fields are hidden.
+	// The group runs with huh's own field separator zeroed (the theme override
+	// below) so those per-field gaps are not doubled.
+	var indivFields []huh.Field
+	for i := range entries {
+		idx := i
+		e := entries[idx]
+		*e.prompt.Target = e.prompt.EffectiveValue // pre-fill so the input shows the default
+		field := storagePathField(e.prompt, visFns[idx])
+		hidden := func() bool { return !visFns[idx]() }
+		leadingGap := func() bool {
+			for j := 0; j < idx; j++ {
+				if visFns[j]() {
+					return true
+				}
+			}
+			return false
+		}
+		indivFields = append(indivFields, newSpacedField(field, hidden, leadingGap))
+	}
+	indivGroup := huh.NewGroup(indivFields...).
 		WithHideFunc(func() bool { return !inIndividualMode() })
+	// Zero huh's inter-field separator for this group so hidden fields leave no gap
+	// and each visible field's own leading gap keeps spacing even.
+	w.overrideTheme(indivGroup, soloThemeNoFieldSeparator())
 
 	// afterRun records the mode, normalises targets so downstream storage-mode
 	// inference is unambiguous (both variants are pre-filled, so the unused one must
@@ -496,8 +526,7 @@ func AddStoragePathPrompts(
 		}
 	}
 
-	groups := append([]*huh.Group{modeGroup, baseGroup, coreGroup}, optGroups...)
-	w.addGroups(after, groups...)
+	w.addGroups(after, modeGroup, baseGroup, indivGroup)
 }
 
 // RunStoragePathPrompts presents the storage-path prompts as a standalone wizard.

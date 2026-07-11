@@ -126,10 +126,10 @@ func TestAddStoragePathPrompts_BaseModeNormalisesTargets(t *testing.T) {
 	w := NewWizard()
 	AddStoragePathPrompts(w, cmd, defaults, &chartVersion, targets, cv)
 
-	// mode group + base-path group + core-paths group + one group per optional
-	// storage (verification, plugins, application-state).
-	if len(w.groups) != 6 || len(w.afterRun) != 1 {
-		t.Fatalf("expected 6 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
+	// mode group + base-path group + one individual-paths group (core + optional
+	// paths share a single page via hidableField).
+	if len(w.groups) != 3 || len(w.afterRun) != 1 {
+		t.Fatalf("expected 3 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
 	}
 
 	// Firing afterRun with the default (base) mode must clear the individual
@@ -165,8 +165,8 @@ func TestAddStoragePathPrompts_IndividualModeClearsBasePath(t *testing.T) {
 	w := NewWizard()
 	AddStoragePathPrompts(w, cmd, defaults, &chartVersion, targets, cv)
 
-	if len(w.groups) != 6 || len(w.afterRun) != 1 {
-		t.Fatalf("expected 6 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
+	if len(w.groups) != 3 || len(w.afterRun) != 1 {
+		t.Fatalf("expected 3 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
 	}
 
 	// Individual mode must clear the base path and keep the required per-path
