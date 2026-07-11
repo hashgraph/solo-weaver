@@ -438,7 +438,7 @@ func AddStoragePathPrompts(
 
 	// indivEntry couples an individual-path prompt with the optional-storage name it
 	// represents ("" for a core path that always applies). optName drives both the
-	// per-group hide func and the afterRun applicability filter.
+	// per-field hide predicate (via hidableField) and the afterRun applicability filter.
 	type indivEntry struct {
 		prompt  InputPrompt
 		optName string
