@@ -806,6 +806,26 @@ sudo solo-provisioner eso operator install --chart-version 0.20.2
 | `--namespace`     | `external-secrets` | Kubernetes namespace to install the External Secrets Operator into                                                   |
 | `--chart-version` | _(catalog default)_ | External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default) |
 
+#### Uninstall External Secrets Operator
+
+Uninstall the ESO Helm release. The command is idempotent: if ESO is not installed in the target namespace, uninstallation is skipped with a clear message.
+
+> **Warning:** uninstalling ESO removes its cluster-scoped CRDs, which deletes every `ExternalSecret`/`SecretStore` resource in the cluster (and the Kubernetes Secrets they sync). Do not run this while other components still rely on synced secrets.
+
+```bash
+# Uninstall from the default namespace (external-secrets)
+sudo solo-provisioner eso operator uninstall
+
+# Uninstall from a custom namespace
+sudo solo-provisioner eso operator uninstall --namespace my-eso
+```
+
+**Additional Flags**:
+
+| Flag          | Default            | Description                                                        |
+|---------------|--------------------|--------------------------------------------------------------------|
+| `--namespace` | `external-secrets` | Kubernetes namespace the External Secrets Operator is installed in |
+
 ---
 
 ### Alloy Commands
@@ -1414,6 +1434,7 @@ sudo solo-provisioner teleport cluster uninstall
 
 # EXTERNAL SECRETS OPERATOR (ESO)
 sudo solo-provisioner eso operator install    [--namespace=<ns>] [--chart-version=<version>]
+sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
 
 # ALLOY
 sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-name=<name>]
