@@ -16,6 +16,7 @@ var operatorCmd = &cobra.Command{
 
 func init() {
 	operatorCmd.AddCommand(installCmd)
+	operatorCmd.AddCommand(uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {
