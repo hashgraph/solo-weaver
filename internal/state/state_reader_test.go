@@ -6,6 +6,8 @@ package state
 
 import (
 	"testing"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 func TestReadProvisionerVersion_ParsesCorrectly(t *testing.T) {
@@ -96,6 +98,7 @@ state:
       logPath: /mnt/log
       verificationPath: /mnt/verification
       pluginsPath: /mnt/plugins
+      applicationStatePath: /mnt/app-state
 `)
 	var doc PromptDefaultsDoc
 	if err := unmarshalStateDoc(data, &doc); err != nil {
@@ -144,6 +147,36 @@ state:
 	}
 	if bn.Storage.PluginsPath != "/mnt/plugins" {
 		t.Errorf("expected Storage.PluginsPath '/mnt/plugins', got %q", bn.Storage.PluginsPath)
+	}
+	if bn.Storage.ApplicationStatePath != "/mnt/app-state" {
+		t.Errorf("expected Storage.ApplicationStatePath '/mnt/app-state', got %q", bn.Storage.ApplicationStatePath)
+	}
+}
+
+func TestReadPromptDefaults_ApplicationStatePathFlowsThroughToModel(t *testing.T) {
+	data := []byte(`
+state:
+  blockNodeState:
+    storage:
+      applicationStatePath: /mnt/app-state
+`)
+	var doc PromptDefaultsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	bn := doc.State.BlockNodeState
+	storage := models.BlockNodeStorage{
+		BasePath:             bn.Storage.BasePath,
+		ArchivePath:          bn.Storage.ArchivePath,
+		LivePath:             bn.Storage.LivePath,
+		LogPath:              bn.Storage.LogPath,
+		VerificationPath:     bn.Storage.VerificationPath,
+		PluginsPath:          bn.Storage.PluginsPath,
+		ApplicationStatePath: bn.Storage.ApplicationStatePath,
+	}
+	if storage.ApplicationStatePath != "/mnt/app-state" {
+		t.Errorf("expected ApplicationStatePath '/mnt/app-state' in model, got %q", storage.ApplicationStatePath)
 	}
 }
 
