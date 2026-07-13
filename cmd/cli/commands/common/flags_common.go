@@ -120,6 +120,15 @@ func FlagESOChartVersion() FlagDefinition[string] {
 	}
 }
 
+func FlagESOUninstallNamespace() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "namespace",
+		ShortName:   "",
+		Description: "Kubernetes namespace the External Secrets Operator is installed in",
+		Default:     "external-secrets",
+	}
+}
+
 func FlagMetricsServer() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
 		Name:        "metrics-server",
