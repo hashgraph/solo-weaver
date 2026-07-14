@@ -10,6 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -24,6 +25,46 @@ const (
 	FlagNamePodCIDR         = "pod-cidr"
 	FlagNameInClusterPorts  = "in-cluster-ports"
 )
+
+// ValidateHostFirewallFlags validates format-sensitive host-firewall flags that
+// are only caught in ResolveHostFirewallConfig — which runs after the interactive
+// wizard. Call this at the top of RunE, before prepareBlocknodeInputs, so
+// operators get immediate feedback for invalid CLI inputs.
+//
+// Only flags explicitly Changed on the CLI are checked; un-set flags fall back
+// to config / built-in defaults and are validated later inside
+// ResolveHostFirewallConfig as always.
+func ValidateHostFirewallFlags(cmd *cobra.Command) error {
+	if cmd.Flags().Changed(FlagNameSSHPort) {
+		port, _ := cmd.Flags().GetInt(FlagNameSSHPort)
+		if err := sanity.ValidatePort(strconv.Itoa(port)); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --%s %d", FlagNameSSHPort, port)
+		}
+	}
+	if cmd.Flags().Changed(FlagNameInClusterPorts) {
+		ports, _ := cmd.Flags().GetIntSlice(FlagNameInClusterPorts)
+		for _, p := range ports {
+			if err := sanity.ValidatePort(strconv.Itoa(p)); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "invalid --%s %d", FlagNameInClusterPorts, p)
+			}
+		}
+	}
+	if cmd.Flags().Changed(FlagNameMgmtCIDRs) {
+		cidrs, _ := cmd.Flags().GetStringSlice(FlagNameMgmtCIDRs)
+		for _, cidr := range normalizeCIDRs(cidrs) {
+			if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", FlagNameMgmtCIDRs, cidr)
+			}
+		}
+	}
+	if cmd.Flags().Changed(FlagNamePodCIDR) {
+		podCIDR, _ := cmd.Flags().GetString(FlagNamePodCIDR)
+		if err := sanity.ValidateIPv4CIDR(strings.TrimSpace(podCIDR)); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", FlagNamePodCIDR, podCIDR)
+		}
+	}
+	return nil
+}
 
 // RegisterHostFirewallFlags registers the node-level host firewall flags on cmd.
 // The values are read back by name in ResolveHostFirewallConfig (no bound vars),

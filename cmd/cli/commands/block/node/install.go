@@ -18,7 +18,13 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateBlockNodeFlags(cmd); err != nil {
+			return err
+		}
 		if err := common.ValidateEgressFlags(cmd, flagLinkRate); err != nil {
+			return err
+		}
+		if err := common.ValidateHostFirewallFlags(cmd); err != nil {
 			return err
 		}
 
