@@ -41,14 +41,10 @@ type classRenderData struct {
 }
 
 // renderTcEgressScript renders the tc-egress.sh template with default
-// SPEED-based rate expressions (preserving the pre-shape-config install-time
-// rendering for backward compatibility with `block node install`).
-// speedMbit > 0 bakes the link rate into the script, bypassing sysfs detection
-// at boot; pass 0 to keep the auto-detect behaviour.
-func renderTcEgressScript(nicName string, speedMbit int) (string, error) {
-	data := defaultScriptData(nicName)
-	data.SpeedMbit = speedMbit
-	return renderTcEgressScriptFromData(data)
+// SPEED-based rate expressions, preserving backward compatibility when no
+// shape config exists. SpeedMbit is left at 0 (sysfs auto-detect at boot).
+func renderTcEgressScript(nicName string) (string, error) {
+	return renderTcEgressScriptFromData(defaultScriptData(nicName))
 }
 
 // renderTcEgressScriptFromConfig renders the tc-egress.sh template from the
@@ -113,18 +109,15 @@ func renderTcEgressScriptFromData(data scriptData) (string, error) {
 }
 
 // RenderTcEgressScript renders the tc-egress.sh boot script with the given NIC
-// name and writes it atomically to TcEgressScriptPath (mode 0755). If the
-// on-disk content is already identical (SHA-256 match) the write is skipped
-// and the function returns nil — making it safe to call from idempotent install flows.
-//
-// speedMbit sets the link rate in Mbit/s directly in the rendered script,
-// bypassing the runtime sysfs detection. Pass 0 to keep the auto-detect
-// behaviour (reads /sys/class/net/<nic>/speed at boot, falls back to 1000).
-func RenderTcEgressScript(nicName string, speedMbit int) error {
+// name using sysfs speed auto-detect and writes it atomically to
+// TcEgressScriptPath (mode 0755). If the on-disk content is already identical
+// (SHA-256 match) the write is skipped — making it safe to call from idempotent
+// install flows. Use Manager.ProvisionDefaultEgress when a trunk rate is known.
+func RenderTcEgressScript(nicName string) error {
 	if !nicNameRe.MatchString(nicName) {
 		return errorx.IllegalArgument.New("egress NIC name %q is invalid: must match %s", nicName, nicNameRe.String())
 	}
-	rendered, err := renderTcEgressScript(nicName, speedMbit)
+	rendered, err := renderTcEgressScript(nicName)
 	if err != nil {
 		return err
 	}

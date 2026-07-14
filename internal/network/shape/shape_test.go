@@ -65,7 +65,7 @@ func TestRenderTcEgressScript_NICInterpolated(t *testing.T) {
 }
 
 func TestRenderTcEgressScript_EmptyNIC(t *testing.T) {
-	if err := RenderTcEgressScript("", 0); err == nil {
+	if err := RenderTcEgressScript(""); err == nil {
 		t.Error("expected error for empty NIC name, got nil")
 	}
 }
@@ -98,7 +98,7 @@ func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 // renderScript is a test-only helper that calls renderTcEgressScript so tests
 // don't need to patch the global TcEgressScriptPath constant.
 func renderScript(nicName string) (string, error) {
-	return renderTcEgressScript(nicName, 0)
+	return renderTcEgressScript(nicName)
 }
 
 // --- New tests: renderTcEgressScriptFromConfig ---
@@ -362,26 +362,69 @@ func TestParseSpeedMbit(t *testing.T) {
 	}
 }
 
-func TestRenderTcEgressScript_BakedSpeed(t *testing.T) {
-	rendered, err := renderTcEgressScript("eth0", 1000)
-	if err != nil {
-		t.Fatalf("renderTcEgressScript: %v", err)
-	}
-	if !strings.Contains(rendered, "SPEED=1000") {
-		t.Errorf("rendered script missing baked SPEED=1000:\n%s", rendered)
-	}
-	if strings.Contains(rendered, `cat /sys/class/net`) {
-		t.Errorf("rendered script should not contain sysfs detection when speed is baked in:\n%s", rendered)
-	}
-}
-
 func TestRenderTcEgressScript_AutoDetectSpeed(t *testing.T) {
-	rendered, err := renderTcEgressScript("eth0", 0)
+	rendered, err := renderTcEgressScript("eth0")
 	if err != nil {
 		t.Fatalf("renderTcEgressScript: %v", err)
 	}
 	if !strings.Contains(rendered, `cat /sys/class/net/"$NIC"/speed`) {
-		t.Errorf("rendered script missing sysfs detection when speedMbit=0:\n%s", rendered)
+		t.Errorf("rendered script missing sysfs detection:\n%s", rendered)
+	}
+}
+
+func renderDefaultEgressScript(t *testing.T, trunkRate string) string {
+	t.Helper()
+	dev, classes, err := defaultEgressConfig(trunkRate)
+	if err != nil {
+		t.Fatalf("defaultEgressConfig(%q): %v", trunkRate, err)
+	}
+	rendered, err := renderTcEgressScriptFromConfig("eth0", dev, classes)
+	if err != nil {
+		t.Fatalf("renderTcEgressScriptFromConfig: %v", err)
+	}
+	return rendered
+}
+
+func TestDefaultEgressConfig_1gbit_ProportionalRates(t *testing.T) {
+	rendered := renderDefaultEgressScript(t, "1gbit")
+
+	// Explicit rates: SPEED variable must be absent.
+	if strings.Contains(rendered, "SPEED") {
+		t.Errorf("rendered script must not contain SPEED when rates are explicit:\n%s", rendered)
+	}
+	// Trunk at 1gbit.
+	if !strings.Contains(rendered, `htb rate "1gbit" ceil "1gbit"`) {
+		t.Errorf("trunk class missing 1gbit rate:\n%s", rendered)
+	}
+	// partner: 40%/70% of 1gbit = 400mbit/700mbit
+	if !strings.Contains(rendered, `rate "400mbit" ceil "700mbit"`) {
+		t.Errorf("partner class missing 400mbit/700mbit:\n%s", rendered)
+	}
+	// public: 30%/70% of 1gbit = 300mbit/700mbit
+	if !strings.Contains(rendered, `rate "300mbit" ceil "700mbit"`) {
+		t.Errorf("public class missing 300mbit/700mbit:\n%s", rendered)
+	}
+	// reserve-egress: 30%/100% = 300mbit / trunk (1gbit)
+	if !strings.Contains(rendered, `rate "300mbit" ceil "1gbit"`) {
+		t.Errorf("reserve-egress class missing 300mbit/1gbit:\n%s", rendered)
+	}
+}
+
+func TestDefaultEgressConfig_100mbit_ProportionalRates(t *testing.T) {
+	rendered := renderDefaultEgressScript(t, "100mbit")
+
+	if strings.Contains(rendered, "SPEED") {
+		t.Errorf("rendered script must not contain SPEED:\n%s", rendered)
+	}
+	// partner: 40mbit/70mbit; public: 30mbit/70mbit; reserve-egress: 30mbit/100mbit trunk
+	if !strings.Contains(rendered, `rate "40mbit" ceil "70mbit"`) {
+		t.Errorf("partner class missing 40mbit/70mbit:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `rate "30mbit" ceil "70mbit"`) {
+		t.Errorf("public class missing 30mbit/70mbit:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `rate "30mbit" ceil "100mbit"`) {
+		t.Errorf("reserve-egress class missing 30mbit/100mbit:\n%s", rendered)
 	}
 }
 

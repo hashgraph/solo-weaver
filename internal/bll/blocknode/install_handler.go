@@ -8,7 +8,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -61,7 +60,6 @@ func (h *InstallHandler) BuildWorkflow(
 	}
 
 	ins := inputs.Custom
-	egressSpeedMbit, _ := shape.ParseSpeedMbit(ins.LinkRate)
 
 	var wb *automa.WorkflowBuilder
 	if currentState.ClusterState.Created {
@@ -78,7 +76,7 @@ func (h *InstallHandler) BuildWorkflow(
 				// is already installed/enabled from that prior cluster provisioning,
 				// so it's safe to apply here.
 				steps.NetworkFirewallCreate(),
-				steps.TcEgressPersist(ins.EgressInterface, egressSpeedMbit),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 			)
 	} else {
@@ -98,7 +96,7 @@ func (h *InstallHandler) BuildWorkflow(
 				// systemSetupWorkflow; apply the host firewall here rather than in
 				// that generic (node-type-agnostic) workflow.
 				steps.NetworkFirewallCreate(),
-				steps.TcEgressPersist(ins.EgressInterface, egressSpeedMbit),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 			)
 	}

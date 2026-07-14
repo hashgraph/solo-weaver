@@ -468,7 +468,7 @@ func (m *Manager) renderAndApplyScript(ctx context.Context, nic string) error {
 		if len(classes) == 0 {
 			// Device configured but no classes yet: render the default SPEED-based
 			// script so the boot oneshot always runs a self-consistent hierarchy.
-			rendered, err = renderTcEgressScript(nic, 0)
+			rendered, err = renderTcEgressScript(nic)
 		} else {
 			rendered, err = renderTcEgressScriptFromConfig(nic, dev, classes)
 		}
@@ -476,7 +476,7 @@ func (m *Manager) renderAndApplyScript(ctx context.Context, nic string) error {
 			return err
 		}
 	} else {
-		rendered, err = renderTcEgressScript(nic, 0)
+		rendered, err = renderTcEgressScript(nic)
 		if err != nil {
 			return err
 		}
@@ -492,6 +492,76 @@ func (m *Manager) renderAndApplyScript(ctx context.Context, nic string) error {
 		return err
 	}
 	return m.applyEgress(ctx)
+}
+
+// defaultEgressConfig returns the device root and three default egress classes
+// at proportions derived from trunkRate (partner 40%/70%, public 30%/70%,
+// reserve-egress 30%/100%). Exposed as a package-internal helper so tests can
+// verify the computation without disk I/O.
+func defaultEgressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error) {
+	bps, err := parseBandwidthBps(trunkRate)
+	if err != nil {
+		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid trunk rate %q", trunkRate)
+	}
+	mbps := bps / 1_000_000
+	now := time.Now().UTC()
+	dev := &DeviceConfig{
+		Dir:          DirEgress,
+		Rate:         trunkRate,
+		DefaultClass: "reserve-egress",
+		CreatedAt:    now,
+	}
+	classes := []*ClassConfig{
+		{Name: "partner", Rate: fmt.Sprintf("%dmbit", mbps*40/100), Ceil: fmt.Sprintf("%dmbit", mbps*70/100), Prio: 0, CreatedAt: now},
+		{Name: "public", Rate: fmt.Sprintf("%dmbit", mbps*30/100), Ceil: fmt.Sprintf("%dmbit", mbps*70/100), Prio: 5, CreatedAt: now},
+		{Name: "reserve-egress", Rate: fmt.Sprintf("%dmbit", mbps*30/100), Ceil: trunkRate, Prio: 1, CreatedAt: now},
+	}
+	return dev, classes, nil
+}
+
+// ProvisionDefaultEgress configures the egress device root and three default
+// HTB classes at proportions derived from trunkRate (partner 40%/70%, public
+// 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
+// Existing configs are always replaced. Called by block node install so the
+// shape registry is the single source of truth from first install.
+func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string) error {
+	dev, classes, err := defaultEgressConfig(trunkRate)
+	if err != nil {
+		return err
+	}
+	return m.withLock(func() error {
+		if err := writeDevice(dev); err != nil {
+			return err
+		}
+		for _, cls := range classes {
+			if err := writeClass(cls); err != nil {
+				return err
+			}
+		}
+		return m.renderAndApplyScript(ctx, nicName)
+	})
+}
+
+// RenderAndApplyEgress renders the tc-egress boot script for nic from stored
+// shape config (if available) or the sysfs auto-detect default, then installs
+// and restarts tc-egress.service. Idempotent.
+func (m *Manager) RenderAndApplyEgress(ctx context.Context, nic string) error {
+	return m.renderAndApplyScript(ctx, nic)
+}
+
+// ProvisionDefaultEgressShape configures the egress shape registry with the
+// three default HTB classes at proportions derived from trunkRate, then renders
+// and applies the boot script. Convenience wrapper over NewManager().ProvisionDefaultEgress.
+func ProvisionDefaultEgressShape(ctx context.Context, nicName, trunkRate string) error {
+	return NewManager().ProvisionDefaultEgress(ctx, nicName, trunkRate)
+}
+
+// RenderAndApplyDefaultEgress renders the tc-egress script for nic from the
+// shape registry (or sysfs fallback when no config exists) and applies it.
+// Used when no trunk rate is supplied (e.g. block node reconfigure without
+// --link-rate).
+func RenderAndApplyDefaultEgress(ctx context.Context, nic string) error {
+	return NewManager().RenderAndApplyEgress(ctx, nic)
 }
 
 // withLock serialises a mutation behind a cross-command flock so concurrent

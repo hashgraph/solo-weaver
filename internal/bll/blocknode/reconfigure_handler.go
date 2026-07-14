@@ -8,7 +8,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -55,7 +54,6 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	}
 
 	ins := inputs.Custom
-	egressSpeedMbit, _ := shape.ParseSpeedMbit(ins.LinkRate)
 
 	var wb *automa.WorkflowBuilder
 	switch {
@@ -73,7 +71,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").
 			Steps(
 				steps.NetworkFirewallCreate(),
-				steps.TcEgressPersist(ins.EgressInterface, egressSpeedMbit),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.PurgeBlockNodeStorage(oldIns),
 				steps.RecreateBlockNodeStorage(ins),
 				steps.UpgradeBlockNode(ins),
@@ -97,7 +95,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
 			Steps(
 				steps.NetworkFirewallCreate(),
-				steps.TcEgressPersist(ins.EgressInterface, egressSpeedMbit),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.PurgeBlockNodeStorage(oldIns),
 				steps.UpgradeBlockNode(ins),
 			)
@@ -120,7 +118,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").
 				Steps(
 					steps.NetworkFirewallCreate(),
-					steps.TcEgressPersist(ins.EgressInterface, egressSpeedMbit),
+					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 					steps.UpgradeBlockNode(ins),
 				)
 		} else {
@@ -129,7 +127,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").
 				Steps(
 					steps.NetworkFirewallCreate(),
-					steps.TcEgressPersist(ins.EgressInterface, egressSpeedMbit),
+					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 					steps.UpgradeBlockNode(ins),
 					steps.RolloutRestartBlockNode(ins),
 				)

@@ -16,21 +16,18 @@ import (
 // TcEgressPersistStepId is the step ID for TcEgressPersist.
 const TcEgressPersistStepId = "tc-egress-persist"
 
-// TcEgressPersist renders /usr/local/sbin/solo-provisioner-tc-egress.sh with
-// the egress NIC name and optional link speed interpolated, installs and
-// enables the solo-provisioner-tc-egress.service oneshot unit, and executes
-// the script immediately so the kernel HTB hierarchy is live without waiting
-// for a reboot.
+// TcEgressPersist provisions the egress tc HTB hierarchy for reboot persistence.
+// When trunkRate is non-empty it writes the egress device root and three default
+// classes (partner/public/reserve-egress) at proportional rates into the shape
+// registry and renders the boot script from those explicit values. When
+// trunkRate is empty it re-renders the script from whatever shape config
+// already exists, falling back to sysfs auto-detect.
 //
 // When nicName is empty the NIC is auto-detected from the default route via
 // DetectEgressInterface. Pass --egress-interface to override on multi-NIC
 // hosts or when the default route does not identify the correct physical
 // interface.
-//
-// speedMbit sets the link rate in Mbit/s directly in the rendered script.
-// Pass 0 to keep the auto-detect behaviour (reads /sys/class/net/<nic>/speed
-// at boot, falls back to 1000 Mbit/s).
-func TcEgressPersist(nicName string, speedMbit int) *automa.StepBuilder {
+func TcEgressPersist(nicName string, trunkRate string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcEgressPersistStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Persisting tc-egress HTB hierarchy for reboot")
@@ -58,24 +55,26 @@ func TcEgressPersist(nicName string, speedMbit int) *automa.StepBuilder {
 				nic = detected
 			}
 
-			if err := shape.RenderTcEgressScript(nic, speedMbit); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
-			}
-			if err := shape.EnsureTcEgressUnit(ctx); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
-			}
-			if err := shape.ApplyTcEgressScript(ctx); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
+			if trunkRate != "" {
+				if err := shape.ProvisionDefaultEgressShape(ctx, nic, trunkRate); err != nil {
+					return automa.FailureReport(stp, automa.WithError(err))
+				}
+				return automa.SuccessReport(stp)
 			}
 
+			// No trunk rate supplied: re-render from existing shape registry (if
+			// populated) or sysfs auto-detect, then apply.
+			if err := shape.RenderAndApplyDefaultEgress(ctx, nic); err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
 			return automa.SuccessReport(stp)
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Rollback is a no-op: the script and unit are idempotent artifacts.
 			// Removing them would leave the kernel hierarchy installed but un-
-			// persisted — no worse than before this step ran. A dedicated
-			// `block node uninstall` step (Story 2.4 / #763) handles teardown.
+			// persisted — no worse than before this step ran. Teardown is handled
+			// by block node uninstall.
 			return automa.SkippedReport(stp,
-				automa.WithDetail("tc-egress rollback is a no-op; teardown is handled by block node uninstall (#763)"))
+				automa.WithDetail("tc-egress rollback is a no-op; teardown is handled by block node uninstall"))
 		})
 }
