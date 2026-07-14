@@ -23,11 +23,12 @@ import (
 // Egress mutations (Dir "egress") re-render TcEgressScriptPath and restart the
 // tc-egress.service oneshot so the kernel picks up changes immediately. Ingress
 // mutations (Dir "ingress") only write config; the daemon pod-lifecycle watcher
-// The daemon pod-lifecycle watcher reads them and applies them to each new veth interface.
+// reads them and applies them to each new veth interface.
 type Manager struct {
 	scriptPath  string
 	lockPath    string
 	nicDetect   func() (string, error)
+	speedDetect func(nic string) (int, bool)
 	applyEgress func(ctx context.Context) error
 	tcRunner    TCRunner
 }
@@ -37,6 +38,7 @@ type Config struct {
 	ScriptPath  string
 	LockPath    string
 	NICDetect   func() (string, error)
+	SpeedDetect func(nic string) (int, bool)
 	ApplyEgress func(ctx context.Context) error
 	TCRunner    TCRunner
 }
@@ -53,6 +55,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		scriptPath:  cfg.ScriptPath,
 		lockPath:    cfg.LockPath,
 		nicDetect:   cfg.NICDetect,
+		speedDetect: cfg.SpeedDetect,
 		applyEgress: cfg.ApplyEgress,
 		tcRunner:    cfg.TCRunner,
 	}
@@ -64,6 +67,9 @@ func NewManagerWithConfig(cfg Config) *Manager {
 	}
 	if m.nicDetect == nil {
 		m.nicDetect = DetectEgressInterface
+	}
+	if m.speedDetect == nil {
+		m.speedDetect = ReadLinkSpeedMbit
 	}
 	if m.applyEgress == nil {
 		m.applyEgress = ApplyTcEgressScript
@@ -84,8 +90,12 @@ func (m *Manager) CreateDevice(ctx context.Context, dev *DeviceConfig, force boo
 	if err := validateDir(dev.Dir); err != nil {
 		return false, err
 	}
-	if err := validateRate(dev.Rate); err != nil {
-		return false, err
+	// "auto" is a valid device rate meaning "detect link speed from sysfs at
+	// boot". All other non-empty values must be parseable bandwidth strings.
+	if strings.ToLower(strings.TrimSpace(dev.Rate)) != "auto" {
+		if err := validateRate(dev.Rate); err != nil {
+			return false, err
+		}
 	}
 	if err := validateDefaultClass(dev.DefaultClass, dev.Dir); err != nil {
 		return false, err
@@ -107,6 +117,7 @@ func (m *Manager) CreateDevice(ctx context.Context, dev *DeviceConfig, force boo
 		} else if dev.CreatedAt.IsZero() {
 			dev.CreatedAt = time.Now().UTC()
 		}
+		m.resolveAutoRate(dev)
 		if err := writeDevice(dev); err != nil {
 			return err
 		}
@@ -261,7 +272,10 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 				return errorx.Decorate(err,
 					"class config updated on disk but live tc class change failed; reboot or restart tc-egress.service to sync")
 			}
-			if err := m.renderAndApplyScript(ctx, nic); err != nil {
+			// Persist the boot script for reboot without restarting the service:
+			// the live tc class change above already updated the kernel, and a
+			// restart would tear down and rebuild the root qdisc.
+			if err := m.persistEgressScript(nic); err != nil {
 				return errorx.Decorate(err,
 					"live tc class change applied but boot script re-render failed; reboot may revert the change")
 			}
@@ -441,6 +455,48 @@ func (m *Manager) DeleteDevice(ctx context.Context, dir string) error {
 	})
 }
 
+// isAutoRate reports whether rate is the literal "auto" (case-insensitive),
+// the operator-facing request to detect the egress link speed at create time.
+func isAutoRate(rate string) bool {
+	return strings.EqualFold(strings.TrimSpace(rate), "auto")
+}
+
+// resolveAutoRateString resolves a rate of "auto" to a concrete tc bandwidth at
+// create time — the NIC's currently detected link speed when readable, else
+// DefaultLinkSpeedMbit (the same value the boot script's sysfs fallback would
+// use). This keeps the value explicit in the registry and the rendered script
+// (visible via `network shape show`, no SPEED variable, no sysfs read at boot),
+// even on a virtual NIC reporting -1. Non-"auto" rates are returned unchanged.
+// Shared by the `network shape` create path and `block node install`'s
+// ProvisionDefaultEgress so the two cannot drift.
+func (m *Manager) resolveAutoRateString(rate string) string {
+	if !isAutoRate(rate) {
+		return rate
+	}
+	if nic, err := m.nicDetect(); err == nil {
+		if mbit, ok := m.speedDetect(nic); ok {
+			resolved := FormatSpeedHint(mbit)
+			logx.As().Info().Str("nic", nic).Str("rate", resolved).Msg(
+				"resolved auto rate to detected link speed")
+			return resolved
+		}
+	}
+	resolved := FormatSpeedHint(DefaultLinkSpeedMbit)
+	logx.As().Warn().Str("rate", resolved).Msg(
+		"auto rate: link speed not detectable at create time; using default fallback rate")
+	return resolved
+}
+
+// resolveAutoRate replaces an egress device rate of "auto" with a concrete
+// bandwidth (see resolveAutoRateString). Only egress is resolved (ingress
+// shaping is per-veth, applied by the daemon on each pod create).
+func (m *Manager) resolveAutoRate(dev *DeviceConfig) {
+	if dev.Dir != DirEgress {
+		return
+	}
+	dev.Rate = m.resolveAutoRateString(dev.Rate)
+}
+
 // renderAndApplyEgress detects the egress NIC, re-renders the boot script from
 // stored config (or the default if no device config exists), and applies via
 // service restart.
@@ -452,46 +508,72 @@ func (m *Manager) renderAndApplyEgress(ctx context.Context) error {
 	return m.renderAndApplyScript(ctx, nic)
 }
 
-// renderAndApplyScript renders the tc-egress script with the given NIC name
-// (using stored config if available, else the default) and restarts the service.
-func (m *Manager) renderAndApplyScript(ctx context.Context, nic string) error {
+// renderEgressScript renders the tc-egress boot script for nic from the current
+// registry (stored device + classes), or the sysfs-detect default when no
+// device config exists.
+func (m *Manager) renderEgressScript(nic string) (string, error) {
 	dev, err := readDevice(DirEgress)
+	if err != nil {
+		return "", err
+	}
+	if dev == nil {
+		return renderTcEgressScript(nic)
+	}
+	classes, err := loadClassesForDir(DirEgress)
+	if err != nil {
+		return "", err
+	}
+	if len(classes) == 0 {
+		// Device configured but no class configs yet. When the device rate is
+		// an explicit bandwidth, render the three default egress classes at
+		// proportional explicit rates so the boot script carries the operator's
+		// rate without a SPEED variable. "auto" (and any unparseable rate) makes
+		// defaultEgressConfig fail, falling back to sysfs detection at boot.
+		if _, defClasses, derr := defaultEgressConfig(dev.Rate); derr == nil {
+			return renderTcEgressScriptFromConfig(nic, dev, defClasses)
+		}
+		return renderTcEgressScript(nic)
+	}
+	return renderTcEgressScriptFromConfig(nic, dev, classes)
+}
+
+// writeEgressScript writes rendered to the script path, skipping the write when
+// the on-disk content is already identical.
+func (m *Manager) writeEgressScript(rendered string) error {
+	if existing, readErr := os.ReadFile(m.scriptPath); readErr == nil {
+		if sha256.Sum256([]byte(rendered)) == sha256.Sum256(existing) {
+			return nil
+		}
+	}
+	return atomicWriteFile(m.scriptPath, rendered, 0o755)
+}
+
+// renderAndApplyScript renders the boot script, persists it, and restarts the
+// tc-egress oneshot so the kernel replays the full hierarchy. Used by mutations
+// that change the qdisc structure (create/delete of a device or class), where a
+// full re-apply is the correct way to reach the new state.
+func (m *Manager) renderAndApplyScript(ctx context.Context, nic string) error {
+	rendered, err := m.renderEgressScript(nic)
 	if err != nil {
 		return err
 	}
-	var rendered string
-	if dev != nil {
-		classes, err := loadClassesForDir(DirEgress)
-		if err != nil {
-			return err
-		}
-		if len(classes) == 0 {
-			// Device configured but no classes yet: render the default SPEED-based
-			// script so the boot oneshot always runs a self-consistent hierarchy.
-			rendered, err = renderTcEgressScript(nic)
-		} else {
-			rendered, err = renderTcEgressScriptFromConfig(nic, dev, classes)
-		}
-		if err != nil {
-			return err
-		}
-	} else {
-		rendered, err = renderTcEgressScript(nic)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Skip the write when on-disk content is already identical.
-	if existing, readErr := os.ReadFile(m.scriptPath); readErr == nil {
-		if sha256.Sum256([]byte(rendered)) == sha256.Sum256(existing) {
-			return m.applyEgress(ctx)
-		}
-	}
-	if err := atomicWriteFile(m.scriptPath, rendered, 0o755); err != nil {
+	if err := m.writeEgressScript(rendered); err != nil {
 		return err
 	}
 	return m.applyEgress(ctx)
+}
+
+// persistEgressScript renders and writes the boot script for reboot persistence
+// WITHOUT restarting the service. Used by `set`, whose live `tc class change`
+// has already updated the running kernel: restarting the oneshot would run the
+// boot script, which deletes and re-adds the root qdisc — reintroducing exactly
+// the qdisc teardown a live update is meant to avoid.
+func (m *Manager) persistEgressScript(nic string) error {
+	rendered, err := m.renderEgressScript(nic)
+	if err != nil {
+		return err
+	}
+	return m.writeEgressScript(rendered)
 }
 
 // defaultEgressConfig returns the device root and three default egress classes
@@ -522,9 +604,12 @@ func defaultEgressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error
 // ProvisionDefaultEgress configures the egress device root and three default
 // HTB classes at proportions derived from trunkRate (partner 40%/70%, public
 // 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
-// Existing configs are always replaced. Called by block node install so the
-// shape registry is the single source of truth from first install.
+// trunkRate may be "auto", which is resolved to the detected link speed at
+// create time (see resolveAutoRateString). Existing configs are always
+// replaced. Called by block node install so the shape registry is the single
+// source of truth from first install.
 func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string) error {
+	trunkRate = m.resolveAutoRateString(trunkRate)
 	dev, classes, err := defaultEgressConfig(trunkRate)
 	if err != nil {
 		return err

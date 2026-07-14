@@ -3,8 +3,6 @@
 package shape
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,7 +18,7 @@ var nicNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,15}$`)
 // scriptData is the template context for the tc-egress.sh boot script.
 type scriptData struct {
 	NIC       string
-	SpeedMbit int // >0 bakes SPEED=N; 0 sysfs auto-detect; <0 skip SPEED block (explicit per-class rates)
+	SpeedMbit int // <0 omits the SPEED block (explicit per-class rates); >=0 emits sysfs auto-detect
 	Device    deviceRenderData
 	Classes   []classRenderData
 }
@@ -99,34 +97,20 @@ func defaultScriptData(nicName string) scriptData {
 	}
 }
 
-// renderTcEgressScriptFromData renders the template with the given scriptData.
+// renderTcEgressScriptFromData validates the NIC name and renders the template
+// with the given scriptData. NIC validation lives here — the single funnel every
+// render passes through — so operator-supplied names (e.g. block node install
+// --egress-interface) cannot inject into the root-executed boot script.
 func renderTcEgressScriptFromData(data scriptData) (string, error) {
+	if !nicNameRe.MatchString(data.NIC) {
+		return "", errorx.IllegalArgument.New(
+			"egress NIC name %q is invalid: must match %s", data.NIC, nicNameRe.String())
+	}
 	rendered, err := templates.Render(tcEgressScriptTemplate, data)
 	if err != nil {
 		return "", errorx.InternalError.Wrap(err, "failed to render %s", tcEgressScriptTemplate)
 	}
 	return rendered, nil
-}
-
-// RenderTcEgressScript renders the tc-egress.sh boot script with the given NIC
-// name using sysfs speed auto-detect and writes it atomically to
-// TcEgressScriptPath (mode 0755). If the on-disk content is already identical
-// (SHA-256 match) the write is skipped — making it safe to call from idempotent
-// install flows. Use Manager.ProvisionDefaultEgress when a trunk rate is known.
-func RenderTcEgressScript(nicName string) error {
-	if !nicNameRe.MatchString(nicName) {
-		return errorx.IllegalArgument.New("egress NIC name %q is invalid: must match %s", nicName, nicNameRe.String())
-	}
-	rendered, err := renderTcEgressScript(nicName)
-	if err != nil {
-		return err
-	}
-	if existing, readErr := os.ReadFile(TcEgressScriptPath); readErr == nil {
-		if sha256.Sum256([]byte(rendered)) == sha256.Sum256(existing) {
-			return nil
-		}
-	}
-	return atomicWriteFile(TcEgressScriptPath, rendered, 0o755)
 }
 
 // atomicWriteFile writes content to path via a temp file in the same directory
@@ -176,10 +160,4 @@ func atomicWriteFile(path, content string, perm os.FileMode) error {
 		return errorx.ExternalError.Wrap(err, "failed to fsync directory %s", dir)
 	}
 	return nil
-}
-
-// contentEqual is a helper for tests that need to compare rendered output
-// without going through SHA-256 directly.
-func contentEqual(a, b string) bool {
-	return bytes.Equal([]byte(a), []byte(b))
 }

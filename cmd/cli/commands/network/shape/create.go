@@ -3,6 +3,8 @@
 package shape
 
 import (
+	"strings"
+
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	shp "github.com/hashgraph/solo-weaver/internal/network/shape"
@@ -70,6 +72,9 @@ func runCreateClass(cmd *cobra.Command, m *shp.Manager, force bool) error {
 	if !cmd.Flags().Changed("rate") {
 		return errorx.IllegalArgument.New("--rate is required for --class")
 	}
+	if strings.EqualFold(strings.TrimSpace(flagRate), "auto") {
+		return errorx.IllegalArgument.New("--rate auto is only valid for --device; class rates must be explicit bandwidth values (e.g. 400mbit)")
+	}
 
 	cls := &shp.ClassConfig{
 		Name: flagClass,
@@ -99,7 +104,7 @@ func runCreateClass(cmd *cobra.Command, m *shp.Manager, force bool) error {
 func init() {
 	createCmd.Flags().StringVar(&flagClass, "class", "", "HTB class name to configure (publisher, backfill-response, reserve-ingress, partner, public, reserve-egress)")
 	createCmd.Flags().StringVar(&flagDevice, "device", "", "Traffic direction to configure root for: ingress ($VETH) or egress ($NIC)")
-	createCmd.Flags().StringVar(&flagRate, "rate", "", "Bandwidth rate (e.g. 100mbit, 1gbit)")
+	createCmd.Flags().StringVar(&flagRate, "rate", "", `Bandwidth rate (e.g. 100mbit, 1gbit). For --device only: "auto" detects the link speed from sysfs at create time and stores it as an explicit rate (falls back to 1gbit when unreadable).`)
 	createCmd.Flags().StringVar(&flagCeil, "ceil", "", "Burst ceiling rate (≥ --rate; defaults to --rate if omitted)")
 	createCmd.Flags().IntVar(&flagPrio, "prio", 0, "HTB scheduling priority [0,7] (0 = highest; default 0)")
 	createCmd.Flags().StringVar(&flagDefault, "default", "", "Default class name for unmatched traffic (--device form only)")

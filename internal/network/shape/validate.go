@@ -41,9 +41,11 @@ func validateDefaultClass(className, dir string) error {
 
 // parseBandwidthBps parses a tc-style bandwidth string and returns its value
 // in bits per second. Supports suffixes: bit, kbit, mbit, gbit (case-insensitive).
-// Returns an error for unknown suffixes or non-numeric values. Shell arithmetic
-// expressions (e.g. "$(( SPEED * 40 / 100 ))mbit") are intentionally not
-// supported — they are only used in the legacy default scriptData path.
+// The numeric part must be a positive integer — zero, fractional, and scientific
+// forms are rejected, matching what tc actually accepts. Returns an error for
+// unknown suffixes too. Shell arithmetic expressions (e.g.
+// "$(( SPEED * 40 / 100 ))mbit") are intentionally not supported — they are only
+// used in the legacy default scriptData path.
 func parseBandwidthBps(s string) (int64, error) {
 	low := strings.ToLower(strings.TrimSpace(s))
 	var multiplier int64
@@ -65,11 +67,11 @@ func parseBandwidthBps(s string) (int64, error) {
 		return 0, errorx.IllegalArgument.New(
 			"invalid bandwidth %q: expected a number followed by bit/kbit/mbit/gbit (e.g. 100mbit)", s)
 	}
-	n, err := strconv.ParseFloat(numStr, 64)
-	if err != nil || n < 0 {
-		return 0, errorx.IllegalArgument.New("invalid bandwidth %q: numeric part must be a non-negative number", s)
+	n, err := strconv.ParseInt(numStr, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, errorx.IllegalArgument.New("invalid bandwidth %q: numeric part must be a positive integer", s)
 	}
-	return int64(n * float64(multiplier)), nil
+	return n * multiplier, nil
 }
 
 // validateRate checks that rate is a non-empty, parseable tc bandwidth string.

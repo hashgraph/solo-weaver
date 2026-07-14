@@ -3,6 +3,7 @@
 package shape
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,8 +66,13 @@ func TestRenderTcEgressScript_NICInterpolated(t *testing.T) {
 }
 
 func TestRenderTcEgressScript_EmptyNIC(t *testing.T) {
-	if err := RenderTcEgressScript(""); err == nil {
+	// The NIC-name check lives in the render funnel, so an empty (or invalid)
+	// NIC is rejected on the live path, not just in a dedicated wrapper.
+	if _, err := renderTcEgressScript(""); err == nil {
 		t.Error("expected error for empty NIC name, got nil")
+	}
+	if _, err := renderTcEgressScript(`eth0";reboot;#`); err == nil {
+		t.Error("expected error for injection-style NIC name, got nil")
 	}
 }
 
@@ -90,7 +96,7 @@ func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	if !contentEqual(string(content), rendered) {
+	if string(content) != rendered {
 		t.Error("content changed on second write")
 	}
 }
@@ -591,5 +597,174 @@ func TestEffectiveCeil_DefaultsToRate(t *testing.T) {
 	cls.Ceil = "700mbit"
 	if cls.effectiveCeil() != "700mbit" {
 		t.Errorf("effectiveCeil() = %q, want %q", cls.effectiveCeil(), "700mbit")
+	}
+}
+
+// --- Device-only rendering tests ---
+//
+// When a device root is configured but no class configs exist yet,
+// renderAndApplyScript branches on defaultEgressConfig(dev.Rate): an explicit
+// rate yields the three default egress classes at proportional explicit rates
+// (no SPEED variable); "auto" or any unparseable rate makes defaultEgressConfig
+// fail and the render falls back to sysfs auto-detect. These tests pin that
+// branch condition and the two rendered outcomes.
+
+func TestDefaultEgressConfig_AutoRateFallsBack(t *testing.T) {
+	// "auto" is not a parseable bandwidth, so defaultEgressConfig returns an
+	// error — the signal renderAndApplyScript uses to fall back to sysfs detect.
+	if _, _, err := defaultEgressConfig("auto"); err == nil {
+		t.Error("expected defaultEgressConfig(\"auto\") to error, got nil")
+	}
+	// An explicit rate must succeed (→ explicit device-only render path).
+	if _, _, err := defaultEgressConfig("500mbit"); err != nil {
+		t.Errorf("defaultEgressConfig(\"500mbit\"): unexpected error: %v", err)
+	}
+}
+
+func TestDeviceOnly_ExplicitRate_NoSpeed(t *testing.T) {
+	// Device-only explicit render reuses the same path as renderAndApplyScript:
+	// defaultEgressConfig(rate) → renderTcEgressScriptFromConfig(dev, classes).
+	dev := &DeviceConfig{Dir: DirEgress, Rate: "500mbit", DefaultClass: "reserve-egress"}
+	_, classes, err := defaultEgressConfig(dev.Rate)
+	if err != nil {
+		t.Fatalf("defaultEgressConfig: %v", err)
+	}
+	rendered, err := renderTcEgressScriptFromConfig("enp0s1", dev, classes)
+	if err != nil {
+		t.Fatalf("renderTcEgressScriptFromConfig: %v", err)
+	}
+	// No SPEED variable and no sysfs detection when the rate is explicit.
+	if strings.Contains(rendered, "SPEED") {
+		t.Errorf("device-only explicit render must not contain SPEED:\n%s", rendered)
+	}
+	// 500mbit → partner 200mbit/350mbit, public 150mbit/350mbit, reserve 150mbit/500mbit.
+	if !strings.Contains(rendered, `htb rate "500mbit" ceil "500mbit"`) {
+		t.Errorf("trunk 500mbit missing:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `rate "200mbit" ceil "350mbit"`) {
+		t.Errorf("partner 200mbit/350mbit missing:\n%s", rendered)
+	}
+}
+
+// --- resolveAutoRate tests ---
+
+func newTestManager(nic string, mbit int, speedOK bool) *Manager {
+	return NewManagerWithConfig(Config{
+		NICDetect:   func() (string, error) { return nic, nil },
+		SpeedDetect: func(string) (int, bool) { return mbit, speedOK },
+	})
+}
+
+func TestResolveAutoRate_ResolvesToDetectedSpeed(t *testing.T) {
+	m := newTestManager("eth0", 1000, true)
+	dev := &DeviceConfig{Dir: DirEgress, Rate: "auto", DefaultClass: "reserve-egress"}
+	m.resolveAutoRate(dev)
+	if dev.Rate != "1gbit" {
+		t.Errorf("expected auto resolved to 1gbit, got %q", dev.Rate)
+	}
+}
+
+func TestResolveAutoRate_FallbackToDefaultWhenUnreadable(t *testing.T) {
+	m := newTestManager("eth0", 0, false)
+	dev := &DeviceConfig{Dir: DirEgress, Rate: "auto", DefaultClass: "reserve-egress"}
+	m.resolveAutoRate(dev)
+	want := FormatSpeedHint(DefaultLinkSpeedMbit)
+	if dev.Rate != want {
+		t.Errorf("expected unreadable sysfs to bake default %q, got %q", want, dev.Rate)
+	}
+	// Must not stay dynamic — the whole point is an explicit, SPEED-free rate.
+	if dev.Rate == "auto" {
+		t.Error("rate must not remain \"auto\" when sysfs is unreadable")
+	}
+}
+
+func TestResolveAutoRate_IngressUntouched(t *testing.T) {
+	m := newTestManager("eth0", 1000, true)
+	dev := &DeviceConfig{Dir: DirIngress, Rate: "auto", DefaultClass: "reserve-ingress"}
+	m.resolveAutoRate(dev)
+	if dev.Rate != "auto" {
+		t.Errorf("ingress \"auto\" must not be sysfs-resolved (per-veth), got %q", dev.Rate)
+	}
+}
+
+func TestResolveAutoRate_ExplicitRateUntouched(t *testing.T) {
+	m := newTestManager("eth0", 1000, true)
+	dev := &DeviceConfig{Dir: DirEgress, Rate: "500mbit", DefaultClass: "reserve-egress"}
+	m.resolveAutoRate(dev)
+	if dev.Rate != "500mbit" {
+		t.Errorf("explicit rate must be left unchanged, got %q", dev.Rate)
+	}
+}
+
+func TestPersistEgressScript_NoServiceRestart(t *testing.T) {
+	// `set` persists the boot script for reboot but must NOT restart the service:
+	// its live `tc class change` already updated the kernel, and a restart would
+	// tear down and rebuild the root qdisc. persistEgressScript writes; only
+	// renderAndApplyScript restarts.
+	scriptPath := filepath.Join(t.TempDir(), "tc-egress.sh")
+	applied := false
+	m := NewManagerWithConfig(Config{
+		ScriptPath:  scriptPath,
+		NICDetect:   func() (string, error) { return "eth0", nil },
+		ApplyEgress: func(context.Context) error { applied = true; return nil },
+	})
+
+	if err := m.persistEgressScript("eth0"); err != nil {
+		t.Fatalf("persistEgressScript: %v", err)
+	}
+	if applied {
+		t.Error("persistEgressScript must not restart the service (no qdisc churn)")
+	}
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Errorf("expected boot script persisted to disk: %v", err)
+	}
+
+	// Contrast: renderAndApplyScript does restart the service.
+	applied = false
+	if err := m.renderAndApplyScript(context.Background(), "eth0"); err != nil {
+		t.Fatalf("renderAndApplyScript: %v", err)
+	}
+	if !applied {
+		t.Error("renderAndApplyScript must restart the service")
+	}
+}
+
+func TestParseBandwidthBps_RejectsZeroAndFractional(t *testing.T) {
+	for _, bad := range []string{"0mbit", "0gbit", "1.5gbit", "0.5mbit", "1e3mbit", "-5mbit"} {
+		if _, err := parseBandwidthBps(bad); err == nil {
+			t.Errorf("parseBandwidthBps(%q): expected error, got nil", bad)
+		}
+	}
+	// Positive integers still parse.
+	if bps, err := parseBandwidthBps("1gbit"); err != nil || bps != 1_000_000_000 {
+		t.Errorf("parseBandwidthBps(1gbit) = (%d, %v), want (1000000000, nil)", bps, err)
+	}
+}
+
+func TestResolveAutoRateString(t *testing.T) {
+	// "auto" with a readable speed resolves to the detected rate.
+	if got := newTestManager("eth0", 1000, true).resolveAutoRateString("auto"); got != "1gbit" {
+		t.Errorf("resolveAutoRateString(auto, readable) = %q, want 1gbit", got)
+	}
+	// case-insensitive.
+	if got := newTestManager("eth0", 100, true).resolveAutoRateString("AUTO"); got != "100mbit" {
+		t.Errorf("resolveAutoRateString(AUTO) = %q, want 100mbit", got)
+	}
+	// unreadable → default fallback.
+	want := FormatSpeedHint(DefaultLinkSpeedMbit)
+	if got := newTestManager("eth0", 0, false).resolveAutoRateString("auto"); got != want {
+		t.Errorf("resolveAutoRateString(auto, unreadable) = %q, want %q", got, want)
+	}
+	// non-"auto" values pass through unchanged.
+	if got := newTestManager("eth0", 1000, true).resolveAutoRateString("400mbit"); got != "400mbit" {
+		t.Errorf("resolveAutoRateString(400mbit) = %q, want 400mbit (unchanged)", got)
+	}
+}
+
+func TestValidateSumRates_AutoDeviceRate(t *testing.T) {
+	// "auto" is not a parseable bandwidth; validateSumRates must skip the check.
+	cfg := &ClassConfig{Name: "partner", Rate: "400mbit"}
+	if err := validateSumRates(nil, cfg, "auto"); err != nil {
+		t.Errorf("validateSumRates with device rate \"auto\" must skip: %v", err)
 	}
 }

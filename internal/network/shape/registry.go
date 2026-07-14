@@ -115,36 +115,6 @@ func loadClassesForDir(dir string) ([]*ClassConfig, error) {
 	return classes, nil
 }
 
-// loadAllClasses loads all class configs (any direction), sorted by name.
-func loadAllClasses() ([]*ClassConfig, error) {
-	entries, err := os.ReadDir(ClassConfigDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, errorx.ExternalError.Wrap(err, "failed to read class config dir %s", ClassConfigDir)
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		names = append(names, strings.TrimSuffix(e.Name(), ".json"))
-	}
-	sort.Strings(names)
-	classes := make([]*ClassConfig, 0, len(names))
-	for _, n := range names {
-		cls, err := readClass(n)
-		if err != nil {
-			return nil, err
-		}
-		if cls != nil {
-			classes = append(classes, cls)
-		}
-	}
-	return classes, nil
-}
-
 // removeClass deletes a class config file, ignoring not-found.
 func removeClass(name string) error {
 	err := os.Remove(classPath(name))
