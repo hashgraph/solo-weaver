@@ -12,6 +12,8 @@ NIC="{{.NIC}}"
 {{- if gt .SpeedMbit 0}}
 # Link speed set by operator at install time; sysfs detection is skipped.
 SPEED={{.SpeedMbit}}
+{{- else if lt .SpeedMbit 0}}
+{{- /* All tc rates are explicit strings; SPEED variable is not used. */}}
 {{- else}}
 # Detect link speed in Mbit/s. The kernel uses -1 for "unknown" (common on
 # virtual NICs and at early boot before the link is established). Suppress

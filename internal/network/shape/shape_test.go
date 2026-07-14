@@ -147,6 +147,10 @@ func TestRenderTcEgressScriptFromConfig_ExplicitRates(t *testing.T) {
 			t.Errorf("missing fq_codel line %q:\n%s", want, rendered)
 		}
 	}
+	// SPEED variable must not appear: all rates are explicit, sysfs detection is dead code.
+	if strings.Contains(rendered, "SPEED") {
+		t.Errorf("rendered script must not contain SPEED when rates are explicit:\n%s", rendered)
+	}
 }
 
 func TestRenderTcEgressScriptFromConfig_UnknownClass(t *testing.T) {

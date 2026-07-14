@@ -20,7 +20,7 @@ var nicNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,15}$`)
 // scriptData is the template context for the tc-egress.sh boot script.
 type scriptData struct {
 	NIC       string
-	SpeedMbit int // 0 means auto-detect from sysfs at boot
+	SpeedMbit int // >0 bakes SPEED=N; 0 sysfs auto-detect; <0 skip SPEED block (explicit per-class rates)
 	Device    deviceRenderData
 	Classes   []classRenderData
 }
@@ -74,7 +74,8 @@ func renderTcEgressScriptFromConfig(nicName string, dev *DeviceConfig, classes [
 		})
 	}
 	return renderTcEgressScriptFromData(scriptData{
-		NIC: nicName,
+		NIC:       nicName,
+		SpeedMbit: -1, // all rates are explicit; SPEED variable not needed
 		Device: deviceRenderData{
 			DefaultMinor: info.Minor,
 			Rate:         dev.Rate,
