@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
@@ -178,9 +179,8 @@ func LinkRateInputPrompt(speedHint string, target *string) InputPrompt {
 			if s == "" {
 				return nil
 			}
-			sl := strings.ToLower(strings.TrimSpace(s))
-			if !strings.HasSuffix(sl, "gbit") && !strings.HasSuffix(sl, "mbit") {
-				return errorx.IllegalArgument.New("must be a tc-style rate (e.g. 1gbit, 100mbit)")
+			if _, ok := shape.ParseSpeedMbit(s); !ok {
+				return errorx.IllegalArgument.New("must be a tc-style rate with a positive integer prefix (e.g. 1gbit, 100mbit)")
 			}
 			return nil
 		},
