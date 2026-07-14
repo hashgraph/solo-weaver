@@ -18,7 +18,7 @@ on:
         description: "Go version installed inside the VM"
         type: string
         required: false
-        default: "1.26.0"
+        default: "1.26.5"
       custom-job-label:
         description: "Custom Job Label"
         type: string
