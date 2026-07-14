@@ -55,9 +55,18 @@ func TcEgressPersist(nicName string, trunkRate string) *automa.StepBuilder {
 				nic = detected
 			}
 
+			tcEgressResolution := []string{
+				"Check the tc-egress service journal for the actual tc error: journalctl -u solo-provisioner-tc-egress.service -n 20",
+				"Verify the NIC name exists on this host: ip link show",
+				"If the NIC is wrong, specify the correct one: block node install --egress-interface <nic>",
+				"Find the NIC used by the default route: ip route get 8.8.8.8 | grep dev",
+			}
+
 			if trunkRate != "" {
 				if err := shape.ProvisionDefaultEgressShape(ctx, nic, trunkRate); err != nil {
-					return automa.FailureReport(stp, automa.WithError(err))
+					return automa.FailureReport(stp, automa.WithError(
+						errorx.Decorate(err, "failed to provision default egress shape").
+							WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
 				}
 				return automa.SuccessReport(stp)
 			}
@@ -65,7 +74,9 @@ func TcEgressPersist(nicName string, trunkRate string) *automa.StepBuilder {
 			// No trunk rate supplied: re-render from existing shape registry (if
 			// populated) or sysfs auto-detect, then apply.
 			if err := shape.RenderAndApplyDefaultEgress(ctx, nic); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(
+					errorx.Decorate(err, "failed to apply tc-egress script").
+						WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
 			}
 			return automa.SuccessReport(stp)
 		}).
