@@ -63,7 +63,7 @@ func TestRenderTcEgressScript_NICInterpolated(t *testing.T) {
 }
 
 func TestRenderTcEgressScript_EmptyNIC(t *testing.T) {
-	if err := RenderTcEgressScript(""); err == nil {
+	if err := RenderTcEgressScript("", 0); err == nil {
 		t.Error("expected error for empty NIC name, got nil")
 	}
 }
@@ -96,7 +96,7 @@ func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 // renderScript is a test-only helper that calls templates.Render directly so
 // tests don't need to patch the global TcEgressScriptPath constant.
 func renderScript(nicName string) (string, error) {
-	return renderTcEgressScript(nicName)
+	return renderTcEgressScript(nicName, 0)
 }
 
 // --- DetectEgressInterface tests (cross-platform via detectEgressInterfaceFrom) ---
@@ -165,4 +165,144 @@ func writeTempRoute(t *testing.T, content string) string {
 	}
 	_ = tmp.Close()
 	return tmp.Name()
+}
+
+// --- Speed hint tests (cross-platform via readLinkSpeedMbitFrom) ---
+
+func TestReadLinkSpeedMbitFrom_ValidSpeed(t *testing.T) {
+	for _, tc := range []struct {
+		content string
+		want    int
+	}{
+		{"1000\n", 1000},
+		{"10000\n", 10000},
+		{"100\n", 100},
+		{"1000", 1000}, // no trailing newline
+	} {
+		path := writeTempSpeed(t, tc.content)
+		got, ok := readLinkSpeedMbitFrom(path)
+		if !ok || got != tc.want {
+			t.Errorf("readLinkSpeedMbitFrom(%q) = (%d, %v), want (%d, true)", tc.content, got, ok, tc.want)
+		}
+	}
+}
+
+func TestReadLinkSpeedMbitFrom_NegativeValue(t *testing.T) {
+	path := writeTempSpeed(t, "-1\n")
+	_, ok := readLinkSpeedMbitFrom(path)
+	if ok {
+		t.Error("expected (0, false) for -1, got ok=true")
+	}
+}
+
+func TestReadLinkSpeedMbitFrom_ZeroValue(t *testing.T) {
+	path := writeTempSpeed(t, "0\n")
+	_, ok := readLinkSpeedMbitFrom(path)
+	if ok {
+		t.Error("expected (0, false) for 0, got ok=true")
+	}
+}
+
+func TestReadLinkSpeedMbitFrom_NonNumeric(t *testing.T) {
+	path := writeTempSpeed(t, "unknown\n")
+	_, ok := readLinkSpeedMbitFrom(path)
+	if ok {
+		t.Error("expected (0, false) for non-numeric content, got ok=true")
+	}
+}
+
+func TestReadLinkSpeedMbitFrom_MissingFile(t *testing.T) {
+	_, ok := readLinkSpeedMbitFrom("/nonexistent/path/speed")
+	if ok {
+		t.Error("expected (0, false) for missing file, got ok=true")
+	}
+}
+
+func TestReadLinkSpeedMbit_PathTraversal(t *testing.T) {
+	_, ok := ReadLinkSpeedMbit("../../../etc/passwd")
+	if ok {
+		t.Error("expected (0, false) for NIC name containing path separator, got ok=true")
+	}
+}
+
+func writeTempSpeed(t *testing.T, content string) string {
+	t.Helper()
+	tmp, err := os.CreateTemp(t.TempDir(), "sysfs-speed-*")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	if _, err := tmp.WriteString(content); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = tmp.Close()
+	return tmp.Name()
+}
+
+// --- FormatSpeedHint tests ---
+
+func TestFormatSpeedHint(t *testing.T) {
+	cases := []struct {
+		mbit int
+		want string
+	}{
+		{1000, "1gbit"},
+		{10000, "10gbit"},
+		{100, "100mbit"},
+		{500, "500mbit"},
+		{2000, "2gbit"},
+		{1500, "1500mbit"},
+	}
+	for _, c := range cases {
+		got := FormatSpeedHint(c.mbit)
+		if got != c.want {
+			t.Errorf("FormatSpeedHint(%d) = %q, want %q", c.mbit, got, c.want)
+		}
+	}
+}
+
+func TestParseSpeedMbit(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  int
+		ok    bool
+	}{
+		{"1gbit", 1000, true},
+		{"10gbit", 10000, true},
+		{"100mbit", 100, true},
+		{"500mbit", 500, true},
+		{"1GBIT", 1000, true}, // case-insensitive
+		{"", 0, false},
+		{"auto", 0, false},
+		{"0gbit", 0, false},
+		{"0mbit", 0, false},
+		{"-1mbit", 0, false},
+	} {
+		got, ok := ParseSpeedMbit(tc.input)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("ParseSpeedMbit(%q) = (%d, %v), want (%d, %v)", tc.input, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestRenderTcEgressScript_BakedSpeed(t *testing.T) {
+	rendered, err := renderTcEgressScript("eth0", 1000)
+	if err != nil {
+		t.Fatalf("renderTcEgressScript: %v", err)
+	}
+	if !strings.Contains(rendered, "SPEED=1000") {
+		t.Errorf("rendered script missing baked SPEED=1000:\n%s", rendered)
+	}
+	if strings.Contains(rendered, `cat /sys/class/net`) {
+		t.Errorf("rendered script should not contain sysfs detection when speed is baked in:\n%s", rendered)
+	}
+}
+
+func TestRenderTcEgressScript_AutoDetectSpeed(t *testing.T) {
+	rendered, err := renderTcEgressScript("eth0", 0)
+	if err != nil {
+		t.Fatalf("renderTcEgressScript: %v", err)
+	}
+	if !strings.Contains(rendered, `cat /sys/class/net/"$NIC"/speed`) {
+		t.Errorf("rendered script missing sysfs detection when speedMbit=0:\n%s", rendered)
+	}
 }

@@ -8,8 +8,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/network/shape"
-	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -20,19 +18,32 @@ var installCmd = &cobra.Command{
 	Short:   "Install a Hedera Block Node",
 	Long:    "Run safety checks, setup a K8s cluster and install a Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateBlockNodeFlags(cmd); err != nil {
+			return err
+		}
+		if err := common.ValidateEgressFlags(cmd, flagLinkRate); err != nil {
+			return err
+		}
+		if err := common.ValidateHostFirewallFlags(cmd); err != nil {
+			return err
+		}
+
 		inputs, cv, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
 			return err
 		}
 
-		// Resolve the host firewall config. The egress-interface prompt is
-		// prepended so it appears in the same TUI panel as the firewall fields.
-		// cv is passed so all values fold into the unified "Selected Inputs"
-		// summary rather than a separate section.
-		detectedNIC, _ := shape.DetectEgressInterface()
-		if err := common.ResolveHostFirewallConfig(cmd, args, cv,
-			prompt.EgressInterfaceInputPrompt(detectedNIC, &flagEgressInterface),
-		); err != nil {
+		// Prompt for egress NIC and bandwidth independently of the host firewall —
+		// tc-egress traffic shaping applies regardless of whether the host
+		// firewall is enabled.
+		if err := common.ResolveEgressConfig(cmd, args, cv, &flagEgressInterface, &flagLinkRate); err != nil {
+			return err
+		}
+		// prepareBlocknodeInputs ran before the prompts; patch in the final values.
+		inputs.Custom.EgressInterface = flagEgressInterface
+		inputs.Custom.LinkRate = flagLinkRate
+
+		if err := common.ResolveHostFirewallConfig(cmd, args, cv); err != nil {
 			return err
 		}
 
@@ -79,7 +90,5 @@ func init() {
 	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
 	common.RegisterHostFirewallFlags(installCmd)
-	installCmd.Flags().StringVar(&flagEgressInterface, "egress-interface", "",
-		"Physical NIC for the $EGRESS HTB traffic-shaper hierarchy (e.g. eth0). "+
-			"Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts.")
+	common.RegisterEgressFlags(installCmd, &flagEgressInterface, &flagLinkRate)
 }

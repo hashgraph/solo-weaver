@@ -14,13 +14,14 @@ import (
 
 // scriptData is the template context for the tc-egress.sh boot script.
 type scriptData struct {
-	NIC string
+	NIC       string
+	SpeedMbit int // 0 means auto-detect from sysfs at boot
 }
 
 // renderTcEgressScript renders the template and returns the script string
 // without writing anything to disk. Used by RenderTcEgressScript and tests.
-func renderTcEgressScript(nicName string) (string, error) {
-	rendered, err := templates.Render(tcEgressScriptTemplate, scriptData{NIC: nicName})
+func renderTcEgressScript(nicName string, speedMbit int) (string, error) {
+	rendered, err := templates.Render(tcEgressScriptTemplate, scriptData{NIC: nicName, SpeedMbit: speedMbit})
 	if err != nil {
 		return "", errorx.InternalError.Wrap(err, "failed to render %s", tcEgressScriptTemplate)
 	}
@@ -32,12 +33,16 @@ func renderTcEgressScript(nicName string) (string, error) {
 // on-disk content is already identical (SHA-256 match) the write is skipped
 // and the function returns nil — making it safe to call from idempotent
 // install flows.
-func RenderTcEgressScript(nicName string) error {
+//
+// speedMbit sets the link rate in Mbit/s directly in the rendered script,
+// bypassing the runtime sysfs detection. Pass 0 to keep the auto-detect
+// behaviour (reads /sys/class/net/<nic>/speed at boot, falls back to 1000).
+func RenderTcEgressScript(nicName string, speedMbit int) error {
 	if nicName == "" {
 		return errorx.IllegalArgument.New("egress NIC name must not be empty")
 	}
 
-	rendered, err := renderTcEgressScript(nicName)
+	rendered, err := renderTcEgressScript(nicName, speedMbit)
 	if err != nil {
 		return err
 	}

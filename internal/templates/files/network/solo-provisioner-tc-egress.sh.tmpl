@@ -10,12 +10,17 @@ set -e
 
 NIC={{.NIC}}
 
+{{- if gt .SpeedMbit 0}}
+# Link speed set by operator at install time; sysfs detection is skipped.
+SPEED={{.SpeedMbit}}
+{{- else}}
 # Detect link speed in Mbit/s. The kernel uses -1 for "unknown" (common on
 # virtual NICs and at early boot before the link is established). Suppress
 # any read error so set -e never fires here (e.g. udev may not have renamed
 # the NIC yet if the service starts very early). Fall back to 1000 Mbit/s.
 SPEED=$(cat /sys/class/net/"$NIC"/speed 2>/dev/null || echo -1)
 [ "${SPEED:-0}" -gt 0 ] 2>/dev/null || SPEED=1000
+{{- end}}
 
 # Remove any existing root qdisc (and all its children). Silent no-op if absent.
 tc qdisc del dev "$NIC" root 2>/dev/null || true

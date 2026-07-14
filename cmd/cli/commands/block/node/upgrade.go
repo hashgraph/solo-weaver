@@ -22,6 +22,10 @@ var (
 		Short: "Upgrade a Hedera Block Node",
 		Long:  "Upgrade an existing Hedera Block Node deployment with new configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateBlockNodeFlags(cmd); err != nil {
+				return err
+			}
+
 			inputs, cv, err := prepareBlocknodeInputs(cmd, args)
 			if err != nil {
 				return err

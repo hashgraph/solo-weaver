@@ -149,6 +149,8 @@ func resolveBlocknodeEffectiveInputs(
 			LoadBalancerEnabled: inputs.Custom.LoadBalancerEnabled,
 			PluginPreset:        inputs.Custom.PluginPreset,
 			PluginList:          inputs.Custom.PluginList,
+			EgressInterface:     inputs.Custom.EgressInterface,
+			LinkRate:            inputs.Custom.LinkRate,
 		},
 	}
 

@@ -20,10 +20,32 @@ var (
 		Short: "Reconfigure a Hedera Block Node",
 		Long:  "Re-apply configuration to an existing Hedera Block Node deployment without changing its chart version",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateBlockNodeFlags(cmd); err != nil {
+				return err
+			}
+			if err := common.ValidateEgressFlags(cmd, flagLinkRate); err != nil {
+				return err
+			}
+			if err := common.ValidateHostFirewallFlags(cmd); err != nil {
+				return err
+			}
+
 			inputs, cv, err := prepareBlocknodeInputs(cmd, args)
 			if err != nil {
 				return err
 			}
+
+			if err := common.ResolveEgressConfig(cmd, args, cv, &flagEgressInterface, &flagLinkRate); err != nil {
+				return err
+			}
+			// prepareBlocknodeInputs ran before the prompts; patch in the final values.
+			inputs.Custom.EgressInterface = flagEgressInterface
+			inputs.Custom.LinkRate = flagLinkRate
+
+			if err := common.ResolveHostFirewallConfig(cmd, args, cv); err != nil {
+				return err
+			}
+
 			if cv != nil {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr())
 				cv.Print("Selected Inputs")
@@ -67,4 +89,6 @@ func init() {
 	common.FlagValuesFile().SetVarP(reconfigureCmd, &flagValuesFile, false)
 	common.FlagNoReuseValues().SetVarP(reconfigureCmd, &flagNoReuseValues, false)
 	common.FlagNoRestart().SetVar(reconfigureCmd, &flagNoRestart, false)
+	common.RegisterHostFirewallFlags(reconfigureCmd)
+	common.RegisterEgressFlags(reconfigureCmd, &flagEgressInterface, &flagLinkRate)
 }

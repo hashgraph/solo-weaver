@@ -173,6 +173,24 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) (*prompt.ChosenVal
 	return cv, nil
 }
 
+// validateBlockNodeFlags validates format-sensitive flags that would otherwise
+// only produce an error after the interactive wizard has already run. Call this
+// at the top of RunE, before prepareBlocknodeInputs, so operators get immediate
+// feedback for invalid CLI inputs rather than sitting through all the prompts.
+func validateBlockNodeFlags(cmd *cobra.Command) error {
+	if flagValuesFile != "" {
+		if _, err := sanity.ValidateInputFile(flagValuesFile); err != nil {
+			return err
+		}
+	}
+	if f := cmd.Flag("plugins"); f != nil && f.Changed && flagPlugins != "" {
+		if err := models.ValidatePluginList(flagPlugins); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
+		}
+	}
+	return nil
+}
+
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
 // When running interactively (TTY, no --force, no --non-interactive), it presents
 // huh prompts for any required flags that were not supplied on the command line.
@@ -292,6 +310,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			PluginPreset:        pluginPreset,
 			PluginList:          pluginList,
 			EgressInterface:     flagEgressInterface,
+			LinkRate:            flagLinkRate,
 		},
 	}
 
