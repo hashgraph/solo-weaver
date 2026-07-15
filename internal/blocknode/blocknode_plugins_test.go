@@ -203,7 +203,7 @@ func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
 			wantAbsent:      []string{"s3-archive", "block-access-service", "stream-publisher", "stream-subscriber", "blocks-file-recent"},
 		},
 		{
-			name:            "RFH upgrade 0.37.0 to 0.37.1 crosses the roster-bootstrap boundary",
+			name:            "RFH target 0.37.0 stays pre-0.37.1 (no roster-bootstrap)",
 			installedPreset: PresetTier1RFH,
 			targetVersion:   "0.37.0",
 			wantContains:    []string{"cloud-storage-archive", "cloud-storage-expanded", "blocks-file-recent", "block-access-service"},
