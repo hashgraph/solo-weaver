@@ -48,6 +48,13 @@ func TestCLIVersionMigration_Applies(t *testing.T) {
 			currentVersion:   "2.0.0",
 			expectApplies:    true,
 		},
+		{
+			// Baseline is below the boundary, so it applies.
+			name:             "baseline installed version crosses boundary should apply",
+			installedVersion: BaselineCLIVersion,
+			currentVersion:   "1.0.0",
+			expectApplies:    true,
+		},
 		// ── does not apply ───────────────────────────────────────────────────
 		{
 			name:             "upgrade within old versions should NOT apply",
@@ -120,6 +127,36 @@ func TestCLIVersionMigration_Applies(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectApplies, applies)
 			}
+		})
+	}
+}
+
+func TestResolveInstalledCLIVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "empty version defaults to the baseline",
+			raw:  "",
+			want: BaselineCLIVersion,
+		},
+		{
+			name: "non-empty version is returned unchanged",
+			raw:  "0.19.0",
+			want: "0.19.0",
+		},
+		{
+			name: "explicit baseline is returned unchanged",
+			raw:  "0.0.0",
+			want: "0.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ResolveInstalledCLIVersion(tt.raw))
 		})
 	}
 }

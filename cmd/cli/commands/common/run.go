@@ -353,6 +353,10 @@ func RunStartupMigrations(ctx context.Context) error {
 		return err
 	}
 
+	// Absent state.yaml reads back as ""; treat it as the baseline so boundary
+	// migrations still run instead of being skipped as a fresh install.
+	installedCLIVersion = migration.ResolveInstalledCLIVersion(installedCLIVersion)
+
 	mctx := &migration.Context{
 		Component: migration.ScopeStartup,
 		Data:      &automa.SyncStateBag{},
