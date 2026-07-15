@@ -1,0 +1,34 @@
+#!/bin/sh
+# Managed by solo-provisioner. Re-rendered by `network shape create/set/delete` and `block node install`; do not edit.
+#
+# Replays the $EGRESS HTB hierarchy at boot. Idempotent: delete the root qdisc
+# first (cascades to all classes and leaf qdiscs), then add everything fresh.
+# fq_codel does not support tc's change() operation, so replace/change is not
+# viable for leaf qdiscs.
+set -e
+
+NIC="{{.NIC}}"
+
+{{- if lt .SpeedMbit 0}}
+{{- /* All tc rates are explicit strings; SPEED variable is not used. */}}
+{{- else}}
+# Detect link speed in Mbit/s. The kernel uses -1 for "unknown" (common on
+# virtual NICs and at early boot before the link is established). Suppress
+# any read error so set -e never fires here (e.g. udev may not have renamed
+# the NIC yet if the service starts very early). Fall back to 1000 Mbit/s.
+SPEED=$(cat /sys/class/net/"$NIC"/speed 2>/dev/null || echo -1)
+[ "${SPEED:-0}" -gt 0 ] 2>/dev/null || SPEED=1000
+{{- end}}
+
+# Remove any existing root qdisc (and all its children). Silent no-op if absent.
+tc qdisc del dev "$NIC" root 2>/dev/null || true
+
+# Root HTB qdisc: unmatched traffic falls to default class 1:{{.Device.DefaultMinor}}.
+tc qdisc add dev "$NIC" root handle 1: htb default {{.Device.DefaultMinor}}
+
+# Trunk class: full link rate as the ceiling for the whole hierarchy.
+tc class  add dev "$NIC" parent 1:   classid 1:1  htb rate "{{.Device.Rate}}" ceil "{{.Device.Rate}}"
+{{range .Classes}}
+tc class  add dev "$NIC" parent 1:1  classid 1:{{.Minor}} htb rate "{{.Rate}}" ceil "{{.Ceil}}" prio {{.Prio}}
+tc qdisc  add dev "$NIC" parent 1:{{.Minor}} handle {{.Handle}}: fq_codel
+{{end}}

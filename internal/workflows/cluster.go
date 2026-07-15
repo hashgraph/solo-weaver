@@ -22,18 +22,25 @@ func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
 }
 
 // InstallClusterWorkflow creates a workflow to set up a kubernetes cluster.
-func InstallClusterWorkflow(nodeType string, profile string, pluginPreset string, skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
+//
+// It is workload-agnostic: it validates only the Kubernetes substrate hardware floor
+// (what Kubernetes itself needs), not any per-workload sizing. Per-workload preflight
+// belongs to the node install commands (e.g. block node install), which run
+// NodeSetupWorkflow before composing KubernetesSetupWorkflow themselves.
+func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
 		Steps(
-			NodeSetupWorkflow(nodeType, profile, pluginPreset, skipHardwareChecks),
-			kubernetesSetupWorkflow(mr),
+			SubstrateSetupWorkflow(skipHardwareChecks),
+			KubernetesSetupWorkflow(mr),
 		)
 }
 
-// kubernetesSetupWorkflow installs and configures Kubernetes components.
-// Rendered as the "Kubernetes Setup" phase in the TUI.
-func kubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
+// KubernetesSetupWorkflow installs and configures Kubernetes components.
+// Rendered as the "Kubernetes Setup" phase in the TUI. It is node-type-agnostic and is
+// composed both by InstallClusterWorkflow (cluster install) and by node install handlers
+// (e.g. block node install) after their own workload preflight + system setup.
+func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	wfSteps := []automa.Builder{
 		// setup env for k8s
 		steps.DisableSwap(),

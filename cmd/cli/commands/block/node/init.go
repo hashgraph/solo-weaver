@@ -3,8 +3,6 @@
 package node
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
@@ -80,28 +78,24 @@ func extractBlockNodeParentFlagsWithOpts(cmd *cobra.Command, args []string, flag
 	return nil
 }
 
-// promptForMissingFlags runs interactive prompts for any required block node
-// flags that were not supplied on the command line. It writes prompted values
-// back into the Cobra flag set and the package-level flag variables so that
-// downstream extraction and validation sees them.
-//
-// Prompts are skipped when:
-//   - --force/-y is set
-//   - --non-interactive is set
-//   - stdout is not a TTY
-//   - the command is "uninstall" (infers values from existing state/config)
-func promptForMissingFlags(cmd *cobra.Command, args []string) error {
+// promptForMissingFlags presents interactive prompts for any block node flags
+// not supplied on the command line. Returns the ChosenValues collector so
+// callers can fold in additional prompt sections (e.g. host firewall) before
+// printing the unified summary. Returns nil when the session is
+// non-interactive or for commands (uninstall) that infer all values from
+// existing state.
+func promptForMissingFlags(cmd *cobra.Command, args []string) (*prompt.ChosenValues, error) {
 	// Destructive commands that operate on an existing deployment should not
 	// prompt — they infer everything from the current state/config.
 	if cmd.Name() == "uninstall" {
-		return nil
+		return nil, nil
 	}
 
 	var rootFlags common.RootFlags
 	_ = common.ExtractRootFlags(cmd, args, &rootFlags) // best-effort to get Force
 
 	if !prompt.ShouldPrompt(rootFlags.Force) {
-		return nil
+		return nil, nil
 	}
 
 	cv := prompt.NewChosenValues()
@@ -122,9 +116,9 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	// Build a single wizard so every prompt page is navigable back and forward
 	// (Shift+Tab / Tab) instead of committing each stage in its own form. Pages are
 	// added in order; each Add* is a no-op when its flag(s) were already supplied on
-	// the command line. Input prompts must be added before the storage and plugin
-	// prompts because they pre-fill flagChartVersion, which the storage and plugin
-	// builders read to filter their options.
+	// the command line. The storage and plugin builders take &flagChartVersion (by
+	// pointer), so their version-dependent pages react to edits made on the earlier
+	// chart-version input page as the operator navigates forward.
 	w := prompt.NewWizard()
 
 	// profileTarget is a local copy the profile prompt writes to; after the wizard
@@ -149,7 +143,7 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	// Storage path prompts: mode select → conditional path inputs (single base
 	// path vs individual paths). Applied to all block node commands that configure
 	// storage (install, upgrade, reconfigure).
-	prompt.AddStoragePathPrompts(w, cmd, defaults, flagChartVersion, prompt.StoragePathTargets{
+	prompt.AddStoragePathPrompts(w, cmd, defaults, &flagChartVersion, prompt.StoragePathTargets{
 		BasePath:             &flagBasePath,
 		ArchivePath:          &flagArchivePath,
 		LivePath:             &flagLivePath,
@@ -160,11 +154,11 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 	}, cv)
 
 	// Plugin preset prompt: preset select → conditional custom multi-select.
-	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, flagChartVersion, cv)
+	prompt.AddPluginPresetPrompts(w, cmd, defaults, &flagPluginPreset, &flagPlugins, &flagChartVersion, flagValuesFile, cv)
 
 	// Run all accumulated pages as a single navigable form.
 	if err := w.Run(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Propagate the prompted profile value into Cobra's inherited persistent
@@ -176,22 +170,42 @@ func promptForMissingFlags(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	_, _ = fmt.Fprintln(cmd.ErrOrStderr())
-	cv.Print("Selected Inputs")
+	return cv, nil
+}
 
+// validateBlockNodeFlags validates format-sensitive flags that would otherwise
+// only produce an error after the interactive wizard has already run. Call this
+// at the top of RunE, before prepareBlocknodeInputs, so operators get immediate
+// feedback for invalid CLI inputs rather than sitting through all the prompts.
+func validateBlockNodeFlags(cmd *cobra.Command) error {
+	if flagValuesFile != "" {
+		if _, err := sanity.ValidateInputFile(flagValuesFile); err != nil {
+			return err
+		}
+	}
+	if f := cmd.Flag("plugins"); f != nil && f.Changed && flagPlugins != "" {
+		if err := models.ValidatePluginList(flagPlugins); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
+		}
+	}
 	return nil
 }
 
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
 // When running interactively (TTY, no --force, no --non-interactive), it presents
 // huh prompts for any required flags that were not supplied on the command line.
-func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlockNodeInputs], error) {
+// The returned ChosenValues collector is nil when the session is non-interactive;
+// callers are responsible for printing the summary (via cv.Print) at the right
+// point — after any additional prompt sections (e.g. host firewall) have added
+// their entries.
+func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.BlockNodeInputs], *prompt.ChosenValues, error) {
 	var err error
 
 	// ── Interactive prompts ──────────────────────────────────────────────
 	// Run prompts for missing flags before extracting/validating them.
-	if err = promptForMissingFlags(cmd, args); err != nil {
-		return nil, err
+	cv, err := promptForMissingFlags(cmd, args)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// ── Extract & validate flags ─────────────────────────────────────────
@@ -201,7 +215,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	requireProfile := cmd.Name() != "uninstall"
 	err = extractBlockNodeParentFlagsWithOpts(cmd, args, &parentFlags, requireProfile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Validate the value file path if provided
@@ -210,14 +224,14 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	if flagValuesFile != "" {
 		validatedValuesFile, err = sanity.ValidateInputFile(flagValuesFile)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	// Determine execution mode based on flags
 	execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 	if err != nil {
-		return nil, errorx.Decorate(err, "failed to determine execution mode")
+		return nil, nil, errorx.Decorate(err, "failed to determine execution mode")
 	}
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
@@ -229,7 +243,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	pluginList := flagPlugins
 	if f := cmd.Flag("plugins"); f != nil && f.Changed {
 		if err := models.ValidatePluginList(flagPlugins); err != nil {
-			return nil, errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
+			return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
 		}
 	}
 	if pluginList == "" && bnpkg.IsKnownPreset(pluginPreset) {
@@ -239,7 +253,10 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	// --plugin-preset is not prompted, so flagPluginPreset stays empty. Re-resolve
 	// from the stored preset to ensure plugin names are updated when crossing chart
 	// version boundaries (e.g. the 0.35 s3-archive → cloud-storage-* rename).
-	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" {
+	// Skip this when the operator manages plugins via their --values file (it defines
+	// plugins.names): re-resolving from the saved preset would clobber the values file.
+	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" &&
+		!bnpkg.ValuesFileDefinesPlugins(validatedValuesFile) {
 		if stateDefaults, defErr := state.ReadPromptDefaultsFromDisk(); defErr == nil {
 			if bnpkg.IsKnownPreset(stateDefaults.BlockNode.PluginPreset) {
 				pluginPreset = stateDefaults.BlockNode.PluginPreset
@@ -251,7 +268,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 		pluginPreset = bnpkg.PresetCustom
 	}
 	if pluginPreset == bnpkg.PresetCustom && pluginList == "" {
-		return nil, errorx.IllegalArgument.New("--plugins is required when --plugin-preset=%s", bnpkg.PresetCustom)
+		return nil, nil, errorx.IllegalArgument.New("--plugins is required when --plugin-preset=%s", bnpkg.PresetCustom)
 	}
 
 	inputs := &models.UserInputs[models.BlockNodeInputs]{
@@ -292,13 +309,15 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			RecentRetention:     flagRecentRetention,
 			PluginPreset:        pluginPreset,
 			PluginList:          pluginList,
+			EgressInterface:     flagEgressInterface,
+			LinkRate:            flagLinkRate,
 		},
 	}
 
 	logx.As().Info().Any("inputs", inputs).Msg("User inputs for block node operation")
 	if err := inputs.Validate(); err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "invalid user inputs")
+		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid user inputs")
 	}
 
-	return inputs, nil
+	return inputs, cv, nil
 }

@@ -113,6 +113,8 @@ func TestBuildWorkflow_WithReset_PathsUnchanged_DataOnly(t *testing.T) {
 
 	ids := workflowStepIDs(t, wb)
 	assert.Equal(t, []string{
+		steps.NetworkFirewallCreateStepId,
+		steps.TcEgressPersistStepId,
 		steps.PurgeBlockNodeStorageStepId,
 		steps.UpgradeBlockNodeStepId,
 	}, ids)
@@ -161,6 +163,8 @@ func TestBuildWorkflow_PurgeStorage_IncludesRecreateStep(t *testing.T) {
 
 			ids := workflowStepIDs(t, wb)
 			assert.Equal(t, []string{
+				steps.NetworkFirewallCreateStepId,
+				steps.TcEgressPersistStepId,
 				steps.PurgeBlockNodeStorageStepId,
 				steps.RecreateBlockNodeStorageStepId,
 				steps.UpgradeBlockNodeStepId,
@@ -184,6 +188,8 @@ func TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart(t *testing.T) {
 
 	ids := workflowStepIDs(t, wb)
 	assert.Equal(t, []string{
+		steps.NetworkFirewallCreateStepId,
+		steps.TcEgressPersistStepId,
 		steps.UpgradeBlockNodeStepId,
 		steps.RolloutRestartBlockNodeStepId,
 	}, ids)

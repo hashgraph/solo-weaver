@@ -5,6 +5,8 @@
 package prompt
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
@@ -119,11 +121,13 @@ func TestAddStoragePathPrompts_BaseModeNormalisesTargets(t *testing.T) {
 	var defaults state.PromptDefaults
 	defaults.BlockNode.Storage.BasePath = "/data"
 
+	chartVersion := "0.35.1"
 	cv := NewChosenValues()
 	w := NewWizard()
-	AddStoragePathPrompts(w, cmd, defaults, "0.35.1", targets, cv)
+	AddStoragePathPrompts(w, cmd, defaults, &chartVersion, targets, cv)
 
-	// mode group + base-path group + individual-paths group.
+	// mode group + base-path group + one individual-paths group (core + optional
+	// paths share a single page via hidableField).
 	if len(w.groups) != 3 || len(w.afterRun) != 1 {
 		t.Fatalf("expected 3 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
 	}
@@ -156,9 +160,10 @@ func TestAddStoragePathPrompts_IndividualModeClearsBasePath(t *testing.T) {
 	// No persisted base path → individual paths is the default mode.
 	var defaults state.PromptDefaults
 
+	chartVersion := "0.35.1"
 	cv := NewChosenValues()
 	w := NewWizard()
-	AddStoragePathPrompts(w, cmd, defaults, "0.35.1", targets, cv)
+	AddStoragePathPrompts(w, cmd, defaults, &chartVersion, targets, cv)
 
 	if len(w.groups) != 3 || len(w.afterRun) != 1 {
 		t.Fatalf("expected 3 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
@@ -178,12 +183,61 @@ func TestAddStoragePathPrompts_IndividualModeClearsBasePath(t *testing.T) {
 	}
 }
 
+// TestAddStoragePathPrompts_IndividualModeTracksChartVersionEdit is the #826
+// regression guard: a single wizard built while the chart version is pre-0.37.0
+// must reflect a later edit to a >=0.37.0 version, dropping the retired
+// verification path and keeping application-state — because the builders read the
+// chart-version pointer live rather than snapshotting it at construction.
+func TestAddStoragePathPrompts_IndividualModeTracksChartVersionEdit(t *testing.T) {
+	cmd := &cobra.Command{Use: "install"}
+
+	var basePath, archivePath, livePath, logPath, verificationPath, pluginsPath, applicationStatePath string
+	targets := storageTargets(&basePath, &archivePath, &livePath, &logPath, &verificationPath, &pluginsPath, &applicationStatePath)
+
+	// No persisted base path → individual mode is the default.
+	var defaults state.PromptDefaults
+
+	// Build the wizard on a pre-0.37.0 version, then simulate the operator editing
+	// the chart-version input to a >=0.37.0 version before the wizard completes.
+	chartVersion := "0.35.1"
+	cv := NewChosenValues()
+	w := NewWizard()
+	AddStoragePathPrompts(w, cmd, defaults, &chartVersion, targets, cv)
+
+	chartVersion = "0.37.1"
+	w.afterRun[0]()
+
+	// application-state applies to >=0.37.0 and must be retained; verification is
+	// retired at 0.37.0 and must be cleared; plugins applies across the range.
+	if applicationStatePath == "" {
+		t.Fatalf("expected application-state path retained for chart 0.37.1, got empty")
+	}
+	if verificationPath != "" {
+		t.Fatalf("expected verification path cleared for chart 0.37.1, got %q", verificationPath)
+	}
+	if pluginsPath == "" {
+		t.Fatalf("expected plugins path retained for chart 0.37.1, got empty")
+	}
+
+	recorded := make(map[string]bool)
+	for _, p := range cv.pairs {
+		recorded[p.title] = true
+	}
+	if recorded["Verification Storage Path"] {
+		t.Fatalf("did not expect verification recorded for chart 0.37.1, got %+v", cv.pairs)
+	}
+	if !recorded["Application-State Storage Path"] {
+		t.Fatalf("expected application-state recorded for chart 0.37.1, got %+v", cv.pairs)
+	}
+}
+
 func TestAddPluginPresetPrompts_NonCustomClearsPlugins(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	var preset, plugins string
 
+	chartVersion := "0.35.1"
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", NewChosenValues())
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, "", NewChosenValues())
 
 	// preset group + conditional custom group.
 	if len(w.groups) != 2 || len(w.afterRun) != 1 {
@@ -215,9 +269,10 @@ func TestAddPluginPresetPrompts_CustomJoinsSelection(t *testing.T) {
 	defaults.BlockNode.PluginPreset = blocknode.PresetCustom
 	defaults.BlockNode.PluginList = valid[0]
 
+	chartVersion := "0.35.1"
 	cv := NewChosenValues()
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, defaults, &preset, &plugins, "0.35.1", cv)
+	AddPluginPresetPrompts(w, cmd, defaults, &preset, &plugins, &chartVersion, "", cv)
 
 	if preset != blocknode.PresetCustom {
 		t.Fatalf("expected Custom preset pre-selected, got %q", preset)
@@ -233,6 +288,37 @@ func TestAddPluginPresetPrompts_CustomJoinsSelection(t *testing.T) {
 	}
 }
 
+func TestAddPluginPresetPrompts_SmartDefaultsToNoneWhenValuesFileDefinesPlugins(t *testing.T) {
+	valuesFile := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(valuesFile, []byte("plugins:\n  names: \"health,verification\"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write values file: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "install"}
+	var preset, plugins string
+
+	chartVersion := "0.35.1"
+	w := NewWizard()
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, valuesFile, NewChosenValues())
+
+	if preset != blocknode.PresetNone {
+		t.Fatalf("expected the values file to smart-default the preset to PresetNone, got %q", preset)
+	}
+}
+
+func TestAddPluginPresetPrompts_DefaultsToTier1LFHWhenNoValuesFile(t *testing.T) {
+	cmd := &cobra.Command{Use: "install"}
+	var preset, plugins string
+
+	chartVersion := "0.35.1"
+	w := NewWizard()
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, "", NewChosenValues())
+
+	if preset != blocknode.PresetTier1LFH {
+		t.Fatalf("expected the default tier1-lfh preset when no --values file is given, got %q", preset)
+	}
+}
+
 func TestAddPluginPresetPrompts_SkipsWhenPresetFlagSet(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	var preset, plugins string
@@ -240,8 +326,9 @@ func TestAddPluginPresetPrompts_SkipsWhenPresetFlagSet(t *testing.T) {
 	cmd.Flags().StringVar(&plugins, "plugins", "", "")
 	_ = cmd.Flags().Set("plugin-preset", "tier1-lfh")
 
+	chartVersion := "0.35.1"
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, "0.35.1", NewChosenValues())
+	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, "", NewChosenValues())
 
 	if len(w.groups) != 0 {
 		t.Fatalf("expected no groups when --plugin-preset already set, got %d", len(w.groups))

@@ -38,7 +38,7 @@ import (
 // and cherry-picks the volume into a 0.36.x release before 0.37.0 ships, bump
 // this constant to that cherry-pick tag — no other structural change is needed.
 //
-// The "-0" suffix is the lowest-possible prerelease per semver §11, so the
+// The "-0" suffix is the lowest-possible prerelease per semver spec, so the
 // boundary is satisfied by every prerelease of 0.37.0 (0.37.0-rc1, -rc2, …) as
 // well as the final 0.37.0 tag. Without it, semver ranks `0.37.0-rc1 < 0.37.0`
 // and release candidates would be wrongly excluded from the cutover. This is a

@@ -73,3 +73,15 @@ func SoloTheme() *huh.Theme {
 
 	return t
 }
+
+// soloThemeNoFieldSeparator returns SoloTheme with the inter-field separator
+// removed. huh renders one FieldSeparator between every adjacent pair of fields
+// in a group — including around a field that renders empty — so a group that
+// hides individual fields (see spacedField) would show a doubled gap around each
+// hidden field. Zeroing the separator here lets each field own its own leading
+// gap instead, keeping spacing even regardless of which fields are hidden.
+func soloThemeNoFieldSeparator() *huh.Theme {
+	t := SoloTheme()
+	t.FieldSeparator = lipgloss.NewStyle()
+	return t
+}

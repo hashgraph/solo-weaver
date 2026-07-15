@@ -3,6 +3,7 @@
 package models
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/automa-saga/logx"
@@ -54,6 +55,56 @@ type SoloOperatorConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
+// DefaultClusterPodCIDR is the cluster-wide pod subnet. It is the single source
+// of truth shared by the kubeadm init config (networking.podSubnet, rendered via
+// templates.KubeadmInitData.PodSubnet) and the host firewall's default
+// --pod-cidr (the in-cluster host-service ports rule). Keeping both off one
+// constant guarantees the firewall opens exactly the range kubeadm assigns pods.
+const DefaultClusterPodCIDR = "10.4.0.0/14"
+
+// HostConfig represents the `host` configuration block: node-level host-firewall
+// settings applied by the block-node workflow (`block node install` /
+// `reconfigure` / `upgrade` — not the generic `kube cluster install`, which is
+// used for cluster provisioning independent of any specific node type). These
+// drive the `inet host` nftables table (see the `network firewall` command).
+// ManagementCIDRs is the SSH/management allowlist; because the table's input
+// chain is default-drop, an empty allowlist would lock the host out of new SSH
+// connections, so the firewall step skips applying it when empty.
+type HostConfig struct {
+	ManagementCIDRs []string `yaml:"managementCidrs" json:"managementCidrs"` // SSH/management allowlist CIDRs
+	SSHPort         int      `yaml:"sshPort" json:"sshPort"`                 // SSH/management TCP port accepted from the allowlist (0 = default 22)
+	PodCIDR         string   `yaml:"podCidr" json:"podCidr"`                 // Pod source range allowed to reach the in-cluster host-service ports (empty = rule omitted)
+	InClusterPorts  []int    `yaml:"inClusterPorts" json:"inClusterPorts"`   // Host-service ports reachable from the pod CIDR
+	Disabled        bool     `yaml:"disabled" json:"disabled"`               // Operator explicitly opted out via --firewall-enabled=false (negative polarity so the zero value means "enabled")
+}
+
+// Validate rejects host-firewall config that would be unsafe to render into the
+// nft ruleset. CIDRs and ports are checked through pkg/sanity so a malformed
+// token can never reach the atomic nft transaction.
+func (c *HostConfig) Validate() error {
+	for _, cidr := range c.ManagementCIDRs {
+		if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid host managementCidr: %s", cidr)
+		}
+	}
+	if c.SSHPort != 0 {
+		if err := sanity.ValidatePort(strconv.Itoa(c.SSHPort)); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid host sshPort: %d", c.SSHPort)
+		}
+	}
+	if c.PodCIDR != "" {
+		if err := sanity.ValidateIPv4CIDR(c.PodCIDR); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid host podCidr: %s", c.PodCIDR)
+		}
+	}
+	for _, p := range c.InClusterPorts {
+		if err := sanity.ValidatePort(strconv.Itoa(p)); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid host inClusterPort: %d", p)
+		}
+	}
+	return nil
+}
+
 // Config holds the global configuration for the application.
 type Config struct {
 	Profile      string             `yaml:"profile" json:"profile"` // Deployment profile (local, perfnet, testnet, mainnet)
@@ -63,6 +114,7 @@ type Config struct {
 	Teleport     TeleportConfig     `yaml:"teleport" json:"teleport"`
 	Proxy        ProxyConfig        `yaml:"proxy" json:"proxy"`
 	SoloOperator SoloOperatorConfig `yaml:"soloOperator" json:"soloOperator"`
+	Host         HostConfig         `yaml:"host" json:"host"`
 }
 
 // BlockNodeStorage represents the `storage` section under `blockNode`.
@@ -258,6 +310,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Proxy.Validate(); err != nil {
+		return err
+	}
+	if err := c.Host.Validate(); err != nil {
 		return err
 	}
 	return nil

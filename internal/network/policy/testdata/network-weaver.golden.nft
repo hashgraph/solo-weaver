@@ -1,0 +1,39 @@
+add table inet weaver
+delete table inet weaver
+add table inet weaver
+table inet weaver {
+	set bn-backfill { type ipv4_addr . inet_service; }
+	set bn-partner-out { type ipv4_addr; flags interval; }
+	set bn-partner-out_ports { type inet_service; elements = { 40980, 40981 }; }
+	set bn-public-out_ports { type inet_service; elements = { 40980, 40981 }; }
+	set bn-publisher { type ipv4_addr; flags interval; }
+	set bn-publisher_ports { type inet_service; elements = { 40840 }; }
+	set bn-restricted { type ipv4_addr; flags interval; }
+	set bn-subscriber-in_ports { type inet_service; elements = { 40980, 40981 }; }
+
+	chain forward {
+		type filter hook forward priority 0; policy drop;
+		ct state invalid drop
+
+		# Quarantine (deny), both directions. Runs before est,rel accept
+		# so already-open connections are also killed.
+		ip saddr @bn-restricted drop
+		ip daddr @bn-restricted drop
+
+		# Asymmetric reply restore. Must precede est,rel accept so every
+		# reply packet is reclassified, not just the SYN.
+		ct direction reply ct mark 0x20 meta priority set 0x10020 accept
+
+		# Classification — specific matches.
+		ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill ct mark set 0x20 meta priority set 0x10060 accept
+		ip saddr 10.4.0.0/24 ip daddr @bn-partner-out tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
+		ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept
+
+		# Classification — fallthrough (any source/dest).
+		ip saddr 10.4.0.0/24 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
+		ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
+
+		ct state established,related accept
+		drop
+	}
+}

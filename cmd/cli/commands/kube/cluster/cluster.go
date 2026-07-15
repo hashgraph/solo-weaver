@@ -8,6 +8,9 @@ import (
 )
 
 var (
+	// flagNodeType backs the deprecated --node-type flag on `kube cluster install`.
+	// Cluster install is workload-agnostic now, so the value is ignored; the flag is
+	// kept hidden for backward compatibility.
 	flagNodeType        string
 	flagStopOnError     bool
 	flagRollbackOnError bool

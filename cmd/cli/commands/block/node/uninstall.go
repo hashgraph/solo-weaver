@@ -16,7 +16,7 @@ var uninstallCmd = &cobra.Command{
 	Short:   "Uninstall Hedera Block Node",
 	Long:    "Uninstall Hedera Block Node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		inputs, err := prepareBlocknodeInputs(cmd, args)
+		inputs, _, err := prepareBlocknodeInputs(cmd, args)
 		if err != nil {
 			return err
 		}

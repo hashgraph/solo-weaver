@@ -46,10 +46,26 @@ These flags are available for all commands:
 |---------------------|-------|----------------------------------------------------------|----------------------------|
 | `--config`          | `-c`  | Path to configuration file                               | None                       |
 | `--profile`         | `-p`  | Deployment profile                                       | Required for most commands |
-| `--output`          | `-o`  | Output format (yaml\|json)                               | `yaml`                     |
+| `--output`          | `-o`  | Output format (text, json)                               | `text`                     |
 | `--non-interactive` | —     | Disable TUI and output raw logs; useful for CI/pipelines | `false`                    |
 | `--version`         | `-v`  | Show version                                             | -                          |
 | `--help`            | `-h`  | Show help                                                | -                          |
+
+> **About `--output`:** selects the **stdout format**.
+> - **`text`** (default) — human-readable output: the interactive TUI on a
+>   terminal, or plain console log lines when piped / `--non-interactive`.
+> - **`json`** — machine-readable output for automation (Ansible, `jq`, CI).
+>   Emits one JSON object per log event (NDJSON) on stdout, followed by a final
+>   tagged summary object `{"type":"summary","status":…,"report_path":…,"report":{…}}`.
+>   Select it with `jq 'select(.type=="summary")'` (a trailing log line may
+>   follow, so filter by the tag rather than assuming it is the last line).
+>   Passing `-o json` **forces non-interactive mode** (the TUI never renders),
+>   matching common tooling (`kubectl -o json`, `terraform -json`). Human error
+>   panels still go to **stderr**, so the stdout JSON stream stays clean.
+>
+> The YAML workflow report file (`setup_report_<timestamp>.yaml`) is written in
+> both modes regardless of `-o`; its path is reported in the `report_path=…`
+> field (and in the JSON summary object).
 
 ### Error Handling Flags
 
@@ -173,13 +189,31 @@ sudo solo-provisioner block node install \
 | `--verification-size`     | Verification storage size (chart versions below 0.37.0)                                                                               |
 | `--log-size`              | Log storage size                                                                                                                      |
 | `--application-state-size` | PV/PVC size for application-state storage (e.g., `500Mi`, `1Gi`); chart versions 0.37.0 and above                                    |
-| `--plugin-preset`         | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, or `custom`); prompts interactively when omitted                                   |
+| `--plugin-preset`         | Plugin preset to deploy (`tier1-lfh`, `tier1-rfh`, `custom`, or `none` for no override — use `--values`/chart default); prompts interactively when omitted |
 | `--plugins`               | Comma-separated plugin list; overrides `--plugin-preset` when set                                                                     |
 | `--plugins-size`          | PV/PVC size for plugins storage (e.g., `5Gi`, `10Gi`)                                                                                 |
 | `--plugins-path`          | Path for plugins storage                                                                                                              |
 | `--historic-retention`    | Historic block retention threshold (`0` = unlimited)                                                                                  |
 | `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`) |
+| `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Set to `false` for hosts managed by an external firewall (default: `true`) |
+| `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs. Empty skips the host firewall.                                                          |
+| `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
+| `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet)                                |
+| `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
+| `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and installs `solo-provisioner-tc-egress.service` so the HTB hierarchy survives reboot. |
+| `--link-rate`             | NIC line rate in tc-style format (e.g. `1gbit`, `100mbit`), or `auto` to detect and store the link speed at install time (written as explicit proportional class rates). Auto-detected from sysfs at each boot when omitted. Interactively, the prompt accepts a rate, `auto`, or blank. |
+
+> **Host firewall**: `block node install` always lays down the node-level `inet
+> host` firewall (SSH/management allowlist, ICMP policy, in-cluster host-service
+> ports) — regardless of whether it's bootstrapping a bare-metal host or deploying
+> onto an already-existing cluster. This is a deliberate design choice: the
+> firewall is owned by the block-node workflow, not by the generic `kube cluster
+> install` (which provisions clusters for other purposes too and should not
+> unconditionally apply node-specific rules). The `--mgmt-cidrs` / `--ssh-port` /
+> `--pod-cidr` / `--in-cluster-ports` flags (and interactive prompts) configure
+> it. An empty management allowlist skips the firewall to avoid locking the host
+> out of SSH; `--firewall-enabled=false` opts out of it entirely.
 
 #### Upgrade Block Node
 
@@ -348,24 +382,33 @@ Sets up a complete single-node Kubernetes environment with all required componen
 - **k9s**: Terminal-based Kubernetes UI
 - **Metrics Server**: Resource metrics for pods and nodes
 
+`kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet host` nftables table) is applied by the block-node workflow instead (see [Install Block Node](#install-block-node) below).
+
+Cluster install is **workload-agnostic**: it validates only the Kubernetes substrate
+hardware floor (what Kubernetes itself needs to run), not any per-workload sizing. It
+therefore takes **no `--profile` or `--node-type`**. Workload-sized hardware validation
+happens later, at `block node check` / `block node install`, where the deployment
+profile and plugin preset are known.
+
 ```bash
-# Install full Kubernetes stack for block nodes
-sudo solo-provisioner kube cluster install \
-  --profile=local \
-  --node-type=block
+# Install the full Kubernetes stack
+sudo solo-provisioner kube cluster install
 
 # With error handling
-sudo solo-provisioner kube cluster install \
-  --profile=mainnet \
-  --node-type=block \
-  --rollback-on-error
+sudo solo-provisioner kube cluster install --rollback-on-error
 ```
 
 **Flags**:
 
-| Flag          | Short | Description                             | Required |
-|---------------|-------|-----------------------------------------|----------|
-| `--node-type` | `-n`  | Type of node (block\|consensus\|mirror) | Yes      |
+| Flag                 | Short | Description                                                        | Required |
+|----------------------|-------|-------------------------------------------------------------------|----------|
+| `--rollback-on-error`| —     | Roll back completed steps if a later step fails                   | No       |
+| `--stop-on-error`    | —     | Stop at the first failing step (default)                          | No       |
+| `--continue-on-error`| —     | Continue past failing steps                                       | No       |
+
+> **Deprecated:** `--profile` and `--node-type` are no longer used by `kube cluster install`.
+> They are still accepted (hidden) so existing scripts do not break, but their values are
+> **ignored** and a notice is printed if you pass them. Remove them from your invocations.
 
 #### Uninstall Kubernetes Cluster
 
@@ -454,6 +497,206 @@ sudo solo-provisioner network firewall delete
 ```
 
 > `delete` removes the table and `/etc/solo-provisioner/network-host.nft` but does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver`); disable it manually if you need it off.
+
+#### Create a Traffic Policy
+
+The `policy` scope is a generic, category-agnostic primitive that manages the `inet weaver` workload traffic plane: named per-category rules that classify traffic into an HTB priority class, or quarantine a set of CIDRs. It is not tied to any specific node type — the CLI takes CIDRs and class names directly (statusz-agnostic); the examples below use the block-node categories because `block node install` is the only caller today. Each `create` renders the rule(s) into the `inet weaver` forward chain, ensures the policy's nft set `@<name>` exists, writes a per-policy registry file under `/etc/solo-provisioner/policies/`, applies the full chain to the live kernel with `nft -f`, and atomically rewrites `/etc/solo-provisioner/network-weaver.nft`.
+
+`create` is create-if-missing, mirroring `network firewall create`: a policy that already exists is left untouched unless `--force` is passed, in which case its config and membership are **replaced** (not merged) from the given flags/`--cidrs`. Without `--force`, an existing policy warns and makes no changes — even if the flags/`--cidrs` given this time differ from before.
+
+Specify **exactly one** action: `--stamp <class>` (classify into an HTB priority class) or `--deny` (drop the CIDRs both directions). There is no `--direction` flag — every class has exactly one direction (see the class list below), so `--stamp <class>` determines it.
+
+```bash
+# Publisher: highest-priority ingress class on the publisher listener port
+sudo solo-provisioner network policy create --name bn-publisher \
+  --ports 40840 --stamp publisher
+
+# Subscriber ingress from any source (no IP-set clause): reserve class
+sudo solo-provisioner network policy create --name bn-subscriber-in \
+  --ports 40980,40981 --stamp reserve-ingress --from-entity world
+
+# Partner egress (specific destinations), curated CIDR list
+sudo solo-provisioner network policy create --name bn-partner-out \
+  --ports 40980,40981 --stamp partner --cidrs 10.20.0.0/16
+
+# Backfill egress with an asymmetric reply class (conntrack reply gets higher priority)
+sudo solo-provisioner network policy create --name bn-backfill \
+  --stamp reserve-egress --reply-stamp backfill-response \
+  --cidrs 10.30.5.7:43473
+
+# Quarantine: drop all traffic to/from a set of CIDRs, both directions
+sudo solo-provisioner network policy create --name bn-restricted \
+  --deny --cidrs 10.99.0.0/16
+```
+
+**Flags**:
+
+| Flag            | Description                                                                                          | Default       |
+|-----------------|------------------------------------------------------------------------------------------------------|---------------|
+| `--name`        | Policy name; also the nft set name `@<name>` (**required**)                                          | (none)        |
+| `--stamp`       | HTB class to classify matching packets into; also fixes the policy's direction (mutually exclusive with `--deny`) | (none) |
+| `--deny`        | Drop the `--cidrs` in both directions (mutually exclusive with `--stamp`)                            | `false`       |
+| `--reply-stamp` | Reply class for an asymmetric conntrack reply (requires `--stamp` to resolve to an egress class; `--reply-stamp` must resolve to the mirror ingress class) | (none) |
+| `--from-entity` | `world` — match any source/dest with no IP-set clause (mutually exclusive with `--cidrs`)            | (none)        |
+| `--ports`       | Workload listener ports for the match key (comma-separated or repeated)                              | (none)        |
+| `--cidrs`       | Initial set membership (comma-separated or repeated); `ip:port` entries for `--reply-stamp` policies | (none)        |
+| `--cidrs-file`  | Alternative to `--cidrs`: a file of CIDRs (one per line or comma-separated)                          | (none)        |
+| `--pod-cidr`    | Pod CIDR to scope classification to                                                                  | auto-detected |
+| `--force`       | Replace an existing policy's config and membership (root flag, `-y`); without it, an existing policy is left untouched | `false` |
+
+`--stamp` references a QoS class name — `publisher`, `reserve-ingress` (ingress); `partner`, `public`, `reserve-egress` (egress); `backfill-response` (ingress, `--reply-stamp` only) — referencing an unknown class is an error. Rule position in the chain is determined by action type and match specificity (deny → reply-restore → specific stamp → fallthrough stamp), never by creation order.
+
+When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
+
+
+> Set **membership** (the CIDRs) is never persisted to `network-weaver.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).
+
+#### Mutate Set Membership (add / remove / set)
+
+Use these verbs to modify a policy's live CIDR set after it has been created. **None of them re-render `network-weaver.nft`** — only the live kernel set changes (§8.3.1).
+
+```bash
+# Add one or more CIDRs to a policy's live set (repeatable or comma-separated)
+sudo solo-provisioner network policy add --name bn-publisher --cidr 10.1.0.1/32
+sudo solo-provisioner network policy add --name bn-publisher --cidr 10.1.0.2/32,10.1.0.3/32
+
+# Remove one or more CIDRs from a policy's live set
+sudo solo-provisioner network policy remove --name bn-publisher --cidr 10.1.0.1/32
+
+# Atomically replace the full membership list (flush + re-add in one kernel transaction)
+sudo solo-provisioner network policy set --name bn-publisher --cidrs 10.2.0.0/16
+# Or clear the set entirely (omit --cidrs):
+sudo solo-provisioner network policy set --name bn-publisher
+```
+
+**`add` / `remove` flags** (use `--cidr` for each CIDR; comma-separated lists are also accepted):
+
+| Flag     | Description                                        | Required |
+|----------|----------------------------------------------------|----------|
+| `--name` | Policy name                                        | yes      |
+| `--cidr` | CIDR to add or remove (repeatable or comma-separated) | yes   |
+
+**`set` flags**:
+
+| Flag           | Description                                                             | Required |
+|----------------|-------------------------------------------------------------------------|----------|
+| `--name`       | Policy name                                                             | yes      |
+| `--cidrs`      | Replacement membership (comma-separated or repeated); omit to clear     | no       |
+| `--cidrs-file` | Alternative to `--cidrs`: a file of CIDRs (one per line or comma-separated) | no  |
+
+For `--reply-stamp` policies the CIDR entries must be `ip:port` pairs for all three verbs, same as `create --cidrs`.
+
+#### Inspect a Policy (show)
+
+Print a policy's registry config and current live set membership:
+
+```bash
+sudo solo-provisioner network policy show --name bn-publisher
+```
+
+Output example:
+```
+policy: bn-publisher
+  action:  stamp
+  class:   publisher
+  direction: ingress
+  ports:   40840
+  created: 2026-01-01T00:00:00Z
+
+live set @bn-publisher:
+  10.1.0.1/32
+  10.1.0.2/32
+```
+
+| Flag     | Description     | Required |
+|----------|-----------------|----------|
+| `--name` | Policy name     | yes      |
+
+#### Remove a Policy (delete)
+
+Remove a policy's rules, set, and registry file, and re-render the `inet weaver` chain:
+
+```bash
+sudo solo-provisioner network policy delete --name bn-restricted
+```
+
+`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver.nft`. If this is the last policy, an empty chain (`policy drop`, no rules) is applied; the boot oneshot stays enabled.
+
+| Flag     | Description     | Required |
+|----------|-----------------|----------|
+| `--name` | Policy name     | yes      |
+
+---
+
+#### `network shape` — tc HTB Bandwidth Class Management
+
+Manage the tc HTB shaping hierarchy for the node's egress NIC. Each `create/set/delete` mutation atomically re-renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and restarts `solo-provisioner-tc-egress.service` so the live kernel and boot script stay in sync.
+
+`block node install` drives the shape registry automatically (from `--link-rate`); `network shape` lets you inspect or adjust individual classes after install.
+
+**Create device root**
+
+```bash
+# Explicit trunk rate: written into the boot script as concrete tc values; no sysfs detection.
+sudo solo-provisioner network shape create \
+  --device egress --rate 1gbit --default reserve-egress
+
+# Auto-detect trunk rate NOW from sysfs (/sys/class/net/<NIC>/speed) and store
+# the resolved value (e.g. 1gbit) as an explicit rate. Unreadable speed → 1gbit.
+sudo solo-provisioner network shape create \
+  --device egress --rate auto --default reserve-egress
+
+# Replace an existing device config.
+sudo solo-provisioner network shape create \
+  --device egress --rate 1gbit --default reserve-egress --force
+```
+
+`--rate auto` reads the detected NIC's link speed from sysfs **at create time** — while the link is up and stable — and stores the resolved value (e.g. `1gbit`) as an ordinary explicit rate. `network shape show` then reports the concrete number and the boot script carries explicit values, with no `SPEED` variable and no sysfs read at boot. If the speed is not readable then (e.g. a virtual NIC reporting `-1`), `auto` falls back to a concrete `1gbit` (1000 Mbit) — still explicit and `SPEED`-free, not a dynamic script. Either way, `--rate auto` always produces a concrete stored rate; the sysfs-at-boot form only appears when no shape device is configured at all (e.g. `block node install` run without `--link-rate` in non-interactive mode).
+
+Until you add the first `--class`, the device root renders a placeholder hierarchy (the three default egress classes at proportional rates: partner 40%/70%, public 30%/70%, reserve-egress 30%/100% of the trunk) at the resolved concrete rate. Adding explicit `--class` configs replaces the placeholder.
+
+**Create / replace HTB leaf classes**
+
+```bash
+sudo solo-provisioner network shape create --class partner        --rate 400mbit --ceil 700mbit  --prio 0
+sudo solo-provisioner network shape create --class public         --rate 300mbit --ceil 700mbit  --prio 5
+sudo solo-provisioner network shape create --class reserve-egress --rate 300mbit --ceil 1000mbit --prio 1
+```
+
+Once all three egress class configs are present, the boot script switches to fully explicit rates (no SPEED variable at all).
+
+**Live update (no qdisc teardown)**
+
+```bash
+sudo solo-provisioner network shape set --class partner --rate 500mbit
+sudo solo-provisioner network shape set --class public  --ceil 600mbit
+```
+
+`set` runs `tc class change` on the live kernel and re-renders the boot script immediately.
+
+**Show**
+
+```bash
+sudo solo-provisioner network shape show              # all devices and classes
+sudo solo-provisioner network shape show --class partner  # single class
+```
+
+**Delete**
+
+```bash
+# Fails if the class is the device default or referenced by a policy --stamp.
+sudo solo-provisioner network shape delete --class reserve-egress
+```
+
+| Flag        | Description                                                                     | Required              |
+|-------------|---------------------------------------------------------------------------------|-----------------------|
+| `--device`  | Traffic direction: `egress` or `ingress`                                        | one of `--device` / `--class` |
+| `--class`   | HTB class name (`partner`, `public`, `reserve-egress`, …)                      | one of `--device` / `--class` |
+| `--rate`    | Bandwidth rate (`100mbit`, `1gbit`) or `"auto"` (sysfs, `--device` form only)  | yes (create/set)      |
+| `--ceil`    | Burst ceiling ≥ `--rate`; defaults to `--rate` when omitted                     | no                    |
+| `--prio`    | HTB scheduling priority `[0,7]`; 0 is highest                                   | no (default 0)        |
+| `--default` | Default class for unmatched traffic (`--device` form only)                      | yes (`--device`)      |
+| `--force`   | Replace an existing device or class config                                       | no                    |
 
 ---
 
@@ -618,6 +861,14 @@ sudo solo-provisioner alloy cluster install \
 | `--prometheus-username`   | Prometheus authentication username *(deprecated)*                                                                                 |
 | `--loki-url`              | Loki remote write URL *(deprecated: use `--add-loki-remote`)*                                                                     |
 | `--loki-username`         | Loki authentication username *(deprecated)*                                                                                       |
+| `--stop-on-error`         | Stop execution on first error (default behavior when no execution-mode flag is set)                                             |
+| `--rollback-on-error`     | Rollback executed steps on error                                                                                                 |
+| `--continue-on-error`     | Continue executing steps even if some steps fail                                                                                 |
+
+> **Note**: `--stop-on-error`, `--rollback-on-error`, and `--continue-on-error` are mutually exclusive and apply to
+> both `alloy cluster install` and `alloy cluster uninstall`. When Alloy fails to install because the Kubernetes
+> cluster is not reachable, install the cluster first with `solo-provisioner kube cluster install` — Alloy deploys
+> into an existing cluster and does not create one.
 
 > **Note**: Passwords must be pre-created in a K8s Secret named `grafana-alloy-secrets` in the `grafana-alloy`
 > namespace. The secret can be created manually, via ESO, Terraform, or any other mechanism.
@@ -874,7 +1125,7 @@ sudo solo-provisioner consensus migration soak status
 #### Show Version
 
 ```bash
-# Default YAML output
+# Default human-readable text output
 solo-provisioner version
 
 # JSON output
@@ -1149,7 +1400,7 @@ sudo solo-provisioner block node reset       --profile=<profile>
 sudo solo-provisioner block node uninstall   --profile=<profile> [--with-reset]
 
 # KUBERNETES
-sudo solo-provisioner kube cluster install   --profile=<profile> --node-type=block
+sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
 
 # TELEPORT
@@ -1179,7 +1430,7 @@ sudo solo-provisioner consensus migration soak stop   [--keep-state]
 sudo solo-provisioner consensus migration soak status
 
 # UTILITIES
-solo-provisioner version [--output=json|yaml]
+solo-provisioner version [--output=text|json]
 solo-provisioner --help
 ```
 

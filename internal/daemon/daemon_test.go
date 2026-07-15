@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -267,13 +268,19 @@ func TestNewFromConfig_DisabledComponentSkipped(t *testing.T) {
 }
 
 func TestNewFromConfig_BlockNodeOnly(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "bn.kubeconfig")
+	require.NoError(t, os.WriteFile(kubeconfig, []byte(minimalKubeconfig), 0o600))
+
 	cfg := DaemonConfig{Components: DaemonComponents{
 		BlockNode: &BlockNodeComponentConfig{
-			Enabled:  true,
-			Monitors: BlockNodeMonitors{TrafficShaper: true},
+			Enabled:    true,
+			Kubeconfig: kubeconfig,
+			Orbit:      "hedera-block-node",
+			Monitors:   BlockNodeMonitors{TrafficShaper: true},
 		},
 	}}
-	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: "/tmp/x.sock"}, cfg)
+	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
 	require.NoError(t, err)
 	require.Len(t, d.components, 1)
 	assert.Equal(t, "block-node", d.components[0].name)
@@ -320,6 +327,61 @@ func TestNewFromConfig_ConsensusNodeWiring(t *testing.T) {
 	assert.NotNil(t, comp.tracker)
 	assert.NotNil(t, comp.probe, "the upgrade monitor declares an RBAC prerequisite, so the component probe must be built")
 	assert.Equal(t, "consensus-node", comp.probe.ComponentName())
+}
+
+// gateProbe closes entered on first Probe, then blocks until release is closed —
+// pins runComponentProbes mid-cycle so a test can check Run awaits it (#697).
+type gateProbe struct {
+	name      string
+	entered   chan struct{}
+	release   chan struct{}
+	enterOnce sync.Once
+}
+
+func (p *gateProbe) ComponentName() string { return p.name }
+func (p *gateProbe) Probe(_ context.Context) error {
+	p.enterOnce.Do(func() { close(p.entered) })
+	<-p.release
+	return nil
+}
+
+// TestRun_AwaitsProbeGoroutine verifies Daemon.Run does not return while the
+// component-probe loop is still in-flight (#697).
+func TestRun_AwaitsProbeGoroutine(t *testing.T) {
+	dir := t.TempDir()
+	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, DaemonConfig{})
+	require.NoError(t, err)
+
+	// No monitors: the supervisor returns nil at once, so only the probe keeps Run alive after cancel.
+	probe := &gateProbe{name: "slow", entered: make(chan struct{}), release: make(chan struct{})}
+	d.components = []component{{name: "slow", probe: probe}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runDone := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(runDone) }()
+
+	select {
+	case <-probe.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe goroutine never started")
+	}
+
+	// Cancel: server + supervisor unwind, but the probe is still blocked.
+	cancel()
+	select {
+	case <-runDone:
+		t.Fatal("Run returned while the probe goroutine was still in-flight")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Release the probe; Run must now observe quiescence and return.
+	close(probe.release)
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after the probe goroutine finished")
+	}
 }
 
 const minimalKubeconfig = `apiVersion: v1

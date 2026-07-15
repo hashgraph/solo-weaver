@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/deps"
@@ -138,6 +139,52 @@ func recentRetentionInputPrompt(eff string, target *string) InputPrompt {
 		EffectiveValue: eff,
 		Target:         target,
 		Validate:       validateRetentionThreshold,
+	}
+}
+
+// EgressInterfaceInputPrompt returns the interactive prompt for --egress-interface.
+// eff is the auto-detected NIC name used as the placeholder/effective value;
+// speedHint is a tc-style bandwidth string (e.g. "1gbit") derived from the
+// detected NIC's link speed — pass an empty string when the speed is unavailable.
+func EgressInterfaceInputPrompt(eff, speedHint string, target *string) InputPrompt {
+	desc := "Physical NIC for the $EGRESS HTB traffic-shaper hierarchy. Leave blank to auto-detect from the default route."
+	if speedHint != "" {
+		desc += " Detected link speed: " + speedHint + "."
+	}
+	return InputPrompt{
+		FlagName:       "egress-interface",
+		Title:          "Egress Network Interface",
+		Description:    desc,
+		Placeholder:    eff,
+		EffectiveValue: eff,
+		Target:         target,
+	}
+}
+
+// LinkRateInputPrompt returns the interactive prompt for --link-rate.
+// speedHint is the auto-detected link speed (e.g. "1gbit") used as the pre-filled
+// default; pass an empty string when detection was unavailable. The operator may
+// leave the field blank to keep runtime auto-detection from sysfs.
+func LinkRateInputPrompt(speedHint string, target *string) InputPrompt {
+	desc := "NIC line rate in tc-style format (e.g. 1gbit, 100mbit). " +
+		"Enter \"auto\" to detect the link speed now and store it as an explicit rate; " +
+		"leave blank to auto-detect at each boot from /sys/class/net/<nic>/speed (falls back to 1000mbit on virtual NICs)."
+	return InputPrompt{
+		FlagName:       "link-rate",
+		Title:          "NIC Link Rate",
+		Description:    desc,
+		Placeholder:    speedHint,
+		EffectiveValue: speedHint,
+		Target:         target,
+		Validate: func(s string) error {
+			if s == "" || strings.EqualFold(strings.TrimSpace(s), "auto") {
+				return nil
+			}
+			if _, ok := shape.ParseSpeedMbit(s); !ok {
+				return errorx.IllegalArgument.New("must be a tc-style rate with a positive integer prefix (e.g. 1gbit, 100mbit) or \"auto\"")
+			}
+			return nil
+		},
 	}
 }
 
@@ -316,17 +363,28 @@ func storagePathField(p InputPrompt, active func() bool) huh.Field {
 //   - targets:      pointers to the seven storage path flag variables
 //   - cv:           chosen-values collector for summary printing
 //
-// The optional-storage prompts (verification, plugins, application-state) are
-// gated on the registry's GetApplicableOptionalStorages(chartVersion) so the
-// operator only sees the storages the target chart actually needs. Because huh
-// cannot add or remove fields from a group mid-run, this applicable set is fixed
-// at construction from the effective chart version; editing the chart-version
-// input later in the same wizard does not re-shape the individual-path fields.
+// All individual paths — the always-present core paths (archive, live, log) plus
+// the optional paths (verification, plugins, application-state) — live on a single
+// wizard page (one huh group). Every input is wrapped in a spacedField, and the
+// optional ones are gated on the registry's RequiredByVersion for the *live* chart
+// version: an optional field whose hidden func (re-reading *chartVersion) reports
+// not-applicable is skipped and rendered empty. Because huh can hide only whole
+// groups (not individual fields) yet recomputes field positions on every keypress,
+// this keeps every applicable path on one page while still re-shaping which
+// optional paths are shown — and the individual-paths label — as the operator edits
+// the chart-version input earlier in the same wizard. chartVersion is taken by
+// pointer so huh's dynamic-func bindings observe those later edits.
+//
+// The group runs with huh's built-in field separator zeroed
+// (soloThemeNoFieldSeparator, applied via the wizard's per-group theme override);
+// each spacedField instead prepends its own leading gap when an earlier field is
+// visible, so a hidden field in the middle leaves no doubled blank line and spacing
+// stays even no matter which optional paths are hidden.
 func AddStoragePathPrompts(
 	w *Wizard,
 	cmd *cobra.Command,
 	defaults state.PromptDefaults,
-	chartVersion string,
+	chartVersion *string,
 	targets StoragePathTargets,
 	cv *ChosenValues,
 ) {
@@ -341,22 +399,17 @@ func AddStoragePathPrompts(
 	stor := defaults.BlockNode.Storage
 	cfgStor := cfg.BlockNode.Storage
 
-	// Determine which optional storages apply to the target chart version.
-	applicable := blocknode.GetApplicableOptionalStorages(chartVersion)
-	includeVerification := false
-	includePlugins := false
-	includeApplicationState := false
-	optionalLabels := make([]string, 0, len(applicable))
-	for _, optStor := range applicable {
-		switch optStor.Name {
-		case "verification":
-			includeVerification = true
-		case "plugins":
-			includePlugins = true
-		case "application-state":
-			includeApplicationState = true
-		}
-		optionalLabels = append(optionalLabels, optStor.Name)
+	// applicableOptional reports whether the named optional storage is required by
+	// the *current* chart-version value. It re-reads *chartVersion on every call so
+	// the per-optional group hide-funcs and the mode-select OptionsFunc react as the
+	// operator edits the chart-version input earlier in the wizard.
+	optByName := make(map[string]blocknode.OptionalStorage)
+	for _, o := range blocknode.GetOptionalStorages() {
+		optByName[o.Name] = o
+	}
+	applicableOptional := func(name string) bool {
+		o, ok := optByName[name]
+		return ok && o.RequiredByVersion(*chartVersion)
 	}
 
 	// Determine the default mode from persisted state.
@@ -366,25 +419,36 @@ func AddStoragePathPrompts(
 		defaultMode = storagePathModeBasePath
 	}
 
-	// selectedMode is shared by the mode-select field, the two path groups' hide
-	// funcs, and the afterRun callback below.
+	// selectedMode is shared by the mode-select field, the path groups' hide funcs,
+	// and the afterRun callback below.
 	selectedMode := defaultMode
+	inBaseMode := func() bool { return selectedMode == storagePathModeBasePath }
+	inIndividualMode := func() bool { return selectedMode == storagePathModeIndividual }
 
 	// ── Page: mode select ─────────────────────────────────────────────────────
-	individualLabel := "Individual paths  (archive, live, log"
-	for _, n := range optionalLabels {
-		individualLabel += ", " + n
+	// The individual-paths option label lists the optional storages that apply to
+	// the live chart version, so it is rebuilt via OptionsFunc bound to
+	// *chartVersion. The option *values* are stable (only the label changes), so
+	// huh preserves the current selection across rebuilds.
+	modeOptions := func() []huh.Option[string] {
+		var label strings.Builder
+		label.WriteString("Individual paths  (archive, live, log")
+		for _, o := range blocknode.GetApplicableOptionalStorages(*chartVersion) {
+			label.WriteString(", ")
+			label.WriteString(o.Name)
+		}
+		label.WriteString(" must all be provided)")
+		return []huh.Option[string]{
+			huh.NewOption("Single base path  (subdirectories are created automatically)", storagePathModeBasePath),
+			huh.NewOption(label.String(), storagePathModeIndividual),
+		}
 	}
-	individualLabel += " must all be provided)"
 	modeGroup := huh.NewGroup(
 		huh.NewSelect[string]().
 			Key("storage-mode").
 			Title("Storage Path Mode").
 			Description("Choose how to configure storage paths for this block node").
-			Options(
-				huh.NewOption("Single base path  (subdirectories are created automatically)", storagePathModeBasePath),
-				huh.NewOption(individualLabel, storagePathModeIndividual),
-			).
+			OptionsFunc(modeOptions, chartVersion).
 			Value(&selectedMode),
 	)
 
@@ -392,67 +456,110 @@ func AddStoragePathPrompts(
 	baseEff := resolveEffective(stor.BasePath, cfgStor.BasePath, deps.BLOCK_NODE_STORAGE_BASE_PATH)
 	basePrompt := basePathInputPrompt(baseEff, targets.BasePath)
 	*targets.BasePath = baseEff
-	inBaseMode := func() bool { return selectedMode == storagePathModeBasePath }
 	baseGroup := huh.NewGroup(storagePathField(basePrompt, inBaseMode)).
 		WithHideFunc(func() bool { return !inBaseMode() })
 
 	// ── Page: individual path inputs (shown only in individual mode) ──────────
-	// Derive per-path defaults from the effective base path so individual inputs
-	// are pre-filled even when no explicit per-path config exists (fresh install
-	// or switching from base-path mode). Subdirectory names mirror those used by
-	// GetStoragePaths at workflow time.
+	// All individual paths share a single group (one page). Core paths (archive,
+	// live, log) apply to every chart version; each optional path is wrapped in a
+	// hidableField whose visibility tracks the live chart version, because huh can
+	// hide only whole groups, not fields. Per-path defaults derive from the
+	// effective base path so inputs are pre-filled even without explicit per-path
+	// config; subdirectory names mirror those used by GetStoragePaths at workflow
+	// time.
 	indivDefault := func(subdir string) string { return path.Join(baseEff, subdir) }
-	individualPrompts := []InputPrompt{
-		archivePathInputPrompt(resolveEffective(stor.ArchivePath, cfgStor.ArchivePath, indivDefault("archive")), targets.ArchivePath, true),
-		livePathInputPrompt(resolveEffective(stor.LivePath, cfgStor.LivePath, indivDefault("live")), targets.LivePath, true),
-		logPathInputPrompt(resolveEffective(stor.LogPath, cfgStor.LogPath, indivDefault("logs")), targets.LogPath, true),
+
+	// indivEntry couples an individual-path prompt with the optional-storage name it
+	// represents ("" for a core path that always applies). optName drives both the
+	// per-field hide predicate (via hidableField) and the afterRun applicability filter.
+	type indivEntry struct {
+		prompt  InputPrompt
+		optName string
 	}
-	if includeVerification {
-		individualPrompts = append(individualPrompts,
-			verificationPathInputPrompt(resolveEffective(stor.VerificationPath, cfgStor.VerificationPath, indivDefault("verification")), targets.VerificationPath, true))
-	}
-	if includePlugins {
-		individualPrompts = append(individualPrompts,
-			pluginsPathInputPrompt(resolveEffective(stor.PluginsPath, cfgStor.PluginsPath, indivDefault("plugins")), targets.PluginsPath, true))
-	}
-	if includeApplicationState {
-		individualPrompts = append(individualPrompts,
-			applicationStatePathInputPrompt(resolveEffective(stor.ApplicationStatePath, cfgStor.ApplicationStatePath, indivDefault("application-state")), targets.ApplicationStatePath, true))
+	entries := []indivEntry{
+		{archivePathInputPrompt(resolveEffective(stor.ArchivePath, cfgStor.ArchivePath, indivDefault("archive")), targets.ArchivePath, true), ""},
+		{livePathInputPrompt(resolveEffective(stor.LivePath, cfgStor.LivePath, indivDefault("live")), targets.LivePath, true), ""},
+		{logPathInputPrompt(resolveEffective(stor.LogPath, cfgStor.LogPath, indivDefault("logs")), targets.LogPath, true), ""},
+		{verificationPathInputPrompt(resolveEffective(stor.VerificationPath, cfgStor.VerificationPath, indivDefault("verification")), targets.VerificationPath, true), "verification"},
+		{pluginsPathInputPrompt(resolveEffective(stor.PluginsPath, cfgStor.PluginsPath, indivDefault("plugins")), targets.PluginsPath, true), "plugins"},
+		{applicationStatePathInputPrompt(resolveEffective(stor.ApplicationStatePath, cfgStor.ApplicationStatePath, indivDefault("application-state")), targets.ApplicationStatePath, true), "application-state"},
 	}
 
-	inIndividualMode := func() bool { return selectedMode == storagePathModeIndividual }
-	individualFields := make([]huh.Field, len(individualPrompts))
-	for i := range individualPrompts {
-		p := individualPrompts[i]
-		*p.Target = p.EffectiveValue // pre-fill so the input shows the default
-		individualFields[i] = storagePathField(p, inIndividualMode)
-	}
-	individualGroup := huh.NewGroup(individualFields...).
-		WithHideFunc(func() bool { return !inIndividualMode() })
-
-	// afterRun records the mode, normalises targets so downstream storage-mode
-	// inference is unambiguous (both variants are pre-filled, so the unused one
-	// must be cleared), and records the chosen paths into the summary.
-	after := func() {
-		cv.add("Storage Path Mode", selectedMode)
-		if selectedMode == storagePathModeBasePath {
-			*targets.ArchivePath = ""
-			*targets.LivePath = ""
-			*targets.LogPath = ""
-			*targets.VerificationPath = ""
-			*targets.PluginsPath = ""
-			*targets.ApplicationStatePath = ""
-			cv.add(basePrompt.Title, *targets.BasePath)
-		} else {
-			*targets.BasePath = ""
-			for i := range individualPrompts {
-				p := individualPrompts[i]
-				cv.add(p.Title, *p.Target)
+	// visible reports whether an entry's field should be shown and validated:
+	// always in individual mode for core paths, and additionally gated on the live
+	// chart version for optional paths.
+	visible := func(e indivEntry) func() bool {
+		return func() bool {
+			if !inIndividualMode() {
+				return false
 			}
+			return e.optName == "" || applicableOptional(e.optName)
 		}
 	}
 
-	w.addGroups(after, modeGroup, baseGroup, individualGroup)
+	// Pre-compute a visibility predicate per entry so each field can decide both
+	// its own visibility and whether any earlier field is already visible (which is
+	// when it must render a leading gap).
+	visFns := make([]func() bool, len(entries))
+	for i := range entries {
+		visFns[i] = visible(entries[i])
+	}
+
+	// All individual-path fields go into a single group (one page). Every field is
+	// wrapped in a spacedField: an optional path that does not apply to the live
+	// chart version renders empty and is skipped, and each shown field owns exactly
+	// one leading gap so spacing stays even regardless of which fields are hidden.
+	// The group runs with huh's own field separator zeroed (the theme override
+	// below) so those per-field gaps are not doubled.
+	var indivFields []huh.Field
+	for i := range entries {
+		idx := i
+		e := entries[idx]
+		*e.prompt.Target = e.prompt.EffectiveValue // pre-fill so the input shows the default
+		field := storagePathField(e.prompt, visFns[idx])
+		hidden := func() bool { return !visFns[idx]() }
+		leadingGap := func() bool {
+			for j := 0; j < idx; j++ {
+				if visFns[j]() {
+					return true
+				}
+			}
+			return false
+		}
+		indivFields = append(indivFields, newSpacedField(field, hidden, leadingGap))
+	}
+	indivGroup := huh.NewGroup(indivFields...).
+		WithHideFunc(func() bool { return !inIndividualMode() })
+	// Zero huh's inter-field separator for this group so hidden fields leave no gap
+	// and each visible field's own leading gap keeps spacing even.
+	w.overrideTheme(indivGroup, soloThemeNoFieldSeparator())
+
+	// afterRun records the mode, normalises targets so downstream storage-mode
+	// inference is unambiguous (both variants are pre-filled, so the unused one must
+	// be cleared), and records the chosen paths into the summary. In individual mode
+	// an optional path that does not apply to the *final* chart version is cleared so
+	// a pre-filled but hidden path can never leak into the resolved inputs.
+	after := func() {
+		cv.add("Storage Path Mode", selectedMode)
+		if selectedMode == storagePathModeBasePath {
+			for i := range entries {
+				*entries[i].prompt.Target = ""
+			}
+			cv.add(basePrompt.Title, *targets.BasePath)
+			return
+		}
+		*targets.BasePath = ""
+		for i := range entries {
+			e := entries[i]
+			if e.optName != "" && !applicableOptional(e.optName) {
+				*e.prompt.Target = ""
+				continue
+			}
+			cv.add(e.prompt.Title, *e.prompt.Target)
+		}
+	}
+
+	w.addGroups(after, modeGroup, baseGroup, indivGroup)
 }
 
 // RunStoragePathPrompts presents the storage-path prompts as a standalone wizard.
@@ -468,7 +575,7 @@ func RunStoragePathPrompts(
 	cv *ChosenValues,
 ) error {
 	w := NewWizard()
-	AddStoragePathPrompts(w, cmd, defaults, chartVersion, targets, cv)
+	AddStoragePathPrompts(w, cmd, defaults, &chartVersion, targets, cv)
 	return w.Run()
 }
 
@@ -550,6 +657,15 @@ func BlockNodeReconfigureInputPrompts(
 // page and switch away from Custom — the multi-select page hides again and
 // --plugins is left empty (normalised in afterRun).
 //
+// The preset-select page pre-selects the last used preset read from the on-disk
+// state file. When the operator's --values file defines plugins.names, the
+// "no override" preset (PresetNone) is pre-selected instead so the values file
+// wins unless the operator actively picks a preset.
+//
+// The custom multi-select page lists all known block-node plugins for the live
+// chartVersion; the operator's selection is joined as a comma-separated string
+// and written to *flagPlugins.
+//
 // The function is a no-op when either flag was already supplied on the command
 // line — the caller's values are respected as-is.
 //
@@ -559,19 +675,24 @@ func BlockNodeReconfigureInputPrompts(
 //   - defaults:        prompt defaults read from the on-disk state file
 //   - flagPluginPreset: pointer to the --plugin-preset flag variable
 //   - flagPlugins:     pointer to the --plugins flag variable
-//   - chartVersion:   target chart version (used to filter available plugins)
+//   - chartVersion:   pointer to the target chart version (used to filter available plugins)
+//   - valuesFile:     path to the operator's --values file (empty when not supplied);
+//     used to smart-default the preset to "no override" when it defines plugins.names
 //   - cv:              chosen-values collector for summary printing
 //
-// Note: the custom multi-select's option list is fixed at construction from
-// chartVersion — huh cannot rebuild option lists mid-run, so editing the
-// chart-version input later in the same wizard does not re-shape the plugin list.
+// The custom multi-select's option list and warning are rebuilt via OptionsFunc /
+// DescriptionFunc bound to *chartVersion, so editing the chart-version input earlier
+// in the same wizard re-shapes the available plugins; huh reconciles the current
+// selection against the new option set (dropping plugins that no longer apply).
+// chartVersion is taken by pointer so those bindings observe later edits.
 func AddPluginPresetPrompts(
 	w *Wizard,
 	cmd *cobra.Command,
 	defaults state.PromptDefaults,
 	flagPluginPreset *string,
 	flagPlugins *string,
-	chartVersion string,
+	chartVersion *string,
+	valuesFile string,
 	cv *ChosenValues,
 ) {
 	// If the operator already supplied --plugins, no prompting is needed.
@@ -585,6 +706,13 @@ func AddPluginPresetPrompts(
 
 	// ── Page: preset selection ─────────────────────────────────────────────────
 	effectivePreset := resolveEffective(defaults.BlockNode.PluginPreset, "", blocknode.PresetTier1LFH)
+	// Smart default: when the operator's --values file defines plugins.names, pre-select
+	// the "no override" option so their file wins unless they actively pick a preset.
+	// This overrides the tier1-lfh/state default (and is sticky when state already saved
+	// "none", since resolveEffective returns it and this just re-selects it).
+	if blocknode.ValuesFileDefinesPlugins(valuesFile) {
+		effectivePreset = blocknode.PresetNone
+	}
 	*flagPluginPreset = effectivePreset
 
 	var options []huh.Option[string]
@@ -602,42 +730,55 @@ func AddPluginPresetPrompts(
 	)
 
 	// ── Page: custom multi-select (shown only when Custom is selected) ────────
-	// Pre-select the plugins from the last-used custom list (if any), but filter
-	// out any entries that no longer exist in the current available plugin list so
-	// the UI does not silently drop them.
-	versionedPlugins := blocknode.PluginsForVersion(chartVersion)
-	validPlugins := make(map[string]struct{}, len(versionedPlugins))
-	var pluginOptions []huh.Option[string]
-	for _, p := range versionedPlugins {
-		validPlugins[p] = struct{}{}
-		pluginOptions = append(pluginOptions, huh.NewOption(p, p))
-	}
-
-	var preSelected []string
-	var unknownPlugins []string
-	if defaults.BlockNode.PluginList != "" {
-		for _, plugin := range strings.Split(defaults.BlockNode.PluginList, ",") {
-			plugin = strings.TrimSpace(plugin)
-			if plugin == "" {
-				continue
-			}
-			if _, ok := validPlugins[plugin]; ok {
-				preSelected = append(preSelected, plugin)
-				continue
-			}
-			unknownPlugins = append(unknownPlugins, plugin)
+	// The available plugins depend on the live chart version, so validForVersion
+	// re-reads *chartVersion on every call. The last-used custom list (from state)
+	// is pre-selected but filtered to the plugins that still apply.
+	savedPlugins := make([]string, 0)
+	for plugin := range strings.SplitSeq(defaults.BlockNode.PluginList, ",") {
+		if plugin = strings.TrimSpace(plugin); plugin != "" {
+			savedPlugins = append(savedPlugins, plugin)
 		}
 	}
+	validForVersion := func() map[string]struct{} {
+		vp := blocknode.PluginsForVersion(*chartVersion)
+		set := make(map[string]struct{}, len(vp))
+		for _, p := range vp {
+			set[p] = struct{}{}
+		}
+		return set
+	}
+	pluginOptionsFn := func() []huh.Option[string] {
+		var opts []huh.Option[string]
+		for _, p := range blocknode.PluginsForVersion(*chartVersion) {
+			opts = append(opts, huh.NewOption(p, p))
+		}
+		return opts
+	}
+	descriptionFn := func() string {
+		valid := validForVersion()
+		var unknown []string
+		for _, p := range savedPlugins {
+			if _, ok := valid[p]; !ok {
+				unknown = append(unknown, p)
+			}
+		}
+		desc := "Choose the individual plugins to install"
+		if len(unknown) > 0 {
+			desc = fmt.Sprintf(
+				"%s\nWarning: previously saved plugins are not available for chart version %s and were not pre-selected: %s",
+				desc, *chartVersion, strings.Join(unknown, ", "))
+		}
+		return desc
+	}
 
-	selectedPlugins := preSelected
-
-	description := "Choose the individual plugins to install"
-	if len(unknownPlugins) > 0 {
-		description = fmt.Sprintf(
-			"%s\nWarning: previously saved plugins are no longer available and were not pre-selected: %s",
-			description,
-			strings.Join(unknownPlugins, ", "),
-		)
+	// Pre-select the saved plugins that apply to the version at construction time;
+	// huh reconciles this selection against the option set whenever it is rebuilt.
+	initialValid := validForVersion()
+	var selectedPlugins []string
+	for _, p := range savedPlugins {
+		if _, ok := initialValid[p]; ok {
+			selectedPlugins = append(selectedPlugins, p)
+		}
 	}
 
 	isCustom := func() bool { return *flagPluginPreset == blocknode.PresetCustom }
@@ -645,8 +786,8 @@ func AddPluginPresetPrompts(
 		huh.NewMultiSelect[string]().
 			Key("plugins").
 			Title("Select Plugins").
-			Description(description).
-			Options(pluginOptions...).
+			DescriptionFunc(descriptionFn, chartVersion).
+			OptionsFunc(pluginOptionsFn, chartVersion).
 			Value(&selectedPlugins).
 			Validate(func(selected []string) error {
 				// Only enforce a selection while the Custom preset is active; when
@@ -663,14 +804,23 @@ func AddPluginPresetPrompts(
 
 	after := func() {
 		cv.add("Plugin Preset", blocknode.PresetLabel(*flagPluginPreset))
-		if isCustom() {
-			*flagPlugins = strings.Join(selectedPlugins, ",")
-			cv.add("Custom Plugins", *flagPlugins)
-		} else {
+		if !isCustom() {
 			// Ensure a pre-selected-but-hidden multi-select never contaminates a
 			// non-custom preset.
 			*flagPlugins = ""
+			return
 		}
+		// Drop any selection that does not apply to the final chart version, in case
+		// the version changed after the multi-select was last reconciled.
+		valid := validForVersion()
+		var final []string
+		for _, p := range selectedPlugins {
+			if _, ok := valid[p]; ok {
+				final = append(final, p)
+			}
+		}
+		*flagPlugins = strings.Join(final, ",")
+		cv.add("Custom Plugins", *flagPlugins)
 	}
 
 	w.addGroups(after, presetGroup, customGroup)
@@ -687,10 +837,11 @@ func RunPluginPresetPrompts(
 	flagPluginPreset *string,
 	flagPlugins *string,
 	chartVersion string,
+	valuesFile string,
 	cv *ChosenValues,
 ) error {
 	w := NewWizard()
-	AddPluginPresetPrompts(w, cmd, defaults, flagPluginPreset, flagPlugins, chartVersion, cv)
+	AddPluginPresetPrompts(w, cmd, defaults, flagPluginPreset, flagPlugins, &chartVersion, valuesFile, cv)
 	return w.Run()
 }
 

@@ -72,8 +72,10 @@ type BlockNodeInputs struct {
 	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values
 	HistoricRetention   string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
 	RecentRetention     string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
-	PluginPreset        string // preset ID (e.g. "tier1-lfh") or "custom"; empty = chart default
+	PluginPreset        string // preset ID (e.g. "tier1-lfh"), "custom", or "none" (no override); empty/"none" = use --values or chart default
 	PluginList          string // resolved comma-separated plugin list injected into plugins.names
+	EgressInterface     string // physical NIC for the $EGRESS HTB hierarchy; auto-detected from the default route when empty
+	LinkRate            string // tc-style NIC line rate override (e.g. "1gbit"); empty = auto-detect from sysfs at boot
 }
 
 type ClusterInputs struct {

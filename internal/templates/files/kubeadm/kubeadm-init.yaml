@@ -52,7 +52,7 @@ kubernetesVersion: {{.KubernetesVersion}}
 networking:
   dnsDomain: cluster.local
   serviceSubnet: 10.0.0.0/14
-  podSubnet: 10.4.0.0/14
+  podSubnet: {{.PodSubnet}}
 controllerManager:
   extraArgs:
     - name: node-cidr-mask-size-ipv4

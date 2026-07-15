@@ -26,23 +26,29 @@ var (
 
 const responsibilityBackoffFactor = 2.0
 
-// TrafficShaperMonitor is the daemonkit.MonitorRunner skeleton for the
-// block-node traffic-shaper workflow. It owns two long-lived responsibilities
-// that run concurrently under Run:
+// TrafficShaperMonitor is the daemonkit.MonitorRunner for the block-node
+// traffic-shaper workflow. It owns two long-lived responsibilities that run
+// concurrently under Run:
 //
 //   - the pod-lifecycle watcher (resolves host-side veths and installs/rebinds
-//     ingress HTB qdiscs — implemented in #747/#748/#749), and
+//     ingress HTB qdiscs — implemented in #748/#749), and
 //   - the statusz poll loop (diffs statusz membership against live nft sets and
 //     applies deltas — implemented in #751/#752/#754/#755).
 //
-// This story (#746) delivers only the supervision skeleton: both responsibility
-// bodies are stubs. Each responsibility is independently retried with
-// exponential back-off so a fault in one cannot stop the other or crash the
-// daemon.
-type TrafficShaperMonitor struct{}
+// Each responsibility is independently retried with exponential back-off so a
+// fault in one cannot stop the other or crash the daemon.
+type TrafficShaperMonitor struct {
+	// resolver resolves the host-side veth name for a BN pod (story #747).
+	// Used by runPodWatcher once the real watch loop lands in #748.
+	resolver *VethResolver
+}
 
-// NewTrafficShaperMonitor constructs a TrafficShaperMonitor.
-func NewTrafficShaperMonitor() *TrafficShaperMonitor { return &TrafficShaperMonitor{} }
+// NewTrafficShaperMonitor constructs a TrafficShaperMonitor with the given
+// VethResolver. The resolver is wired into runPodWatcher by #748; it is held
+// here so #748 can use it without further constructor changes.
+func NewTrafficShaperMonitor(resolver *VethResolver) *TrafficShaperMonitor {
+	return &TrafficShaperMonitor{resolver: resolver}
+}
 
 // Name implements daemonkit.MonitorRunner.
 func (m *TrafficShaperMonitor) Name() string { return "bn-traffic-shaper-monitor" }
@@ -111,9 +117,8 @@ func (m *TrafficShaperMonitor) superviseResponsibility(ctx context.Context, name
 	}
 }
 
-// runPodWatcher is the pod-lifecycle watcher responsibility. Stub for #746; the
-// real implementation lands in #747 (veth resolution), #748 (HTB install) and
-// #749 (rebind/cleanup).
+// runPodWatcher is the pod-lifecycle watcher responsibility. Stub replaced by
+// the real watch loop in #748; m.resolver is ready for use there.
 func (m *TrafficShaperMonitor) runPodWatcher(ctx context.Context) error {
 	logx.As().Info().
 		Str("reason", "TrafficShaperPodWatcherStub").

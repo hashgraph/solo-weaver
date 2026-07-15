@@ -210,6 +210,9 @@ func (b *blockNodeChecker) populateStorageFromPVs(
 		case strings.Contains(claimName, "plugins"):
 			storage.PluginsPath = hostpath
 			storage.PluginsSize = size
+		case strings.Contains(claimName, "application-state"):
+			storage.ApplicationStatePath = hostpath
+			storage.ApplicationStateSize = size
 		}
 
 	}

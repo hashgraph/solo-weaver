@@ -54,6 +54,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	}
 
 	ins := inputs.Custom
+
 	var wb *automa.WorkflowBuilder
 	switch {
 	case ins.PurgeStorage:
@@ -68,7 +69,13 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		// After purging old dirs, recreate PVs/PVCs and create new directories at
 		// the new paths, then upgrade the chart.
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").
-			Steps(steps.PurgeBlockNodeStorage(oldIns), steps.RecreateBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))
+			Steps(
+				steps.NetworkFirewallCreate(),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
+				steps.PurgeBlockNodeStorage(oldIns),
+				steps.RecreateBlockNodeStorage(ins),
+				steps.UpgradeBlockNode(ins),
+			)
 	case ins.ResetStorage:
 		// --with-reset wipes data only; PVs/PVCs are preserved. Storage paths must
 		// not have changed because local-PV hostPath is immutable.
@@ -86,7 +93,12 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		oldIns := ins
 		oldIns.Storage = currentState.BlockNodeState.Storage
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
-			Steps(steps.PurgeBlockNodeStorage(oldIns), steps.UpgradeBlockNode(ins))
+			Steps(
+				steps.NetworkFirewallCreate(),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
+				steps.PurgeBlockNodeStorage(oldIns),
+				steps.UpgradeBlockNode(ins),
+			)
 	default:
 		// For non-reset reconfigures, storage path changes require --purge-storage because
 		// existing PVs/PVCs cannot be mutated in-place; block with a clear error.
@@ -104,12 +116,21 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		if ins.NoRestart {
 			// Opt-out: apply new values via helm but skip the rollout-restart.
 			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").
-				Steps(steps.UpgradeBlockNode(ins))
+				Steps(
+					steps.NetworkFirewallCreate(),
+					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
+					steps.UpgradeBlockNode(ins),
+				)
 		} else {
 			// Default: apply new values then trigger a rolling restart so ConfigMap-only
 			// changes are picked up by the running pod.
 			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").
-				Steps(steps.UpgradeBlockNode(ins), steps.RolloutRestartBlockNode(ins))
+				Steps(
+					steps.NetworkFirewallCreate(),
+					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
+					steps.UpgradeBlockNode(ins),
+					steps.RolloutRestartBlockNode(ins),
+				)
 		}
 	}
 	return wb, nil

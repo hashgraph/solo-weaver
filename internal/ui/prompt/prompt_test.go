@@ -423,6 +423,23 @@ func TestValidateRequiredPath(t *testing.T) {
 	}
 }
 
+func TestLinkRateInputPrompt_Validate(t *testing.T) {
+	var target string
+	p := LinkRateInputPrompt("1gbit", &target)
+	// Accepted: blank (detect at boot), "auto" (detect at create, any case), tc rates.
+	for _, ok := range []string{"", "auto", "AUTO", " auto ", "1gbit", "100mbit"} {
+		if err := p.Validate(ok); err != nil {
+			t.Errorf("Validate(%q): unexpected error: %v", ok, err)
+		}
+	}
+	// Rejected: non-rate garbage.
+	for _, bad := range []string{"fast", "1gig", "abc", "0mbit"} {
+		if err := p.Validate(bad); err == nil {
+			t.Errorf("Validate(%q): expected error, got nil", bad)
+		}
+	}
+}
+
 func TestArchivePathInputPrompt_RequiredValidation(t *testing.T) {
 	var target string
 	// required=true: empty value must be rejected.

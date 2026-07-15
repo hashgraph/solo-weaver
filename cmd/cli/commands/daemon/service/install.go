@@ -139,7 +139,7 @@ func resolveDaemonConfig(
 	if err == nil {
 		// Apply flag overrides and merge any newly requested components.
 		changed := applyFlagOverrides(&cfg)
-		changed = mergeRequestedComponents(&cfg, flagComponents) || changed
+		changed = mergeRequestedComponents(&cfg, flagComponents, paths) || changed
 		if changed {
 			if err := daemon.WriteDaemonConfig(paths.DaemonConfigPath, cfg); err != nil {
 				return daemon.DaemonConfig{}, err
@@ -185,10 +185,11 @@ func resolveDaemonConfig(
 
 	var bnCfg *daemon.BlockNodeComponentConfig
 	if cs.Has(prompt.ComponentBlockNode) {
-		// Orbit and Kubeconfig omitted while traffic-shaper is stubbed.
 		c := daemon.BlockNodeComponentConfig{
-			Enabled:  true,
-			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
+			Enabled:    true,
+			Kubeconfig: paths.DaemonBNKubeconfigPath,
+			Orbit:      flagBNOrbit,
+			Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
 		}
 		bnCfg = &c
 	}
@@ -208,7 +209,9 @@ func resolveDaemonConfig(
 			targets.CNOrbit = &cnCfg.Orbit
 			targets.CNUpgradeDir = &cnCfg.UpgradeDir
 		}
-		// BNOrbit not prompted while traffic-shaper is stubbed.
+		if bnCfg != nil {
+			targets.BNOrbit = &bnCfg.Orbit
+		}
 		if err := prompt.RunDaemonInstallPrompts(cmd, &cfg, targets, paths, cv); err != nil {
 			return daemon.DaemonConfig{}, err
 		}
@@ -232,13 +235,14 @@ func resolveDaemonConfig(
 
 // mergeRequestedComponents adds any component blocks requested via --components
 // that are absent in cfg. Returns true if cfg was modified.
-func mergeRequestedComponents(cfg *daemon.DaemonConfig, componentsFlag string) bool {
+func mergeRequestedComponents(cfg *daemon.DaemonConfig, componentsFlag string, paths models.WeaverPaths) bool {
 	cs := prompt.ParseComponentsFlag(componentsFlag)
 	changed := false
 	if cs.Has(prompt.ComponentBlockNode) && cfg.Components.BlockNode == nil {
 		cfg.Components.BlockNode = &daemon.BlockNodeComponentConfig{
-			Enabled:  true,
-			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
+			Enabled:    true,
+			Kubeconfig: paths.DaemonBNKubeconfigPath,
+			Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
 		}
 		changed = true
 	}

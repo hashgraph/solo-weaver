@@ -2400,3 +2400,61 @@ func TestSanity_ValidateDNSName(t *testing.T) {
 		})
 	}
 }
+
+func TestSanity_ValidateIPv4CIDR(t *testing.T) {
+	testCases := []struct {
+		name        string
+		cidr        string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "valid IPv4 CIDR",
+			cidr:        "10.0.0.0/8",
+			expectError: false,
+		},
+		{
+			name:        "valid IPv4 CIDR, narrow mask",
+			cidr:        "192.168.1.0/24",
+			expectError: false,
+		},
+		{
+			name:        "empty string",
+			cidr:        "",
+			expectError: true,
+			errorMsg:    "CIDR cannot be empty",
+		},
+		{
+			name:        "malformed CIDR",
+			cidr:        "not-a-cidr",
+			expectError: true,
+			errorMsg:    "invalid CIDR",
+		},
+		{
+			name:        "bare IP without prefix length",
+			cidr:        "10.0.0.1",
+			expectError: true,
+			errorMsg:    "invalid CIDR",
+		},
+		{
+			name:        "IPv6 CIDR rejected",
+			cidr:        "2001:db8::/32",
+			expectError: true,
+			errorMsg:    "IPv6 CIDRs are not yet supported",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateIPv4CIDR(tc.cidr)
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

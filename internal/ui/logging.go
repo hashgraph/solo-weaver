@@ -115,6 +115,38 @@ func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 		Logger()
 }
 
+// newJSONConsoleLogger creates a zerolog.Logger that writes machine-readable
+// JSON to stdout AND to the rolling log file. Neither writer is a
+// zerolog.ConsoleWriter, so zerolog's native compact single-line JSON encoding
+// is used — i.e. stdout becomes an NDJSON stream. Used by SetJSONConsoleLogging
+// for --output json.
+func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
+	fileWriter := &lumberjack.Logger{
+		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
+		MaxSize:    cfg.MaxSize,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxAge,
+		Compress:   cfg.Compress,
+	}
+
+	pid := os.Getpid()
+	mw := zerolog.MultiLevelWriter(os.Stdout, fileWriter)
+	return zerolog.New(mw).With().
+		Timestamp().
+		Int("pid", pid).
+		Str("version", version.Get().Version).
+		Logger()
+}
+
+// SetJSONConsoleLogging replaces the global logx logger with one that emits
+// NDJSON to stdout (and the log file). Used in --output json mode so downstream
+// automation can parse each log event. Like its sibling SuppressConsoleLogging,
+// it works around logx.Initialize() unconditionally installing a human-readable
+// ConsoleWriter.
+func SetJSONConsoleLogging(cfg logx.LoggingConfig) {
+	logx.SetLogger(newJSONConsoleLogger(cfg))
+}
+
 // SuppressConsoleLogging replaces the global logx logger with a file-only
 // writer (no ConsoleWriter) so that raw zerolog lines do not appear on stdout.
 //

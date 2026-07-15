@@ -76,12 +76,13 @@ type PromptDefaultsDoc struct {
 			PluginPreset      string `yaml:"pluginPreset"`
 			PluginList        string `yaml:"pluginList"`
 			Storage           struct {
-				BasePath         string `yaml:"basePath"`
-				ArchivePath      string `yaml:"archivePath"`
-				LivePath         string `yaml:"livePath"`
-				LogPath          string `yaml:"logPath"`
-				VerificationPath string `yaml:"verificationPath"`
-				PluginsPath      string `yaml:"pluginsPath"`
+				BasePath             string `yaml:"basePath"`
+				ArchivePath          string `yaml:"archivePath"`
+				LivePath             string `yaml:"livePath"`
+				LogPath              string `yaml:"logPath"`
+				VerificationPath     string `yaml:"verificationPath"`
+				PluginsPath          string `yaml:"pluginsPath"`
+				ApplicationStatePath string `yaml:"applicationStatePath"`
 			} `yaml:"storage"`
 		} `yaml:"blockNodeState"`
 	} `yaml:"state"`
@@ -202,12 +203,13 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 			PluginPreset:      bn.PluginPreset,
 			PluginList:        bn.PluginList,
 			Storage: models.BlockNodeStorage{
-				BasePath:         bn.Storage.BasePath,
-				ArchivePath:      bn.Storage.ArchivePath,
-				LivePath:         bn.Storage.LivePath,
-				LogPath:          bn.Storage.LogPath,
-				VerificationPath: bn.Storage.VerificationPath,
-				PluginsPath:      bn.Storage.PluginsPath,
+				BasePath:             bn.Storage.BasePath,
+				ArchivePath:          bn.Storage.ArchivePath,
+				LivePath:             bn.Storage.LivePath,
+				LogPath:              bn.Storage.LogPath,
+				VerificationPath:     bn.Storage.VerificationPath,
+				PluginsPath:          bn.Storage.PluginsPath,
+				ApplicationStatePath: bn.Storage.ApplicationStatePath,
 			},
 		},
 	}, nil

@@ -67,3 +67,20 @@ func CreateNodeSpec(spec DeploymentSpec, hostProfile HostProfile) (Spec, error) 
 
 	return nodeSpec, nil
 }
+
+// CreateSubstrateSpec creates a spec for the Kubernetes substrate floor.
+//
+// Unlike CreateNodeSpec, it deliberately bypasses the IsValidNodeType / IsValidProfile
+// gates: the substrate is not a user-facing node type and carries no profile. It resolves
+// requirements straight from the "k8s-substrate" provider via NewNodeSpec, which only
+// consults the provider registry. The substrate provider ignores profile and options.
+func CreateSubstrateSpec(hostProfile HostProfile) (Spec, error) {
+	spec := DeploymentSpec{NodeType: NodeTypeSubstrate}
+
+	nodeSpec, err := NewNodeSpec(spec, hostProfile)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create substrate spec")
+	}
+
+	return nodeSpec, nil
+}

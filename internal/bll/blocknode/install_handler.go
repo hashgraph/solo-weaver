@@ -60,6 +60,7 @@ func (h *InstallHandler) BuildWorkflow(
 	}
 
 	ins := inputs.Custom
+
 	var wb *automa.WorkflowBuilder
 	if currentState.ClusterState.Created {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
@@ -70,16 +71,32 @@ func (h *InstallHandler) BuildWorkflow(
 				// verifies the binary exists, not the user account. This step is
 				// idempotent and safe to repeat on up-to-date installations.
 				steps.EnsureWeaverOwnerStep(),
+				// The node-level host firewall (inet host table) is owned by the
+				// block-node workflow, not the generic kube cluster install — nftables
+				// is already installed/enabled from that prior cluster provisioning,
+				// so it's safe to apply here.
+				steps.NetworkFirewallCreate(),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 			)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
 			Steps(
 				// Same backwards-compat guard as above: ensure weaver:2500 exists
-				// before InstallClusterWorkflow's preflight check validates it.
-				// Older binaries did not create this account during self-install.
+				// before the preflight check validates it. Older binaries did not
+				// create this account during self-install.
 				steps.EnsureWeaverOwnerStep(),
-				workflows.InstallClusterWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks, h.mr),
+				// Block node install owns its workload-sized preflight (block provider,
+				// profile, plugin preset) plus system setup, then stands up Kubernetes.
+				// InstallClusterWorkflow is intentionally not reused here: it validates
+				// only the substrate floor, which is weaker than the block-node floor.
+				workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
+				workflows.KubernetesSetupWorkflow(h.mr),
+				// nftables was just installed/enabled by NodeSetupWorkflow's
+				// systemSetupWorkflow; apply the host firewall here rather than in
+				// that generic (node-type-agnostic) workflow.
+				steps.NetworkFirewallCreate(),
+				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 			)
 	}

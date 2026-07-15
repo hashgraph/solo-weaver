@@ -8,6 +8,11 @@ import (
 )
 
 var (
+	// Error-control flags (persistent → apply to both install and uninstall)
+	flagStopOnError     bool
+	flagRollbackOnError bool
+	flagContinueOnError bool
+
 	// Alloy configuration flags
 	flagMonitorBlockNode   bool
 	flagClusterName        string
@@ -32,6 +37,17 @@ var (
 )
 
 func init() {
+	// Error-control flags (persistent on the cluster command, so both install and
+	// uninstall inherit them — mirrors the block node pattern in block/node/node.go).
+	common.FlagStopOnError().SetVarP(clusterCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError().SetVarP(clusterCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError().SetVarP(clusterCmd, &flagContinueOnError, false)
+	clusterCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
+
 	// Core configuration flags
 	common.FlagClusterName().SetVarP(clusterCmd, &flagClusterName, false)
 	common.FlagMonitorBlockNode().SetVarP(clusterCmd, &flagMonitorBlockNode, false)

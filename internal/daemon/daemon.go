@@ -113,6 +113,8 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 	if bn != nil && bn.Enabled {
 		result, err := blocknode.NewComponent(blocknode.ComponentConfig{
 			TrafficShaperEnabled: bn.Monitors.TrafficShaper,
+			KubeconfigPath:       bn.Kubeconfig,
+			Namespace:            bn.Orbit,
 		})
 		if err != nil {
 			return nil, err
@@ -350,9 +352,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return errorx.ExternalError.Wrap(err, "consensus-node kubeconfig preflight failed — daemon cannot start")
 		}
 	}
-	// block-node kubeconfig preflight is deferred until the traffic-shaper monitor
-	// requires K8s access (currently stubbed; it polls a remote API only).
-
 	// READY=1 means the daemon process is up and its socket is serving.
 	// Component prerequisite health is tracked separately by runComponentProbes
 	// and surfaced via GET /status — operators use `daemon service check` to
@@ -365,8 +364,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return d.server.Start(ctx) })
 	eg.Go(func() error { return d.componentSupervisor(ctx) })
-
-	go d.runComponentProbes(ctx)
+	// Tracked in the errgroup so Run awaits it (nil return never cancels the group)
+	eg.Go(func() error {
+		d.runComponentProbes(ctx)
+		return nil
+	})
 
 	return eg.Wait()
 }

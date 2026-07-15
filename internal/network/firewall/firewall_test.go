@@ -200,6 +200,17 @@ func TestManager_AddRejectsBadInput(t *testing.T) {
 
 	require.Error(t, m.AddMgmtCIDR(ctx, "not-a-cidr"))
 	require.Error(t, m.AddPort(ctx, 70000))
+	require.Error(t, m.AddMgmtCIDR(ctx, "2001:db8::/32")) // IPv6 not supported by ipv4_addr sets
+}
+
+func TestTable_Validate_RejectsIPv6(t *testing.T) {
+	mgmt := sampleTable()
+	mgmt.MgmtCIDRs = []string{"2001:db8::/32"}
+	require.ErrorContains(t, mgmt.Validate(), "IPv6 CIDRs are not yet supported")
+
+	pod := sampleTable()
+	pod.PodCIDR = "2001:db8::/32"
+	require.ErrorContains(t, pod.Validate(), "IPv6 CIDRs are not yet supported")
 }
 
 func TestManager_MutateBeforeCreateFails(t *testing.T) {
