@@ -71,6 +71,9 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").
 			Steps(
 				steps.NetworkFirewallCreate(),
+				// Keep network-weaver.nft in sync with the policy registry (no-op
+				// if the registry is empty), matching the install ordering.
+				steps.NftWeaverPersist(),
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.PurgeBlockNodeStorage(oldIns),
 				steps.RecreateBlockNodeStorage(ins),
@@ -95,6 +98,9 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
 			Steps(
 				steps.NetworkFirewallCreate(),
+				// Keep network-weaver.nft in sync with the policy registry (no-op
+				// if the registry is empty), matching the install ordering.
+				steps.NftWeaverPersist(),
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.PurgeBlockNodeStorage(oldIns),
 				steps.UpgradeBlockNode(ins),
@@ -118,6 +124,9 @@ func (h *ReconfigureHandler) BuildWorkflow(
 			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").
 				Steps(
 					steps.NetworkFirewallCreate(),
+					// Keep network-weaver.nft in sync with the policy registry (no-op
+					// if the registry is empty), matching the install ordering.
+					steps.NftWeaverPersist(),
 					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 					steps.UpgradeBlockNode(ins),
 				)
@@ -127,6 +136,9 @@ func (h *ReconfigureHandler) BuildWorkflow(
 			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").
 				Steps(
 					steps.NetworkFirewallCreate(),
+					// Keep network-weaver.nft in sync with the policy registry (no-op
+					// if the registry is empty), matching the install ordering.
+					steps.NftWeaverPersist(),
 					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 					steps.UpgradeBlockNode(ins),
 					steps.RolloutRestartBlockNode(ins),

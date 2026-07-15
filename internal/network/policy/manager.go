@@ -418,6 +418,32 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			}
 		}
 
+		if len(remaining) == 0 {
+			// Deleting the last policy: tear the whole table down rather than
+			// render an empty chain. Render([]) emits `policy drop` with no
+			// accept rule for new connections — a blackhole that Apply() would
+			// load into the kernel and atomicWrite would persist for replay at
+			// boot. Remove the live table (if present) and the persisted file so
+			// an empty registry means "no inet weaver table", live or on disk.
+			if exists, err := m.runner.Exists(ctx); err != nil {
+				return errorx.Decorate(err, "failed to check the inet weaver table while removing the last policy")
+			} else if exists {
+				if err := m.runner.Delete(ctx); err != nil {
+					return errorx.Decorate(err, "failed to delete the inet weaver table while removing the last policy")
+				}
+			}
+			if err := os.Remove(m.weaverNftPath); err != nil && !os.IsNotExist(err) {
+				return errorx.Decorate(errorx.ExternalError.Wrap(err, "failed to remove %s", m.weaverNftPath),
+					"inet weaver table deleted but removing the persisted file failed; re-run to reconcile")
+			}
+			if err := os.Remove(registryPath(m.registryDir, name)); err != nil && !os.IsNotExist(err) {
+				return errorx.Decorate(errorx.ExternalError.Wrap(err, "failed to remove registry file for %q", name),
+					"inet weaver table and file removed but removing the registry entry failed; re-run to reconcile")
+			}
+			logx.As().Info().Str("policy", name).Msg("network policy deleted (last policy — inet weaver table torn down)")
+			return nil
+		}
+
 		// Recover the pod CIDR from the existing .nft if any remaining policy
 		// is a --stamp (same pattern as Create).
 		podCIDR := ""

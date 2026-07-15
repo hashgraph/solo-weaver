@@ -45,6 +45,18 @@ func readEntry(dir, name string) (*Policy, error) {
 	return &p, nil
 }
 
+// IsRegistryEmpty reports whether the policy registry at dir contains no
+// entries. A missing directory is treated as empty. On error the bool is false
+// so a failed read can never be mistaken for "empty" (len(nil)==0) and cause a
+// caller to skip work it should not.
+func IsRegistryEmpty(dir string) (bool, error) {
+	policies, err := loadAll(dir)
+	if err != nil {
+		return false, err
+	}
+	return len(policies) == 0, nil
+}
+
 // loadAll reads every policy registry file in dir, sorted by name for a
 // deterministic render. A missing directory yields an empty slice (the first
 // create renders from a single in-memory entry before the dir exists).
