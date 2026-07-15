@@ -348,21 +348,23 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 func RunStartupMigrations(ctx context.Context) error {
 	// Read the provisioner version last written to disk — this is the "installed"
 	// CLI version before the current binary ran for the first time.
-	installedCLIVersion, err := state.ReadProvisionerVersionFromDisk()
+	onDiskCLIVersion, err := state.ReadProvisionerVersionFromDisk()
 	if err != nil {
 		return err
 	}
+	currentCLIVersion := version.Get().Version
 
-	// Absent state.yaml reads back as ""; treat it as the baseline so boundary
-	// migrations still run instead of being skipped as a fresh install.
-	installedCLIVersion = migration.ResolveInstalledCLIVersion(installedCLIVersion)
+	// An absent state.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
+	// 0.0.0 baseline so pending migrations still run instead of being skipped as a fresh
+	// install
+	installedCLIVersion := migration.ResolveInstalledCLIVersion(onDiskCLIVersion)
 
 	mctx := &migration.Context{
 		Component: migration.ScopeStartup,
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedCLIVersion)
-	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Get().Version)
+	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, currentCLIVersion)
 
 	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 	if err != nil {
@@ -386,6 +388,20 @@ func RunStartupMigrations(ctx context.Context) error {
 		return report.Error
 	}
 	logx.As().Info().Msg("Startup migrations completed successfully")
+
+	// Record the version we just migrated to so these boundary migrations are not
+	// re-evaluated — and non-idempotent ones (e.g. the Cilium agent restart) not
+	// re-run — on the next invocation. Gate on an actual version change and on a
+	// provisioned host so a genuinely fresh machine keeps having no state file.
+	// Best-effort: a persistence failure must not fail the user's command; the
+	// worst case is the next run re-evaluates the same boundary (prior behaviour).
+	// See #789 / #781.
+	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
+		if err := state.PersistProvisionerVersion(); err != nil {
+			logx.As().Warn().Err(err).
+				Msg("Failed to record provisioner version after startup migrations; boundary migrations may re-run next invocation")
+		}
+	}
 	return nil
 }
 
