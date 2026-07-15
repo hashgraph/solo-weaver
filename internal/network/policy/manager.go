@@ -4,6 +4,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -320,18 +321,80 @@ func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error
 // clears the set. Like Add/Remove, only the live kernel set is changed.
 func (m *Manager) Set(ctx context.Context, name string, cidrs []string) error {
 	return m.withLock(func() error {
-		p, err := m.requirePolicyWithCIDRSet(name)
-		if err != nil {
-			return err
-		}
-		if err := p.validateCIDRs(cidrs); err != nil {
-			return err
-		}
-		if err := m.requireTableExists(ctx, name); err != nil {
-			return err
-		}
-		return m.runner.SetElements(ctx, name, setElements(p, cidrs))
+		return m.applySet(ctx, name, cidrs)
 	})
+}
+
+// applySet replaces the live set for one named policy with cidrs via a single
+// `flush set + add element` transaction (runner.SetElements). It performs NO
+// locking: callers must already hold the shared apply lock (withLock for the
+// CLI `set` verb, withLockNB for the daemon's ApplyMembership batch), so both
+// paths funnel through the identical kernel transaction and can never
+// interleave with a concurrent operator apply.
+func (m *Manager) applySet(ctx context.Context, name string, cidrs []string) error {
+	p, err := m.requirePolicyWithCIDRSet(name)
+	if err != nil {
+		return err
+	}
+	if err := p.validateCIDRs(cidrs); err != nil {
+		return err
+	}
+	if err := m.requireTableExists(ctx, name); err != nil {
+		return err
+	}
+	return m.runner.SetElements(ctx, name, setElements(p, cidrs))
+}
+
+// ApplyMembership pushes desired CIDR membership into one or more policies'
+// live `inet weaver` sets. It is the traffic-shaper daemon's write path, and
+// it reuses the same per-policy transaction as the hand-run `network policy
+// set` CLI (applySet -> runner.SetElements), so both produce identical kernel
+// state for the same input.
+//
+// Each map entry is a full-list replace (like `set`): an empty slice clears
+// that policy's set. Policies are applied in deterministic (sorted) name
+// order, one `nft -f` transaction per policy for atomicity.
+//
+// The whole batch runs under a SINGLE non-blocking acquisition of the shared
+// apply flock. The return value is:
+//   - (false, nil): the lock was already held by a hand-run operator command,
+//     so nothing was written and the caller skips this tick rather than
+//     blocking or interleaving nft transactions;
+//   - (true, nil):  the lock was acquired and every policy applied cleanly;
+//   - (false, err): the lock was acquired but a policy failed mid-batch — the
+//     batch is not considered applied (see the partial-commit note below).
+//
+// ApplyMembership never calls `create`: a name absent from the registry, or
+// one carrying no CIDR set, is an error (the policy structure is fixed by
+// `block node install`). An error mid-batch stops the batch — policies applied
+// before it stay committed and the caller re-drives on the next tick, which is
+// safe because the apply is idempotent.
+//
+// It acquires the lock itself, so it must NOT be called while the caller
+// already holds withLock/withLockNB (doing so would self-deadlock on a second
+// open-file-description of the same lock file).
+func (m *Manager) ApplyMembership(ctx context.Context, desired map[string][]string) (applied bool, err error) {
+	if len(desired) == 0 {
+		return true, nil
+	}
+	names := make([]string, 0, len(desired))
+	for name := range desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	acquired, err := m.withLockNB(func() error {
+		for _, name := range names {
+			if err := m.applySet(ctx, name, desired[name]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return acquired, nil
 }
 
 // Show returns a human-readable summary of a named policy: its registry config
@@ -536,16 +599,28 @@ func (m *Manager) requireTableExists(ctx context.Context, name string) error {
 	return nil
 }
 
-// withLock serialises a mutation behind the shared cross-command flock so a
-// hand-run operator command and the daemon poll loop cannot interleave
-// nft transactions on the shared network tables.
-func (m *Manager) withLock(fn func() error) error {
+// openLockFile creates the lock directory if needed and opens the shared
+// apply-lock file. The caller owns the returned handle and must Close it (which
+// also releases any flock held on it).
+func (m *Manager) openLockFile() (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(m.lockPath), 0o755); err != nil {
-		return errorx.ExternalError.Wrap(err, "failed to create lock directory %s", filepath.Dir(m.lockPath))
+		return nil, errorx.ExternalError.Wrap(err, "failed to create lock directory %s", filepath.Dir(m.lockPath))
 	}
 	f, err := os.OpenFile(m.lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return errorx.ExternalError.Wrap(err, "failed to open lock file %s", m.lockPath)
+		return nil, errorx.ExternalError.Wrap(err, "failed to open lock file %s", m.lockPath)
+	}
+	return f, nil
+}
+
+// withLock serialises a mutation behind the shared cross-command flock so a
+// hand-run operator command and the daemon poll loop cannot interleave
+// nft transactions on the shared network tables. It blocks until the lock is
+// available (LOCK_EX).
+func (m *Manager) withLock(fn func() error) error {
+	f, err := m.openLockFile()
+	if err != nil {
+		return err
 	}
 	defer func() { _ = f.Close() }()
 
@@ -555,4 +630,33 @@ func (m *Manager) withLock(fn func() error) error {
 	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
 
 	return fn()
+}
+
+// withLockNB is the non-blocking counterpart to withLock (LOCK_EX|LOCK_NB). It
+// is the daemon poll loop's acquisition mode: when a hand-run operator command
+// is mid-apply and already holds the lock, withLockNB does NOT run fn and
+// returns (false, nil) so the caller skips this tick, rather than blocking and
+// risking interleaved nft transactions. On a clean acquisition it runs fn and
+// returns (true, fn()'s error). Any lock error other than "would block" is
+// returned with acquired=false.
+func (m *Manager) withLockNB(fn func() error) (acquired bool, err error) {
+	f, err := m.openLockFile()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		// A held lock surfaces as EWOULDBLOCK, which is the same errno value as
+		// EAGAIN on the platforms this runs on (Linux daemon, darwin dev), so
+		// errors.Is here also matches the EAGAIN spelling — the tick is skipped
+		// cleanly rather than being reported as a lock failure.
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return false, nil
+		}
+		return false, errorx.ExternalError.Wrap(err, "failed to acquire lock %s", m.lockPath)
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+
+	return true, fn()
 }
