@@ -142,6 +142,13 @@ func (m *CiliumAccelerationMigration) Rollback(ctx context.Context, mctx *migrat
 	return nil
 }
 
+// KubernetesInstalled reports whether Kubernetes has been provisioned on this
+// host, using the same probe the Cilium startup migrations gate their Execute()
+// on. The startup orchestrator uses it to decide whether to record the
+// provisioner version after a migration pass, so a genuinely fresh machine keeps
+// having no state file.
+func KubernetesInstalled() bool { return kubernetesInstalled() }
+
 // defaultKubernetesInstalled reports whether Kubernetes has been provisioned on
 // this host (the kubeadm admin kubeconfig exists).
 func defaultKubernetesInstalled() bool {

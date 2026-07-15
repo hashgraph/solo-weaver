@@ -161,6 +161,34 @@ func TestResolveInstalledCLIVersion(t *testing.T) {
 	}
 }
 
+// TestCLIVersionMigration_PersistedVersionStopsRerun proves the #789/#781 fix
+// end-to-end at the version layer: on the first run a pre-state-tracking host
+// (no recorded version) crosses the boundary and the migration applies; after the
+// startup path persists the current version (PersistProvisionerVersion), the next
+// run reads that version back and the SAME boundary no longer applies — so a
+// non-idempotent migration (e.g. the Cilium agent restart) runs exactly once
+// instead of on every invocation.
+func TestCLIVersionMigration_PersistedVersionStopsRerun(t *testing.T) {
+	m := &CLIVersionMigration{id: "cilium-agent-restart-v0.19.2", minVersion: "0.19.2"}
+	const currentVersion = "0.21.0"
+
+	applies := func(onDiskVersion string) bool {
+		installed := ResolveInstalledCLIVersion(onDiskVersion)
+		mctx := &Context{Data: &automa.SyncStateBag{}}
+		mctx.Data.Set(CtxKeyInstalledCLIVersion, installed)
+		mctx.Data.Set(CtxKeyCurrentCLIVersion, currentVersion)
+		got, err := m.Applies(mctx)
+		require.NoError(t, err)
+		return got
+	}
+
+	// Run 1: absent state.yaml → "" → 0.0.0 baseline → boundary applies (migration runs).
+	assert.True(t, applies(""), "first run on a pre-state-tracking host must apply the boundary")
+
+	// Run 2: PersistProvisionerVersion recorded the current version → boundary no longer applies.
+	assert.False(t, applies(currentVersion), "after the version is recorded the boundary must not re-apply")
+}
+
 func TestCLIVersionMigration_Applies_InvalidMinVersion(t *testing.T) {
 	// A migration constructed with a bad minVersion should surface an error
 	// in Applies() rather than silently misrouting.
