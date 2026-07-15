@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
+	"github.com/joomcode/errorx"
 )
 
 // Per-responsibility back-off bounds. A fault in one subsystem (pod watcher or
@@ -41,13 +43,22 @@ type TrafficShaperMonitor struct {
 	// resolver resolves the host-side veth name for a BN pod (story #747).
 	// Used by runPodWatcher once the real watch loop lands in #748.
 	resolver *VethResolver
+	// lister reads live nft set membership so the poll loop can diff desired
+	// statusz-derived membership against the kernel. Satisfied by the network
+	// policy Runner; a fake is injected in tests.
+	lister elementLister
 }
 
 // NewTrafficShaperMonitor constructs a TrafficShaperMonitor with the given
 // VethResolver. The resolver is wired into runPodWatcher by #748; it is held
-// here so #748 can use it without further constructor changes.
+// here so #748 can use it without further constructor changes. The live-set
+// reader defaults to the network policy exec Runner, which reads the `inet
+// weaver` sets via `nft list set`.
 func NewTrafficShaperMonitor(resolver *VethResolver) *TrafficShaperMonitor {
-	return &TrafficShaperMonitor{resolver: resolver}
+	return &TrafficShaperMonitor{
+		resolver: resolver,
+		lister:   policy.NewExecRunner(),
+	}
 }
 
 // Name implements daemonkit.MonitorRunner.
@@ -128,16 +139,35 @@ func (m *TrafficShaperMonitor) runPodWatcher(ctx context.Context) error {
 	return nil
 }
 
-// runStatuszPoll is the statusz poll-loop responsibility. Stub for #746; the
-// real implementation lands in #751 (statusz client), #752 (category→policy
-// diff), #754 (membership apply) and #755 (bootstrap/outage policy).
+// runStatuszPoll is the statusz poll-loop responsibility. The category→policy
+// diff engine is in place; the surrounding loop is not yet wired — statusz fetch
+// lands in #751, delta apply in #754, and bootstrap/outage policy in #755. It
+// exercises the diff seam once with an empty desired view so the plumbing (the
+// live-set reader and reconcilePolicies) is ready for #754 to drive from real
+// statusz data. An empty view maps to zero deltas and touches no set.
 func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
+	deltas, err := m.reconcilePolicies(ctx, nil)
+	if err != nil {
+		return err
+	}
 	logx.As().Info().
 		Str("reason", "TrafficShaperStatuszPollStub").
 		Str("monitor", m.Name()).
-		Msg("statusz poll loop not yet implemented — stub running")
+		Int("policy_deltas", len(deltas)).
+		Msg("statusz poll loop not yet wired — diff engine ready, awaiting statusz client")
 	<-ctx.Done()
 	return nil
+}
+
+// reconcilePolicies computes the per-policy membership deltas between the desired
+// category endpoints and the live nft sets. It does NOT apply them — applying is
+// #754's responsibility. It is the seam the poll loop drives once the statusz
+// client (#751) supplies real endpoints.
+func (m *TrafficShaperMonitor) reconcilePolicies(ctx context.Context, ce CategoryEndpoints) ([]PolicyDelta, error) {
+	if m.lister == nil {
+		return nil, errorx.IllegalState.New("traffic-shaper monitor has no live-set reader")
+	}
+	return computePolicyDeltas(ctx, m.lister, ce)
 }
 
 // minDuration returns the smaller of a and b.
