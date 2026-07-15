@@ -202,6 +202,7 @@ sudo solo-provisioner block node install \
 | `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet)                                |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
 | `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and installs `solo-provisioner-tc-egress.service` so the HTB hierarchy survives reboot. |
+| `--link-rate`             | NIC line rate in tc-style format (e.g. `1gbit`, `100mbit`), or `auto` to detect and store the link speed at install time (written as explicit proportional class rates). Auto-detected from sysfs at each boot when omitted. Interactively, the prompt accepts a rate, `auto`, or blank. |
 
 > **Host firewall**: `block node install` always lays down the node-level `inet
 > host` firewall (SSH/management allowlist, ICMP policy, in-cluster host-service
@@ -624,6 +625,78 @@ sudo solo-provisioner network policy delete --name bn-restricted
 | Flag     | Description     | Required |
 |----------|-----------------|----------|
 | `--name` | Policy name     | yes      |
+
+---
+
+#### `network shape` — tc HTB Bandwidth Class Management
+
+Manage the tc HTB shaping hierarchy for the node's egress NIC. Each `create/set/delete` mutation atomically re-renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and restarts `solo-provisioner-tc-egress.service` so the live kernel and boot script stay in sync.
+
+`block node install` drives the shape registry automatically (from `--link-rate`); `network shape` lets you inspect or adjust individual classes after install.
+
+**Create device root**
+
+```bash
+# Explicit trunk rate: written into the boot script as concrete tc values; no sysfs detection.
+sudo solo-provisioner network shape create \
+  --device egress --rate 1gbit --default reserve-egress
+
+# Auto-detect trunk rate NOW from sysfs (/sys/class/net/<NIC>/speed) and store
+# the resolved value (e.g. 1gbit) as an explicit rate. Unreadable speed → 1gbit.
+sudo solo-provisioner network shape create \
+  --device egress --rate auto --default reserve-egress
+
+# Replace an existing device config.
+sudo solo-provisioner network shape create \
+  --device egress --rate 1gbit --default reserve-egress --force
+```
+
+`--rate auto` reads the detected NIC's link speed from sysfs **at create time** — while the link is up and stable — and stores the resolved value (e.g. `1gbit`) as an ordinary explicit rate. `network shape show` then reports the concrete number and the boot script carries explicit values, with no `SPEED` variable and no sysfs read at boot. If the speed is not readable then (e.g. a virtual NIC reporting `-1`), `auto` falls back to a concrete `1gbit` (1000 Mbit) — still explicit and `SPEED`-free, not a dynamic script. Either way, `--rate auto` always produces a concrete stored rate; the sysfs-at-boot form only appears when no shape device is configured at all (e.g. `block node install` run without `--link-rate` in non-interactive mode).
+
+Until you add the first `--class`, the device root renders a placeholder hierarchy (the three default egress classes at proportional rates: partner 40%/70%, public 30%/70%, reserve-egress 30%/100% of the trunk) at the resolved concrete rate. Adding explicit `--class` configs replaces the placeholder.
+
+**Create / replace HTB leaf classes**
+
+```bash
+sudo solo-provisioner network shape create --class partner        --rate 400mbit --ceil 700mbit  --prio 0
+sudo solo-provisioner network shape create --class public         --rate 300mbit --ceil 700mbit  --prio 5
+sudo solo-provisioner network shape create --class reserve-egress --rate 300mbit --ceil 1000mbit --prio 1
+```
+
+Once all three egress class configs are present, the boot script switches to fully explicit rates (no SPEED variable at all).
+
+**Live update (no qdisc teardown)**
+
+```bash
+sudo solo-provisioner network shape set --class partner --rate 500mbit
+sudo solo-provisioner network shape set --class public  --ceil 600mbit
+```
+
+`set` runs `tc class change` on the live kernel and re-renders the boot script immediately.
+
+**Show**
+
+```bash
+sudo solo-provisioner network shape show              # all devices and classes
+sudo solo-provisioner network shape show --class partner  # single class
+```
+
+**Delete**
+
+```bash
+# Fails if the class is the device default or referenced by a policy --stamp.
+sudo solo-provisioner network shape delete --class reserve-egress
+```
+
+| Flag        | Description                                                                     | Required              |
+|-------------|---------------------------------------------------------------------------------|-----------------------|
+| `--device`  | Traffic direction: `egress` or `ingress`                                        | one of `--device` / `--class` |
+| `--class`   | HTB class name (`partner`, `public`, `reserve-egress`, …)                      | one of `--device` / `--class` |
+| `--rate`    | Bandwidth rate (`100mbit`, `1gbit`) or `"auto"` (sysfs, `--device` form only)  | yes (create/set)      |
+| `--ceil`    | Burst ceiling ≥ `--rate`; defaults to `--rate` when omitted                     | no                    |
+| `--prio`    | HTB scheduling priority `[0,7]`; 0 is highest                                   | no (default 0)        |
+| `--default` | Default class for unmatched traffic (`--device` form only)                      | yes (`--device`)      |
+| `--force`   | Replace an existing device or class config                                       | no                    |
 
 ---
 

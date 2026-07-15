@@ -167,7 +167,8 @@ func EgressInterfaceInputPrompt(eff, speedHint string, target *string) InputProm
 // leave the field blank to keep runtime auto-detection from sysfs.
 func LinkRateInputPrompt(speedHint string, target *string) InputPrompt {
 	desc := "NIC line rate in tc-style format (e.g. 1gbit, 100mbit). " +
-		"Leave blank to auto-detect at boot from /sys/class/net/<nic>/speed (falls back to 1000mbit on virtual NICs)."
+		"Enter \"auto\" to detect the link speed now and store it as an explicit rate; " +
+		"leave blank to auto-detect at each boot from /sys/class/net/<nic>/speed (falls back to 1000mbit on virtual NICs)."
 	return InputPrompt{
 		FlagName:       "link-rate",
 		Title:          "NIC Link Rate",
@@ -176,11 +177,11 @@ func LinkRateInputPrompt(speedHint string, target *string) InputPrompt {
 		EffectiveValue: speedHint,
 		Target:         target,
 		Validate: func(s string) error {
-			if s == "" {
+			if s == "" || strings.EqualFold(strings.TrimSpace(s), "auto") {
 				return nil
 			}
 			if _, ok := shape.ParseSpeedMbit(s); !ok {
-				return errorx.IllegalArgument.New("must be a tc-style rate with a positive integer prefix (e.g. 1gbit, 100mbit)")
+				return errorx.IllegalArgument.New("must be a tc-style rate with a positive integer prefix (e.g. 1gbit, 100mbit) or \"auto\"")
 			}
 			return nil
 		},

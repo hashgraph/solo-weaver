@@ -9,8 +9,8 @@ const procNetRoute = "/proc/net/route"
 
 // DetectEgressInterface returns the name of the interface that carries the
 // default route — the physical $EGRESS NIC the HTB hierarchy should be
-// attached to. Works for single-NIC hosts (§4.1); multi-NIC support (§4.2)
-// is out of scope and requires --egress-interface to be set explicitly.
+// attached to. On multi-NIC hosts the desired interface must be specified
+// explicitly via --egress-interface.
 //
 // Fails with an actionable error when no default route is found (e.g. the
 // routing table is not yet populated or the host has no default gateway).

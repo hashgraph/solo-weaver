@@ -24,6 +24,12 @@ func readLinkSpeedMbitFrom(path string) (int, bool) {
 	return n, true
 }
 
+// DefaultLinkSpeedMbit is the link speed assumed when sysfs cannot report one
+// (common on virtual NICs and at early boot, where /sys/class/net/<nic>/speed
+// reads -1). It mirrors the fallback baked into the tc-egress boot script's
+// sysfs-detection block; keep the two in sync.
+const DefaultLinkSpeedMbit = 1000
+
 // FormatSpeedHint converts a Mbit/s value into a tc-style bandwidth string
 // suitable for operator-facing prompts (e.g. 1000 → "1gbit", 10000 → "10gbit",
 // 100 → "100mbit").

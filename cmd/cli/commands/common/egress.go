@@ -3,6 +3,8 @@
 package common
 
 import (
+	"strings"
+
 	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/joomcode/errorx"
@@ -25,8 +27,8 @@ func RegisterEgressFlags(cmd *cobra.Command, egressInterface, linkRate *string) 
 		"Physical NIC for the $EGRESS HTB traffic-shaper hierarchy (e.g. eth0). "+
 			"Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts.")
 	cmd.Flags().StringVar(linkRate, FlagNameLinkRate, "",
-		"NIC line rate in tc-style format (e.g. 1gbit, 100mbit). "+
-			"Auto-detected from sysfs at boot when omitted; baked into the script when set.")
+		"NIC line rate in tc-style format (e.g. 1gbit, 100mbit), or \"auto\" to detect and store the speed at install time. "+
+			"Auto-detected from sysfs at each boot when omitted; written as explicit proportional class rates when set.")
 }
 
 // ValidateEgressFlags rejects a set --link-rate value that is not a valid
@@ -36,9 +38,12 @@ func RegisterEgressFlags(cmd *cobra.Command, egressInterface, linkRate *string) 
 // It requires RegisterEgressFlags to have been called on cmd.
 func ValidateEgressFlags(cmd *cobra.Command, linkRate string) error {
 	if cmd.Flags().Changed(FlagNameLinkRate) && linkRate != "" {
+		if strings.EqualFold(strings.TrimSpace(linkRate), "auto") {
+			return nil
+		}
 		if _, ok := shape.ParseSpeedMbit(linkRate); !ok {
 			return errorx.IllegalArgument.New(
-				"invalid --%s %q: must be a tc-style rate (e.g. 1gbit, 100mbit)",
+				"invalid --%s %q: must be a tc-style rate (e.g. 1gbit, 100mbit) or \"auto\"",
 				FlagNameLinkRate, linkRate)
 		}
 	}
