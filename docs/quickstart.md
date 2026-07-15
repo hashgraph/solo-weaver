@@ -826,6 +826,14 @@ sudo solo-provisioner alloy cluster install \
 | `--prometheus-username`   | Prometheus authentication username *(deprecated)*                                                                                 |
 | `--loki-url`              | Loki remote write URL *(deprecated: use `--add-loki-remote`)*                                                                     |
 | `--loki-username`         | Loki authentication username *(deprecated)*                                                                                       |
+| `--stop-on-error`         | Stop execution on first error (default behavior when no execution-mode flag is set)                                             |
+| `--rollback-on-error`     | Rollback executed steps on error                                                                                                 |
+| `--continue-on-error`     | Continue executing steps even if some steps fail                                                                                 |
+
+> **Note**: `--stop-on-error`, `--rollback-on-error`, and `--continue-on-error` are mutually exclusive and apply to
+> both `alloy cluster install` and `alloy cluster uninstall`. When Alloy fails to install because the Kubernetes
+> cluster is not reachable, install the cluster first with `solo-provisioner kube cluster install` — Alloy deploys
+> into an existing cluster and does not create one.
 
 > **Note**: Passwords must be pre-created in a K8s Secret named `grafana-alloy-secrets` in the `grafana-alloy`
 > namespace. The secret can be created manually, via ESO, Terraform, or any other mechanism.
