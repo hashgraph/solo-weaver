@@ -14,6 +14,7 @@ var (
 	flagContinueOnError bool
 
 	// Alloy configuration flags
+	flagProfile            string
 	flagMonitorBlockNode   bool
 	flagClusterName        string
 	flagClusterSecretStore string
@@ -49,6 +50,7 @@ func init() {
 	)
 
 	// Core configuration flags
+	common.FlagProfile().SetVarP(clusterCmd, &flagProfile, false)
 	common.FlagClusterName().SetVarP(clusterCmd, &flagClusterName, false)
 	common.FlagMonitorBlockNode().SetVarP(clusterCmd, &flagMonitorBlockNode, false)
 

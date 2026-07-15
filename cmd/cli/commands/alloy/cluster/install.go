@@ -10,6 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
@@ -45,6 +46,24 @@ Examples:
   solo-provisioner alloy cluster install \
     --cluster-name=my-cluster`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Resolve the deployment profile. Unlike block/kube this flag is optional:
+		// when omitted we leave config.Profile as loaded via the root --config flag
+		// (viper) so the environment label still resolves. Only override the global
+		// config when a non-empty --profile is explicitly provided, and validate it.
+		flagProfile, err := common.FlagProfile().Value(cmd, args)
+		if err != nil {
+			return errorx.IllegalArgument.Wrap(err, "failed to get profile flag")
+		}
+		if flagProfile != "" {
+			if !hardware.IsValidProfile(flagProfile) {
+				return errorx.IllegalArgument.New("unsupported profile: %q. Supported profiles: %v",
+					flagProfile, models.SupportedProfiles())
+			}
+			// Set the profile in the global config so the label profile can emit
+			// the environment label on scraped metrics and logs.
+			config.SetProfile(flagProfile)
+		}
+
 		// Parse multi-remote flags
 		prometheusRemotes, err := parseRemoteFlags(flagPrometheusRemotes)
 		if err != nil {
