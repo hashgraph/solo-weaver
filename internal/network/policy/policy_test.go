@@ -20,12 +20,13 @@ import (
 // without that, tests wouldn't exercise the membership loss Manager.Create's
 // snapshot/restore is meant to prevent.
 type fakeRunner struct {
-	applied     string
-	applyCount  int
-	elements    map[string][]string
-	exists      bool
-	applyErr    error
-	listElemErr error
+	applied      string
+	applyCount   int
+	elements     map[string][]string
+	exists       bool
+	applyErr     error
+	listElemErr  error
+	setElemOrder []string // set names in the order SetElements was called
 }
 
 func newFakeRunner() *fakeRunner { return &fakeRunner{elements: map[string][]string{}} }
@@ -75,6 +76,7 @@ func (f *fakeRunner) SetElements(_ context.Context, set string, elements []strin
 	if !f.exists {
 		return errors.New("nft flush set " + set + " failed: No such file or directory")
 	}
+	f.setElemOrder = append(f.setElemOrder, set)
 	if len(elements) == 0 {
 		delete(f.elements, set)
 	} else {
