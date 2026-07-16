@@ -73,11 +73,20 @@ func chartSpec(name string) *helmChartSpec {
 }
 
 // resolveCatalogChart loads the embedded infrastructure catalog and returns
-// the install plan for the named cluster component. Returning an error
-// (rather than panicking) lets tests assert on misconfigurations; production
-// callers should prefer chartSpec, which crashes loudly on the same
-// impossible-in-practice conditions.
+// the install plan for the named cluster component at its default version.
+// Returning an error (rather than panicking) lets tests assert on
+// misconfigurations; production callers should prefer chartSpec, which crashes
+// loudly on the same impossible-in-practice conditions.
 func resolveCatalogChart(name string) (*helmChartSpec, error) {
+	return resolveCatalogChartVersion(name, "")
+}
+
+// resolveCatalogChartVersion is like resolveCatalogChart but resolves a specific
+// chart version; an empty version selects the catalog default. A non-empty
+// version must be declared under the component's `versions:` map (so PullAndVerify
+// has a checksum); otherwise it errors. This is the path user-supplied
+// --chart-version flags flow through.
+func resolveCatalogChartVersion(name, version string) (*helmChartSpec, error) {
 	catalog, err := software.LoadInfrastructureCatalog()
 	if err != nil {
 		return nil, errorx.IllegalFormat.Wrap(err, "load infrastructure catalog")
@@ -86,9 +95,11 @@ func resolveCatalogChart(name string) (*helmChartSpec, error) {
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "catalog")
 	}
-	version, err := meta.GetDefaultVersion()
-	if err != nil {
-		return nil, errorx.IllegalFormat.Wrap(err, "catalog")
+	if version == "" {
+		version, err = meta.GetDefaultVersion()
+		if err != nil {
+			return nil, errorx.IllegalFormat.Wrap(err, "catalog")
+		}
 	}
 	sum, ok := meta.Versions[software.Version(version)]
 	if !ok {
