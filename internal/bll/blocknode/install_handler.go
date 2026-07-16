@@ -84,6 +84,9 @@ func (h *InstallHandler) BuildWorkflow(
 				// oneshot unit.
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
+				// Enable the traffic-shaper monitor in daemon.yaml so it starts
+				// reconciling statusz-driven nft membership once the daemon runs.
+				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace),
 			)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
@@ -110,6 +113,9 @@ func (h *InstallHandler) BuildWorkflow(
 				// oneshot unit.
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
+				// Enable the traffic-shaper monitor in daemon.yaml so it starts
+				// reconciling statusz-driven nft membership once the daemon runs.
+				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace),
 			)
 	}
 	return wb, nil
