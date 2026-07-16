@@ -27,6 +27,18 @@ const (
 	storagePathModeIndividual = "Individual paths"
 )
 
+// Custom plugin multi-select sizing. huh sets the option viewport to
+// (fieldHeight − title − description), so the field height is sized to the option
+// count plus chrome for the title and (up to three-line) description, letting the
+// whole menu render without paging. It is capped so an unexpectedly large menu — or a
+// mis-sized terminal — can't produce an unwieldy field; huh scrolls past the cap and
+// the field stays filterable ("/") by huh's default. Without an explicit height,
+// huh's OptionsFunc path forces a default of 10 (only ~8 plugins visible).
+const (
+	pluginMultiSelectMaxHeight = 50
+	pluginMultiSelectChrome    = 4
+)
+
 // validateRetentionThreshold validates that a retention threshold is a non-negative integer.
 func validateRetentionThreshold(s string) error {
 	if s == "" {
@@ -426,29 +438,34 @@ func AddStoragePathPrompts(
 	inIndividualMode := func() bool { return selectedMode == storagePathModeIndividual }
 
 	// ── Page: mode select ─────────────────────────────────────────────────────
-	// The individual-paths option label lists the optional storages that apply to
-	// the live chart version, so it is rebuilt via OptionsFunc bound to
-	// *chartVersion. The option *values* are stable (only the label changes), so
-	// huh preserves the current selection across rebuilds.
-	modeOptions := func() []huh.Option[string] {
-		var label strings.Builder
-		label.WriteString("Individual paths  (archive, live, log")
+	// Options are STATIC (two fixed modes). The per-version detail — which optional
+	// storages must be supplied in individual mode — lives in the field description
+	// via DescriptionFunc, not in the option labels. This is deliberate: using
+	// OptionsFunc would force huh's field height to its default and route through the
+	// viewport's `YOffset = selected` path, which scrolls the non-selected option out
+	// of view (with the default being Individual, "Single base path" was hidden until
+	// the user arrowed up). Static Options leave the height at 0, so huh sizes the
+	// viewport to the option count and shows both modes.
+	modeDescription := func() string {
+		var b strings.Builder
+		b.WriteString("Choose how to configure storage paths for this block node.\n")
+		b.WriteString("Individual paths mode requires archive, live, log")
 		for _, o := range blocknode.GetApplicableOptionalStorages(*chartVersion) {
-			label.WriteString(", ")
-			label.WriteString(o.Name)
+			b.WriteString(", ")
+			b.WriteString(o.Name)
 		}
-		label.WriteString(" must all be provided)")
-		return []huh.Option[string]{
-			huh.NewOption("Single base path  (subdirectories are created automatically)", storagePathModeBasePath),
-			huh.NewOption(label.String(), storagePathModeIndividual),
-		}
+		b.WriteString(" to all be provided.")
+		return b.String()
 	}
 	modeGroup := huh.NewGroup(
 		huh.NewSelect[string]().
 			Key("storage-mode").
 			Title("Storage Path Mode").
-			Description("Choose how to configure storage paths for this block node").
-			OptionsFunc(modeOptions, chartVersion).
+			DescriptionFunc(modeDescription, chartVersion).
+			Options(
+				huh.NewOption("Single base path  (subdirectories created automatically)", storagePathModeBasePath),
+				huh.NewOption("Individual paths  (set each path separately)", storagePathModeIndividual),
+			).
 			Value(&selectedMode),
 	)
 
@@ -782,6 +799,12 @@ func AddPluginPresetPrompts(
 	}
 
 	isCustom := func() bool { return *flagPluginPreset == blocknode.PresetCustom }
+	// Size the field to the current plugin count (plus chrome) so every option shows
+	// without paging, capped at pluginMultiSelectMaxHeight. Computed from the chart
+	// version at construction; huh keeps this height across OptionsFunc rebuilds, so a
+	// mid-wizard version change to a larger menu falls back to scrolling — acceptable
+	// since real menus are far below the cap.
+	pluginFieldHeight := min(len(blocknode.PluginsForVersion(*chartVersion))+pluginMultiSelectChrome, pluginMultiSelectMaxHeight)
 	customGroup := huh.NewGroup(
 		huh.NewMultiSelect[string]().
 			Key("plugins").
@@ -789,6 +812,12 @@ func AddPluginPresetPrompts(
 			DescriptionFunc(descriptionFn, chartVersion).
 			OptionsFunc(pluginOptionsFn, chartVersion).
 			Value(&selectedPlugins).
+			// Show the whole plugin menu at once instead of huh's OptionsFunc-forced
+			// default of ~8 visible rows. Type-to-filter ("/") is already available
+			// via huh's default Filterable state; do NOT call Filtering(true) — that
+			// boots the field into active filter-input mode, which hijacks space
+			// (typed into the filter, clearing the list) and shift+tab.
+			Height(pluginFieldHeight).
 			Validate(func(selected []string) error {
 				// Only enforce a selection while the Custom preset is active; when
 				// the group is hidden this validator must not block submission.

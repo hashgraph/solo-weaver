@@ -101,6 +101,34 @@ var blockNodePluginHistory = []blockNodePluginConfig{
 			"cloud-storage-expanded",
 		},
 	},
+	{
+		// BN 0.37.1: roster-bootstrap-rsa + roster-bootstrap-tss added to both presets.
+		// The RFH preset was also trimmed upstream: block-access-service, stream-publisher,
+		// stream-subscriber, and blocks-file-recent were dropped (recent blocks now flow to
+		// cloud storage rather than the local live volume). Strings copied verbatim from the
+		// chart's values-overrides/plugin-profile-{lfh,rfh,all}.yaml at tag v0.37.1.
+		MinVersion: "0.37.1",
+		Presets: map[string]string{
+			PresetTier1LFH: "backfill,block-access-service,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber,verification",
+			PresetTier1RFH: "backfill,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,verification",
+		},
+		AllPlugins: []string{
+			"backfill",
+			"block-access-service",
+			"blocks-file-historic",
+			"blocks-file-recent",
+			"cloud-storage-archive",
+			"cloud-storage-expanded",
+			"facility-messaging",
+			"health",
+			"roster-bootstrap-rsa",
+			"roster-bootstrap-tss",
+			"server-status",
+			"stream-publisher",
+			"stream-subscriber",
+			"verification",
+		},
+	},
 }
 
 // AllBlockNodePlugins is the ordered list of available plugins for the current

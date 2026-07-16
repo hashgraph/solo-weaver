@@ -116,6 +116,51 @@ func TestPluginListForPreset_Tier1RFH_LegacyBN(t *testing.T) {
 	}
 }
 
+// ── BN 0.37.1 roster-bootstrap boundary ──────────────────────────────────────
+
+// TestPluginListForPreset_BN0371_ExactLists pins the 0.37.1 preset strings to the
+// verbatim upstream values-overrides/plugin-profile-{lfh,rfh}.yaml so the injected
+// plugins.names is byte-identical to the chart default. "" resolves to the latest
+// (0.37.1) entry.
+func TestPluginListForPreset_BN0371_ExactLists(t *testing.T) {
+	const wantLFH = "backfill,block-access-service,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber,verification"
+	const wantRFH = "backfill,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,verification"
+	for _, ver := range []string{"", "0.37.1", "0.38.0", "1.0.0"} {
+		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
+		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
+	}
+}
+
+// TestPluginListForPreset_Pre0371_NoRosterBootstrap verifies that chart versions
+// below 0.37.1 keep resolving to the 0.35.0 bracket: no roster-bootstrap plugins,
+// and the RFH preset still carries the plugins that 0.37.1 trims.
+func TestPluginListForPreset_Pre0371_NoRosterBootstrap(t *testing.T) {
+	for _, ver := range []string{"0.35.0", "0.36.0", "0.37.0"} {
+		lfh := PluginListForPreset(PresetTier1LFH, ver)
+		rfh := PluginListForPreset(PresetTier1RFH, ver)
+		assert.NotContains(t, lfh, "roster-bootstrap", "LFH version=%q", ver)
+		assert.NotContains(t, rfh, "roster-bootstrap", "RFH version=%q", ver)
+		for _, kept := range []string{"block-access-service", "stream-publisher", "stream-subscriber", "blocks-file-recent"} {
+			assert.Contains(t, rfh, kept, "RFH version=%q must still carry %q below 0.37.1", ver, kept)
+		}
+	}
+}
+
+// TestPluginsForVersion_BN0371Boundary verifies the TUI custom multi-select menu
+// gains roster-bootstrap only at 0.37.1+.
+func TestPluginsForVersion_BN0371Boundary(t *testing.T) {
+	for _, ver := range []string{"", "0.37.1", "0.38.0"} {
+		plugins := PluginsForVersion(ver)
+		assert.Contains(t, plugins, "roster-bootstrap-rsa", "version=%q", ver)
+		assert.Contains(t, plugins, "roster-bootstrap-tss", "version=%q", ver)
+	}
+	for _, ver := range []string{"0.35.0", "0.37.0"} {
+		plugins := PluginsForVersion(ver)
+		assert.NotContains(t, plugins, "roster-bootstrap-rsa", "version=%q", ver)
+		assert.NotContains(t, plugins, "roster-bootstrap-tss", "version=%q", ver)
+	}
+}
+
 // TestPluginListForPreset_UpgradeScenario documents the expected behaviour when an
 // operator upgrades from a pre-0.35 chart to 0.35+. solo-weaver reads the stored
 // PluginPreset ("tier1-rfh") and calls PluginListForPreset with the new target
@@ -148,6 +193,27 @@ func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
 			installedPreset: PresetTier1LFH,
 			targetVersion:   "0.35.0",
 			wantContains:    []string{"blocks-file-historic", "blocks-file-recent"},
+			wantAbsent:      []string{"s3-archive", "cloud-storage-archive", "cloud-storage-expanded"},
+		},
+		{
+			name:            "RFH upgrade to 0.37.1 adds roster-bootstrap and drops trimmed plugins",
+			installedPreset: PresetTier1RFH,
+			targetVersion:   "0.37.1",
+			wantContains:    []string{"roster-bootstrap-rsa", "roster-bootstrap-tss", "cloud-storage-archive", "cloud-storage-expanded"},
+			wantAbsent:      []string{"s3-archive", "block-access-service", "stream-publisher", "stream-subscriber", "blocks-file-recent"},
+		},
+		{
+			name:            "RFH target 0.37.0 stays pre-0.37.1 (no roster-bootstrap)",
+			installedPreset: PresetTier1RFH,
+			targetVersion:   "0.37.0",
+			wantContains:    []string{"cloud-storage-archive", "cloud-storage-expanded", "blocks-file-recent", "block-access-service"},
+			wantAbsent:      []string{"roster-bootstrap-rsa", "roster-bootstrap-tss"},
+		},
+		{
+			name:            "LFH upgrade to 0.37.1 adds roster-bootstrap and keeps file plugins",
+			installedPreset: PresetTier1LFH,
+			targetVersion:   "0.37.1",
+			wantContains:    []string{"roster-bootstrap-rsa", "roster-bootstrap-tss", "blocks-file-historic", "blocks-file-recent"},
 			wantAbsent:      []string{"s3-archive", "cloud-storage-archive", "cloud-storage-expanded"},
 		},
 	}
