@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
 	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/joomcode/errorx"
 )
@@ -47,17 +48,27 @@ type TrafficShaperMonitor struct {
 	// statusz-derived membership against the kernel. Satisfied by the network
 	// policy Runner; a fake is injected in tests.
 	lister elementLister
+	// delegator runs privileged solo-provisioner subcommands under sudo. The
+	// daemon is unprivileged (User=weaver), so both responsibilities delegate
+	// their privileged work through it: the poll loop applies membership via
+	// `network policy set` and the watcher installs veth qdiscs via `block node
+	// tc-attach`. Held here so the poll loop and watcher can consume it once
+	// their apply/attach paths are wired, without a constructor change.
+	delegator privexec.Delegator
 }
 
 // NewTrafficShaperMonitor constructs a TrafficShaperMonitor with the given
 // VethResolver. The resolver is wired into runPodWatcher by #748; it is held
 // here so #748 can use it without further constructor changes. The live-set
 // reader defaults to the network policy exec Runner, which reads the `inet
-// weaver` sets via `nft list set`.
+// weaver` sets via `nft list set`. The delegator defaults to the sudo-backed
+// privileged-exec seam so the poll loop and watcher can perform their
+// privileged work without the unprivileged daemon holding root itself.
 func NewTrafficShaperMonitor(resolver *VethResolver) *TrafficShaperMonitor {
 	return &TrafficShaperMonitor{
-		resolver: resolver,
-		lister:   policy.NewExecRunner(),
+		resolver:  resolver,
+		lister:    policy.NewExecRunner(),
+		delegator: privexec.New(),
 	}
 }
 

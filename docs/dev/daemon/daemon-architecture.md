@@ -166,10 +166,18 @@ systemd unit), never as root. It holds no Linux capabilities of its own.
 
 **Privilege via exec-delegation, not raw tools.** When the daemon needs to perform a
 privileged action it execs the root `solo-provisioner` CLI (see "CLI invocation & the import
-boundary" above) — it does **not** invoke `kubectl`/`helm`/`kubeadm`/`systemctl` directly.
-This is verified, not aspirational: the daemon binary imports `os/exec` nowhere in its
-transitive closure, talks to Kubernetes via client-go, and talks to systemd via the
-go-systemd dbus API. Its only privileged-escalation path is the sudoers grant below.
+boundary" above) — it does **not** invoke `kubectl`/`helm`/`kubeadm`/`systemctl`/`nft`/`tc`
+directly. It talks to Kubernetes via client-go and to systemd via the go-systemd dbus API;
+its only privileged-escalation path is the sudoers grant below. The exec-delegation itself is
+confined to a single package, `internal/daemon/privexec`, which is the **only** place in the
+daemon's import closure that reaches for `os/exec`. It execs nothing but `sudo` +
+`solo-provisioner`, so the "no raw tools" guarantee holds even though `os/exec` is now present.
+The delegation is synchronous (run, wait, capture stdout) and execs `sudo -n` so a
+missing or expired grant fails fast instead of blocking on a prompt the daemon has no
+tty for. Any failure is returned as a `*daemonkit.ProbeError` carrying an operator-facing
+reason/resolution, which the daemon boundary converts into a `daemonkit.StatusError` so
+`/status` explains it. The self-upgrade protocol's detached child spawn is a separate exec
+mechanism with different lifecycle semantics.
 
 **Sudoers grant (`internal/templates/files/weaver/sudoers`).** Weaver is granted passwordless
 sudo to the `solo-provisioner` binary as a whole (any subcommand), at both its install paths:
