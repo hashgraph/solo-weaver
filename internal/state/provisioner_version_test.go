@@ -8,15 +8,12 @@ import (
 	"testing"
 
 	"github.com/automa-saga/version"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// readProvisionerVersionFrom parses the provisioner version out of a state file
-// at an arbitrary path using the EXACT same doc struct and unmarshaller that the
-// production reader (ReadProvisionerVersionFromDisk) uses. This lets the test
-// assert the round-trip a real second invocation would observe, without the
-// reader's fixed models.Paths() path.
+// readProvisionerVersionFrom parses the provisioner version from a state file at an arbitrary path (unlike the reader's fixed models.Paths() path).
 func readProvisionerVersionFrom(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -26,10 +23,7 @@ func readProvisionerVersionFrom(t *testing.T, path string) string {
 	return doc.State.Provisioner.Version
 }
 
-// TestPersistProvisionerVersion_CreatesFileWhenAbsent proves that on a
-// pre-state-tracking host (no state.yaml) PersistProvisionerVersion writes a
-// state file whose provisioner.version is the running binary's version — which
-// is exactly what ReadProvisionerVersionFromDisk returns on the next invocation.
+// TestPersistProvisionerVersion_CreatesFileWhenAbsent: with no state.yaml, the write creates one holding the running binary's version.
 func TestPersistProvisionerVersion_CreatesFileWhenAbsent(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "state.yaml")
 
@@ -48,9 +42,7 @@ func TestPersistProvisionerVersion_CreatesFileWhenAbsent(t *testing.T) {
 	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
 }
 
-// TestPersistProvisionerVersion_PreservesExistingState proves the write is a
-// merge, not a clobber: reality-detected fields already on disk (here a software
-// entry) survive, and only provisioner.version is advanced to the current binary.
+// TestPersistProvisionerVersion_PreservesExistingState: the write merges — an existing software entry survives; only provisioner.version advances.
 func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "state.yaml")
 	fm := newTestFileManager(t)
@@ -87,9 +79,7 @@ func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
 	assert.Equal(t, "1.30.0", sw.Version)
 }
 
-// TestPersistProvisionerVersion_Idempotent proves repeated calls are safe (the
-// optimistic-concurrency baseline is set on each call), so a per-command hook
-// never errors on the second run.
+// TestPersistProvisionerVersion_Idempotent: repeated calls succeed (the concurrency baseline resets each call).
 func TestPersistProvisionerVersion_Idempotent(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "state.yaml")
 	fm := newTestFileManager(t)
@@ -99,4 +89,35 @@ func TestPersistProvisionerVersion_Idempotent(t *testing.T) {
 		require.NoErrorf(t, err, "call %d should succeed", i)
 	}
 	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
+}
+
+// TestPersistThenReadProvisionerVersion_RoundTrip: writer and reader agree on the state-file path and shape — the round-trip #789 depends on.
+func TestPersistThenReadProvisionerVersion_RoundTrip(t *testing.T) {
+	home := t.TempDir()
+	restore := models.SetPaths(home)
+	t.Cleanup(restore)
+
+	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
+
+	// Precondition: state dir exists but no state.yaml — the reader returns "".
+	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
+	_, statErr := os.Stat(stateFile)
+	require.True(t, os.IsNotExist(statErr), "precondition: state file must not exist yet")
+
+	absent, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Empty(t, absent, "absent state.yaml must read back as an empty version")
+
+	// Write the running version at the default path (no opts → the reader's path).
+	require.NoError(t, PersistProvisionerVersion())
+
+	_, statErr = os.Stat(stateFile)
+	require.NoError(t, statErr, "state file should now exist at the reader's path")
+
+	// The reader observes exactly the version just written (non-empty).
+	readBack, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.NotEmpty(t, readBack, "recorded version must read back non-empty, unlike the absent case")
+	assert.Equal(t, version.Get().Version, readBack,
+		"the reader must observe the version the writer persisted")
 }

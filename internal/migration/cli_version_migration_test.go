@@ -161,13 +161,7 @@ func TestResolveInstalledCLIVersion(t *testing.T) {
 	}
 }
 
-// TestCLIVersionMigration_PersistedVersionStopsRerun proves the #789/#781 fix
-// end-to-end at the version layer: on the first run a pre-state-tracking host
-// (no recorded version) crosses the boundary and the migration applies; after the
-// startup path persists the current version (PersistProvisionerVersion), the next
-// run reads that version back and the SAME boundary no longer applies — so a
-// non-idempotent migration (e.g. the Cilium agent restart) runs exactly once
-// instead of on every invocation.
+// TestCLIVersionMigration_PersistedVersionStopsRerun: an absent version crosses the boundary; once persisted, it no longer applies — so the migration runs once
 func TestCLIVersionMigration_PersistedVersionStopsRerun(t *testing.T) {
 	m := &CLIVersionMigration{id: "cilium-agent-restart-v0.19.2", minVersion: "0.19.2"}
 	const currentVersion = "0.21.0"

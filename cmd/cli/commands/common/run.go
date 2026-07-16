@@ -343,6 +343,11 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// persistProvisionerVersion records the running binary's version to the on-disk
+// state file. A var so tests can stub it to exercise the best-effort swallow in
+// RunStartupMigrations without a writable state dir.
+var persistProvisionerVersion = state.PersistProvisionerVersion
+
 // RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
 // It is a no-op when no migrations apply.
 func RunStartupMigrations(ctx context.Context) error {
@@ -371,33 +376,30 @@ func RunStartupMigrations(ctx context.Context) error {
 		return err
 	}
 
-	if len(migrations) == 0 {
+	if len(migrations) > 0 {
+		migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
+		wf, err := migrationWf.Build()
+		if err != nil {
+			return err
+		}
+
+		logx.As().Info().Msg("Running startup migrations...")
+		report := wf.Execute(ctx)
+		if report.Error != nil {
+			return report.Error
+		}
+		logx.As().Info().Msg("Startup migrations completed successfully")
+	} else {
 		logx.As().Debug().Msg("No startup migrations needed")
-		return nil
 	}
 
-	migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
-	wf, err := migrationWf.Build()
-	if err != nil {
-		return err
-	}
-
-	logx.As().Info().Msg("Running startup migrations...")
-	report := wf.Execute(ctx)
-	if report.Error != nil {
-		return report.Error
-	}
-	logx.As().Info().Msg("Startup migrations completed successfully")
-
-	// Record the version we just migrated to so these boundary migrations are not
-	// re-evaluated — and non-idempotent ones (e.g. the Cilium agent restart) not
-	// re-run — on the next invocation. Gate on an actual version change and on a
-	// provisioned host so a genuinely fresh machine keeps having no state file.
-	// Best-effort: a persistence failure must not fail the user's command; the
-	// worst case is the next run re-evaluates the same boundary (prior behaviour).
-	// See #789 / #781.
+	// Record the running version so boundary migrations aren't re-run next time and
+	// pre-state-tracking clusters get a state.yaml. Persist regardless of whether a
+	// migration applied — coupling it to that would stop backfilling once nothing
+	// crosses the baseline. Gate on a version change and a provisioned host so a
+	// fresh machine keeps no state file. Best-effort.
 	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
-		if err := state.PersistProvisionerVersion(); err != nil {
+		if err := persistProvisionerVersion(); err != nil {
 			logx.As().Warn().Err(err).
 				Msg("Failed to record provisioner version after startup migrations; boundary migrations may re-run next invocation")
 		}
