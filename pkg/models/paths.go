@@ -27,3 +27,16 @@ var (
 func Paths() WeaverPaths {
 	return *pp
 }
+
+// SetPaths re-roots the process-wide Weaver paths at the given home directory and
+// returns a function that restores the previous paths. It exists so tests can
+// redirect path lookups that are hard-wired to Paths() (e.g. the state-file
+// readers in internal/state) at a temporary directory. Not for production use.
+//
+//	restore := models.SetPaths(t.TempDir())
+//	defer restore()
+func SetPaths(home string) func() {
+	prev := pp
+	pp = NewWeaverPaths(home)
+	return func() { pp = prev }
+}
