@@ -16,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/eso"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
@@ -107,6 +108,7 @@ func init() {
 	rootCmd.AddCommand(consensus.GetCmd())
 	rootCmd.AddCommand(teleport.GetCmd())
 	rootCmd.AddCommand(alloy.GetCmd())
+	rootCmd.AddCommand(eso.GetCmd())
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
 	rootCmd.AddCommand(daemon.GetCmd())

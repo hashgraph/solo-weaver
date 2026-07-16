@@ -20,11 +20,26 @@ const (
 	IsExternalSecretsReadyStepId = "is-external-secrets-ready"
 )
 
-// SetupExternalSecrets returns a workflow builder that sets up External Secrets Operator.
-func SetupExternalSecrets() *automa.WorkflowBuilder {
+// ESOInstallOptions parameterizes the External Secrets Operator install workflow.
+// Empty fields select the catalog default namespace and version.
+type ESOInstallOptions struct {
+	Namespace string
+	Version   string
+}
+
+// SetupExternalSecrets returns a workflow builder that installs the External Secrets Operator.
+func SetupExternalSecrets(opts ESOInstallOptions) (*automa.WorkflowBuilder, error) {
+	spec, err := resolveCatalogChartVersion("external-secrets", opts.Version)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Namespace != "" {
+		spec.Namespace = opts.Namespace
+	}
+
 	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(
-		installExternalSecrets(),
-		isExternalSecretsReady(),
+		installExternalSecrets(spec),
+		isExternalSecretsReady(spec),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up External Secrets Operator")
@@ -35,11 +50,58 @@ func SetupExternalSecrets() *automa.WorkflowBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator setup successfully")
-		})
+		}), nil
 }
 
-func installExternalSecrets() automa.Builder {
-	spec := chartSpec("external-secrets")
+// installESOChart runs the idempotent ESO Helm install and reports whether it
+// installed (false = already present). Extracted from the step so it can be
+// unit-tested with a mock helm.Manager.
+func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec) (bool, error) {
+	isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+	if err != nil {
+		return false, err
+	}
+	if isInstalled {
+		return false, nil
+	}
+
+	if _, err := hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{}); err != nil {
+		return false, err
+	}
+
+	localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+	if err != nil {
+		return false, err
+	}
+
+	helmValues := []string{
+		"installCRDs=true",
+		"webhook.port=9443",
+	}
+
+	if _, err := hm.InstallChart(
+		ctx,
+		spec.Release,
+		localChart,
+		"",
+		spec.Namespace,
+		helm.InstallChartOptions{
+			ValueOpts: &values.Options{
+				Values: helmValues,
+			},
+			CreateNamespace: true,
+			Atomic:          true,
+			Wait:            true,
+			Timeout:         helm.DefaultTimeout,
+		},
+	); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func installExternalSecrets(spec *helmChartSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallExternalSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
@@ -49,50 +111,15 @@ func installExternalSecrets() automa.Builder {
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			installed, err := installESOChart(ctx, hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if !installed {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("External Secrets Operator is already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-			}
-
-			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			helmValues := []string{
-				"installCRDs=true",
-				"webhook.port=9443",
-			}
-
-			_, err = hm.InstallChart(
-				ctx,
-				spec.Release,
-				localChart,
-				"",
-				spec.Namespace,
-				helm.InstallChartOptions{
-					ValueOpts: &values.Options{
-						Values: helmValues,
-					},
-					CreateNamespace: true,
-					Atomic:          true,
-					Wait:            true,
-					Timeout:         helm.DefaultTimeout,
-				},
-			)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta[InstalledByThisStep] = "true"
@@ -129,8 +156,7 @@ func installExternalSecrets() automa.Builder {
 		})
 }
 
-func isExternalSecretsReady() automa.Builder {
-	spec := chartSpec("external-secrets")
+func isExternalSecretsReady(spec *helmChartSpec) automa.Builder {
 	return automa.NewStepBuilder().WithId(IsExternalSecretsReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			k, err := kube.NewClient()
