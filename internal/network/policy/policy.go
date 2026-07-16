@@ -197,15 +197,18 @@ func validateIPPort(s string) error {
 
 // setElements converts initial --cidrs entries into nft element tokens for the
 // policy's set: `<ip> . <port>` compound keys for --reply-stamp policies, plain
-// CIDRs otherwise. The input is assumed already validated.
+// CIDRs otherwise. The input is assumed already validated, so the compound
+// conversion's error (only possible on a malformed ip:port) cannot fire here;
+// it shares CompoundElement so the CLI apply path and the daemon poll loop's
+// diff render compound elements identically.
 func setElements(p *Policy, cidrs []string) []string {
 	if !p.isCompoundSet() {
 		return cidrs
 	}
 	out := make([]string, 0, len(cidrs))
 	for _, c := range cidrs {
-		host, port, _ := net.SplitHostPort(c)
-		out = append(out, host+" . "+port)
+		tok, _ := CompoundElement(c)
+		out = append(out, tok)
 	}
 	return out
 }
