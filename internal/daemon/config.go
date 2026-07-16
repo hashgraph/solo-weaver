@@ -3,8 +3,10 @@
 package daemon
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,6 +18,11 @@ const (
 	// Increment this constant whenever a breaking structural change is made to
 	// DaemonConfig so that LoadDaemonConfig can detect and migrate old files.
 	CurrentSchemaVersion = 1
+
+	// DefaultStatuszPollInterval is the steady-state cadence at which the
+	// traffic-shaper monitor polls statusz when statusz.poll_interval is unset.
+	// The design specifies a 5-second poll loop.
+	DefaultStatuszPollInterval = 5 * time.Second
 )
 
 // DaemonConfig is parsed from daemon.yaml at startup.
@@ -38,7 +45,10 @@ const (
 //	    kubeconfig: /opt/solo/weaver/config/daemon-bn.kubeconfig
 //	    orbit: hedera-block-node
 //	    monitors:
-//	      upgrade: true
+//	      traffic_shaper: true
+//	    statusz:                     # optional local-fallback statusz source
+//	      base_url: http://127.0.0.1:8080
+//	      poll_interval: 5s
 type DaemonConfig struct {
 	// SchemaVersion identifies the config file format. Always written as
 	// CurrentSchemaVersion by WriteDaemonConfig. A value of 0 means the file
@@ -99,11 +109,73 @@ type BlockNodeComponentConfig struct {
 	Orbit string `yaml:"orbit"`
 
 	Monitors BlockNodeMonitors `yaml:"monitors"`
+
+	// Statusz is the optional local-fallback statusz source for the
+	// traffic-shaper poll loop. When nil or with an empty BaseURL, the monitor
+	// has no statusz source to poll (BN-pod statusz discovery is a future story)
+	// and the poll loop idles. When set, the monitor polls that fixed REST
+	// endpoint — a mock statusz server in dev/test, or a directly reachable BN
+	// statusz.
+	Statusz *StatuszConfig `yaml:"statusz,omitempty"`
 }
 
 // BlockNodeMonitors toggles individual monitors for the block-node component.
 type BlockNodeMonitors struct {
 	TrafficShaper bool `yaml:"traffic_shaper"`
+}
+
+// StatuszConfig is the local-fallback statusz source polled by the block-node
+// traffic-shaper monitor. The monitor reads `statusz/inbound-clients` and
+// `statusz/outbound-clients` relative to BaseURL and reconciles the returned
+// roster into the live nft set membership.
+type StatuszConfig struct {
+	// BaseURL is the root the statusz REST endpoints resolve against, e.g.
+	// http://127.0.0.1:8080. Empty means "no local-fallback source configured";
+	// the poll loop then idles rather than polling.
+	BaseURL string `yaml:"base_url,omitempty"`
+
+	// PollInterval is the poll cadence in Go duration form (e.g. "5s"). Empty
+	// defaults to DefaultStatuszPollInterval.
+	PollInterval string `yaml:"poll_interval,omitempty"`
+}
+
+// EffectivePollInterval returns the configured poll interval, or the 5-second
+// default when unset. It assumes the value has already passed Validate, and
+// falls back to the default for any residual parse failure rather than erroring.
+func (s StatuszConfig) EffectivePollInterval() time.Duration {
+	if s.PollInterval == "" {
+		return DefaultStatuszPollInterval
+	}
+	d, err := time.ParseDuration(s.PollInterval)
+	if err != nil || d <= 0 {
+		return DefaultStatuszPollInterval
+	}
+	return d
+}
+
+// Validate checks the statusz block's fields: BaseURL, when set, must be an
+// http(s) URL with a host, and PollInterval, when set, must be a positive Go
+// duration.
+func (s StatuszConfig) Validate() error {
+	if s.BaseURL != "" {
+		u, err := url.Parse(s.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return ErrConfigMalformed.New(
+				"components.block_node.statusz.base_url must be an http(s) URL with a host, got %q", s.BaseURL)
+		}
+	}
+	if s.PollInterval != "" {
+		d, err := time.ParseDuration(s.PollInterval)
+		if err != nil {
+			return ErrConfigMalformed.Wrap(err,
+				"components.block_node.statusz.poll_interval %q is not a valid Go duration", s.PollInterval)
+		}
+		if d <= 0 {
+			return ErrConfigMalformed.New(
+				"components.block_node.statusz.poll_interval must be positive, got %q", s.PollInterval)
+		}
+	}
+	return nil
 }
 
 // Validate checks that all required fields within the block-node block are present.
@@ -114,6 +186,11 @@ func (bn BlockNodeComponentConfig) Validate() error {
 		}
 		if bn.Orbit == "" {
 			return ErrConfigMalformed.New("components.block_node.orbit is required when monitors.traffic_shaper is true")
+		}
+	}
+	if bn.Statusz != nil {
+		if err := bn.Statusz.Validate(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -200,13 +277,23 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 	if err != nil {
 		return DaemonConfig{}, ErrConfigNotFound.Wrap(err, "daemon config not found at %s", path)
 	}
+	return ParseDaemonConfig(data, path)
+}
 
+// ParseDaemonConfig parses daemon config bytes that have already been read from
+// source (a path, used only in error messages). It is the file-read-free core of
+// LoadDaemonConfig: callers that have already captured the raw bytes — e.g. an
+// install step that snapshots daemon.yaml for rollback — parse from those exact
+// bytes so the parsed config and the snapshot can never diverge across a second
+// read. It applies the same two-phase probe + migration + Validate as
+// LoadDaemonConfig (see that function's doc for version rules).
+func ParseDaemonConfig(data []byte, source string) (DaemonConfig, error) {
 	// Phase 1: probe the schema version only.
 	var probe struct {
 		SchemaVersion int `yaml:"schemaVersion"`
 	}
 	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid daemon config at %s", path)
+		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid daemon config at %s", source)
 	}
 	version := probe.SchemaVersion
 	if version == 0 {
@@ -216,7 +303,7 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 		return DaemonConfig{}, ErrConfigMalformed.New(
 			"daemon config %s was written by a newer binary (schemaVersion %d > supported %d); "+
 				"upgrade solo-provisioner-daemon to a compatible version",
-			path, version, CurrentSchemaVersion)
+			source, version, CurrentSchemaVersion)
 	}
 
 	// Phase 2: unmarshal into the versioned struct and walk the migration chain.
@@ -229,17 +316,17 @@ func LoadDaemonConfig(path string) (DaemonConfig, error) {
 	case 1:
 		var raw daemonConfigV1
 		if err := yaml.Unmarshal(data, &raw); err != nil {
-			return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid v1 daemon config at %s", path)
+			return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "invalid v1 daemon config at %s", source)
 		}
 		cfg = raw.migrateToLatest()
 	default:
 		// Should never reach here given the version > CurrentSchemaVersion guard above.
 		return DaemonConfig{}, ErrConfigMalformed.New(
-			"unsupported daemon config schemaVersion %d at %s", version, path)
+			"unsupported daemon config schemaVersion %d at %s", version, source)
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "daemon config %s", path)
+		return DaemonConfig{}, ErrConfigMalformed.Wrap(err, "daemon config %s", source)
 	}
 
 	return cfg, nil

@@ -46,10 +46,16 @@ type blockNodeConfigV1 struct {
 	Kubeconfig string              `yaml:"kubeconfig"`
 	Orbit      string              `yaml:"orbit"`
 	Monitors   blockNodeMonitorsV1 `yaml:"monitors"`
+	Statusz    *statuszConfigV1    `yaml:"statusz,omitempty"`
 }
 
 type blockNodeMonitorsV1 struct {
 	TrafficShaper bool `yaml:"traffic_shaper"`
+}
+
+type statuszConfigV1 struct {
+	BaseURL      string `yaml:"base_url,omitempty"`
+	PollInterval string `yaml:"poll_interval,omitempty"`
 }
 
 // migrateToLatest is the terminal step of the migration chain at v1.
@@ -75,7 +81,7 @@ func (v daemonConfigV1) migrateToLatest() DaemonConfig {
 		}
 	}
 	if bn := v.Components.BlockNode; bn != nil {
-		cfg.Components.BlockNode = &BlockNodeComponentConfig{
+		blockNode := &BlockNodeComponentConfig{
 			Enabled:    bn.Enabled,
 			Kubeconfig: bn.Kubeconfig,
 			Orbit:      bn.Orbit,
@@ -83,6 +89,13 @@ func (v daemonConfigV1) migrateToLatest() DaemonConfig {
 				TrafficShaper: bn.Monitors.TrafficShaper,
 			},
 		}
+		if s := bn.Statusz; s != nil {
+			blockNode.Statusz = &StatuszConfig{
+				BaseURL:      s.BaseURL,
+				PollInterval: s.PollInterval,
+			}
+		}
+		cfg.Components.BlockNode = blockNode
 	}
 	return cfg
 }
