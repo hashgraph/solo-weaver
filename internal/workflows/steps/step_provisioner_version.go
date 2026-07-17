@@ -16,6 +16,11 @@ import (
 // without a writable state dir.
 var persistProvisionerVersion = state.PersistProvisionerVersion
 
+// metaVersionPersisted is a report metadata key set to "false" when the
+// best-effort persist failed. OnCompletion reads it to emit an honest message
+// instead of unconditionally reporting success.
+const metaVersionPersisted = "version_persisted"
+
 // RecordProvisionerVersion persists the running CLI version to state.yaml at the
 // end of cluster install. `kube cluster install` does not flush state via the
 // BaseHandler path (unlike `block node install`), so without this a fresh cluster
@@ -28,6 +33,10 @@ func RecordProvisionerVersion() *automa.StepBuilder {
 				logx.As().Warn().Err(err).
 					Msg("Failed to record provisioner version after cluster install; " +
 						"startup migrations may re-evaluate historical boundaries on the next invocation")
+				// Stay non-fatal (success) so cluster install does not abort, but
+				// flag the miss so OnCompletion reports it honestly.
+				return automa.StepSuccessReport(stp.Id(),
+					automa.WithMetadata(automa.StringMap{metaVersionPersisted: "false"}))
 			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
@@ -39,6 +48,12 @@ func RecordProvisionerVersion() *automa.StepBuilder {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to record provisioner version")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			if rpt.Metadata[metaVersionPersisted] == "false" {
+				notify.As().StepCompletion(ctx, stp, rpt,
+					"Provisioner version not recorded (best-effort); "+
+						"startup migrations may re-run on the next invocation")
+				return
+			}
 			notify.As().StepCompletion(ctx, stp, rpt, "Provisioner version recorded")
 		})
 }

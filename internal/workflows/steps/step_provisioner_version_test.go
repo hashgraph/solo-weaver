@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,4 +66,47 @@ func TestRecordProvisionerVersion_PersistFailureIsNonFatal(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error, "a failed version record must not fail the step")
 	assert.Equal(t, 1, persistCalled, "the version record must have been attempted")
+}
+
+// TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome: the step
+// stays non-fatal on persist failure, but the completion message must not claim
+// success. On failure it flags the miss via report metadata and OnCompletion
+// emits a distinct, honest message; on success it reports the version recorded.
+func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *testing.T) {
+	origHandler := notify.As().StepCompletion
+	t.Cleanup(func() { notify.SetDefault(&notify.Handler{StepCompletion: origHandler}) })
+
+	var gotMsg string
+	notify.SetDefault(&notify.Handler{
+		StepCompletion: func(_ context.Context, _ automa.Step, _ *automa.Report, msg string, _ ...interface{}) {
+			gotMsg = msg
+		},
+	})
+
+	origPersist := persistProvisionerVersion
+	t.Cleanup(func() { persistProvisionerVersion = origPersist })
+
+	// Failure path: the completion message must signal the miss.
+	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
+		return errors.New("simulated persist failure")
+	}
+	step, err := RecordProvisionerVersion().Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	require.NoError(t, report.Error, "persist failure must remain non-fatal")
+	assert.Equal(t, "false", report.Metadata[metaVersionPersisted],
+		"the report must flag that the version was not persisted")
+	assert.Contains(t, gotMsg, "not recorded",
+		"the completion message must not claim the version was recorded")
+
+	// Success path: the completion message reports the version recorded.
+	gotMsg = ""
+	persistProvisionerVersion = func(_ ...state.ManagerOption) error { return nil }
+	step, err = RecordProvisionerVersion().Build()
+	require.NoError(t, err)
+	report = step.Execute(context.Background())
+	require.NoError(t, report.Error)
+	assert.NotEqual(t, "false", report.Metadata[metaVersionPersisted],
+		"a successful persist must not flag a miss")
+	assert.Equal(t, "Provisioner version recorded", gotMsg)
 }
