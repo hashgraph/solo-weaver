@@ -154,21 +154,40 @@ func renderChain(policies []*Policy, podCIDR string) ([]string, error) {
 		lines = append(lines, restore...)
 	}
 
-	// Tiers 3 and 4: stamp classification, specific before fallthrough.
-	var specific, fallthr []string
+	// Tiers 3 and 4: stamp classification, specific before fallthrough. Within
+	// each tier, policies are grouped by (Direction, Ports) and ordered by
+	// CreatedAt within a group -- a stable tiebreaker for the cases that can
+	// still share a group (fallthrough policies, which the overlap check in
+	// Manager.Create doesn't apply to; or specific policies loaded from
+	// registry data written before that check existed).
+	var specificPolicies, fallthrPolicies []*Policy
 	for _, p := range policies {
 		if p.Action != ActionStamp {
 			continue
 		}
+		if p.FromEntityWorld {
+			fallthrPolicies = append(fallthrPolicies, p)
+		} else {
+			specificPolicies = append(specificPolicies, p)
+		}
+	}
+	specificPolicies = orderByGroupThenCreatedAt(specificPolicies)
+	fallthrPolicies = orderByGroupThenCreatedAt(fallthrPolicies)
+
+	var specific, fallthr []string
+	for _, p := range specificPolicies {
 		rule, err := renderStampRule(p, podCIDR)
 		if err != nil {
 			return nil, err
 		}
-		if p.FromEntityWorld {
-			fallthr = append(fallthr, rule)
-		} else {
-			specific = append(specific, rule)
+		specific = append(specific, rule)
+	}
+	for _, p := range fallthrPolicies {
+		rule, err := renderStampRule(p, podCIDR)
+		if err != nil {
+			return nil, err
 		}
+		fallthr = append(fallthr, rule)
 	}
 	if len(specific) > 0 {
 		lines = append(lines, "", "\t\t# Classification — specific matches.")
@@ -183,6 +202,40 @@ func renderChain(policies []*Policy, podCIDR string) ([]string, error) {
 		"\t\tct state established,related accept",
 		"\t\tdrop")
 	return lines, nil
+}
+
+// orderByGroupThenCreatedAt returns policies reordered so that members of the
+// same (Direction, Ports) group (see groupKey) are contiguous and sorted by
+// CreatedAt ascending, while groups themselves keep the relative order of
+// their first member in the input. The per-group sort is stable, so policies
+// with equal CreatedAt (e.g. an unpopulated field in older test fixtures)
+// retain their input order rather than being shuffled.
+func orderByGroupThenCreatedAt(policies []*Policy) []*Policy {
+	type group struct {
+		key     string
+		members []*Policy
+	}
+	var groups []*group
+	byKey := make(map[string]*group, len(policies))
+	for _, p := range policies {
+		k := groupKey(p)
+		g, ok := byKey[k]
+		if !ok {
+			g = &group{key: k}
+			byKey[k] = g
+			groups = append(groups, g)
+		}
+		g.members = append(g.members, p)
+	}
+
+	out := make([]*Policy, 0, len(policies))
+	for _, g := range groups {
+		sort.SliceStable(g.members, func(i, j int) bool {
+			return g.members[i].CreatedAt.Before(g.members[j].CreatedAt)
+		})
+		out = append(out, g.members...)
+	}
+	return out
 }
 
 // renderReplyRestoreRule renders the ingress restore rule for a --reply-stamp

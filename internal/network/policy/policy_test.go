@@ -193,6 +193,28 @@ func TestRender_WorkedExamples(t *testing.T) {
 	require.Contains(t, doc, "set bn-backfill { type ipv4_addr . inet_service; }")
 }
 
+func TestRender_CreatedAtTiebreakWithinDirPortsGroup(t *testing.T) {
+	older := fixedTime()
+	newer := older.Add(time.Hour)
+
+	// Both policies are egress fallthrough with the same --ports, so they
+	// land in the same tier-4 group. Name order ("aaa" < "zzz") disagrees
+	// with CreatedAt order here on purpose, so the assertion below can only
+	// pass if renderChain is ordering by CreatedAt, not by name.
+	policies := []*Policy{
+		{Name: "aaa-newer", Action: ActionStamp, Stamp: "public", Direction: DirectionEgress, FromEntityWorld: true, Ports: []string{"9000"}, CreatedAt: newer},
+		{Name: "zzz-older", Action: ActionStamp, Stamp: "reserve-egress", Direction: DirectionEgress, FromEntityWorld: true, Ports: []string{"9000"}, CreatedAt: older},
+	}
+	doc, err := Render(policies, "10.4.0.0/24")
+	require.NoError(t, err)
+
+	zzzIdx := strings.Index(doc, "@zzz-older_ports")
+	aaaIdx := strings.Index(doc, "@aaa-newer_ports")
+	require.NotEqual(t, -1, zzzIdx, "zzz-older's rule must be present")
+	require.NotEqual(t, -1, aaaIdx, "aaa-newer's rule must be present")
+	require.Less(t, zzzIdx, aaaIdx, "the older policy must render first despite sorting after the newer one by name")
+}
+
 func TestRender_RequiresPodCIDR(t *testing.T) {
 	_, err := Render(sampleBNPolicies(), "")
 	require.Error(t, err)
@@ -437,6 +459,58 @@ func TestCreate_CorruptSiblingRegistryRejected(t *testing.T) {
 	_, err := m.Create(context.Background(), &Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}, nil, "10.4.0.0/24", false)
 	require.ErrorContains(t, err, "corrupt policy registry entry")
 	require.Empty(t, r.applied, "a corrupt sibling entry must fail before the kernel is touched")
+}
+
+func TestCreate_OverlappingSpecificPoliciesRejected(t *testing.T) {
+	r := newFakeRunner()
+	m, _, regDir := newTestManager(t, r)
+
+	// publisher and reserve-ingress are both DirectionIngress; same --ports
+	// makes the two policies claim the same (Direction, Ports) group.
+	a := &Policy{Name: "bn-a", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}
+	changed, err := m.Create(context.Background(), a, []string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	firstApplyCount := r.applyCount
+
+	b := &Policy{Name: "bn-b", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40840"}}
+	_, err = m.Create(context.Background(), b, []string{"10.1.0.2/32"}, "10.4.0.0/24", false)
+	require.ErrorContains(t, err, "overlaps with existing policy")
+
+	require.Equal(t, firstApplyCount, r.applyCount, "a rejected overlap must never reach the kernel")
+	require.NoFileExists(t, filepath.Join(regDir, "bn-b.json"))
+}
+
+func TestCreate_OverlapCheckExcludesSelfOnForce(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+
+	a := &Policy{Name: "bn-a", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}
+	_, err := m.Create(context.Background(), a, []string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+	require.NoError(t, err)
+
+	// Re-creating the SAME name with --force must not trip the overlap check
+	// against its own prior registry entry.
+	changed, err := m.Create(context.Background(), a, []string{"10.1.0.2/32"}, "10.4.0.0/24", true)
+	require.NoError(t, err)
+	require.True(t, changed)
+}
+
+func TestCreate_FromEntityWorldNotSubjectToOverlapCheck(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+
+	a := &Policy{Name: "bn-a", Action: ActionStamp, Stamp: "public", FromEntityWorld: true, Ports: []string{"9000"}}
+	_, err := m.Create(context.Background(), a, nil, "10.4.0.0/24", false)
+	require.NoError(t, err)
+
+	b := &Policy{Name: "bn-b", Action: ActionStamp, Stamp: "reserve-egress", FromEntityWorld: true, Ports: []string{"9000"}}
+	changed, err := m.Create(context.Background(), b, nil, "10.4.0.0/24", false)
+	require.NoError(t, err, "fallthrough policies sharing direction+ports are not overlap-checked")
+	require.True(t, changed)
+
+	require.Contains(t, r.applied, "@bn-a_ports")
+	require.Contains(t, r.applied, "@bn-b_ports")
 }
 
 func TestRegistry_RoundTrip(t *testing.T) {
