@@ -2,7 +2,7 @@
 
 //go:build !integration
 
-package blocknode
+package shaper
 
 import (
 	"context"
@@ -136,17 +136,9 @@ func TestComputePolicyDeltas_LiveReadErrorPropagates(t *testing.T) {
 	require.ErrorContains(t, err, "bn-publisher")
 }
 
-func TestReconcilePolicies_NilListerErrors(t *testing.T) {
-	m := &TrafficShaperMonitor{} // no lister injected
-	_, err := m.reconcilePolicies(context.Background(), CategoryEndpoints{CategoryPublisher: {"10.1.0.1/32"}})
-	require.Error(t, err)
-	require.ErrorContains(t, err, "live-set reader")
-}
-
-func TestReconcilePolicies_ComputesDeltas(t *testing.T) {
+func TestComputePolicyDeltas_ComputesDeltas(t *testing.T) {
 	l := newFakeLister()
-	m := &TrafficShaperMonitor{lister: l}
-	deltas, err := m.reconcilePolicies(context.Background(), CategoryEndpoints{CategoryPublisher: {"10.1.0.1/32"}})
+	deltas, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPublisher: {"10.1.0.1/32"}})
 	require.NoError(t, err)
 	require.Equal(t, []PolicyDelta{
 		{Policy: "bn-publisher", SetDelta: setDelta([]string{"10.1.0.1"}, nil)},

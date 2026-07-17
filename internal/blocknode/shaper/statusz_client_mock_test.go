@@ -2,14 +2,14 @@
 
 //go:build !integration
 
-package blocknode_test
+package shaper_test
 
 import (
 	"context"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/blocknode/shaper"
 	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode/statuszmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ func TestStatuszClient_DecodesMockServer(t *testing.T) {
 	srv := httptest.NewServer(statuszmock.Handler(statuszmock.StaticRoster(roster)))
 	defer srv.Close()
 
-	client := blocknode.NewStatuszClient(srv.URL)
+	client := shaper.NewStatuszClient(srv.URL)
 
 	inbound, err := client.InboundClients(context.Background())
 	require.NoError(t, err)

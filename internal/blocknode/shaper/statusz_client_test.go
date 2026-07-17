@@ -2,7 +2,7 @@
 
 //go:build !integration
 
-package blocknode
+package shaper
 
 import (
 	"context"
