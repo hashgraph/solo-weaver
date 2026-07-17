@@ -4,6 +4,7 @@ package policy
 
 import (
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -217,4 +218,57 @@ func setElements(p *Policy, cidrs []string) []string {
 // clause.
 func portElements(ports []string) string {
 	return strings.Join(ports, ", ")
+}
+
+// isSpecific reports whether p is a "specific" stamp policy for tier-3/4
+// grouping and overlap purposes: an --stamp policy that is not --from-entity
+// world (i.e. one that renders an IP-set clause). Deny policies and
+// fallthrough stamp policies are never "specific".
+func isSpecific(p *Policy) bool {
+	return p.Action == ActionStamp && !p.FromEntityWorld
+}
+
+// portsKey returns a canonical, order-insensitive key for a --ports value, so
+// two policies naming the same ports in a different flag order still compare
+// equal for grouping/overlap purposes.
+func portsKey(ports []string) string {
+	sorted := append([]string(nil), ports...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",")
+}
+
+// groupKey returns the (Direction, Ports) grouping key used both by
+// renderChain's tier-3/4 ordering and by the overlap check below.
+func groupKey(p *Policy) string {
+	return string(p.Direction) + "|" + portsKey(p.Ports)
+}
+
+// checkNoOverlap rejects candidate if it is a "specific" stamp policy that
+// shares its (Direction, Ports) group with another existing specific policy.
+// Two specific policies claiming the same traffic would have an ambiguous
+// classification outcome, since set membership -- and therefore which
+// policy's CIDR actually matches a given packet -- can change independently
+// after create via the daemon/element verbs (Add/Remove/Set), so the check
+// is on the group key alone, not on the initial --cidrs values. Fallthrough
+// (--from-entity world) policies are exempt: they intentionally match
+// anything, and creation order (see renderChain) already gives them a
+// deterministic position.
+//
+// existing entries matching candidate.Name are skipped so a --force
+// re-create of the same policy never self-rejects.
+func checkNoOverlap(existing []*Policy, candidate *Policy) error {
+	if !isSpecific(candidate) {
+		return nil
+	}
+	for _, p := range existing {
+		if p.Name == candidate.Name {
+			continue
+		}
+		if isSpecific(p) && groupKey(p) == groupKey(candidate) {
+			return errorx.IllegalArgument.New(
+				"policy %q overlaps with existing policy %q: both are specific --stamp policies for direction=%s ports=%v",
+				candidate.Name, p.Name, candidate.Direction, candidate.Ports)
+		}
+	}
+	return nil
 }

@@ -127,6 +127,14 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 			}
 		}
 
+		// Reject a specific --stamp policy that would share its
+		// (Direction, Ports) group with another already-registered
+		// specific policy -- checked up front, for both the
+		// create-if-missing and --force paths.
+		if err := checkNoOverlap(policies, p); err != nil {
+			return err
+		}
+
 		existing := findByName(policies, p.Name)
 		target, newCIDRs := p, cidrs
 		if existing != nil && !force {
