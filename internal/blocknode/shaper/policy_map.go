@@ -119,6 +119,31 @@ func computePolicyDeltas(ctx context.Context, lister elementLister, ce CategoryE
 	return deltas, nil
 }
 
+// canonicalDesiredMembership maps each owned category present in ce to its nft
+// policy name and the canonical, nft-rendered form of its desired membership:
+// compound "<ip> . <port>" tokens for peer_bn, /32-collapsed and numerically
+// ordered elements otherwise (via policy.CanonicalizeElements). This is exactly
+// the rendering computePolicyDeltas diffs against live nft state, so digesting
+// this form — rather than the raw statusz endpoints desiredMembership carries —
+// means the digest only changes when the actual applied membership would
+// change, regardless of how statusz happens to spell an equivalent host/CIDR
+// across polls.
+func canonicalDesiredMembership(ce CategoryEndpoints) (map[string][]string, error) {
+	m := make(map[string][]string, len(ce))
+	for cat, endpoints := range ce {
+		b, ok := categoryBindings[cat]
+		if !ok {
+			continue
+		}
+		elems, err := desiredElements(b, endpoints)
+		if err != nil {
+			return nil, err
+		}
+		m[b.policyName] = policy.CanonicalizeElements(elems)
+	}
+	return m, nil
+}
+
 // desiredElements converts a category's raw statusz endpoints into nft set
 // element tokens for its policy: compound "<ip> . <port>" keys for the peer_bn
 // category, plain elements otherwise. Canonicalization (ordering, /32 collapse)

@@ -279,15 +279,24 @@ func initConfig(ctx context.Context) {
 }
 
 // isPrivilegeExemptInvocation reports whether args represents an invocation
-// that does not require superuser privileges (version output, help text).
+// that does not require superuser privileges: version output, help text, or
+// `block node reconcile-shaper --check`. The latter's entire design point (see
+// #893) is running unprivileged so the daemon scheduler can cheaply detect a
+// real change before ever escalating to sudo for the apply path.
 func isPrivilegeExemptInvocation(args []string) bool {
 	if len(args) == 0 {
 		return true
 	}
+	hasReconcileShaper, hasCheckTrue := false, false
 	for _, arg := range args {
 		switch arg {
 		case "--version", "-v", "--help", "-h":
 			return true
+		case "reconcile-shaper":
+			hasReconcileShaper = true
+		}
+		if isCheckTrueFlag(arg) {
+			hasCheckTrue = true
 		}
 	}
 	// Only the leading subcommand word can be exempt; flag values and nested
@@ -297,7 +306,27 @@ func isPrivilegeExemptInvocation(args []string) bool {
 		return true
 	}
 
-	return false
+	// "reconcile-shaper" is a fixed, unambiguous subcommand name, so pairing it
+	// with a --check flag that resolves true is a safe substitute for full
+	// argument parsing (which Execute() cannot do yet — this guard runs before
+	// Cobra initializes).
+	return hasReconcileShaper && hasCheckTrue
+}
+
+// isCheckTrueFlag reports whether arg is a spelling of --check that resolves
+// to true: the bare flag, or an explicit --check=<truthy> value. --check=false
+// (or any other falsy spelling) is deliberately not exempt, since that
+// invokes the privileged apply path.
+func isCheckTrueFlag(arg string) bool {
+	if arg == "--check" {
+		return true
+	}
+	val, ok := strings.CutPrefix(arg, "--check=")
+	if !ok {
+		return false
+	}
+	b, err := strconv.ParseBool(val)
+	return err == nil && b
 }
 
 func activateProxy(ctx context.Context) {

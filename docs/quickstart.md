@@ -361,6 +361,41 @@ sudo solo-provisioner block node uninstall \
 > targeted way to remove the block-node PVs without tearing down the whole
 > cluster via `kube cluster uninstall`.
 
+#### Reconcile Traffic Shaper
+
+Reconcile the block node traffic-shaper's `inet weaver` nft policy set membership
+from the block node's statusz endpoints. The command fetches the active
+inbound/outbound endpoints, maps them to the owned policy sets
+(`bn-publisher`, `bn-partner`, `bn-restricted`, `bn-backfill`), and applies only
+the policies whose membership changed.
+
+```bash
+# Detect only (unprivileged): print a digest of the desired membership; touches no nft state
+solo-provisioner block node reconcile-shaper \
+  --statusz-url=http://10.0.0.5:8080 \
+  --check
+
+# Apply (root): read live nft, diff, and rewrite the changed policies
+sudo solo-provisioner block node reconcile-shaper \
+  --statusz-url=http://10.0.0.5:8080
+
+# Machine-readable output
+sudo solo-provisioner block node reconcile-shaper \
+  --statusz-url=http://10.0.0.5:8080 \
+  --output=json
+```
+
+**Additional Flags**:
+
+| Flag             | Description                                                                          | Default |
+|------------------|--------------------------------------------------------------------------------------|---------|
+| `--statusz-url`  | Base URL of the block node's statusz endpoints (required)                            | —       |
+| `--check`        | Only fetch and print the desired-membership digest; read/write no nft state (unprivileged) | `false` |
+
+> **Privilege**: `--check` never touches nft and needs no privilege. The apply
+> path (no `--check`) reads and writes the live `inet weaver` sets and must run as
+> root; the daemon invokes it via sudo.
+
 ---
 
 ### Kubernetes Commands

@@ -145,6 +145,26 @@ func TestComputePolicyDeltas_ComputesDeltas(t *testing.T) {
 	}, deltas)
 }
 
+func TestCanonicalDesiredMembership_MatchesDeltaRendering(t *testing.T) {
+	ce := CategoryEndpoints{
+		CategoryPublisher: {"10.1.0.2/32", "10.1.0.1/32"}, // /32 collapse + numeric order
+		CategoryPeerBN:    {"10.30.5.7:43473"},            // compound conversion
+		Category("mgmt"):  {"10.9.0.1"},                   // unmapped → dropped
+	}
+
+	m, err := canonicalDesiredMembership(ce)
+	require.NoError(t, err)
+	require.Equal(t, map[string][]string{
+		"bn-publisher": {"10.1.0.1", "10.1.0.2"},
+		"bn-backfill":  {"10.30.5.7 . 43473"},
+	}, m)
+}
+
+func TestCanonicalDesiredMembership_MalformedCompoundErrors(t *testing.T) {
+	_, err := canonicalDesiredMembership(CategoryEndpoints{CategoryPeerBN: {"not-an-ip-port"}})
+	require.Error(t, err)
+}
+
 // setDelta builds a policy.SetDelta so tests express expectations as an
 // (adds, deletes) pair.
 func setDelta(adds, deletes []string) policy.SetDelta {
