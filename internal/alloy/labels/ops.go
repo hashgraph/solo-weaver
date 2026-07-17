@@ -22,6 +22,7 @@ func (OpsProfile) Name() string { return "ops" }
 // Labels added (from LabelInput):
 //   - cluster        = ClusterName
 //   - environment    = DeployProfile
+//   - instance       = ClusterName (human-readable override of the scrape IP:port)
 //   - instance_type  = alphabetic prefix of first cluster name segment (e.g. "lfh")
 //   - inventory_name = full cluster name (for DevOps inventory systems)
 //   - ip             = MachineIP (when available)
@@ -31,6 +32,12 @@ func (OpsProfile) Labels(input LabelInput) map[string]string {
 	if input.ClusterName != "" {
 		labels["cluster"] = input.ClusterName
 		labels["inventory_name"] = input.ClusterName
+		// Override the auto-populated instance (IP:port) with the cluster name so
+		// dashboards show human-readable names (e.g. "lfh00-testnet"). This mirrors
+		// inventory_name; a static replacement is used rather than a source_labels
+		// copy because RenderLabelRules sorts rules alphabetically and cannot
+		// guarantee inventory_name is set before an instance rule would read it.
+		labels["instance"] = input.ClusterName
 	}
 
 	if input.DeployProfile != "" {

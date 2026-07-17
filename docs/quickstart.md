@@ -840,6 +840,7 @@ kubectl create secret generic grafana-alloy-secrets \
 # Step 2: Install Alloy with remotes
 sudo solo-provisioner alloy cluster install \
   --cluster-name=mainnet-block-01 \
+  --profile=mainnet \
   --add-prometheus-remote=name=primary,url=https://prom1.example.com/api/v1/write,username=user1 \
   --add-loki-remote=name=primary,url=https://loki1.example.com/loki/api/v1/push,username=user1 \
   --monitor-block-node
@@ -854,6 +855,7 @@ sudo solo-provisioner alloy cluster install \
 | Flag                      | Description                                                                                                                       |
 |---------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | `--cluster-name`          | Cluster name for metrics/logs labels                                                                                              |
+| `--profile`, `-p`         | Deployment profile (`local`, `perfnet`, `testnet`, `previewnet`, `mainnet`); sets the `environment` label for the `ops` profile. Optional; if omitted, the value from `--config` is used |
 | `--monitor-block-node`    | Enable Block Node specific monitoring                                                                                             |
 | `--add-prometheus-remote` | Add a Prometheus remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng` |
 | `--add-loki-remote`       | Add a Loki remote (format: `name=<name>,url=<url>,username=<username>[,labelProfile=eng\|ops]`). Repeatable. Default: `eng`       |
@@ -959,7 +961,7 @@ remote activates a profile.
 | Profile           | Labels Added                                                                 |
 |-------------------|------------------------------------------------------------------------------|
 | `eng` *(default)* | `cluster`                                                                    |
-| `ops`             | `cluster`, `environment`, `instance_type`, `inventory_name`, `ip` (optional) |
+| `ops`             | `cluster`, `environment`, `instance`, `instance_type`, `inventory_name`, `ip` (optional) |
 
 **Example** — install with the `ops` label profile:
 
@@ -977,6 +979,7 @@ With `--cluster-name=lfh02-previewnet-blocknode` and `--profile=previewnet`, the
 |------------------|------------------------------|------------------------------------------------------------------|
 | `cluster`        | `lfh02-previewnet-blocknode` | Always set (from `--cluster-name`)                               |
 | `environment`    | `previewnet`                 | From `--profile` (deploy profile)                                |
+| `instance`       | `lfh02-previewnet-blocknode` | Full cluster name; overrides the auto-scraped `IP:port`          |
 | `instance_type`  | `lfh`                        | Alphabetic prefix of the first segment of cluster name           |
 | `inventory_name` | `lfh02-previewnet-blocknode` | Full cluster name                                                |
 | `ip`             | `<ip>`                       | Optional; set when an IP address label is available for the node |

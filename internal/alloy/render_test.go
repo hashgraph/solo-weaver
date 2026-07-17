@@ -232,8 +232,8 @@ func TestRenderModularConfigs_WithOpsLabelProfile_AllModules(t *testing.T) {
 		assert.Contains(t, content, `target_label = "ip"`, "module %s should contain ip rule", moduleName)
 		// ops profile should include inventory_name
 		assert.Contains(t, content, `target_label = "inventory_name"`, "module %s should contain inventory_name", moduleName)
-		// instance label should NOT be present
-		assert.NotContains(t, content, `target_label = "instance"`, "module %s should not contain instance rule", moduleName)
+		// ops profile should override instance with the human-readable cluster name
+		assert.Contains(t, content, `target_label = "instance"`, "module %s should contain instance rule", moduleName)
 	}
 }
 
