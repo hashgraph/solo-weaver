@@ -396,6 +396,35 @@ sudo solo-provisioner block node reconcile-shaper \
 > path (no `--check`) reads and writes the live `inet weaver` sets and must run as
 > root; the daemon invokes it via sudo.
 
+#### Attach Ingress Traffic Shaper (`tc-attach`)
+
+Install the `$VETH` ingress HTB hierarchy (classes `1:10`/`1:20`/`1:30`, default
+`reserve-ingress`, `fq_codel` leaves, no tc filters) on a block node pod's
+host-side veth, using the per-class ingress budgets recorded by
+`network shape`. The solo-provisioner-daemon's pod-lifecycle watcher runs this
+via sudo on each block node pod create, passing the veth it resolved for the
+pod; you can also run it by hand for debugging.
+
+```bash
+# Install the ingress HTB hierarchy on a resolved host-side veth (root)
+sudo solo-provisioner block node tc-attach --veth lxc1a2b3c
+
+# Tear it down (best-effort; the kernel also removes it when the pod's veth disappears)
+sudo solo-provisioner block node tc-attach --veth lxc1a2b3c --detach
+```
+
+**Additional Flags**:
+
+| Flag       | Description                                                                                 | Default |
+|------------|---------------------------------------------------------------------------------------------|---------|
+| `--veth`   | Host-side veth interface to (de)install the ingress HTB hierarchy on, e.g. `lxc1a2b3c` (required) | —       |
+| `--detach` | Tear down the ingress HTB hierarchy on the veth instead of installing it (best-effort)      | `false` |
+
+> **Privilege**: `tc-attach` always mutates live kernel tc state and must run as
+> root (the daemon invokes it via sudo). Unlike `reconcile-shaper`, it has no
+> unprivileged `--check` mode. It requires the ingress shape to have been
+> recorded first (normally by `block node install` via `network shape`).
+
 ---
 
 ### Kubernetes Commands
