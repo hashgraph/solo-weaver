@@ -33,13 +33,30 @@ func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []st
 		})
 	}
 
-	// block_node: added in S7 (#667). When enabled, append:
-	//   specs = append(specs, steps.DaemonComponentSpec{
-	//       ShortName:      "bn",
-	//       Namespace:      bn.Orbit,
-	//       KubeconfigPath: paths.DaemonBNKubeconfigPath,
-	//       PolicyRules:    <bn RBAC rules>,
-	//   })
+	// block_node: only the traffic-shaper monitor touches the K8s API, so RBAC is
+	// provisioned only when that monitor is enabled. The daemon's pod-lifecycle
+	// watcher lists/watches BN pods (pods: get/list/watch) and the veth resolver
+	// execs into a pod to read eth0's iflink (pods/exec: create). The statusz poll
+	// loop talks HTTP + `sudo network policy set`, so it needs no API access.
+	if bn := cfg.Components.BlockNode; bn != nil && bn.Enabled && bn.Monitors.TrafficShaper {
+		specs = append(specs, steps.DaemonComponentSpec{
+			ShortName:      "bn",
+			Namespace:      bn.Orbit,
+			KubeconfigPath: paths.DaemonBNKubeconfigPath,
+			PolicyRules: []rbacv1.PolicyRule{
+				{
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+					Verbs:     []string{"get", "list", "watch"},
+				},
+				{
+					APIGroups: []string{""},
+					Resources: []string{"pods/exec"},
+					Verbs:     []string{"create"},
+				},
+			},
+		})
+	}
 
 	return specs
 }
