@@ -105,7 +105,7 @@ var (
 				if ex := errorx.Cast(err); ex != nil {
 					return ex.WithProperty(models.ErrPropertyResolution, []string{
 						"Check the daemon config: cat " + daemonConfigPath,
-						"Check the kubeconfig: ls -la " + paths.DaemonCNKubeconfigPath,
+						"Check the component kubeconfig(s): ls -la " + paths.DaemonCNKubeconfigPath + " " + paths.DaemonBNKubeconfigPath,
 						"Reinstall the daemon: sudo solo-provisioner daemon service install",
 					})
 				}

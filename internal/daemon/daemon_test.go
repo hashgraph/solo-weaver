@@ -288,6 +288,43 @@ func TestNewFromConfig_BlockNodeOnly(t *testing.T) {
 	assert.Len(t, d.components[0].monitors, 1)
 }
 
+func TestNewFromConfig_MissingKubeconfigSkipsComponentNotDaemon(t *testing.T) {
+	dir := t.TempDir()
+	// A block-node component whose scoped kubeconfig does not exist must not crash
+	// the whole daemon: the component is skipped and NewFromConfig still succeeds so
+	// any other components keep running.
+	cfg := DaemonConfig{Components: DaemonComponents{
+		BlockNode: &BlockNodeComponentConfig{
+			Enabled:    true,
+			Kubeconfig: filepath.Join(dir, "does-not-exist.kubeconfig"),
+			Orbit:      "hedera-block-node",
+			Monitors:   BlockNodeMonitors{TrafficShaper: true},
+		},
+	}}
+	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
+	require.NoError(t, err, "a missing component kubeconfig must not fail daemon construction")
+	assert.Empty(t, d.components, "the block-node component must be skipped when its kubeconfig is missing")
+}
+
+func TestNewFromConfig_ConsensusNodeMissingKubeconfigSkipsComponentNotDaemon(t *testing.T) {
+	dir := t.TempDir()
+	// A consensus-node component whose scoped kubeconfig does not exist must not
+	// crash the whole daemon: the component is skipped and NewFromConfig still
+	// succeeds so any other components keep running.
+	cfg := DaemonConfig{Components: DaemonComponents{
+		ConsensusNode: &ConsensusNodeComponentConfig{
+			Enabled:    true,
+			Kubeconfig: filepath.Join(dir, "does-not-exist.kubeconfig"),
+			NodeID:     "0",
+			Orbit:      "hedera-network",
+			Monitors:   ConsensusNodeMonitors{Upgrade: true},
+		},
+	}}
+	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
+	require.NoError(t, err, "a missing component kubeconfig must not fail daemon construction")
+	assert.Empty(t, d.components, "the consensus-node component must be skipped when its kubeconfig is missing")
+}
+
 func TestNewFromConfig_BlockNodeEnabledNoMonitorsProducesNoComponent(t *testing.T) {
 	cfg := DaemonConfig{Components: DaemonComponents{
 		BlockNode: &BlockNodeComponentConfig{Enabled: true}, // TrafficShaper off → zero monitors
