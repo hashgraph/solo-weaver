@@ -86,9 +86,8 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			MigrateEventsDir: paths.DaemonConsensusMigrateEventsDir,
 		})
 		if err != nil {
-			return nil, err
-		}
-		if len(result.Monitors) > 0 {
+			logComponentBuildSkipped("consensus-node", cn.Kubeconfig, err)
+		} else if len(result.Monitors) > 0 {
 			comp := component{
 				name:     "consensus-node",
 				monitors: result.Monitors,
@@ -117,9 +116,8 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			Namespace:            bn.Orbit,
 		})
 		if err != nil {
-			return nil, err
-		}
-		if len(result.Monitors) > 0 {
+			logComponentBuildSkipped("block-node", bn.Kubeconfig, err)
+		} else if len(result.Monitors) > 0 {
 			comp := component{
 				name:     "block-node",
 				monitors: result.Monitors,
@@ -154,6 +152,23 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 		Logger: slog.Default(),
 	}, daemonkit.ServerConfig{})
 	return d, nil
+}
+
+// logComponentBuildSkipped reports that an enabled daemon component could not be
+// built (typically its scoped kubeconfig is missing or unreadable) and is being
+// skipped so the daemon still starts with its remaining components — one
+// component's construction failure must not take down the whole daemon. A missing
+// kubeconfig is an install/provisioning gap, not a transient fault, so the
+// operator must provision it and restart the daemon.
+func logComponentBuildSkipped(name, kubeconfig string, err error) {
+	logx.As().Error().Err(err).
+		Str("reason", "DaemonComponentSkipped").
+		Str("component", name).
+		Str("kubeconfig", kubeconfig).
+		Msgf("skipping daemon component %q — it could not be built; the daemon starts without it. "+
+			"Verify its kubeconfig exists (%s), then reinstall and restart the daemon: "+
+			"sudo solo-provisioner daemon service stop && sudo solo-provisioner daemon service install && sudo solo-provisioner daemon service start",
+			name, kubeconfig)
 }
 
 // componentSupervisor starts one supervised goroutine per monitor in every
