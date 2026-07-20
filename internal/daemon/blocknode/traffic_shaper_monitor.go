@@ -9,8 +9,6 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
-	"github.com/hashgraph/solo-weaver/internal/network/policy"
-	"github.com/joomcode/errorx"
 )
 
 // Per-responsibility back-off bounds. A fault in one subsystem (pod watcher or
@@ -35,8 +33,10 @@ const responsibilityBackoffFactor = 2.0
 //
 //   - the pod-lifecycle watcher (resolves host-side veths and installs/rebinds
 //     ingress HTB qdiscs — implemented in #748/#749), and
-//   - the statusz poll loop (diffs statusz membership against live nft sets and
-//     applies deltas — implemented in #751/#752/#754/#755).
+//   - the statusz poll loop, which reconciles the nft policy membership from
+//     statusz. Its reconcile logic now lives in the `block node reconcile-shaper`
+//     CLI worker; the daemon-side scheduler that execs that worker is not yet
+//     wired, so this responsibility is currently an idle stub.
 //
 // Each responsibility is independently retried with exponential back-off so a
 // fault in one cannot stop the other or crash the daemon.
@@ -44,10 +44,6 @@ type TrafficShaperMonitor struct {
 	// resolver resolves the host-side veth name for a BN pod (story #747).
 	// Used by runPodWatcher once the real watch loop lands in #748.
 	resolver *VethResolver
-	// lister reads live nft set membership so the poll loop can diff desired
-	// statusz-derived membership against the kernel. Satisfied by the network
-	// policy Runner; a fake is injected in tests.
-	lister elementLister
 	// delegator runs privileged solo-provisioner subcommands under sudo. The
 	// daemon is unprivileged (User=weaver), so both responsibilities delegate
 	// their privileged work through it: the poll loop applies membership via
@@ -59,15 +55,13 @@ type TrafficShaperMonitor struct {
 
 // NewTrafficShaperMonitor constructs a TrafficShaperMonitor with the given
 // VethResolver. The resolver is wired into runPodWatcher by #748; it is held
-// here so #748 can use it without further constructor changes. The live-set
-// reader defaults to the network policy exec Runner, which reads the `inet
-// weaver` sets via `nft list set`. The delegator defaults to the sudo-backed
-// privileged-exec seam so the poll loop and watcher can perform their
-// privileged work without the unprivileged daemon holding root itself.
+// here so #748 can use it without further constructor changes. The delegator
+// defaults to the sudo-backed privileged-exec seam so the poll loop and watcher
+// can perform their privileged work without the unprivileged daemon holding
+// root itself.
 func NewTrafficShaperMonitor(resolver *VethResolver) *TrafficShaperMonitor {
 	return &TrafficShaperMonitor{
 		resolver:  resolver,
-		lister:    policy.NewExecRunner(),
 		delegator: privexec.New(),
 	}
 }
@@ -150,35 +144,17 @@ func (m *TrafficShaperMonitor) runPodWatcher(ctx context.Context) error {
 	return nil
 }
 
-// runStatuszPoll is the statusz poll-loop responsibility. The category→policy
-// diff engine is in place; the surrounding loop is not yet wired — statusz fetch
-// lands in #751, delta apply in #754, and bootstrap/outage policy in #755. It
-// exercises the diff seam once with an empty desired view so the plumbing (the
-// live-set reader and reconcilePolicies) is ready for #754 to drive from real
-// statusz data. An empty view maps to zero deltas and touches no set.
+// runStatuszPoll is the statusz poll-loop responsibility. The reconciliation
+// logic now lives in the `solo-provisioner block node reconcile-shaper` worker;
+// the daemon-side scheduler that execs it is not yet wired. Until then this is a
+// pure idle stub that blocks until ctx is cancelled and touches no set.
 func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
-	deltas, err := m.reconcilePolicies(ctx, nil)
-	if err != nil {
-		return err
-	}
 	logx.As().Info().
 		Str("reason", "TrafficShaperStatuszPollStub").
 		Str("monitor", m.Name()).
-		Int("policy_deltas", len(deltas)).
-		Msg("statusz poll loop not yet wired — diff engine ready, awaiting statusz client")
+		Msg("statusz poll loop not yet wired — reconcile-shaper scheduler pending")
 	<-ctx.Done()
 	return nil
-}
-
-// reconcilePolicies computes the per-policy membership deltas between the desired
-// category endpoints and the live nft sets. It does NOT apply them — applying is
-// #754's responsibility. It is the seam the poll loop drives once the statusz
-// client (#751) supplies real endpoints.
-func (m *TrafficShaperMonitor) reconcilePolicies(ctx context.Context, ce CategoryEndpoints) ([]PolicyDelta, error) {
-	if m.lister == nil {
-		return nil, errorx.IllegalState.New("traffic-shaper monitor has no live-set reader")
-	}
-	return computePolicyDeltas(ctx, m.lister, ce)
 }
 
 // minDuration returns the smaller of a and b.

@@ -22,6 +22,10 @@ func TestIsPrivilegeExemptInvocation(t *testing.T) {
 		{"help", "block"},
 		{"--non-interactive", "--help"},
 		{"--log-level", "debug", "-h"},
+		{"block", "node", "reconcile-shaper", "--check", "--statusz-url", "http://127.0.0.1:8080"},
+		{"block", "node", "reconcile-shaper", "--statusz-url=http://127.0.0.1:8080", "--check"},
+		{"block", "node", "reconcile-shaper", "--check=true", "--statusz-url", "http://127.0.0.1:8080"},
+		{"--log-level", "debug", "block", "node", "reconcile-shaper", "--check", "--statusz-url", "http://127.0.0.1:8080"},
 	}
 	for _, args := range exempt {
 		require.True(t, isPrivilegeExemptInvocation(args), "expected exempt: %v", args)
@@ -35,6 +39,8 @@ func TestIsPrivilegeExemptInvocation(t *testing.T) {
 		{"block", "node", "upgrade", "--profile=mainnet"},
 		{"teleport", "node", "install"},
 		{"alloy", "cluster", "install"},
+		{"block", "node", "reconcile-shaper", "--statusz-url", "http://127.0.0.1:8080"},
+		{"block", "node", "reconcile-shaper", "--check=false", "--statusz-url", "http://127.0.0.1:8080"},
 	}
 	for _, args := range notExempt {
 		require.False(t, isPrivilegeExemptInvocation(args), "expected not exempt: %v", args)
