@@ -215,6 +215,15 @@ sudo solo-provisioner block node install \
 > it. An empty management allowlist skips the firewall to avoid locking the host
 > out of SSH; `--firewall-enabled=false` opts out of it entirely.
 
+> **Traffic-shaper defaults**: `block node install` records both the `$EGRESS`
+> (physical NIC) and the `$VETH` (per-pod ingress) HTB shapes using the design's
+> default per-class budgets, so the daemon can install the ingress hierarchy on
+> the next pod create without any manual `network shape` step. The `$EGRESS` shape
+> is persisted for reboot replay (`solo-provisioner-tc-egress.service`); the
+> ingress shape is recorded as config only (the `$VETH` is ephemeral and replayed
+> per-pod). Ingress bandwidth defaults to the egress `--link-rate`. Tune any class
+> afterward with `network shape set --class <name> --rate/--ceil/--prio`.
+
 #### Upgrade Block Node
 
 Upgrade an existing Block Node deployment:

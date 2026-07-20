@@ -83,6 +83,11 @@ func (h *InstallHandler) BuildWorkflow(
 				// Render and install the $EGRESS HTB boot-persistence script and
 				// oneshot unit.
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
+				// Record the $VETH ingress HTB shape (publisher/backfill-response/
+				// reserve-ingress) so the daemon replays it on each pod create.
+				// Ingress bandwidth defaults to egress (--link-rate); not persisted
+				// across reboot (the veth is ephemeral).
+				steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 				// Enable the traffic-shaper monitor in daemon.yaml so it starts
 				// reconciling statusz-driven nft membership once the daemon runs.
@@ -112,6 +117,11 @@ func (h *InstallHandler) BuildWorkflow(
 				// Render and install the $EGRESS HTB boot-persistence script and
 				// oneshot unit.
 				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
+				// Record the $VETH ingress HTB shape (publisher/backfill-response/
+				// reserve-ingress) so the daemon replays it on each pod create.
+				// Ingress bandwidth defaults to egress (--link-rate); not persisted
+				// across reboot (the veth is ephemeral).
+				steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 				// Enable the traffic-shaper monitor in daemon.yaml so it starts
 				// reconciling statusz-driven nft membership once the daemon runs.
