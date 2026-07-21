@@ -10,8 +10,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 )
 
-var flagESOUninstallNamespace string
-
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall the External Secrets Operator",
@@ -34,10 +32,10 @@ Examples:
 		l := logx.As()
 		l.Debug().
 			Strs("args", args).
-			Str("namespace", flagESOUninstallNamespace).
+			Str("namespace", flagESONamespace).
 			Msg("Uninstalling External Secrets Operator")
 
-		wb := workflows.NewESOUninstallWorkflow(flagESOUninstallNamespace)
+		wb := workflows.NewESOUninstallWorkflow(flagESONamespace)
 
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
@@ -49,5 +47,5 @@ Examples:
 }
 
 func init() {
-	common.FlagESOUninstallNamespace().SetVar(uninstallCmd, &flagESOUninstallNamespace, false)
+	common.FlagESONamespace().SetVar(uninstallCmd, &flagESONamespace, false)
 }

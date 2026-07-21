@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var flagESONamespace string
+
 var operatorCmd = &cobra.Command{
 	Use:   "operator",
 	Short: "Manage the External Secrets Operator installation",

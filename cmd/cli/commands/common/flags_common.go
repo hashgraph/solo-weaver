@@ -106,7 +106,7 @@ func FlagESONamespace() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "namespace",
 		ShortName:   "",
-		Description: "Kubernetes namespace to install the External Secrets Operator into",
+		Description: "Kubernetes namespace for the External Secrets Operator",
 		Default:     "external-secrets",
 	}
 }
@@ -117,15 +117,6 @@ func FlagESOChartVersion() FlagDefinition[string] {
 		ShortName:   "",
 		Description: "External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default)",
 		Default:     "",
-	}
-}
-
-func FlagESOUninstallNamespace() FlagDefinition[string] {
-	return FlagDefinition[string]{
-		Name:        "namespace",
-		ShortName:   "",
-		Description: "Kubernetes namespace the External Secrets Operator is installed in",
-		Default:     "external-secrets",
 	}
 }
 

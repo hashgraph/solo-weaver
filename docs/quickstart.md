@@ -803,7 +803,7 @@ sudo solo-provisioner eso operator install --chart-version 0.20.2
 
 | Flag              | Default            | Description                                                                                                          |
 |-------------------|--------------------|----------------------------------------------------------------------------------------------------------------------|
-| `--namespace`     | `external-secrets` | Kubernetes namespace to install the External Secrets Operator into                                                   |
+| `--namespace`     | `external-secrets` | Kubernetes namespace for the External Secrets Operator                                                               |
 | `--chart-version` | _(catalog default)_ | External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default) |
 
 #### Uninstall External Secrets Operator
@@ -824,7 +824,7 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 
 | Flag          | Default            | Description                                                        |
 |---------------|--------------------|--------------------------------------------------------------------|
-| `--namespace` | `external-secrets` | Kubernetes namespace the External Secrets Operator is installed in |
+| `--namespace` | `external-secrets` | Kubernetes namespace for the External Secrets Operator |
 
 ---
 
