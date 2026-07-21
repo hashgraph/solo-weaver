@@ -71,27 +71,16 @@ func (h *InstallHandler) BuildWorkflow(
 				// verifies the binary exists, not the user account. This step is
 				// idempotent and safe to repeat on up-to-date installations.
 				steps.EnsureWeaverOwnerStep(),
-				// The node-level host firewall (inet host table) is owned by the
-				// block-node workflow, not the generic kube cluster install — nftables
-				// is already installed/enabled from that prior cluster provisioning,
-				// so it's safe to apply here.
-				steps.NetworkFirewallCreate(),
-				// Re-render network-weaver.nft from the policy registry and restart
-				// the shared oneshot so systemd's RemainAfterExit state reflects both
-				// the host and weaver tables.
-				steps.NftWeaverPersist(),
-				// Render and install the $EGRESS HTB boot-persistence script and
-				// oneshot unit.
-				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
-				// Record the $VETH ingress HTB shape (publisher/backfill-response/
-				// reserve-ingress) so the daemon replays it on each pod create.
-				// Ingress bandwidth defaults to egress (--link-rate); not persisted
-				// across reboot (the veth is ephemeral).
-				steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate),
+				// Static network plane (host firewall + weaver policy persistence +
+				// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
+				// The host firewall is owned by the block-node workflow (not the generic
+				// kube cluster install); nftables is already installed/enabled by prior
+				// cluster provisioning, so it's safe to apply here.
+				workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 				// Enable the traffic-shaper monitor in daemon.yaml so it starts
 				// reconciling statusz-driven nft membership once the daemon runs.
-				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace),
+				workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace),
 			)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
@@ -106,26 +95,16 @@ func (h *InstallHandler) BuildWorkflow(
 				// only the substrate floor, which is weaker than the block-node floor.
 				workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
 				workflows.KubernetesSetupWorkflow(h.mr),
+				// Static network plane (host firewall + weaver policy persistence +
+				// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
 				// nftables was just installed/enabled by NodeSetupWorkflow's
-				// systemSetupWorkflow; apply the host firewall here rather than in
-				// that generic (node-type-agnostic) workflow.
-				steps.NetworkFirewallCreate(),
-				// Re-render network-weaver.nft from the policy registry and restart
-				// the shared oneshot so systemd's RemainAfterExit state reflects both
-				// the host and weaver tables.
-				steps.NftWeaverPersist(),
-				// Render and install the $EGRESS HTB boot-persistence script and
-				// oneshot unit.
-				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
-				// Record the $VETH ingress HTB shape (publisher/backfill-response/
-				// reserve-ingress) so the daemon replays it on each pod create.
-				// Ingress bandwidth defaults to egress (--link-rate); not persisted
-				// across reboot (the veth is ephemeral).
-				steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate),
+				// systemSetupWorkflow, so applying the host firewall here (rather than
+				// in that generic, node-type-agnostic workflow) is safe.
+				workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate),
 				steps.SetupBlockNode(ins),
 				// Enable the traffic-shaper monitor in daemon.yaml so it starts
 				// reconciling statusz-driven nft membership once the daemon runs.
-				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace),
+				workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace),
 			)
 	}
 	return wb, nil
