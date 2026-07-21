@@ -5,6 +5,7 @@ package eso
 import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/eso/operator"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/eso/secret"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,7 @@ var esoCmd = &cobra.Command{
 
 func init() {
 	esoCmd.AddCommand(operator.GetCmd())
+	esoCmd.AddCommand(secret.GetCmd())
 }
 
 func GetCmd() *cobra.Command {

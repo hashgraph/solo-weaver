@@ -23,3 +23,13 @@ func NewESOInstallWorkflow(opts ESOInstallOptions) (*automa.WorkflowBuilder, err
 func NewESOUninstallWorkflow(namespace string) *automa.WorkflowBuilder {
 	return steps.TeardownExternalSecrets(namespace)
 }
+
+// ESOSecretOptions aliases the steps-layer options so cmd callers need not
+// import internal/workflows/steps.
+type ESOSecretOptions = steps.ESOSecretOptions
+
+// NewESOSecretCreateWorkflow creates a workflow that applies an ExternalSecret to
+// the cluster, which ESO reconciles into the target Kubernetes Secret.
+func NewESOSecretCreateWorkflow(opts ESOSecretOptions) *automa.WorkflowBuilder {
+	return steps.SetupESOSecret(opts)
+}
