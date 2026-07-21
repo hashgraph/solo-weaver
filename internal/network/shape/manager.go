@@ -641,6 +641,74 @@ func ProvisionDefaultEgressShape(ctx context.Context, nicName, trunkRate string)
 	return NewManager().ProvisionDefaultEgress(ctx, nicName, trunkRate)
 }
 
+// defaultIngressConfig returns the ingress device root and three default ingress
+// classes at proportions derived from trunkRate (publisher 80%, backfill-response
+// 10%, reserve-ingress 10%; all ceil 100% of trunk). Mirrors defaultEgressConfig;
+// exposed as a package-internal helper so tests can verify the computation
+// without disk I/O.
+func defaultIngressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error) {
+	bps, err := parseBandwidthBps(trunkRate)
+	if err != nil {
+		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid trunk rate %q", trunkRate)
+	}
+	mbps := bps / 1_000_000
+	now := time.Now().UTC()
+	dev := &DeviceConfig{
+		Dir:          DirIngress,
+		Rate:         trunkRate,
+		DefaultClass: "reserve-ingress",
+		CreatedAt:    now,
+	}
+	classes := []*ClassConfig{
+		{Name: "publisher", Rate: fmt.Sprintf("%dmbit", mbps*80/100), Ceil: trunkRate, Prio: 0, CreatedAt: now},
+		{Name: "backfill-response", Rate: fmt.Sprintf("%dmbit", mbps*10/100), Ceil: trunkRate, Prio: 7, CreatedAt: now},
+		{Name: "reserve-ingress", Rate: fmt.Sprintf("%dmbit", mbps*10/100), Ceil: trunkRate, Prio: 1, CreatedAt: now},
+	}
+	return dev, classes, nil
+}
+
+// ProvisionDefaultIngress records the ingress ($VETH) device root and three
+// default HTB classes at proportions derived from trunkRate (publisher 80%,
+// backfill-response 10%, reserve-ingress 10%; all ceil 100%). trunkRate may be
+// "auto", resolved to the detected link speed at record time (see
+// resolveAutoRateString). Unlike ProvisionDefaultEgress this writes config only
+// and renders NO boot script: the $VETH HTB is deliberately not persisted across
+// reboot — the daemon pod-lifecycle watcher replays it on each pod create from
+// the stored class configs. Called by block node install so ApplyIngressVeth
+// finds concrete ingress config on the first pod create (the per-pod replay has
+// no sysfs fallback, so the recorded rates must always be concrete).
+func (m *Manager) ProvisionDefaultIngress(_ context.Context, trunkRate string) error {
+	trunkRate = m.resolveAutoRateString(trunkRate)
+	dev, classes, err := defaultIngressConfig(trunkRate)
+	if err != nil {
+		return err
+	}
+	return m.withLock(func() error {
+		if err := writeDevice(dev); err != nil {
+			return err
+		}
+		for _, cls := range classes {
+			if err := writeClass(cls); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ProvisionDefaultIngressShape records the ingress shape registry with the three
+// default HTB classes at proportions derived from trunkRate. Convenience wrapper
+// over ProvisionDefaultIngress. When nicName is non-empty it pins the resolution
+// of a "auto" trunkRate to the operator-chosen NIC (parity with the egress path
+// on multi-NIC hosts); ingress bandwidth defaults to egress.
+func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string) error {
+	cfg := Config{}
+	if nicName != "" {
+		cfg.NICDetect = func() (string, error) { return nicName, nil }
+	}
+	return NewManagerWithConfig(cfg).ProvisionDefaultIngress(ctx, trunkRate)
+}
+
 // RenderAndApplyDefaultEgress renders the tc-egress script for nic from the
 // shape registry (or sysfs fallback when no config exists) and applies it.
 // Used when no trunk rate is supplied (e.g. block node reconfigure without

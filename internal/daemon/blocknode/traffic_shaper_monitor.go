@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
 )
 
@@ -41,28 +44,46 @@ const responsibilityBackoffFactor = 2.0
 // Each responsibility is independently retried with exponential back-off so a
 // fault in one cannot stop the other or crash the daemon.
 type TrafficShaperMonitor struct {
-	// resolver resolves the host-side veth name for a BN pod (story #747).
-	// Used by runPodWatcher once the real watch loop lands in #748.
-	resolver *VethResolver
+	// resolver resolves the host-side veth name for a BN pod (story #747). Held
+	// as an interface so the pod watcher can be unit-tested with a fake.
+	resolver vethResolver
 	// delegator runs privileged solo-provisioner subcommands under sudo. The
 	// daemon is unprivileged (User=weaver), so both responsibilities delegate
 	// their privileged work through it: the poll loop applies membership via
 	// `network policy set` and the watcher installs veth qdiscs via `block node
-	// tc-attach`. Held here so the poll loop and watcher can consume it once
-	// their apply/attach paths are wired, without a constructor change.
+	// tc-attach`.
 	delegator privexec.Delegator
+	// client watches BN pods in namespace. Nil only in unit tests that exercise
+	// the supervisor loop without a real cluster (runPodWatcher degrades to an
+	// idle block in that case).
+	client kubernetes.Interface
+	// namespace is the BN orbit namespace the pod watcher scopes its list/watch
+	// to.
+	namespace string
+
+	// mu guards attached and inflight.
+	mu sync.Mutex
+	// attached maps pod UID → installed veth, used to dedupe redundant attaches
+	// and to know which veth to detach on pod delete.
+	attached map[types.UID]string
+	// inflight tracks pods with an attach goroutine currently running, so the
+	// watch loop never launches a second concurrent attach for the same pod
+	// while its (retrying) resolve is still in progress.
+	inflight map[types.UID]bool
 }
 
-// NewTrafficShaperMonitor constructs a TrafficShaperMonitor with the given
-// VethResolver. The resolver is wired into runPodWatcher by #748; it is held
-// here so #748 can use it without further constructor changes. The delegator
-// defaults to the sudo-backed privileged-exec seam so the poll loop and watcher
-// can perform their privileged work without the unprivileged daemon holding
-// root itself.
-func NewTrafficShaperMonitor(resolver *VethResolver) *TrafficShaperMonitor {
+// NewTrafficShaperMonitor constructs a TrafficShaperMonitor. resolver and client
+// are built from the BN-scoped kubeconfig by NewComponent; namespace is the BN
+// orbit. The delegator defaults to the sudo-backed privileged-exec seam so the
+// watcher can install veth qdiscs without the unprivileged daemon holding root.
+func NewTrafficShaperMonitor(resolver *VethResolver, client kubernetes.Interface, namespace string) *TrafficShaperMonitor {
 	return &TrafficShaperMonitor{
 		resolver:  resolver,
 		delegator: privexec.New(),
+		client:    client,
+		namespace: namespace,
+		attached:  make(map[types.UID]string),
+		inflight:  make(map[types.UID]bool),
 	}
 }
 
@@ -131,17 +152,6 @@ func (m *TrafficShaperMonitor) superviseResponsibility(ctx context.Context, name
 		}
 		backoff = minDuration(time.Duration(float64(backoff)*responsibilityBackoffFactor), responsibilityBackoffMax)
 	}
-}
-
-// runPodWatcher is the pod-lifecycle watcher responsibility. Stub replaced by
-// the real watch loop in #748; m.resolver is ready for use there.
-func (m *TrafficShaperMonitor) runPodWatcher(ctx context.Context) error {
-	logx.As().Info().
-		Str("reason", "TrafficShaperPodWatcherStub").
-		Str("monitor", m.Name()).
-		Msg("pod-lifecycle watcher not yet implemented — stub running")
-	<-ctx.Done()
-	return nil
 }
 
 // runStatuszPoll is the statusz poll-loop responsibility. The reconciliation

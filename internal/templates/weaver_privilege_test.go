@@ -76,3 +76,22 @@ func TestDaemonServiceRunsUnprivileged(t *testing.T) {
 		t.Errorf("daemon service unit sets a NoNewPrivileges directive; it must be omitted so sudo delegation works\n--- unit ---\n%s", unit)
 	}
 }
+
+// TestDaemonServiceGrantsRuntimeDir locks the invariant that the daemon's
+// privileged-exec children can write their tc/nft flock under
+// /run/solo-provisioner. ProtectSystem=strict makes /run read-only, so without a
+// RuntimeDirectory the exec'd `block node tc-attach` / `network policy set` fail
+// with "read-only file system" when opening /run/solo-provisioner/network/.*
+// lock files.
+func TestDaemonServiceGrantsRuntimeDir(t *testing.T) {
+	unit := directiveLines(t, "files/weaver/solo-provisioner-daemon.service")
+
+	if !strings.Contains(unit, "ProtectSystem=strict") {
+		t.Fatalf("expected ProtectSystem=strict (the reason the runtime dir grant is required)\n--- unit ---\n%s", unit)
+	}
+	// RuntimeDirectory=solo-provisioner makes /run/solo-provisioner writable inside
+	// the sandbox (and recreates it after reboot, since /run is tmpfs).
+	if !strings.Contains(unit, "RuntimeDirectory=solo-provisioner") {
+		t.Errorf("daemon service unit must set RuntimeDirectory=solo-provisioner so exec'd tc/nft workers can write their flock under /run/solo-provisioner\n--- unit ---\n%s", unit)
+	}
+}
