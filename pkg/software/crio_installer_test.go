@@ -39,6 +39,10 @@ func Test_generateExpectedCrioSocketDropIn(t *testing.T) {
 	require.Contains(t, content, "ExecStopPost=-")
 	require.Contains(t, content, "rm -f /var/run/crio/crio.sock")
 
+	// systemd native exec form only — the interpolated sandbox path must never be
+	// handed to a shell for re-parsing (no "sh -c" exec wrapper).
+	require.NotContains(t, content, "sh -c")
+
 	// The drop-in bridges to the sandbox socket; it must never rebind cri-o's listen socket.
 	require.NotContains(t, content, "crio.api.listen")
 }

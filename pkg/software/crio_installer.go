@@ -473,9 +473,15 @@ func (ci *crioInstaller) generateExpectedCrioSocketDropIn() string {
 # path (/var/run/crio/crio.sock) that vendored cAdvisor dials with a hardcoded
 # const, so kubelet's eviction manager can register the "crio-images" imagefs
 # label. See https://github.com/hashgraph/solo-weaver/issues/22.
+#
+# Uses systemd's native exec form (no shell), so the interpolated sandbox path is
+# never re-parsed by /bin/sh. mkdir and ln are separate ExecStartPost= lines
+# because exec form has no shell operators; ExecStopPost is prefixed with '-' so
+# cleanup can never fail the unit.
 [Service]
-ExecStartPost=/bin/sh -c 'mkdir -p /var/run/crio && ln -sfn %s /var/run/crio/crio.sock'
-ExecStopPost=-/bin/sh -c 'rm -f /var/run/crio/crio.sock'
+ExecStartPost=/usr/bin/mkdir -p /var/run/crio
+ExecStartPost=/usr/bin/ln -sfn %s /var/run/crio/crio.sock
+ExecStopPost=-/usr/bin/rm -f /var/run/crio/crio.sock
 `, sandboxSocket)
 }
 
@@ -489,9 +495,11 @@ func (ci *crioInstaller) configureCrioSocketDropIn() error {
 		return errorx.IllegalState.Wrap(err, "failed to create crio.service.d directory at %s", dropInDir)
 	}
 
-	// Write the drop-in file in the sandbox
+	// Write the drop-in file in the sandbox via the injected fileManager so the
+	// write is atomic (temp-then-rename) — a systemd unit override must never be
+	// observed partially written.
 	dropInPath := getCrioSocketDropInPath()
-	if err := os.WriteFile(dropInPath, []byte(ci.generateExpectedCrioSocketDropIn()), models.DefaultFilePerm); err != nil {
+	if err := ci.fileManager.AtomicWriteFile(dropInPath, []byte(ci.generateExpectedCrioSocketDropIn()), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write crio socket drop-in at %s", dropInPath)
 	}
 
