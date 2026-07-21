@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -11,6 +12,8 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
@@ -204,12 +207,22 @@ func uninstallExternalSecrets(spec *helmChartSpec) automa.Builder {
 			l := logx.As()
 			hm, err := newHelmManager()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					errorx.InternalError.Wrap(err, "failed to initialise Helm manager").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check the solo-provisioner logs for details: /opt/solo/weaver/logs/solo-provisioner.log",
+						})))
 			}
 
 			uninstalled, err := uninstallESOChart(hm, spec)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					errorx.ExternalError.Wrap(err, "failed to uninstall External Secrets Operator release %q in namespace %q", spec.Release, spec.Namespace).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Verify the cluster is reachable: kubectl cluster-info",
+							fmt.Sprintf("Check the release state: helm list -n %s", spec.Namespace),
+							fmt.Sprintf("Remove it manually if needed: helm uninstall %s -n %s", spec.Release, spec.Namespace),
+						})))
 			}
 
 			if !uninstalled {
