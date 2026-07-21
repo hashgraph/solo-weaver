@@ -44,6 +44,7 @@ func RemoveSystemdServiceFiles() *automa.StepBuilder {
 			// Remove systemd service files
 			filesToRemove := []string{
 				"/usr/lib/systemd/system/crio.service",
+				"/usr/lib/systemd/system/crio.service.d",
 				"/usr/lib/systemd/system/kubelet.service.d",
 				"/usr/lib/systemd/system/kubelet.service",
 			}

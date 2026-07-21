@@ -123,6 +123,7 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		path.Join(pp.SandboxDir, "usr/libexec/crio"),
 		path.Join(pp.SandboxDir, "usr/lib/systemd/system"),
 		path.Join(pp.SandboxDir, "usr/lib/systemd/system/kubelet.service.d"),
+		path.Join(pp.SandboxDir, "usr/lib/systemd/system/crio.service.d"),
 		path.Join(pp.SandboxDir, "usr/local/share/man"),
 		path.Join(pp.SandboxDir, "usr/local/share/oci-umount/oci-umount.d"),
 		path.Join(pp.SandboxDir, "usr/local/share/bash-completion/completions"),

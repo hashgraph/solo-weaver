@@ -37,6 +37,14 @@ const (
 	CrioInstallFile       = ".crio-install"
 	CrioDefaultConfigFile = "crio"
 
+	// CrioServiceDropInDir is the systemd drop-in directory for crio.service.
+	CrioServiceDropInDir = "crio.service.d"
+	// CrioSocketDropInFile is the drop-in that bridges cri-o's sandbox API socket
+	// to the default /var/run/crio/crio.sock path that vendored cAdvisor dials
+	// with a hardcoded const, so kubelet's eviction manager can register the
+	// "crio-images" imagefs label. See issue #22.
+	CrioSocketDropInFile = "10-sandbox-socket.conf"
+
 	// Directory names
 	ContribDir = "contrib/"
 )
@@ -353,6 +361,12 @@ func (ci *crioInstaller) Configure() error {
 		return errorx.IllegalState.Wrap(err, "failed to create CRI-O service symlink")
 	}
 
+	// Bridge the sandbox API socket to /var/run/crio/crio.sock for cAdvisor (issue #22)
+	err = ci.configureCrioSocketDropIn()
+	if err != nil {
+		return err
+	}
+
 	// Record configured state
 	return ci.recordConfigured()
 }
@@ -425,6 +439,73 @@ func (ci *crioInstaller) patchServiceFile() error {
 // getCrioServicePath returns the path to the crio.service file in the sandbox
 func getCrioServicePath() string {
 	return path.Join(models.Paths().SandboxDir, "usr", "lib", "systemd", "system", CrioServiceFile)
+}
+
+// getCrioServiceDropInDir returns the crio.service.d drop-in directory in the sandbox.
+func getCrioServiceDropInDir() string {
+	return path.Join(models.Paths().SandboxDir, "usr", "lib", "systemd", "system", CrioServiceDropInDir)
+}
+
+// getCrioSocketDropInPath returns the path to the sandbox-socket drop-in file in the sandbox.
+func getCrioSocketDropInPath() string {
+	return path.Join(getCrioServiceDropInDir(), CrioSocketDropInFile)
+}
+
+// getSystemCrioServiceDropInDir returns the host crio.service.d drop-in directory.
+func getSystemCrioServiceDropInDir() string {
+	return path.Join(userSystemdDir, CrioServiceDropInDir)
+}
+
+// generateExpectedCrioSocketDropIn returns the systemd drop-in content that bridges
+// cri-o's sandbox API socket to the default /var/run/crio/crio.sock path.
+//
+// Vendored cAdvisor (in kubelet) dials cri-o at a hardcoded /var/run/crio/crio.sock
+// to discover the container image storage root and register the "crio-images"
+// filesystem label. Because solo-weaver runs cri-o on a sandbox socket, that default
+// path does not exist and the label is never registered, so kubelet's eviction
+// manager logs `non-existent label "crio-images"` on every sync. This drop-in creates
+// a symlink at the default path on every cri-o start (surviving the tmpfs /run wipe on
+// reboot) and removes it on stop. See https://github.com/hashgraph/solo-weaver/issues/22.
+func (ci *crioInstaller) generateExpectedCrioSocketDropIn() string {
+	sandboxSocket := filepath.Join(models.Paths().SandboxDir, "var/run/crio/crio.sock")
+
+	return fmt.Sprintf(`# Managed by solo-weaver. Bridges cri-o's sandbox API socket to the default
+# path (/var/run/crio/crio.sock) that vendored cAdvisor dials with a hardcoded
+# const, so kubelet's eviction manager can register the "crio-images" imagefs
+# label. See https://github.com/hashgraph/solo-weaver/issues/22.
+[Service]
+ExecStartPost=/bin/sh -c 'mkdir -p /var/run/crio && ln -sfn %s /var/run/crio/crio.sock'
+ExecStopPost=-/bin/sh -c 'rm -f /var/run/crio/crio.sock'
+`, sandboxSocket)
+}
+
+// configureCrioSocketDropIn writes the crio.service drop-in that bridges the sandbox
+// API socket to /var/run/crio/crio.sock (so cAdvisor can reach cri-o) and symlinks it
+// into the host systemd drop-in directory. See issue #22.
+func (ci *crioInstaller) configureCrioSocketDropIn() error {
+	// Ensure the sandbox drop-in directory exists
+	dropInDir := getCrioServiceDropInDir()
+	if err := ci.fileManager.CreateDirectory(dropInDir, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create crio.service.d directory at %s", dropInDir)
+	}
+
+	// Write the drop-in file in the sandbox
+	dropInPath := getCrioSocketDropInPath()
+	if err := os.WriteFile(dropInPath, []byte(ci.generateExpectedCrioSocketDropIn()), models.DefaultFilePerm); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to write crio socket drop-in at %s", dropInPath)
+	}
+
+	// Create the host drop-in directory and symlink the drop-in file into it
+	systemDropInDir := getSystemCrioServiceDropInDir()
+	if err := ci.fileManager.CreateDirectory(systemDropInDir, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create host crio.service.d directory at %s", systemDropInDir)
+	}
+	systemDropInPath := path.Join(systemDropInDir, CrioSocketDropInFile)
+	if err := ci.fileManager.CreateSymbolicLink(dropInPath, systemDropInPath, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create crio socket drop-in symlink from %s to %s", dropInPath, systemDropInPath)
+	}
+
+	return nil
 }
 
 // updateCrioTomlConfig updates the CRI-O TOML configuration file with sandbox paths
@@ -508,6 +589,7 @@ func (ci *crioInstaller) Uninstall() error {
 		filepath.Join(sandboxDir, fishInstallDir, CrioFishFile),
 		filepath.Join(sandboxDir, zshInstallDir, "_crio"),
 		filepath.Join(sandboxDir, userSystemdDir, CrioServiceFile),
+		filepath.Join(sandboxDir, userSystemdDir, CrioServiceDropInDir, CrioSocketDropInFile),
 		filepath.Join(sandboxDir, containersRegistriesConfdDir, RegistriesConfFile),
 	}
 
@@ -529,6 +611,7 @@ func (ci *crioInstaller) Uninstall() error {
 		filepath.Join(sandboxDir, crioConfdDir),
 		filepath.Join(sandboxDir, man5Dir),
 		filepath.Join(sandboxDir, man8Dir),
+		filepath.Join(sandboxDir, userSystemdDir, CrioServiceDropInDir),
 		filepath.Join(sandboxDir, userSystemdDir),
 		filepath.Join(sandboxDir, cniDir),
 	}
@@ -564,6 +647,12 @@ func (ci *crioInstaller) RemoveConfiguration() error {
 	err := ci.fileManager.RemoveAll(systemdServicePath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove CRI-O service symlink")
+	}
+
+	// Remove the cAdvisor socket-bridge drop-in directory (crio-exclusive) (issue #22)
+	err = ci.fileManager.RemoveAll(getSystemCrioServiceDropInDir())
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to remove CRI-O socket drop-in directory")
 	}
 
 	// Remove /etc/containers/registries.conf.d symlink
@@ -725,6 +814,7 @@ func (ci *crioInstaller) verifySandboxConfigs() (models.StringMap, error) {
 		PolicyJsonFile:        filepath.Join(sandboxDir, etcCrioDir, PolicyJsonFile),
 		RegistriesConfFile:    filepath.Join(sandboxDir, containersRegistriesConfdDir, RegistriesConfFile),
 		CrioServiceFile:       filepath.Join(sandboxDir, userSystemdDir, CrioServiceFile),
+		CrioSocketDropInFile:  getCrioSocketDropInPath(),
 		CrioDefaultConfigFile: filepath.Join(sandboxDir, getSysconfigDir(), CrioDefaultConfigFile),
 	}
 
@@ -770,6 +860,37 @@ func (ci *crioInstaller) verifySandboxConfigs() (models.StringMap, error) {
 			systemdPath, target, expectedService)
 	}
 	meta.Set("crio.service.system", systemdPath)
+
+	// Verify cAdvisor socket-bridge drop-in symlink: /usr/lib/systemd/system/crio.service.d/10-sandbox-socket.conf -> sandbox (issue #22)
+	systemDropInPath := path.Join(getSystemCrioServiceDropInDir(), CrioSocketDropInFile)
+	_, existsDropIn, err := ci.fileManager.PathExists(systemDropInPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to check crio socket drop-in symlink at %s", systemDropInPath)
+	}
+	if !existsDropIn {
+		return nil, NewFileNotFoundError(systemDropInPath)
+	}
+	fiDropIn, err := os.Lstat(systemDropInPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to lstat %s", systemDropInPath)
+	}
+	if fiDropIn.Mode()&os.ModeSymlink == 0 {
+		return nil, errorx.IllegalState.New("crio socket drop-in %s is not a symlink", systemDropInPath)
+	}
+	dropInTarget, err := os.Readlink(systemDropInPath)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to read symlink %s", systemDropInPath)
+	}
+	if !filepath.IsAbs(dropInTarget) {
+		dropInTarget = filepath.Join(filepath.Dir(systemDropInPath), dropInTarget)
+	}
+	dropInTarget = filepath.Clean(dropInTarget)
+	expectedDropIn := filepath.Clean(getCrioSocketDropInPath())
+	if dropInTarget != expectedDropIn {
+		return nil, errorx.IllegalState.New("crio socket drop-in symlink %s -> %s does not point to sandbox %s",
+			systemDropInPath, dropInTarget, expectedDropIn)
+	}
+	meta.Set("crio.socket.dropin.system", systemDropInPath)
 
 	// Verify /etc/containers is symlinked to sandbox /etc/containers (so registries.conf.d is rooted in sandbox)
 	systemContainersPath := etcContainersFolder // `/etc/containers`
