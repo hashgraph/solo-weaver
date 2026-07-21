@@ -352,6 +352,16 @@ type AlloyRemoteConfig struct {
 	LabelProfile string `yaml:"labelProfile" json:"labelProfile"` // Label profile name (e.g. ops) for auto-derived labels
 }
 
+// ESOSecretDataEntry maps one key of a Kubernetes Secret to a location in the
+// external store, parsed from a single `eso secret create --set` value
+// (KEY=store/path[#field]). It renders into one entry of an ExternalSecret's
+// spec.data.
+type ESOSecretDataEntry struct {
+	SecretKey string `yaml:"secretKey" json:"secretKey"` // key in the resulting K8s Secret
+	RemoteKey string `yaml:"remoteKey" json:"remoteKey"` // path/key in the external store
+	Property  string `yaml:"property" json:"property"`   // optional field within the remote entry
+}
+
 // AlloyConfig represents the `alloy` configuration block for observability.
 // Note: Passwords are managed via Vault and External Secrets Operator, not in config files.
 type AlloyConfig struct {
