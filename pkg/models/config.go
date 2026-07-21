@@ -72,10 +72,16 @@ const DefaultClusterPodCIDR = "10.4.0.0/14"
 // connections, so the firewall step skips applying it when empty.
 type HostConfig struct {
 	ManagementCIDRs []string `yaml:"managementCidrs" json:"managementCidrs"` // SSH/management allowlist CIDRs
-	SSHPort         int      `yaml:"sshPort" json:"sshPort"`                 // SSH/management TCP port accepted from the allowlist (0 = default 22)
-	PodCIDR         string   `yaml:"podCidr" json:"podCidr"`                 // Pod source range allowed to reach the in-cluster host-service ports (empty = rule omitted)
-	InClusterPorts  []int    `yaml:"inClusterPorts" json:"inClusterPorts"`   // Host-service ports reachable from the pod CIDR
-	Disabled        bool     `yaml:"disabled" json:"disabled"`               // Operator explicitly opted out via --firewall-enabled=false (negative polarity so the zero value means "enabled")
+	// BlockedCIDRs is the operator-curated deny list, dropped before every
+	// other rule (set @blocked_addrs in the `inet host` table). It is distinct
+	// from the BN workload plane's `bn-restricted` set (`inet weaver`), which
+	// the traffic-shaper daemon reconciles automatically from block-node
+	// statusz; this list is purely operator-managed and nothing else writes it.
+	BlockedCIDRs   []string `yaml:"blockedCidrs" json:"blockedCidrs"`
+	SSHPort        int      `yaml:"sshPort" json:"sshPort"`               // SSH/management TCP port accepted from the allowlist (0 = default 22)
+	PodCIDR        string   `yaml:"podCidr" json:"podCidr"`               // Pod source range allowed to reach the in-cluster host-service ports (empty = rule omitted)
+	InClusterPorts []int    `yaml:"inClusterPorts" json:"inClusterPorts"` // Host-service ports reachable from the pod CIDR
+	Disabled       bool     `yaml:"disabled" json:"disabled"`             // Operator explicitly opted out via --firewall-enabled=false (negative polarity so the zero value means "enabled")
 }
 
 // Validate rejects host-firewall config that would be unsafe to render into the
@@ -85,6 +91,11 @@ func (c *HostConfig) Validate() error {
 	for _, cidr := range c.ManagementCIDRs {
 		if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid host managementCidr: %s", cidr)
+		}
+	}
+	for _, cidr := range c.BlockedCIDRs {
+		if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid host blockedCidr: %s", cidr)
 		}
 	}
 	if c.SSHPort != 0 {

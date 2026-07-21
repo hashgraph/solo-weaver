@@ -55,6 +55,19 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
+	// networkSteps is the shared network-plane prefix for every branch below.
+	// TcEgressPersist is omitted when the install-time TrafficShapingEnabled
+	// decision (persisted onto BlockNodeState — see patchBlockNodeStateAfterInstall)
+	// was "no": reconfigure never resolves --traffic-shaping-enabled itself, so
+	// without this check it would silently re-provision tc shaping for a block
+	// node that was deliberately installed without it. NetworkFirewallCreate and
+	// NftWeaverPersist are always safe to include unconditionally — they
+	// self-gate (host-firewall disabled / empty policy registry respectively).
+	networkSteps := []automa.Builder{steps.NetworkFirewallCreate(), steps.NftWeaverPersist()}
+	if !currentState.BlockNodeState.TrafficShapingDisabled {
+		networkSteps = append(networkSteps, steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate, nil))
+	}
+
 	var wb *automa.WorkflowBuilder
 	switch {
 	case ins.PurgeStorage:
@@ -68,17 +81,12 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 		// After purging old dirs, recreate PVs/PVCs and create new directories at
 		// the new paths, then upgrade the chart.
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").
-			Steps(
-				steps.NetworkFirewallCreate(),
-				// Keep network-weaver.nft in sync with the policy registry (no-op
-				// if the registry is empty), matching the install ordering.
-				steps.NftWeaverPersist(),
-				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
-				steps.PurgeBlockNodeStorage(oldIns),
-				steps.RecreateBlockNodeStorage(ins),
-				steps.UpgradeBlockNode(ins),
-			)
+		stepList := append(networkSteps,
+			steps.PurgeBlockNodeStorage(oldIns),
+			steps.RecreateBlockNodeStorage(ins),
+			steps.UpgradeBlockNode(ins),
+		)
+		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").Steps(stepList...)
 	case ins.ResetStorage:
 		// --with-reset wipes data only; PVs/PVCs are preserved. Storage paths must
 		// not have changed because local-PV hostPath is immutable.
@@ -95,16 +103,11 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 		oldIns := ins
 		oldIns.Storage = currentState.BlockNodeState.Storage
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").
-			Steps(
-				steps.NetworkFirewallCreate(),
-				// Keep network-weaver.nft in sync with the policy registry (no-op
-				// if the registry is empty), matching the install ordering.
-				steps.NftWeaverPersist(),
-				steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
-				steps.PurgeBlockNodeStorage(oldIns),
-				steps.UpgradeBlockNode(ins),
-			)
+		stepList := append(networkSteps,
+			steps.PurgeBlockNodeStorage(oldIns),
+			steps.UpgradeBlockNode(ins),
+		)
+		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").Steps(stepList...)
 	default:
 		// For non-reset reconfigures, storage path changes require --purge-storage because
 		// existing PVs/PVCs cannot be mutated in-place; block with a clear error.
@@ -121,28 +124,13 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 		if ins.NoRestart {
 			// Opt-out: apply new values via helm but skip the rollout-restart.
-			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").
-				Steps(
-					steps.NetworkFirewallCreate(),
-					// Keep network-weaver.nft in sync with the policy registry (no-op
-					// if the registry is empty), matching the install ordering.
-					steps.NftWeaverPersist(),
-					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
-					steps.UpgradeBlockNode(ins),
-				)
+			stepList := append(networkSteps, steps.UpgradeBlockNode(ins))
+			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").Steps(stepList...)
 		} else {
 			// Default: apply new values then trigger a rolling restart so ConfigMap-only
 			// changes are picked up by the running pod.
-			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").
-				Steps(
-					steps.NetworkFirewallCreate(),
-					// Keep network-weaver.nft in sync with the policy registry (no-op
-					// if the registry is empty), matching the install ordering.
-					steps.NftWeaverPersist(),
-					steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate),
-					steps.UpgradeBlockNode(ins),
-					steps.RolloutRestartBlockNode(ins),
-				)
+			stepList := append(networkSteps, steps.UpgradeBlockNode(ins), steps.RolloutRestartBlockNode(ins))
+			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").Steps(stepList...)
 		}
 	}
 	return wb, nil

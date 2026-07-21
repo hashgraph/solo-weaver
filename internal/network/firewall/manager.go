@@ -96,6 +96,16 @@ func (m *Manager) RemoveMgmtCIDR(ctx context.Context, cidr string) error {
 	return m.mutate(ctx, func(t *Table) error { t.RemoveMgmtCIDR(cidr); return nil })
 }
 
+// AddBlockedCIDR adds one CIDR to the operator block list and re-renders.
+func (m *Manager) AddBlockedCIDR(ctx context.Context, cidr string) error {
+	return m.mutate(ctx, func(t *Table) error { return t.AddBlockedCIDR(cidr) })
+}
+
+// RemoveBlockedCIDR removes one CIDR from the operator block list and re-renders.
+func (m *Manager) RemoveBlockedCIDR(ctx context.Context, cidr string) error {
+	return m.mutate(ctx, func(t *Table) error { t.RemoveBlockedCIDR(cidr); return nil })
+}
+
 // AddPort adds one in-cluster host-service port and re-renders.
 func (m *Manager) AddPort(ctx context.Context, port int) error {
 	return m.mutate(ctx, func(t *Table) error { return t.AddPort(port) })
@@ -106,13 +116,18 @@ func (m *Manager) RemovePort(ctx context.Context, port int) error {
 	return m.mutate(ctx, func(t *Table) error { t.RemovePort(port); return nil })
 }
 
-// Set atomically replaces the management CIDR list and/or the in-cluster port
-// list. A nil slice leaves that dimension unchanged; an empty (non-nil) slice
-// clears it.
-func (m *Manager) Set(ctx context.Context, mgmtCIDRs []string, ports []int) error {
+// Set atomically replaces the management CIDR list, the operator block list,
+// and/or the in-cluster port list. A nil slice leaves that dimension unchanged;
+// an empty (non-nil) slice clears it.
+func (m *Manager) Set(ctx context.Context, mgmtCIDRs, blockedCIDRs []string, ports []int) error {
 	return m.mutate(ctx, func(t *Table) error {
 		if mgmtCIDRs != nil {
 			if err := t.SetMgmtCIDRs(mgmtCIDRs); err != nil {
+				return err
+			}
+		}
+		if blockedCIDRs != nil {
+			if err := t.SetBlockedCIDRs(blockedCIDRs); err != nil {
 				return err
 			}
 		}

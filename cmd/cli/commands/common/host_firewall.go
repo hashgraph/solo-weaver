@@ -21,6 +21,7 @@ import (
 const (
 	FlagNameFirewallEnabled = "firewall-enabled"
 	FlagNameMgmtCIDRs       = "mgmt-cidrs"
+	FlagNameBlockedCIDRs    = "blocked-cidrs"
 	FlagNameSSHPort         = "ssh-port"
 	FlagNamePodCIDR         = "pod-cidr"
 	FlagNameInClusterPorts  = "in-cluster-ports"
@@ -57,6 +58,14 @@ func ValidateHostFirewallFlags(cmd *cobra.Command) error {
 			}
 		}
 	}
+	if cmd.Flags().Changed(FlagNameBlockedCIDRs) {
+		cidrs, _ := cmd.Flags().GetStringSlice(FlagNameBlockedCIDRs)
+		for _, cidr := range normalizeCIDRs(cidrs) {
+			if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", FlagNameBlockedCIDRs, cidr)
+			}
+		}
+	}
 	if cmd.Flags().Changed(FlagNamePodCIDR) {
 		podCIDR, _ := cmd.Flags().GetString(FlagNamePodCIDR)
 		if err := sanity.ValidateIPv4CIDR(strings.TrimSpace(podCIDR)); err != nil {
@@ -70,11 +79,16 @@ func ValidateHostFirewallFlags(cmd *cobra.Command) error {
 // The values are read back by name in ResolveHostFirewallConfig (no bound vars),
 // so the same registration works for any command that provisions a host.
 func RegisterHostFirewallFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool(FlagNameFirewallEnabled, true,
+	cmd.Flags().Bool(FlagNameFirewallEnabled, false,
 		"Apply the node-level host firewall (inet host table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). "+
-			"Disable for hosts managed by an external firewall.")
+			"Opt-in (default: false) so existing non-interactive callers are unaffected; enable explicitly for "+
+			"hosts you want this tool to manage the firewall on.")
 	cmd.Flags().StringSlice(FlagNameMgmtCIDRs, nil,
 		"SSH/management allowlist CIDRs for the node host firewall (comma-separated or repeated). Empty skips the host firewall.")
+	cmd.Flags().StringSlice(FlagNameBlockedCIDRs, nil,
+		"Operator-curated block list CIDRs for the node host firewall, dropped before any other rule including "+
+			"established connections (comma-separated or repeated). Distinct from the BN workload plane's "+
+			"bn-restricted set, which the traffic-shaper daemon manages automatically.")
 	cmd.Flags().Int(FlagNameSSHPort, firewall.DefaultSSHPort,
 		"SSH/management TCP port allowed from --mgmt-cidrs by the node host firewall")
 	cmd.Flags().String(FlagNamePodCIDR, models.DefaultClusterPodCIDR,
@@ -107,7 +121,11 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	}
 
 	cfg := config.Get().Host
-	firewallEnabled := effectiveBool(cmd, FlagNameFirewallEnabled, !cfg.Disabled)
+	// Seeded false (opt-in), not derived from cfg.Disabled: this is a one-shot
+	// default for "nothing specified anywhere," not a round-tripped decision —
+	// config.yaml's zero value is indistinguishable from "not mentioned," so it
+	// can never safely override this default toward "enabled."
+	firewallEnabled := effectiveBool(cmd, FlagNameFirewallEnabled, false)
 
 	// Prompt for the enable/disable choice only when it wasn't already decided
 	// on the CLI. Declining here skips the allowlist/port prompts below entirely
@@ -116,13 +134,30 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 		enabled, err := prompt.RunConfirm(
 			"Enable host firewall?",
 			"Apply the node-level inet host firewall (SSH/mgmt allowlist, ICMP policy, in-cluster ports). "+
-				"Choose No to skip entirely, e.g. for hosts managed by an external firewall.",
+				"Opt-in, default No — choose Yes to have this tool manage the host firewall.",
 			firewallEnabled,
 		)
 		if err != nil {
 			return err
 		}
 		firewallEnabled = enabled
+	}
+
+	// Non-interactive callers that supply host-firewall config flags without also
+	// passing --firewall-enabled=true would otherwise have those flags silently
+	// ignored: with the opt-in default there's no confirm prompt to catch the
+	// mismatch, and the early return below drops out without applying anything.
+	if !firewallEnabled && !prompt.ShouldPrompt(force) {
+		for _, name := range []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs, FlagNameSSHPort, FlagNamePodCIDR, FlagNameInClusterPorts} {
+			if cmd.Flags().Changed(name) {
+				return errorx.IllegalArgument.New(
+					"--%s was supplied but the host firewall is not enabled (--firewall-enabled defaults to false)", name).
+					WithProperty(models.ErrPropertyResolution, []string{
+						"Pass --firewall-enabled=true to actually apply the host firewall settings",
+						"Or drop --" + name + " if you did not intend to configure the host firewall",
+					})
+			}
+		}
 	}
 
 	// An explicit opt-out skips resolving/prompting for the allowlist/port
@@ -141,6 +176,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	// prompt layer skips any flag already set on the CLI, leaving these seeds
 	// intact, so the same strings are parsed whether or not a prompt ran.
 	mgmtStr := effectiveCSV(cmd, FlagNameMgmtCIDRs, cfg.ManagementCIDRs)
+	blockedStr := effectiveCSV(cmd, FlagNameBlockedCIDRs, cfg.BlockedCIDRs)
 	sshStr := effectiveInt(cmd, FlagNameSSHPort, cfg.SSHPort, firewall.DefaultSSHPort)
 	portsStr := effectiveIntCSV(cmd, FlagNameInClusterPorts, cfg.InClusterPorts, firewall.DefaultInClusterPorts)
 	podStr := effectiveStr(cmd, FlagNamePodCIDR, cfg.PodCIDR, models.DefaultClusterPodCIDR)
@@ -152,6 +188,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 		}
 		if err := prompt.RunInputPrompts(cmd, []prompt.InputPrompt{
 			prompt.MgmtCIDRsInputPrompt(mgmtStr, &mgmtStr),
+			prompt.BlockedCIDRsInputPrompt(blockedStr, &blockedStr),
 			prompt.SSHPortInputPrompt(sshStr, &sshStr),
 			prompt.PodCIDRInputPrompt(podStr, &podStr),
 			prompt.InClusterPortsInputPrompt(portsStr, &portsStr),
@@ -174,6 +211,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 
 	hostCfg := models.HostConfig{
 		ManagementCIDRs: normalizeCIDRs(strings.Split(mgmtStr, ",")),
+		BlockedCIDRs:    normalizeCIDRs(strings.Split(blockedStr, ",")),
 		SSHPort:         sshPort,
 		PodCIDR:         strings.TrimSpace(podStr),
 		InClusterPorts:  ports,

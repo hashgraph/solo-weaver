@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -19,16 +20,30 @@ import (
 //
 // Ordering note preserved from the caller: this must run after the Kubernetes
 // setup, since nftables is installed/enabled by the system-setup phase before the
-// host firewall is applied here.
-func NetworkSetupWorkflow(egressInterface, linkRate string) *automa.WorkflowBuilder {
+// host firewall is applied here. NetworkPolicyCreate runs before NftWeaverPersist
+// so the policy registry is populated when the weaver table is rendered and
+// persisted; an empty registry would persist a policy-drop chain.
+//
+// trafficShapingEnabled gates the BN workload policy plane and tc shaping
+// (NetworkPolicyCreate, NftWeaverPersist, TcEgressPersist, TcIngressRecord) as
+// one bundle, independent of the host firewall (NetworkFirewallCreate, always
+// included — it is gated separately by hostCfg.Disabled inside its own step).
+// When false, none of the four steps are added: there is no inet weaver table
+// to persist and no tc config to shape traffic with.
+func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool) *automa.WorkflowBuilder {
+	stepList := []automa.Builder{steps.NetworkFirewallCreate()}
+	if trafficShapingEnabled {
+		stepList = append(stepList,
+			steps.NetworkPolicyCreate(force),
+			steps.NftWeaverPersist(),
+			steps.TcEgressPersist(egressInterface, linkRate, shapeOverrides),
+			steps.TcIngressRecord(egressInterface, linkRate, shapeOverrides),
+		)
+	}
+
 	return automa.NewWorkflowBuilder().
 		WithId("block-node-network-setup").
-		Steps(
-			steps.NetworkFirewallCreate(),
-			steps.NftWeaverPersist(),
-			steps.TcEgressPersist(egressInterface, linkRate),
-			steps.TcIngressRecord(egressInterface, linkRate),
-		).
+		Steps(stepList...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Network Setup")
 			return ctx, nil

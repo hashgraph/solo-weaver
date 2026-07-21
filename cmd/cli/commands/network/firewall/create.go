@@ -39,6 +39,9 @@ var createCmd = &cobra.Command{
 		if cmd.Flags().Changed("mgmt-cidrs") {
 			t.MgmtCIDRs = flagMgmtCIDRs
 		}
+		if cmd.Flags().Changed("blocked-cidrs") {
+			t.BlockedCIDRs = flagBlockedCIDRs
+		}
 		if cmd.Flags().Changed("in-cluster-ports") {
 			t.InClusterPorts = flagInClusterPorts
 		}
@@ -87,6 +90,7 @@ var createCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Management/SSH allowlist CIDRs (comma-separated or repeated)")
+	createCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Operator-curated block list CIDRs, dropped before any other rule (comma-separated or repeated)")
 	createCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", fw.DefaultInClusterPorts, "Host-service ports reachable from the pod CIDR")
 	createCmd.Flags().IntVar(&flagSSHPort, "ssh-port", fw.DefaultSSHPort, "SSH/management TCP port accepted from the allowlist")
 	createCmd.Flags().StringVar(&flagPodCIDR, "pod-cidr", "", "Pod CIDR allowed to reach the in-cluster host-service ports (default: auto-detected from the local node's .spec.podCIDR; the rule is omitted if no cluster is reachable)")

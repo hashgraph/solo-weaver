@@ -196,24 +196,49 @@ sudo solo-provisioner block node install \
 | `--historic-retention`    | Historic block retention threshold (`0` = unlimited)                                                                                  |
 | `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`) |
-| `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Set to `false` for hosts managed by an external firewall (default: `true`) |
+| `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
 | `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs. Empty skips the host firewall.                                                          |
+| `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs, dropped before any other rule including established connections. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
 | `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
 | `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet)                                |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
+| `--traffic-shaping-enabled` | Create the BN workload network-policy plane (`inet weaver` classification) and tc HTB traffic shaping, and install the traffic-shaper daemon. Opt-in (default: `false`); set to `true` to get all three |
 | `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and installs `solo-provisioner-tc-egress.service` so the HTB hierarchy survives reboot. |
-| `--link-rate`             | NIC line rate in tc-style format (e.g. `1gbit`, `100mbit`), or `auto` to detect and store the link speed at install time (written as explicit proportional class rates). Auto-detected from sysfs at each boot when omitted. Interactively, the prompt accepts a rate, `auto`, or blank. |
+| `--link-rate`             | NIC line rate in tc-style format (e.g. `1gbit`, `100mbit`), or `auto` to detect and store the link speed at install time (written as explicit proportional class rates). Auto-detected from sysfs at each boot when omitted. Interactively, the prompt accepts a rate, `auto`, or blank. The link is full-duplex, so this rate parameterizes both the `$EGRESS` and `$VETH` HTB trunks. |
+| `--shape`                 | Per-class HTB bandwidth override, repeatable: `--shape <class>=rate=<r>,ceil=<c>,prio=<p>` (e.g. `--shape publisher=rate=800mbit,ceil=1gbit,prio=0`). Any subset of `rate`/`ceil`/`prio` may be given; classes not overridden use the profile defaults. Valid classes: `publisher`, `backfill-response`, `reserve-ingress`, `partner`, `public`, `reserve-egress`. |
+| `--daemon-version`        | Version of `solo-provisioner-daemon` to auto-download when traffic shaping installs the daemon (defaults to this CLI's own version). Ignored when `--daemon-bin` is set. |
+| `--daemon-bin`            | Local path to a pre-built `solo-provisioner-daemon` binary, installed as-is instead of downloaded. **Required for `--profile=local`** — local/dev builds have no downloadable release to auto-download from. |
 
-> **Host firewall**: `block node install` always lays down the node-level `inet
+> **Host firewall**: `block node install` can lay down the node-level `inet
 > host` firewall (SSH/management allowlist, ICMP policy, in-cluster host-service
 > ports) — regardless of whether it's bootstrapping a bare-metal host or deploying
-> onto an already-existing cluster. This is a deliberate design choice: the
+> onto an already-existing cluster. This is opt-in (`--firewall-enabled`, default
+> `false`) so existing non-interactive callers are unaffected; when enabled, the
 > firewall is owned by the block-node workflow, not by the generic `kube cluster
 > install` (which provisions clusters for other purposes too and should not
-> unconditionally apply node-specific rules). The `--mgmt-cidrs` / `--ssh-port` /
-> `--pod-cidr` / `--in-cluster-ports` flags (and interactive prompts) configure
-> it. An empty management allowlist skips the firewall to avoid locking the host
-> out of SSH; `--firewall-enabled=false` opts out of it entirely.
+> unconditionally apply node-specific rules). The `--mgmt-cidrs` / `--blocked-cidrs`
+> / `--ssh-port` / `--pod-cidr` / `--in-cluster-ports` flags (and interactive
+> prompts) configure it once enabled. An empty management allowlist skips the
+> firewall to avoid locking the host out of SSH. `--blocked-cidrs` only takes
+> effect when `--firewall-enabled` is also true — both live on the same `inet
+> host` table, rendered by the same step — but the *set itself* is a plain deny
+> list, dropped before every other rule (including established connections),
+> and is purely operator-managed for its whole lifecycle, unlike the
+> daemon-owned `bn-restricted` set on the BN workload plane.
+
+> **Traffic shaping gate**: daemon activation is not a separate decision from
+> traffic shaping — `block node install` automatically installs and provisions
+> the traffic-shaper daemon whenever traffic shaping is enabled, with no
+> separate prompt or flag. `--traffic-shaping-enabled` is opt-in (default
+> `false`) so existing non-interactive callers are unaffected; enabling it
+> creates the BN workload network-policy plane (`inet weaver` classification),
+> tc HTB shaping, and installs the daemon, all together — declining (or the
+> default) skips the egress NIC/link-rate prompts too, since there would be
+> nothing left for any of it to reconcile. This decision is durable: it's
+> recorded in the runtime state and honored by later `reconfigure`/`upgrade`
+> runs too, not just the install where it was made. This whole gate is
+> independent of `--firewall-enabled`, which only gates the host's own SSH/mgmt
+> firewall.
 
 > **Traffic-shaper defaults**: `block node install` records both the `$EGRESS`
 > (physical NIC) and the `$VETH` (per-pod ingress) HTB shapes using the design's
@@ -222,7 +247,37 @@ sudo solo-provisioner block node install \
 > is persisted for reboot replay (`solo-provisioner-tc-egress.service`); the
 > ingress shape is recorded as config only (the `$VETH` is ephemeral and replayed
 > per-pod). Ingress bandwidth defaults to the egress `--link-rate`. Tune any class
-> afterward with `network shape set --class <name> --rate/--ceil/--prio`.
+> afterward with `network shape set --class <name> --rate/--ceil/--prio`, or at
+> install time with `--shape <class>=rate=...,ceil=...,prio=...`.
+
+> **Network policies**: when traffic shaping is enabled (see the traffic shaping
+> gate above), `block node install` lays down the `inet weaver`
+> classification plane by creating the fixed set of BN policies (`bn-publisher`,
+> `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-status-in/out`,
+> `bn-mgmt-in/out`, `bn-restricted`, `bn-backfill`) idempotently, then persists the
+> rendered `network-weaver.nft` for reboot replay. The one operator-curated set,
+> `bn-mgmt-in/out`, is seeded here from the host management allowlist
+> (`--mgmt-cidrs`). Every other set's membership — including `bn-restricted` —
+> is reconciled at runtime by the traffic-shaper daemon from the block node's
+> statusz; `bn-restricted` in particular reflects a "restricted" category the
+> block node itself reports, so it always starts empty and has no install-time
+> flag. A permanent, purely operator-managed block list lives instead on the
+> host firewall (`--blocked-cidrs`, a different table).
+> Re-running the install never clobbers operator-applied set membership or per-class
+> shape values; `--force` re-renders the static rules from these definitions.
+
+> **Traffic-shaper daemon**: a block node without its traffic-shaper daemon has no
+> ingress prioritization (the `$VETH` HTB is never installed) and nothing
+> reconciling the daemon-owned nft sets from statusz. At the end of a successful
+> install, `block node install` installs and provisions the daemon for this
+> block node's namespace automatically whenever traffic shaping is enabled (see
+> the traffic-shaping gate above) — no separate prompt or flag. If the daemon is
+> already active, this is a no-op. By default the daemon binary is auto-downloaded
+> from the infrastructure catalog at `--daemon-version` (defaulting to this CLI's
+> own version); pass `--daemon-bin` to install a local binary instead. For
+> `--profile=local`, `--daemon-bin` is required — local/dev builds have no
+> downloadable release, so interactive sessions prompt for the path and
+> non-interactive ones fail fast with a resolution hint.
 
 #### Upgrade Block Node
 

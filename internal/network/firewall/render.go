@@ -16,10 +16,11 @@ import (
 // Strings are pre-joined here because templates.Render parses without a FuncMap,
 // so the template itself cannot call join.
 type renderData struct {
-	MgmtElements string
-	PortElements string
-	SSHPort      int
-	PodCIDR      string
+	MgmtElements    string
+	BlockedElements string
+	PortElements    string
+	SSHPort         int
+	PodCIDR         string
 }
 
 // Render produces the full `inet host` nft document for this table. The same
@@ -36,10 +37,11 @@ func (t *Table) Render() (string, error) {
 	}
 
 	data := renderData{
-		MgmtElements: strings.Join(t.MgmtCIDRs, ", "),
-		PortElements: strings.Join(ports, ", "),
-		SSHPort:      t.SSHPort,
-		PodCIDR:      t.PodCIDR,
+		MgmtElements:    strings.Join(t.MgmtCIDRs, ", "),
+		BlockedElements: strings.Join(t.BlockedCIDRs, ", "),
+		PortElements:    strings.Join(ports, ", "),
+		SSHPort:         t.SSHPort,
+		PodCIDR:         t.PodCIDR,
 	}
 
 	rendered, err := templates.Render(hostNftTemplate, data)

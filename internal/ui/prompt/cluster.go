@@ -31,6 +31,26 @@ func validateMgmtCIDRs(s string) error {
 	return nil
 }
 
+// validateBlockedCIDRs validates a comma-separated operator block list. An
+// empty value is allowed — it means no CIDRs are blocked. Each non-empty entry
+// must be a valid CIDR.
+func validateBlockedCIDRs(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	for _, c := range strings.Split(s, ",") {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid blocked CIDR %q", c)
+		}
+	}
+	return nil
+}
+
 // validatePodCIDR validates the pod CIDR. Empty is allowed (the in-cluster
 // host-service ports rule is then omitted); a non-empty value must be a CIDR.
 func validatePodCIDR(s string) error {
@@ -89,6 +109,24 @@ func MgmtCIDRsInputPrompt(eff string, target *string) InputPrompt {
 		EffectiveValue: eff,
 		Target:         target,
 		Validate:       validateMgmtCIDRs,
+	}
+}
+
+// BlockedCIDRsInputPrompt returns the interactive prompt for the host
+// firewall's operator-curated block list. eff is the effective value (from
+// flag/config) shown as the pre-filled suggestion; target receives the
+// comma-separated result. This is distinct from the BN workload plane's
+// `bn-restricted` set, which the traffic-shaper daemon manages automatically —
+// this list is purely operator-managed.
+func BlockedCIDRsInputPrompt(eff string, target *string) InputPrompt {
+	return InputPrompt{
+		FlagName:       "blocked-cidrs",
+		Title:          "Blocked CIDRs (host firewall)",
+		Description:    "CIDRs to drop before any other rule, including already-open connections (comma-separated). Leave empty to block nothing.",
+		Placeholder:    "203.0.113.0/24",
+		EffectiveValue: eff,
+		Target:         target,
+		Validate:       validateBlockedCIDRs,
 	}
 }
 

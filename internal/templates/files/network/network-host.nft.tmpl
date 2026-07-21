@@ -3,6 +3,7 @@ delete table inet host
 add table inet host
 table inet host {
 	set mgmt_addrs { type ipv4_addr; flags interval;{{if .MgmtElements}} elements = { {{.MgmtElements}} };{{end}} }
+	set blocked_addrs { type ipv4_addr; flags interval;{{if .BlockedElements}} elements = { {{.BlockedElements}} };{{end}} }
 	set in_cluster_ports { type inet_service;{{if .PortElements}} elements = { {{.PortElements}} };{{end}} }
 
 	chain input {
@@ -10,6 +11,13 @@ table inet host {
 
 		# Drop invalid; admit loopback.
 		ct state invalid drop
+
+		# Operator-curated block list (`network firewall --blocked-cidrs`). Runs
+		# before every other rule, including established/related, so an entry
+		# added here drops already-open connections too. Purely operator-managed:
+		# nothing else ever writes to this set.
+		ip saddr @blocked_addrs drop
+
 		iif "lo" accept
 
 		# ICMP is evaluated BEFORE the established/related fast-path. netfilter
