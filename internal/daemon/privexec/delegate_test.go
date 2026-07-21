@@ -100,6 +100,48 @@ func TestNetworkPolicySet_EmptyNameIsGuarded(t *testing.T) {
 	require.Empty(t, call.name, "exec must not run when the name is invalid")
 }
 
+func TestTCAttach_BuildsSudoArgv(t *testing.T) {
+	d, call := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		nil, nil,
+	)
+
+	require.NoError(t, d.TCAttach(context.Background(), "lxc1a2b3c"))
+	require.Equal(t, "/usr/bin/sudo", call.name)
+	require.Equal(t, []string{
+		"-n",
+		"/opt/solo/weaver/bin/solo-provisioner",
+		"block", "node", "tc-attach", "--veth", "lxc1a2b3c",
+	}, call.args)
+}
+
+func TestTCDetach_AppendsDetachFlag(t *testing.T) {
+	d, call := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		nil, nil,
+	)
+
+	require.NoError(t, d.TCDetach(context.Background(), "lxc1a2b3c"))
+	require.Equal(t, []string{
+		"-n",
+		"/opt/solo/weaver/bin/solo-provisioner",
+		"block", "node", "tc-attach", "--veth", "lxc1a2b3c", "--detach",
+	}, call.args)
+}
+
+func TestTCAttach_EmptyVethIsGuarded(t *testing.T) {
+	d, call := fakeDelegator([]string{"/usr/bin/sudo", "/usr/local/bin/solo-provisioner"}, "", nil, nil)
+
+	err := d.TCAttach(context.Background(), "  ")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "VethNameEmpty", pe.Reason)
+	require.Empty(t, call.name, "exec must not run when the veth name is empty")
+}
+
 func TestResolveCLI_PrefersDaemonSibling(t *testing.T) {
 	// Both the sibling and a granted path exist; the sibling wins.
 	d, _ := fakeDelegator(

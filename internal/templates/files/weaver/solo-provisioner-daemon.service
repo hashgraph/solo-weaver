@@ -17,6 +17,15 @@ RestartSec=5s
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/opt/solo{{range .ExtraReadWritePaths}} {{.}}{{end}}
+# The daemon delegates privileged tc/nft work by exec'ing `sudo solo-provisioner`
+# children, which inherit this unit's mount namespace. Those children acquire a
+# flock under /run/solo-provisioner/network to serialise tc/nft applies with the
+# operator CLI. Under ProtectSystem=strict that path is read-only, so grant it a
+# managed runtime dir: RuntimeDirectory creates and RW-mounts /run/solo-provisioner
+# on every start (recreating it after reboot, since /run is tmpfs); Preserve=yes
+# keeps it across daemon restarts so a concurrent operator flock is never yanked.
+RuntimeDirectory=solo-provisioner
+RuntimeDirectoryPreserve=yes
 
 [Install]
 WantedBy=multi-user.target

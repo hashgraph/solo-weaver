@@ -215,6 +215,15 @@ sudo solo-provisioner block node install \
 > it. An empty management allowlist skips the firewall to avoid locking the host
 > out of SSH; `--firewall-enabled=false` opts out of it entirely.
 
+> **Traffic-shaper defaults**: `block node install` records both the `$EGRESS`
+> (physical NIC) and the `$VETH` (per-pod ingress) HTB shapes using the design's
+> default per-class budgets, so the daemon can install the ingress hierarchy on
+> the next pod create without any manual `network shape` step. The `$EGRESS` shape
+> is persisted for reboot replay (`solo-provisioner-tc-egress.service`); the
+> ingress shape is recorded as config only (the `$VETH` is ephemeral and replayed
+> per-pod). Ingress bandwidth defaults to the egress `--link-rate`. Tune any class
+> afterward with `network shape set --class <name> --rate/--ceil/--prio`.
+
 #### Upgrade Block Node
 
 Upgrade an existing Block Node deployment:
@@ -395,6 +404,35 @@ sudo solo-provisioner block node reconcile-shaper \
 > **Privilege**: `--check` never touches nft and needs no privilege. The apply
 > path (no `--check`) reads and writes the live `inet weaver` sets and must run as
 > root; the daemon invokes it via sudo.
+
+#### Attach Ingress Traffic Shaper (`tc-attach`)
+
+Install the `$VETH` ingress HTB hierarchy (classes `1:10`/`1:20`/`1:30`, default
+`reserve-ingress`, `fq_codel` leaves, no tc filters) on a block node pod's
+host-side veth, using the per-class ingress budgets recorded by
+`network shape`. The solo-provisioner-daemon's pod-lifecycle watcher runs this
+via sudo on each block node pod create, passing the veth it resolved for the
+pod; you can also run it by hand for debugging.
+
+```bash
+# Install the ingress HTB hierarchy on a resolved host-side veth (root)
+sudo solo-provisioner block node tc-attach --veth lxc1a2b3c
+
+# Tear it down (best-effort; the kernel also removes it when the pod's veth disappears)
+sudo solo-provisioner block node tc-attach --veth lxc1a2b3c --detach
+```
+
+**Additional Flags**:
+
+| Flag       | Description                                                                                 | Default |
+|------------|---------------------------------------------------------------------------------------------|---------|
+| `--veth`   | Host-side veth interface to (de)install the ingress HTB hierarchy on, e.g. `lxc1a2b3c` (required) | —       |
+| `--detach` | Tear down the ingress HTB hierarchy on the veth instead of installing it (best-effort)      | `false` |
+
+> **Privilege**: `tc-attach` always mutates live kernel tc state and must run as
+> root (the daemon invokes it via sudo). Unlike `reconcile-shaper`, it has no
+> unprivileged `--check` mode. It requires the ingress shape to have been
+> recorded first (normally by `block node install` via `network shape`).
 
 ---
 

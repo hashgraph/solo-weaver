@@ -6,6 +6,7 @@ import (
 	"fmt"
 	oslib "os"
 	"path"
+	"strconv"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -407,6 +408,15 @@ func (m *Manager) injectPluginsConfig(valuesContent []byte) ([]byte, error) {
 // left untouched. An explicit non-LoadBalancer service.type triggers a warning so the
 // mismatch is visible in logs without weaver clobbering an explicit operator choice.
 // When LoadBalancerEnabled is false the values are returned unchanged.
+//
+// Exception (issue #900): when the operator enables the chart's own loadBalancer block
+// (loadBalancer.enabled: true — the "split topology": a ClusterIP main Service plus a
+// separate "-external" LoadBalancer Service), the chart renders that external Service and
+// applies its annotations from .Values.loadBalancer.annotations. In that case weaver defers
+// entirely to the chart: it does not warn about a ClusterIP service.type and does not inject
+// a MetalLB annotation onto the main service (which would be inert there, since MetalLB
+// ignores non-LoadBalancer services). The reachability probe already locates the chart's
+// "-external" Service, so no service.* injection is needed.
 func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error) {
 	if !m.blockNodeInputs.LoadBalancerEnabled {
 		return valuesContent, nil
@@ -415,6 +425,15 @@ func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error)
 	var vals map[string]interface{}
 	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
 		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for service annotation injection")
+	}
+
+	// Issue #900: if the operator drives the external endpoint through the chart's own
+	// loadBalancer block, the chart owns the "-external" Service and its annotations. Weaver
+	// must not warn about a ClusterIP main service.type or inject an inert MetalLB annotation
+	// onto it — defer entirely to the chart.
+	if chartOwnsLoadBalancer(vals) {
+		logx.As().Debug().Msg("values enable the chart's loadBalancer block; deferring the external Service and its MetalLB annotation to the chart (skipping service.* injection)")
+		return valuesContent, nil
 	}
 
 	service, ok := vals["service"].(map[string]interface{})
@@ -474,4 +493,32 @@ func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error)
 	}
 
 	return result, nil
+}
+
+// chartOwnsLoadBalancer reports whether the merged values enable the block-node chart's own
+// loadBalancer block (loadBalancer.enabled: true). When enabled, the chart renders a dedicated
+// "-external" LoadBalancer Service and applies its annotations from .Values.loadBalancer.annotations,
+// so weaver must not inject its own service.type/annotations for the LoadBalancer. See issue #900.
+//
+// The value is read for truthiness rather than a strict bool type: an operator may quote it
+// (loadBalancer.enabled: "true"), which Helm still treats as enabled, so a bool-only check would
+// misread that as disabled and re-introduce the misleading warning + inert injection this gate
+// suppresses. A native bool is honored directly; a string is parsed with strconv.ParseBool
+// (accepting "true"/"1"/"t" and "false"/"0"/"f", case-insensitive). Any other shape — absent
+// block, missing key, unparseable value — is treated as not-enabled, preserving the default
+// single-LB path and the accurate ClusterIP-with-no-LB warning.
+func chartOwnsLoadBalancer(vals map[string]interface{}) bool {
+	lb, ok := vals["loadBalancer"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	switch enabled := lb["enabled"].(type) {
+	case bool:
+		return enabled
+	case string:
+		parsed, err := strconv.ParseBool(enabled)
+		return err == nil && parsed
+	default:
+		return false
+	}
 }

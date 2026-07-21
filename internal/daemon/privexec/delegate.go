@@ -65,6 +65,16 @@ type Delegator interface {
 	// atomically replaces the named policy's live nft set with cidrs; an empty
 	// (or nil) cidrs slice clears the set (the --cidrs flag is omitted).
 	NetworkPolicySet(ctx context.Context, name string, cidrs []string) error
+
+	// TCAttach delegates `block node tc-attach --veth <veth>` — the pod-lifecycle
+	// watcher's ingress-HTB install path. It installs the $VETH HTB hierarchy on
+	// the given host-side veth from the recorded ingress shape config.
+	TCAttach(ctx context.Context, veth string) error
+
+	// TCDetach delegates `block node tc-attach --veth <veth> --detach` — the
+	// best-effort teardown of the $VETH HTB hierarchy on pod delete or before a
+	// clean re-attach.
+	TCDetach(ctx context.Context, veth string) error
 }
 
 // execDelegator is the production Delegator. Its resolution and exec seams are
@@ -143,6 +153,34 @@ func (d *execDelegator) NetworkPolicySet(ctx context.Context, name string, cidrs
 	args := []string{"network", "policy", "set", "--name", name}
 	if len(cidrs) > 0 {
 		args = append(args, "--cidrs", strings.Join(cidrs, ","))
+	}
+	_, err := d.Run(ctx, args...)
+	return err
+}
+
+func (d *execDelegator) TCAttach(ctx context.Context, veth string) error {
+	return d.tcAttach(ctx, veth, false)
+}
+
+func (d *execDelegator) TCDetach(ctx context.Context, veth string) error {
+	return d.tcAttach(ctx, veth, true)
+}
+
+// tcAttach delegates the `block node tc-attach --veth <veth> [--detach]` exec.
+// The veth-name format is validated by the CLI/shape layer the exec reaches;
+// here we only guard against an empty name so a daemon bug surfaces as a clear
+// ProbeError rather than a malformed argv.
+func (d *execDelegator) tcAttach(ctx context.Context, veth string, detach bool) error {
+	if strings.TrimSpace(veth) == "" {
+		return &daemonkit.ProbeError{
+			Reason:     "VethNameEmpty",
+			Message:    "block node tc-attach requires a non-empty veth name",
+			Resolution: "this is a daemon bug; report it with the daemon logs",
+		}
+	}
+	args := []string{"block", "node", "tc-attach", "--veth", veth}
+	if detach {
+		args = append(args, "--detach")
 	}
 	_, err := d.Run(ctx, args...)
 	return err

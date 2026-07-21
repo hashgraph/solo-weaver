@@ -99,7 +99,7 @@ func init() {
 	// LoadBalancer / MetalLB annotation flag
 	common.FlagLoadBalancerEnabled().SetVarP(nodeCmd, &flagLoadBalancerEnabled, false)
 
-	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, uninstallCmd, reconcileShaperCmd)
+	nodeCmd.AddCommand(checkCmd, installCmd, upgradeCmd, reconfigureCmd, resetCmd, uninstallCmd, reconcileShaperCmd, tcAttachCmd)
 }
 
 func GetCmd() *cobra.Command {

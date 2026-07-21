@@ -1128,6 +1128,164 @@ func TestInjectServiceAnnotations_PreservesExistingType(t *testing.T) {
 	assert.Equal(t, "ClusterIP", service["type"], "operator-set service.type must not be clobbered")
 }
 
+// TestInjectServiceAnnotations_ChartOwnedLoadBalancerDefers is issue #900, case 3 (the
+// "split topology"): service.type: ClusterIP + the chart's own loadBalancer.enabled: true.
+// The chart owns the "-external" LoadBalancer Service and its annotations, so weaver must
+// defer entirely — no warning, no MetalLB annotation injected onto the ClusterIP service —
+// and return the values byte-identical.
+func TestInjectServiceAnnotations_ChartOwnedLoadBalancerDefers(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: ClusterIP
+  port: 40840
+loadBalancer:
+  enabled: true
+  annotations:
+    metallb.io/address-pool: "public-address-pool"
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	// Deferred to the chart → byte-identical, no service.* mutation.
+	assert.Equal(t, input, result)
+
+	// The MetalLB annotation stays under loadBalancer.annotations (chart-owned); weaver must
+	// not have injected one onto service.annotations.
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	_, hasServiceAnnotations := service["annotations"]
+	assert.False(t, hasServiceAnnotations, "weaver must not inject service.annotations when the chart owns the LoadBalancer")
+	assert.Equal(t, "ClusterIP", service["type"], "operator service.type must be left untouched")
+}
+
+// TestInjectServiceAnnotations_ChartOwnedLoadBalancerNoOperatorAnnotation covers case 3 when
+// the operator enables loadBalancer but has not (yet) set loadBalancer.annotations. Weaver
+// still defers — it must not "helpfully" inject onto service.annotations, since that tag would
+// be inert on the ClusterIP service and the real tag belongs under loadBalancer.annotations.
+func TestInjectServiceAnnotations_ChartOwnedLoadBalancerNoOperatorAnnotation(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: ClusterIP
+loadBalancer:
+  enabled: true
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	assert.Equal(t, input, result)
+	assert.NotContains(t, string(result), "metallb.io/address-pool")
+}
+
+// TestInjectServiceAnnotations_ChartOwnedLoadBalancerQuotedBoolDefers covers issue #900 case 3
+// when the operator quotes the flag (loadBalancer.enabled: "true"). Helm treats that quoted
+// string as enabled, so weaver must too — a bool-only gate would misread it as disabled and
+// re-introduce the misleading warning + inert service.annotations injection. Weaver defers and
+// returns the values byte-identical, exactly as for the unquoted bool.
+func TestInjectServiceAnnotations_ChartOwnedLoadBalancerQuotedBoolDefers(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: ClusterIP
+  port: 40840
+loadBalancer:
+  enabled: "true"
+  annotations:
+    metallb.io/address-pool: "public-address-pool"
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	// Deferred to the chart → byte-identical, no service.* mutation.
+	assert.Equal(t, input, result)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	_, hasServiceAnnotations := service["annotations"]
+	assert.False(t, hasServiceAnnotations, "quoted loadBalancer.enabled must still defer to the chart")
+	assert.Equal(t, "ClusterIP", service["type"], "operator service.type must be left untouched")
+}
+
+// TestInjectServiceAnnotations_QuotedFalseNotChartOwned pins the other end of the string parse:
+// loadBalancer.enabled: "false" reads operator intent (off), not Helm's "any non-empty string is
+// truthy" quirk. That is not the chart-owned split topology, so weaver keeps its default behavior
+// and still injects the MetalLB annotation onto the main service.
+func TestInjectServiceAnnotations_QuotedFalseNotChartOwned(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: LoadBalancer
+loadBalancer:
+  enabled: "false"
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	annotations := service["annotations"].(map[string]interface{})
+	assert.Equal(t, "public-address-pool", annotations["metallb.io/address-pool"],
+		`loadBalancer.enabled: "false" reads as off; weaver must still inject the MetalLB annotation`)
+}
+
+// TestInjectServiceAnnotations_LoadBalancerDisabledStillInjects is the non-regression guard
+// for cases 1/2/4 (issue #900): loadBalancer.enabled: false is NOT the chart-owned split
+// topology, so weaver keeps its default behavior and injects the MetalLB annotation onto the
+// main service. This pins that the new gate keys off loadBalancer.enabled being true, not
+// merely present.
+func TestInjectServiceAnnotations_LoadBalancerDisabledStillInjects(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: LoadBalancer
+loadBalancer:
+  enabled: false
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	annotations := service["annotations"].(map[string]interface{})
+	assert.Equal(t, "public-address-pool", annotations["metallb.io/address-pool"],
+		"loadBalancer.enabled=false is not chart-owned; weaver must still inject the MetalLB annotation")
+}
+
 // TestMergeValues_OperatorWinsOnScalar verifies the deep-merge contract: operator scalars
 // override base scalars at the same path.
 func TestMergeValues_OperatorWinsOnScalar(t *testing.T) {

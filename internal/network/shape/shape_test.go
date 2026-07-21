@@ -434,6 +434,88 @@ func TestDefaultEgressConfig_100mbit_ProportionalRates(t *testing.T) {
 	}
 }
 
+// --- Ingress default config tests ---
+
+// findClass returns the ClassConfig with the given name, failing the test when
+// it is absent.
+func findClass(t *testing.T, classes []*ClassConfig, name string) *ClassConfig {
+	t.Helper()
+	for _, c := range classes {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("class %q not found in %+v", name, classes)
+	return nil
+}
+
+func TestDefaultIngressConfig_1gbit(t *testing.T) {
+	dev, classes, err := defaultIngressConfig("1gbit")
+	if err != nil {
+		t.Fatalf("defaultIngressConfig(1gbit): %v", err)
+	}
+	if dev.Dir != DirIngress {
+		t.Errorf("dev.Dir = %q, want %q", dev.Dir, DirIngress)
+	}
+	if dev.Rate != "1gbit" {
+		t.Errorf("dev.Rate = %q, want 1gbit", dev.Rate)
+	}
+	if dev.DefaultClass != "reserve-ingress" {
+		t.Errorf("dev.DefaultClass = %q, want reserve-ingress", dev.DefaultClass)
+	}
+
+	// 80% / 10% / 10% of 1000mbit; all ceil = 100% (trunk = 1gbit); §1 prios.
+	for _, tc := range []struct {
+		name string
+		rate string
+		prio int
+	}{
+		{"publisher", "800mbit", 0},
+		{"backfill-response", "100mbit", 7},
+		{"reserve-ingress", "100mbit", 1},
+	} {
+		c := findClass(t, classes, tc.name)
+		if c.Rate != tc.rate {
+			t.Errorf("%s rate = %q, want %q", tc.name, c.Rate, tc.rate)
+		}
+		if c.Ceil != "1gbit" {
+			t.Errorf("%s ceil = %q, want 1gbit (100%%)", tc.name, c.Ceil)
+		}
+		if c.Prio != tc.prio {
+			t.Errorf("%s prio = %d, want %d", tc.name, c.Prio, tc.prio)
+		}
+	}
+}
+
+func TestDefaultIngressConfig_100mbit(t *testing.T) {
+	_, classes, err := defaultIngressConfig("100mbit")
+	if err != nil {
+		t.Fatalf("defaultIngressConfig(100mbit): %v", err)
+	}
+	// 80% / 10% / 10% of 100mbit.
+	if c := findClass(t, classes, "publisher"); c.Rate != "80mbit" || c.Ceil != "100mbit" {
+		t.Errorf("publisher = %s/%s, want 80mbit/100mbit", c.Rate, c.Ceil)
+	}
+	if c := findClass(t, classes, "backfill-response"); c.Rate != "10mbit" || c.Ceil != "100mbit" {
+		t.Errorf("backfill-response = %s/%s, want 10mbit/100mbit", c.Rate, c.Ceil)
+	}
+	if c := findClass(t, classes, "reserve-ingress"); c.Rate != "10mbit" || c.Ceil != "100mbit" {
+		t.Errorf("reserve-ingress = %s/%s, want 10mbit/100mbit", c.Rate, c.Ceil)
+	}
+}
+
+func TestDefaultIngressConfig_UnparseableRateErrors(t *testing.T) {
+	// "auto" is resolved to a concrete rate before defaultIngressConfig is called
+	// (see ProvisionDefaultIngress); the pure helper rejects it, matching the
+	// egress helper's contract.
+	if _, _, err := defaultIngressConfig("auto"); err == nil {
+		t.Error("expected defaultIngressConfig(\"auto\") to error, got nil")
+	}
+	if _, _, err := defaultIngressConfig("500mbit"); err != nil {
+		t.Errorf("defaultIngressConfig(\"500mbit\"): unexpected error: %v", err)
+	}
+}
+
 // --- Validation tests ---
 
 func TestValidateDir(t *testing.T) {
