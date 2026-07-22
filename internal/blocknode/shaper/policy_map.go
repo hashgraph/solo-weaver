@@ -47,7 +47,7 @@ type categoryBinding struct {
 // by the monitor.
 var categoryBindings = map[Category]categoryBinding{
 	CategoryPublisher:  {policyName: "bn-publisher"},
-	CategoryPartner:    {policyName: "bn-partner"},
+	CategoryPartner:    {policyName: "bn-partner-out"},
 	CategoryRestricted: {policyName: "bn-restricted"},
 	CategoryPeerBN:     {policyName: "bn-backfill", compound: true},
 }

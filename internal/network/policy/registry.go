@@ -29,6 +29,22 @@ func writeEntry(dir string, p *Policy) error {
 	return atomicWriteFile(registryPath(dir, p.Name), string(data)+"\n", 0o644)
 }
 
+// Exists reports whether a policy with the given name is present in the
+// registry at RegistryDir. A missing file is not an error (returns false). It
+// lets install orchestration tell a genuinely new policy from one that already
+// existed before a create — e.g. so rollback deletes only what it created and
+// never an operator-owned policy replaced via --force.
+func Exists(name string) (bool, error) {
+	_, err := os.Stat(registryPath(RegistryDir, name))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, errorx.ExternalError.Wrap(err, "failed to stat policy registry %s", registryPath(RegistryDir, name))
+}
+
 // readEntry loads a single policy from its registry file.
 func readEntry(dir, name string) (*Policy, error) {
 	data, err := os.ReadFile(registryPath(dir, name))

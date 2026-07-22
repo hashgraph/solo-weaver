@@ -40,6 +40,9 @@ var (
 	flagLoadBalancerEnabled  bool
 	flagEgressInterface      string
 	flagLinkRate             string
+	flagShape                []string
+	flagDaemonBin            string
+	flagDaemonVersion        string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",

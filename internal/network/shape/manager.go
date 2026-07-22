@@ -284,6 +284,22 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 	})
 }
 
+// HasEgressConfig reports whether the egress device already has a recorded
+// shape config (device + classes) in the registry — i.e. whether a prior
+// ProvisionDefaultEgress (via `block node install`/`network shape create`)
+// has already run. Used by the install-time TcEgressPersist step to decide
+// between provisioning fresh defaults (nothing recorded yet: matches
+// TcIngressRecord's unconditional behavior) and re-applying from what's
+// already there (an existing install: never clobber operator-adjusted
+// `network shape set` values just because --link-rate was omitted).
+func (m *Manager) HasEgressConfig() (bool, error) {
+	dev, err := readDevice(DirEgress)
+	if err != nil {
+		return false, err
+	}
+	return dev != nil, nil
+}
+
 // ShowClass returns a human-readable summary of the named class config.
 func (m *Manager) ShowClass(name string) (string, error) {
 	cls, err := readClass(name)
@@ -608,10 +624,14 @@ func defaultEgressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error
 // create time (see resolveAutoRateString). Existing configs are always
 // replaced. Called by block node install so the shape registry is the single
 // source of truth from first install.
-func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string) error {
+func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
 	trunkRate = m.resolveAutoRateString(trunkRate)
 	dev, classes, err := defaultEgressConfig(trunkRate)
 	if err != nil {
+		return err
+	}
+	applyClassOverrides(classes, overrides)
+	if err := validateProvisionedClasses(classes, dev.Rate); err != nil {
 		return err
 	}
 	return m.withLock(func() error {
@@ -635,10 +655,11 @@ func (m *Manager) RenderAndApplyEgress(ctx context.Context, nic string) error {
 }
 
 // ProvisionDefaultEgressShape configures the egress shape registry with the
-// three default HTB classes at proportions derived from trunkRate, then renders
-// and applies the boot script. Convenience wrapper over NewManager().ProvisionDefaultEgress.
-func ProvisionDefaultEgressShape(ctx context.Context, nicName, trunkRate string) error {
-	return NewManager().ProvisionDefaultEgress(ctx, nicName, trunkRate)
+// three default HTB classes at proportions derived from trunkRate (with any
+// per-class --shape overrides merged in), then renders and applies the boot
+// script. Convenience wrapper over NewManager().ProvisionDefaultEgress.
+func ProvisionDefaultEgressShape(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
+	return NewManager().ProvisionDefaultEgress(ctx, nicName, trunkRate, overrides)
 }
 
 // defaultIngressConfig returns the ingress device root and three default ingress
@@ -677,10 +698,14 @@ func defaultIngressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, erro
 // the stored class configs. Called by block node install so ApplyIngressVeth
 // finds concrete ingress config on the first pod create (the per-pod replay has
 // no sysfs fallback, so the recorded rates must always be concrete).
-func (m *Manager) ProvisionDefaultIngress(_ context.Context, trunkRate string) error {
+func (m *Manager) ProvisionDefaultIngress(_ context.Context, trunkRate string, overrides map[string]ClassOverride) error {
 	trunkRate = m.resolveAutoRateString(trunkRate)
 	dev, classes, err := defaultIngressConfig(trunkRate)
 	if err != nil {
+		return err
+	}
+	applyClassOverrides(classes, overrides)
+	if err := validateProvisionedClasses(classes, dev.Rate); err != nil {
 		return err
 	}
 	return m.withLock(func() error {
@@ -701,12 +726,12 @@ func (m *Manager) ProvisionDefaultIngress(_ context.Context, trunkRate string) e
 // over ProvisionDefaultIngress. When nicName is non-empty it pins the resolution
 // of a "auto" trunkRate to the operator-chosen NIC (parity with the egress path
 // on multi-NIC hosts); ingress bandwidth defaults to egress.
-func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string) error {
+func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
 	cfg := Config{}
 	if nicName != "" {
 		cfg.NICDetect = func() (string, error) { return nicName, nil }
 	}
-	return NewManagerWithConfig(cfg).ProvisionDefaultIngress(ctx, trunkRate)
+	return NewManagerWithConfig(cfg).ProvisionDefaultIngress(ctx, trunkRate, overrides)
 }
 
 // RenderAndApplyDefaultEgress renders the tc-egress script for nic from the

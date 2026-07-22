@@ -28,7 +28,7 @@ const TcIngressRecordStepId = "tc-ingress-record"
 // speed at install time — so the recorded class rates are always concrete, since
 // the per-pod replay has no sysfs fallback. nicName pins auto-resolution to the
 // operator-chosen NIC on multi-NIC hosts.
-func TcIngressRecord(nicName string, linkRate string) *automa.StepBuilder {
+func TcIngressRecord(nicName string, linkRate string, overrides map[string]shape.ClassOverride) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcIngressRecordStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Recording tc-ingress ($VETH) HTB shape for per-pod replay")
@@ -45,7 +45,7 @@ func TcIngressRecord(nicName string, linkRate string) *automa.StepBuilder {
 			if rate == "" {
 				rate = "auto"
 			}
-			if err := shape.ProvisionDefaultIngressShape(ctx, nicName, rate); err != nil {
+			if err := shape.ProvisionDefaultIngressShape(ctx, nicName, rate, overrides); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
 					errorx.Decorate(err, "failed to record default ingress shape").
 						WithProperty(models.ErrPropertyResolution, []string{

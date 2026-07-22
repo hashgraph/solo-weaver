@@ -51,7 +51,7 @@ func TestComputePolicyDeltas_MapsCategoriesToPolicies(t *testing.T) {
 	// Ordered by policy name; no-op deltas omitted (all four have changes here).
 	require.Equal(t, []PolicyDelta{
 		{Policy: "bn-backfill", SetDelta: setDelta([]string{"10.30.5.7 . 43473"}, nil)},
-		{Policy: "bn-partner", SetDelta: setDelta([]string{"10.2.0.1"}, nil)},
+		{Policy: "bn-partner-out", SetDelta: setDelta([]string{"10.2.0.1"}, nil)},
 		{Policy: "bn-publisher", SetDelta: setDelta([]string{"10.1.0.2"}, nil)},
 		{Policy: "bn-restricted", SetDelta: setDelta([]string{"10.3.0.0/24"}, nil)},
 	}, deltas)
@@ -78,7 +78,7 @@ func TestComputePolicyDeltas_AbsentCategoryLeavesSetUntouched(t *testing.T) {
 	deltas, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPartner: {"10.2.0.1/32"}})
 	require.NoError(t, err)
 	require.Equal(t, []PolicyDelta{
-		{Policy: "bn-partner", SetDelta: setDelta([]string{"10.2.0.1"}, nil)},
+		{Policy: "bn-partner-out", SetDelta: setDelta([]string{"10.2.0.1"}, nil)},
 	}, deltas)
 	require.NotContains(t, l.reads, "bn-publisher", "absent category's set must not be read")
 }
@@ -169,4 +169,27 @@ func TestCanonicalDesiredMembership_MalformedCompoundErrors(t *testing.T) {
 // (adds, deletes) pair.
 func setDelta(adds, deletes []string) policy.SetDelta {
 	return policy.SetDelta{Adds: adds, Deletes: deletes}
+}
+
+// TestCategoryBindings_PolicyNamesAreCanonical guards against categoryBindings
+// drifting from the canonical BN policy set created by NetworkPolicyCreate
+// (internal/workflows/steps/step_network_policy.go). A binding to a policy
+// name that doesn't exist there makes ApplyMembership fail every time that
+// category has any endpoint reported (Manager.ApplyMembership never calls
+// create: "a name absent from the registry ... is an error") — this bit once,
+// with CategoryPartner bound to "bn-partner" instead of "bn-partner-out".
+// There is no shared export between the two packages, so this list must be
+// kept in sync by hand; this test is what catches the next drift.
+func TestCategoryBindings_PolicyNamesAreCanonical(t *testing.T) {
+	canonicalBNPolicyNames := map[string]bool{
+		"bn-publisher": true, "bn-subscriber-in": true, "bn-partner-out": true,
+		"bn-public-out": true, "bn-status-in": true, "bn-status-out": true,
+		"bn-mgmt-in": true, "bn-mgmt-out": true, "bn-restricted": true, "bn-backfill": true,
+	}
+	for cat, b := range categoryBindings {
+		if !canonicalBNPolicyNames[b.policyName] {
+			t.Errorf("categoryBindings[%q].policyName = %q is not one of the canonical "+
+				"BN policy names created by NetworkPolicyCreate", cat, b.policyName)
+		}
+	}
 }

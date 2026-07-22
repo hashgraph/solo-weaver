@@ -17,17 +17,24 @@ import (
 const TcEgressPersistStepId = "tc-egress-persist"
 
 // TcEgressPersist provisions the egress tc HTB hierarchy for reboot persistence.
-// When trunkRate is non-empty it writes the egress device root and three default
-// classes (partner/public/reserve-egress) at proportional rates into the shape
-// registry and renders the boot script from those explicit values. When
-// trunkRate is empty it re-renders the script from whatever shape config
-// already exists, falling back to sysfs auto-detect.
+// It writes the egress device root and three default classes
+// (partner/public/reserve-egress) into the shape registry — either at the
+// operator-supplied trunkRate/overrides, or, when neither was supplied and no
+// egress registry entry exists yet (a fresh install), at auto-detected
+// defaults. This mirrors TcIngressRecord's unconditional provisioning so
+// `network shape show` always reports all six classes after install, not just
+// the three from TcIngressRecord.
+//
+// When trunkRate/overrides are empty and an egress registry entry already
+// exists (a reconfigure/upgrade re-run that didn't pass --link-rate/--shape),
+// it re-renders the boot script from that existing config instead, so it
+// never clobbers operator-applied `network shape set` adjustments.
 //
 // When nicName is empty the NIC is auto-detected from the default route via
 // DetectEgressInterface. Pass --egress-interface to override on multi-NIC
 // hosts or when the default route does not identify the correct physical
 // interface.
-func TcEgressPersist(nicName string, trunkRate string) *automa.StepBuilder {
+func TcEgressPersist(nicName string, trunkRate string, overrides map[string]shape.ClassOverride) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcEgressPersistStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Persisting tc-egress HTB hierarchy for reboot")
@@ -62,8 +69,26 @@ func TcEgressPersist(nicName string, trunkRate string) *automa.StepBuilder {
 				"Find the NIC used by the default route: ip route get 8.8.8.8 | grep dev",
 			}
 
-			if trunkRate != "" {
-				if err := shape.ProvisionDefaultEgressShape(ctx, nic, trunkRate); err != nil {
+			hasExisting, err := shape.NewManager().HasEgressConfig()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(
+					errorx.Decorate(err, "failed to check existing egress shape config").
+						WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
+			}
+
+			// Provision explicit class config when the operator gave a trunk rate,
+			// gave per-class --shape overrides (which need concrete classes to
+			// merge into), or there is no egress registry entry yet (a fresh
+			// install — matches TcIngressRecord's unconditional provisioning, so
+			// the registry always ends up populated with all six classes).
+			// Resolve an empty rate to "auto" so the proportional defaults are
+			// computed against the detected link speed at install time.
+			if trunkRate != "" || len(overrides) > 0 || !hasExisting {
+				rate := trunkRate
+				if rate == "" {
+					rate = "auto"
+				}
+				if err := shape.ProvisionDefaultEgressShape(ctx, nic, rate, overrides); err != nil {
 					return automa.FailureReport(stp, automa.WithError(
 						errorx.Decorate(err, "failed to provision default egress shape").
 							WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
@@ -71,8 +96,9 @@ func TcEgressPersist(nicName string, trunkRate string) *automa.StepBuilder {
 				return automa.SuccessReport(stp)
 			}
 
-			// No trunk rate supplied: re-render from existing shape registry (if
-			// populated) or sysfs auto-detect, then apply.
+			// No trunk rate or overrides supplied, and a registry entry already
+			// exists (reconfigure/upgrade without --link-rate/--shape): re-render
+			// from that existing shape config, then apply.
 			if err := shape.RenderAndApplyDefaultEgress(ctx, nic); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
 					errorx.Decorate(err, "failed to apply tc-egress script").

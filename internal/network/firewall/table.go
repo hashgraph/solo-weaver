@@ -28,6 +28,14 @@ var DefaultInClusterPorts = []int{6443, 4244, 7472, 10250}
 type Table struct {
 	// MgmtCIDRs is the management/SSH allowlist (set @mgmt_addrs).
 	MgmtCIDRs []string
+	// BlockedCIDRs is the operator-curated deny list (set @blocked_addrs). It is
+	// purely operator-managed for its whole lifecycle — nothing in this package
+	// or the daemon ever writes to it automatically. This is deliberately
+	// distinct from the BN workload plane's `bn-restricted` set (`inet weaver`),
+	// which the traffic-shaper daemon reconciles from the block node's statusz
+	// "restricted" category; an operator block list needs a home the daemon
+	// never overwrites.
+	BlockedCIDRs []string
 	// InClusterPorts are host-service ports reachable from PodCIDR (set
 	// @in_cluster_ports). Per design there is deliberately no --service-ports:
 	// BN ports live only in `network policy --ports`.
@@ -59,6 +67,12 @@ func (t *Table) Validate() error {
 	for _, c := range t.MgmtCIDRs {
 		if err := sanity.ValidateIPv4CIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", c)
+		}
+	}
+
+	for _, c := range t.BlockedCIDRs {
+		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --blocked-cidr %q", c)
 		}
 	}
 
@@ -116,6 +130,44 @@ func (t *Table) SetMgmtCIDRs(cidrs []string) error {
 	dedup := dedupeStrings(cidrs)
 	sort.Strings(dedup)
 	t.MgmtCIDRs = dedup
+	return nil
+}
+
+// AddBlockedCIDR adds a single CIDR to the operator block list (idempotent).
+func (t *Table) AddBlockedCIDR(cidr string) error {
+	if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+		return errorx.IllegalArgument.Wrap(err, "invalid --blocked-cidr %q", cidr)
+	}
+	if sanity.Contains(cidr, t.BlockedCIDRs) {
+		return nil
+	}
+	t.BlockedCIDRs = append(t.BlockedCIDRs, cidr)
+	sort.Strings(t.BlockedCIDRs)
+	return nil
+}
+
+// RemoveBlockedCIDR removes a single CIDR from the operator block list
+// (idempotent; removing an absent CIDR is a no-op).
+func (t *Table) RemoveBlockedCIDR(cidr string) {
+	out := t.BlockedCIDRs[:0]
+	for _, c := range t.BlockedCIDRs {
+		if c != cidr {
+			out = append(out, c)
+		}
+	}
+	t.BlockedCIDRs = out
+}
+
+// SetBlockedCIDRs atomically replaces the full operator block list.
+func (t *Table) SetBlockedCIDRs(cidrs []string) error {
+	for _, c := range cidrs {
+		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --blocked-cidr %q", c)
+		}
+	}
+	dedup := dedupeStrings(cidrs)
+	sort.Strings(dedup)
+	t.BlockedCIDRs = dedup
 	return nil
 }
 

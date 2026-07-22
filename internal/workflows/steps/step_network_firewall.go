@@ -81,6 +81,7 @@ func NetworkFirewallCreate() *automa.StepBuilder {
 			// otherwise indicate a config the resolver never touched.
 			t := firewall.NewTable()
 			t.MgmtCIDRs = hostCfg.ManagementCIDRs
+			t.BlockedCIDRs = hostCfg.BlockedCIDRs
 			if hostCfg.SSHPort != 0 {
 				t.SSHPort = hostCfg.SSHPort
 			}

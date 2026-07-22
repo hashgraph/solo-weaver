@@ -50,6 +50,10 @@ type DaemonBinarySource struct {
 	// Checksum is an optional sha256 hex digest to verify BinPath.
 	// Ignored when BinPath is empty (the catalog checksum is used instead).
 	Checksum string
+	// Version selects which catalog version to auto-download. Ignored when
+	// BinPath is set (no version resolution needed for a locally-supplied
+	// binary). Empty means the catalog's own default version.
+	Version string
 }
 
 // InstallDaemonBinaryStep obtains, verifies, and installs the solo-provisioner-daemon
@@ -84,7 +88,11 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 
 			if src.BinPath == "" {
 				// ── Auto-download path: delegate entirely to daemonInstaller ────────
-				installer, err := software.NewDaemonInstaller()
+				var opts []software.InstallerOption
+				if src.Version != "" {
+					opts = append(opts, software.WithVersion(src.Version))
+				}
+				installer, err := software.NewDaemonInstaller(opts...)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(),
 						automa.WithError(errorx.InternalError.Wrap(err, "failed to initialise daemon installer").

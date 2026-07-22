@@ -5,6 +5,7 @@ package common
 import (
 	"fmt"
 
+	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
@@ -311,5 +312,20 @@ func FlagDaemonChecksum() FlagDefinition[string] {
 		ShortName:   "",
 		Description: "SHA-256 hex digest of the binary supplied via --daemon-bin (e.g. the value from a .sha256 release asset)",
 		Default:     "",
+	}
+}
+
+// FlagDaemonVersion is the solo-provisioner-daemon version to auto-download
+// from the infrastructure catalog. Ignored when --daemon-bin is set (the local
+// binary is installed as-is; no version resolution needed). Defaults to this
+// CLI's own running version — meaningful once the CLI and daemon are
+// co-released under one version scheme; for unstamped local/dev builds this
+// resolves to "dev", which has no catalog entry, hence --daemon-bin instead.
+func FlagDaemonVersion() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "daemon-version",
+		ShortName:   "",
+		Description: "Version of solo-provisioner-daemon to auto-download (defaults to this CLI's own version); ignored when --daemon-bin is set",
+		Default:     version.Get().Version,
 	}
 }

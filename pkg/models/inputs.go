@@ -74,8 +74,31 @@ type BlockNodeInputs struct {
 	RecentRetention     string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
 	PluginPreset        string // preset ID (e.g. "tier1-lfh"), "custom", or "none" (no override); empty/"none" = use --values or chart default
 	PluginList          string // resolved comma-separated plugin list injected into plugins.names
-	EgressInterface     string // physical NIC for the $EGRESS HTB hierarchy; auto-detected from the default route when empty
-	LinkRate            string // tc-style NIC line rate override (e.g. "1gbit"); empty = auto-detect from sysfs at boot
+	// TrafficShapingEnabled gates the BN workload network-policy plane (inet
+	// weaver classification) and tc HTB traffic shaping (from
+	// --traffic-shaping-enabled). When false, the network-setup workflow skips
+	// creating the policy plane and tc config entirely, and the caller skips
+	// offering the traffic-shaper daemon — there is nothing left for it to
+	// reconcile without the policy plane's classification.
+	TrafficShapingEnabled bool
+	EgressInterface       string // physical NIC for the $EGRESS HTB hierarchy; auto-detected from the default route when empty
+	LinkRate              string // tc-style NIC line rate override (e.g. "1gbit"); empty = auto-detect from sysfs at boot
+	// ShapeOverrides carries per-class HTB bandwidth overrides from --shape,
+	// keyed by class name. Empty = use the profile defaults for every class.
+	// Held as a neutral type so pkg/models stays decoupled from the shape
+	// package; the install workflow converts it at the call site.
+	ShapeOverrides map[string]ShapeOverride
+}
+
+// ShapeOverride is one class's operator-supplied HTB bandwidth override, parsed
+// from `block node install --shape <class>=rate=...,ceil=...,prio=...`. A
+// zero-value field (empty Rate/Ceil, nil Prio) keeps that class's profile
+// default. It mirrors internal/network/shape.ClassOverride without creating a
+// dependency from pkg/models onto that package.
+type ShapeOverride struct {
+	Rate string
+	Ceil string
+	Prio *int
 }
 
 type ClusterInputs struct {

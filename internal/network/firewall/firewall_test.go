@@ -28,6 +28,7 @@ func (f *fakeRunner) Exists(_ context.Context) (bool, error) { return f.exists, 
 func sampleTable() *Table {
 	return &Table{
 		MgmtCIDRs:      []string{"10.0.0.0/8", "192.168.0.0/16"},
+		BlockedCIDRs:   []string{"203.0.113.0/24"},
 		InClusterPorts: []int{4244, 6443, 7472, 10250},
 		SSHPort:        22,
 		PodCIDR:        "10.4.0.0/24",
@@ -65,6 +66,10 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	require.Contains(t, doc, "ip saddr @mgmt_addrs tcp dport 22 accept")
 	require.Contains(t, doc, "elements = { 10.0.0.0/8, 192.168.0.0/16 }")
 	require.Contains(t, doc, "elements = { 4244, 6443, 7472, 10250 }")
+	// The operator block list is a distinct set from the mgmt allowlist and
+	// must be dropped before anything else, including established/related.
+	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; elements = { 203.0.113.0/24 }; }")
+	require.Contains(t, doc, "ip saddr @blocked_addrs drop")
 	// ICMP is a static, safe ruleset: full ICMP from mgmt, and from everyone
 	// else the path-health subset (PMTUD + traceroute) plus rate-limited echo.
 	require.Contains(t, doc, "ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept")
@@ -86,6 +91,12 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	estIdx := strings.LastIndex(doc, "ct state established,related accept")
 	require.Greater(t, dropIdx, limitIdx, "echo drop must follow the echo rate limit")
 	require.Greater(t, estIdx, dropIdx, "established,related accept must come after the ICMP echo rules")
+
+	// The block list must be evaluated before established/related so an
+	// operator-added CIDR also kills already-open connections, not just new ones.
+	blockedIdx := strings.Index(doc, "ip saddr @blocked_addrs drop")
+	require.Greater(t, blockedIdx, 0)
+	require.Less(t, blockedIdx, estIdx, "blocked-CIDR drop must precede established,related accept")
 }
 
 func TestRender_NoMgmtNoPod(t *testing.T) {
@@ -96,6 +107,7 @@ func TestRender_NoMgmtNoPod(t *testing.T) {
 	// Empty mgmt set renders without an elements clause; no pod CIDR means no
 	// in-cluster rule line.
 	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; }")
+	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; }")
 	require.NotContains(t, doc, "tcp dport @in_cluster_ports accept")
 }
 
@@ -181,10 +193,21 @@ func TestManager_AddRemoveSet(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "10.5.0.0/16")
 
-	require.NoError(t, m.Set(ctx, []string{"172.16.0.0/12"}, []int{9100}))
+	require.NoError(t, m.AddBlockedCIDR(ctx, "203.0.113.0/24"))
+	data, err = os.ReadFile(nftPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "203.0.113.0/24")
+
+	require.NoError(t, m.RemoveBlockedCIDR(ctx, "203.0.113.0/24"))
+	data, err = os.ReadFile(nftPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "203.0.113.0/24")
+
+	require.NoError(t, m.Set(ctx, []string{"172.16.0.0/12"}, []string{"198.51.100.0/24"}, []int{9100}))
 	data, err = os.ReadFile(nftPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "172.16.0.0/12")
+	require.Contains(t, string(data), "198.51.100.0/24")
 	require.Contains(t, string(data), "9100")
 	// Set replaced the port list entirely.
 	require.NotContains(t, string(data), "6443")
@@ -201,6 +224,8 @@ func TestManager_AddRejectsBadInput(t *testing.T) {
 	require.Error(t, m.AddMgmtCIDR(ctx, "not-a-cidr"))
 	require.Error(t, m.AddPort(ctx, 70000))
 	require.Error(t, m.AddMgmtCIDR(ctx, "2001:db8::/32")) // IPv6 not supported by ipv4_addr sets
+	require.Error(t, m.AddBlockedCIDR(ctx, "not-a-cidr"))
+	require.Error(t, m.AddBlockedCIDR(ctx, "2001:db8::/32")) // IPv6 not supported by ipv4_addr sets
 }
 
 func TestTable_Validate_RejectsIPv6(t *testing.T) {
@@ -211,6 +236,10 @@ func TestTable_Validate_RejectsIPv6(t *testing.T) {
 	pod := sampleTable()
 	pod.PodCIDR = "2001:db8::/32"
 	require.ErrorContains(t, pod.Validate(), "IPv6 CIDRs are not yet supported")
+
+	blocked := sampleTable()
+	blocked.BlockedCIDRs = []string{"2001:db8::/32"}
+	require.ErrorContains(t, blocked.Validate(), "IPv6 CIDRs are not yet supported")
 }
 
 func TestManager_MutateBeforeCreateFails(t *testing.T) {

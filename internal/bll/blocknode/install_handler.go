@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -61,53 +62,71 @@ func (h *InstallHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
+	// Enable the traffic-shaper monitor in daemon.yaml only when the policy
+	// plane it reconciles against was actually created — with traffic shaping
+	// disabled there is no inet weaver classification for the daemon to watch.
+	var daemonConfigStep []automa.Builder
+	if ins.TrafficShapingEnabled {
+		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace)}
+	}
+
 	var wb *automa.WorkflowBuilder
 	if currentState.ClusterState.Created {
-		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
-			Steps(
-				// Backwards-compat guard: older released binaries did not create
-				// weaver:2500 during self-install, so the account may be absent on
-				// machines upgraded from an old binary. The global pre-run check only
-				// verifies the binary exists, not the user account. This step is
-				// idempotent and safe to repeat on up-to-date installations.
-				steps.EnsureWeaverOwnerStep(),
-				// Static network plane (host firewall + weaver policy persistence +
-				// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
-				// The host firewall is owned by the block-node workflow (not the generic
-				// kube cluster install); nftables is already installed/enabled by prior
-				// cluster provisioning, so it's safe to apply here.
-				workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate),
-				steps.SetupBlockNode(ins),
-				// Enable the traffic-shaper monitor in daemon.yaml so it starts
-				// reconciling statusz-driven nft membership once the daemon runs.
-				workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace),
-			)
+		stepList := []automa.Builder{
+			// Backwards-compat guard: older released binaries did not create
+			// weaver:2500 during self-install, so the account may be absent on
+			// machines upgraded from an old binary. The global pre-run check only
+			// verifies the binary exists, not the user account. This step is
+			// idempotent and safe to repeat on up-to-date installations.
+			steps.EnsureWeaverOwnerStep(),
+			// Static network plane (host firewall + weaver policy persistence +
+			// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
+			// The host firewall is owned by the block-node workflow (not the generic
+			// kube cluster install); nftables is already installed/enabled by prior
+			// cluster provisioning, so it's safe to apply here.
+			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled),
+			steps.SetupBlockNode(ins),
+		}
+		stepList = append(stepList, daemonConfigStep...)
+		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(stepList...)
 	} else {
-		wb = automa.NewWorkflowBuilder().WithId("block-node-install").
-			Steps(
-				// Same backwards-compat guard as above: ensure weaver:2500 exists
-				// before the preflight check validates it. Older binaries did not
-				// create this account during self-install.
-				steps.EnsureWeaverOwnerStep(),
-				// Block node install owns its workload-sized preflight (block provider,
-				// profile, plugin preset) plus system setup, then stands up Kubernetes.
-				// InstallClusterWorkflow is intentionally not reused here: it validates
-				// only the substrate floor, which is weaker than the block-node floor.
-				workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
-				workflows.KubernetesSetupWorkflow(h.mr),
-				// Static network plane (host firewall + weaver policy persistence +
-				// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
-				// nftables was just installed/enabled by NodeSetupWorkflow's
-				// systemSetupWorkflow, so applying the host firewall here (rather than
-				// in that generic, node-type-agnostic workflow) is safe.
-				workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate),
-				steps.SetupBlockNode(ins),
-				// Enable the traffic-shaper monitor in daemon.yaml so it starts
-				// reconciling statusz-driven nft membership once the daemon runs.
-				workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace),
-			)
+		stepList := []automa.Builder{
+			// Same backwards-compat guard as above: ensure weaver:2500 exists
+			// before the preflight check validates it. Older binaries did not
+			// create this account during self-install.
+			steps.EnsureWeaverOwnerStep(),
+			// Block node install owns its workload-sized preflight (block provider,
+			// profile, plugin preset) plus system setup, then stands up Kubernetes.
+			// InstallClusterWorkflow is intentionally not reused here: it validates
+			// only the substrate floor, which is weaker than the block-node floor.
+			workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
+			workflows.KubernetesSetupWorkflow(h.mr),
+			// Static network plane (host firewall + weaver policy persistence +
+			// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
+			// nftables was just installed/enabled by NodeSetupWorkflow's
+			// systemSetupWorkflow, so applying the host firewall here (rather than
+			// in that generic, node-type-agnostic workflow) is safe.
+			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled),
+			steps.SetupBlockNode(ins),
+		}
+		stepList = append(stepList, daemonConfigStep...)
+		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(stepList...)
 	}
 	return wb, nil
+}
+
+// toClassOverrides converts the neutral models.ShapeOverride map carried on the
+// inputs into the shape package's ClassOverride map the network setup workflow
+// consumes. It exists so pkg/models stays decoupled from internal/network/shape.
+func toClassOverrides(in map[string]models.ShapeOverride) map[string]shape.ClassOverride {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]shape.ClassOverride, len(in))
+	for name, o := range in {
+		out[name] = shape.ClassOverride{Rate: o.Rate, Ceil: o.Ceil, Prio: o.Prio}
+	}
+	return out
 }
 
 // HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.
@@ -116,7 +135,7 @@ func (h *InstallHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeState())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeStateAfterInstall())
 }
 
 func NewInstallHandler(
