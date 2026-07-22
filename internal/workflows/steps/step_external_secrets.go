@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -11,13 +12,17 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 const (
-	SetupExternalSecretsStepId   = "setup-external-secrets"
-	InstallExternalSecretsStepId = "install-external-secrets"
-	IsExternalSecretsReadyStepId = "is-external-secrets-ready"
+	SetupExternalSecretsStepId     = "setup-external-secrets"
+	InstallExternalSecretsStepId   = "install-external-secrets"
+	IsExternalSecretsReadyStepId   = "is-external-secrets-ready"
+	TeardownExternalSecretsStepId  = "teardown-external-secrets"
+	UninstallExternalSecretsStepId = "uninstall-external-secrets"
 )
 
 // ESOInstallOptions parameterizes the External Secrets Operator install workflow.
@@ -51,6 +56,29 @@ func SetupExternalSecrets(opts ESOInstallOptions) (*automa.WorkflowBuilder, erro
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator setup successfully")
 		}), nil
+}
+
+// TeardownExternalSecrets returns a workflow builder that uninstalls the External
+// Secrets Operator. An empty namespace selects the catalog default namespace.
+func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
+	spec := chartSpec("external-secrets")
+	if namespace != "" {
+		spec.Namespace = namespace
+	}
+
+	return automa.NewWorkflowBuilder().WithId(TeardownExternalSecretsStepId).Steps(
+		uninstallExternalSecrets(spec),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Tearing down External Secrets Operator")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to tear down External Secrets Operator")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator torn down successfully")
+		})
 }
 
 // installESOChart runs the idempotent ESO Helm install and reports whether it
@@ -153,6 +181,66 @@ func installExternalSecrets(spec *helmChartSpec) automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator installed successfully")
+		})
+}
+
+// uninstallESOChart runs the idempotent ESO Helm uninstall and reports whether it
+// uninstalled (false = not installed). Extracted from the step so it can be
+// unit-tested with a mock helm.Manager.
+func uninstallESOChart(hm helm.Manager, spec *helmChartSpec) (bool, error) {
+	isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+	if err != nil {
+		return false, err
+	}
+	if !isInstalled {
+		return false, nil
+	}
+	if err := hm.UninstallChart(spec.Release, spec.Namespace); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func uninstallExternalSecrets(spec *helmChartSpec) automa.Builder {
+	return automa.NewStepBuilder().WithId(UninstallExternalSecretsStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			l := logx.As()
+			hm, err := newHelmManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					errorx.InternalError.Wrap(err, "failed to initialise Helm manager").
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check the solo-provisioner logs for details: /opt/solo/weaver/logs/solo-provisioner.log",
+						})))
+			}
+
+			uninstalled, err := uninstallESOChart(hm, spec)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(
+					errorx.ExternalError.Wrap(err, "failed to uninstall External Secrets Operator release %q in namespace %q", spec.Release, spec.Namespace).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Verify the cluster is reachable: kubectl cluster-info",
+							fmt.Sprintf("Check the release state: helm list -n %s", spec.Namespace),
+							fmt.Sprintf("Remove it manually if needed: helm uninstall %s -n %s", spec.Release, spec.Namespace),
+						})))
+			}
+
+			if !uninstalled {
+				l.Info().Msg("External Secrets Operator is not installed, skipping uninstallation")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"uninstalled": "true"}))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling External Secrets Operator")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall External Secrets Operator")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator uninstalled successfully")
 		})
 }
 
