@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var flagESONamespace string
+
 var operatorCmd = &cobra.Command{
 	Use:   "operator",
 	Short: "Manage the External Secrets Operator installation",
@@ -16,6 +18,7 @@ var operatorCmd = &cobra.Command{
 
 func init() {
 	operatorCmd.AddCommand(installCmd)
+	operatorCmd.AddCommand(uninstallCmd)
 }
 
 func GetCmd() *cobra.Command {

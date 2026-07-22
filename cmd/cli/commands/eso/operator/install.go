@@ -10,10 +10,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 )
 
-var (
-	flagESONamespace    string
-	flagESOChartVersion string
-)
+var flagESOChartVersion string
 
 var installCmd = &cobra.Command{
 	Use:   "install",

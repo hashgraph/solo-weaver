@@ -17,3 +17,9 @@ type ESOInstallOptions = steps.ESOInstallOptions
 func NewESOInstallWorkflow(opts ESOInstallOptions) (*automa.WorkflowBuilder, error) {
 	return steps.SetupExternalSecrets(opts)
 }
+
+// NewESOUninstallWorkflow creates a workflow to uninstall the External Secrets
+// Operator (ESO) Helm release. An empty namespace selects the catalog default.
+func NewESOUninstallWorkflow(namespace string) *automa.WorkflowBuilder {
+	return steps.TeardownExternalSecrets(namespace)
+}

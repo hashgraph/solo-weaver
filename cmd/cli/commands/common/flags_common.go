@@ -106,7 +106,7 @@ func FlagESONamespace() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "namespace",
 		ShortName:   "",
-		Description: "Kubernetes namespace to install the External Secrets Operator into",
+		Description: "Kubernetes namespace for the External Secrets Operator",
 		Default:     "external-secrets",
 	}
 }

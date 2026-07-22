@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -86,6 +87,90 @@ func Test_installESOChart_NamespaceOverride(t *testing.T) {
 	installed, err := installESOChart(context.Background(), hm, spec)
 	require.NoError(t, err)
 	assert.True(t, installed)
+}
+
+func Test_uninstallESOChart_Uninstalls(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
+	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+
+	uninstalled, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	assert.True(t, uninstalled)
+}
+
+func Test_uninstallESOChart_Idempotent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, nil)
+	// No UninstallChart expectation: not-installed must skip.
+
+	uninstalled, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	assert.False(t, uninstalled)
+}
+
+func Test_uninstallESOChart_NamespaceOverride(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	const customNS = "my-eso"
+	spec.Namespace = customNS
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().IsInstalled(spec.Release, customNS).Return(true, nil)
+	hm.EXPECT().UninstallChart(spec.Release, customNS).Return(nil)
+
+	uninstalled, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	assert.True(t, uninstalled)
+}
+
+func Test_uninstallESOChart_IsInstalledError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	wantErr := errors.New("is-installed boom")
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, wantErr)
+	// No UninstallChart expectation: the IsInstalled error must short-circuit.
+
+	uninstalled, err := uninstallESOChart(hm, spec)
+	require.ErrorIs(t, err, wantErr)
+	assert.False(t, uninstalled)
+}
+
+func Test_uninstallESOChart_UninstallChartError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	wantErr := errors.New("uninstall boom")
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
+	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(wantErr)
+
+	uninstalled, err := uninstallESOChart(hm, spec)
+	require.ErrorIs(t, err, wantErr)
+	assert.False(t, uninstalled)
 }
 
 func Test_SetupExternalSecrets_VersionResolution(t *testing.T) {
