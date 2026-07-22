@@ -22,7 +22,8 @@ func Test_generateExpectedCrioSocketDropIn(t *testing.T) {
 	ci, ok := installer.(*crioInstaller)
 	require.True(t, ok, "expected *crioInstaller")
 
-	content := ci.generateExpectedCrioSocketDropIn()
+	content, err := ci.generateExpectedCrioSocketDropIn()
+	require.NoError(t, err)
 
 	sandboxSocket := filepath.Join(models.Paths().SandboxDir, "var/run/crio/crio.sock")
 

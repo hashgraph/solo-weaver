@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/tomlx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -44,6 +45,11 @@ const (
 	// with a hardcoded const, so kubelet's eviction manager can register the
 	// "crio-images" imagefs label. See issue #22.
 	CrioSocketDropInFile = "10-sandbox-socket.conf"
+
+	// crioSocketDropInTemplate is the embedded template rendered into
+	// CrioSocketDropInFile; its {{.SandboxSocket}} placeholder is filled with the
+	// sandbox crio.sock path. See issue #22.
+	crioSocketDropInTemplate = "files/crio/10-sandbox-socket.conf"
 
 	// Directory names
 	ContribDir = "contrib/"
@@ -466,23 +472,17 @@ func getSystemCrioServiceDropInDir() string {
 // manager logs `non-existent label "crio-images"` on every sync. This drop-in creates
 // a symlink at the default path on every cri-o start (surviving the tmpfs /run wipe on
 // reboot) and removes it on stop. See https://github.com/hashgraph/solo-weaver/issues/22.
-func (ci *crioInstaller) generateExpectedCrioSocketDropIn() string {
+func (ci *crioInstaller) generateExpectedCrioSocketDropIn() (string, error) {
 	sandboxSocket := filepath.Join(models.Paths().SandboxDir, "var/run/crio/crio.sock")
 
-	return fmt.Sprintf(`# Managed by solo-weaver. Bridges cri-o's sandbox API socket to the default
-# path (/var/run/crio/crio.sock) that vendored cAdvisor dials with a hardcoded
-# const, so kubelet's eviction manager can register the "crio-images" imagefs
-# label. See https://github.com/hashgraph/solo-weaver/issues/22.
-#
-# Uses systemd's native exec form (no shell), so the interpolated sandbox path is
-# never re-parsed by /bin/sh. mkdir and ln are separate ExecStartPost= lines
-# because exec form has no shell operators; ExecStopPost is prefixed with '-' so
-# cleanup can never fail the unit.
-[Service]
-ExecStartPost=/usr/bin/mkdir -p /var/run/crio
-ExecStartPost=/usr/bin/ln -sfn %s /var/run/crio/crio.sock
-ExecStopPost=-/usr/bin/rm -f /var/run/crio/crio.sock
-`, sandboxSocket)
+	content, err := templates.Render(crioSocketDropInTemplate, struct{ SandboxSocket string }{
+		SandboxSocket: sandboxSocket,
+	})
+	if err != nil {
+		return "", errorx.IllegalState.Wrap(err, "failed to render crio socket drop-in template")
+	}
+
+	return content, nil
 }
 
 // configureCrioSocketDropIn writes the crio.service drop-in that bridges the sandbox
@@ -498,8 +498,12 @@ func (ci *crioInstaller) configureCrioSocketDropIn() error {
 	// Write the drop-in file in the sandbox via the injected fileManager so the
 	// write is atomic (temp-then-rename) — a systemd unit override must never be
 	// observed partially written.
+	dropInContent, err := ci.generateExpectedCrioSocketDropIn()
+	if err != nil {
+		return err
+	}
 	dropInPath := getCrioSocketDropInPath()
-	if err := ci.fileManager.AtomicWriteFile(dropInPath, []byte(ci.generateExpectedCrioSocketDropIn()), models.DefaultFilePerm); err != nil {
+	if err := ci.fileManager.AtomicWriteFile(dropInPath, []byte(dropInContent), models.DefaultFilePerm); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write crio socket drop-in at %s", dropInPath)
 	}
 
