@@ -51,6 +51,12 @@ const (
 	// sandbox crio.sock path. See issue #22.
 	crioSocketDropInTemplate = "files/crio/10-sandbox-socket.conf"
 
+	// defaultCrioSocketDir / defaultCrioSocketPath are the hardcoded path that
+	// vendored cAdvisor dials; the socket-bridge symlinks the sandbox socket here.
+	// See issue #22.
+	defaultCrioSocketDir  = "/var/run/crio"
+	defaultCrioSocketPath = "/var/run/crio/crio.sock"
+
 	// Directory names
 	ContribDir = "contrib/"
 )
@@ -462,6 +468,69 @@ func getSystemCrioServiceDropInDir() string {
 	return path.Join(userSystemdDir, CrioServiceDropInDir)
 }
 
+// getSandboxCrioSocketPath returns the cri-o API socket path inside the sandbox.
+// The socket-bridge drop-in and EnsureCrioSocketSymlink both target this path.
+func getSandboxCrioSocketPath() string {
+	return filepath.Join(models.Paths().SandboxDir, "var/run/crio/crio.sock")
+}
+
+// CrioInstalled reports whether cri-o is installed on this host, detected via its
+// systemd unit symlink. Used by the startup socket-bridge migration to no-op on
+// hosts without a cluster. See issue #22.
+func CrioInstalled() (bool, error) {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return false, err
+	}
+	ci := installer.(*crioInstaller)
+	_, exists, err := ci.fileManager.PathExists(filepath.Join(userSystemdDir, CrioServiceFile))
+	return exists, err
+}
+
+// CrioSocketBridgePresent reports whether the cAdvisor socket-bridge drop-in host
+// symlink already exists, so the migration is idempotent. See issue #22.
+func CrioSocketBridgePresent() (bool, error) {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return false, err
+	}
+	ci := installer.(*crioInstaller)
+	_, exists, err := ci.fileManager.PathExists(path.Join(getSystemCrioServiceDropInDir(), CrioSocketDropInFile))
+	return exists, err
+}
+
+// ReconfigureCrioSocketDropIn writes the socket-bridge drop-in file and host
+// symlink for already-provisioned clusters whose IsConfigured guard would
+// otherwise skip Configure(). It reuses the same template render + write path as
+// a fresh install, so the drop-in content has a single source of truth. See issue #22.
+func ReconfigureCrioSocketDropIn() error {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return err
+	}
+	return installer.(*crioInstaller).configureCrioSocketDropIn()
+}
+
+// EnsureCrioSocketSymlink creates the default-path symlink
+// /var/run/crio/crio.sock -> <sandbox>/var/run/crio/crio.sock immediately, so
+// vendored cAdvisor finds the socket on its next sync without restarting the
+// running runtime. This mirrors what the drop-in's ExecStartPost does on start;
+// the migration does it directly to avoid a crio restart. See issue #22.
+func EnsureCrioSocketSymlink() error {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return err
+	}
+	ci := installer.(*crioInstaller)
+	if err := ci.fileManager.CreateDirectory(defaultCrioSocketDir, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s", defaultCrioSocketDir)
+	}
+	if err := ci.fileManager.CreateSymbolicLink(getSandboxCrioSocketPath(), defaultCrioSocketPath, true); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s symlink", defaultCrioSocketPath)
+	}
+	return nil
+}
+
 // generateExpectedCrioSocketDropIn returns the systemd drop-in content that bridges
 // cri-o's sandbox API socket to the default /var/run/crio/crio.sock path.
 //
@@ -473,10 +542,8 @@ func getSystemCrioServiceDropInDir() string {
 // a symlink at the default path on every cri-o start (surviving the tmpfs /run wipe on
 // reboot) and removes it on stop. See https://github.com/hashgraph/solo-weaver/issues/22.
 func (ci *crioInstaller) generateExpectedCrioSocketDropIn() (string, error) {
-	sandboxSocket := filepath.Join(models.Paths().SandboxDir, "var/run/crio/crio.sock")
-
 	content, err := templates.Render(crioSocketDropInTemplate, struct{ SandboxSocket string }{
-		SandboxSocket: sandboxSocket,
+		SandboxSocket: getSandboxCrioSocketPath(),
 	})
 	if err != nil {
 		return "", errorx.IllegalState.Wrap(err, "failed to render crio socket drop-in template")
