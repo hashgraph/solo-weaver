@@ -110,10 +110,21 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 
 	bn := cfg.Components.BlockNode
 	if bn != nil && bn.Enabled {
+		// statusz is optional (see BlockNodeComponentConfig.Statusz): when it is
+		// nil or its base_url is empty, the poll loop idles. EffectivePollInterval
+		// already applies the 5s default.
+		var statuszBaseURL string
+		var statuszPollInterval time.Duration
+		if bn.Statusz != nil {
+			statuszBaseURL = bn.Statusz.BaseURL
+			statuszPollInterval = bn.Statusz.EffectivePollInterval()
+		}
 		result, err := blocknode.NewComponent(blocknode.ComponentConfig{
 			TrafficShaperEnabled: bn.Monitors.TrafficShaper,
 			KubeconfigPath:       bn.Kubeconfig,
 			Namespace:            bn.Orbit,
+			StatuszBaseURL:       statuszBaseURL,
+			StatuszPollInterval:  statuszPollInterval,
 		})
 		if err != nil {
 			logComponentBuildSkipped("block-node", bn.Kubeconfig, err)

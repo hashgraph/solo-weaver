@@ -58,6 +58,10 @@ func (f *fakeDelegator) TCDetach(_ context.Context, veth string) error {
 	f.detached = append(f.detached, veth)
 	return nil
 }
+func (f *fakeDelegator) ReconcileShaper(context.Context, string) error { return nil }
+func (f *fakeDelegator) ReconcileShaperCheck(context.Context, string) (string, error) {
+	return "", nil
+}
 
 func newTestMonitor(r vethResolver, d *fakeDelegator) *TrafficShaperMonitor {
 	return &TrafficShaperMonitor{
