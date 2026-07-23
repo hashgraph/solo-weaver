@@ -165,6 +165,22 @@ tasks:
       - task: "build"
     cmds:
       - "docker build -t solo-weaver ."
+
+  hash:
+    desc: "Hash every released binary (CLI + daemon) for all OS/arch combinations"
+    deps:
+      - "build"
+    cmds:
+      - task: "hash:cli:all"
+      - task: "hash:daemon:all"
+
+  sign:
+    desc: "Sign every released binary (CLI + daemon) for all OS/arch combinations"
+    deps:
+      - "build"
+    cmds:
+      - task: "sign:cli:all"
+      - task: "sign:daemon:all"
   
   generate:
     # Declared `run: once` so multiple callers in the same invocation (e.g.

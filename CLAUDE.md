@@ -238,9 +238,9 @@ Detailed framework docs live in `docs/dev/`:
 ## Key Conventions
 
 - All dependencies are vendored in `/vendor` — run `go mod vendor` after updating `go.mod`
-- Builds produce two binaries at `bin/solo-provisioner-{OS}-{ARCH}` (CLI) and `bin/solo-provisioner-daemon-{OS}-{ARCH}` (daemon); `task build` produces both, and hashing/signing are done via the per-binary tasks `hash:cli:all`, `hash:daemon:all`, `sign:cli:all`, and `sign:daemon:all`
-- Each binary has its own release pipeline and tag namespace: CLI → `vX.Y.Z` driven by `.releaserc_cli.json` and `.github/workflows/flow-deploy-release-cli.yaml`; daemon → `daemon-vX.Y.Z` driven by `.releaserc_daemon.json` and `flow-deploy-release-daemon.yaml`. They can be released independently. Daemon releases also set `make_latest=false` on the GitHub release so the repo's "Latest" badge stays pinned to the CLI namespace.
-- Each binary embeds its own VERSION/COMMIT at `pkg/version/cli/` and `pkg/version/daemon/`; the `pkg/version` parent package exposes `Get`/`Number`/`Commit` whose values are registered at init time by whichever subpackage the running binary imports
+- Builds produce two binaries at `bin/solo-provisioner-{OS}-{ARCH}` (CLI) and `bin/solo-provisioner-daemon-{OS}-{ARCH}` (daemon); `task build` produces both. The top-level `task hash` / `task sign` aggregators cover both binaries (they fan out to the per-binary `hash:cli:all`/`hash:daemon:all` and `sign:cli:all`/`sign:daemon:all` tasks)
+- Both binaries are released together by a single pipeline under one tag namespace `vX.Y.Z`, driven by `.releaserc` and `.github/workflows/flow-deploy-release-artifact.yaml`. Each release attaches all CLI and daemon artifacts (binary, `.sha256`, and `.asc` GPG signatures) so CLI `vX.Y.Z` and daemon `vX.Y.Z` always ship together at the same version.
+- Version/commit are stamped into `github.com/automa-saga/version` at link time via `-ldflags` (see the `LDFLAGS` var in `Taskfile.yaml`); shared code reads the running binary's version through that package. Override with `VERSION=` on `task build`/`hash`/`sign` (defaults to `0.0.0`)
 - Deployment profiles: `local`, `perfnet`, `testnet`, `previewnet`, `mainnet`
 - PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/)
 - License headers (SPDX) are required on all source files — enforced by `task license:check`

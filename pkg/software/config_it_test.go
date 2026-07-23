@@ -24,6 +24,20 @@ func Test_Config_LoadInfrastructureCatalogYAML(t *testing.T) {
 		t.Run("Artifact_"+artifact.Name, func(t *testing.T) {
 			// Verify basic fields
 			require.NotEmpty(t, artifact.Name, "Artifact name should not be empty")
+
+			// Signed-release artifacts (e.g. solo-provisioner-daemon) resolve for
+			// any version and are verified by GPG signature, so they declare a
+			// signedRelease spec instead of an enumerated versions map.
+			if artifact.SignedRelease != nil {
+				require.NotEmpty(t, artifact.SignedRelease.URL,
+					"Signed-release artifact %s must declare a url", artifact.Name)
+				require.NotEmpty(t, artifact.SignedRelease.BinaryName,
+					"Signed-release artifact %s must declare a binaryName", artifact.Name)
+				require.Empty(t, artifact.Versions,
+					"Signed-release artifact %s must not enumerate versions", artifact.Name)
+				return
+			}
+
 			require.NotEmpty(t, artifact.Versions, "Artifact should have at least one version")
 
 			// Verify each version
@@ -130,27 +144,28 @@ func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
 	require.Error(t, err, "Should return error for non-existent software")
 }
 
-// Test_Config_DaemonAutoDownloadUnavailable_Integration locks in the contract that
-// the solo-provisioner-daemon binary has no embedded catalog entry. There is no
-// published daemon release yet, so the auto-download path (used when no --daemon-bin
-// is supplied) must fail rather than attempt a broken download. NewDaemonInstaller
-// resolves the catalog entry up front, so a missing entry surfaces as an error here.
-//
-// If/when a real daemon release with checksums is published and re-added to the
-// catalog, this test should be replaced with one asserting the entry resolves.
-func Test_Config_DaemonAutoDownloadUnavailable_Integration(t *testing.T) {
+// Test_Config_DaemonCatalogEntry_Integration verifies that the
+// solo-provisioner-daemon binary resolves from the catalog as a signed-release
+// artifact and that NewDaemonInstaller builds against it. The daemon is released
+// from this repo alongside the CLI, so its authenticity is established by verifying
+// the release's detached GPG signature against the embedded release key
+// (pkg/codesign) rather than a pinned per-version checksum; the entry therefore
+// carries a signedRelease spec and no enumerated versions map.
+func Test_Config_DaemonCatalogEntry_Integration(t *testing.T) {
 	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
-	_, err = config.GetHostArtifact(DaemonBinaryName)
-	require.Error(t, err,
-		"solo-provisioner-daemon must NOT have a catalog entry until a real release exists; "+
-			"its presence would re-enable a broken auto-download path")
+	artifact, err := config.GetHostArtifact(DaemonBinaryName)
+	require.NoError(t, err, "solo-provisioner-daemon must have a catalog entry")
+	require.NotNil(t, artifact.SignedRelease,
+		"daemon entry must be a signed-release artifact (verified by GPG signature, not checksum)")
+	require.NotEmpty(t, artifact.SignedRelease.URL, "daemon signedRelease.url must be set")
+	require.Equal(t, DaemonBinaryName, artifact.SignedRelease.BinaryName)
 
 	_, err = NewDaemonInstaller()
-	require.Error(t, err,
-		"NewDaemonInstaller must fail without a catalog entry so the install step fails "+
-			"cleanly when no --daemon-bin is supplied")
+	require.NoError(t, err,
+		"NewDaemonInstaller must succeed now that the catalog entry exists so the "+
+			"auto-download path is available when no --daemon-bin is supplied")
 }
 
 // Test_Config_GetDefaultVersion_Integration tests getting the default version from actual artifacts
@@ -167,6 +182,12 @@ func Test_Config_GetDefaultVersion_Integration(t *testing.T) {
 			defaultVersion, err := artifact.GetDefaultVersion()
 			require.NoError(t, err, "Should be able to get default version for %s", artifact.Name)
 			require.NotEmpty(t, defaultVersion, "Default version should not be empty for %s", artifact.Name)
+
+			// Signed-release artifacts resolve for any version and enumerate no
+			// versions map, so the default is not expected to be a member of it.
+			if artifact.SignedRelease != nil {
+				return
+			}
 
 			// Verify the default version exists in the versions map
 			_, exists := artifact.Versions[Version(defaultVersion)]

@@ -15,7 +15,17 @@
           { "path": "bin/solo-provisioner-linux-arm64",            "label": "solo-provisioner (linux/arm64)" },
           { "path": "bin/solo-provisioner-linux-arm64.sha256",     "label": "solo-provisioner (linux/arm64) SHA256" },
           { "path": "bin/solo-provisioner-linux-arm64.sha256.asc", "label": "solo-provisioner (linux/arm64) SHA256 signature" },
-          { "path": "bin/solo-provisioner-linux-arm64.asc",        "label": "solo-provisioner (linux/arm64) signature" }
+          { "path": "bin/solo-provisioner-linux-arm64.asc",        "label": "solo-provisioner (linux/arm64) signature" },
+
+          { "path": "bin/solo-provisioner-daemon-linux-amd64",            "label": "solo-provisioner-daemon (linux/amd64)" },
+          { "path": "bin/solo-provisioner-daemon-linux-amd64.sha256",     "label": "solo-provisioner-daemon (linux/amd64) SHA256" },
+          { "path": "bin/solo-provisioner-daemon-linux-amd64.sha256.asc", "label": "solo-provisioner-daemon (linux/amd64) SHA256 signature" },
+          { "path": "bin/solo-provisioner-daemon-linux-amd64.asc",        "label": "solo-provisioner-daemon (linux/amd64) signature" },
+
+          { "path": "bin/solo-provisioner-daemon-linux-arm64",            "label": "solo-provisioner-daemon (linux/arm64)" },
+          { "path": "bin/solo-provisioner-daemon-linux-arm64.sha256",     "label": "solo-provisioner-daemon (linux/arm64) SHA256" },
+          { "path": "bin/solo-provisioner-daemon-linux-arm64.sha256.asc", "label": "solo-provisioner-daemon (linux/arm64) SHA256 signature" },
+          { "path": "bin/solo-provisioner-daemon-linux-arm64.asc",        "label": "solo-provisioner-daemon (linux/arm64) signature" }
         ]
       }
     ]
@@ -24,10 +34,10 @@
     { "breaking": true, "release": "minor" }
   ],
   "verifyRelease": [
-    ["@semantic-release/exec", { "cmd": "task hash:cli:all VERSION=${nextRelease.version}" }]
+    ["@semantic-release/exec", { "cmd": "task hash VERSION=${nextRelease.version}" }]
   ],
   "prepare": [
-    ["@semantic-release/exec", { "cmd": "task sign:cli:all VERSION=${nextRelease.version}" }]
+    ["@semantic-release/exec", { "cmd": "task sign VERSION=${nextRelease.version}" }]
   ],
   "branches": [
     { "name": "main" },

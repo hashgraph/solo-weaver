@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: "Deploy Release Artifact (Daemon)"
+name: "Deploy Release Artifact"
 on:
   workflow_dispatch:
     inputs:
@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   create-github-release:
-    name: Github / Release / Daemon
+    name: Github / Release
     runs-on: solo-linux-medium
     steps:
       - name: Harden Runner
@@ -102,7 +102,7 @@ jobs:
           JSON
           npm install --no-audit --no-fund
 
-      - name: Publish Semantic Release (Daemon)
+      - name: Publish Semantic Release
         id: semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
@@ -114,16 +114,16 @@ jobs:
             FLAGS="--dry-run"
           fi
 
-          npx semantic-release ${FLAGS} --extends "$(pwd)/.releaserc_daemon.json" 2>&1 | tee semantic-release-output.txt
+          npx semantic-release ${FLAGS} 2>&1 | tee semantic-release-output.txt
 
           # Extract the next version from semantic-release output for dry-run
           if [[ "${{ inputs.dry-run-enabled }}" == "true" ]]; then
             NEXT_VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\(-[0-9A-Za-z.-]\{1,\}\)\{0,1\}\).*/\1/p' semantic-release-output.txt || echo "")
             if [[ -n "$NEXT_VERSION" ]]; then
               echo "next-version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run: Next daemon release would be daemon-v${NEXT_VERSION}"
+              echo "::notice::Dry-run: Next release would be v${NEXT_VERSION}"
             else
-              echo "::notice::Dry-run: No new daemon release would be created"
+              echo "::notice::Dry-run: No new release would be created"
             fi
           fi
 
@@ -136,21 +136,21 @@ jobs:
             VERSION="${{ steps.semantic-release.outputs.next-version }}"
             if [[ -n "$VERSION" ]]; then
               echo "number=${VERSION}" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run mode - predicted daemon version: ${VERSION}"
+              echo "::notice::Dry-run mode - predicted version: ${VERSION}"
             else
               echo "number=dry-run-no-release" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Dry-run mode - no daemon release would be created"
+              echo "::notice::Dry-run mode - no release would be created"
             fi
           else
-            # Version is stamped into the binary via -ldflags at build time; there is
+            # Version is stamped into the binaries via -ldflags at build time; there is
             # no longer a VERSION file to read. Recover the released version from the
             # semantic-release log (printed in both dry-run and real runs).
             VERSION=$(sed -n 's/.*The next release version is \([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\(-[0-9A-Za-z.-]\{1,\}\)\{0,1\}\).*/\1/p' semantic-release-output.txt || echo "")
             if [[ -n "$VERSION" ]]; then
               echo "number=${VERSION}" >> "${GITHUB_OUTPUT}"
-              echo "::notice::Released daemon version: ${VERSION}"
+              echo "::notice::Released version: ${VERSION}"
             else
               echo "number=no-release" >> "${GITHUB_OUTPUT}"
-              echo "::notice::No new daemon release was created"
+              echo "::notice::No new release was created"
             fi
           fi

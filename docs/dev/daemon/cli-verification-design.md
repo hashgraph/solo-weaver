@@ -17,7 +17,7 @@ time**.
 ## Trust anchor
 
 The release pipeline already publishes, per binary (`taskfiles/cli.yaml`,
-`taskfiles/daemon.yaml`, `.releaserc_cli.json`):
+`taskfiles/daemon.yaml`, `.releaserc`):
 
 - `<binary>`            — the binary
 - `<binary>.sha256`     — checksum
@@ -25,11 +25,10 @@ The release pipeline already publishes, per binary (`taskfiles/cli.yaml`,
 - `<binary>.asc`        — GPG detached signature of the binary
 
 The trust anchor is therefore the **GPG public key**, not the bare SHA. The key is
-stable across the independent CLI (`vX.Y.Z`) and daemon (`daemon-vX.Y.Z`) release
-cadences, so it is embeddable at build time; a checksum is not (a daemon cannot
-know the SHA of a CLI version released after it, and a self-written checksum is
-self-attested). We embed the key; we do not embed or trust host-stored checksums
-as an authenticity control.
+stable across releases, so it is embeddable at build time; a checksum is not (a
+binary cannot know the SHA of a version released after it, and a self-written
+checksum is self-attested). We embed the key; we do not embed or trust host-stored
+checksums as an authenticity control.
 
 ### Key model: embedded primary public key + rotatable signing subkeys (recommended)
 
@@ -231,7 +230,7 @@ To support this design it must:
 2. **Publish the public key block as a release asset** (e.g.
    `solo-provisioner-pubkey.asc` containing the primary + current subkeys with
    binding signatures), alongside the existing `<binary>.asc`. Add it to
-   `.releaserc_cli.json` / `.releaserc_daemon.json` assets.
+   the `.releaserc` assets.
 3. **Keep signing the binary directly** (`<binary>.asc`) — that is what the daemon
    verifies. The `.sha256` / `.sha256.asc` remain for integrity/manual checks.
 4. **Export the primary public key** into the repo (`pkg/codesign` `//go:embed`
