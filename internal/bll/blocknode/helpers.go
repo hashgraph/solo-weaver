@@ -173,6 +173,7 @@ func resolveBlocknodeEffectiveInputs(
 			LinkRate:              inputs.Custom.LinkRate,
 			ShapeOverrides:        inputs.Custom.ShapeOverrides,
 			TrafficShapingEnabled: inputs.Custom.TrafficShapingEnabled,
+			Timeout:               inputs.Custom.Timeout,
 		},
 	}
 
