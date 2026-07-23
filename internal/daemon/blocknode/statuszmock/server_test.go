@@ -38,7 +38,7 @@ func TestHandler_StaticRoster(t *testing.T) {
 			{Remote: statuszmock.Endpoint{Address: "10.10.1.0/24", Port: "*"}, Category: "publisher"},
 		},
 		Outbound: []statuszmock.Connection{
-			{Remote: statuszmock.Endpoint{Address: "10.30.5.7", Port: "43473"}, Category: "peer_bn"},
+			{Remote: statuszmock.Endpoint{Address: "10.30.5.7", Port: "43473"}, Category: "partner"},
 		},
 	}
 	srv := httptest.NewServer(statuszmock.Handler(statuszmock.StaticRoster(roster)))
@@ -50,7 +50,7 @@ func TestHandler_StaticRoster(t *testing.T) {
 
 	out := decode(t, srv, "/statusz/outbound-clients")
 	require.Len(t, out, 1)
-	assert.Equal(t, "peer_bn", out[0]["category"])
+	assert.Equal(t, "partner", out[0]["category"])
 }
 
 func TestHandler_EmptyRosterReturnsEmptyArray(t *testing.T) {

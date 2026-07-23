@@ -42,24 +42,28 @@ exactly, and each `--stamp` references one of the fixed class names (`publisher`
 creates the `inet weaver` table:
 
 ```bash
-sudo solo-provisioner network policy create --name bn-publisher  --stamp publisher --ports 40840
-sudo solo-provisioner network policy create --name bn-partner    --stamp partner   --ports 40980,40981
-sudo solo-provisioner network policy create --name bn-restricted --deny
+sudo solo-provisioner network policy create --name bn-publisher   --stamp publisher --ports 40840
+sudo solo-provisioner network policy create --name bn-partner-out --stamp partner   --ports 40980,40981
+sudo solo-provisioner network policy create --name bn-restricted  --deny
 sudo solo-provisioner network policy create --name bn-backfill    --stamp reserve-egress --reply-stamp backfill-response
 ```
 
-| category (statusz) | policy / nft set | create flags |
+| statusz (direction, category) | policy / nft set | create flags |
 |---|---|---|
-| publisher | bn-publisher | `--stamp publisher --ports 40840` |
-| partner | bn-partner | `--stamp partner --ports 40980,40981` |
-| restricted | bn-restricted | `--deny` |
-| peer_bn | bn-backfill | `--stamp reserve-egress --reply-stamp backfill-response` (compound ip:port) |
+| inbound publisher | bn-publisher | `--stamp publisher --ports 40840` |
+| inbound partner | bn-partner-out | `--stamp partner --ports 40980,40981` |
+| inbound restricted | bn-restricted | `--deny` |
+| outbound partner | bn-backfill | `--stamp reserve-egress --reply-stamp backfill-response` (compound ip:port) |
+
+The backfill peers appear as **outbound** `partner` endpoints — there is no
+`peer_bn` category. Inbound `partner` and outbound `partner` map to different
+sets.
 
 Confirm the table and its sets exist and are empty (no roster applied yet):
 
 ```bash
 sudo nft list table inet weaver
-# expect sets: bn-publisher, bn-partner, bn-restricted, bn-backfill (empty)
+# expect sets: bn-publisher, bn-partner-out, bn-restricted, bn-backfill (empty)
 ```
 
 ## Step 2 - start the mock statusz server
@@ -74,7 +78,7 @@ cat > roster.json <<'JSON'
     { "remote": {"address": "10.20.1.0/24", "port": "*"}, "category": "partner" }
   ],
   "outbound": [
-    { "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "peer_bn" }
+    { "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "partner" }
   ]
 }
 JSON
@@ -158,9 +162,9 @@ watch -n1 'sudo nft list table inet weaver | sed -n "/set bn-/,/}/p"'
 
 Within one poll interval the sets fill from the roster:
 
-- `bn-publisher` -> `10.10.1.0/24`
-- `bn-partner`   -> `10.20.1.0/24`
-- `bn-backfill`  -> `10.30.5.7 . 43473`
+- `bn-publisher`   -> `10.10.1.0/24`
+- `bn-partner-out` -> `10.20.1.0/24`
+- `bn-backfill`    -> `10.30.5.7 . 43473`
 
 Now edit `roster.json` (no restart needed - the mock re-reads it, the daemon
 re-polls it):
@@ -178,7 +182,7 @@ cat > roster.json <<'JSON'
 JSON
 ```
 
-Within ~5s: `bn-publisher` gains `10.11.0.0/16`, `bn-partner` empties, and
+Within ~5s: `bn-publisher` gains `10.11.0.0/16`, `bn-partner-out` empties, and
 `bn-backfill` empties. Stop the mock server (or block its port) and confirm the
 sets are **left as-is** - an outage keeps the last-good state, it does not drop
 rules.
@@ -223,17 +227,19 @@ otherwise-idle class be borrowed against. Consequences to look for:
 
 ### Category VMs and roster
 
-| VM | Roster category | Exercises |
+| VM | Roster placement | Exercises |
 |---|---|---|
-| `solo-weaver-cn` | `publisher` | ingress publisher class 1:10 |
-| `solo-weaver-partner` | `partner` | egress partner class 1:40 |
-| `solo-weaver-public` | (unmapped `public`) | egress public class 1:50 |
-| `solo-weaver-peer` | `peer_bn` | backfill: egress 1:60 req / ingress 1:20 resp |
+| `solo-weaver-cn` | inbound `publisher` | ingress publisher class 1:10 |
+| `solo-weaver-partner` | inbound `partner` | egress partner class 1:40 |
+| `solo-weaver-public` | (recognized-but-unmapped `public`) | egress public class 1:50 |
+| `solo-weaver-peer` | outbound `partner` | backfill: egress 1:60 req / ingress 1:20 resp |
 
-Put each VM's address in `roster.json` under its category (publisher/partner/
-peer_bn); the public VM stays **unmapped** (a `public` source is any-source, not
-a set member, so it falls through to the public class). Reload is automatic — the
-mock re-reads the file, the daemon re-polls it.
+Put each VM's address in `roster.json` under the right direction and category:
+the publisher and partner clients under `inbound`, the backfill peer under
+`outbound` with category `partner`. The public VM stays **unmapped** (a `public`
+source is any-source, not a set member, so it falls through to the public
+class). Reload is automatic — the mock re-reads the file, the daemon re-polls
+it.
 
 ### iperf3 setup
 

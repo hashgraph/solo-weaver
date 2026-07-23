@@ -14,7 +14,7 @@
 //
 //	{
 //	  "inbound":  [ { "remote": {"address":"10.10.1.0/24","port":"*"}, "category":"publisher" } ],
-//	  "outbound": [ { "remote": {"address":"10.30.5.7","port":"43473"}, "category":"peer_bn" } ]
+//	  "outbound": [ { "remote": {"address":"10.30.5.7","port":"43473"}, "category":"partner" } ]
 //	}
 package main
 

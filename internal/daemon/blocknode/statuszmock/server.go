@@ -10,8 +10,9 @@
 // The wire contract mirrors block-node/api/network-data.proto (a `NetworkData`
 // with `active_endpoints`). It is defined independently here so the mock stays
 // decoupled from the daemon's decode types and can serve the contract on its
-// own. The contract is PROVISIONAL — confirming it with the BN team is a
-// blocking dependency.
+// own. The category vocabulary is the real BN contract: partner, publisher,
+// public, restricted. Peer block nodes this BN backfills from appear as OUTBOUND
+// partner endpoints, not a distinct category.
 package statuszmock
 
 import (
