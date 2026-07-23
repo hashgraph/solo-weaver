@@ -8,8 +8,12 @@
 // docs/dev/daemon/daemon-architecture.md and the BN traffic-shaper design's
 // daemon-vs-CLI separation. This package is the ONLY place in the daemon's
 // import closure that reaches for os/exec, and it execs nothing but sudo +
-// solo-provisioner: never kubectl/helm/systemctl/nft/tc directly. The sudoers
-// grant (internal/templates/files/weaver/sudoers) is the single escalation path
+// solo-provisioner: never kubectl/helm/systemctl/nft/tc directly. Almost every
+// delegation runs solo-provisioner under sudo; the sole exception is the
+// traffic-shaper poll loop's unprivileged `reconcile-shaper --check` digest
+// probe, which execs solo-provisioner directly (no sudo) because the check path
+// touches no privileged state. The sudoers grant
+// (internal/templates/files/weaver/sudoers) remains the single escalation path
 // and is restricted to the solo-provisioner binary.
 //
 // The delegation is synchronous (run, wait, capture output) — distinct from the
@@ -18,6 +22,7 @@ package privexec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -75,6 +80,20 @@ type Delegator interface {
 	// best-effort teardown of the $VETH HTB hierarchy on pod delete or before a
 	// clean re-attach.
 	TCDetach(ctx context.Context, veth string) error
+
+	// ReconcileShaper delegates `block node reconcile-shaper --statusz-url <url>`
+	// under sudo — the traffic-shaper poll loop's privileged apply path. The
+	// worker fetches statusz, diffs the live nft policy sets, and rewrites only
+	// the policies whose membership changed.
+	ReconcileShaper(ctx context.Context, statuszURL string) error
+
+	// ReconcileShaperCheck delegates the unprivileged
+	// `block node reconcile-shaper --statusz-url <url> --check --output json`
+	// probe (no sudo, no nft) and returns the desired-membership digest. The
+	// poll loop calls it every tick and only invokes the privileged
+	// ReconcileShaper when the digest changed, so a steady-state roster costs no
+	// root escalation.
+	ReconcileShaperCheck(ctx context.Context, statuszURL string) (digest string, err error)
 }
 
 // execDelegator is the production Delegator. Its resolution and exec seams are
@@ -166,6 +185,77 @@ func (d *execDelegator) TCDetach(ctx context.Context, veth string) error {
 	return d.tcAttach(ctx, veth, true)
 }
 
+func (d *execDelegator) ReconcileShaper(ctx context.Context, statuszURL string) error {
+	if strings.TrimSpace(statuszURL) == "" {
+		return &daemonkit.ProbeError{
+			Reason:     "StatuszURLEmpty",
+			Message:    "block node reconcile-shaper requires a non-empty statusz URL",
+			Resolution: "this is a daemon bug; report it with the daemon logs",
+		}
+	}
+	_, err := d.Run(ctx, "block", "node", "reconcile-shaper", "--statusz-url", statuszURL)
+	return err
+}
+
+// ReconcileShaperCheck execs the reconcile-shaper worker's unprivileged --check
+// path directly (not under sudo): it fetches statusz and prints the
+// desired-membership digest as JSON without reading or writing any nft state, so
+// no escalation is needed. It parses `desired-digest` from that JSON and returns
+// it. The daemon-facing name of the CLI is resolved the same way Run resolves
+// it, so the sibling-preference and granted-path fallbacks apply identically.
+func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL string) (string, error) {
+	if strings.TrimSpace(statuszURL) == "" {
+		return "", &daemonkit.ProbeError{
+			Reason:     "StatuszURLEmpty",
+			Message:    "block node reconcile-shaper --check requires a non-empty statusz URL",
+			Resolution: "this is a daemon bug; report it with the daemon logs",
+		}
+	}
+
+	cliBin, err := d.resolveCLI()
+	if err != nil {
+		return "", err
+	}
+
+	// No sudo: --check reads only statusz over HTTP and touches no nft state, so
+	// it runs as the unprivileged daemon user. --output json makes the digest
+	// machine-parseable.
+	args := []string{"block", "node", "reconcile-shaper", "--statusz-url", statuszURL, "--check", "--output", "json"}
+	out, err := d.output(ctx, cliBin, args...)
+	if err != nil {
+		return "", &daemonkit.ProbeError{
+			Reason:     "ReconcileShaperCheckFailed",
+			Message:    unprivilegedExecMessage(cliBin, args, err),
+			Resolution: "reproduce manually as the daemon user: " + cliBin + " " + strings.Join(args, " "),
+			Err:        err,
+		}
+	}
+
+	var res struct {
+		Digest string `json:"desired-digest"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		return "", &daemonkit.ProbeError{
+			Reason:     "ReconcileShaperCheckParseFailed",
+			Message:    "could not parse reconcile-shaper --check --output json digest",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+			Err:        err,
+		}
+	}
+	// A missing or empty desired-digest means the CLI's --check contract drifted
+	// (the field vanished or renamed). Fail fast: an empty digest would otherwise
+	// be treated as a real membership value by the poll loop's digest gate and
+	// silently suppress the privileged apply until the next forced resync.
+	if res.Digest == "" {
+		return "", &daemonkit.ProbeError{
+			Reason:     "ReconcileShaperCheckEmptyDigest",
+			Message:    "reconcile-shaper --check returned an empty desired-digest",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	return res.Digest, nil
+}
+
 // tcAttach delegates the `block node tc-attach --veth <veth> [--detach]` exec.
 // The veth-name format is validated by the CLI/shape layer the exec reaches;
 // here we only guard against an empty name so a daemon bug surfaces as a clear
@@ -218,7 +308,20 @@ func (d *execDelegator) resolveCLI() (string, error) {
 // privilegedExecMessage builds the human-readable failure message, preferring
 // the CLI's stderr (available on a non-zero exit) over the raw exec error.
 func privilegedExecMessage(cliBin string, args []string, err error) string {
-	base := "sudo " + cliBin + " " + strings.Join(args, " ") + " failed"
+	return execMessage("sudo "+cliBin, args, err)
+}
+
+// unprivilegedExecMessage is privilegedExecMessage's no-sudo counterpart for the
+// reconcile-shaper --check probe.
+func unprivilegedExecMessage(cliBin string, args []string, err error) string {
+	return execMessage(cliBin, args, err)
+}
+
+// execMessage builds the human-readable failure message for a prefix (the sudo+
+// CLI or the bare CLI) and argv, preferring the CLI's stderr (available on a
+// non-zero exit) over the raw exec error.
+func execMessage(prefix string, args []string, err error) string {
+	base := prefix + " " + strings.Join(args, " ") + " failed"
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {

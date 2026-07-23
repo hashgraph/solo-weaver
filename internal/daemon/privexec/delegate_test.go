@@ -142,6 +142,116 @@ func TestTCAttach_EmptyVethIsGuarded(t *testing.T) {
 	require.Empty(t, call.name, "exec must not run when the veth name is empty")
 }
 
+func TestReconcileShaper_BuildsSudoArgv(t *testing.T) {
+	d, call := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		nil, nil,
+	)
+
+	require.NoError(t, d.ReconcileShaper(context.Background(), "http://127.0.0.1:8080"))
+	require.Equal(t, "/usr/bin/sudo", call.name)
+	require.Equal(t, []string{
+		"-n",
+		"/opt/solo/weaver/bin/solo-provisioner",
+		"block", "node", "reconcile-shaper", "--statusz-url", "http://127.0.0.1:8080",
+	}, call.args)
+}
+
+func TestReconcileShaper_EmptyURLIsGuarded(t *testing.T) {
+	d, call := fakeDelegator([]string{"/usr/bin/sudo", "/usr/local/bin/solo-provisioner"}, "", nil, nil)
+
+	err := d.ReconcileShaper(context.Background(), "  ")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "StatuszURLEmpty", pe.Reason)
+	require.Empty(t, call.name, "exec must not run when the statusz URL is empty")
+}
+
+func TestReconcileShaperCheck_BuildsUnprivilegedArgvAndParsesDigest(t *testing.T) {
+	// Deliberately omit sudo from the existing paths: the --check probe must
+	// resolve and exec the CLI directly, never sudo.
+	d, call := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"desired-digest":"abc123","desired":{}}`), nil,
+	)
+
+	digest, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err)
+	require.Equal(t, "abc123", digest)
+
+	require.Equal(t, "/opt/solo/weaver/bin/solo-provisioner", call.name,
+		"the check probe execs the CLI directly, not sudo")
+	require.Equal(t, []string{
+		"block", "node", "reconcile-shaper",
+		"--statusz-url", "http://127.0.0.1:8080",
+		"--check", "--output", "json",
+	}, call.args)
+	require.NotContains(t, call.args, "-n", "no sudo non-interactive flag on the unprivileged path")
+}
+
+func TestReconcileShaperCheck_EmptyURLIsGuarded(t *testing.T) {
+	d, call := fakeDelegator([]string{"/usr/local/bin/solo-provisioner"}, "", nil, nil)
+
+	_, err := d.ReconcileShaperCheck(context.Background(), "")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "StatuszURLEmpty", pe.Reason)
+	require.Empty(t, call.name, "exec must not run when the statusz URL is empty")
+}
+
+func TestReconcileShaperCheck_BadJSONReportsParseError(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte("not json at all"), nil,
+	)
+
+	_, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "ReconcileShaperCheckParseFailed", pe.Reason)
+}
+
+func TestReconcileShaperCheck_EmptyDigestReportsContractError(t *testing.T) {
+	// Well-formed JSON but no (or empty) desired-digest — the --check contract
+	// drifted. Must fail fast rather than return "".
+	d, _ := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"desired":{}}`), nil,
+	)
+
+	_, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "ReconcileShaperCheckEmptyDigest", pe.Reason)
+}
+
+func TestReconcileShaperCheck_ExecFailureReportsProbeError(t *testing.T) {
+	exitErr := runFailingCommand(t)
+	exitErr.Stderr = []byte("statusz unreachable\n")
+
+	d, _ := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		nil, exitErr,
+	)
+
+	_, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "ReconcileShaperCheckFailed", pe.Reason)
+	require.Contains(t, pe.Message, "statusz unreachable")
+	require.ErrorIs(t, err, exitErr, "underlying exec error must remain unwrappable")
+}
+
 func TestResolveCLI_PrefersDaemonSibling(t *testing.T) {
 	// Both the sibling and a granted path exist; the sibling wins.
 	d, _ := fakeDelegator(
