@@ -22,6 +22,16 @@ import (
 // finalizer.
 const HelmOwnedServiceDeleteTimeout = 30 * time.Second
 
+// resolveHelmTimeout picks the operator-supplied install/upgrade timeout
+// (from --timeout) when set, falling back to helm.DefaultTimeout (5m) for any
+// caller that leaves BlockNodeInputs.Timeout unset (zero) or negative.
+func (m *Manager) resolveHelmTimeout() time.Duration {
+	if m.blockNodeInputs.Timeout > 0 {
+		return m.blockNodeInputs.Timeout
+	}
+	return helm.DefaultTimeout
+}
+
 // InstallChart installs the block node helm chart
 func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, error) {
 	isInstalled, err := m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
@@ -45,7 +55,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 			CreateNamespace: false,
 			Atomic:          true,
 			Wait:            true,
-			Timeout:         helm.DefaultTimeout,
+			Timeout:         m.resolveHelmTimeout(),
 		},
 	)
 	if err != nil {
@@ -89,7 +99,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 			ReuseValues: reuseValues,
 			Atomic:      true,
 			Wait:        true,
-			Timeout:     helm.DefaultTimeout,
+			Timeout:     m.resolveHelmTimeout(),
 		},
 	)
 	if err != nil {

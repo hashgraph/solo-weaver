@@ -176,6 +176,7 @@ sudo solo-provisioner block node install \
 | `--values`, `-f`          | Custom Helm values file                                                                                                               |
 | `--chart-repo`            | Helm chart repository URL                                                                                                             |
 | `--chart-version`         | Specific chart version                                                                                                                |
+| `--timeout`               | Timeout for the block node Helm install/upgrade, as a Go duration (e.g. `10m`, `600s`, `1h`). The operation is rolled back (`--atomic`) if it exceeds this budget (default: `5m0s`) |
 | `--namespace`             | Kubernetes namespace                                                                                                                  |
 | `--release-name`          | Helm release name                                                                                                                     |
 | `--base-path`             | Base path for all storage                                                                                                             |
@@ -307,6 +308,7 @@ sudo solo-provisioner block node upgrade \
 |---------------------|--------------------------------------------------------------|---------|
 | `--no-reuse-values` | Don't reuse previous release values                          | `false` |
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved | `false` |
+| `--timeout`         | Timeout for the block node Helm install/upgrade, as a Go duration (e.g. `10m`, `600s`, `1h`). The operation is rolled back (`--atomic`) if it exceeds this budget | `5m0s` |
 
 #### Reset Block Node
 
