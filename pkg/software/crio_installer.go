@@ -525,7 +525,15 @@ func EnsureCrioSocketSymlink() error {
 	if err := ci.fileManager.CreateDirectory(defaultCrioSocketDir, true); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create %s", defaultCrioSocketDir)
 	}
-	if err := ci.fileManager.CreateSymbolicLink(getSandboxCrioSocketPath(), defaultCrioSocketPath, true); err != nil {
+	// The source is cri-o's unix socket, not a regular file or directory, so it
+	// cannot go through fileManager.CreateSymbolicLink (which only accepts those
+	// source types). A symlink's target type is irrelevant to link creation, so
+	// create it directly — mirroring the drop-in's `ExecStartPost ... ln -sfn`.
+	// Remove any stale link first so the create is idempotent. See issue #22.
+	if err := os.Remove(defaultCrioSocketPath); err != nil && !os.IsNotExist(err) {
+		return errorx.IllegalState.Wrap(err, "failed to remove existing %s", defaultCrioSocketPath)
+	}
+	if err := os.Symlink(getSandboxCrioSocketPath(), defaultCrioSocketPath); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create %s symlink", defaultCrioSocketPath)
 	}
 	return nil
