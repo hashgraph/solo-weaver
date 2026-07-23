@@ -151,7 +151,15 @@ type BlockNodeState struct {
 	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
 	PluginPreset      string                  `yaml:"pluginPreset,omitempty" json:"pluginPreset,omitempty"`
 	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
-	LastSync          htime.Time              `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	// TrafficShapingDisabled records an install-time opt-out
+	// (--traffic-shaping-enabled=false) that cannot be recovered from the Helm
+	// release or the live cluster. Negative polarity so the zero value means
+	// "enabled", matching HostConfig.Disabled's convention. Only `block node
+	// install` ever writes this (see patchBlockNodeStateAfterInstall); reconfigure
+	// and upgrade read it to durably skip re-provisioning tc shaping for a block
+	// node that was deliberately installed without it.
+	TrafficShapingDisabled bool       `yaml:"trafficShapingDisabled,omitempty" json:"trafficShapingDisabled,omitempty"`
+	LastSync               htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.

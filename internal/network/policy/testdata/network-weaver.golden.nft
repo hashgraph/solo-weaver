@@ -33,6 +33,9 @@ table inet weaver {
 		ip saddr 10.4.0.0/24 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
 		ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
 
+		# Unclassified pod egress (no meta priority; HTB default class).
+		ip saddr 10.4.0.0/24 ip daddr != 10.4.0.0/24 accept
+
 		ct state established,related accept
 		drop
 	}

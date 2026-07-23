@@ -112,7 +112,35 @@ type ArtifactMetadata struct {
 	Name     string                     `yaml:"name"`
 	Default  Version                    `yaml:"default"`
 	Versions map[Version]VersionDetails `yaml:"versions"`
-	platform *platformProvider
+	// SignedRelease, when set, marks a self-published artifact whose authenticity
+	// is verified by an embedded GPG signature (pkg/codesign) rather than a pinned
+	// per-version checksum. A released binary cannot carry the checksum of a
+	// version published after it, so such artifacts declare a templated URL that
+	// resolves for any version and are verified against their detached signature;
+	// the versions map is not enumerated.
+	SignedRelease *SignedReleaseSpec `yaml:"signedRelease,omitempty"`
+	platform      *platformProvider
+}
+
+// SignedReleaseSpec describes a self-published, signature-verified artifact.
+type SignedReleaseSpec struct {
+	// URL is the download URL template for the binary, parameterised on
+	// {{.OS}}, {{.ARCH}}, and {{.VERSION}}.
+	URL string `yaml:"url"`
+	// BinaryName is the filename the downloaded binary is installed as.
+	BinaryName string `yaml:"binaryName"`
+	// SignatureURLSuffix locates the detached OpenPGP signature relative to the
+	// binary URL. Defaults to ".asc" when empty.
+	SignatureURLSuffix string `yaml:"signatureUrlSuffix,omitempty"`
+}
+
+// SigURLSuffix returns the configured detached-signature URL suffix, defaulting
+// to ".asc".
+func (s *SignedReleaseSpec) SigURLSuffix() string {
+	if s.SignatureURLSuffix == "" {
+		return ".asc"
+	}
+	return s.SignatureURLSuffix
 }
 
 // VersionDetails represents the structure for a specific versionToBeInstalled
@@ -392,6 +420,21 @@ func (c *InfrastructureCatalog) ClusterNames() []string {
 func (c *InfrastructureCatalog) validate() error {
 	for i := range c.Host {
 		host := &c.Host[i]
+		if host.SignedRelease != nil {
+			if host.SignedRelease.URL == "" {
+				return errorx.IllegalFormat.New("host[%s]: signedRelease.url is required", host.Name)
+			}
+			if host.SignedRelease.BinaryName == "" {
+				return errorx.IllegalFormat.New("host[%s]: signedRelease.binaryName is required", host.Name)
+			}
+			// A signed-release artifact resolves for any version via its URL
+			// template; enumerating a versions map alongside it is ambiguous
+			// (which source is authoritative?), so reject the combination.
+			if len(host.Versions) > 0 {
+				return errorx.IllegalFormat.New(
+					"host[%s]: signedRelease artifacts must not also declare a versions map", host.Name)
+			}
+		}
 		if _, err := host.GetDefaultVersion(); err != nil {
 			return errorx.IllegalFormat.Wrap(err, "host[%s]", host.Name)
 		}
@@ -502,8 +545,12 @@ func (si *ArtifactMetadata) GetDefaultVersion() (string, error) {
 	if si.Default == "" {
 		return "", errorx.IllegalFormat.New("artifact %s has no default version declared", si.Name)
 	}
-	if _, ok := si.Versions[si.Default]; !ok {
-		return "", NewVersionNotFoundError(si.Name, string(si.Default))
+	// Signed-release artifacts resolve for any version and do not enumerate a
+	// versions map, so the default need not be a member of it.
+	if si.SignedRelease == nil {
+		if _, ok := si.Versions[si.Default]; !ok {
+			return "", NewVersionNotFoundError(si.Name, string(si.Default))
+		}
 	}
 	return string(si.Default), nil
 }

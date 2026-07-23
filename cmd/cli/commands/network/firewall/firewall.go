@@ -23,6 +23,8 @@ import (
 var (
 	flagMgmtCIDRs      []string
 	flagMgmtCIDR       string
+	flagBlockedCIDRs   []string
+	flagBlockedCIDR    string
 	flagInClusterPorts []int
 	flagInClusterPort  int
 	flagSSHPort        int

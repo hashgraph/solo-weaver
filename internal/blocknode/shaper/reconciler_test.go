@@ -224,9 +224,9 @@ func TestReconciler_Apply_AppliesOnlyChangedPolicies(t *testing.T) {
 		outbound: NetworkData{},
 	}
 	lister := newFakeLister()
-	// bn-partner already matches desired; bn-publisher differs; bn-restricted and
-	// bn-backfill are seeded empty and live-empty → no change.
-	lister.elements["bn-partner"] = []string{"10.2.0.1"}
+	// bn-partner-out already matches desired; bn-publisher differs; bn-restricted
+	// and bn-backfill are seeded empty and live-empty → no change.
+	lister.elements["bn-partner-out"] = []string{"10.2.0.1"}
 	lister.elements["bn-publisher"] = []string{"10.9.9.9"}
 
 	applier := &fakeApplier{applied: true}
@@ -241,7 +241,7 @@ func TestReconciler_Apply_AppliesOnlyChangedPolicies(t *testing.T) {
 
 	assert.Equal(t, []string{"bn-publisher"}, res.Applied)
 	// The other three owned policies are reported unchanged.
-	assert.Equal(t, []string{"bn-backfill", "bn-partner", "bn-restricted"}, res.Unchanged)
+	assert.Equal(t, []string{"bn-backfill", "bn-partner-out", "bn-restricted"}, res.Unchanged)
 	assert.NotEmpty(t, res.Digest)
 }
 
@@ -274,7 +274,7 @@ func TestReconciler_Apply_LockHeldReportsNothingApplied(t *testing.T) {
 	// The changed policy must not silently vanish from the result: it is
 	// reported skipped (still out of sync), not folded into unchanged.
 	assert.Equal(t, []string{"bn-publisher"}, res.Skipped)
-	assert.Equal(t, []string{"bn-backfill", "bn-partner", "bn-restricted"}, res.Unchanged)
+	assert.Equal(t, []string{"bn-backfill", "bn-partner-out", "bn-restricted"}, res.Unchanged)
 }
 
 func TestReconciler_Apply_PropagatesApplyError(t *testing.T) {

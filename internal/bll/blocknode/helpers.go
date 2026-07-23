@@ -52,6 +52,26 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 	}
 }
 
+// patchBlockNodeStateAfterInstall extends patchBlockNodeState with the one
+// field that only `block node install` ever decides: TrafficShapingDisabled.
+// It must NOT live in the shared patchBlockNodeState — that callback is also
+// used by reconfigure/upgrade/reset/uninstall's HandleIntent, none of which
+// resolve or carry TrafficShapingEnabled, so their effectiveInputs.Custom
+// value is always the unset zero value and would silently flip a
+// true-at-install decision back to "disabled" on every later run. Recording it
+// only here, and only from InstallHandler, is what lets reconfigure/upgrade
+// read back the original decision (via currentState.BlockNodeState) without
+// ever having the chance to overwrite it themselves.
+func patchBlockNodeStateAfterInstall() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+	base := patchBlockNodeState()
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+		st.BlockNodeState.TrafficShapingDisabled = !effectiveInputs.Custom.TrafficShapingEnabled
+		logx.As().Debug().Bool("trafficShapingDisabled", st.BlockNodeState.TrafficShapingDisabled).
+			Msg("Persisted block node traffic-shaping decision into runtime state")
+		return base(st, effectiveInputs)
+	}
+}
+
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
 func resolveBlocknodeEffectiveInputs(
 	runtime *rsl.BlockNodeRuntimeResolver,
@@ -140,17 +160,19 @@ func resolveBlocknodeEffectiveInputs(
 			HistoricRetention: effHistoricRetention.Get().Val(),
 			RecentRetention:   effRecentRetention.Get().Val(),
 			// Passed through from user input (no resolution)
-			ValuesFile:          inputs.Custom.ValuesFile,
-			ReuseValues:         inputs.Custom.ReuseValues,
-			SkipHardwareChecks:  inputs.Custom.SkipHardwareChecks,
-			ResetStorage:        inputs.Custom.ResetStorage,
-			PurgeStorage:        inputs.Custom.PurgeStorage,
-			NoRestart:           inputs.Custom.NoRestart,
-			LoadBalancerEnabled: inputs.Custom.LoadBalancerEnabled,
-			PluginPreset:        inputs.Custom.PluginPreset,
-			PluginList:          inputs.Custom.PluginList,
-			EgressInterface:     inputs.Custom.EgressInterface,
-			LinkRate:            inputs.Custom.LinkRate,
+			ValuesFile:            inputs.Custom.ValuesFile,
+			ReuseValues:           inputs.Custom.ReuseValues,
+			SkipHardwareChecks:    inputs.Custom.SkipHardwareChecks,
+			ResetStorage:          inputs.Custom.ResetStorage,
+			PurgeStorage:          inputs.Custom.PurgeStorage,
+			NoRestart:             inputs.Custom.NoRestart,
+			LoadBalancerEnabled:   inputs.Custom.LoadBalancerEnabled,
+			PluginPreset:          inputs.Custom.PluginPreset,
+			PluginList:            inputs.Custom.PluginList,
+			EgressInterface:       inputs.Custom.EgressInterface,
+			LinkRate:              inputs.Custom.LinkRate,
+			ShapeOverrides:        inputs.Custom.ShapeOverrides,
+			TrafficShapingEnabled: inputs.Custom.TrafficShapingEnabled,
 		},
 	}
 

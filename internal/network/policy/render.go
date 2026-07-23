@@ -26,8 +26,9 @@ import (
 //  2. asymmetric reply-stamp restore
 //  3. stamp classification — specific (has an IP-set match)
 //  4. stamp classification — fallthrough (--from-entity world)
-//  5. ct state established,related accept   (structural)
-//  6. drop                                   (structural)
+//  5. unclassified pod egress                (structural; only when podCIDR is set)
+//  6. ct state established,related accept   (structural)
+//  7. drop                                   (structural)
 func Render(policies []*Policy, podCIDR string) (string, error) {
 	if podCIDR == "" && needsPodCIDR(policies) {
 		return "", errorx.IllegalArgument.New("pod CIDR is required to render a --stamp policy in the inet weaver chain")
@@ -113,7 +114,7 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 }
 
 // renderChain builds the forward chain body lines (indented two tabs), grouped
-// into the six tiers above.
+// into the seven tiers above.
 func renderChain(policies []*Policy, podCIDR string) ([]string, error) {
 	lines := []string{
 		"\t\ttype filter hook forward priority 0; policy drop;",
@@ -196,6 +197,22 @@ func renderChain(policies []*Policy, podCIDR string) ([]string, error) {
 	if len(fallthr) > 0 {
 		lines = append(lines, "", "\t\t# Classification — fallthrough (any source/dest).")
 		lines = append(lines, fallthr...)
+	}
+
+	// Tier 5: unclassified pod egress. Only rendered when a pod CIDR is known
+	// (the canonical BN install set always supplies one; a deny-only chain
+	// built without one just skips this tier rather than erroring, since
+	// nothing above requires it either). Deliberately no meta priority: this
+	// is a default-allow escape hatch for outbound traffic this registry
+	// doesn't otherwise classify (e.g. the chart's Maven-based plugin
+	// resolution), so it falls to the HTB default class instead of one of
+	// the classified priority bands. ip daddr != podCIDR keeps this scoped to
+	// egress leaving the node, not a blanket pass for intra-CIDR pod-to-pod
+	// traffic the classification tiers above don't already cover.
+	if podCIDR != "" {
+		lines = append(lines, "",
+			"\t\t# Unclassified pod egress (no meta priority; HTB default class).",
+			fmt.Sprintf("\t\tip saddr %s ip daddr != %s accept", podCIDR, podCIDR))
 	}
 
 	lines = append(lines, "",

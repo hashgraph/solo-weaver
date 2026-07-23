@@ -25,6 +25,9 @@ func Parse(content string) (*Table, error) {
 	if cidrs, ok := parseElements(content, reMgmtSet); ok {
 		t.MgmtCIDRs = splitElements(cidrs)
 	}
+	if cidrs, ok := parseElements(content, reBlockedSet); ok {
+		t.BlockedCIDRs = splitElements(cidrs)
+	}
 	if ports, ok := parseElements(content, rePortSet); ok {
 		for _, p := range splitElements(ports) {
 			n, err := strconv.Atoi(p)
@@ -50,10 +53,11 @@ func Parse(content string) (*Table, error) {
 }
 
 var (
-	reMgmtSet = regexp.MustCompile(`set mgmt_addrs \{[^}]*elements = \{ ([^}]*) \}`)
-	rePortSet = regexp.MustCompile(`set in_cluster_ports \{[^}]*elements = \{ ([^}]*) \}`)
-	reSSHPort = regexp.MustCompile(`ip saddr @mgmt_addrs tcp dport (\d+) accept`)
-	rePodCIDR = regexp.MustCompile(`ip saddr (\S+) tcp dport @in_cluster_ports accept`)
+	reMgmtSet    = regexp.MustCompile(`set mgmt_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	reBlockedSet = regexp.MustCompile(`set blocked_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	rePortSet    = regexp.MustCompile(`set in_cluster_ports \{[^}]*elements = \{ ([^}]*) \}`)
+	reSSHPort    = regexp.MustCompile(`ip saddr @mgmt_addrs tcp dport (\d+) accept`)
+	rePodCIDR    = regexp.MustCompile(`ip saddr (\S+) tcp dport @in_cluster_ports accept`)
 )
 
 func parseElements(content string, re *regexp.Regexp) (string, bool) {

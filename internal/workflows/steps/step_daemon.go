@@ -39,25 +39,31 @@ type daemonVersionOutput struct {
 }
 
 // DaemonBinarySource describes where to obtain the daemon binary.
-// When BinPath is empty the binary is auto-downloaded from the URL embedded in
-// the infrastructure catalog (pkg/software/infrastructure-catalog.yaml) and
-// verified against its per-arch sha256 checksum.
+// When BinPath is empty the binary is auto-downloaded from the release URL
+// embedded in the infrastructure catalog (pkg/software/infrastructure-catalog.yaml)
+// and verified against the embedded release GPG key (pkg/codesign) using the
+// release's detached signature.
 // When BinPath is set, Checksum (sha256 hex) may be supplied to verify the
 // binary before it is installed.
 type DaemonBinarySource struct {
 	// BinPath is the local path to the binary. Empty means auto-download.
 	BinPath string
 	// Checksum is an optional sha256 hex digest to verify BinPath.
-	// Ignored when BinPath is empty (the catalog checksum is used instead).
+	// Ignored when BinPath is empty (the auto-download path verifies the
+	// release signature instead).
 	Checksum string
+	// Version selects which catalog version to auto-download. Ignored when
+	// BinPath is set (no version resolution needed for a locally-supplied
+	// binary). Empty means the catalog's own default version.
+	Version string
 }
 
 // InstallDaemonBinaryStep obtains, verifies, and installs the solo-provisioner-daemon
 // binary at paths.BinDir/solo-provisioner-daemon.
 //
 // Resolution order:
-//  1. src.BinPath == "": auto-download via the infrastructure catalog, verify
-//     sha256 against the embedded per-arch checksum.
+//  1. src.BinPath == "": auto-download via the infrastructure catalog, verify the
+//     release's detached signature against the embedded release GPG key.
 //  2. src.BinPath set + src.Checksum set: verify sha256 of BinPath before installing.
 //  3. src.BinPath set (no checksum): copy as-is after confirming the file exists.
 //
@@ -84,13 +90,16 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 
 			if src.BinPath == "" {
 				// ── Auto-download path: delegate entirely to daemonInstaller ────────
-				installer, err := software.NewDaemonInstaller()
+				var opts []software.InstallerOption
+				if src.Version != "" {
+					opts = append(opts, software.WithVersion(src.Version))
+				}
+				installer, err := software.NewDaemonInstaller(opts...)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(),
 						automa.WithError(errorx.InternalError.Wrap(err, "failed to initialise daemon installer").
 							WithProperty(models.ErrPropertyResolution, []string{
-								"Auto-download is unavailable until an official solo-provisioner-daemon release is published",
-								"Build the daemon locally and install it with --daemon-bin:",
+								"Retry, or build the daemon locally and install it with --daemon-bin:",
 								"  task build:daemon GOOS=linux GOARCH=<arch>",
 								"  sudo solo-provisioner daemon service install --daemon-bin=<path-to-binary>",
 							})))
@@ -106,7 +115,7 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 
 				if err := installer.Download(); err != nil {
 					version := installer.Version()
-					releasesURL := "https://github.com/hashgraph/solo-weaver/releases/tag/daemon-v" + version
+					releasesURL := "https://github.com/hashgraph/solo-weaver/releases/tag/v" + version
 					return automa.StepFailureReport(stp.Id(),
 						automa.WithError(errorx.InternalError.Wrap(err, "failed to download daemon binary version %s", version).
 							WithProperty(models.ErrPropertyResolution, []string{

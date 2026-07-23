@@ -42,7 +42,7 @@ func TestFirewallCmd_Structure(t *testing.T) {
 }
 
 func TestCreateCmd_Flags(t *testing.T) {
-	for _, name := range []string{"mgmt-cidrs", "in-cluster-ports", "ssh-port", "pod-cidr"} {
+	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "ssh-port", "pod-cidr"} {
 		require.NotNil(t, createCmd.Flags().Lookup(name), "create is missing --%s", name)
 	}
 	// Defaults must match the firewall package defaults.
@@ -100,6 +100,7 @@ func TestAddRemoveCmd_Flags(t *testing.T) {
 			cmd = removeCmd
 		}
 		require.NotNil(t, cmd.Flags().Lookup("mgmt-cidr"), "%s missing --mgmt-cidr", c)
+		require.NotNil(t, cmd.Flags().Lookup("blocked-cidr"), "%s missing --blocked-cidr", c)
 		require.NotNil(t, cmd.Flags().Lookup("in-cluster-port"), "%s missing --in-cluster-port", c)
 	}
 }
