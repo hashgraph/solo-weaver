@@ -29,7 +29,7 @@ const sampleInboundClientsJSON = `{
 
 const sampleOutboundClientsJSON = `{
   "active_endpoints": [
-    { "local": {"address": "0.0.0.0", "port": "*"}, "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "peer_bn", "tls_required": true }
+    { "local": {"address": "0.0.0.0", "port": "*"}, "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "partner", "tls_required": true }
   ]
 }`
 
@@ -90,7 +90,7 @@ func TestStatuszClient_OutboundClients_DecodesSample(t *testing.T) {
 	require.Len(t, data.ActiveEndpoints, 1)
 
 	peer := data.ActiveEndpoints[0]
-	require.Equal(t, "peer_bn", peer.Category)
+	require.Equal(t, "partner", peer.Category)
 	require.Equal(t, "10.30.5.7", peer.Remote.Address)
 	require.Equal(t, "43473", peer.Remote.Port)
 	require.True(t, peer.TLSRequired)

@@ -143,7 +143,7 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 
 // fetchEndpoints reads both statusz endpoints and buckets them into the desired
 // per-category membership view.
-func (r *Reconciler) fetchEndpoints(ctx context.Context) (CategoryEndpoints, error) {
+func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
 		return nil, err
@@ -155,55 +155,61 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context) (CategoryEndpoints, err
 	return bucketizeEndpoints(inbound, outbound), nil
 }
 
-// bucketizeEndpoints folds one statusz snapshot into the desired per-category
-// membership. Inbound categories (publisher/partner/restricted) contribute their
-// remote host/CIDR; the outbound peer_bn category contributes compound
+// bucketizeEndpoints folds one statusz snapshot into the desired membership,
+// keyed by (direction, category). Inbound endpoints are matched against the
+// inbound bindings (publisher/partner/restricted) and contribute their remote
+// host/CIDR; outbound endpoints are matched against the outbound bindings. The
+// compound bn-backfill set (outbound partner) contributes compound
 // "remote.Address:remote.Port" pairs, skipping any endpoint whose port is empty
 // or "*" (a wildcard port cannot key a compound set).
 //
-// Every owned category is seeded present with an empty slice, so a category the
+// Every owned binding is seeded present with an empty slice, so a category the
 // BN no longer reports collapses to an empty membership that clears its set
 // rather than leaving stale members behind — each owned set is fully reconciled
-// every tick. Categories outside categoryBindings (e.g. the public category, or
-// operator-curated mgmt sets) are ignored.
-func bucketizeEndpoints(inbound, outbound NetworkData) CategoryEndpoints {
-	ce := make(CategoryEndpoints, len(categoryBindings))
-	for c := range categoryBindings {
-		ce[c] = []string{}
+// every tick. Endpoints whose (direction, category) is not an owned binding
+// (e.g. the public category, or operator-curated mgmt sets) are ignored.
+func bucketizeEndpoints(inbound, outbound NetworkData) categoryEndpoints {
+	ce := make(categoryEndpoints, len(categoryBindings))
+	for k := range categoryBindings {
+		ce[k] = []string{}
 	}
 
-	for _, conn := range inbound.ActiveEndpoints {
-		cat := Category(conn.Category)
-		b, ok := categoryBindings[cat]
-		if !ok || b.compound {
+	bucketize(ce, Inbound, inbound)
+	bucketize(ce, Outbound, outbound)
+
+	return ce
+}
+
+// bucketize appends one direction's endpoints into ce under their owned
+// bindings, rendering compound "ip:port" tokens for compound sets and plain
+// host/CIDR otherwise. Endpoints with no owned binding for (dir, category) are
+// dropped; a compound endpoint with an empty or wildcard port is skipped.
+func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
+	for _, conn := range data.ActiveEndpoints {
+		k := bindingKey{dir: dir, cat: Category(conn.Category)}
+		b, ok := categoryBindings[k]
+		if !ok {
 			continue
 		}
-		ce[cat] = append(ce[cat], conn.Remote.Address)
-	}
-
-	for _, conn := range outbound.ActiveEndpoints {
-		cat := Category(conn.Category)
-		b, ok := categoryBindings[cat]
-		if !ok || !b.compound {
+		if !b.compound {
+			ce[k] = append(ce[k], conn.Remote.Address)
 			continue
 		}
 		if conn.Remote.Port == "" || conn.Remote.Port == "*" {
 			continue
 		}
-		ce[cat] = append(ce[cat], conn.Remote.Address+":"+conn.Remote.Port)
+		ce[k] = append(ce[k], conn.Remote.Address+":"+conn.Remote.Port)
 	}
-
-	return ce
 }
 
-// desiredMembership maps each owned category present in ce to its nft policy
-// name, carrying the raw statusz endpoints through unchanged (the policy Manager
-// and the diff engine canonicalize them on the way to the kernel). Categories
-// with no policy binding are dropped.
-func desiredMembership(ce CategoryEndpoints) map[string][]string {
+// desiredMembership maps each owned key present in ce to its nft policy name,
+// carrying the raw statusz endpoints through unchanged (the policy Manager and
+// the diff engine canonicalize them on the way to the kernel). Keys with no
+// policy binding are dropped.
+func desiredMembership(ce categoryEndpoints) map[string][]string {
 	m := make(map[string][]string, len(ce))
-	for cat, endpoints := range ce {
-		b, ok := categoryBindings[cat]
+	for k, endpoints := range ce {
+		b, ok := categoryBindings[k]
 		if !ok {
 			continue
 		}

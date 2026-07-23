@@ -27,7 +27,7 @@ func TestStatuszClient_DecodesMockServer(t *testing.T) {
 			{Remote: statuszmock.Endpoint{Address: "10.20.1.0/24", Port: "*"}, Category: "partner", TLSRequired: true},
 		},
 		Outbound: []statuszmock.Connection{
-			{Remote: statuszmock.Endpoint{Address: "10.30.5.7", Port: "43473"}, Category: "peer_bn"},
+			{Remote: statuszmock.Endpoint{Address: "10.30.5.7", Port: "43473"}, Category: "partner"},
 		},
 	}
 	srv := httptest.NewServer(statuszmock.Handler(statuszmock.StaticRoster(roster)))
@@ -46,7 +46,7 @@ func TestStatuszClient_DecodesMockServer(t *testing.T) {
 	outbound, err := client.OutboundClients(context.Background())
 	require.NoError(t, err)
 	require.Len(t, outbound.ActiveEndpoints, 1)
-	assert.Equal(t, "peer_bn", outbound.ActiveEndpoints[0].Category)
+	assert.Equal(t, "partner", outbound.ActiveEndpoints[0].Category)
 	assert.Equal(t, "10.30.5.7", outbound.ActiveEndpoints[0].Remote.Address)
 	assert.Equal(t, "43473", outbound.ActiveEndpoints[0].Remote.Port)
 }
