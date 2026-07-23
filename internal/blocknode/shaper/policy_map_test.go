@@ -38,11 +38,11 @@ func TestComputePolicyDeltas_MapsCategoriesToPolicies(t *testing.T) {
 	l := newFakeLister()
 	l.elements["bn-publisher"] = []string{"10.1.0.1/32"}
 
-	ce := CategoryEndpoints{
-		CategoryPublisher:  {"10.1.0.1/32", "10.1.0.2/32"}, // one add
-		CategoryPartner:    {"10.2.0.1/32"},                // all add (empty live)
-		CategoryRestricted: {"10.3.0.0/24"},                // all add
-		CategoryPeerBN:     {"10.30.5.7:43473"},            // compound add
+	ce := categoryEndpoints{
+		{Inbound, CategoryPublisher}:  {"10.1.0.1/32", "10.1.0.2/32"}, // one add
+		{Inbound, CategoryPartner}:    {"10.2.0.1/32"},                // all add (empty live)
+		{Inbound, CategoryRestricted}: {"10.3.0.0/24"},                // all add
+		{Outbound, CategoryPartner}:   {"10.30.5.7:43473"},            // compound add
 	}
 
 	deltas, err := computePolicyDeltas(context.Background(), l, ce)
@@ -57,12 +57,31 @@ func TestComputePolicyDeltas_MapsCategoriesToPolicies(t *testing.T) {
 	}, deltas)
 }
 
+// TestComputePolicyDeltas_PartnerSplitsByDirection proves the same partner
+// category maps to two different sets depending on direction: inbound partner
+// feeds bn-partner-out, outbound partner feeds the compound bn-backfill.
+func TestComputePolicyDeltas_PartnerSplitsByDirection(t *testing.T) {
+	l := newFakeLister()
+
+	ce := categoryEndpoints{
+		{Inbound, CategoryPartner}:  {"10.2.0.1/32"},
+		{Outbound, CategoryPartner}: {"10.30.5.7:43473"},
+	}
+
+	deltas, err := computePolicyDeltas(context.Background(), l, ce)
+	require.NoError(t, err)
+	require.Equal(t, []PolicyDelta{
+		{Policy: "bn-backfill", SetDelta: setDelta([]string{"10.30.5.7 . 43473"}, nil)},
+		{Policy: "bn-partner-out", SetDelta: setDelta([]string{"10.2.0.1"}, nil)},
+	}, deltas)
+}
+
 func TestComputePolicyDeltas_EmptyCategoryClearsSet(t *testing.T) {
 	l := newFakeLister()
 	l.elements["bn-publisher"] = []string{"10.1.0.1/32", "10.1.0.2/32"}
 
 	// Present with an empty slice → clear the whole set.
-	deltas, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPublisher: {}})
+	deltas, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{Inbound, CategoryPublisher}: {}})
 	require.NoError(t, err)
 	require.Equal(t, []PolicyDelta{
 		{Policy: "bn-publisher", SetDelta: setDelta(nil, []string{"10.1.0.1", "10.1.0.2"})},
@@ -75,7 +94,7 @@ func TestComputePolicyDeltas_AbsentCategoryLeavesSetUntouched(t *testing.T) {
 
 	// bn-publisher's category is absent entirely → no delta, and its live set is
 	// never even read.
-	deltas, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPartner: {"10.2.0.1/32"}})
+	deltas, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{Inbound, CategoryPartner}: {"10.2.0.1/32"}})
 	require.NoError(t, err)
 	require.Equal(t, []PolicyDelta{
 		{Policy: "bn-partner-out", SetDelta: setDelta([]string{"10.2.0.1"}, nil)},
@@ -89,17 +108,31 @@ func TestComputePolicyDeltas_NoOpDeltaOmitted(t *testing.T) {
 	l.elements["bn-publisher"] = []string{"10.1.0.1", "10.1.0.2"}
 
 	deltas, err := computePolicyDeltas(context.Background(), l,
-		CategoryEndpoints{CategoryPublisher: {"10.1.0.2/32", "10.1.0.1/32"}})
+		categoryEndpoints{{Inbound, CategoryPublisher}: {"10.1.0.2/32", "10.1.0.1/32"}})
 	require.NoError(t, err)
 	require.Empty(t, deltas)
 }
 
 func TestComputePolicyDeltas_UnmappedCategoryIgnored(t *testing.T) {
 	l := newFakeLister()
-	deltas, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{Category("mgmt"): {"10.9.0.1/32"}})
+	deltas, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{Inbound, Category("mgmt")}: {"10.9.0.1/32"}})
 	require.NoError(t, err)
 	require.Empty(t, deltas)
 	require.Empty(t, l.reads, "unmapped category must not trigger any live-set read")
+}
+
+// TestComputePolicyDeltas_PublicRecognizedButUnmapped confirms the public
+// category produces no delta and no live-set read: it is deliberately not a
+// monitor-owned set (bn-public-out stays port-match-driven), not an "unknown
+// category" surprise.
+func TestComputePolicyDeltas_PublicRecognizedButUnmapped(t *testing.T) {
+	l := newFakeLister()
+	for _, dir := range []Direction{Inbound, Outbound} {
+		deltas, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{dir, CategoryPublic}: {"0.0.0.0/0"}})
+		require.NoError(t, err)
+		require.Empty(t, deltas)
+	}
+	require.Empty(t, l.reads, "public category must not trigger any live-set read")
 }
 
 func TestComputePolicyDeltas_CompoundEndpointConversion(t *testing.T) {
@@ -107,7 +140,7 @@ func TestComputePolicyDeltas_CompoundEndpointConversion(t *testing.T) {
 	l.elements["bn-backfill"] = []string{"10.30.5.7 . 43473"}
 
 	deltas, err := computePolicyDeltas(context.Background(), l,
-		CategoryEndpoints{CategoryPeerBN: {"10.30.5.8:43473"}})
+		categoryEndpoints{{Outbound, CategoryPartner}: {"10.30.5.8:43473"}})
 	require.NoError(t, err)
 	require.Equal(t, []PolicyDelta{
 		{Policy: "bn-backfill", SetDelta: setDelta([]string{"10.30.5.8 . 43473"}, []string{"10.30.5.7 . 43473"})},
@@ -122,7 +155,7 @@ func TestComputePolicyDeltas_MalformedCompoundEndpointErrors(t *testing.T) {
 		"::1:80",          // IPv6 host
 	} {
 		l := newFakeLister()
-		_, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPeerBN: {bad}})
+		_, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{Outbound, CategoryPartner}: {bad}})
 		require.Error(t, err, "expected %q to be rejected", bad)
 		require.ErrorContains(t, err, "bn-backfill")
 	}
@@ -131,14 +164,14 @@ func TestComputePolicyDeltas_MalformedCompoundEndpointErrors(t *testing.T) {
 func TestComputePolicyDeltas_LiveReadErrorPropagates(t *testing.T) {
 	l := newFakeLister()
 	l.err["bn-publisher"] = errors.New("nft boom")
-	_, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPublisher: {"10.1.0.1/32"}})
+	_, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{Inbound, CategoryPublisher}: {"10.1.0.1/32"}})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "bn-publisher")
 }
 
 func TestComputePolicyDeltas_ComputesDeltas(t *testing.T) {
 	l := newFakeLister()
-	deltas, err := computePolicyDeltas(context.Background(), l, CategoryEndpoints{CategoryPublisher: {"10.1.0.1/32"}})
+	deltas, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{{Inbound, CategoryPublisher}: {"10.1.0.1/32"}})
 	require.NoError(t, err)
 	require.Equal(t, []PolicyDelta{
 		{Policy: "bn-publisher", SetDelta: setDelta([]string{"10.1.0.1"}, nil)},
@@ -146,10 +179,10 @@ func TestComputePolicyDeltas_ComputesDeltas(t *testing.T) {
 }
 
 func TestCanonicalDesiredMembership_MatchesDeltaRendering(t *testing.T) {
-	ce := CategoryEndpoints{
-		CategoryPublisher: {"10.1.0.2/32", "10.1.0.1/32"}, // /32 collapse + numeric order
-		CategoryPeerBN:    {"10.30.5.7:43473"},            // compound conversion
-		Category("mgmt"):  {"10.9.0.1"},                   // unmapped → dropped
+	ce := categoryEndpoints{
+		{Inbound, CategoryPublisher}: {"10.1.0.2/32", "10.1.0.1/32"}, // /32 collapse + numeric order
+		{Outbound, CategoryPartner}:  {"10.30.5.7:43473"},            // compound conversion
+		{Inbound, Category("mgmt")}:  {"10.9.0.1"},                   // unmapped → dropped
 	}
 
 	m, err := canonicalDesiredMembership(ce)
@@ -161,7 +194,7 @@ func TestCanonicalDesiredMembership_MatchesDeltaRendering(t *testing.T) {
 }
 
 func TestCanonicalDesiredMembership_MalformedCompoundErrors(t *testing.T) {
-	_, err := canonicalDesiredMembership(CategoryEndpoints{CategoryPeerBN: {"not-an-ip-port"}})
+	_, err := canonicalDesiredMembership(categoryEndpoints{{Outbound, CategoryPartner}: {"not-an-ip-port"}})
 	require.Error(t, err)
 }
 
@@ -186,10 +219,10 @@ func TestCategoryBindings_PolicyNamesAreCanonical(t *testing.T) {
 		"bn-public-out": true, "bn-status-in": true, "bn-status-out": true,
 		"bn-mgmt-in": true, "bn-mgmt-out": true, "bn-restricted": true, "bn-backfill": true,
 	}
-	for cat, b := range categoryBindings {
+	for key, b := range categoryBindings {
 		if !canonicalBNPolicyNames[b.policyName] {
-			t.Errorf("categoryBindings[%q].policyName = %q is not one of the canonical "+
-				"BN policy names created by NetworkPolicyCreate", cat, b.policyName)
+			t.Errorf("categoryBindings[%+v].policyName = %q is not one of the canonical "+
+				"BN policy names created by NetworkPolicyCreate", key, b.policyName)
 		}
 	}
 }

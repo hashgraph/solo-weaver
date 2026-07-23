@@ -104,56 +104,57 @@ func TestBucketizeEndpoints_CategorizesAndSeedsAllOwned(t *testing.T) {
 	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
 		conn("publisher", "10.10.1.0/24", "*"),
 		conn("partner", "10.20.1.0/24", "*"),
-		conn("public", "0.0.0.0/0", "*"), // unmapped → skipped
+		conn("public", "0.0.0.0/0", "*"), // recognized but unmapped → skipped
 	}}
 	outbound := NetworkData{ActiveEndpoints: []NetworkConnection{
-		conn("peer_bn", "10.30.5.7", "43473"),
+		conn("partner", "10.30.5.7", "43473"), // outbound partner → bn-backfill
 	}}
 
 	ce := bucketizeEndpoints(inbound, outbound)
 
-	// All four owned categories present.
+	// All four owned bindings present.
 	require.Len(t, ce, 4)
-	require.Contains(t, ce, CategoryPublisher)
-	require.Contains(t, ce, CategoryPartner)
-	require.Contains(t, ce, CategoryRestricted)
-	require.Contains(t, ce, CategoryPeerBN)
+	require.Contains(t, ce, bindingKey{Inbound, CategoryPublisher})
+	require.Contains(t, ce, bindingKey{Inbound, CategoryPartner})
+	require.Contains(t, ce, bindingKey{Inbound, CategoryRestricted})
+	require.Contains(t, ce, bindingKey{Outbound, CategoryPartner})
 
-	assert.Equal(t, []string{"10.10.1.0/24"}, ce[CategoryPublisher])
-	assert.Equal(t, []string{"10.20.1.0/24"}, ce[CategoryPartner])
+	assert.Equal(t, []string{"10.10.1.0/24"}, ce[bindingKey{Inbound, CategoryPublisher}])
+	assert.Equal(t, []string{"10.20.1.0/24"}, ce[bindingKey{Inbound, CategoryPartner}])
 	// restricted reported nothing → present but empty (clears its set).
-	assert.Empty(t, ce[CategoryRestricted])
-	// peer_bn folds to a compound ip:port raw endpoint.
-	assert.Equal(t, []string{"10.30.5.7:43473"}, ce[CategoryPeerBN])
+	assert.Empty(t, ce[bindingKey{Inbound, CategoryRestricted}])
+	// outbound partner folds to a compound ip:port raw endpoint.
+	assert.Equal(t, []string{"10.30.5.7:43473"}, ce[bindingKey{Outbound, CategoryPartner}])
 
-	// The unmapped public category never appears.
-	require.NotContains(t, ce, Category("public"))
+	// The unmapped public category never appears, on either direction.
+	require.NotContains(t, ce, bindingKey{Inbound, CategoryPublic})
+	require.NotContains(t, ce, bindingKey{Outbound, CategoryPublic})
 }
 
-func TestBucketizeEndpoints_SkipsWildcardAndEmptyPeerPort(t *testing.T) {
+func TestBucketizeEndpoints_SkipsWildcardAndEmptyBackfillPort(t *testing.T) {
 	outbound := NetworkData{ActiveEndpoints: []NetworkConnection{
-		conn("peer_bn", "10.30.5.7", "43473"), // kept
-		conn("peer_bn", "10.30.5.8", "*"),     // wildcard port → skipped
-		conn("peer_bn", "10.30.5.9", ""),      // empty port → skipped
+		conn("partner", "10.30.5.7", "43473"), // kept
+		conn("partner", "10.30.5.8", "*"),     // wildcard port → skipped
+		conn("partner", "10.30.5.9", ""),      // empty port → skipped
 	}}
 
 	ce := bucketizeEndpoints(NetworkData{}, outbound)
-	assert.Equal(t, []string{"10.30.5.7:43473"}, ce[CategoryPeerBN])
+	assert.Equal(t, []string{"10.30.5.7:43473"}, ce[bindingKey{Outbound, CategoryPartner}])
 }
 
 func TestBucketizeEndpoints_EmptySnapshotSeedsAllOwnedEmpty(t *testing.T) {
 	ce := bucketizeEndpoints(NetworkData{}, NetworkData{})
 	require.Len(t, ce, 4)
-	for c := range categoryBindings {
-		assert.Empty(t, ce[c], "category %s should be present but empty", c)
+	for k := range categoryBindings {
+		assert.Empty(t, ce[k], "binding %+v should be present but empty", k)
 	}
 }
 
 func TestDesiredMembership_MapsOwnedCategoriesToPolicies(t *testing.T) {
-	ce := CategoryEndpoints{
-		CategoryPublisher: {"10.1.0.1"},
-		CategoryPeerBN:    {"10.30.5.7:43473"},
-		Category("mgmt"):  {"10.9.0.1"}, // unmapped → dropped
+	ce := categoryEndpoints{
+		{Inbound, CategoryPublisher}: {"10.1.0.1"},
+		{Outbound, CategoryPartner}:  {"10.30.5.7:43473"},
+		{Inbound, Category("mgmt")}:  {"10.9.0.1"}, // unmapped → dropped
 	}
 	m := desiredMembership(ce)
 	require.Equal(t, map[string][]string{
@@ -168,7 +169,7 @@ func TestReconciler_Check_DigestsDesired(t *testing.T) {
 			conn("publisher", "10.10.1.0/24", "*"),
 		}},
 		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
-			conn("peer_bn", "10.30.5.7", "43473"),
+			conn("partner", "10.30.5.7", "43473"),
 		}},
 	}
 	r := &Reconciler{fetcher: f}
