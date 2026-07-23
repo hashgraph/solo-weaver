@@ -4,12 +4,14 @@ package blocknode
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
@@ -84,6 +86,30 @@ func TestUpgradeChart_TimeoutPropagation(t *testing.T) {
 
 			err := m.UpgradeChart(context.Background(), "values.yaml", false)
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestIsHelmTimeoutError(t *testing.T) {
+	// Mirrors the real chain: errorx wrapping the helm SDK's atomic-rollback text.
+	atomicTimeout := errorx.IllegalState.Wrap(
+		fmt.Errorf("release block-node failed, and has been uninstalled due to atomic being set: context deadline exceeded"),
+		"failed to install block node chart")
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "wrapped context.DeadlineExceeded", err: errorx.Decorate(context.DeadlineExceeded, "wait"), want: true},
+		{name: "atomic rollback deadline text", err: atomicTimeout, want: true},
+		{name: "kube wait timeout text", err: fmt.Errorf("timed out waiting for the condition"), want: true},
+		{name: "unrelated failure", err: errorx.IllegalState.New("ImagePullBackOff"), want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsHelmTimeoutError(tc.err))
 		})
 	}
 }

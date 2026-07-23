@@ -4,7 +4,9 @@ package blocknode
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -22,14 +24,37 @@ import (
 // finalizer.
 const HelmOwnedServiceDeleteTimeout = 30 * time.Second
 
-// resolveHelmTimeout picks the operator-supplied install/upgrade timeout
+// Namespace returns the block-node Kubernetes namespace these operations target.
+func (m *Manager) Namespace() string {
+	return m.blockNodeInputs.Namespace
+}
+
+// ResolveHelmTimeout picks the operator-supplied install/upgrade timeout
 // (from --timeout) when set, falling back to helm.DefaultTimeout (5m) for any
 // caller that leaves BlockNodeInputs.Timeout unset (zero) or negative.
-func (m *Manager) resolveHelmTimeout() time.Duration {
+func (m *Manager) ResolveHelmTimeout() time.Duration {
 	if m.blockNodeInputs.Timeout > 0 {
 		return m.blockNodeInputs.Timeout
 	}
 	return helm.DefaultTimeout
+}
+
+// IsHelmTimeoutError reports whether err is a block-node Helm install/upgrade
+// that ran out its --timeout budget (the resources did not become ready in
+// time), as opposed to a genuine resource failure. With --atomic set, Helm
+// rolls the release back and surfaces the wait deadline as a context-deadline
+// or wait-timeout cause, so callers can only distinguish it from the error
+// chain. Used to attach a "raise --timeout" resolution hint at the step layer.
+func IsHelmTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "timed out waiting")
 }
 
 // InstallChart installs the block node helm chart
@@ -55,7 +80,7 @@ func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, er
 			CreateNamespace: false,
 			Atomic:          true,
 			Wait:            true,
-			Timeout:         m.resolveHelmTimeout(),
+			Timeout:         m.ResolveHelmTimeout(),
 		},
 	)
 	if err != nil {
@@ -99,7 +124,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 			ReuseValues: reuseValues,
 			Atomic:      true,
 			Wait:        true,
-			Timeout:     m.resolveHelmTimeout(),
+			Timeout:     m.ResolveHelmTimeout(),
 		},
 	)
 	if err != nil {
