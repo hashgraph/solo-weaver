@@ -130,6 +130,7 @@ var installCmd = &cobra.Command{
 func init() {
 	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
+	common.FlagHelmTimeout().SetVarP(installCmd, &flagHelmTimeout, false)
 	common.RegisterHostFirewallFlags(installCmd)
 	common.RegisterTrafficShapingFlags(installCmd)
 	common.RegisterEgressFlags(installCmd, &flagEgressInterface, &flagLinkRate)

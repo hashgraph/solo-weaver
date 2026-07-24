@@ -3,6 +3,8 @@
 package node
 
 import (
+	"time"
+
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
@@ -43,6 +45,7 @@ var (
 	flagShape                []string
 	flagDaemonBin            string
 	flagDaemonVersion        string
+	flagHelmTimeout          time.Duration
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",

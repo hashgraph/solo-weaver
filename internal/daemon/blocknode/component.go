@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"time"
+
 	"github.com/automa-saga/daemonkit"
 	"github.com/joomcode/errorx"
 	"k8s.io/client-go/kubernetes"
@@ -20,6 +22,16 @@ type ComponentConfig struct {
 	// Namespace is the Kubernetes namespace (orbit) where BN pods run.
 	// Required when TrafficShaperEnabled is true.
 	Namespace string
+
+	// StatuszBaseURL is the block node's statusz base URL the traffic-shaper
+	// poll loop reconciles from (components.block_node.statusz.base_url). Empty
+	// keeps the poll loop idle.
+	StatuszBaseURL string
+
+	// StatuszPollInterval is the poll loop's cadence
+	// (components.block_node.statusz.poll_interval, already defaulted via
+	// StatuszConfig.EffectivePollInterval by the caller).
+	StatuszPollInterval time.Duration
 }
 
 // ComponentResult contains the monitors built by NewComponent and a reference
@@ -53,7 +65,7 @@ func NewComponent(cfg ComponentConfig) (ComponentResult, error) {
 		if err != nil {
 			return ComponentResult{}, err
 		}
-		tsm = NewTrafficShaperMonitor(resolver, client, cfg.Namespace)
+		tsm = NewTrafficShaperMonitor(resolver, client, cfg.Namespace, cfg.StatuszBaseURL, cfg.StatuszPollInterval)
 		monitors = append(monitors, tsm)
 	}
 
