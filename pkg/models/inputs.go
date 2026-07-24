@@ -5,6 +5,7 @@ package models
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -88,6 +89,10 @@ type BlockNodeInputs struct {
 	// Held as a neutral type so pkg/models stays decoupled from the shape
 	// package; the install workflow converts it at the call site.
 	ShapeOverrides map[string]ShapeOverride
+	// Timeout caps the block-node Helm install/upgrade (the `--atomic` wait
+	// budget), set from `--timeout`. Zero means "unset" — the install/upgrade
+	// call site falls back to helm.DefaultTimeout (5m).
+	Timeout time.Duration
 }
 
 // ShapeOverride is one class's operator-supplied HTB bandwidth override, parsed
@@ -246,6 +251,12 @@ func (c *BlockNodeInputs) Validate() error {
 		if err := ValidatePluginList(c.PluginList); err != nil {
 			return err
 		}
+	}
+
+	// A negative Helm timeout is nonsensical; zero is allowed and means "use the
+	// default" (resolved to helm.DefaultTimeout at the install/upgrade call site).
+	if c.Timeout < 0 {
+		return errorx.IllegalArgument.New("invalid timeout: %s (must not be negative)", c.Timeout)
 	}
 
 	return nil

@@ -4,6 +4,7 @@ package models
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -802,6 +803,31 @@ func TestBlockNodeInputs_RetentionValidation(t *testing.T) {
 				assert.Contains(t, err.Error(), tt.errorMsg)
 			} else {
 				require.NoError(t, err, "Expected no validation error")
+			}
+		})
+	}
+}
+
+// TestBlockNodeInputs_TimeoutValidation tests the validation of the Helm timeout field.
+func TestBlockNodeInputs_TimeoutValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     time.Duration
+		expectError bool
+	}{
+		{name: "zero_is_valid_means_default", timeout: 0, expectError: false},
+		{name: "positive_is_valid", timeout: 10 * time.Minute, expectError: false},
+		{name: "negative_is_invalid", timeout: -1 * time.Second, expectError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&BlockNodeInputs{Timeout: tt.timeout}).Validate()
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "invalid timeout")
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}

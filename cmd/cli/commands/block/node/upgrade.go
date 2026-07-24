@@ -72,4 +72,5 @@ func init() {
 	common.FlagWithStorageReset().SetVarP(upgradeCmd, &flagWithReset, false)
 	common.FlagValuesFile().SetVarP(upgradeCmd, &flagValuesFile, false)
 	common.FlagNoReuseValues().SetVarP(upgradeCmd, &flagNoReuseValues, false)
+	common.FlagHelmTimeout().SetVarP(upgradeCmd, &flagHelmTimeout, false)
 }

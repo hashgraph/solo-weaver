@@ -2,6 +2,12 @@
 
 package common
 
+import (
+	"time"
+
+	"github.com/hashgraph/solo-weaver/pkg/helm"
+)
+
 // Flag descriptor factories for the `block node` command tree.
 //
 // Each factory returns a fresh FlagDefinition value so callers always receive an
@@ -195,5 +201,14 @@ func FlagLoadBalancerEnabled() FlagDefinition[bool] {
 		ShortName:   "",
 		Description: "Inject MetalLB address-pool annotation into the block node service (disable for environments without MetalLB)",
 		Default:     true,
+	}
+}
+
+func FlagHelmTimeout() FlagDefinition[time.Duration] {
+	return FlagDefinition[time.Duration]{
+		Name:        "timeout",
+		ShortName:   "",
+		Description: "Timeout for the block node Helm install/upgrade, as a Go duration (e.g. 10m, 600s, 1h). The operation is rolled back (--atomic) if it exceeds this budget",
+		Default:     helm.DefaultTimeout,
 	}
 }

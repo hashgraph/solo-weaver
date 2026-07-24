@@ -4,11 +4,13 @@ package steps
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
@@ -225,6 +227,32 @@ func uninstallBlockNode(profile string, valuesFile string, getManager func() (*b
 		})
 }
 
+// blockNodeChartError enriches a failed Helm install/upgrade with an
+// operator-actionable resolution. When the failure is a --timeout budget
+// overrun (Helm rolled the release back under --atomic before the resources
+// became ready), it points the operator at raising --timeout; otherwise it
+// falls back to the generic pod-inspection steps. action is "install" or
+// "upgrade".
+func blockNodeChartError(err error, manager *blocknode.Manager, action string) error {
+	namespace := manager.Namespace()
+	if blocknode.IsHelmTimeoutError(err) {
+		return errorx.Decorate(err, "block node %s exceeded the --timeout budget", action).
+			WithProperty(models.ErrPropertyResolution, []string{
+				fmt.Sprintf("The block node did not become ready within the --timeout budget (%s) and was rolled back (--atomic).", manager.ResolveHelmTimeout()),
+				"Re-run with a longer --timeout, e.g.:",
+				fmt.Sprintf("  solo-provisioner block node %s --timeout 15m ...", action),
+				"A cold first boot can be slow when the chart's resolve-plugins init container resolves plugins from Maven.",
+			})
+	}
+	return errorx.Decorate(err, "block node %s failed", action).
+		WithProperty(models.ErrPropertyResolution, []string{
+			"Inspect the block node pod for the underlying cause:",
+			fmt.Sprintf("  kubectl -n %s get pods", namespace),
+			fmt.Sprintf("  kubectl -n %s describe pod -l app.kubernetes.io/name=block-node-server", namespace),
+			fmt.Sprintf("  kubectl -n %s logs -l app.kubernetes.io/name=block-node-server --all-containers", namespace),
+		})
+}
+
 // installBlockNode installs the block node helm chart
 func installBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
@@ -243,7 +271,7 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 
 			installed, err := manager.InstallChart(ctx, valuesFilePath)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(err, manager, "install")))
 			}
 
 			if !installed {
@@ -408,7 +436,7 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 
 			err = manager.UpgradeChart(ctx, valuesFilePath, inputs.ReuseValues)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(err, manager, "upgrade")))
 			}
 
 			meta["upgraded"] = "true"

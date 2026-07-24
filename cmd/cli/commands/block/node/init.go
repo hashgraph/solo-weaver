@@ -311,6 +311,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			PluginList:          pluginList,
 			EgressInterface:     flagEgressInterface,
 			LinkRate:            flagLinkRate,
+			Timeout:             flagHelmTimeout,
 		},
 	}
 
