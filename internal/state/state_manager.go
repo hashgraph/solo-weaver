@@ -136,6 +136,32 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 	return m, nil
 }
 
+// PersistProvisionerVersion records the running binary's version in the on-disk
+// state file so version-boundary startup migrations are not re-evaluated — and
+// non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
+// invocation.
+//
+// It Refresh()es first, so any existing reality-detected software/cluster/
+// block-node fields are preserved and the optimistic-concurrency baseline is set;
+// on a host with no state file it writes a minimal one from NewState defaults. A
+// missing file is not an error. Call only after a successful startup-migration
+// pass and only on a provisioned host, so a genuinely fresh machine keeps having
+// no state file.
+func PersistProvisionerVersion(opts ...ManagerOption) error {
+	sm, err := NewStateManager(opts...)
+	if err != nil {
+		return err
+	}
+
+	if err := sm.Refresh(); err != nil && !errorx.IsOfType(err, NotFoundError) {
+		return err
+	}
+
+	s := sm.State()
+	s.ProvisionerState.Version = version.Get().Version
+	return sm.Set(s).FlushState()
+}
+
 // State returns a copy of the current in-memory state (thread-safe).
 // Returns a value copy so callers cannot mutate the manager's internals
 // through the returned value.

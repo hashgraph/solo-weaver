@@ -142,6 +142,13 @@ func (m *CiliumAccelerationMigration) Rollback(ctx context.Context, mctx *migrat
 	return nil
 }
 
+// KubernetesInstalled reports whether Kubernetes is provisioned on this host,
+// using the same probe the Cilium migrations gate Execute() on. The startup
+// orchestrator uses it to decide whether to record the provisioner version, so a
+// fresh machine keeps having no state file. A var so tests can stub the probe
+// (which reads /etc/kubernetes/admin.conf, absent on a CI host).
+var KubernetesInstalled = defaultKubernetesInstalled
+
 // defaultKubernetesInstalled reports whether Kubernetes has been provisioned on
 // this host (the kubeadm admin kubeconfig exists).
 func defaultKubernetesInstalled() bool {

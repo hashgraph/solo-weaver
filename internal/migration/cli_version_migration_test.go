@@ -48,6 +48,13 @@ func TestCLIVersionMigration_Applies(t *testing.T) {
 			currentVersion:   "2.0.0",
 			expectApplies:    true,
 		},
+		{
+			// Baseline is below the boundary, so it applies.
+			name:             "baseline installed version crosses boundary should apply",
+			installedVersion: BaselineCLIVersion,
+			currentVersion:   "1.0.0",
+			expectApplies:    true,
+		},
 		// ── does not apply ───────────────────────────────────────────────────
 		{
 			name:             "upgrade within old versions should NOT apply",
@@ -122,6 +129,58 @@ func TestCLIVersionMigration_Applies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveInstalledCLIVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "empty version defaults to the baseline",
+			raw:  "",
+			want: BaselineCLIVersion,
+		},
+		{
+			name: "non-empty version is returned unchanged",
+			raw:  "0.19.0",
+			want: "0.19.0",
+		},
+		{
+			name: "explicit baseline is returned unchanged",
+			raw:  "0.0.0",
+			want: "0.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ResolveInstalledCLIVersion(tt.raw))
+		})
+	}
+}
+
+// TestCLIVersionMigration_PersistedVersionStopsRerun: an absent version crosses the boundary; once persisted, it no longer applies — so the migration runs once
+func TestCLIVersionMigration_PersistedVersionStopsRerun(t *testing.T) {
+	m := &CLIVersionMigration{id: "cilium-agent-restart-v0.19.2", minVersion: "0.19.2"}
+	const currentVersion = "0.21.0"
+
+	applies := func(onDiskVersion string) bool {
+		installed := ResolveInstalledCLIVersion(onDiskVersion)
+		mctx := &Context{Data: &automa.SyncStateBag{}}
+		mctx.Data.Set(CtxKeyInstalledCLIVersion, installed)
+		mctx.Data.Set(CtxKeyCurrentCLIVersion, currentVersion)
+		got, err := m.Applies(mctx)
+		require.NoError(t, err)
+		return got
+	}
+
+	// Run 1: absent state.yaml → "" → 0.0.0 baseline → boundary applies (migration runs).
+	assert.True(t, applies(""), "first run on a pre-state-tracking host must apply the boundary")
+
+	// Run 2: PersistProvisionerVersion recorded the current version → boundary no longer applies.
+	assert.False(t, applies(currentVersion), "after the version is recorded the boundary must not re-apply")
 }
 
 func TestCLIVersionMigration_Applies_InvalidMinVersion(t *testing.T) {
