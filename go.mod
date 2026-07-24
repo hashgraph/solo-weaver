@@ -1,6 +1,6 @@
 module github.com/hashgraph/solo-weaver
 
-go 1.26.0
+go 1.26.5
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -9,7 +9,7 @@ require (
 	github.com/automa-saga/automa v0.11.0
 	github.com/automa-saga/daemonkit v0.1.0
 	github.com/automa-saga/logx v0.5.0
-	github.com/automa-saga/version v1.0.0
+	github.com/automa-saga/version v1.0.1
 	github.com/bluet/syspkg v0.1.7
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
