@@ -399,38 +399,42 @@ func (m *Manager) injectPluginsConfig(valuesContent []byte) ([]byte, error) {
 	return result, nil
 }
 
-// injectServiceAnnotations ensures the merged values express a LoadBalancer service when
-// LoadBalancerEnabled is true. It (a) sets service.type to LoadBalancer if absent — defense
-// in depth so the type can never go missing regardless of which values path is taken — and
-// (b) merges the MetalLB address-pool annotation into service.annotations.
+// injectServiceAnnotations resolves the main block-node service's exposure in the merged
+// Helm values. It owns two independent decisions:
 //
-// When the operator's values file already contains either field, the existing value is
-// left untouched. An explicit non-LoadBalancer service.type triggers a warning so the
-// mismatch is visible in logs without weaver clobbering an explicit operator choice.
-// When LoadBalancerEnabled is false the values are returned unchanged.
+//  1. service.type — weaver's single source of truth for the main service type (the base
+//     values template no longer hardcodes it; see issue #926). When the operator left the
+//     type unset it defaults to LoadBalancer; an explicit operator service.type is honored.
+//  2. the MetalLB metallb.io/address-pool annotation — injected onto service.annotations
+//     only when LoadBalancerEnabled is true (the environment has MetalLB). When false, the
+//     main service is left a plain LoadBalancer (best-effort; the auto-allocated NodePort
+//     still serves) with no pool tag.
 //
-// Exception (issue #900): when the operator enables the chart's own loadBalancer block
-// (loadBalancer.enabled: true — the "split topology": a ClusterIP main Service plus a
-// separate "-external" LoadBalancer Service), the chart renders that external Service and
-// applies its annotations from .Values.loadBalancer.annotations. In that case weaver defers
-// entirely to the chart: it does not warn about a ClusterIP service.type and does not inject
-// a MetalLB annotation onto the main service (which would be inert there, since MetalLB
-// ignores non-LoadBalancer services). The reachability probe already locates the chart's
-// "-external" Service, so no service.* injection is needed.
+// Decoupling the two is deliberate: --load-balancer-enabled governs MetalLB annotation
+// injection, not the base service type. So a no-MetalLB install (LoadBalancerEnabled=false)
+// preserves the historical LoadBalancer main service without a pool annotation, rather than
+// silently dropping to the chart's ClusterIP default.
+//
+// Split topology (issues #900 / #926): when the operator enables the chart's own
+// loadBalancer block (loadBalancer.enabled: true — a ClusterIP main Service plus a separate
+// "-external" LoadBalancer Service), the chart renders that external Service and applies its
+// annotations from .Values.loadBalancer.annotations, and the main service keeps the chart's
+// ClusterIP default. Weaver defers entirely: it imposes no service.type (so the chart's
+// ClusterIP stands) and injects no MetalLB annotation onto the main service (which would be
+// inert, since MetalLB ignores non-LoadBalancer services). This defer holds regardless of
+// LoadBalancerEnabled. The reachability probe already locates the chart's "-external"
+// Service, so no service.* injection is needed.
 func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error) {
-	if !m.blockNodeInputs.LoadBalancerEnabled {
-		return valuesContent, nil
-	}
-
 	var vals map[string]interface{}
 	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
 		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for service annotation injection")
 	}
 
-	// Issue #900: if the operator drives the external endpoint through the chart's own
-	// loadBalancer block, the chart owns the "-external" Service and its annotations. Weaver
-	// must not warn about a ClusterIP main service.type or inject an inert MetalLB annotation
-	// onto it — defer entirely to the chart.
+	// Split topology (#900/#926): the operator drives the external endpoint through the
+	// chart's own loadBalancer block, so the chart owns the "-external" Service and its
+	// annotations while the main service keeps the chart's ClusterIP default. Weaver must not
+	// impose a service.type or inject an inert MetalLB annotation onto the main service —
+	// defer entirely to the chart, whether or not MetalLB is enabled.
 	if chartOwnsLoadBalancer(vals) {
 		logx.As().Debug().Msg("values enable the chart's loadBalancer block; deferring the external Service and its MetalLB annotation to the chart (skipping service.* injection)")
 		return valuesContent, nil
@@ -449,38 +453,52 @@ func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error)
 		defaultPool   = "public-address-pool"
 	)
 
+	lbEnabled := m.blockNodeInputs.LoadBalancerEnabled
 	mutated := false
 
+	// Default the main service to LoadBalancer when the operator left the type unset. This
+	// holds regardless of --load-balancer-enabled: on the non-split path weaver always wants a
+	// LoadBalancer-shaped main service. An explicit operator service.type is honored; when
+	// MetalLB is enabled a non-LoadBalancer type also warns, since verify-block-node-reachable
+	// will then find no external IP.
 	switch t := service[typeKey].(type) {
 	case nil:
 		service[typeKey] = typeLB
-		logx.As().Info().Msg("Injecting service.type: LoadBalancer (LoadBalancerEnabled=true and no operator override)")
+		logx.As().Info().Msg("Defaulting service.type: LoadBalancer (no operator override)")
 		mutated = true
 	case string:
-		if t != typeLB {
+		if t != typeLB && lbEnabled {
 			logx.As().Warn().
 				Str("service.type", t).
 				Msg("LoadBalancerEnabled=true but operator values set service.type to a non-LoadBalancer value; leaving as-is — verify-block-node-reachable will fail")
 		}
 	default:
+		// A non-string service.type is malformed regardless of MetalLB — warn
+		// unconditionally so it can't slip through silently when
+		// --load-balancer-enabled=false and cause confusing Helm behavior.
 		logx.As().Warn().
 			Str("service.type", fmt.Sprintf("%v", t)).
-			Msg("LoadBalancerEnabled=true but operator values set service.type to a non-string value; leaving as-is")
+			Msg("operator values set service.type to a non-string value; leaving as-is — this is almost certainly a values-file mistake")
 	}
 
-	annotations, ok := service["annotations"].(map[string]interface{})
-	if !ok {
-		annotations = make(map[string]interface{})
-	}
-	if existing, alreadySet := annotations[annotationKey]; alreadySet {
-		logx.As().Debug().
-			Str(annotationKey, fmt.Sprintf("%v", existing)).
-			Msg("metallb.io/address-pool already set in values file; skipping injection")
-	} else {
-		annotations[annotationKey] = defaultPool
-		service["annotations"] = annotations
-		logx.As().Info().Msg("Injecting MetalLB address-pool annotation into service.annotations")
-		mutated = true
+	// The MetalLB address-pool annotation is only meaningful when the environment has MetalLB
+	// (--load-balancer-enabled, default true). When disabled, leave the main service a plain
+	// LoadBalancer without tagging a pool.
+	if lbEnabled {
+		annotations, ok := service["annotations"].(map[string]interface{})
+		if !ok {
+			annotations = make(map[string]interface{})
+		}
+		if existing, alreadySet := annotations[annotationKey]; alreadySet {
+			logx.As().Debug().
+				Str(annotationKey, fmt.Sprintf("%v", existing)).
+				Msg("metallb.io/address-pool already set in values file; skipping injection")
+		} else {
+			annotations[annotationKey] = defaultPool
+			service["annotations"] = annotations
+			logx.As().Info().Msg("Injecting MetalLB address-pool annotation into service.annotations")
+			mutated = true
+		}
 	}
 
 	if !mutated {

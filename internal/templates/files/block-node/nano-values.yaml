@@ -118,8 +118,12 @@ loki:
 promtail:
   enabled: false
 
+# service.type is intentionally NOT set here. Weaver decides the main service type at
+# deploy time (internal/blocknode/values.go: injectServiceAnnotations): it defaults to
+# LoadBalancer on the single-service path, and defers to the chart's ClusterIP default on
+# the split topology (loadBalancer.enabled: true). Hardcoding it here would override the
+# chart's ClusterIP default for split installs — see issue #926.
 service:
-  type: LoadBalancer
   port: 40840
 
 loadBalancer:

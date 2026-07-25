@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -92,7 +93,14 @@ func (m *Manager) findLoadBalancerEndpoint(ctx context.Context) (string, int64, 
 	if lb == nil {
 		return "", 0, errorx.IllegalState.New(
 			"no LoadBalancer Service found in namespace %s; cannot probe reachability",
-			m.blockNodeInputs.Namespace)
+			m.blockNodeInputs.Namespace).
+			WithProperty(models.ErrPropertyResolution, []string{
+				"The block node's main Service is not a LoadBalancer, so there is no external endpoint to probe.",
+				"This usually means the values set 'service.type: ClusterIP' (or another non-LoadBalancer type) while --load-balancer-enabled is true (the default), which is what enables this probe.",
+				"If a ClusterIP main service is intended, re-run with --load-balancer-enabled=false to skip the reachability probe.",
+				"If external reachability is intended, remove the service.type override so the main Service is a LoadBalancer.",
+				"For a split topology (chart owns a separate external LoadBalancer), set loadBalancer.enabled: true in your -f values so the chart renders the '-external' Service.",
+			})
 	}
 
 	ingress, found, _ := unstructured.NestedSlice(lb.Object, "status", "loadBalancer", "ingress")
