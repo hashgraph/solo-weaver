@@ -66,7 +66,7 @@ Both endpoints are REST/JSON, resolved relative to the configured base URL:
 
 - `remote.address` is the source (inbound) or destination (outbound) host or
   CIDR. It is the value written into the nft set.
-- `remote.port` is only meaningful for the outbound `peer_bn` category, where
+- `remote.port` is only meaningful for the outbound `partner` category, where
   the backfill set is keyed on `address . port`. Inbound categories ignore the
   port (it is the BN's listener port, not part of the source allowlist).
 - Fields the shaper does not consume (`scheme`, `protocol`, `certificate`) are
@@ -83,14 +83,21 @@ a shared config file.
 | statusz endpoint | category | policy / nft set | key shape |
 |---|---|---|---|
 | inbound-clients | `publisher` | `bn-publisher` | ipv4 host/CIDR |
-| inbound-clients | `partner` | `bn-partner` | ipv4 host/CIDR |
+| inbound-clients | `partner` | `bn-partner-out` | ipv4 host/CIDR |
 | inbound-clients | `restricted` | `bn-restricted` | ipv4 host/CIDR |
-| outbound-clients | `peer_bn` | `bn-backfill` | compound `ip . port` |
+| outbound-clients | `partner` | `bn-backfill` | compound `ip . port` |
 
-Categories not in this table (for example `public`, or the operator-curated
-management set) are **never touched** by the monitor. A `public` source is
-expressed as the absence of a source-match on its rule, not as a set element, so
-it is intentionally dropped during bucketing.
+The mapping is keyed on **(direction, category)**, not category alone: the same
+`partner` string maps to `bn-partner-out` inbound and to the compound
+`bn-backfill` outbound. A peer block node this BN backfills from is reported as
+an outbound `partner` connection — there is no distinct `peer_bn` category.
+
+The `public` category is **recognized but deliberately unmapped**: a `public`
+source is expressed as the absence of a source-match on its rule (the
+`bn-public-out` port-match set), not as a statusz-reconciled set element, so it
+is intentionally dropped during bucketing rather than treated as an unknown
+category. The operator-curated management sets are likewise never touched by the
+monitor.
 
 Each owned category is reconciled on every successful poll: an address that
 drops out of statusz is removed from its set, not left stale. A poll that
@@ -160,7 +167,7 @@ Roster file shape:
     { "remote": {"address": "10.20.1.0/24", "port": "*"}, "category": "partner" }
   ],
   "outbound": [
-    { "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "peer_bn" }
+    { "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "partner" }
   ]
 }
 ```
