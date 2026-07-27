@@ -113,19 +113,23 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 // summary after all prompt sections complete. When cv is nil a local collector
 // is used and printed as "Host Firewall" immediately.
 //
+// seedEnabled is the default the enable/disable choice falls back to when neither
+// the flag nor an interactive prompt decides it. `install` passes false (opt-in —
+// a fresh install without the flag installs no firewall), while `reconfigure`
+// passes whether the inet host table currently exists on the host, so a no-flag /
+// default-accept reconfigure keeps the current state rather than silently tearing
+// an established firewall down. It is intentionally NOT derived from cfg.Disabled:
+// config.yaml's zero value cannot distinguish "enabled" from "never configured".
+//
 // It requires RegisterHostFirewallFlags to have been called on cmd.
-func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues) error {
+func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, seedEnabled bool) error {
 	force, err := FlagForce().Value(cmd, args)
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", FlagForce().Name)
 	}
 
 	cfg := config.Get().Host
-	// Seeded false (opt-in), not derived from cfg.Disabled: this is a one-shot
-	// default for "nothing specified anywhere," not a round-tripped decision —
-	// config.yaml's zero value is indistinguishable from "not mentioned," so it
-	// can never safely override this default toward "enabled."
-	firewallEnabled := effectiveBool(cmd, FlagNameFirewallEnabled, false)
+	firewallEnabled := effectiveBool(cmd, FlagNameFirewallEnabled, seedEnabled)
 
 	// Prompt for the enable/disable choice only when it wasn't already decided
 	// on the CLI. Declining here skips the allowlist/port prompts below entirely

@@ -11,6 +11,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -56,28 +57,47 @@ func deployedBlockNodeState(basePath string) state.State {
 	}
 }
 
-// reconfigureInputs returns minimal valid UserInputs for a reconfigure.
+// reconfigureInputs returns minimal valid UserInputs for a reconfigure. Traffic
+// shaping is enabled — the common case where a reconfigure re-asserts the plane.
 func reconfigureInputs(basePath string, resetStorage bool) models.UserInputs[models.BlockNodeInputs] {
 	return reconfigureInputsWithFlags(basePath, resetStorage, false)
 }
 
 // reconfigureInputsWithFlags is the full-flag variant for tests that need to
-// exercise --purge-storage paths.
+// exercise --purge-storage paths. Traffic shaping is enabled.
 func reconfigureInputsWithFlags(basePath string, resetStorage, purgeStorage bool) models.UserInputs[models.BlockNodeInputs] {
+	ins := reconfigureInputsTS(basePath, true)
+	ins.Custom.ResetStorage = resetStorage || purgeStorage
+	ins.Custom.PurgeStorage = purgeStorage
+	return ins
+}
+
+// reconfigureInputsTS builds reconfigure inputs with an explicit traffic-shaping
+// target, for exercising the enable vs disable convergence branches.
+func reconfigureInputsTS(basePath string, trafficShapingEnabled bool) models.UserInputs[models.BlockNodeInputs] {
 	return models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{
-			Namespace:    "block-node-ns",
-			Release:      "block-node",
-			Chart:        "oci://example.com/block-node",
-			ChartVersion: "0.30.0",
-			Storage: models.BlockNodeStorage{
-				BasePath: basePath,
-			},
-			ResetStorage: resetStorage || purgeStorage,
-			PurgeStorage: purgeStorage,
-			ReuseValues:  true,
+			Namespace:             "block-node-ns",
+			Release:               "block-node",
+			Chart:                 "oci://example.com/block-node",
+			ChartVersion:          "0.30.0",
+			Storage:               models.BlockNodeStorage{BasePath: basePath},
+			ReuseValues:           true,
+			TrafficShapingEnabled: trafficShapingEnabled,
 		},
 	}
+}
+
+// enableNetworkPrefix is the network-plane step prefix the convergence assembler
+// emits when traffic shaping is enabled and the host firewall is not being torn
+// down (the default in these tests, where config.Host.Disabled is false).
+var enableNetworkPrefix = []string{
+	steps.NetworkFirewallCreateStepId,
+	steps.NetworkPolicyCreateStepId,
+	steps.NftWeaverPersistStepId,
+	steps.TcEgressPersistStepId,
+	steps.TcIngressRecordStepId,
+	steps.BlockNodeDaemonConfigStepId,
 }
 
 // workflowStepIDs builds the given WorkflowBuilder and returns the IDs of the
@@ -112,13 +132,10 @@ func TestBuildWorkflow_WithReset_PathsUnchanged_DataOnly(t *testing.T) {
 	assert.Equal(t, "block-node-reconfigure-with-reset", wb.Id())
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, []string{
-		steps.NetworkFirewallCreateStepId,
-		steps.NftWeaverPersistStepId,
-		steps.TcEgressPersistStepId,
+	assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
 		steps.PurgeBlockNodeStorageStepId,
 		steps.UpgradeBlockNodeStepId,
-	}, ids)
+	), ids)
 }
 
 // TestBuildWorkflow_WithReset_PathsChanged_ReturnsError verifies that
@@ -163,14 +180,11 @@ func TestBuildWorkflow_PurgeStorage_IncludesRecreateStep(t *testing.T) {
 			assert.Equal(t, "block-node-reconfigure-purge-storage", wb.Id())
 
 			ids := workflowStepIDs(t, wb)
-			assert.Equal(t, []string{
-				steps.NetworkFirewallCreateStepId,
-				steps.NftWeaverPersistStepId,
-				steps.TcEgressPersistStepId,
+			assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
 				steps.PurgeBlockNodeStorageStepId,
 				steps.RecreateBlockNodeStorageStepId,
 				steps.UpgradeBlockNodeStepId,
-			}, ids)
+			), ids)
 		})
 	}
 }
@@ -189,13 +203,52 @@ func TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart(t *testing.T) {
 	assert.Equal(t, "block-node-reconfigure", wb.Id())
 
 	ids := workflowStepIDs(t, wb)
+	assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
+		steps.UpgradeBlockNodeStepId,
+		steps.RolloutRestartBlockNodeStepId,
+	), ids)
+}
+
+// TestBuildWorkflow_TrafficShapingDisabled_TearsDown verifies that resolving
+// traffic shaping to disabled emits the teardown branch (policy delete, tc
+// teardown, daemon-config disable) instead of the enable steps.
+func TestBuildWorkflow_TrafficShapingDisabled_TearsDown(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	currentState := deployedBlockNodeState("/mnt/storage")
+	inputs := reconfigureInputsTS("/mnt/storage", false)
+
+	wb, err := h.BuildWorkflow(currentState, inputs)
+	require.NoError(t, err)
+
+	ids := workflowStepIDs(t, wb)
 	assert.Equal(t, []string{
 		steps.NetworkFirewallCreateStepId,
-		steps.NftWeaverPersistStepId,
-		steps.TcEgressPersistStepId,
+		steps.NetworkPolicyDeleteAllStepId,
+		steps.TcEgressTeardownStepId,
+		steps.BlockNodeDaemonConfigStepId,
 		steps.UpgradeBlockNodeStepId,
 		steps.RolloutRestartBlockNodeStepId,
 	}, ids)
+}
+
+// TestBuildWorkflow_FirewallDisabled_DeletesTable verifies that when the resolved
+// host-firewall config is disabled (config.Host.Disabled=true), the convergence
+// assembler emits NetworkFirewallDelete instead of NetworkFirewallCreate.
+func TestBuildWorkflow_FirewallDisabled_DeletesTable(t *testing.T) {
+	config.OverrideHostConfig(models.HostConfig{Disabled: true})
+	t.Cleanup(func() { config.OverrideHostConfig(models.HostConfig{}) })
+
+	h := newMinimalReconfigureHandler()
+	currentState := deployedBlockNodeState("/mnt/storage")
+	inputs := reconfigureInputsTS("/mnt/storage", false)
+
+	wb, err := h.BuildWorkflow(currentState, inputs)
+	require.NoError(t, err)
+
+	ids := workflowStepIDs(t, wb)
+	assert.Equal(t, steps.NetworkFirewallDeleteStepId, ids[0],
+		"host firewall disabled should emit the delete step first")
 }
 
 // TestBuildWorkflow_NoReset_ChangedPathsReturnsError verifies that changing

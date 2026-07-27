@@ -8,6 +8,8 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -62,6 +64,30 @@ var (
 			}
 
 			logx.As().Info().Msg("Successfully upgraded Hedera Block Node")
+
+			// Silent convergence: upgrade does not prompt or expose a gate — it reads
+			// the persisted install-time traffic-shaping decision. When that decision
+			// was "enabled", ensure the daemon service is running so the block-node
+			// traffic-shaper monitor (re-asserted in daemon.yaml by the workflow)
+			// actually runs. It is a no-op when the daemon is already up, which is the
+			// normal case for an already-shaped block node.
+			//
+			// If the persisted decision can't be read, skip activation rather than
+			// guessing: TrafficShapingDisabled's zero value reads as "enabled" (negative
+			// polarity), so proceeding on a read error would wrongly activate the daemon
+			// (with an empty namespace) for a node that may have traffic shaping disabled.
+			// The workflow already re-asserted daemon.yaml from the authoritative
+			// state-manager view, and a running daemon is unaffected.
+			stateDefaults, sErr := state.ReadPromptDefaultsFromDisk()
+			switch {
+			case sErr != nil:
+				logx.As().Warn().Err(sErr).Msg(
+					"skipping traffic-shaper daemon activation on upgrade: could not read the persisted traffic-shaping decision")
+			case !stateDefaults.BlockNode.TrafficShapingDisabled:
+				if err := ensureBlockNodeDaemon(cmd, stateDefaults.BlockNode.Namespace, workflowsteps.DaemonBinarySource{}); err != nil {
+					return err
+				}
+			}
 			return nil
 		},
 	}

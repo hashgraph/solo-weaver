@@ -34,34 +34,51 @@ const (
 	daemonConfigPriorContentKey = "daemon-config-prior-content"
 )
 
-// WriteBlockNodeDaemonConfigStep enables the block-node traffic-shaper monitor
-// in daemon.yaml at install time. It loads the existing config (or starts a
-// fresh one), merges in the block_node component block — enabled, the scoped
-// daemon-bn.kubeconfig, the BN orbit (namespace), and monitors.traffic_shaper —
-// while preserving any operator-set statusz block and the consensus_node block,
+// WriteBlockNodeDaemonConfigStep records the block-node component's enablement
+// in daemon.yaml. It loads the existing config (or starts a fresh one), merges in
+// the block_node component block — enabled/monitors.traffic_shaper set to the
+// requested state, the scoped daemon-bn.kubeconfig, and the BN orbit (namespace)
+// — while preserving any operator-set statusz block and the consensus_node block,
 // then writes it back.
 //
+// enabled drives both Components.BlockNode.Enabled and Monitors.TrafficShaper:
+//   - true  (install / reconfigure enable): the traffic-shaper monitor runs once
+//     the daemon is up.
+//   - false (reconfigure disable): the block-node component and its traffic-shaper
+//     monitor are turned off WITHOUT uninstalling the daemon binary/service, so a
+//     co-located component (e.g. consensus-node monitoring) that shares the same
+//     daemon keeps running.
+//
 // The daemon binary and systemd service are installed separately by `daemon
-// service install`; this step only records the enablement so the traffic-shaper
-// monitor starts once the daemon runs. The write is fully reversed on rollback
-// (the file is restored to its prior content, or removed if it did not exist).
-func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string) *automa.StepBuilder {
+// service install`; this step only records the enablement. The write is fully
+// reversed on rollback (the file is restored to its prior content, or removed if
+// it did not exist).
+func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, enabled bool) *automa.StepBuilder {
 	cfgPath := paths.DaemonConfigPath
 	kubeconfig := paths.DaemonBNKubeconfigPath
 	if orbit == "" {
 		orbit = defaultBlockNodeOrbit
 	}
 
+	startMsg := "Enabling traffic-shaper monitor in daemon.yaml"
+	failMsg := "Failed to enable traffic-shaper monitor in daemon.yaml"
+	doneMsg := "Traffic-shaper monitor enabled in daemon.yaml"
+	if !enabled {
+		startMsg = "Disabling traffic-shaper monitor in daemon.yaml"
+		failMsg = "Failed to disable traffic-shaper monitor in daemon.yaml"
+		doneMsg = "Traffic-shaper monitor disabled in daemon.yaml"
+	}
+
 	return automa.NewStepBuilder().WithId(BlockNodeDaemonConfigStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Enabling traffic-shaper monitor in daemon.yaml")
+			notify.As().StepStart(ctx, stp, startMsg)
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to enable traffic-shaper monitor in daemon.yaml")
+			notify.As().StepFailure(ctx, stp, rpt, failMsg)
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Traffic-shaper monitor enabled in daemon.yaml")
+			notify.As().StepCompletion(ctx, stp, rpt, doneMsg)
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			prior, err := os.ReadFile(cfgPath)
@@ -96,10 +113,10 @@ func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string) *aut
 			// Preserve an operator-set statusz block (local-fallback source) if
 			// one already exists; this step only owns the enablement fields.
 			bn := &daemon.BlockNodeComponentConfig{
-				Enabled:    true,
+				Enabled:    enabled,
 				Kubeconfig: kubeconfig,
 				Orbit:      orbit,
-				Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
+				Monitors:   daemon.BlockNodeMonitors{TrafficShaper: enabled},
 			}
 			if cfg.Components.BlockNode != nil {
 				bn.Statusz = cfg.Components.BlockNode.Statusz
@@ -108,7 +125,7 @@ func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string) *aut
 
 			if err := cfg.Validate(); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
-					errorx.Decorate(err, "daemon config is invalid after enabling block-node monitor").
+					errorx.Decorate(err, "daemon config is invalid after updating block-node monitor").
 						WithProperty(models.ErrPropertyResolution, []string{
 							"Inspect " + cfgPath,
 						})))
@@ -126,7 +143,8 @@ func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string) *aut
 			logx.As().Info().
 				Str("path", cfgPath).
 				Str("orbit", orbit).
-				Msg("Enabled block-node traffic-shaper monitor in daemon.yaml")
+				Bool("enabled", enabled).
+				Msg("Updated block-node traffic-shaper monitor in daemon.yaml")
 			return automa.SuccessReport(stp)
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {

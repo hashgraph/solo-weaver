@@ -140,6 +140,15 @@ func (m *Manager) Set(ctx context.Context, mgmtCIDRs, blockedCIDRs []string, por
 	})
 }
 
+// IsActive reports whether the inet host table is currently present in the
+// kernel. It is a read-only probe (no lock, no mutation) used by callers that
+// need the firewall's current on-host state — e.g. seeding the reconfigure
+// enable/disable prompt from ground truth rather than from config.yaml, whose
+// zero value cannot distinguish "enabled" from "never configured".
+func (m *Manager) IsActive(ctx context.Context) (bool, error) {
+	return m.runner.Exists(ctx)
+}
+
 // Show returns the live inet host table. If the table is not active it returns
 // a human-readable message (not an error) so the caller can print it cleanly.
 func (m *Manager) Show(ctx context.Context) (string, error) {

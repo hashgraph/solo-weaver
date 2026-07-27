@@ -68,14 +68,15 @@ type PromptDefaultsDoc struct {
 			Profile string `yaml:"profile"`
 		} `yaml:"machineState"`
 		BlockNodeState struct {
-			Name              string `yaml:"name"`
-			Namespace         string `yaml:"namespace"`
-			ChartVersion      string `yaml:"version"`
-			HistoricRetention string `yaml:"historicRetention"`
-			RecentRetention   string `yaml:"recentRetention"`
-			PluginPreset      string `yaml:"pluginPreset"`
-			PluginList        string `yaml:"pluginList"`
-			Storage           struct {
+			Name                   string `yaml:"name"`
+			Namespace              string `yaml:"namespace"`
+			ChartVersion           string `yaml:"version"`
+			HistoricRetention      string `yaml:"historicRetention"`
+			RecentRetention        string `yaml:"recentRetention"`
+			PluginPreset           string `yaml:"pluginPreset"`
+			PluginList             string `yaml:"pluginList"`
+			TrafficShapingDisabled bool   `yaml:"trafficShapingDisabled"`
+			Storage                struct {
 				BasePath             string `yaml:"basePath"`
 				ArchivePath          string `yaml:"archivePath"`
 				LivePath             string `yaml:"livePath"`
@@ -158,14 +159,15 @@ func softwareVersionFromDoc(doc SoftwareVersionsDoc, name string) string {
 // inside BlockNodeState, so its keys (name, namespace, version) live
 // directly under blockNodeState in the YAML.
 type BlockNodeSummary struct {
-	ReleaseName       string
-	Namespace         string
-	ChartVersion      string
-	HistoricRetention string
-	RecentRetention   string
-	PluginPreset      string
-	PluginList        string
-	Storage           models.BlockNodeStorage
+	ReleaseName            string
+	Namespace              string
+	ChartVersion           string
+	HistoricRetention      string
+	RecentRetention        string
+	PluginPreset           string
+	PluginList             string
+	TrafficShapingDisabled bool
+	Storage                models.BlockNodeStorage
 }
 
 // PromptDefaults holds all prompt-relevant fields extracted from the on-disk
@@ -195,13 +197,14 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 	return PromptDefaults{
 		Profile: doc.State.MachineState.Profile,
 		BlockNode: BlockNodeSummary{
-			ReleaseName:       bn.Name,
-			Namespace:         bn.Namespace,
-			ChartVersion:      bn.ChartVersion,
-			HistoricRetention: bn.HistoricRetention,
-			RecentRetention:   bn.RecentRetention,
-			PluginPreset:      bn.PluginPreset,
-			PluginList:        bn.PluginList,
+			ReleaseName:            bn.Name,
+			Namespace:              bn.Namespace,
+			ChartVersion:           bn.ChartVersion,
+			HistoricRetention:      bn.HistoricRetention,
+			RecentRetention:        bn.RecentRetention,
+			PluginPreset:           bn.PluginPreset,
+			PluginList:             bn.PluginList,
+			TrafficShapingDisabled: bn.TrafficShapingDisabled,
 			Storage: models.BlockNodeStorage{
 				BasePath:             bn.Storage.BasePath,
 				ArchivePath:          bn.Storage.ArchivePath,

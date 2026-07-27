@@ -89,13 +89,23 @@ func (h *UpgradeHandler) BuildWorkflow(
 	}
 
 	ins := inputs.Custom
+
+	// Silent network-plane convergence: re-assert the persisted host-firewall and
+	// traffic-shaping decision on every upgrade, create-if-missing only
+	// (allowTeardown=false), so a routine version bump neither regresses the network
+	// plane nor tears it down. The traffic-shaping target comes from the install-time
+	// decision recorded on BlockNodeState — upgrade never prompts and never resolves
+	// its own gate (only reconfigure does). Daemon activation, when traffic shaping is
+	// enabled, is handled post-workflow in the CLI layer.
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false)
+
 	var wb *automa.WorkflowBuilder
 	if ins.ResetStorage {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").
-			Steps(steps.PurgeBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))
+			Steps(append(networkSteps, steps.PurgeBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))...)
 	} else {
 		wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade").
-			Steps(steps.UpgradeBlockNode(ins))
+			Steps(append(networkSteps, steps.UpgradeBlockNode(ins))...)
 	}
 	return wb, nil
 }

@@ -64,7 +64,7 @@ func BlockNodeDaemonConfigWorkflow(namespace string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("block-node-daemon-config").
 		Steps(
-			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace),
+			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace, true),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Traffic-shaper Monitor")
