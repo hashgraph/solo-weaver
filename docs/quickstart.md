@@ -196,7 +196,7 @@ sudo solo-provisioner block node install \
 | `--plugins-path`          | Path for plugins storage                                                                                                              |
 | `--historic-retention`    | Historic block retention threshold (`0` = unlimited)                                                                                  |
 | `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
-| `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`) |
+| `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`). See [Block-node service exposure](./block-node-service-exposure.md) for how this interacts with `service.type` and the chart's split topology. |
 | `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
 | `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs. Empty skips the host firewall.                                                          |
 | `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs, dropped before any other rule including established connections. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
