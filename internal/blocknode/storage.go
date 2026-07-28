@@ -88,9 +88,15 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 			verificationPath = p
 			verificationSize = s
 		case "plugins":
-			includePlugins = true
-			pluginsPath = p
-			pluginsSize = s
+			// #913: skip the managed plugins PV/PVC when the effective
+			// plugins.names is empty (plugins-baked image). The chart renders no
+			// plugins volume in that case, so a forced empty PVC would only
+			// shadow the image's baked plugins directory.
+			if m.managesPluginsStorage() {
+				includePlugins = true
+				pluginsPath = p
+				pluginsSize = s
+			}
 		case "application-state":
 			includeApplicationState = true
 			applicationStatePath = p
@@ -169,6 +175,11 @@ func (m *Manager) CreatePersistentVolumes(ctx context.Context, tempDir string) e
 
 	pvcNames := []string{"live-storage-pvc", "archive-storage-pvc", "logging-storage-pvc"}
 	for _, os := range applicable {
+		// #913: the plugins PVC is not provisioned for a plugins-baked image, so
+		// do not wait on it (it would never bind).
+		if os.Name == "plugins" && !m.managesPluginsStorage() {
+			continue
+		}
 		pvcNames = append(pvcNames, os.PVCName)
 	}
 

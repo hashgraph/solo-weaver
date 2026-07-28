@@ -185,7 +185,7 @@ func (o *OptionalStorage) RequiredByVersion(targetVersion string) bool {
 // be set (to derive missing paths) or all required individual paths must be
 // explicit. This includes core paths (archive, live, log) and version-dependent
 // optional paths (verification, plugins, application-state).
-func ValidateStorageCompleteness(storage models.BlockNodeStorage, chartVersion string) error {
+func ValidateStorageCompleteness(storage models.BlockNodeStorage, chartVersion string, managePlugins bool) error {
 	// If basePath is set, all missing paths can be derived.
 	if strings.TrimSpace(storage.BasePath) != "" {
 		return nil
@@ -199,6 +199,11 @@ func ValidateStorageCompleteness(storage models.BlockNodeStorage, chartVersion s
 	}
 	// Without basePath, version-dependent optional paths must also be explicit.
 	for _, opt := range GetApplicableOptionalStorages(chartVersion) {
+		// #913: a plugins-baked image provisions no managed plugins PVC, so a
+		// plugins path is not required for it.
+		if opt.Name == "plugins" && !managePlugins {
+			continue
+		}
 		if strings.TrimSpace(opt.GetPath(&storage)) == "" {
 			return errorx.IllegalArgument.New(
 				"%s storage path is required for chart version %s; set --base-path (or storage.basePath in config) or --%s-path",
