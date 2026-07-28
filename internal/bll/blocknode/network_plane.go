@@ -45,9 +45,17 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 	switch {
 	case trafficShapingEnabled:
 		// Enable: create the BN policy plane, persist the weaver table, (re)provision
-		// tc egress/ingress shaping, and enable the daemon's traffic-shaper monitor.
-		// Daemon binary/service activation itself is handled post-workflow in the CLI
-		// (ensureBlockNodeDaemon), mirroring install.
+		// tc egress/ingress shaping, enable the daemon's traffic-shaper monitor, and
+		// restart the daemon so that change takes effect. The daemon reads daemon.yaml
+		// only at startup (no hot-reload) and the post-workflow ensureBlockNodeDaemon
+		// is a no-op when the daemon is already running — so re-enabling on a host
+		// where the daemon is up (e.g. a prior disable left it running with the
+		// monitor off) would otherwise never start the monitor, and the ingress $VETH
+		// HTB would never be (re)installed. Restarting here reloads daemon.yaml; the
+		// monitor's initial pod list then shapes the current pod's veth immediately,
+		// and the subsequent rollout-restart's new veth via a watch event.
+		// RestartDaemonServiceStep self-skips when the daemon is not running (fresh
+		// enable), where post-workflow ensureBlockNodeDaemon installs and starts it.
 		shapeOverrides := toClassOverrides(ins.ShapeOverrides)
 		out = append(out,
 			steps.NetworkPolicyCreate(force),
@@ -55,6 +63,7 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 			steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate, shapeOverrides),
 			steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate, shapeOverrides),
 			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace, true),
+			steps.RestartDaemonServiceStep(),
 		)
 	case allowTeardown:
 		// Disable: remove every BN policy (the last delete tears the inet weaver

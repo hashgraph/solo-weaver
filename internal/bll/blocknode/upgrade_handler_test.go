@@ -67,6 +67,7 @@ func TestUpgrade_TrafficShapingEnabled_ReAssertsPlane(t *testing.T) {
 		steps.TcEgressPersistStepId,
 		steps.TcIngressRecordStepId,
 		steps.BlockNodeDaemonConfigStepId,
+		steps.RestartDaemonServiceStepId,
 		steps.UpgradeBlockNodeStepId,
 	}, ids)
 }

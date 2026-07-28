@@ -98,6 +98,7 @@ var enableNetworkPrefix = []string{
 	steps.TcEgressPersistStepId,
 	steps.TcIngressRecordStepId,
 	steps.BlockNodeDaemonConfigStepId,
+	steps.RestartDaemonServiceStepId,
 }
 
 // workflowStepIDs builds the given WorkflowBuilder and returns the IDs of the
