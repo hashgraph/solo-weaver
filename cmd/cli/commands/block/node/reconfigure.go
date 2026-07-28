@@ -11,7 +11,6 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -67,16 +66,14 @@ var (
 			}
 			inputs.Custom.TrafficShapingEnabled = trafficShapingEnabled
 
-			// Egress NIC/bandwidth and the daemon binary source are only needed when
-			// enabling traffic shaping — declining or disabling leaves nothing to
-			// configure or activate here.
-			var daemonSource workflowsteps.DaemonBinarySource
+			// Egress NIC/bandwidth is needed before the workflow because its tc steps
+			// consume EgressInterface/LinkRate — declining or disabling leaves nothing
+			// to configure here. The daemon binary source is resolved later, AFTER the
+			// workflow (see below): resolving it here would let a missing --daemon-bin
+			// on --profile=local preempt the clearer "block node is not installed"
+			// precondition error on a fresh host.
 			if trafficShapingEnabled {
 				if err := common.ResolveEgressConfig(cmd, args, cv, &flagEgressInterface, &flagLinkRate); err != nil {
-					return err
-				}
-				daemonSource, err = resolveDaemonBinarySource(cmd, args, inputs.Custom.Profile, cv)
-				if err != nil {
 					return err
 				}
 			}
@@ -129,6 +126,15 @@ var (
 			// daemon-config step turns the block-node monitor off without uninstalling
 			// the shared service.
 			if trafficShapingEnabled {
+				// Resolve the daemon binary source now — only after the reconfigure
+				// workflow (including its "block node is not installed" precondition) has
+				// succeeded — so a missing --daemon-bin on --profile=local cannot mask
+				// that clearer precondition error. This mirrors upgrade, which likewise
+				// activates the daemon post-workflow.
+				daemonSource, err := resolveDaemonBinarySource(cmd, args, inputs.Custom.Profile, cv)
+				if err != nil {
+					return err
+				}
 				// bnNamespace is only a fallback orbit for provisionBlockNodeDaemon: the
 				// workflow's daemon-config step already persisted the resolved namespace
 				// (never empty — it defaults to the block-node orbit) into daemon.yaml,
