@@ -8,7 +8,7 @@ on:
         description: "Go Version:"
         type: string
         required: false
-        default: ">=1.26.0"
+        default: ">=1.26.5"
       custom-job-label:
         description: "Custom Job Label:"
         type: string
@@ -48,7 +48,7 @@ jobs:
       - name: Setup GoLang
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ inputs.go-version || '>=1.26.0' }}
+          go-version: ${{ inputs.go-version || '>=1.26.5' }}
 
       - name: Compile Code
         run: task build
