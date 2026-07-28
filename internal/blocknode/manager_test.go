@@ -942,8 +942,13 @@ func TestInjectRetentionConfig_OverridesExistingValues(t *testing.T) {
 
 // ── injectServiceAnnotations ──────────────────────────────────────────────────
 
-// TestInjectServiceAnnotations_Disabled tests that nothing is injected when LoadBalancerEnabled is false.
-func TestInjectServiceAnnotations_Disabled(t *testing.T) {
+// TestInjectServiceAnnotations_DisabledPreservesLoadBalancerType is case C (issue #926): with
+// --load-balancer-enabled=false (no MetalLB) and no operator service.type, weaver preserves the
+// historical LoadBalancer main service (best-effort; the auto-allocated NodePort still serves)
+// but must NOT inject a MetalLB address-pool annotation — the pool tag is meaningless without
+// MetalLB. This preserves pre-#926 behavior for the no-MetalLB path now that the base template
+// no longer hardcodes service.type.
+func TestInjectServiceAnnotations_DisabledPreservesLoadBalancerType(t *testing.T) {
 	manager := &Manager{
 		blockNodeInputs: models.BlockNodeInputs{
 			LoadBalancerEnabled: false,
@@ -951,16 +956,110 @@ func TestInjectServiceAnnotations_Disabled(t *testing.T) {
 		logger: testLogger(),
 	}
 
-	input := []byte(`blockNode:
-  config: {}
+	// Mirrors the base template after #926: service block present with a port but no type.
+	input := []byte(`service:
+  port: 40840
 `)
 
 	result, err := manager.injectServiceAnnotations(input)
 	require.NoError(t, err)
 
-	// Content must be returned byte-identical — nothing was parsed or rewritten.
-	assert.Equal(t, input, result)
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	assert.Equal(t, "LoadBalancer", service["type"], "case C: main service type preserved as LoadBalancer")
+	assert.EqualValues(t, 40840, service["port"], "port preserved")
+	assert.NotContains(t, string(result), "metallb.io/address-pool", "no MetalLB annotation when --load-balancer-enabled=false")
+}
+
+// TestInjectServiceAnnotations_DisabledPreservesExplicitClusterIP is case C with an explicit
+// operator service.type: ClusterIP (and no chart loadBalancer block). Weaver injects nothing —
+// the operator's choice is honored and, since MetalLB is disabled, there is no annotation to
+// add — so the values come back byte-identical.
+func TestInjectServiceAnnotations_DisabledPreservesExplicitClusterIP(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: false,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  type: ClusterIP
+  port: 40840
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	assert.Equal(t, input, result, "explicit ClusterIP + MetalLB disabled → byte-identical, nothing to mutate")
 	assert.NotContains(t, string(result), "metallb.io/address-pool")
+}
+
+// TestInjectServiceAnnotations_SplitTopologyNoOperatorTypeStaysChartDefault is the heart of
+// issue #926 and its criterion 1: split topology (loadBalancer.enabled: true) with the operator
+// silent on service.type. Weaver must NOT force service.type: LoadBalancer onto the main service
+// — it defers to the chart so the chart's ClusterIP default stands. The values come back
+// byte-identical with no service.type key at all.
+func TestInjectServiceAnnotations_SplitTopologyNoOperatorTypeStaysChartDefault(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: true,
+		},
+		logger: testLogger(),
+	}
+
+	// Mirrors the base template (service has a port but no type) merged with an operator -f that
+	// only enables the chart's own external LoadBalancer.
+	input := []byte(`service:
+  port: 40840
+loadBalancer:
+  enabled: true
+  annotations:
+    metallb.io/address-pool: "public-address-pool"
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	// Deferred to the chart → byte-identical, no service.* mutation.
+	assert.Equal(t, input, result)
+
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	_, hasType := service["type"]
+	assert.False(t, hasType, "weaver must not force service.type on the split path — chart keeps ClusterIP")
+	_, hasServiceAnnotations := service["annotations"]
+	assert.False(t, hasServiceAnnotations, "weaver must not inject service.annotations on the split path")
+}
+
+// TestInjectServiceAnnotations_SplitTopologyDisabledStillDefers pins that the split-topology
+// defer holds even when --load-balancer-enabled=false: the chart still owns the external
+// LoadBalancer, so weaver leaves the main service to the chart's ClusterIP default.
+func TestInjectServiceAnnotations_SplitTopologyDisabledStillDefers(t *testing.T) {
+	manager := &Manager{
+		blockNodeInputs: models.BlockNodeInputs{
+			LoadBalancerEnabled: false,
+		},
+		logger: testLogger(),
+	}
+
+	input := []byte(`service:
+  port: 40840
+loadBalancer:
+  enabled: true
+`)
+
+	result, err := manager.injectServiceAnnotations(input)
+	require.NoError(t, err)
+
+	assert.Equal(t, input, result, "split topology defers regardless of --load-balancer-enabled")
+	var vals map[string]interface{}
+	require.NoError(t, yaml.Unmarshal(result, &vals))
+	service := vals["service"].(map[string]interface{})
+	_, hasType := service["type"]
+	assert.False(t, hasType, "chart keeps ClusterIP even with MetalLB disabled")
 }
 
 // TestInjectServiceAnnotations_InjectsWhenAbsent tests that the annotation is injected
