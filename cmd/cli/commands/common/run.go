@@ -343,45 +343,67 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// persistProvisionerVersion records the running binary's version to the on-disk
+// state file. A var so tests can stub it to exercise the best-effort swallow in
+// RunStartupMigrations without a writable state dir.
+var persistProvisionerVersion = state.PersistProvisionerVersion
+
 // RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
 // It is a no-op when no migrations apply.
 func RunStartupMigrations(ctx context.Context) error {
 	// Read the provisioner version last written to disk — this is the "installed"
 	// CLI version before the current binary ran for the first time.
-	installedCLIVersion, err := state.ReadProvisionerVersionFromDisk()
+	onDiskCLIVersion, err := state.ReadProvisionerVersionFromDisk()
 	if err != nil {
 		return err
 	}
+	currentCLIVersion := version.Get().Version
+
+	// An absent state.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
+	// 0.0.0 baseline so pending migrations still run instead of being skipped as a fresh
+	// install
+	installedCLIVersion := migration.ResolveInstalledCLIVersion(onDiskCLIVersion)
 
 	mctx := &migration.Context{
 		Component: migration.ScopeStartup,
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedCLIVersion)
-	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Get().Version)
+	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, currentCLIVersion)
 
 	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 	if err != nil {
 		return err
 	}
 
-	if len(migrations) == 0 {
+	if len(migrations) > 0 {
+		migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
+		wf, err := migrationWf.Build()
+		if err != nil {
+			return err
+		}
+
+		logx.As().Info().Msg("Running startup migrations...")
+		report := wf.Execute(ctx)
+		if report.Error != nil {
+			return report.Error
+		}
+		logx.As().Info().Msg("Startup migrations completed successfully")
+	} else {
 		logx.As().Debug().Msg("No startup migrations needed")
-		return nil
 	}
 
-	migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
-	wf, err := migrationWf.Build()
-	if err != nil {
-		return err
+	// Record the running version so boundary migrations aren't re-run next time and
+	// pre-state-tracking clusters get a state.yaml. Persist regardless of whether a
+	// migration applied — coupling it to that would stop backfilling once nothing
+	// crosses the baseline. Gate on a version change and a provisioned host so a
+	// fresh machine keeps no state file. Best-effort.
+	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
+		if err := persistProvisionerVersion(); err != nil {
+			logx.As().Warn().Err(err).
+				Msg("Failed to record provisioner version after startup migrations; boundary migrations may re-run next invocation")
+		}
 	}
-
-	logx.As().Info().Msg("Running startup migrations...")
-	report := wf.Execute(ctx)
-	if report.Error != nil {
-		return report.Error
-	}
-	logx.As().Info().Msg("Startup migrations completed successfully")
 	return nil
 }
 

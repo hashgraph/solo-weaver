@@ -13,6 +13,20 @@ const (
 	CtxKeyCurrentCLIVersion   = "currentCLIVersion"
 )
 
+// BaselineCLIVersion is the assumed installed version when none was recorded on
+// disk. It makes every version-boundary migration eligible; each migration's
+// Execute() guard keeps it a no-op on a fresh machine.
+const BaselineCLIVersion = "0.0.0"
+
+// ResolveInstalledCLIVersion maps an absent (empty) version to BaselineCLIVersion;
+// non-empty is returned as-is.
+func ResolveInstalledCLIVersion(raw string) string {
+	if raw == "" {
+		return BaselineCLIVersion
+	}
+	return raw
+}
+
 // CLIVersionMigration provides a base implementation for CLI-version-boundary startup migrations.
 // Embed this in concrete migrations to get ID(), Description(), and Applies() behaviour
 // that gates on the CLI binary version rather than a deployed chart version.
@@ -34,7 +48,9 @@ func (v *CLIVersionMigration) ID() string          { return v.id }
 func (v *CLIVersionMigration) Description() string { return v.description }
 
 // Applies returns true if the CLI is upgrading across the version boundary.
-// Returns false when installedCLIVersion is empty (fresh install).
+//
+// An empty installedCLIVersion returns false; the startup path supplies
+// BaselineCLIVersion instead, so this is only a fallback for direct callers.
 func (v *CLIVersionMigration) Applies(mctx *Context) (bool, error) {
 	var installedCLIVersion string
 	if s, ok := mctx.Data.String(CtxKeyInstalledCLIVersion); ok {
