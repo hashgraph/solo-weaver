@@ -564,10 +564,17 @@ func (m *Manager) renderAndApplyEgress(ctx context.Context) error {
 }
 
 // renderAndApplyUnshapeEgress renders the teardown-only (unshape) boot script for
-// the detected egress NIC, persists it, and restarts the tc-egress oneshot so the
-// kernel drops the live HTB hierarchy. Used exclusively by TeardownEgress — the
-// registry is already empty at that point, so the normal render would re-apply
-// default shaping instead of removing it.
+// the detected egress NIC, persists it, drops the live HTB hierarchy directly,
+// and restarts the tc-egress oneshot so the on-disk state matches. Used
+// exclusively by TeardownEgress — the registry is already empty at that point, so
+// the normal render would re-apply default shaping instead of removing it.
+//
+// The live root qdisc is deleted directly via the tc runner rather than relying
+// solely on the systemd oneshot re-running the (now unshape) boot script: the
+// boot script's job is to ADD the hierarchy, so using a service restart to REMOVE
+// it is indirect. A direct `tc qdisc del dev <nic> root` makes the teardown
+// immediate and deterministic; the unshape boot script written above keeps the
+// NIC unshaped across reboots.
 func (m *Manager) renderAndApplyUnshapeEgress(ctx context.Context) error {
 	nic, err := m.nicDetect()
 	if err != nil {
@@ -579,6 +586,11 @@ func (m *Manager) renderAndApplyUnshapeEgress(ctx context.Context) error {
 	}
 	if err := m.writeEgressScript(rendered); err != nil {
 		return err
+	}
+	// Drop the live hierarchy now, independent of systemd. Best-effort: a NIC with
+	// no root qdisc is not an error (see TCRunner.QdiscDelRoot).
+	if err := m.tcRunner.QdiscDelRoot(ctx, nic); err != nil {
+		return errorx.Decorate(err, "failed to delete live tc-egress root qdisc on %s", nic)
 	}
 	return m.applyEgress(ctx)
 }
