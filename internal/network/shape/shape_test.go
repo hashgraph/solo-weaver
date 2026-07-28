@@ -76,6 +76,45 @@ func TestRenderTcEgressScript_EmptyNIC(t *testing.T) {
 	}
 }
 
+// TestRenderTcEgressUnshapeScript verifies the teardown render deletes the root
+// qdisc and re-adds nothing — the fix for TeardownEgress re-applying the default
+// HTB hierarchy instead of removing it. It also funnels through the same NIC
+// validation as the shaping render.
+func TestRenderTcEgressUnshapeScript(t *testing.T) {
+	rendered, err := renderTcEgressUnshapeScript("enp0s1")
+	if err != nil {
+		t.Fatalf("renderTcEgressUnshapeScript: %v", err)
+	}
+
+	if !strings.Contains(rendered, `NIC="enp0s1"`) {
+		t.Errorf("unshape script missing NIC assignment:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `tc qdisc del dev "$NIC" root 2>/dev/null || true`) {
+		t.Errorf("unshape script must delete the root qdisc:\n%s", rendered)
+	}
+	// The whole point: no hierarchy is re-added, so none of the qdisc/class add
+	// verbs may appear (checked against command lines, not the shared banner).
+	for _, forbidden := range []string{
+		"root handle 1: htb default",
+		"tc qdisc add dev",
+		"tc class  add dev",
+		"handle 140: fq_codel",
+		"SPEED=$(cat",
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Errorf("unshape script must not contain %q (would re-shape the NIC):\n%s", forbidden, rendered)
+		}
+	}
+
+	// NIC validation still applies on the teardown path.
+	if _, err := renderTcEgressUnshapeScript(""); err == nil {
+		t.Error("expected error for empty NIC name, got nil")
+	}
+	if _, err := renderTcEgressUnshapeScript(`eth0";reboot;#`); err == nil {
+		t.Error("expected error for injection-style NIC name, got nil")
+	}
+}
+
 func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 	dir := t.TempDir()
 	const testNIC = "ens3"

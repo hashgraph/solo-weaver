@@ -21,6 +21,11 @@ type scriptData struct {
 	SpeedMbit int // <0 omits the SPEED block (explicit per-class rates); >=0 emits sysfs auto-detect
 	Device    deviceRenderData
 	Classes   []classRenderData
+	// Unshape, when true, renders a teardown-only script: it deletes the root
+	// qdisc and re-adds nothing, leaving the NIC unshaped. Used by TeardownEgress
+	// so disabling traffic shaping does not fall through to the default-shaping
+	// render (which would re-apply the stock HTB hierarchy instead of removing it).
+	Unshape bool
 }
 
 // deviceRenderData is the device-level template context.
@@ -43,6 +48,15 @@ type classRenderData struct {
 // shape config exists. SpeedMbit is left at 0 (sysfs auto-detect at boot).
 func renderTcEgressScript(nicName string) (string, error) {
 	return renderTcEgressScriptFromData(defaultScriptData(nicName))
+}
+
+// renderTcEgressUnshapeScript renders a teardown-only tc-egress.sh: it deletes
+// the root qdisc and re-adds nothing, leaving the NIC unshaped both live (on
+// service restart) and across reboots. TeardownEgress uses this instead of the
+// default-shaping render so disabling traffic shaping actually removes the HTB
+// hierarchy rather than replacing it with the stock default classes.
+func renderTcEgressUnshapeScript(nicName string) (string, error) {
+	return renderTcEgressScriptFromData(scriptData{NIC: nicName, SpeedMbit: -1, Unshape: true})
 }
 
 // renderTcEgressScriptFromConfig renders the tc-egress.sh template from the

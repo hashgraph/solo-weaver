@@ -496,9 +496,13 @@ func (m *Manager) TeardownEgress(ctx context.Context) error {
 		if err := removeDevice(DirEgress); err != nil {
 			return err
 		}
-		// Re-render with the default (empty) egress config so the boot script and
-		// the live kernel hierarchy are both reset to unshaped.
-		if err := m.renderAndApplyEgress(ctx); err != nil {
+		// Re-render an unshape boot script (delete root qdisc, re-add nothing) and
+		// apply it so both the boot script and the live kernel hierarchy are reset
+		// to unshaped. This must NOT go through renderAndApplyEgress: with the
+		// device/class registry now empty, that path falls through to the default
+		// shaping render and would re-apply the stock HTB hierarchy instead of
+		// removing it.
+		if err := m.renderAndApplyUnshapeEgress(ctx); err != nil {
 			return errorx.Decorate(err,
 				"egress shape config removed but boot script re-render failed; restart tc-egress.service to sync")
 		}
@@ -557,6 +561,26 @@ func (m *Manager) renderAndApplyEgress(ctx context.Context) error {
 		return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
 	}
 	return m.renderAndApplyScript(ctx, nic)
+}
+
+// renderAndApplyUnshapeEgress renders the teardown-only (unshape) boot script for
+// the detected egress NIC, persists it, and restarts the tc-egress oneshot so the
+// kernel drops the live HTB hierarchy. Used exclusively by TeardownEgress — the
+// registry is already empty at that point, so the normal render would re-apply
+// default shaping instead of removing it.
+func (m *Manager) renderAndApplyUnshapeEgress(ctx context.Context) error {
+	nic, err := m.nicDetect()
+	if err != nil {
+		return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
+	}
+	rendered, err := renderTcEgressUnshapeScript(nic)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEgressScript(rendered); err != nil {
+		return err
+	}
+	return m.applyEgress(ctx)
 }
 
 // renderEgressScript renders the tc-egress boot script for nic from the current
