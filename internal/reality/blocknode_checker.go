@@ -70,6 +70,14 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 
 	logx.As().Debug().Msg("Found BlockNode Helm release; building BlockNodeState")
+	// TrafficShapingDisabled is a weaver-only install decision that cannot be
+	// recovered from the Helm release or the live cluster (see its doc on
+	// state.BlockNodeState). Capture the persisted value before rebuilding the
+	// struct so a reality refresh does not silently reset it to the enabled
+	// default — which would make reconfigure/upgrade re-provision tc shaping (and
+	// attempt to install the daemon) for a block node deliberately installed
+	// without it.
+	trafficShapingDisabled := bn.TrafficShapingDisabled
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
@@ -83,8 +91,9 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			DeletedAt:     re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
-		Storage:  models.BlockNodeStorage{},
-		LastSync: now,
+		Storage:                models.BlockNodeStorage{},
+		TrafficShapingDisabled: trafficShapingDisabled,
+		LastSync:               now,
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
