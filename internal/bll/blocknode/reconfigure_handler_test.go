@@ -227,6 +227,7 @@ func TestBuildWorkflow_TrafficShapingDisabled_TearsDown(t *testing.T) {
 		steps.NetworkPolicyDeleteAllStepId,
 		steps.TcEgressTeardownStepId,
 		steps.BlockNodeDaemonConfigStepId,
+		steps.RestartDaemonServiceStepId,
 		steps.UpgradeBlockNodeStepId,
 		steps.RolloutRestartBlockNodeStepId,
 	}, ids)

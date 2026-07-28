@@ -59,12 +59,19 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 	case allowTeardown:
 		// Disable: remove every BN policy (the last delete tears the inet weaver
 		// table down, so no NftWeaverPersist is needed), drop the tc egress hierarchy,
-		// and turn the daemon's block-node traffic-shaper monitor off without
-		// uninstalling the shared daemon service.
+		// turn the daemon's block-node traffic-shaper monitor off, and restart the
+		// daemon so that change takes effect. The daemon reads daemon.yaml only at
+		// startup (no hot-reload), so without the restart the live monitor keeps
+		// running and re-applies the ingress $VETH HTB on the next BN pod create —
+		// which, on the default reconfigure path, is triggered by the rollout-restart
+		// that runs right after these network steps. Restarting here (before that pod
+		// churn) ensures the monitor is gone when the new veth appears, so it comes up
+		// unshaped. RestartDaemonServiceStep self-skips when the daemon is not running.
 		out = append(out,
 			steps.NetworkPolicyDeleteAll(),
 			steps.TcEgressTeardown(),
 			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace, false),
+			steps.RestartDaemonServiceStep(),
 		)
 	}
 

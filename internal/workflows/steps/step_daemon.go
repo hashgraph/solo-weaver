@@ -587,6 +587,53 @@ func StopDaemonServiceStep() *automa.StepBuilder {
 		})
 }
 
+// RestartDaemonServiceStepId is the step ID for RestartDaemonServiceStep.
+const RestartDaemonServiceStepId = "restart-daemon-service"
+
+// RestartDaemonServiceStep restarts the solo-provisioner-daemon systemd service
+// so it re-reads daemon.yaml. The daemon loads its component config (including
+// whether the block-node traffic-shaper monitor runs) only at startup — there is
+// no hot-reload — so a config change such as disabling the traffic-shaper monitor
+// only takes effect after a restart. Restart (not stop) is used deliberately: the
+// daemon is shared, so co-located components must keep running; the now-disabled
+// block-node monitor simply is not rebuilt.
+//
+// It is best-effort with respect to installation state: when the service is not
+// running (e.g. the daemon was never installed) there is nothing to reload, so the
+// step is skipped rather than failing.
+func RestartDaemonServiceStep() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId(RestartDaemonServiceStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if running, _ := pkgos.IsServiceRunning(ctx, daemonServiceName); !running {
+				logx.As().Info().Msgf("Service %s is not running; skipping restart", daemonServiceName)
+				return automa.SkippedReport(stp,
+					automa.WithDetail("daemon service not running; nothing to reload"))
+			}
+			if err := pkgos.RestartService(ctx, daemonServiceName); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to restart service %s", daemonServiceName).
+						WithProperty(models.ErrPropertyResolution, []string{
+							fmt.Sprintf("Check daemon logs: sudo journalctl -u %s -n 50 --no-pager", daemonServiceName),
+							fmt.Sprintf("Check service status: sudo systemctl status %s", daemonServiceName),
+							"Verify daemon config: cat /opt/solo/weaver/config/daemon.yaml",
+							fmt.Sprintf("Restart manually: sudo systemctl restart %s", daemonServiceName),
+						})))
+			}
+			logx.As().Info().Msgf("Service %s restarted", daemonServiceName)
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Restarting solo-provisioner-daemon to apply config")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to restart solo-provisioner-daemon service")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner Daemon service restarted")
+		})
+}
+
 // CheckDaemonServiceStep verifies the daemon installation and runtime health:
 //  1. Sandbox unit file exists at $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
 //  2. System symlink exists at /usr/lib/systemd/system/solo-provisioner-daemon.service → sandbox file
