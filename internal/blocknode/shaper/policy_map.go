@@ -82,6 +82,69 @@ var categoryBindings = map[bindingKey]categoryBinding{
 	{Outbound, CategoryPartner}:   {policyName: "bn-backfill", compound: true},
 }
 
+// portBindings maps an INBOUND statusz category to the managed-ports policy sets
+// its endpoints' local.port values feed. It is a listener-port binding, separate
+// from categoryBindings (membership): the public category has no membership
+// binding (bn-subscriber-in / bn-public-out match any source), but its listener
+// ports — subscriber, block-access, AND server-status, which is public to
+// everyone — drive those two sets' `<name>_ports` match. Only inbound local.ports
+// are listener ports; an outbound connection originates from an ephemeral local
+// port ("*") and never feeds a listener-port set.
+//
+// Each mapped policy's ports set is reconciled every tick with present/absent
+// semantics: seeded present (empty) so a category the BN stops reporting clears
+// the set rather than leaving stale ports behind.
+var portBindings = map[Category][]string{
+	CategoryPublisher: {"bn-publisher"},
+	CategoryPartner:   {"bn-partner-out"},
+	CategoryPublic:    {"bn-subscriber-in", "bn-public-out"},
+}
+
+// managedPortsPolicyNames returns every policy name whose `<name>_ports` set the
+// daemon reconciles (the de-duplicated, sorted union of portBindings' targets).
+func managedPortsPolicyNames() []string {
+	seen := make(map[string]struct{})
+	for _, names := range portBindings {
+		for _, n := range names {
+			seen[n] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// computePortDeltas diffs each managed-ports policy's desired listener ports
+// (desiredPortsByPolicy[name]) against its live `<name>_ports` nft set and
+// returns the non-empty deltas, ordered by policy name. Like computePolicyDeltas
+// it reads live state via lister and mutates nothing; the delta's Policy field
+// carries the POLICY name (not the set name) so callers can look the desired
+// ports back up.
+func computePortDeltas(ctx context.Context, lister elementLister, desiredPortsByPolicy map[string][]string) ([]PolicyDelta, error) {
+	names := make([]string, 0, len(desiredPortsByPolicy))
+	for name := range desiredPortsByPolicy {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var deltas []PolicyDelta
+	for _, name := range names {
+		live, err := lister.ListElements(ctx, policy.PortsSetName(name))
+		if err != nil {
+			return nil, errorx.Decorate(err, "read live listener ports for policy %s", name)
+		}
+		delta := policy.DiffElements(desiredPortsByPolicy[name], live)
+		if delta.Empty() {
+			continue
+		}
+		deltas = append(deltas, PolicyDelta{Policy: name, SetDelta: delta})
+	}
+	return deltas, nil
+}
+
 // categoryEndpoints is one poll's desired membership view, keyed by the
 // (direction, category) each endpoint set was read from. For each key PRESENT in
 // the map, the slice is its active endpoints: plain IPv4 hosts/CIDRs for the

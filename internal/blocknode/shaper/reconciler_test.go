@@ -40,27 +40,41 @@ func (f *fakeFetcher) OutboundClients(context.Context) (NetworkData, error) {
 	return f.outbound, nil
 }
 
-// fakeApplier records the membership it was asked to apply and returns a
-// configurable (applied, err).
+// fakeApplier records the membership and listener ports it was asked to apply in
+// a single ApplySets call and returns a configurable (applied, err).
 type fakeApplier struct {
-	got     map[string][]string
-	applied bool
-	err     error
-	calls   int
+	got      map[string][]string // last ApplySets membership input
+	gotPorts map[string][]string // last ApplySets ports input
+	applied  bool                // returned by ApplySets
+	err      error               // returned by ApplySets
+	calls    int                 // ApplySets calls
 }
 
-func (a *fakeApplier) ApplyMembership(_ context.Context, desired map[string][]string) (bool, error) {
+func (a *fakeApplier) ApplySets(_ context.Context, membership, ports map[string][]string) (bool, error) {
 	a.calls++
-	a.got = desired
+	a.got = membership
+	a.gotPorts = ports
 	if a.err != nil {
 		return false, a.err
 	}
 	return a.applied, nil
 }
 
-// conn is a small helper to build an inbound/outbound NetworkConnection.
+// conn is a small helper to build an inbound/outbound NetworkConnection with only
+// a remote (its local port is unset, so it drives membership but not listener
+// ports).
 func conn(category, addr, port string) NetworkConnection {
 	return NetworkConnection{Remote: Endpoint{Address: addr, Port: port}, Category: category}
+}
+
+// inconn builds an inbound NetworkConnection carrying a local listener port (the
+// BN side), used to exercise listener-port derivation.
+func inconn(category, localPort string) NetworkConnection {
+	return NetworkConnection{
+		Local:    Endpoint{Address: "192.168.1.119", Port: localPort},
+		Remote:   Endpoint{Address: "*", Port: "*"},
+		Category: category,
+	}
 }
 
 func TestMembershipDigest_Deterministic(t *testing.T) {
@@ -177,14 +191,16 @@ func TestReconciler_Check_DigestsDesired(t *testing.T) {
 	result, err := r.Check(context.Background())
 	require.NoError(t, err)
 
-	// The digest is exactly the digest of the canonical desired membership
-	// derived from the same snapshot — no nft read/write happened (nil
-	// lister/applier untouched).
+	// The digest is exactly the digest of the canonical desired membership AND
+	// listener ports derived from the same snapshot — no nft read/write happened
+	// (nil lister/applier untouched).
 	ce := bucketizeEndpoints(f.inbound, f.outbound)
 	wantCanon, err := canonicalDesiredMembership(ce)
 	require.NoError(t, err)
-	require.Equal(t, membershipDigest(wantCanon), result.Digest)
+	wantPorts := desiredPorts(f.inbound)
+	require.Equal(t, membershipDigest(combinedCanonical(wantCanon, wantPorts)), result.Digest)
 	require.Equal(t, wantCanon, result.Desired)
+	require.Equal(t, wantPorts, result.DesiredPorts)
 }
 
 func TestReconciler_Check_DigestIgnoresSpellingEquivalence(t *testing.T) {
@@ -236,13 +252,17 @@ func TestReconciler_Apply_AppliesOnlyChangedPolicies(t *testing.T) {
 	res, err := r.Apply(context.Background())
 	require.NoError(t, err)
 
-	// Only bn-publisher changed; it is the only policy handed to the applier.
+	// Only bn-publisher changed; it is the only policy in the membership batch. No
+	// inbound local.port was reported, so every managed-ports set is desired-empty
+	// and live-empty → the ports batch is empty (one atomic ApplySets call).
 	require.Equal(t, 1, applier.calls)
 	require.Equal(t, map[string][]string{"bn-publisher": {"10.1.0.1/32"}}, applier.got)
+	require.Empty(t, applier.gotPorts, "no port change → empty ports batch")
 
 	assert.Equal(t, []string{"bn-publisher"}, res.Applied)
-	// The other three owned policies are reported unchanged.
-	assert.Equal(t, []string{"bn-backfill", "bn-partner-out", "bn-restricted"}, res.Unchanged)
+	// Every other owned set — membership sets and the managed `_ports` sets — is
+	// reported unchanged.
+	assert.Equal(t, exclude(ownedSetNames(), "bn-publisher"), res.Unchanged)
 	assert.NotEmpty(t, res.Digest)
 }
 
@@ -254,9 +274,9 @@ func TestReconciler_Apply_NoChangesTakesNoApply(t *testing.T) {
 
 	res, err := r.Apply(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 0, applier.calls, "no deltas → applier must not be called")
+	require.Equal(t, 0, applier.calls, "no deltas in either dimension → applier must not be called")
 	assert.Empty(t, res.Applied)
-	assert.Equal(t, ownedPolicyNames(), res.Unchanged)
+	assert.Equal(t, ownedSetNames(), res.Unchanged)
 }
 
 func TestReconciler_Apply_LockHeldReportsNothingApplied(t *testing.T) {
@@ -275,7 +295,24 @@ func TestReconciler_Apply_LockHeldReportsNothingApplied(t *testing.T) {
 	// The changed policy must not silently vanish from the result: it is
 	// reported skipped (still out of sync), not folded into unchanged.
 	assert.Equal(t, []string{"bn-publisher"}, res.Skipped)
-	assert.Equal(t, []string{"bn-backfill", "bn-partner-out", "bn-restricted"}, res.Unchanged)
+	assert.Equal(t, exclude(ownedSetNames(), "bn-publisher"), res.Unchanged)
+}
+
+// exclude returns all minus the dropped names, preserving order — a small helper
+// so unchanged-set expectations track ownedSetNames() rather than hardcoding the
+// full list.
+func exclude(all []string, drop ...string) []string {
+	dropSet := make(map[string]struct{}, len(drop))
+	for _, d := range drop {
+		dropSet[d] = struct{}{}
+	}
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		if _, ok := dropSet[s]; !ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func TestReconciler_Apply_PropagatesApplyError(t *testing.T) {
@@ -290,4 +327,141 @@ func TestReconciler_Apply_PropagatesApplyError(t *testing.T) {
 	_, err := r.Apply(context.Background())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "nft boom")
+}
+
+func TestDesiredPorts_DerivesPerFacilityFromInboundLocalPort(t *testing.T) {
+	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("publisher", "40984"),
+		inconn("partner", "40980"),
+		inconn("public", "40980"),     // subscriber
+		inconn("public", "40981"),     // block-access
+		inconn("public", "40982"),     // server-status — public to everyone
+		inconn("restricted", "49999"), // no port binding → ignored
+	}}
+
+	got := desiredPorts(inbound)
+
+	// publisher and partner map to a single set each; the public union
+	// (including server-status 40982) feeds both public-facing sets.
+	assert.Equal(t, map[string][]string{
+		"bn-publisher":     {"40984"},
+		"bn-partner-out":   {"40980"},
+		"bn-subscriber-in": {"40980", "40981", "40982"},
+		"bn-public-out":    {"40980", "40981", "40982"},
+	}, got)
+}
+
+func TestDesiredPorts_SeedsAllManagedPresentAndSkipsWildcardEmpty(t *testing.T) {
+	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("publisher", "*"), // wildcard local port → skipped
+		inconn("partner", ""),    // empty local port → skipped
+	}}
+
+	got := desiredPorts(inbound)
+
+	// Every managed-ports policy is present but empty (present-vs-absent is load
+	// bearing: present-empty clears the set, matching the membership contract).
+	require.Len(t, got, 4)
+	for _, name := range []string{"bn-publisher", "bn-partner-out", "bn-subscriber-in", "bn-public-out"} {
+		require.Contains(t, got, name)
+		assert.Empty(t, got[name], name)
+	}
+}
+
+func TestReconciler_Apply_ReconcilesListenerPorts(t *testing.T) {
+	// The public category has no membership binding, so a public inbound endpoint
+	// drives ONLY the listener-port pass — an isolated ports-only reconcile.
+	f := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("public", "40982"),
+	}}}
+	lister := newFakeLister() // all sets live-empty
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, 1, applier.calls)
+	require.Empty(t, applier.got, "public has no membership binding → empty membership batch")
+	require.Equal(t, map[string][]string{
+		"bn-subscriber-in": {"40982"},
+		"bn-public-out":    {"40982"},
+	}, applier.gotPorts)
+
+	// The changed ports are reported by their `<name>_ports` nft set names.
+	assert.Equal(t, []string{"bn-public-out_ports", "bn-subscriber-in_ports"}, res.Applied)
+	assert.NotContains(t, res.Unchanged, "bn-public-out_ports")
+}
+
+func TestReconciler_Apply_PortLockHeldReportsPortsSkipped(t *testing.T) {
+	f := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("public", "40982"),
+	}}}
+	lister := newFakeLister()
+	applier := &fakeApplier{applied: false} // operator lock held → skipped
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, applier.calls)
+	assert.Empty(t, res.Applied)
+	assert.Equal(t, []string{"bn-public-out_ports", "bn-subscriber-in_ports"}, res.Skipped)
+}
+
+func TestReconciler_Apply_PropagatesPortApplyError(t *testing.T) {
+	f := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("public", "40982"),
+	}}}
+	lister := newFakeLister()
+	applier := &fakeApplier{err: errors.New("nft ports boom")}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	_, err := r.Apply(context.Background())
+	require.Error(t, err)
+	require.ErrorContains(t, err, "nft ports boom")
+}
+
+func TestReconciler_Check_DigestChangesOnPortsOnly(t *testing.T) {
+	// Two snapshots with identical membership (public has no membership binding)
+	// but different derived listener ports — the digest must still differ so the
+	// daemon's digest-based change detection never misses a ports-only update.
+	base := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("public", "40982"),
+	}}}
+	changed := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+		inconn("public", "40999"),
+	}}}
+	resBase, err := (&Reconciler{fetcher: base}).Check(context.Background())
+	require.NoError(t, err)
+	resChanged, err := (&Reconciler{fetcher: changed}).Check(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, resBase.Desired, resChanged.Desired, "membership is identical")
+	require.NotEqual(t, resBase.Digest, resChanged.Digest, "ports-only change must move the digest")
+}
+
+func TestReconciler_Apply_MembershipAndPortsAppliedInOneAtomicCall(t *testing.T) {
+	// A publisher inbound endpoint carries both a remote (membership) and a
+	// local.port (listener port), so both dimensions change this tick — and must
+	// be handed to the applier in a SINGLE ApplySets call, so an operator cannot
+	// grab the lock between a membership write and a ports write and leave one
+	// dimension stale.
+	f := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+		{
+			Local:    Endpoint{Address: "192.0.2.10", Port: "40984"},
+			Remote:   Endpoint{Address: "198.51.100.1", Port: "*"},
+			Category: "publisher",
+		},
+	}}}
+	lister := newFakeLister()
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, 1, applier.calls, "both dimensions go through one atomic ApplySets call")
+	require.Equal(t, map[string][]string{"bn-publisher": {"198.51.100.1"}}, applier.got)
+	require.Equal(t, map[string][]string{"bn-publisher": {"40984"}}, applier.gotPorts)
+	assert.Equal(t, []string{"bn-publisher", "bn-publisher_ports"}, res.Applied)
 }

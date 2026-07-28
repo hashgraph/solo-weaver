@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 )
 
@@ -405,6 +406,144 @@ func (m *Manager) ApplyMembership(ctx context.Context, desired map[string][]stri
 	return acquired, nil
 }
 
+// ApplySets pushes desired CIDR membership AND listener ports to the live nft
+// sets under a SINGLE non-blocking acquisition of the shared apply flock, so a
+// reconcile tick is atomic: either both dimensions are written, or the whole tick
+// is skipped because an operator command holds the lock. It is the traffic-shaper
+// daemon's write path. Applying the two dimensions under two separate
+// acquisitions (ApplyMembership then ApplyPorts) would open a partial-apply
+// window where an operator could take the lock between them and leave one
+// dimension stale until the next force-resync.
+//
+// membership maps a policy name to its desired CIDR set; ports maps a
+// managed-ports policy name to its desired `<name>_ports` set. Each entry is a
+// full-list replace (an empty slice clears that set). Membership sets are applied
+// first, then port sets, each one `nft -f` transaction, in sorted name order. The
+// return contract matches ApplyMembership:
+//   - (false, nil): the lock was held by a hand-run operator command, nothing was
+//     written, the caller skips this tick;
+//   - (true, nil):  the lock was acquired and both dimensions applied cleanly;
+//   - (false, err): the lock was acquired but a set failed mid-batch.
+//
+// It acquires the lock itself, so it must NOT be called while the caller already
+// holds withLock/withLockNB.
+func (m *Manager) ApplySets(ctx context.Context, membership, ports map[string][]string) (applied bool, err error) {
+	if len(membership) == 0 && len(ports) == 0 {
+		return true, nil
+	}
+	memNames := sortedMapKeys(membership)
+	portNames := sortedMapKeys(ports)
+
+	acquired, err := m.withLockNB(func() error {
+		for _, name := range memNames {
+			if err := m.applySet(ctx, name, membership[name]); err != nil {
+				return err
+			}
+		}
+		for _, name := range portNames {
+			if err := m.applyPortsSet(ctx, name, ports[name]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return acquired, nil
+}
+
+// sortedMapKeys returns m's keys in sorted order, for deterministic apply order.
+func sortedMapKeys(m map[string][]string) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ApplyPorts pushes desired listener ports into one or more managed-ports
+// policies' live `<name>_ports` sets. It is the traffic-shaper daemon's
+// listener-port write path — the exact counterpart of ApplyMembership for the
+// CIDR sets — reconciling each set from the BN's statusz local.port. It shares
+// ApplyMembership's batching, single non-blocking acquisition of the shared
+// apply flock, and return contract:
+//   - (false, nil): the lock was already held by a hand-run operator command, so
+//     nothing was written and the caller skips this tick;
+//   - (true, nil):  the lock was acquired and every policy applied cleanly;
+//   - (false, err): the lock was acquired but a policy failed mid-batch.
+//
+// Each map entry is a full-list replace: an empty slice clears that policy's
+// ports set. A name absent from the registry, or one whose ports are static
+// rather than daemon-managed, is an error (the policy structure is fixed by
+// `block node install`). Like ApplyMembership it acquires the lock itself, so it
+// must NOT be called while the caller already holds withLock/withLockNB.
+func (m *Manager) ApplyPorts(ctx context.Context, desired map[string][]string) (applied bool, err error) {
+	if len(desired) == 0 {
+		return true, nil
+	}
+	names := make([]string, 0, len(desired))
+	for name := range desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	acquired, err := m.withLockNB(func() error {
+		for _, name := range names {
+			if err := m.applyPortsSet(ctx, name, desired[name]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return acquired, nil
+}
+
+// applyPortsSet replaces the live `<name>_ports` set for one managed-ports
+// policy with ports via a single `flush set + add element` transaction. Like
+// applySet (its CIDR-membership sibling) it performs NO locking: callers must
+// already hold the shared apply lock. Every port is validated before the write
+// so a malformed statusz value can never poison the nft transaction.
+func (m *Manager) applyPortsSet(ctx context.Context, name string, ports []string) error {
+	p, err := m.requirePolicyWithPortsSet(name)
+	if err != nil {
+		return err
+	}
+	for _, port := range ports {
+		if err := sanity.ValidatePort(port); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid listener port %q for policy %q", port, name)
+		}
+	}
+	if err := m.requireTableExists(ctx, name); err != nil {
+		return err
+	}
+	return m.runner.SetElements(ctx, PortsSetName(p.Name), ports)
+}
+
+// requirePolicyWithPortsSet loads the named policy and verifies it carries a
+// daemon-managed ports set (ManagedPorts). Returns an error if the policy is
+// missing or its ports are static/none — the daemon must only ever write the
+// managed-ports sets `block node install` declared, never a static or absent one.
+func (m *Manager) requirePolicyWithPortsSet(name string) (*Policy, error) {
+	p, err := readEntry(m.registryDir, name)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errorx.IllegalState.New(
+			"policy %q not found; run `network policy create` with --name and the original policy flags first", name)
+	}
+	if !p.ManagedPorts {
+		return nil, errorx.IllegalArgument.New(
+			"policy %q has no daemon-managed ports set; its listener ports are static, not reconciled from statusz", name)
+	}
+	return p, nil
+}
+
 // Show returns a human-readable summary of a named policy: its registry config
 // (action, class, ports, created_at) followed by the live set membership from
 // the kernel (`nft list set inet weaver <name>`). No lock is taken — Show is
@@ -432,6 +571,17 @@ func (m *Manager) Show(ctx context.Context, name string) (string, error) {
 	}
 	if len(p.Ports) > 0 {
 		fmt.Fprintf(&b, "  ports:   %s\n", strings.Join(p.Ports, ", "))
+	}
+	if p.ManagedPorts {
+		ports, err := m.runner.ListElements(ctx, PortsSetName(p.Name))
+		if err != nil {
+			return "", err
+		}
+		if len(ports) == 0 {
+			b.WriteString("  ports:   managed (reconciled from statusz; none yet)\n")
+		} else {
+			fmt.Fprintf(&b, "  ports:   managed (reconciled from statusz): %s\n", strings.Join(ports, ", "))
+		}
 	}
 	if p.FromEntityWorld {
 		b.WriteString("  from-entity: world\n")

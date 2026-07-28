@@ -51,6 +51,18 @@ type canonicalPolicy struct {
 	deny       bool   // --deny (drop both directions)
 	fromWorld  bool   // --from-entity world (no IP-set clause)
 	ports      []string
+	// managedPorts marks a policy whose `<name>_ports` listener-port set is
+	// reconciled by the traffic-shaper daemon from the BN's statusz local.port,
+	// not seeded here. Such a set is rendered empty at install and filled on the
+	// first poll tick (the same empty-and-fill contract the CIDR membership sets
+	// have), so no port literal is baked into the inet weaver chain.
+	managedPorts bool
+	// healthPort marks the bn-mgmt sets, whose ports come from the resolved
+	// block-node health port (chart blockNode.ports.health) rather than a literal
+	// or from statusz. The health port is the one a-priori facility port: it
+	// bootstraps statusz discovery (you fetch statusz on it), so it cannot itself
+	// be read back from statusz.
+	healthPort bool
 	// curated marks an operator-curated set (bn-mgmt-*) that receives its
 	// initial membership from operator input at create time rather than from
 	// the daemon's statusz poll loop. bn-restricted is NOT curated: it reflects
@@ -67,28 +79,51 @@ type canonicalPolicy struct {
 // categories at runtime; these definitions are statusz-agnostic. --stamp
 // references the class names in the stable mark map; each class fixes its own
 // direction, so there is no direction flag.
+//
+// Listener ports are no longer baked in as literals: the publisher, subscriber,
+// block-access and server-status ports are read back from the BN's statusz
+// local.port and reconciled into the per-policy `<name>_ports` sets by the
+// daemon (managedPorts). Server-status is public to everyone, so it rides the
+// public port union on bn-subscriber-in (ingress) and bn-public-out (egress)
+// rather than a dedicated set — the old bn-status-in/bn-status-out policies are
+// folded away (see obsoleteBNPolicies). Only the bn-mgmt health port is pinned
+// here, from the chart's blockNode.ports.health (healthPort), because it
+// bootstraps statusz discovery and cannot come from statusz itself.
 var canonicalBNPolicies = []canonicalPolicy{
-	{name: "bn-publisher", ports: []string{"40840"}, stamp: "publisher"},
-	{name: "bn-subscriber-in", ports: []string{"40980", "40981"}, stamp: "reserve-ingress", fromWorld: true},
-	{name: "bn-partner-out", ports: []string{"40980", "40981"}, stamp: "partner"},
-	{name: "bn-public-out", ports: []string{"40980", "40981"}, stamp: "public", fromWorld: true},
-	{name: "bn-status-in", ports: []string{"40982"}, stamp: "reserve-ingress", fromWorld: true},
-	{name: "bn-status-out", ports: []string{"40982"}, stamp: "public", fromWorld: true},
-	{name: "bn-mgmt-in", ports: []string{"40983"}, stamp: "reserve-ingress", curated: true},
-	{name: "bn-mgmt-out", ports: []string{"40983"}, stamp: "reserve-egress", curated: true},
+	{name: "bn-publisher", managedPorts: true, stamp: "publisher"},
+	{name: "bn-subscriber-in", managedPorts: true, stamp: "reserve-ingress", fromWorld: true},
+	{name: "bn-partner-out", managedPorts: true, stamp: "partner"},
+	{name: "bn-public-out", managedPorts: true, stamp: "public", fromWorld: true},
+	{name: "bn-mgmt-in", healthPort: true, stamp: "reserve-ingress", curated: true},
+	{name: "bn-mgmt-out", healthPort: true, stamp: "reserve-egress", curated: true},
 	{name: "bn-restricted", deny: true},
 	{name: "bn-backfill", stamp: "reserve-egress", replyStamp: "backfill-response"},
 }
 
-// toPolicy builds the policy.Policy for a canonical entry. Action/Direction are
-// resolved from the stamp/deny fields; Validate (called inside Manager.Create)
-// derives Direction from the class and rejects any invalid combination.
-func (c canonicalPolicy) toPolicy() *policy.Policy {
+// obsoleteBNPolicies are policies a prior solo-weaver release created that this
+// release no longer owns. On upgrade they still sit in the policy registry (and
+// the live table, which Manager re-renders from the registry), so the install
+// step deletes them explicitly rather than leaving orphaned sets behind.
+// bn-status-in / bn-status-out were folded into the public port union on
+// bn-subscriber-in / bn-public-out (server-status is public to everyone).
+var obsoleteBNPolicies = []string{"bn-status-in", "bn-status-out"}
+
+// toPolicy builds the policy.Policy for a canonical entry, resolving a
+// healthPort entry's ports to the given block-node health port. Action/Direction
+// are resolved from the stamp/deny fields; Validate (called inside
+// Manager.Create) derives Direction from the class and rejects any invalid
+// combination.
+func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
+	ports := c.ports
+	if c.healthPort {
+		ports = []string{healthPort}
+	}
 	p := &policy.Policy{
 		Name:            c.name,
 		Stamp:           c.stamp,
 		ReplyStamp:      c.replyStamp,
-		Ports:           c.ports,
+		Ports:           ports,
+		ManagedPorts:    c.managedPorts,
 		FromEntityWorld: c.fromWorld,
 	}
 	if c.deny {
@@ -112,7 +147,11 @@ func (c canonicalPolicy) toPolicy() *policy.Policy {
 // initial membership here from the host management allowlist (--mgmt-cidrs).
 // bn-restricted starts empty and is left entirely to the daemon's statusz poll
 // loop — see canonicalPolicy.curated.
-func NetworkPolicyCreate(force bool) *automa.StepBuilder {
+// healthPort is the resolved block-node health/statusz port (from
+// blocknode.ResolveHealthPort against the operator's effective values), used to
+// seed the bn-mgmt sets so the port solo-weaver allows tracks the port the BN
+// actually listens on rather than a value baked into solo-weaver.
+func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkPolicyCreateStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Creating network policies (inet weaver)")
@@ -165,7 +204,7 @@ func NetworkPolicyCreate(force bool) *automa.StepBuilder {
 				}
 
 				cidrs := initialCIDRs(c, mgmtCIDRs)
-				changed, err := mgr.Create(ctx, c.toPolicy(), cidrs, podCIDR, force)
+				changed, err := mgr.Create(ctx, c.toPolicy(healthPort), cidrs, podCIDR, force)
 				if err != nil {
 					stp.State().Local().Set(policyCreatedNamesKey, created)
 					return automa.FailureReport(stp, automa.WithError(
@@ -180,6 +219,37 @@ func NetworkPolicyCreate(force bool) *automa.StepBuilder {
 					created = append(created, c.name)
 				}
 			}
+			// Remove policies a prior release created that this release folded
+			// away (bn-status-*). On upgrade they still sit in the registry, and
+			// Manager re-renders the whole table from it, so leaving them would
+			// keep orphaned sets alive. Idempotent: absent policies are skipped,
+			// so a fresh install (where they never existed) is a no-op.
+			for _, name := range obsoleteBNPolicies {
+				exists, err := policy.Exists(name)
+				if err != nil {
+					stp.State().Local().Set(policyCreatedNamesKey, created)
+					return automa.FailureReport(stp, automa.WithError(
+						errorx.Decorate(err, "failed to check whether obsolete network policy %q exists", name).
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Inspect the policy registry: ls " + policy.RegistryDir,
+							})))
+				}
+				if !exists {
+					continue
+				}
+				if err := mgr.Delete(ctx, name); err != nil {
+					stp.State().Local().Set(policyCreatedNamesKey, created)
+					return automa.FailureReport(stp, automa.WithError(
+						errorx.Decorate(err, "failed to remove obsolete network policy %q", name).
+							WithProperty(models.ErrPropertyResolution, []string{
+								"Inspect the live weaver table: nft list table inet weaver",
+								"Check the policy registry for leftover entries: ls " + policy.RegistryDir,
+							})))
+				}
+				logx.As().Info().Str("policy", name).
+					Msg("removed obsolete network policy (folded into the public port union)")
+			}
+
 			stp.State().Local().Set(policyCreatedNamesKey, created)
 			logx.As().Info().Int("created", len(created)).Int("total", len(canonicalBNPolicies)).
 				Msg("network policies reconciled")

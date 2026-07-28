@@ -16,11 +16,11 @@ import (
 )
 
 // BlockNodePublicPort is the well-known TCP port the block-node gRPC service
-// listens on. It's an ecosystem-wide contract (the chart defaults to it, every
-// SDK and tool assumes it), so the reachability probe dials it directly instead
-// of trying to look the port up by name on the Service — chart versions have
-// used `http`, `grpc`, and other names for it, and matching any of those is
-// more fragile than dialing the well-known number.
+// listens on (the chart's `service.port` default; every SDK and tool assumes
+// it). The reachability probe prefers the LoadBalancer Service's own advertised
+// port and falls back to this constant only when the Service exposes no port, so
+// a chart that publishes the service on a non-default port is probed on the port
+// it actually announces rather than a stale hardcoded number.
 const BlockNodePublicPort int64 = 40840
 
 // VerifyExternalReachable opens a TCP connection from the host running
@@ -118,5 +118,24 @@ func (m *Manager) findLoadBalancerEndpoint(ctx context.Context) (string, int64, 
 		return "", 0, errorx.IllegalState.New("loadBalancer.ingress[0].ip is empty on Service %s", lb.GetName())
 	}
 
-	return ip, BlockNodePublicPort, nil
+	return ip, loadBalancerPort(lb), nil
+}
+
+// loadBalancerPort returns the port the LoadBalancer Service advertises (its
+// first spec.ports entry), falling back to the well-known BlockNodePublicPort
+// when the Service exposes no ports — so the probe targets the port the Service
+// actually announces rather than a hardcoded number.
+func loadBalancerPort(lb *unstructured.Unstructured) int64 {
+	ports, found, _ := unstructured.NestedSlice(lb.Object, "spec", "ports")
+	if !found || len(ports) == 0 {
+		return BlockNodePublicPort
+	}
+	entry, ok := ports[0].(map[string]interface{})
+	if !ok {
+		return BlockNodePublicPort
+	}
+	if port, ok, _ := unstructured.NestedInt64(entry, "port"); ok && port > 0 {
+		return port
+	}
+	return BlockNodePublicPort
 }

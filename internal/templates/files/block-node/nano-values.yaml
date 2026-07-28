@@ -9,6 +9,13 @@ resources:
     memory: "1.5Gi"
 
 blockNode:
+  # Pin the health/statusz port so the port solo-weaver allows (bn-mgmt) and dials
+  # for statusz always matches the port the block node listens on. Rendered from
+  # DefaultBlockNodeHealthPort so this stays a single source of truth. The other
+  # facility ports (publisher/subscriber/block-access/server-status) are read back
+  # from statusz and reconciled at runtime, so they are not pinned here.
+  ports:
+    health: {{ .HealthPort }}
   config:
     JAVA_OPTS: '-Xms1G -Xmx1G -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath="/tmp/dump.hprof"'
     MESSAGING_BLOCK_ITEM_QUEUE_SIZE: "128"

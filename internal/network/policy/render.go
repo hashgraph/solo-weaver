@@ -16,8 +16,10 @@ import (
 // registry policies, in tier order. The same output feeds both the kernel apply
 // (`nft -f`) and the on-disk artifact, so the live table and the persisted file
 // can never diverge. Set *membership* is deliberately not rendered here — only
-// set schemas and the static `--ports` elements — because membership is owned
-// by the daemon poll loop and never persisted.
+// set schemas and any static `--ports` elements — because membership is owned
+// by the daemon poll loop and never persisted. A managed-ports set
+// (`<name>_ports` for a ManagedPorts policy) is likewise declared empty here and
+// filled from statusz at runtime, exactly like the CIDR membership set.
 //
 // Rule position is determined by action type and match specificity, never by
 // creation order:
@@ -92,8 +94,9 @@ func sortedByName(policies []*Policy) []*Policy {
 }
 
 // renderSetDecls emits the schema for each policy's sets, name-sorted for a
-// deterministic render. Membership set elements are omitted; only the static
-// `--ports` set carries elements.
+// deterministic render. Membership set elements are omitted; only a static
+// `--ports` set carries inline elements — a managed-ports set is declared empty
+// and filled by the daemon.
 func renderSetDecls(policies []*Policy) ([]string, error) {
 	var lines []string
 	for _, p := range policies {
@@ -106,8 +109,16 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 			}
 		}
 		if len(p.Ports) > 0 {
-			lines = append(lines, fmt.Sprintf("\tset %s_ports { type inet_service; elements = { %s }; }",
-				p.Name, portElements(p.Ports)))
+			lines = append(lines, fmt.Sprintf("\tset %s { type inet_service; elements = { %s }; }",
+				PortsSetName(p.Name), portElements(p.Ports)))
+		} else if p.ManagedPorts {
+			// Daemon-managed listener ports: the set is declared but empty,
+			// exactly like the CIDR membership set above. The traffic-shaper
+			// poll loop fills it from the BN's statusz local.port each tick;
+			// nothing is seeded (or persisted) here. Until the first poll the
+			// set is empty, so the `tcp dport @<name>_ports` clause matches
+			// nothing — the same bootstrap behavior the membership sets have.
+			lines = append(lines, fmt.Sprintf("\tset %s { type inet_service; }", PortsSetName(p.Name)))
 		}
 	}
 	return lines, nil
@@ -294,16 +305,16 @@ func renderStampRule(p *Policy, podCIDR string) (string, error) {
 		if p.hasCIDRSet() {
 			b.WriteString(" ip saddr @" + p.Name)
 		}
-		if len(p.Ports) > 0 {
-			b.WriteString(" tcp dport @" + p.Name + "_ports")
+		if p.hasPortsSet() {
+			b.WriteString(" tcp dport @" + PortsSetName(p.Name))
 		}
 	case DirectionEgress:
 		b.WriteString("ip saddr " + podCIDR)
 		if p.hasCIDRSet() {
 			b.WriteString(" ip daddr @" + p.Name)
 		}
-		if len(p.Ports) > 0 {
-			b.WriteString(" tcp sport @" + p.Name + "_ports")
+		if p.hasPortsSet() {
+			b.WriteString(" tcp sport @" + PortsSetName(p.Name))
 		}
 	default:
 		return "", errorx.AssertionFailed.New("stamp policy %q has no direction", p.Name)

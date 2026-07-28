@@ -62,6 +62,15 @@ func (h *InstallHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
+	// Resolve the health/statusz port from the operator's effective --values so the
+	// bn-mgmt policy set allows the port the BN actually listens on rather than a
+	// value baked into solo-weaver; falls back to the chart default when the
+	// operator supplies no override.
+	healthPort, err := bnpkg.ResolveHealthPort(ins.ValuesFile)
+	if err != nil {
+		return nil, err
+	}
+
 	// Enable the traffic-shaper monitor in daemon.yaml only when the policy
 	// plane it reconciles against was actually created — with traffic shaping
 	// disabled there is no inet weaver classification for the daemon to watch.
@@ -84,7 +93,7 @@ func (h *InstallHandler) BuildWorkflow(
 			// The host firewall is owned by the block-node workflow (not the generic
 			// kube cluster install); nftables is already installed/enabled by prior
 			// cluster provisioning, so it's safe to apply here.
-			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled),
+			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled, healthPort),
 			steps.SetupBlockNode(ins),
 		}
 		stepList = append(stepList, daemonConfigStep...)
@@ -106,7 +115,7 @@ func (h *InstallHandler) BuildWorkflow(
 			// nftables was just installed/enabled by NodeSetupWorkflow's
 			// systemSetupWorkflow, so applying the host firewall here (rather than
 			// in that generic, node-type-agnostic workflow) is safe.
-			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled),
+			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled, healthPort),
 			steps.SetupBlockNode(ins),
 		}
 		stepList = append(stepList, daemonConfigStep...)

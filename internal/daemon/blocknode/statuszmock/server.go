@@ -59,6 +59,42 @@ func StaticRoster(r Roster) RosterProvider {
 	return func() (Roster, error) { return r, nil }
 }
 
+// DefaultRoster returns a representative roster with realistic per-facility
+// listener ports, so a developer or UAT run gets a BN that exercises both the
+// membership and the listener-port reconciliation out of the box. It mirrors the
+// facility→port contract the traffic-shaper derives from `local.port`:
+//
+//   - publisher listens on 40984 (category publisher)
+//   - subscriber listens on 40980 (categories partner and public)
+//   - block-access listens on 40981 (category public)
+//   - server-status listens on 40982 (category public; public to everyone)
+//
+// Addresses are RFC 5737 documentation ranges (192.0.2.0/24 for the BN,
+// 198.51.100.0/24 for peers), deliberately NOT a real private range: a default
+// fixture must not pin host-network IPs that shift with the developer's actual
+// subnet (e.g. changing wifi) or collide with a live network. Only `local.port`
+// (listener ports) and `remote.address` (membership) are consumed by the
+// reconciler — `local.address` is never read. The dual-role backfill peer
+// (198.51.100.140) appears both inbound as a partner and outbound as the peer
+// this BN backfills from. For an environment-specific roster, drop in a
+// roster.json (FileRoster) to override this default.
+func DefaultRoster() Roster {
+	const bn = "192.0.2.10"
+	return Roster{
+		Inbound: []Connection{
+			{Local: Endpoint{bn, "40984"}, Remote: Endpoint{"198.51.100.234", "*"}, Category: "publisher"},
+			{Local: Endpoint{bn, "40980"}, Remote: Endpoint{"198.51.100.192", "*"}, Category: "partner"},
+			{Local: Endpoint{bn, "40980"}, Remote: Endpoint{"198.51.100.208", "*"}, Category: "public"},
+			{Local: Endpoint{bn, "40981"}, Remote: Endpoint{"*", "*"}, Category: "public"},
+			{Local: Endpoint{bn, "40982"}, Remote: Endpoint{"*", "*"}, Category: "public"},
+			{Local: Endpoint{bn, "40980"}, Remote: Endpoint{"198.51.100.140", "*"}, Category: "partner"},
+		},
+		Outbound: []Connection{
+			{Local: Endpoint{bn, "*"}, Remote: Endpoint{"198.51.100.140", "50980"}, Category: "partner"},
+		},
+	}
+}
+
 // FileRoster returns a provider that reads and decodes the JSON roster at path
 // on every call, so external edits take effect on the next poll without a
 // restart. A missing file yields an empty roster (the BN "has no clients yet"
