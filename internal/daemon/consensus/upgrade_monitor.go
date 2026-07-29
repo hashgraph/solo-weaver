@@ -33,6 +33,12 @@ var networkUpgradeExecuteGVR = schema.GroupVersionResource{
 	Resource: "networkupgradeexecutes",
 }
 
+// NetworkUpgradeExecuteGVR returns the GVR the monitor watches. Exported so
+// tests can assert it against the CRD solo-operator installs.
+func NetworkUpgradeExecuteGVR() schema.GroupVersionResource {
+	return networkUpgradeExecuteGVR
+}
+
 const (
 	// NetworkUpgradeExecute status.phase values are defined as the shared
 	// contract in internal/consensus (cn.Phase*). They are referenced directly
