@@ -37,6 +37,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,6 +45,14 @@ import (
 // This test is run first via -tags='cluster_setup' before other cluster-dependent tests.
 func Test_ClusterSetup(t *testing.T) {
 	testutil.Reset(t)
+
+	// Enable solo-operator so its CRDs (incl. networkupgradeexecutes under
+	// operator.solo.hedera.com) are installed. This is what the require_cluster
+	// guard TestWithCluster_UpgradeMonitor_GVRMatchesInstalledCRD asserts against.
+	// The gate is evaluated when the workflow is built, so set it before the call.
+	cfg := config.Get()
+	cfg.SoloOperator.Enabled = true
+	require.NoError(t, config.Set(&cfg))
 
 	installWf, err := InstallClusterWorkflow(false, nil).
 		WithExecutionMode(automa.StopOnError).
