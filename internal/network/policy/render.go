@@ -221,7 +221,7 @@ func renderChain(policies []*Policy, podCIDR string) ([]string, error) {
 	if podCIDR != "" {
 		lines = append(lines, "",
 			"\t\t# Unclassified pod egress (no meta priority; HTB default class).",
-			fmt.Sprintf("\t\tip saddr %s", podCIDR))
+			fmt.Sprintf("\t\tip saddr %s accept", podCIDR))
 	}
 
 	lines = append(lines, "",
