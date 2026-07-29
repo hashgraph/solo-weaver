@@ -20,16 +20,16 @@ import (
 // port may be "*" — both are exercised here so the decode boundary is pinned to
 // the real BN schema rather than a simplified stand-in.
 const sampleInboundClientsJSON = `{
-  "active_endpoints": [
-    { "local": {"address": "0.0.0.0", "port": "40840"}, "remote": {"address": "10.10.1.0/24", "port": "*"}, "category": "publisher", "tls_required": true },
-    { "local": {"address": "0.0.0.0", "port": "40980"}, "remote": {"address": "10.20.1.0/24", "port": "*"}, "category": "partner",   "tls_required": true },
-    { "local": {"address": "0.0.0.0", "port": "40980"}, "remote": {"address": "0.0.0.0/0",    "port": "*"}, "category": "public",    "tls_required": false }
+  "activeEndpoints": [
+    { "local": {"address": "0.0.0.0", "port": "40840"}, "remote": {"address": "10.10.1.0/24", "port": "*"}, "category": "publisher", "tlsRequired": true },
+    { "local": {"address": "0.0.0.0", "port": "40980"}, "remote": {"address": "10.20.1.0/24", "port": "*"}, "category": "partner",   "tlsRequired": true },
+    { "local": {"address": "0.0.0.0", "port": "40980"}, "remote": {"address": "0.0.0.0/0",    "port": "*"}, "category": "public",    "tlsRequired": false }
   ]
 }`
 
 const sampleOutboundClientsJSON = `{
-  "active_endpoints": [
-    { "local": {"address": "0.0.0.0", "port": "*"}, "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "partner", "tls_required": true }
+  "activeEndpoints": [
+    { "local": {"address": "0.0.0.0", "port": "*"}, "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "partner", "tlsRequired": true }
   ]
 }`
 
@@ -39,10 +39,10 @@ func newMockStatuszServer(t *testing.T, inbound, outbound http.HandlerFunc) *htt
 	t.Helper()
 	mux := http.NewServeMux()
 	if inbound != nil {
-		mux.HandleFunc("/statusz/inbound-clients", inbound)
+		mux.HandleFunc("/statusz/inbound", inbound)
 	}
 	if outbound != nil {
-		mux.HandleFunc("/statusz/outbound-clients", outbound)
+		mux.HandleFunc("/statusz/outbound", outbound)
 	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -97,7 +97,7 @@ func TestStatuszClient_OutboundClients_DecodesSample(t *testing.T) {
 }
 
 func TestStatuszClient_EmptyEndpoints_DecodesToEmptySlice(t *testing.T) {
-	srv := newMockStatuszServer(t, jsonResponder(`{"active_endpoints": []}`), nil)
+	srv := newMockStatuszServer(t, jsonResponder(`{"activeEndpoints": []}`), nil)
 	c := NewStatuszClient(srv.URL)
 
 	data, err := c.InboundClients(context.Background())

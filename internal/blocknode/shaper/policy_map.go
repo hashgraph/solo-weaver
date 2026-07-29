@@ -11,7 +11,7 @@ import (
 )
 
 // Category is a statusz traffic category as reported by the block node's statusz
-// endpoints (inbound-clients / outbound-clients). The vocabulary is fixed by the
+// endpoints (statusz/inbound / statusz/outbound). The vocabulary is fixed by the
 // BN's contract, not operator-configurable: partner, publisher, public,
 // restricted.
 type Category string
@@ -41,9 +41,9 @@ const (
 type Direction int
 
 const (
-	// Inbound is the statusz/inbound-clients endpoint.
+	// Inbound is the statusz/inbound endpoint.
 	Inbound Direction = iota
-	// Outbound is the statusz/outbound-clients endpoint.
+	// Outbound is the statusz/outbound endpoint.
 	Outbound
 )
 

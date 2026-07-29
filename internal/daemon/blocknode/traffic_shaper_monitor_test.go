@@ -97,6 +97,51 @@ func waitForCount(t *testing.T, get func() int32, want int32) {
 	}
 }
 
+// TestEffectiveStatuszURL verifies the precedence: a configured base_url override
+// wins over discovery; otherwise the discovered URL is used; otherwise "".
+func TestEffectiveStatuszURL(t *testing.T) {
+	override := &TrafficShaperMonitor{statuszURL: "http://override:8080", discoveredStatuszURL: "http://disc:40983"}
+	require.Equal(t, "http://override:8080", override.effectiveStatuszURL(),
+		"configured base_url overrides discovery")
+
+	discovered := &TrafficShaperMonitor{discoveredStatuszURL: "http://disc:40983"}
+	require.Equal(t, "http://disc:40983", discovered.effectiveStatuszURL(),
+		"discovered URL used when no base_url override")
+
+	none := &TrafficShaperMonitor{}
+	require.Empty(t, none.effectiveStatuszURL(), "empty when neither configured nor discovered")
+}
+
+// TestRunStatuszPoll_ReconcilesOnceDiscovered verifies the loop stays quiet (no
+// exec) while no endpoint is available, then reconciles once discovery yields one
+// — the zero-config path where a pod appears after the loop starts.
+func TestRunStatuszPoll_ReconcilesOnceDiscovered(t *testing.T) {
+	d := &pollFakeDelegator{digests: []string{"D1"}}
+	m := newPollMonitor(d, "", time.Millisecond) // no base_url override
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- m.runStatuszPoll(ctx) }()
+
+	// A few ticks with no discovered endpoint must not exec anything.
+	time.Sleep(20 * time.Millisecond)
+	require.Zero(t, d.checkCalls.Load(), "no exec while the endpoint is undiscovered")
+
+	// Discovery lands (as the pod watcher would set it), then the loop reconciles.
+	m.mu.Lock()
+	m.discoveredStatuszURL = "http://10.1.2.3:40983"
+	m.mu.Unlock()
+
+	waitForCount(t, d.applyCalls.Load, 1)
+	cancel()
+	<-done
+
+	d.mu.Lock()
+	require.Equal(t, "http://10.1.2.3:40983", d.lastURL, "reconciled against the discovered URL")
+	d.mu.Unlock()
+}
+
 // TestRunStatuszPoll_InertWhenUnset verifies that with no statusz base_url the
 // poll loop touches no delegator path and returns nil on ctx cancel.
 func TestRunStatuszPoll_InertWhenUnset(t *testing.T) {

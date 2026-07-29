@@ -5,6 +5,8 @@ package blocknode
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/automa-saga/logx"
@@ -19,6 +21,18 @@ import (
 // imported) to keep the daemon's import closure free of the provisioning
 // packages (helm/mount/etc.), which it deliberately never pulls in.
 const bnPodLabelSelector = "app.kubernetes.io/name=block-node-server"
+
+// bnHealthPortName is the name of the BN pod's /healthz + statusz containerPort
+// (the upstream hiero-block-node chart names it "health"). The traffic-shaper
+// builds its discovered statusz base URL on the port carrying this name.
+const bnHealthPortName = "health"
+
+// defaultBNHealthPort mirrors internal/blocknode.DefaultBlockNodeHealthPort;
+// duplicated (not imported) for the same reason as bnPodLabelSelector — to keep
+// the daemon's import closure free of the provisioning packages. It is the
+// fallback statusz port used only when a discovered BN pod exposes no
+// "health"-named containerPort.
+const defaultBNHealthPort = "40983"
 
 // vethResolver is the subset of *VethResolver the pod watcher needs, extracted
 // so the watcher can be unit-tested with a fake.
@@ -123,7 +137,17 @@ func (m *TrafficShaperMonitor) handleWatchEvent(ctx context.Context, ev watch.Ev
 // Modified events for a pod already being attached are dropped (the eventual
 // handlePodUpsert re-reads the pod state on the next event anyway). Delete
 // handling stays synchronous — it is a quick map lookup plus a best-effort exec.
+//
+// Statusz discovery is recorded here, synchronously and BEFORE the in-flight
+// guard, so it tracks the latest pod state on every event even while a veth
+// attach is still in flight for the same pod. Folding it into the guarded
+// handlePodUpsert goroutine instead would let the guard drop the very
+// Modified event that first carries the pod IP (leaving the poll loop idle until
+// an unrelated event fired); discovery is a cheap map write and shares none of
+// the attach's dedup needs, so it does not belong behind that guard.
 func (m *TrafficShaperMonitor) dispatchUpsert(ctx context.Context, pod *corev1.Pod) {
+	m.recordDiscoveredStatusz(pod)
+
 	uid := pod.UID
 	m.mu.Lock()
 	if m.inflight[uid] {
@@ -195,6 +219,13 @@ func (m *TrafficShaperMonitor) handlePodUpsert(ctx context.Context, pod *corev1.
 // recorded at attach time (a deleted pod can no longer be exec'd to re-resolve).
 func (m *TrafficShaperMonitor) handlePodDelete(ctx context.Context, pod *corev1.Pod) {
 	m.mu.Lock()
+	// Drop the discovered statusz endpoint only if this is the pod that set it, so
+	// a stale delete for some other pod cannot blank a still-valid endpoint. The
+	// poll loop then idles until another ready BN pod is observed.
+	if m.discoveredStatuszPod == pod.UID {
+		m.discoveredStatuszURL = ""
+		m.discoveredStatuszPod = ""
+	}
 	veth, ok := m.attached[pod.UID]
 	delete(m.attached, pod.UID)
 	m.mu.Unlock()
@@ -215,6 +246,57 @@ func (m *TrafficShaperMonitor) handlePodDelete(ctx context.Context, pod *corev1.
 		Str("pod", pod.Namespace+"/"+pod.Name).
 		Str("veth", veth).
 		Msg("tore down $VETH ingress HTB for deleted BN pod")
+}
+
+// recordDiscoveredStatusz records the statusz base URL for a ready BN pod as
+// http://<podIP>:<healthPort>, where healthPort is the pod's "health"-named
+// containerPort (falling back to defaultBNHealthPort). The reconcile-shaper
+// client resolves the statusz/inbound and statusz/outbound endpoints relative to
+// this base. It self-gates: it no-ops for a pod that is not yet ContainersReady
+// or has no IP. It is called from dispatchUpsert on every upsert event (not
+// behind the in-flight guard), so once a ready pod carries an IP the endpoint is
+// recorded even if a veth attach for the same pod is still in flight. The poll
+// loop reads this via effectiveStatuszURL when no base_url override is
+// configured; handlePodDelete clears it when this pod goes away.
+func (m *TrafficShaperMonitor) recordDiscoveredStatusz(pod *corev1.Pod) {
+	if !podContainersReady(pod) {
+		return
+	}
+	ip := pod.Status.PodIP
+	if ip == "" {
+		// Ready but no IP yet (rare); a later Modified event carries the IP and,
+		// because discovery is not behind the in-flight guard, records it then.
+		return
+	}
+	url := "http://" + net.JoinHostPort(ip, bnHealthContainerPort(pod))
+
+	m.mu.Lock()
+	changed := m.discoveredStatuszURL != url
+	m.discoveredStatuszURL = url
+	m.discoveredStatuszPod = pod.UID
+	m.mu.Unlock()
+
+	if changed {
+		logx.As().Info().
+			Str("reason", "TrafficShaperStatuszDiscovered").
+			Str("pod", pod.Namespace+"/"+pod.Name).
+			Str("statusz_url", url).
+			Msg("discovered BN statusz endpoint from pod")
+	}
+}
+
+// bnHealthContainerPort returns the pod's "health"-named containerPort as a
+// string — the BN /healthz + statusz port. It falls back to defaultBNHealthPort
+// when no container declares a port with that name.
+func bnHealthContainerPort(pod *corev1.Pod) string {
+	for i := range pod.Spec.Containers {
+		for _, p := range pod.Spec.Containers[i].Ports {
+			if p.Name == bnHealthPortName {
+				return strconv.Itoa(int(p.ContainerPort))
+			}
+		}
+	}
+	return defaultBNHealthPort
 }
 
 // resolveVethWithRetry resolves the pod's host-side veth, retrying while the

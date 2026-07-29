@@ -242,3 +242,118 @@ func TestPodContainersReady(t *testing.T) {
 	require.False(t, podContainersReady(&corev1.Pod{}), "no condition → not ready")
 	require.False(t, podContainersReady(nil))
 }
+
+// readyPodWithNet is a ContainersReady pod carrying a PodIP and the given
+// containerPorts, for statusz-discovery tests.
+func readyPodWithNet(uid, name, ip string, ports ...corev1.ContainerPort) *corev1.Pod {
+	pod := readyPod(uid, name)
+	pod.Status.PodIP = ip
+	pod.Spec.Containers = []corev1.Container{{Name: "block-node", Ports: ports}}
+	return pod
+}
+
+func TestBNHealthContainerPort(t *testing.T) {
+	withHealth := readyPodWithNet("u1", "bn-0", "10.0.0.1",
+		corev1.ContainerPort{Name: "metrics", ContainerPort: 16007},
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+	require.Equal(t, "40983", bnHealthContainerPort(withHealth), "uses the health-named port")
+
+	noHealth := readyPodWithNet("u2", "bn-1", "10.0.0.2",
+		corev1.ContainerPort{Name: "metrics", ContainerPort: 16007})
+	require.Equal(t, defaultBNHealthPort, bnHealthContainerPort(noHealth),
+		"falls back to the default when no health-named port is present")
+}
+
+func TestRecordDiscoveredStatusz_UsesHealthContainerPort(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: "grpc", ContainerPort: 40840},
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+
+	m.recordDiscoveredStatusz(pod)
+	require.Equal(t, "http://10.1.2.3:40983", m.discoveredStatuszURL)
+	require.Equal(t, types.UID("u1"), m.discoveredStatuszPod)
+}
+
+func TestRecordDiscoveredStatusz_FallsBackToDefaultPort(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: "grpc", ContainerPort: 40840})
+
+	m.recordDiscoveredStatusz(pod)
+	require.Equal(t, "http://10.1.2.3:"+defaultBNHealthPort, m.discoveredStatuszURL)
+}
+
+func TestRecordDiscoveredStatusz_NoIPIsNoOp(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPod("u1", "bn-0") // ready but no PodIP yet
+
+	m.recordDiscoveredStatusz(pod)
+	require.Empty(t, m.discoveredStatuszURL, "no endpoint recorded until the pod has an IP")
+}
+
+func TestHandlePodDelete_ClearsDiscoveredStatuszForOwningPod(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+
+	m.recordDiscoveredStatusz(pod)
+	require.NotEmpty(t, m.discoveredStatuszURL)
+
+	m.handlePodDelete(context.Background(), pod)
+	require.Empty(t, m.discoveredStatuszURL, "owning pod delete clears the discovered endpoint")
+	require.Equal(t, types.UID(""), m.discoveredStatuszPod)
+}
+
+func TestHandlePodDelete_KeepsDiscoveredStatuszForOtherPod(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+	m.recordDiscoveredStatusz(pod)
+
+	m.handlePodDelete(context.Background(), readyPod("u2", "bn-1"))
+	require.Equal(t, "http://10.1.2.3:40983", m.discoveredStatuszURL,
+		"an unrelated pod delete must not clear a still-valid endpoint")
+}
+
+// TestDispatchUpsert_RecordsDiscoveryWhileAttachInFlight covers the case where a
+// pod is ContainersReady before its IP is populated: the first event launches a
+// veth attach that blocks (so the pod stays in-flight), and the follow-up event
+// that first carries the IP would be dropped by the in-flight guard. Discovery
+// runs ahead of that guard, so the endpoint is still recorded rather than missed.
+func TestDispatchUpsert_RecordsDiscoveryWhileAttachInFlight(t *testing.T) {
+	release := make(chan struct{})
+	d := &fakeDelegator{}
+	m := newTestMonitor(&blockingResolver{veth: "lxcAAA", gate: release}, d)
+
+	// First event: ready but no IP yet → veth goroutine blocks (in-flight), and
+	// discovery no-ops because there is no IP.
+	m.dispatchUpsert(context.Background(), readyPod("u1", "bn-0"))
+	require.Eventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.inflight["u1"]
+	}, time.Second, time.Millisecond, "pod should be in-flight while veth resolves")
+	m.mu.Lock()
+	require.Empty(t, m.discoveredStatuszURL, "no endpoint until the pod has an IP")
+	m.mu.Unlock()
+
+	// Second event for the same pod now carries the IP. It is dropped for veth
+	// (still in-flight), but discovery must still record the endpoint.
+	m.dispatchUpsert(context.Background(), readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983}))
+
+	m.mu.Lock()
+	got := m.discoveredStatuszURL
+	m.mu.Unlock()
+	require.Equal(t, "http://10.1.2.3:40983", got,
+		"discovery must be recorded even while a veth attach is in-flight")
+
+	// Let the blocked goroutine finish so it does not outlive the test.
+	close(release)
+	require.Eventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.inflight) == 0
+	}, time.Second, time.Millisecond)
+}
