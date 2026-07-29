@@ -217,13 +217,11 @@ func renderChain(policies []*Policy, podCIDR string) ([]string, error) {
 	// is a default-allow escape hatch for outbound traffic this registry
 	// doesn't otherwise classify (e.g. the chart's Maven-based plugin
 	// resolution), so it falls to the HTB default class instead of one of
-	// the classified priority bands. ip daddr != podCIDR keeps this scoped to
-	// egress leaving the node, not a blanket pass for intra-CIDR pod-to-pod
-	// traffic the classification tiers above don't already cover.
+	// the classified priority bands.
 	if podCIDR != "" {
 		lines = append(lines, "",
 			"\t\t# Unclassified pod egress (no meta priority; HTB default class).",
-			fmt.Sprintf("\t\tip saddr %s ip daddr != %s accept", podCIDR, podCIDR))
+			fmt.Sprintf("\t\tip saddr %s", podCIDR))
 	}
 
 	lines = append(lines, "",
