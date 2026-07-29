@@ -97,9 +97,9 @@ sudo kubectl apply -f - <<'CRDEOF'
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: networkupgradeexecutes.hedera.com
+  name: networkupgradeexecutes.operator.solo.hedera.com
 spec:
-  group: hedera.com
+  group: operator.solo.hedera.com
   names:
     kind: NetworkUpgradeExecute
     listKind: NetworkUpgradeExecuteList
@@ -158,8 +158,8 @@ spec:
 CRDEOF
 
 # Verify:
-sudo kubectl get crd networkupgradeexecutes.hedera.com
-# expected: networkupgradeexecutes.hedera.com   <age>
+sudo kubectl get crd networkupgradeexecutes.operator.solo.hedera.com
+# expected: networkupgradeexecutes.operator.solo.hedera.com   <age>
 ```
 
 Once all six steps complete, proceed to TC-01.
@@ -1013,7 +1013,7 @@ and starts the execute workflow (currently a stub).
 - Daemon installed and running with `consensus-node` component enabled.
 - The `NetworkUpgradeExecute` CRD is installed in the cluster:
   ```bash
-  kubectl get crd networkupgradeexecutes.hedera.com
+  kubectl get crd networkupgradeexecutes.operator.solo.hedera.com
   ```
 
 ### Steps
@@ -1025,7 +1025,7 @@ and starts the execute workflow (currently a stub).
 2. Create a `NetworkUpgradeExecute` CR and set its status via the status subresource:
    ```bash
    kubectl apply -f - <<'EOF'
-   apiVersion: hedera.com/v1alpha1
+   apiVersion: operator.solo.hedera.com/v1alpha1
    kind: NetworkUpgradeExecute
    metadata:
      name: test-upgrade-01
@@ -1081,7 +1081,7 @@ kubectl delete networkupgradeexecute test-upgrade-01 -n $ORBIT
    if not already present from TC-23):
    ```bash
    kubectl apply -f - <<'EOF'
-   apiVersion: hedera.com/v1alpha1
+   apiVersion: operator.solo.hedera.com/v1alpha1
    kind: NetworkUpgradeExecute
    metadata:
      name: test-upgrade-01
@@ -1172,7 +1172,7 @@ and restoring RBAC clears the degraded state within one watch cycle — without 
    ```
    Expected output (truncated):
    ```
-   WRN List error — retrying error="...networkupgradeexecutes.hedera.com is forbidden..." reason=UpgradeMonitorListError
+   WRN List error — retrying error="...networkupgradeexecutes.operator.solo.hedera.com is forbidden..." reason=UpgradeMonitorListError
    ```
 
 4. Confirm the daemon is still alive and `/health` still responds, and that `/status` and
@@ -1196,7 +1196,7 @@ and restoring RBAC clears the degraded state within one watch cycle — without 
              "state": "degraded",
              "error": {
                "reason": "UpgradeMonitorListError",
-               "message": "...: networkupgradeexecutes.hedera.com is forbidden: ...",
+               "message": "...: networkupgradeexecutes.operator.solo.hedera.com is forbidden: ...",
                "resolution": "Verify RBAC for NetworkUpgradeExecute resources in namespace <orbit>: kubectl get clusterrolebinding solo-provisioner-daemon-cn",
                "since": "<RFC3339 timestamp>"
              }
