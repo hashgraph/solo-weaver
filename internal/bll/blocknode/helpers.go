@@ -7,6 +7,7 @@ import (
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
@@ -69,8 +70,70 @@ func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInpu
 		st.BlockNodeState.TrafficShapingDisabled = !effectiveInputs.Custom.TrafficShapingEnabled
 		logx.As().Debug().Bool("trafficShapingDisabled", st.BlockNodeState.TrafficShapingDisabled).
 			Msg("Persisted block node traffic-shaping decision into runtime state")
+
+		// Persist the host-firewall decision + content (host-scoped) so a later
+		// reconfigure/upgrade can re-assert the inet host table without the operator
+		// re-supplying the allowlist. Written even when the block node is not (yet)
+		// deployed, mirroring TrafficShapingDisabled — the firewall is host-scoped and
+		// its application is independent of the Helm release status.
+		patchMachineFirewallFromConfig(st)
+
+		// Persist the traffic-shaping content only when it was enabled and a real
+		// target was resolved, so upgrade/reconfigure re-assert the same NIC/rate/
+		// overrides instead of auto-detecting. When disabled we leave any prior
+		// Shaping record intact (the decision on TrafficShapingDisabled governs re-assert).
+		if effectiveInputs.Custom.TrafficShapingEnabled {
+			patchBlockNodeShaping(st, effectiveInputs.Custom)
+		}
 		return base(st, effectiveInputs)
 	}
+}
+
+// patchMachineFirewallFromConfig records the resolved host-firewall configuration
+// (config.Get().Host, set by common.ResolveHostFirewallConfig earlier in the CLI
+// flow) into MachineState.Firewall. The enable/disable decision is always kept in
+// sync; the CIDR/port content is updated only when the firewall is enabled with a
+// non-empty allowlist, so a disable — or an enable with an empty allowlist, which
+// the NetworkFirewallCreate step skips — flips Disabled but preserves the
+// last-known-good allowlist for a future bare re-enable.
+func patchMachineFirewallFromConfig(st *state.State) {
+	hostCfg := config.Get().Host
+
+	fw := st.MachineState.Firewall
+	if fw == nil {
+		fw = &state.HostFirewallState{}
+	}
+	fw.Disabled = hostCfg.Disabled
+
+	if !hostCfg.Disabled && len(hostCfg.ManagementCIDRs) > 0 {
+		fw.ManagementCIDRs = hostCfg.ManagementCIDRs
+		fw.BlockedCIDRs = hostCfg.BlockedCIDRs
+		fw.SSHPort = hostCfg.SSHPort
+		fw.PodCIDR = hostCfg.PodCIDR
+		fw.InClusterPorts = hostCfg.InClusterPorts
+	}
+
+	st.MachineState.Firewall = fw
+	logx.As().Debug().
+		Bool("disabled", fw.Disabled).
+		Int("managementCidrs", len(fw.ManagementCIDRs)).
+		Msg("Persisted host-firewall configuration into runtime state")
+}
+
+// patchBlockNodeShaping records the resolved traffic-shaping content bundle into
+// BlockNodeState.Shaping so upgrade/reconfigure can re-assert the operator's
+// original egress NIC, link rate, and per-class overrides.
+func patchBlockNodeShaping(st *state.State, ins models.BlockNodeInputs) {
+	st.BlockNodeState.Shaping = &state.ShapingState{
+		EgressInterface: ins.EgressInterface,
+		LinkRate:        ins.LinkRate,
+		ShapeOverrides:  ins.ShapeOverrides,
+	}
+	logx.As().Debug().
+		Str("egressInterface", ins.EgressInterface).
+		Str("linkRate", ins.LinkRate).
+		Int("shapeOverrides", len(ins.ShapeOverrides)).
+		Msg("Persisted block node traffic-shaping content into runtime state")
 }
 
 // resolveBlocknodeEffectiveInputs resolves common fields for blocknode commands.
@@ -147,6 +210,33 @@ func resolveBlocknodeEffectiveInputs(
 		Any("recentRetention", effRecentRetention).
 		Msg("Determined effective block node recent retention")
 
+	// Traffic-shaping content (egress NIC, link rate, per-class overrides) has no
+	// resolver tier — it is passed through from user input. Fall back to the
+	// persisted BlockNodeState.Shaping when the operator did not supply a value, so
+	// `upgrade` (which never prompts for these) and a bare `reconfigure` re-assert
+	// the operator's original shaping instead of auto-detecting. Explicit user input
+	// always wins. On a fresh install CurrentState carries no Shaping, so this is a
+	// no-op there.
+	egressInterface := inputs.Custom.EgressInterface
+	linkRate := inputs.Custom.LinkRate
+	shapeOverrides := inputs.Custom.ShapeOverrides
+	if current, err := runtime.CurrentState(); err == nil && current.Shaping != nil {
+		if egressInterface == "" {
+			egressInterface = current.Shaping.EgressInterface
+		}
+		if linkRate == "" {
+			linkRate = current.Shaping.LinkRate
+		}
+		if len(shapeOverrides) == 0 {
+			shapeOverrides = current.Shaping.ShapeOverrides
+		}
+		logx.As().Debug().
+			Str("egressInterface", egressInterface).
+			Str("linkRate", linkRate).
+			Int("shapeOverrides", len(shapeOverrides)).
+			Msg("Applied persisted traffic-shaping content as fallback for unset inputs")
+	}
+
 	effectiveInputs := models.UserInputs[models.BlockNodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlockNodeInputs{
@@ -170,9 +260,9 @@ func resolveBlocknodeEffectiveInputs(
 			LoadBalancerEnabled:   inputs.Custom.LoadBalancerEnabled,
 			PluginPreset:          inputs.Custom.PluginPreset,
 			PluginList:            inputs.Custom.PluginList,
-			EgressInterface:       inputs.Custom.EgressInterface,
-			LinkRate:              inputs.Custom.LinkRate,
-			ShapeOverrides:        inputs.Custom.ShapeOverrides,
+			EgressInterface:       egressInterface,
+			LinkRate:              linkRate,
+			ShapeOverrides:        shapeOverrides,
 			TrafficShapingEnabled: inputs.Custom.TrafficShapingEnabled,
 			Timeout:               inputs.Custom.Timeout,
 		},

@@ -153,6 +153,70 @@ state:
 	}
 }
 
+func TestReadPromptDefaults_ParsesFirewall(t *testing.T) {
+	data := []byte(`
+state:
+  machineState:
+    profile: mainnet
+    firewall:
+      disabled: true
+      managementCidrs:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+      blockedCidrs:
+        - 192.0.2.0/24
+      sshPort: 2222
+      podCidr: 10.4.0.0/14
+      inClusterPorts:
+        - 8080
+        - 9090
+`)
+	var doc PromptDefaultsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	fw := doc.State.MachineState.Firewall
+	if fw == nil {
+		t.Fatal("expected firewall to be parsed, got nil")
+	}
+	if !fw.Disabled {
+		t.Error("expected Disabled true")
+	}
+	if len(fw.ManagementCIDRs) != 2 || fw.ManagementCIDRs[0] != "10.0.0.0/8" {
+		t.Errorf("unexpected ManagementCIDRs: %+v", fw.ManagementCIDRs)
+	}
+	if len(fw.BlockedCIDRs) != 1 || fw.BlockedCIDRs[0] != "192.0.2.0/24" {
+		t.Errorf("unexpected BlockedCIDRs: %+v", fw.BlockedCIDRs)
+	}
+	if fw.SSHPort != 2222 {
+		t.Errorf("expected SSHPort 2222, got %d", fw.SSHPort)
+	}
+	if fw.PodCIDR != "10.4.0.0/14" {
+		t.Errorf("expected PodCIDR '10.4.0.0/14', got %q", fw.PodCIDR)
+	}
+	if len(fw.InClusterPorts) != 2 || fw.InClusterPorts[1] != 9090 {
+		t.Errorf("unexpected InClusterPorts: %+v", fw.InClusterPorts)
+	}
+}
+
+func TestReadPromptDefaults_MissingFirewallReturnsNil(t *testing.T) {
+	// An old state file with no machineState.firewall must parse cleanly and leave
+	// the firewall pointer nil (backward compatibility — AC6).
+	data := []byte(`
+state:
+  machineState:
+    profile: mainnet
+`)
+	var doc PromptDefaultsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if doc.State.MachineState.Firewall != nil {
+		t.Errorf("expected nil firewall for an old state file, got %+v", doc.State.MachineState.Firewall)
+	}
+}
+
 func TestReadPromptDefaults_ApplicationStatePathFlowsThroughToModel(t *testing.T) {
 	data := []byte(`
 state:

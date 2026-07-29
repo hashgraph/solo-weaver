@@ -65,7 +65,15 @@ type ProvisionerVersionDoc struct {
 type PromptDefaultsDoc struct {
 	State struct {
 		MachineState struct {
-			Profile string `yaml:"profile"`
+			Profile  string `yaml:"profile"`
+			Firewall *struct {
+				Disabled        bool     `yaml:"disabled"`
+				ManagementCIDRs []string `yaml:"managementCidrs"`
+				BlockedCIDRs    []string `yaml:"blockedCidrs"`
+				SSHPort         int      `yaml:"sshPort"`
+				PodCIDR         string   `yaml:"podCidr"`
+				InClusterPorts  []int    `yaml:"inClusterPorts"`
+			} `yaml:"firewall"`
 		} `yaml:"machineState"`
 		BlockNodeState struct {
 			Name                   string `yaml:"name"`
@@ -175,6 +183,11 @@ type BlockNodeSummary struct {
 type PromptDefaults struct {
 	Profile   string
 	BlockNode BlockNodeSummary
+	// Firewall is the last-persisted host-firewall configuration (decision +
+	// allowlist content) from machineState.firewall, or nil when the firewall was
+	// never configured. It seeds reconfigure/upgrade so the operator does not have
+	// to re-supply --mgmt-cidrs on a re-enable.
+	Firewall *models.HostConfig
 }
 
 // ReadPromptDefaultsFromDisk extracts all prompt-relevant fields from the
@@ -193,9 +206,22 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		return PromptDefaults{}, err
 	}
 
+	var firewall *models.HostConfig
+	if fw := doc.State.MachineState.Firewall; fw != nil {
+		firewall = &models.HostConfig{
+			Disabled:        fw.Disabled,
+			ManagementCIDRs: fw.ManagementCIDRs,
+			BlockedCIDRs:    fw.BlockedCIDRs,
+			SSHPort:         fw.SSHPort,
+			PodCIDR:         fw.PodCIDR,
+			InClusterPorts:  fw.InClusterPorts,
+		}
+	}
+
 	bn := doc.State.BlockNodeState
 	return PromptDefaults{
-		Profile: doc.State.MachineState.Profile,
+		Profile:  doc.State.MachineState.Profile,
+		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
 			ReleaseName:            bn.Name,
 			Namespace:              bn.Namespace,

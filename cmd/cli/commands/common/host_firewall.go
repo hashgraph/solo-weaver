@@ -6,7 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -175,6 +177,15 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 		return nil
 	}
 
+	// Fall back to the last-persisted firewall allowlist for any field the operator
+	// did not supply via --config, so a reconfigure that re-enables the firewall
+	// without re-passing --mgmt-cidrs restores the last-known-good allowlist instead
+	// of skipping with the SSH-lockout guard (issue #932). State sits below the
+	// config file and above the built-in default; a CLI flag, checked inside the
+	// effective* helpers below, still wins over all of them. On a fresh host with no
+	// persisted firewall this is a no-op.
+	cfg = mergeHostFirewallFromState(cfg)
+
 	// Seed each prompt target with the effective value: the CLI flag when the
 	// operator set it, else the config value, else the built-in default. The
 	// prompt layer skips any flag already set on the CLI, leaving these seeds
@@ -295,6 +306,68 @@ func joinInts(in []int) string {
 		parts[i] = strconv.Itoa(n)
 	}
 	return strings.Join(parts, ",")
+}
+
+// mergeHostFirewallFromState fills any host-firewall content field left empty by
+// the config file with the last value persisted in state (machineState.firewall).
+// It is the "state" tier of the flag > config > state > default precedence for the
+// firewall allowlist: the returned config seeds the effective* helpers, where a
+// CLI flag still takes priority. Only the allowlist content is merged — the
+// enable/disable decision is resolved separately (flag / prompt / live probe), so
+// the persisted Firewall.Disabled is intentionally ignored here. Returns cfg
+// unchanged when no firewall was ever persisted or the state read fails.
+func mergeHostFirewallFromState(cfg models.HostConfig) models.HostConfig {
+	defaults, err := state.ReadPromptDefaultsFromDisk()
+	if err != nil {
+		logx.As().Debug().Err(err).Msg("could not read persisted firewall config; not seeding from state")
+		return cfg
+	}
+	fw := defaults.Firewall
+	if fw == nil {
+		return cfg
+	}
+	if len(cfg.ManagementCIDRs) == 0 {
+		cfg.ManagementCIDRs = fw.ManagementCIDRs
+	}
+	if len(cfg.BlockedCIDRs) == 0 {
+		cfg.BlockedCIDRs = fw.BlockedCIDRs
+	}
+	if cfg.SSHPort == 0 {
+		cfg.SSHPort = fw.SSHPort
+	}
+	if cfg.PodCIDR == "" {
+		cfg.PodCIDR = fw.PodCIDR
+	}
+	if len(cfg.InClusterPorts) == 0 {
+		cfg.InClusterPorts = fw.InClusterPorts
+	}
+	return cfg
+}
+
+// SeedHostFirewallFromState applies the last-persisted host-firewall configuration
+// (machineState.firewall) to the global config for commands — namely `block node
+// upgrade` — that re-assert the firewall without prompting or exposing firewall
+// flags. It honors the persisted enable/disable decision: when the firewall was
+// enabled, the recorded allowlist is applied so NetworkFirewallCreate re-asserts
+// (create-if-missing) rather than skipping on an empty allowlist; when it was
+// disabled, config.Host.Disabled is set so the step skips (upgrade never tears the
+// firewall down — allowTeardown=false). It is a no-op when no firewall was ever
+// persisted, leaving the empty default that makes the step skip.
+func SeedHostFirewallFromState() error {
+	defaults, err := state.ReadPromptDefaultsFromDisk()
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to read persisted firewall config")
+	}
+	if defaults.Firewall == nil {
+		logx.As().Debug().Msg("no persisted host-firewall config; leaving firewall unconfigured for this run")
+		return nil
+	}
+	config.OverrideHostConfig(*defaults.Firewall)
+	logx.As().Debug().
+		Bool("disabled", defaults.Firewall.Disabled).
+		Int("managementCidrs", len(defaults.Firewall.ManagementCIDRs)).
+		Msg("Seeded host-firewall config from persisted state")
+	return nil
 }
 
 // normalizeCIDRs trims whitespace and drops empty entries from a CIDR list so
