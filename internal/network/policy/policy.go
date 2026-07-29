@@ -52,7 +52,8 @@ type Policy struct {
 	Stamp           string    `json:"stamp"`             // HTB class (from --stamp); "" for deny
 	ReplyStamp      string    `json:"reply_stamp"`       // reply class (from --reply-stamp); "" if unset
 	Direction       Direction `json:"direction"`         // derived from Stamp's class by Validate; "" for deny
-	Ports           []string  `json:"ports"`             // workload listener ports (from --ports); nil if none
+	Ports           []string  `json:"ports"`             // static workload listener ports (from --ports); nil if none or ManagedPorts
+	ManagedPorts    bool      `json:"managed_ports"`     // true when <name>_ports is filled by the daemon from statusz, not seeded here
 	FromEntityWorld bool      `json:"from_entity_world"` // true if --from-entity world (no IP-set clause)
 	CreatedAt       time.Time `json:"created_at"`        // tiebreaker within a tier, preserved across a --force replace
 }
@@ -91,6 +92,15 @@ func (p *Policy) Validate(cidrs []string) error {
 	for _, port := range p.Ports {
 		if err := sanity.ValidatePort(port); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --ports entry %q", port)
+		}
+	}
+
+	if p.ManagedPorts {
+		if p.Action != ActionStamp {
+			return errorx.IllegalArgument.New("managed ports are only valid with --stamp")
+		}
+		if len(p.Ports) > 0 {
+			return errorx.IllegalArgument.New("managed ports are mutually exclusive with static --ports (the daemon fills the set from statusz)")
 		}
 	}
 
@@ -140,6 +150,9 @@ func (p *Policy) validateDeny() error {
 	if len(p.Ports) > 0 {
 		return errorx.IllegalArgument.New("--ports does not apply to --deny")
 	}
+	if p.ManagedPorts {
+		return errorx.IllegalArgument.New("managed ports do not apply to --deny")
+	}
 	if p.FromEntityWorld {
 		return errorx.IllegalArgument.New("--from-entity world does not apply to --deny")
 	}
@@ -182,6 +195,13 @@ func (p *Policy) hasCIDRSet() bool {
 	return !p.FromEntityWorld
 }
 
+// hasPortsSet reports whether the policy renders a named `@<name>_ports`
+// listener-port set — either statically seeded (len(Ports) > 0) or daemon-managed
+// (ManagedPorts, filled from statusz at runtime and declared empty at render).
+func (p *Policy) hasPortsSet() bool {
+	return len(p.Ports) > 0 || p.ManagedPorts
+}
+
 func validateIPPort(s string) error {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
@@ -220,6 +240,13 @@ func portElements(ports []string) string {
 	return strings.Join(ports, ", ")
 }
 
+// PortsSetName returns the nft set name that holds a policy's listener ports
+// (`<name>_ports`). Rendered by renderSetDecls, referenced by the stamp rule's
+// `tcp dport/sport @<name>_ports` clause, and written by Manager.ApplyPorts.
+func PortsSetName(policyName string) string {
+	return policyName + "_ports"
+}
+
 // isSpecific reports whether p is a "specific" stamp policy for tier-3/4
 // grouping and overlap purposes: an --stamp policy that is not --from-entity
 // world (i.e. one that renders an IP-set clause). Deny policies and
@@ -238,8 +265,16 @@ func portsKey(ports []string) string {
 }
 
 // groupKey returns the (Direction, Ports) grouping key used both by
-// renderChain's tier-3/4 ordering and by the overlap check below.
+// renderChain's tier-3/4 ordering and by the overlap check below. A
+// managed-ports policy carries no static ports — its real listener ports are
+// reconciled from statusz at runtime and are distinct per policy by design — so
+// each is keyed to its own group: two managed-ports policies can never be seen
+// as overlapping statically (their empty static port lists would otherwise
+// collide), and the runtime distinction they actually have is invisible here.
 func groupKey(p *Policy) string {
+	if p.ManagedPorts {
+		return string(p.Direction) + "|managed:" + p.Name
+	}
 	return string(p.Direction) + "|" + portsKey(p.Ports)
 }
 

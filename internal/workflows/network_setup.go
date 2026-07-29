@@ -30,11 +30,11 @@ import (
 // included — it is gated separately by hostCfg.Disabled inside its own step).
 // When false, none of the four steps are added: there is no inet weaver table
 // to persist and no tc config to shape traffic with.
-func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool) *automa.WorkflowBuilder {
+func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool, healthPort string) *automa.WorkflowBuilder {
 	stepList := []automa.Builder{steps.NetworkFirewallCreate()}
 	if trafficShapingEnabled {
 		stepList = append(stepList,
-			steps.NetworkPolicyCreate(force),
+			steps.NetworkPolicyCreate(force, healthPort),
 			steps.NftWeaverPersist(),
 			steps.TcEgressPersist(egressInterface, linkRate, shapeOverrides),
 			steps.TcIngressRecord(egressInterface, linkRate, shapeOverrides),

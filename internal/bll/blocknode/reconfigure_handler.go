@@ -55,12 +55,21 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
+	// Resolve the health/statusz port from the operator's effective --values so the
+	// bn-mgmt policy set allows the port the BN actually listens on rather than a
+	// value baked into solo-weaver; falls back to the chart default when the
+	// operator supplies no override. Mirrors the install path.
+	healthPort, err := bnpkg.ResolveHealthPort(ins.ValuesFile)
+	if err != nil {
+		return nil, err
+	}
+
 	// networkSteps is the shared network-plane prefix for every branch below.
 	// Reconfigure resolves both --firewall-enabled and --traffic-shaping-enabled
 	// fresh (in the CLI layer, seeded from the current on-host state), so the
 	// convergence assembler is driven by the operator's decision and is allowed to
 	// tear a feature down when it is turned off. See networkPlaneSteps.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, healthPort)
 
 	var wb *automa.WorkflowBuilder
 	switch {

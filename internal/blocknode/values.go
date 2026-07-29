@@ -124,10 +124,16 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		IncludeVerification     bool
 		IncludePlugins          bool
 		IncludeApplicationState bool
+		HealthPort              string
 	}{
 		IncludeVerification:     includeVerification,
 		IncludePlugins:          includePlugins,
 		IncludeApplicationState: includeApplicationState,
+		// Pin the BN's health/statusz port from the single Go source of truth so
+		// the port solo-weaver allows (bn-mgmt) and dials for statusz always
+		// matches the port the BN listens on, even if the upstream chart default
+		// changes underneath us.
+		HealthPort: DefaultBlockNodeHealthPort,
 	})
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to render block node values template")

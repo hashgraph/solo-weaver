@@ -22,6 +22,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode/statuszmock"
 )
@@ -31,7 +32,22 @@ func main() {
 	roster := flag.String("roster", "roster.json", "path to the JSON roster file (re-read on every request)")
 	flag.Parse()
 
-	handler := statuszmock.Handler(statuszmock.FileRoster(*roster))
+	// Fall back to the built-in DefaultRoster only when the roster file is genuinely
+	// absent, so the demo serves a realistic per-facility roster (with listener
+	// ports) out of the box; drop in a roster.json to override it live. Any other
+	// stat error (permission denied, IO fault) is a real misconfiguration — fail
+	// fast rather than silently masking it behind the default roster.
+	var provider statuszmock.RosterProvider
+	switch _, err := os.Stat(*roster); {
+	case err == nil:
+		provider = statuszmock.FileRoster(*roster)
+	case os.IsNotExist(err):
+		log.Printf("roster file %s not found; serving the built-in default roster", *roster)
+		provider = statuszmock.StaticRoster(statuszmock.DefaultRoster())
+	default:
+		log.Fatalf("cannot stat roster file %s: %v", *roster, err)
+	}
+	handler := statuszmock.Handler(provider)
 
 	log.Printf("mock statusz server listening on %s, serving roster %s", *addr, *roster)
 	log.Printf("  GET %s/statusz/inbound-clients", *addr)

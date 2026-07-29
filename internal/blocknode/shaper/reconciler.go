@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/netip"
 	"sort"
 	"strings"
 
@@ -21,12 +22,14 @@ type endpointFetcher interface {
 	OutboundClients(ctx context.Context) (NetworkData, error)
 }
 
-// membershipApplier writes desired per-policy nft set membership to the kernel.
+// setApplier writes desired per-policy nft set state to the kernel — CIDR
+// membership sets and managed listener-port sets — under a single lock
+// acquisition, so a reconcile tick is atomic (both dimensions or neither).
 // Satisfied by *policy.Manager; a fake is injected in tests. The bool return
-// distinguishes "applied" from "skipped because the operator apply lock was
-// held" (see policy.Manager.ApplyMembership).
-type membershipApplier interface {
-	ApplyMembership(ctx context.Context, desired map[string][]string) (bool, error)
+// distinguishes "applied" from "skipped because the operator apply lock was held"
+// (see policy.Manager.ApplySets).
+type setApplier interface {
+	ApplySets(ctx context.Context, membership, ports map[string][]string) (bool, error)
 }
 
 // Reconciler drives one reconcile of the block node traffic-shaper's nft policy
@@ -40,7 +43,7 @@ type membershipApplier interface {
 type Reconciler struct {
 	fetcher endpointFetcher
 	lister  elementLister
-	applier membershipApplier
+	applier setApplier
 }
 
 // NewReconciler wires the production Reconciler: statusz is read over HTTP from
@@ -66,21 +69,25 @@ type Result struct {
 	Digest    string   `json:"digest"`
 }
 
-// CheckResult is the unprivileged detect path's output: the sha256 digest of
-// the desired policy membership, and the canonical desired membership itself
-// (policy name -> nft-rendered elements) so `--check --output json` is useful
-// for daemon-side introspection and debugging, not just change detection.
+// CheckResult is the unprivileged detect path's output: the sha256 digest of the
+// desired policy state, the canonical desired CIDR membership (policy name ->
+// nft-rendered elements), and the desired per-policy listener ports derived from
+// statusz local.port, so `--check --output json` is useful for daemon-side
+// introspection and debugging, not just change detection. The digest covers BOTH
+// membership and ports, so a ports-only change is still detected.
 type CheckResult struct {
-	Digest  string              `json:"desired-digest"`
-	Desired map[string][]string `json:"desired"`
+	Digest       string              `json:"desired-digest"`
+	Desired      map[string][]string `json:"desired"`
+	DesiredPorts map[string][]string `json:"desired-ports"`
 }
 
 // Check fetches both statusz endpoints, buckets them into the desired
-// per-category membership, and returns the sha256 digest of the canonical
-// desired policy membership alongside that canonical membership. It reads no
-// nft state and requires no privilege — it is the unprivileged detect path.
+// per-category membership, derives the desired per-policy listener ports from
+// the inbound local.port values, and returns the sha256 digest over both. It
+// reads no nft state and requires no privilege — it is the unprivileged detect
+// path.
 func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
-	ce, err := r.fetchEndpoints(ctx)
+	ce, inbound, err := r.fetchEndpoints(ctx)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -88,16 +95,26 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 	if err != nil {
 		return CheckResult{}, err
 	}
-	return CheckResult{Digest: membershipDigest(canon), Desired: canon}, nil
+	portsDesired := desiredPorts(inbound)
+	return CheckResult{
+		Digest:       membershipDigest(combinedCanonical(canon, portsDesired)),
+		Desired:      canon,
+		DesiredPorts: portsDesired,
+	}, nil
 }
 
-// Apply fetches both statusz endpoints, buckets them into the desired
-// membership, reads the live nft sets to find which owned policies actually
-// changed, and rewrites only those. Policies already in the desired state are
-// not touched. The returned Result records the applied/unchanged split and the
-// desired-membership digest.
+// Apply fetches both statusz endpoints, derives the desired CIDR membership and
+// listener ports, reads the live nft sets to find which owned sets actually
+// changed, and rewrites only those. Sets already in the desired state are not
+// touched. Both dimensions' changes are applied together under a single lock
+// acquisition (see setApplier.ApplySets), so a tick is atomic — either both the
+// changed membership sets and the changed listener-port sets are written, or the
+// whole tick is skipped because an operator holds the lock. The returned Result
+// folds both into its applied/skipped/unchanged lists — a membership set reported
+// by its policy name (`bn-publisher`), a listener-port set by its nft set name
+// (`bn-publisher_ports`) — alongside the digest, which covers both dimensions.
 func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
-	ce, err := r.fetchEndpoints(ctx)
+	ce, inbound, err := r.fetchEndpoints(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -106,59 +123,77 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	digest := membershipDigest(canon)
+	portsDesired := desiredPorts(inbound)
+	digest := membershipDigest(combinedCanonical(canon, portsDesired))
 
-	deltas, err := computePolicyDeltas(ctx, r.lister, ce)
+	memDeltas, err := computePolicyDeltas(ctx, r.lister, ce)
+	if err != nil {
+		return Result{}, err
+	}
+	portDeltas, err := computePortDeltas(ctx, r.lister, portsDesired)
 	if err != nil {
 		return Result{}, err
 	}
 
-	changed := make(map[string][]string, len(deltas))
-	changedNames := make([]string, 0, len(deltas))
-	for _, d := range deltas {
-		changed[d.Policy] = desired[d.Policy]
-		changedNames = append(changedNames, d.Policy)
+	// Membership sets are keyed and reported by policy name; listener-port sets
+	// are keyed by policy name for the apply batch but reported by their
+	// `<name>_ports` nft set name.
+	changedMem := make(map[string][]string, len(memDeltas))
+	changedPorts := make(map[string][]string, len(portDeltas))
+	changed := make([]string, 0, len(memDeltas)+len(portDeltas))
+	for _, d := range memDeltas {
+		changedMem[d.Policy] = desired[d.Policy]
+		changed = append(changed, d.Policy)
 	}
-	sort.Strings(changedNames)
+	for _, d := range portDeltas {
+		changedPorts[d.Policy] = portsDesired[d.Policy]
+		changed = append(changed, policy.PortsSetName(d.Policy))
+	}
+	sort.Strings(changed)
 
-	res := Result{Digest: digest, Unchanged: unchangedPolicyNames(changedNames)}
-	if len(changed) == 0 {
+	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed)}
+	if len(changedMem) == 0 && len(changedPorts) == 0 {
 		return res, nil
 	}
 
-	applied, err := r.applier.ApplyMembership(ctx, changed)
+	// One lock acquisition for both dimensions: the tick is atomic.
+	applied, err := r.applier.ApplySets(ctx, changedMem, changedPorts)
 	if err != nil {
-		return Result{}, errorx.ExternalError.Wrap(err, "apply reconciled traffic-shaper membership")
+		return Result{}, errorx.ExternalError.Wrap(err, "apply reconciled traffic-shaper sets")
 	}
+	// The operator apply lock being held (applied == false) means nothing was
+	// written, so the changed sets are still out of sync — report them as skipped
+	// rather than dropping them from both Applied and Unchanged.
 	if applied {
-		res.Applied = changedNames
+		res.Applied = changed
 	} else {
-		// The operator apply lock was held: nothing was written, so these
-		// policies are still out of sync — report them as skipped rather than
-		// silently dropping them from both Applied and Unchanged.
-		res.Skipped = changedNames
+		res.Skipped = changed
 	}
 	return res, nil
 }
 
-// fetchEndpoints reads both statusz endpoints and buckets them into the desired
-// per-category membership view.
-func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, error) {
+// fetchEndpoints reads both statusz endpoints, buckets them into the desired
+// per-category membership view, and returns the raw inbound NetworkData too:
+// listener-port derivation reads local.port straight off the inbound endpoints
+// (which the membership bucketize discards), so the port pass needs the raw
+// inbound payload rather than the bucketized view.
+func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NetworkData{}, err
 	}
 	outbound, err := r.fetcher.OutboundClients(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NetworkData{}, err
 	}
-	return bucketizeEndpoints(inbound, outbound), nil
+	return bucketizeEndpoints(inbound, outbound), inbound, nil
 }
 
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,
 // keyed by (direction, category). Inbound endpoints are matched against the
 // inbound bindings (publisher/partner/restricted) and contribute their remote
-// host/CIDR; outbound endpoints are matched against the outbound bindings. The
+// host as an explicit-mask CIDR (a bare host IP is normalized to /32, see
+// hostCIDR); outbound endpoints are matched against the outbound bindings. The
 // compound bn-backfill set (outbound partner) contributes compound
 // "remote.Address:remote.Port" pairs, skipping any endpoint whose port is empty
 // or "*" (a wildcard port cannot key a compound set).
@@ -181,9 +216,10 @@ func bucketizeEndpoints(inbound, outbound NetworkData) categoryEndpoints {
 }
 
 // bucketize appends one direction's endpoints into ce under their owned
-// bindings, rendering compound "ip:port" tokens for compound sets and plain
-// host/CIDR otherwise. Endpoints with no owned binding for (dir, category) are
-// dropped; a compound endpoint with an empty or wildcard port is skipped.
+// bindings, rendering compound "ip:port" tokens for compound sets and an
+// explicit-mask CIDR (a bare host IP normalized to /32 via hostCIDR) otherwise.
+// Endpoints with no owned binding for (dir, category) are dropped; a compound
+// endpoint with an empty or wildcard port is skipped.
 func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 	for _, conn := range data.ActiveEndpoints {
 		k := bindingKey{dir: dir, cat: Category(conn.Category)}
@@ -192,7 +228,7 @@ func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 			continue
 		}
 		if !b.compound {
-			ce[k] = append(ce[k], conn.Remote.Address)
+			ce[k] = append(ce[k], hostCIDR(conn.Remote.Address))
 			continue
 		}
 		if conn.Remote.Port == "" || conn.Remote.Port == "*" {
@@ -202,10 +238,34 @@ func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 	}
 }
 
+// hostCIDR normalizes a statusz plain-set membership address into the
+// explicit-mask form the policy layer requires. statusz reports a connected peer
+// as a bare host IP ("198.51.100.7"), but policy.Manager.ApplySets validates
+// every plain-set element as a CIDR and rejects a bare IP outright
+// (sanity.ValidateCIDR: callers must be explicit about the mask). A bare IPv4
+// host is therefore rendered as an explicit /32; a value that already carries a
+// prefix ("10.0.0.0/24"), or that does not parse as a bare IPv4 address (an
+// unexpected wildcard or IPv6 token), is returned unchanged so the downstream
+// validator surfaces a precise error rather than this stage silently mangling
+// it. The /32 is diff-stable: policy.CanonicalizeElements collapses it back to
+// the bare address nft prints, so digests and membership deltas are identical to
+// the pre-normalization form.
+func hostCIDR(addr string) string {
+	if strings.Contains(addr, "/") {
+		return addr
+	}
+	if a, err := netip.ParseAddr(addr); err == nil && a.Is4() {
+		return addr + "/32"
+	}
+	return addr
+}
+
 // desiredMembership maps each owned key present in ce to its nft policy name,
-// carrying the raw statusz endpoints through unchanged (the policy Manager and
-// the diff engine canonicalize them on the way to the kernel). Keys with no
-// policy binding are dropped.
+// carrying the endpoints through unchanged (bucketize has already normalized
+// plain-set hosts to explicit-mask CIDRs and folded compound sets to "ip:port"
+// pairs; the policy Manager and the diff engine canonicalize ordering and the
+// /32 collapse on the way to the kernel). Keys with no policy binding are
+// dropped.
 func desiredMembership(ce categoryEndpoints) map[string][]string {
 	m := make(map[string][]string, len(ce))
 	for k, endpoints := range ce {
@@ -216,6 +276,71 @@ func desiredMembership(ce categoryEndpoints) map[string][]string {
 		m[b.policyName] = endpoints
 	}
 	return m
+}
+
+// desiredPorts derives each managed-ports policy's desired listener ports from
+// the inbound statusz local.port values, per the portBindings table. It is the
+// port-dimension counterpart to desiredMembership, and carries the same
+// present/absent semantics: every policy in portBindings is seeded present (with
+// an empty, de-duplicated slice), so a category the BN stops reporting collapses
+// its ports set to empty — clearing it — rather than leaving stale ports behind.
+//
+// Only local.port is read (the BN's own listener port); an endpoint whose
+// local.port is empty or "*" (an unspecified/wildcard port) is skipped, since a
+// wildcard cannot key an inet_service set. Outbound endpoints are never
+// consulted: an outbound connection originates from an ephemeral local port and
+// is not a listener.
+func desiredPorts(inbound NetworkData) map[string][]string {
+	perPolicy := make(map[string]map[string]struct{})
+	for _, names := range portBindings {
+		for _, name := range names {
+			if _, ok := perPolicy[name]; !ok {
+				perPolicy[name] = make(map[string]struct{})
+			}
+		}
+	}
+
+	for _, conn := range inbound.ActiveEndpoints {
+		names, ok := portBindings[Category(conn.Category)]
+		if !ok {
+			continue
+		}
+		port := conn.Local.Port
+		if port == "" || port == "*" {
+			continue
+		}
+		for _, name := range names {
+			perPolicy[name][port] = struct{}{}
+		}
+	}
+
+	out := make(map[string][]string, len(perPolicy))
+	for name, set := range perPolicy {
+		ports := make([]string, 0, len(set))
+		for p := range set {
+			ports = append(ports, p)
+		}
+		out[name] = sortedUnique(ports)
+	}
+	return out
+}
+
+// combinedCanonical merges the canonical desired CIDR membership (keyed by policy
+// name) with the desired listener ports (keyed by `<name>_ports`, the actual nft
+// set name) into one map, canonicalizing the ports the same way membership is.
+// Digesting this combined view means the digest changes when EITHER membership or
+// ports change, so the daemon's digest-based change detection never misses a
+// ports-only update. Keying ports under the `_ports` set name keeps them from
+// colliding with a policy's membership entry.
+func combinedCanonical(canon, portsDesired map[string][]string) map[string][]string {
+	combined := make(map[string][]string, len(canon)+len(portsDesired))
+	for name, elems := range canon {
+		combined[name] = elems
+	}
+	for name, ports := range portsDesired {
+		combined[policy.PortsSetName(name)] = policy.CanonicalizeElements(ports)
+	}
+	return combined
 }
 
 // membershipDigest returns a sha256 hex digest over a canonical serialization of
@@ -272,15 +397,29 @@ func ownedPolicyNames() []string {
 	return names
 }
 
-// unchangedPolicyNames returns the owned policy names not present in changed,
-// sorted.
-func unchangedPolicyNames(changed []string) []string {
+// ownedSetNames returns every nft set the traffic-shaper reconciles, sorted: the
+// CIDR membership sets (ownedPolicyNames, keyed by policy name) plus the managed
+// listener-port sets (`<name>_ports` for each managedPortsPolicyNames entry). It
+// is the denominator for the Apply Result's unchanged accounting across both
+// dimensions.
+func ownedSetNames() []string {
+	names := ownedPolicyNames()
+	for _, p := range managedPortsPolicyNames() {
+		names = append(names, policy.PortsSetName(p))
+	}
+	sort.Strings(names)
+	return names
+}
+
+// unchangedSetNames returns the owned set names (membership + listener-port sets)
+// not present in changed, sorted.
+func unchangedSetNames(changed []string) []string {
 	changedSet := make(map[string]struct{}, len(changed))
 	for _, c := range changed {
 		changedSet[c] = struct{}{}
 	}
 	var out []string
-	for _, name := range ownedPolicyNames() {
+	for _, name := range ownedSetNames() {
 		if _, ok := changedSet[name]; !ok {
 			out = append(out, name)
 		}

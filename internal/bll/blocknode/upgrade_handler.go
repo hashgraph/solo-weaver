@@ -90,6 +90,15 @@ func (h *UpgradeHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
+	// Resolve the health/statusz port from the operator's effective --values so the
+	// re-asserted bn-mgmt policy set tracks the port the BN actually listens on
+	// rather than a value baked into solo-weaver; falls back to the chart default
+	// when the operator supplies no override. Mirrors the install path.
+	healthPort, err := bnpkg.ResolveHealthPort(ins.ValuesFile)
+	if err != nil {
+		return nil, err
+	}
+
 	// Silent network-plane convergence: re-assert the persisted host-firewall and
 	// traffic-shaping decision on every upgrade, create-if-missing only
 	// (allowTeardown=false), so a routine version bump neither regresses the network
@@ -97,7 +106,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// decision recorded on BlockNodeState — upgrade never prompts and never resolves
 	// its own gate (only reconfigure does). Daemon activation, when traffic shaping is
 	// enabled, is handled post-workflow in the CLI layer.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, healthPort)
 
 	var wb *automa.WorkflowBuilder
 	if ins.ResetStorage {
