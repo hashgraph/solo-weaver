@@ -156,6 +156,48 @@ func TestBucketizeEndpoints_SkipsWildcardAndEmptyBackfillPort(t *testing.T) {
 	assert.Equal(t, []string{"10.30.5.7:43473"}, ce[bindingKey{Outbound, CategoryPartner}])
 }
 
+// TestBucketizeEndpoints_NormalizesBareHostToSlash32 pins the fix for the
+// statusz-derived membership apply: a connected peer is reported by statusz as a
+// bare host IP, but the policy layer validates every plain-set element as a CIDR
+// and rejects a bare address. bucketize must therefore normalize a bare IPv4
+// host to an explicit /32 while leaving an already-masked CIDR untouched, so the
+// desired membership fed to ApplySets is always valid.
+func TestBucketizeEndpoints_NormalizesBareHostToSlash32(t *testing.T) {
+	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		conn("publisher", "198.51.100.234", "*"), // bare host → /32
+		conn("partner", "198.51.100.0/24", "*"),  // already a CIDR → unchanged
+	}}
+
+	ce := bucketizeEndpoints(inbound, NetworkData{})
+
+	assert.Equal(t, []string{"198.51.100.234/32"}, ce[bindingKey{Inbound, CategoryPublisher}])
+	assert.Equal(t, []string{"198.51.100.0/24"}, ce[bindingKey{Inbound, CategoryPartner}])
+}
+
+// TestReconciler_Apply_NormalizesBareHostMembership is the end-to-end guard: a
+// statusz snapshot carrying a bare host IP must reach ApplySets as an explicit
+// /32 CIDR (the form policy.Manager.ApplySets accepts), not the bare address
+// that surfaced the original apply failure.
+func TestReconciler_Apply_NormalizesBareHostMembership(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("publisher", "198.51.100.234", "*"),
+		}},
+		outbound: NetworkData{},
+	}
+	lister := newFakeLister()
+	lister.elements["bn-publisher"] = []string{"10.9.9.9"} // differs → change
+
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, map[string][]string{"bn-publisher": {"198.51.100.234/32"}}, applier.got)
+	assert.Equal(t, []string{"bn-publisher"}, res.Applied)
+}
+
 func TestBucketizeEndpoints_EmptySnapshotSeedsAllOwnedEmpty(t *testing.T) {
 	ce := bucketizeEndpoints(NetworkData{}, NetworkData{})
 	require.Len(t, ce, 4)
@@ -461,7 +503,7 @@ func TestReconciler_Apply_MembershipAndPortsAppliedInOneAtomicCall(t *testing.T)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, applier.calls, "both dimensions go through one atomic ApplySets call")
-	require.Equal(t, map[string][]string{"bn-publisher": {"198.51.100.1"}}, applier.got)
+	require.Equal(t, map[string][]string{"bn-publisher": {"198.51.100.1/32"}}, applier.got)
 	require.Equal(t, map[string][]string{"bn-publisher": {"40984"}}, applier.gotPorts)
 	assert.Equal(t, []string{"bn-publisher", "bn-publisher_ports"}, res.Applied)
 }

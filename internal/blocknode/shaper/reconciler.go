@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/netip"
 	"sort"
 	"strings"
 
@@ -191,7 +192,8 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, Net
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,
 // keyed by (direction, category). Inbound endpoints are matched against the
 // inbound bindings (publisher/partner/restricted) and contribute their remote
-// host/CIDR; outbound endpoints are matched against the outbound bindings. The
+// host as an explicit-mask CIDR (a bare host IP is normalized to /32, see
+// hostCIDR); outbound endpoints are matched against the outbound bindings. The
 // compound bn-backfill set (outbound partner) contributes compound
 // "remote.Address:remote.Port" pairs, skipping any endpoint whose port is empty
 // or "*" (a wildcard port cannot key a compound set).
@@ -214,9 +216,10 @@ func bucketizeEndpoints(inbound, outbound NetworkData) categoryEndpoints {
 }
 
 // bucketize appends one direction's endpoints into ce under their owned
-// bindings, rendering compound "ip:port" tokens for compound sets and plain
-// host/CIDR otherwise. Endpoints with no owned binding for (dir, category) are
-// dropped; a compound endpoint with an empty or wildcard port is skipped.
+// bindings, rendering compound "ip:port" tokens for compound sets and an
+// explicit-mask CIDR (a bare host IP normalized to /32 via hostCIDR) otherwise.
+// Endpoints with no owned binding for (dir, category) are dropped; a compound
+// endpoint with an empty or wildcard port is skipped.
 func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 	for _, conn := range data.ActiveEndpoints {
 		k := bindingKey{dir: dir, cat: Category(conn.Category)}
@@ -225,7 +228,7 @@ func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 			continue
 		}
 		if !b.compound {
-			ce[k] = append(ce[k], conn.Remote.Address)
+			ce[k] = append(ce[k], hostCIDR(conn.Remote.Address))
 			continue
 		}
 		if conn.Remote.Port == "" || conn.Remote.Port == "*" {
@@ -235,10 +238,34 @@ func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 	}
 }
 
+// hostCIDR normalizes a statusz plain-set membership address into the
+// explicit-mask form the policy layer requires. statusz reports a connected peer
+// as a bare host IP ("198.51.100.7"), but policy.Manager.ApplySets validates
+// every plain-set element as a CIDR and rejects a bare IP outright
+// (sanity.ValidateCIDR: callers must be explicit about the mask). A bare IPv4
+// host is therefore rendered as an explicit /32; a value that already carries a
+// prefix ("10.0.0.0/24"), or that does not parse as a bare IPv4 address (an
+// unexpected wildcard or IPv6 token), is returned unchanged so the downstream
+// validator surfaces a precise error rather than this stage silently mangling
+// it. The /32 is diff-stable: policy.CanonicalizeElements collapses it back to
+// the bare address nft prints, so digests and membership deltas are identical to
+// the pre-normalization form.
+func hostCIDR(addr string) string {
+	if strings.Contains(addr, "/") {
+		return addr
+	}
+	if a, err := netip.ParseAddr(addr); err == nil && a.Is4() {
+		return addr + "/32"
+	}
+	return addr
+}
+
 // desiredMembership maps each owned key present in ce to its nft policy name,
-// carrying the raw statusz endpoints through unchanged (the policy Manager and
-// the diff engine canonicalize them on the way to the kernel). Keys with no
-// policy binding are dropped.
+// carrying the endpoints through unchanged (bucketize has already normalized
+// plain-set hosts to explicit-mask CIDRs and folded compound sets to "ip:port"
+// pairs; the policy Manager and the diff engine canonicalize ordering and the
+// /32 collapse on the way to the kernel). Keys with no policy binding are
+// dropped.
 func desiredMembership(ce categoryEndpoints) map[string][]string {
 	m := make(map[string][]string, len(ce))
 	for k, endpoints := range ce {
