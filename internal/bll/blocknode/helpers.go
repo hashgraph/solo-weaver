@@ -52,17 +52,18 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 	}
 }
 
-// patchBlockNodeStateAfterInstall extends patchBlockNodeState with the one
-// field that only `block node install` ever decides: TrafficShapingDisabled.
-// It must NOT live in the shared patchBlockNodeState — that callback is also
-// used by reconfigure/upgrade/reset/uninstall's HandleIntent, none of which
-// resolve or carry TrafficShapingEnabled, so their effectiveInputs.Custom
-// value is always the unset zero value and would silently flip a
-// true-at-install decision back to "disabled" on every later run. Recording it
-// only here, and only from InstallHandler, is what lets reconfigure/upgrade
-// read back the original decision (via currentState.BlockNodeState) without
-// ever having the chance to overwrite it themselves.
-func patchBlockNodeStateAfterInstall() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+// patchBlockNodeStateWithTrafficShaping extends patchBlockNodeState with the
+// TrafficShapingDisabled field, persisting the caller's resolved
+// TrafficShapingEnabled decision. It is used by the two commands that resolve a
+// real traffic-shaping target: `block node install` and `block node reconfigure`.
+//
+// It must NOT be used by upgrade/reset/uninstall — those do not resolve
+// TrafficShapingEnabled, so their effectiveInputs.Custom value is the unset zero
+// value and would silently flip a true decision back to "disabled" on every run.
+// Upgrade in particular reads the persisted decision (via
+// currentState.BlockNodeState) to drive its silent convergence and therefore keeps
+// the plain patchBlockNodeState, which leaves this field untouched.
+func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	base := patchBlockNodeState()
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 		st.BlockNodeState.TrafficShapingDisabled = !effectiveInputs.Custom.TrafficShapingEnabled

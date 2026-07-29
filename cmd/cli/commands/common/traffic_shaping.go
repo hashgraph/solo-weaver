@@ -36,17 +36,23 @@ func RegisterTrafficShapingFlags(cmd *cobra.Command) {
 // Declining skips all of it: there is nothing for any of them to configure
 // once the policy plane itself is off.
 //
+// seedEnabled is the default the choice falls back to when neither the flag nor
+// an interactive prompt decides it: `install` passes false (opt-in — a fresh
+// install without the flag stays unshaped), while `reconfigure` passes the block
+// node's CURRENT traffic-shaping state (from BlockNodeState.TrafficShapingDisabled)
+// so a no-flag / default-accept reconfigure keeps the existing decision rather than
+// silently tearing an established plane down.
+//
 // It requires RegisterTrafficShapingFlags to have been called on cmd.
-func ResolveTrafficShapingConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues) (bool, error) {
+func ResolveTrafficShapingConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, seedEnabled bool) (bool, error) {
 	force, err := FlagForce().Value(cmd, args)
 	if err != nil {
 		return false, errorx.IllegalArgument.Wrap(err, "failed to get %s flag", FlagForce().Name)
 	}
 
-	// Seeded false (opt-in) so existing non-interactive/scripted installs that
-	// don't pass this flag keep today's behavior rather than silently picking
-	// up the policy plane, tc shaping, and daemon install.
-	enabled := effectiveBool(cmd, FlagNameTrafficShapingEnabled, false)
+	// Seeded from the caller-supplied default (opt-in false for install; the
+	// current persisted state for reconfigure), overridden by the flag when set.
+	enabled := effectiveBool(cmd, FlagNameTrafficShapingEnabled, seedEnabled)
 
 	// Prompt for the enable/disable choice only when it wasn't already decided
 	// on the CLI. Declining here skips the egress prompts below entirely —

@@ -135,7 +135,7 @@ func (h *InstallHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeStateAfterInstall())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeStateWithTrafficShaping())
 }
 
 func NewInstallHandler(

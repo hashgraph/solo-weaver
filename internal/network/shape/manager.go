@@ -471,6 +471,45 @@ func (m *Manager) DeleteDevice(ctx context.Context, dir string) error {
 	})
 }
 
+// TeardownEgress removes the entire egress tc shape configuration — every egress
+// class and the egress device root — then re-renders the boot script to its empty
+// default and applies it, dropping the live HTB hierarchy on the physical NIC.
+//
+// Unlike DeleteClass/DeleteDevice (the operator-facing single-object verbs, which
+// deliberately refuse to delete a device's default class or a still-referenced
+// class), this is the wholesale teardown used when traffic shaping is disabled on
+// an existing block node: the caller has already removed the BN network policies
+// that reference these classes, so the per-object safety guards no longer apply.
+// It is idempotent — with no egress config present it re-renders the empty script
+// and returns nil.
+func (m *Manager) TeardownEgress(ctx context.Context) error {
+	return m.withLock(func() error {
+		classes, err := loadClassesForDir(DirEgress)
+		if err != nil {
+			return err
+		}
+		for _, c := range classes {
+			if err := removeClass(c.Name); err != nil {
+				return err
+			}
+		}
+		if err := removeDevice(DirEgress); err != nil {
+			return err
+		}
+		// Re-render an unshape boot script (delete root qdisc, re-add nothing) and
+		// apply it so both the boot script and the live kernel hierarchy are reset
+		// to unshaped. This must NOT go through renderAndApplyEgress: with the
+		// device/class registry now empty, that path falls through to the default
+		// shaping render and would re-apply the stock HTB hierarchy instead of
+		// removing it.
+		if err := m.renderAndApplyUnshapeEgress(ctx); err != nil {
+			return errorx.Decorate(err,
+				"egress shape config removed but boot script re-render failed; restart tc-egress.service to sync")
+		}
+		return nil
+	})
+}
+
 // isAutoRate reports whether rate is the literal "auto" (case-insensitive),
 // the operator-facing request to detect the egress link speed at create time.
 func isAutoRate(rate string) bool {
@@ -522,6 +561,38 @@ func (m *Manager) renderAndApplyEgress(ctx context.Context) error {
 		return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
 	}
 	return m.renderAndApplyScript(ctx, nic)
+}
+
+// renderAndApplyUnshapeEgress renders the teardown-only (unshape) boot script for
+// the detected egress NIC, persists it, drops the live HTB hierarchy directly,
+// and restarts the tc-egress oneshot so the on-disk state matches. Used
+// exclusively by TeardownEgress — the registry is already empty at that point, so
+// the normal render would re-apply default shaping instead of removing it.
+//
+// The live root qdisc is deleted directly via the tc runner rather than relying
+// solely on the systemd oneshot re-running the (now unshape) boot script: the
+// boot script's job is to ADD the hierarchy, so using a service restart to REMOVE
+// it is indirect. A direct `tc qdisc del dev <nic> root` makes the teardown
+// immediate and deterministic; the unshape boot script written above keeps the
+// NIC unshaped across reboots.
+func (m *Manager) renderAndApplyUnshapeEgress(ctx context.Context) error {
+	nic, err := m.nicDetect()
+	if err != nil {
+		return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
+	}
+	rendered, err := renderTcEgressUnshapeScript(nic)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEgressScript(rendered); err != nil {
+		return err
+	}
+	// Drop the live hierarchy now, independent of systemd. Best-effort: a NIC with
+	// no root qdisc is not an error (see TCRunner.QdiscDelRoot).
+	if err := m.tcRunner.QdiscDelRoot(ctx, nic); err != nil {
+		return errorx.Decorate(err, "failed to delete live tc-egress root qdisc on %s", nic)
+	}
+	return m.applyEgress(ctx)
 }
 
 // renderEgressScript renders the tc-egress boot script for nic from the current

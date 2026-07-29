@@ -76,6 +76,91 @@ func TestRenderTcEgressScript_EmptyNIC(t *testing.T) {
 	}
 }
 
+// TestRenderTcEgressUnshapeScript verifies the teardown render deletes the root
+// qdisc and re-adds nothing — the fix for TeardownEgress re-applying the default
+// HTB hierarchy instead of removing it. It also funnels through the same NIC
+// validation as the shaping render.
+func TestRenderTcEgressUnshapeScript(t *testing.T) {
+	rendered, err := renderTcEgressUnshapeScript("enp0s1")
+	if err != nil {
+		t.Fatalf("renderTcEgressUnshapeScript: %v", err)
+	}
+
+	if !strings.Contains(rendered, `NIC="enp0s1"`) {
+		t.Errorf("unshape script missing NIC assignment:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `tc qdisc del dev "$NIC" root 2>/dev/null || true`) {
+		t.Errorf("unshape script must delete the root qdisc:\n%s", rendered)
+	}
+	// The whole point: no hierarchy is re-added, so none of the qdisc/class add
+	// verbs may appear (checked against command lines, not the shared banner).
+	for _, forbidden := range []string{
+		"root handle 1: htb default",
+		"tc qdisc add dev",
+		"tc class  add dev",
+		"handle 140: fq_codel",
+		"SPEED=$(cat",
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Errorf("unshape script must not contain %q (would re-shape the NIC):\n%s", forbidden, rendered)
+		}
+	}
+
+	// NIC validation still applies on the teardown path.
+	if _, err := renderTcEgressUnshapeScript(""); err == nil {
+		t.Error("expected error for empty NIC name, got nil")
+	}
+	if _, err := renderTcEgressUnshapeScript(`eth0";reboot;#`); err == nil {
+		t.Error("expected error for injection-style NIC name, got nil")
+	}
+}
+
+// TestRenderAndApplyUnshapeEgress_DeletesLiveRootAndPersists verifies the egress
+// teardown drops the live hierarchy directly (tc qdisc del root, independent of
+// systemd), writes the unshape boot script for reboot persistence, and triggers
+// the apply. This is the runtime half of the fix for TeardownEgress leaving the
+// NIC shaped.
+func TestRenderAndApplyUnshapeEgress_DeletesLiveRootAndPersists(t *testing.T) {
+	tc := &recordingTCRunner{}
+	scriptPath := filepath.Join(t.TempDir(), "tc-egress.sh")
+	applied := false
+
+	m := NewManagerWithConfig(Config{
+		ScriptPath:  scriptPath,
+		LockPath:    filepath.Join(t.TempDir(), ".tc-applying"),
+		NICDetect:   func() (string, error) { return "enp0s1", nil },
+		TCRunner:    tc,
+		ApplyEgress: func(_ context.Context) error { applied = true; return nil },
+	})
+
+	if err := m.renderAndApplyUnshapeEgress(context.Background()); err != nil {
+		t.Fatalf("renderAndApplyUnshapeEgress: %v", err)
+	}
+
+	// Live hierarchy dropped directly on the detected NIC.
+	if len(tc.calls) != 1 || tc.calls[0] != "qdisc-del-root enp0s1" {
+		t.Errorf("expected a single qdisc-del-root enp0s1 call, got %v", tc.calls)
+	}
+	if !applied {
+		t.Error("expected applyEgress to be invoked to sync the boot script")
+	}
+
+	// Unshape boot script persisted for reboot: deletes root, re-adds nothing.
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+	if !strings.Contains(got, `tc qdisc del dev "$NIC" root 2>/dev/null || true`) {
+		t.Errorf("boot script must delete the root qdisc:\n%s", got)
+	}
+	for _, forbidden := range []string{"root handle 1: htb default", "tc class  add dev"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("boot script must not re-shape (%q):\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 	dir := t.TempDir()
 	const testNIC = "ens3"

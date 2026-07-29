@@ -45,7 +45,7 @@ var installCmd = &cobra.Command{
 		// The traffic-shaping gate is independent of the host firewall — it
 		// covers the BN workload network-policy plane and tc HTB shaping, not
 		// the host's own SSH/mgmt firewall.
-		trafficShapingEnabled, err := common.ResolveTrafficShapingConfig(cmd, args, cv)
+		trafficShapingEnabled, err := common.ResolveTrafficShapingConfig(cmd, args, cv, false)
 		if err != nil {
 			return err
 		}
@@ -70,7 +70,7 @@ var installCmd = &cobra.Command{
 
 		// Host firewall is independently gated from traffic shaping above — it
 		// applies regardless of whether the BN policy plane/tc shaping is enabled.
-		if err := common.ResolveHostFirewallConfig(cmd, args, cv); err != nil {
+		if err := common.ResolveHostFirewallConfig(cmd, args, cv, false); err != nil {
 			return err
 		}
 

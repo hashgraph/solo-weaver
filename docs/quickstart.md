@@ -310,6 +310,13 @@ sudo solo-provisioner block node upgrade \
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved | `false` |
 | `--timeout`         | Timeout for the block node Helm install/upgrade, as a Go duration (e.g. `10m`, `600s`, `1h`). The operation is rolled back (`--atomic`) if it exceeds this budget | `5m0s` |
 
+> **Firewall & traffic shaping on upgrade**: `upgrade` does **not** expose the
+> `--firewall-enabled` / `--traffic-shaping-enabled` gates and never prompts for
+> them — a version bump is a routine operation, so it reads the persisted install
+> decision and silently re-asserts the matching network plane (host firewall,
+> BN policy plane, tc shaping, daemon monitor) create-if-missing. It never turns a
+> feature on or off from an upgrade; to change enablement, use `reconfigure`.
+
 #### Reset Block Node
 
 Reset Block Node storage by clearing all data files. This is useful for re-provisioning or when you need to start fresh:
@@ -373,6 +380,16 @@ sudo solo-provisioner block node reconfigure \
   --profile=mainnet \
   --values=/path/to/values.yaml \
   --no-restart
+
+# Enable traffic shaping on a block node that was installed without it
+sudo solo-provisioner block node reconfigure \
+  --profile=mainnet \
+  --traffic-shaping-enabled=true
+
+# Disable the host firewall that was previously enabled (tears the table down)
+sudo solo-provisioner block node reconfigure \
+  --profile=mainnet \
+  --firewall-enabled=false
 ```
 
 **Additional Flags**:
@@ -383,11 +400,29 @@ sudo solo-provisioner block node reconfigure \
 | `--no-restart`      | Skip rollout-restart of the block node pod after reconfiguring                                        | `false` |
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
 | `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
+| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet host` table) on an existing install. Seeded from the firewall's current on-host state, so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
+| `--traffic-shaping-enabled` | Enable or disable the BN traffic-shaping bundle (network-policy plane + tc HTB shaping + daemon traffic-shaper monitor) on an existing install. Seeded from the persisted install decision, so a no-flag reconfigure keeps it; pass `=true` to create it (with `--egress-interface`/`--link-rate`/`--shape`/`--daemon-bin` as on `install`), `=false` to tear it down. | persisted state |
 
 > **Storage path changes**: Local PV `hostPath.path` is immutable. If your
 > reconfigure changes any storage path, you must pass `--purge-storage` so the
 > existing PV/PVCs are deleted and recreated at the new paths. Running
 > `reconfigure --with-reset` with a path change is rejected with a clear error.
+
+> **Enabling/disabling firewall & traffic shaping after install**: `reconfigure`
+> exposes the same `--firewall-enabled` / `--traffic-shaping-enabled` gates as
+> `install`, so an operator can turn either feature on or off on an
+> already-deployed block node without a full `install --force` reinstall. Both
+> gates are seeded from the block node's **current** state — the host firewall from
+> whether the `inet host` table exists, traffic shaping from the persisted install
+> decision — so a routine reconfigure that doesn't pass the flag (or accepts the
+> interactive default) never changes enablement. Teardown only happens on an
+> explicit toggle: answering **No** (or passing `=false`) for a currently-enabled
+> feature removes it — the `inet host` table for the firewall; every `bn-*` policy,
+> the tc egress shaping, and the daemon's block-node traffic-shaper monitor for
+> traffic shaping. Disabling the traffic-shaper monitor does **not** uninstall the
+> shared daemon service, so a co-located component (e.g. consensus-node monitoring)
+> keeps running. Enabling traffic shaping activates the daemon automatically, just
+> like `install`.
 
 #### Uninstall Block Node
 

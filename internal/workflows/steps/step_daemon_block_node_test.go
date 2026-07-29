@@ -27,7 +27,7 @@ func blockNodeConfigPaths(t *testing.T) models.WeaverPaths {
 func TestWriteBlockNodeDaemonConfig_FreshFile(t *testing.T) {
 	paths := blockNodeConfigPaths(t)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -52,13 +52,56 @@ func TestWriteBlockNodeDaemonConfig_FreshFile(t *testing.T) {
 func TestWriteBlockNodeDaemonConfig_EmptyOrbitDefaults(t *testing.T) {
 	paths := blockNodeConfigPaths(t)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "", true).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
 	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
 	require.NoError(t, err)
 	assert.Equal(t, defaultBlockNodeOrbit, cfg.Components.BlockNode.Orbit)
+}
+
+func TestWriteBlockNodeDaemonConfig_DisableTurnsMonitorOff(t *testing.T) {
+	paths := blockNodeConfigPaths(t)
+
+	// Seed an enabled block_node component with an operator-set statusz block and a
+	// co-located consensus_node component that must survive the disable.
+	seed := daemon.DaemonConfig{
+		Components: daemon.DaemonComponents{
+			ConsensusNode: &daemon.ConsensusNodeComponentConfig{
+				Enabled:    true,
+				Kubeconfig: "/opt/solo/weaver/config/daemon-cn.kubeconfig",
+				NodeID:     "3",
+				Orbit:      "hedera-network",
+				Monitors:   daemon.ConsensusNodeMonitors{Upgrade: true},
+			},
+			BlockNode: &daemon.BlockNodeComponentConfig{
+				Enabled:    true,
+				Kubeconfig: "/opt/solo/weaver/config/daemon-bn.kubeconfig",
+				Orbit:      "block-node",
+				Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
+				Statusz:    &daemon.StatuszConfig{BaseURL: "http://127.0.0.1:8080", PollInterval: "3s"},
+			},
+		},
+	}
+	require.NoError(t, daemon.WriteDaemonConfig(paths.DaemonConfigPath, seed))
+
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", false).Build()
+	require.NoError(t, err)
+	require.NoError(t, step.Execute(context.Background()).Error)
+
+	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
+	require.NoError(t, err)
+	// block_node traffic-shaper monitor is off, statusz preserved.
+	require.NotNil(t, cfg.Components.BlockNode)
+	assert.False(t, cfg.Components.BlockNode.Enabled)
+	assert.False(t, cfg.Components.BlockNode.Monitors.TrafficShaper)
+	require.NotNil(t, cfg.Components.BlockNode.Statusz)
+	assert.Equal(t, "http://127.0.0.1:8080", cfg.Components.BlockNode.Statusz.BaseURL)
+	// consensus_node component is untouched — disabling BN must not affect it.
+	require.NotNil(t, cfg.Components.ConsensusNode)
+	assert.True(t, cfg.Components.ConsensusNode.Enabled)
+	assert.Equal(t, "3", cfg.Components.ConsensusNode.NodeID)
 }
 
 func TestWriteBlockNodeDaemonConfig_PreservesExistingBlocks(t *testing.T) {
@@ -84,7 +127,7 @@ func TestWriteBlockNodeDaemonConfig_PreservesExistingBlocks(t *testing.T) {
 	priorBytes, err := os.ReadFile(paths.DaemonConfigPath)
 	require.NoError(t, err)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 

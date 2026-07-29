@@ -56,17 +56,11 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	ins := inputs.Custom
 
 	// networkSteps is the shared network-plane prefix for every branch below.
-	// TcEgressPersist is omitted when the install-time TrafficShapingEnabled
-	// decision (persisted onto BlockNodeState — see patchBlockNodeStateAfterInstall)
-	// was "no": reconfigure never resolves --traffic-shaping-enabled itself, so
-	// without this check it would silently re-provision tc shaping for a block
-	// node that was deliberately installed without it. NetworkFirewallCreate and
-	// NftWeaverPersist are always safe to include unconditionally — they
-	// self-gate (host-firewall disabled / empty policy registry respectively).
-	networkSteps := []automa.Builder{steps.NetworkFirewallCreate(), steps.NftWeaverPersist()}
-	if !currentState.BlockNodeState.TrafficShapingDisabled {
-		networkSteps = append(networkSteps, steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate, nil))
-	}
+	// Reconfigure resolves both --firewall-enabled and --traffic-shaping-enabled
+	// fresh (in the CLI layer, seeded from the current on-host state), so the
+	// convergence assembler is driven by the operator's decision and is allowed to
+	// tear a feature down when it is turned off. See networkPlaneSteps.
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true)
 
 	var wb *automa.WorkflowBuilder
 	switch {
@@ -142,7 +136,7 @@ func (h *ReconfigureHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeState())
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeStateWithTrafficShaping())
 }
 
 // NewReconfigureHandler creates a new ReconfigureHandler.

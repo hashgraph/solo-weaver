@@ -8,6 +8,12 @@
 set -e
 
 NIC="{{.NIC}}"
+{{- if .Unshape}}
+
+# Traffic shaping disabled: remove any existing root qdisc (cascading to all
+# classes and leaf qdiscs) and leave the NIC unshaped. No hierarchy is re-added.
+tc qdisc del dev "$NIC" root 2>/dev/null || true
+{{- else}}
 
 {{- if lt .SpeedMbit 0}}
 {{- /* All tc rates are explicit strings; SPEED variable is not used. */}}
@@ -32,3 +38,4 @@ tc class  add dev "$NIC" parent 1:   classid 1:1  htb rate "{{.Device.Rate}}" ce
 tc class  add dev "$NIC" parent 1:1  classid 1:{{.Minor}} htb rate "{{.Rate}}" ceil "{{.Ceil}}" prio {{.Prio}}
 tc qdisc  add dev "$NIC" parent 1:{{.Minor}} handle {{.Handle}}: fq_codel
 {{end}}
+{{- end}}
