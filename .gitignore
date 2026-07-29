@@ -354,6 +354,9 @@ secring.*
 dist/
 /bin/
 
+### Local Go toolchain version pin (goenv/asdf) — per-developer, not committed ###
+.go-version
+
 ### Generated Files ###
 **/mocks_generated.go
 unit-test-report.md
