@@ -322,7 +322,16 @@ func mergeHostFirewallFromState(cfg models.HostConfig) models.HostConfig {
 		logx.As().Debug().Err(err).Msg("could not read persisted firewall config; not seeding from state")
 		return cfg
 	}
-	fw := defaults.Firewall
+	return applyPersistedFirewallContent(cfg, defaults.Firewall)
+}
+
+// applyPersistedFirewallContent fills any empty host-firewall content field in cfg
+// with the corresponding value from the persisted firewall fw, leaving fields the
+// operator already supplied (via --config) untouched — this is what enforces the
+// config > state precedence. The enable/disable decision (fw.Disabled) is
+// deliberately not touched here; callers resolve it separately. Returns cfg
+// unchanged when fw is nil.
+func applyPersistedFirewallContent(cfg models.HostConfig, fw *models.HostConfig) models.HostConfig {
 	if fw == nil {
 		return cfg
 	}
@@ -344,15 +353,21 @@ func mergeHostFirewallFromState(cfg models.HostConfig) models.HostConfig {
 	return cfg
 }
 
-// SeedHostFirewallFromState applies the last-persisted host-firewall configuration
-// (machineState.firewall) to the global config for commands — namely `block node
+// SeedHostFirewallFromState seeds the global host-firewall config from the
+// last-persisted state (machineState.firewall) for commands — namely `block node
 // upgrade` — that re-assert the firewall without prompting or exposing firewall
-// flags. It honors the persisted enable/disable decision: when the firewall was
-// enabled, the recorded allowlist is applied so NetworkFirewallCreate re-asserts
-// (create-if-missing) rather than skipping on an empty allowlist; when it was
-// disabled, config.Host.Disabled is set so the step skips (upgrade never tears the
-// firewall down — allowTeardown=false). It is a no-op when no firewall was ever
-// persisted, leaving the empty default that makes the step skip.
+// flags. An operator-supplied --config firewall section always wins (config >
+// state, issue #932 AC4): the config file's values are kept, and only the fields
+// it left empty are filled from persisted state.
+//
+// The enable/disable decision is resolved to honor config first: when the config
+// file specified any firewall content, its (config-authored) decision stands;
+// otherwise the persisted decision governs — when the firewall was enabled, the
+// recorded allowlist re-asserts (NetworkFirewallCreate is create-if-missing) and
+// when it was disabled, config.Host.Disabled makes the step skip (upgrade never
+// tears the firewall down — allowTeardown=false). It is a no-op when no firewall
+// was ever persisted and no config was supplied, leaving the empty default that
+// makes the step skip.
 func SeedHostFirewallFromState() error {
 	defaults, err := state.ReadPromptDefaultsFromDisk()
 	if err != nil {
@@ -362,10 +377,33 @@ func SeedHostFirewallFromState() error {
 		logx.As().Debug().Msg("no persisted host-firewall config; leaving firewall unconfigured for this run")
 		return nil
 	}
-	config.OverrideHostConfig(*defaults.Firewall)
+
+	// Detect whether the operator authored a firewall section in --config before
+	// merging state in. HostConfig.Disabled's zero value can't distinguish
+	// "enabled" from "never configured", so the presence of any content field is
+	// what tells us the config file is authoritative for the enable/disable
+	// decision (same reasoning as ResolveHostFirewallConfig's seedEnabled).
+	cfg := config.Get().Host
+	configHasContent := len(cfg.ManagementCIDRs) > 0 ||
+		len(cfg.BlockedCIDRs) > 0 ||
+		cfg.SSHPort > 0 ||
+		cfg.PodCIDR != "" ||
+		len(cfg.InClusterPorts) > 0
+
+	cfg = applyPersistedFirewallContent(cfg, defaults.Firewall)
+
+	// Only the persisted enable/disable decision fills in when config said nothing
+	// about the firewall; an operator who configured it via --config keeps their
+	// own decision.
+	if !configHasContent {
+		cfg.Disabled = defaults.Firewall.Disabled
+	}
+
+	config.OverrideHostConfig(cfg)
 	logx.As().Debug().
-		Bool("disabled", defaults.Firewall.Disabled).
-		Int("managementCidrs", len(defaults.Firewall.ManagementCIDRs)).
+		Bool("disabled", cfg.Disabled).
+		Bool("configHasContent", configHasContent).
+		Int("managementCidrs", len(cfg.ManagementCIDRs)).
 		Msg("Seeded host-firewall config from persisted state")
 	return nil
 }
