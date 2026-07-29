@@ -21,8 +21,8 @@ const statuszClientTimeout = 4 * time.Second
 // REST/JSON: network-data.proto defines only the payload shape, not a gRPC
 // service.
 const (
-	inboundClientsPath  = "statusz/inbound-clients"
-	outboundClientsPath = "statusz/outbound-clients"
+	inboundClientsPath  = "statusz/inbound"
+	outboundClientsPath = "statusz/outbound"
 )
 
 // The types below mirror the JSON encoding of
@@ -31,6 +31,9 @@ const (
 // (provisional) BN schema stays in this one file. json.Decode drops the proto
 // fields the traffic-shaper doesn't consume (scheme, protocol, certificate), so
 // they are simply absent here rather than modelled and thrown away.
+//
+// The BN encodes these in camelCase (e.g. `activeEndpoints`), so the json tags
+// match that casing rather than the proto's snake_case field names.
 
 // Endpoint is one side (local or remote) of a NetworkConnection. Port is a
 // string because the BN reports "*" (any port) alongside numeric ports, and
@@ -47,13 +50,13 @@ type NetworkConnection struct {
 	Local       Endpoint `json:"local"`
 	Remote      Endpoint `json:"remote"`
 	Category    string   `json:"category"`
-	TLSRequired bool     `json:"tls_required"`
+	TLSRequired bool     `json:"tlsRequired"`
 }
 
 // NetworkData is the decoded payload of a statusz endpoint: the set of active
 // endpoints the BN currently reports.
 type NetworkData struct {
-	ActiveEndpoints []NetworkConnection `json:"active_endpoints"`
+	ActiveEndpoints []NetworkConnection `json:"activeEndpoints"`
 }
 
 // StatuszClient reads a Block Node's statusz REST/JSON endpoints.
@@ -72,13 +75,13 @@ func NewStatuszClient(baseURL string) *StatuszClient {
 	}
 }
 
-// InboundClients fetches GET {base}/statusz/inbound-clients and decodes the
+// InboundClients fetches GET {base}/statusz/inbound and decodes the
 // NetworkData payload.
 func (c *StatuszClient) InboundClients(ctx context.Context) (NetworkData, error) {
 	return c.fetch(ctx, inboundClientsPath)
 }
 
-// OutboundClients fetches GET {base}/statusz/outbound-clients and decodes the
+// OutboundClients fetches GET {base}/statusz/outbound and decodes the
 // NetworkData payload.
 func (c *StatuszClient) OutboundClients(ctx context.Context) (NetworkData, error) {
 	return c.fetch(ctx, outboundClientsPath)

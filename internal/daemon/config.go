@@ -110,12 +110,13 @@ type BlockNodeComponentConfig struct {
 
 	Monitors BlockNodeMonitors `yaml:"monitors"`
 
-	// Statusz is the optional local-fallback statusz source for the
+	// Statusz is the optional explicit-override statusz source for the
 	// traffic-shaper poll loop. When nil or with an empty BaseURL, the monitor
-	// has no statusz source to poll (BN-pod statusz discovery is a future story)
-	// and the poll loop idles. When set, the monitor polls that fixed REST
-	// endpoint — a mock statusz server in dev/test, or a directly reachable BN
-	// statusz.
+	// discovers the endpoint from the watched BN pod (pod IP + the pod's
+	// health/statusz containerPort) and reconciles from it, re-resolving as the
+	// pod restarts or reschedules; until a BN pod is observed the poll loop idles.
+	// When set, BaseURL takes precedence over discovery — an explicit override
+	// pointing at a directly reachable BN statusz or a port-forward.
 	Statusz *StatuszConfig `yaml:"statusz,omitempty"`
 }
 
@@ -124,14 +125,16 @@ type BlockNodeMonitors struct {
 	TrafficShaper bool `yaml:"traffic_shaper"`
 }
 
-// StatuszConfig is the local-fallback statusz source polled by the block-node
-// traffic-shaper monitor. The monitor reads `statusz/inbound-clients` and
-// `statusz/outbound-clients` relative to BaseURL and reconciles the returned
-// roster into the live nft set membership.
+// StatuszConfig is an explicit override for the statusz source polled by the
+// block-node traffic-shaper monitor. The monitor reads `statusz/inbound`
+// and `statusz/outbound` relative to BaseURL and reconciles the returned
+// roster into the live nft set membership. When unset, the monitor discovers the
+// endpoint from the watched BN pod instead.
 type StatuszConfig struct {
 	// BaseURL is the root the statusz REST endpoints resolve against, e.g.
-	// http://127.0.0.1:8080. Empty means "no local-fallback source configured";
-	// the poll loop then idles rather than polling.
+	// http://127.0.0.1:8080. When set it takes precedence over pod discovery — an
+	// explicit override such as a port-forward or a directly reachable BN. Empty
+	// means "discover the endpoint from the watched BN pod".
 	BaseURL string `yaml:"base_url,omitempty"`
 
 	// PollInterval is the poll cadence in Go duration form (e.g. "5s"). Empty

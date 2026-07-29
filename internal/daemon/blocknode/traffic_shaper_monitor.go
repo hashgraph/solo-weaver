@@ -61,16 +61,17 @@ type TrafficShaperMonitor struct {
 	// to.
 	namespace string
 
-	// statuszURL is the base URL of the block node's statusz endpoints the poll
-	// loop reconciles from (components.block_node.statusz.base_url). Empty means
-	// no source is configured and the poll loop idles.
+	// statuszURL is the operator-configured statusz base URL
+	// (components.block_node.statusz.base_url). When set it is an explicit
+	// override that takes precedence over pod discovery; empty means "discover
+	// the endpoint from the watched BN pod" (see discoveredStatuszURL).
 	statuszURL string
 	// pollInterval is the steady-state cadence of the statusz poll loop
 	// (components.block_node.statusz.poll_interval). A non-positive value falls
 	// back to defaultStatuszPollInterval.
 	pollInterval time.Duration
 
-	// mu guards attached and inflight.
+	// mu guards attached, inflight, and the discovered-statusz fields.
 	mu sync.Mutex
 	// attached maps pod UID → installed veth, used to dedupe redundant attaches
 	// and to know which veth to detach on pod delete.
@@ -79,6 +80,15 @@ type TrafficShaperMonitor struct {
 	// watch loop never launches a second concurrent attach for the same pod
 	// while its (retrying) resolve is still in progress.
 	inflight map[types.UID]bool
+	// discoveredStatuszURL is the statusz base URL discovered from the watched BN
+	// pod (http://<podIP>:<healthPort>), recorded by the pod watcher when a pod
+	// becomes ContainersReady and cleared when that pod is deleted. Empty until a
+	// ready BN pod is observed. effectiveStatuszURL prefers statuszURL over this.
+	discoveredStatuszURL string
+	// discoveredStatuszPod is the UID of the pod that set discoveredStatuszURL, so
+	// a delete only clears the endpoint when it is that pod (not some other pod in
+	// a multi-pod window) that went away.
+	discoveredStatuszPod types.UID
 }
 
 // NewTrafficShaperMonitor constructs a TrafficShaperMonitor. resolver and client
@@ -182,30 +192,40 @@ const defaultStatuszPollInterval = 5 * time.Second
 // live nft and self-heals that drift. A var (not const) so tests can shrink it.
 var statuszForceResyncInterval = time.Minute
 
+// effectiveStatuszURL returns the statusz base URL the poll loop should reconcile
+// against this tick: the operator-configured base_url override when set,
+// otherwise the URL discovered from the watched BN pod, otherwise "" (no source
+// yet — the poll loop idles this tick).
+func (m *TrafficShaperMonitor) effectiveStatuszURL() string {
+	// statuszURL is set once in the constructor and never mutated, so it needs no
+	// lock; the discovered URL is written by the pod watcher and does.
+	if m.statuszURL != "" {
+		return m.statuszURL
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.discoveredStatuszURL
+}
+
 // runStatuszPoll is the statusz poll-loop responsibility: the daemon-side
 // scheduler that execs the `solo-provisioner block node reconcile-shaper` worker
 // once per poll tick to keep the daemon-owned nft policy sets reconciled from
 // statusz.
 //
-// When no statusz base_url is configured it stays inert — it logs once and
-// blocks on ctx, touching no set — so installs that never configured statusz
-// keep a quiet loop rather than erroring.
+// The statusz endpoint is resolved per tick via effectiveStatuszURL: the
+// configured base_url override when set, otherwise the endpoint discovered from
+// the watched BN pod. When neither is available the tick is skipped quietly
+// (no exec, no error) so a daemon that has not yet observed a BN pod keeps a
+// quiet loop and picks the endpoint up once discovery yields one — and follows it
+// across pod restarts as the discovered URL changes.
 //
 // Each tick first runs the unprivileged `--check` digest probe; the privileged
-// apply (a root sudo exec) fires only when the desired membership changed or the
-// force-resync interval has elapsed since the last apply. A worker-exec failure
-// is returned to superviseResponsibility, which retries with the 5s→5min
-// back-off; a ctx cancellation returns nil (clean shutdown).
+// apply (a root sudo exec) fires only when the desired membership changed, the
+// resolved URL changed, or the force-resync interval has elapsed since the last
+// apply. A worker-exec failure is returned to superviseResponsibility, which
+// retries with the 5s→5min back-off; a ctx cancellation returns nil (clean
+// shutdown).
 func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
-	if m.statuszURL == "" {
-		logx.As().Info().
-			Str("reason", "TrafficShaperStatuszUnconfigured").
-			Str("monitor", m.Name()).
-			Msg("no statusz base_url configured — traffic-shaper poll loop idle")
-		<-ctx.Done()
-		return nil
-	}
-
 	interval := m.pollInterval
 	if interval <= 0 {
 		interval = defaultStatuszPollInterval
@@ -214,31 +234,57 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 	logx.As().Info().
 		Str("reason", "TrafficShaperStatuszPollStarting").
 		Str("monitor", m.Name()).
-		Str("statusz_url", m.statuszURL).
+		Str("base_url", m.statuszURL).
 		Dur("poll_interval", interval).
 		Msg("statusz poll loop starting")
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// lastDigest/lastApply are local to this invocation: a fault restarts
+	// lastDigest/lastApply/lastURL are local to this invocation: a fault restarts
 	// runStatuszPoll (via superviseResponsibility), which resets them and forces
 	// a fresh apply — correct, since post-fault we can't trust the prior state.
 	var lastDigest string
 	var lastApply time.Time
+	var lastURL string
 
 	reconcile := func() error {
-		digest, err := m.delegator.ReconcileShaperCheck(ctx, m.statuszURL)
+		statuszURL := m.effectiveStatuszURL()
+		if statuszURL != lastURL {
+			// Endpoint transition (discovered/lost/changed): log once and reset the
+			// digest gate so the next non-empty URL forces a fresh apply rather than
+			// trusting a digest computed against the previous endpoint.
+			if statuszURL == "" {
+				logx.As().Info().
+					Str("reason", "TrafficShaperStatuszEndpointLost").
+					Str("monitor", m.Name()).
+					Msg("no statusz endpoint available — poll loop idle until a BN pod is discovered or base_url is set")
+			} else {
+				logx.As().Info().
+					Str("reason", "TrafficShaperStatuszEndpointResolved").
+					Str("monitor", m.Name()).
+					Str("statusz_url", statuszURL).
+					Msg("statusz endpoint resolved — reconciling")
+			}
+			lastURL = statuszURL
+			lastDigest = ""
+			lastApply = time.Time{}
+		}
+		if statuszURL == "" {
+			return nil
+		}
+
+		digest, err := m.delegator.ReconcileShaperCheck(ctx, statuszURL)
 		if err != nil {
 			return err
 		}
 		// Skip the root apply only when the desired membership is unchanged AND
 		// the force-resync window has not elapsed. lastApply.IsZero() forces the
-		// first reconcile of the loop to apply.
+		// first reconcile against a (new) URL to apply.
 		if digest == lastDigest && !lastApply.IsZero() && time.Since(lastApply) < statuszForceResyncInterval {
 			return nil
 		}
-		if err := m.delegator.ReconcileShaper(ctx, m.statuszURL); err != nil {
+		if err := m.delegator.ReconcileShaper(ctx, statuszURL); err != nil {
 			return err
 		}
 		lastDigest = digest

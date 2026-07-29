@@ -2,28 +2,27 @@
 
 This document describes how the `solo-provisioner-daemon` block-node
 traffic-shaper monitor consumes the Block Node's `statusz` REST endpoints, how
-the statusz categories map to network policies, the local-fallback statusz
-configuration schema in `daemon.yaml`, and the mock statusz server used for
-daemon development and tests.
+the statusz categories map to network policies, and how the monitor resolves the
+statusz endpoint — discovered from the watched BN pod, with an optional
+`base_url` override in `daemon.yaml`.
 
 > **The statusz contract is provisional.** The request/response shape below
 > mirrors the Block Node's `network-data.proto`. Confirming the contract with
 > the Block Node team is a blocking dependency; treat this document as the
 > current best understanding, not a frozen interface.
 
-> **Implementation status.** This story delivers the pieces the loop *consumes* —
-> the `daemon.yaml` local-fallback config schema, the install-time monitor
-> enablement, and the mock statusz server. The poll loop *itself* (fetch → diff →
-> apply) lands in a follow-up TS_3 story: it applies nft membership through the
+> **Implementation note.** The poll loop applies nft membership through the
 > daemon's `privexec` sudo-delegation (the daemon is unprivileged and never calls
-> `nft` directly), not the in-process path this doc's prose describes.
+> `nft` directly), not the in-process path this doc's prose describes. The monitor
+> resolves the statusz endpoint by discovering it from the watched BN pod, with an
+> optional `base_url` override.
 
 ## What the poll loop does
 
 The traffic-shaper monitor runs a poll loop that, on a fixed cadence
 (default 5s):
 
-1. fetches the BN's `inbound-clients` and `outbound-clients` statusz endpoints,
+1. fetches the BN's `statusz/inbound` and `statusz/outbound` endpoints,
 2. buckets the returned endpoints by category,
 3. diffs the desired membership against the live nftables sets, and
 4. applies the per-policy membership deltas.
@@ -46,19 +45,19 @@ Both endpoints are REST/JSON, resolved relative to the configured base URL:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET statusz/inbound-clients` | Sources allowed to connect **to** the BN, by category |
-| `GET statusz/outbound-clients` | Destinations the BN connects **out** to (peer-BN backfill) |
+| `GET statusz/inbound` | Sources allowed to connect **to** the BN, by category |
+| `GET statusz/outbound` | Destinations the BN connects **out** to (peer-BN backfill) |
 
 ### Response shape (`NetworkData`)
 
 ```json
 {
-  "active_endpoints": [
+  "activeEndpoints": [
     {
       "local":  { "address": "0.0.0.0",      "port": "40840" },
       "remote": { "address": "10.10.1.0/24", "port": "*" },
       "category": "publisher",
-      "tls_required": true
+      "tlsRequired": true
     }
   ]
 }
@@ -82,10 +81,10 @@ a shared config file.
 
 | statusz endpoint | category | policy / nft set | key shape |
 |---|---|---|---|
-| inbound-clients | `publisher` | `bn-publisher` | ipv4 host/CIDR |
-| inbound-clients | `partner` | `bn-partner-out` | ipv4 host/CIDR |
-| inbound-clients | `restricted` | `bn-restricted` | ipv4 host/CIDR |
-| outbound-clients | `partner` | `bn-backfill` | compound `ip . port` |
+| inbound | `publisher` | `bn-publisher` | ipv4 host/CIDR |
+| inbound | `partner` | `bn-partner-out` | ipv4 host/CIDR |
+| inbound | `restricted` | `bn-restricted` | ipv4 host/CIDR |
+| outbound | `partner` | `bn-backfill` | compound `ip . port` |
 
 The mapping is keyed on **(direction, category)**, not category alone: the same
 `partner` string maps to `bn-partner-out` inbound and to the compound
@@ -103,10 +102,13 @@ Each owned category is reconciled on every successful poll: an address that
 drops out of statusz is removed from its set, not left stale. A poll that
 reports no endpoints for an owned category clears that set.
 
-## Local-fallback statusz configuration
+## Statusz endpoint: discovery and override
 
-The monitor needs to know **where** to poll statusz. This is configured with an
-optional `statusz` block on the block-node component in `daemon.yaml`:
+The monitor needs to know **where** to poll statusz. By default it **discovers**
+the endpoint from the watched BN pod — the pod's IP joined with its
+`health`-named containerPort (the BN `/healthz` + statusz port) — and re-resolves
+it as the pod restarts or reschedules. An optional `statusz` block on the
+block-node component in `daemon.yaml` overrides discovery with a fixed endpoint:
 
 ```yaml
 components:
@@ -123,61 +125,27 @@ components:
 
 | Field | Required | Meaning |
 |---|---|---|
-| `base_url` | no | Root URL the `statusz/...` paths resolve against. Must be `http(s)` with a host. |
+| `base_url` | no | Root URL the `statusz/...` paths resolve against. Must be `http(s)` with a host. When set, **overrides** pod discovery. |
 | `poll_interval` | no | Poll cadence as a Go duration (e.g. `5s`, `10s`). Defaults to `5s`. |
 
-When `base_url` is empty (or the `statusz` block is absent), the poll loop
-**idles** — there is no source to poll. In-cluster discovery of statusz on the
-BN pod is a later story; until then, `base_url` is how the monitor is pointed at
-a statusz source, whether that is the mock server, a port-forward, or a
-directly reachable BN.
+When `base_url` is set it takes precedence over discovery — an explicit override
+pointing at a directly reachable BN or a port-forward. When it is empty (or the
+`statusz` block is absent), the monitor discovers the endpoint from the BN pod;
+until a ready BN pod is observed the poll loop idles quietly and starts polling
+as soon as one appears.
 
 ### Enablement at install time
 
 `block node install` writes/merges the `block_node` block above into
 `daemon.yaml` (enabled, the scoped `daemon-bn.kubeconfig`, the BN orbit, and
 `monitors.traffic_shaper: true`), preserving any operator-set `statusz` block
-and the `consensus_node` block. It does **not** set `base_url` — the
-local-fallback source is an operator/deploy concern, added separately. The
+and the `consensus_node` block. It does **not** set `base_url` — discovery is the
+default, and the override is an operator/deploy concern added separately. The
 daemon binary and service are installed by `daemon service install`; the install
 step only records the enablement so the monitor starts when the daemon runs.
 
 Disable the monitor at any time with `monitors.traffic_shaper: false` and a
 daemon restart.
-
-## Mock statusz server (dev & tests)
-
-`internal/daemon/blocknode/statuszmock` is a minimal mock of the two statusz
-endpoints, served from a JSON roster file that is **re-read on every request**,
-so editing the file changes what the daemon's poll loop sees on its next tick.
-It is used by daemon tests and by the UTM-VM traffic-shaper demo.
-
-Run it:
-
-```bash
-go run ./internal/daemon/blocknode/statuszmock/cmd --addr :8080 --roster roster.json
-```
-
-Roster file shape:
-
-```json
-{
-  "inbound": [
-    { "remote": {"address": "10.10.1.0/24", "port": "*"}, "category": "publisher" },
-    { "remote": {"address": "10.20.1.0/24", "port": "*"}, "category": "partner" }
-  ],
-  "outbound": [
-    { "remote": {"address": "10.30.5.7", "port": "43473"}, "category": "partner" }
-  ]
-}
-```
-
-A missing roster file is served as an empty roster (the BN "no clients yet"
-bootstrap state) rather than an error, so the server can be started before the
-roster exists. Point `daemon.yaml`'s `block_node.statusz.base_url` at this
-server's address to drive the poll loop from it.
-
-See `docs/dev/traffic-shaper-demo.md` for the end-to-end UTM-VM walkthrough.
 
 ## Related
 
