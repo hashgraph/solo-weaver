@@ -84,7 +84,11 @@ type PromptDefaultsDoc struct {
 			PluginPreset           string `yaml:"pluginPreset"`
 			PluginList             string `yaml:"pluginList"`
 			TrafficShapingDisabled bool   `yaml:"trafficShapingDisabled"`
-			Storage                struct {
+			Shaping                *struct {
+				EgressInterface string `yaml:"egressInterface"`
+				LinkRate        string `yaml:"linkRate"`
+			} `yaml:"shaping"`
+			Storage struct {
 				BasePath             string `yaml:"basePath"`
 				ArchivePath          string `yaml:"archivePath"`
 				LivePath             string `yaml:"livePath"`
@@ -175,7 +179,13 @@ type BlockNodeSummary struct {
 	PluginPreset           string
 	PluginList             string
 	TrafficShapingDisabled bool
-	Storage                models.BlockNodeStorage
+	// EgressInterface and LinkRate are the last-persisted traffic-shaping content
+	// from blockNodeState.shaping, empty when shaping was never configured. They
+	// seed the reconfigure egress prompts so a default-accept keeps the operator's
+	// previously-chosen NIC / link rate instead of reverting to auto-detection.
+	EgressInterface string
+	LinkRate        string
+	Storage         models.BlockNodeStorage
 }
 
 // PromptDefaults holds all prompt-relevant fields extracted from the on-disk
@@ -219,6 +229,11 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 	}
 
 	bn := doc.State.BlockNodeState
+	var egressInterface, linkRate string
+	if bn.Shaping != nil {
+		egressInterface = bn.Shaping.EgressInterface
+		linkRate = bn.Shaping.LinkRate
+	}
 	return PromptDefaults{
 		Profile:  doc.State.MachineState.Profile,
 		Firewall: firewall,
@@ -231,6 +246,8 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 			PluginPreset:           bn.PluginPreset,
 			PluginList:             bn.PluginList,
 			TrafficShapingDisabled: bn.TrafficShapingDisabled,
+			EgressInterface:        egressInterface,
+			LinkRate:               linkRate,
 			Storage: models.BlockNodeStorage{
 				BasePath:             bn.Storage.BasePath,
 				ArchivePath:          bn.Storage.ArchivePath,

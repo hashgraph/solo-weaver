@@ -61,7 +61,7 @@ func TestNetworkFirewallCreate_SkipsWithoutMgmtCIDRs(t *testing.T) {
 	nftPath := withStubbedFirewall(t, r)
 	setHostConfig(t, models.HostConfig{}) // no management CIDRs
 
-	step, err := NetworkFirewallCreate().Build()
+	step, err := NetworkFirewallCreate(false).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -82,7 +82,7 @@ func TestNetworkFirewallCreate_SkipsWhenDisabled(t *testing.T) {
 		Disabled:        true,
 	})
 
-	step, err := NetworkFirewallCreate().Build()
+	step, err := NetworkFirewallCreate(false).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -101,7 +101,7 @@ func TestNetworkFirewallCreate_CreatesWhenMgmtCIDRsSet(t *testing.T) {
 		InClusterPorts:  []int{6443, 10250},
 	})
 
-	step, err := NetworkFirewallCreate().Build()
+	step, err := NetworkFirewallCreate(false).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -134,7 +134,7 @@ func TestNetworkFirewallCreate_ExplicitEmptyPortsAndPodCIDROverrideDefaults(t *t
 		InClusterPorts:  nil,
 	})
 
-	step, err := NetworkFirewallCreate().Build()
+	step, err := NetworkFirewallCreate(false).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -154,7 +154,7 @@ func TestNetworkFirewallCreate_RollbackSkipsWhenPreexisting(t *testing.T) {
 	withStubbedFirewall(t, r)
 	setHostConfig(t, models.HostConfig{ManagementCIDRs: []string{"10.0.0.0/8"}, SSHPort: 22})
 
-	step, err := NetworkFirewallCreate().Build()
+	step, err := NetworkFirewallCreate(false).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -164,4 +164,32 @@ func TestNetworkFirewallCreate_RollbackSkipsWhenPreexisting(t *testing.T) {
 	rollback := step.Rollback(context.Background())
 	require.Equal(t, automa.StatusSkipped, rollback.Status)
 	require.False(t, r.deleted, "rollback must not delete a pre-existing table")
+}
+
+func TestNetworkFirewallCreate_ReconcileReRendersExistingTable(t *testing.T) {
+	// reconcile=true (reconfigure): even though the table already exists, the
+	// resolved flags must be re-rendered to disk so changed firewall settings
+	// take effect. create-if-missing (reconcile=false) would skip the write.
+	r := &fakeFwRunner{exists: true}
+	nftPath := withStubbedFirewall(t, r)
+	setHostConfig(t, models.HostConfig{
+		ManagementCIDRs: []string{"10.0.0.0/8"},
+		SSHPort:         22,
+		PodCIDR:         models.DefaultClusterPodCIDR,
+		InClusterPorts:  []int{6443},
+	})
+
+	step, err := NetworkFirewallCreate(true).Build()
+	require.NoError(t, err)
+
+	report := step.Execute(context.Background())
+	require.NoError(t, report.Error)
+	require.Equal(t, automa.StatusSuccess, report.Status)
+	require.FileExists(t, nftPath, "reconcile must re-render the artifact even when the table pre-existed")
+
+	// The table pre-existed, so rollback must NOT delete it — a re-render is not
+	// a creation.
+	rollback := step.Rollback(context.Background())
+	require.Equal(t, automa.StatusSkipped, rollback.Status)
+	require.False(t, r.deleted, "rollback must not delete a table this step only re-rendered")
 }

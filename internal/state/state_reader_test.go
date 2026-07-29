@@ -217,6 +217,48 @@ state:
 	}
 }
 
+func TestReadPromptDefaults_ParsesShaping(t *testing.T) {
+	data := []byte(`
+state:
+  blockNodeState:
+    name: my-release
+    trafficShapingDisabled: false
+    shaping:
+      egressInterface: eth0
+      linkRate: 500mbit
+`)
+	var doc PromptDefaultsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	bn := doc.State.BlockNodeState
+	if bn.Shaping == nil {
+		t.Fatal("expected Shaping to be parsed, got nil")
+	}
+	if bn.Shaping.EgressInterface != "eth0" {
+		t.Errorf("expected Shaping.EgressInterface 'eth0', got %q", bn.Shaping.EgressInterface)
+	}
+	if bn.Shaping.LinkRate != "500mbit" {
+		t.Errorf("expected Shaping.LinkRate '500mbit', got %q", bn.Shaping.LinkRate)
+	}
+}
+
+func TestReadPromptDefaults_MissingShapingReturnsNil(t *testing.T) {
+	data := []byte(`
+state:
+  blockNodeState:
+    name: my-release
+`)
+	var doc PromptDefaultsDoc
+	if err := unmarshalStateDoc(data, &doc); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if doc.State.BlockNodeState.Shaping != nil {
+		t.Errorf("expected nil Shaping when absent, got %+v", doc.State.BlockNodeState.Shaping)
+	}
+}
+
 func TestReadPromptDefaults_ApplicationStatePathFlowsThroughToModel(t *testing.T) {
 	data := []byte(`
 state:

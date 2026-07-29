@@ -73,6 +73,16 @@ var (
 			// on --profile=local preempt the clearer "block node is not installed"
 			// precondition error on a fresh host.
 			if trafficShapingEnabled {
+				// Seed the egress prompts from the persisted last-chosen shaping
+				// content so a default-accept keeps the operator's previous NIC/link
+				// rate instead of reverting to auto-detection. An explicit CLI flag
+				// still wins (ResolveEgressConfig skips a prompt whose flag was set).
+				if !cmd.Flags().Changed(common.FlagNameEgressInterface) && flagEgressInterface == "" {
+					flagEgressInterface = stateDefaults.BlockNode.EgressInterface
+				}
+				if !cmd.Flags().Changed(common.FlagNameLinkRate) && flagLinkRate == "" {
+					flagLinkRate = stateDefaults.BlockNode.LinkRate
+				}
 				if err := common.ResolveEgressConfig(cmd, args, cv, &flagEgressInterface, &flagLinkRate); err != nil {
 					return err
 				}

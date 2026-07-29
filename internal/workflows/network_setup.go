@@ -31,7 +31,7 @@ import (
 // When false, none of the four steps are added: there is no inet weaver table
 // to persist and no tc config to shape traffic with.
 func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool, healthPort string) *automa.WorkflowBuilder {
-	stepList := []automa.Builder{steps.NetworkFirewallCreate()}
+	stepList := []automa.Builder{steps.NetworkFirewallCreate(false)}
 	if trafficShapingEnabled {
 		stepList = append(stepList,
 			steps.NetworkPolicyCreate(force, healthPort),

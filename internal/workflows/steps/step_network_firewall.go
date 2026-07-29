@@ -25,12 +25,20 @@ var newFirewallManager = func() *firewall.Manager { return firewall.NewManager()
 
 // NetworkFirewallCreate lays down the node-level `inet host` nftables table
 // (SSH/management allowlist, ICMP policy, in-cluster host-service ports) by
-// invoking the same create-if-missing logic as `network firewall create`. It
-// is wired into the block-node workflow (`block node install` /
-// `reconfigure` / `upgrade`) — not the generic `kube cluster install`, which
-// provisions a cluster independent of any specific node type and should not
-// unconditionally apply node-specific firewall rules. The create is
-// create-if-missing, so re-running any of those commands is a no-op.
+// invoking the same logic as `network firewall create`. It is wired into the
+// block-node workflow (`block node install` / `reconfigure` / `upgrade`) — not
+// the generic `kube cluster install`, which provisions a cluster independent of
+// any specific node type and should not unconditionally apply node-specific
+// firewall rules.
+//
+// reconcile selects the convergence behaviour:
+//   - reconcile=false (install / upgrade): create-if-missing. When the table
+//     already exists the supplied flags are NOT applied, so re-running is a
+//     no-op. This is the "re-assert the install decision, never regress" mode.
+//   - reconcile=true (reconfigure): force re-render the table from the resolved
+//     flags even when it already exists, so an operator changing firewall
+//     settings via `block node reconfigure` actually sees them take effect. Only
+//     the branch that already knows teardown is permitted passes this.
 //
 // The table's input chain is default-drop and the only SSH allow rule matches
 // the management allowlist (`ip saddr @mgmt_addrs tcp dport <ssh> accept`).
@@ -39,7 +47,7 @@ var newFirewallManager = func() *firewall.Manager { return firewall.NewManager()
 // with a warning rather than rendering a lock-out ruleset. The allowlist is
 // supplied via `--mgmt-cidrs` or the host.managementCidrs config value. An
 // operator can also opt out entirely via `--firewall-enabled=false`.
-func NetworkFirewallCreate() *automa.StepBuilder {
+func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkFirewallCreateStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Applying host firewall (inet host)")
@@ -88,13 +96,27 @@ func NetworkFirewallCreate() *automa.StepBuilder {
 			t.InClusterPorts = hostCfg.InClusterPorts
 			t.PodCIDR = hostCfg.PodCIDR
 
-			changed, err := newFirewallManager().Create(ctx, t, false)
+			mgr := newFirewallManager()
+
+			// Determine whether the table pre-existed so rollback only deletes a
+			// table this step actually introduced. In create-if-missing mode
+			// Create's returned `changed` already implies "did not exist", but in
+			// reconcile (force) mode `changed` is true even for a re-render of a
+			// pre-existing table — so probe first and never delete on rollback in
+			// that case.
+			existedBefore, err := mgr.IsActive(ctx)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
-			stp.State().Local().Set(FirewallCreatedByThisStep, changed)
 
-			meta := map[string]string{FirewallCreatedByThisStep: strconv.FormatBool(changed)}
+			changed, err := mgr.Create(ctx, t, reconcile)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+			createdByThisStep := changed && !existedBefore
+			stp.State().Local().Set(FirewallCreatedByThisStep, createdByThisStep)
+
+			meta := map[string]string{FirewallCreatedByThisStep: strconv.FormatBool(createdByThisStep)}
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {

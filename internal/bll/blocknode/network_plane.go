@@ -43,7 +43,10 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 	if allowTeardown && config.Get().Host.Disabled {
 		out = append(out, steps.NetworkFirewallDelete())
 	} else {
-		out = append(out, steps.NetworkFirewallCreate())
+		// reconcile=allowTeardown: reconfigure (allowTeardown=true) force
+		// re-renders the host firewall so changed settings actually take effect;
+		// upgrade (allowTeardown=false) re-asserts create-if-missing only.
+		out = append(out, steps.NetworkFirewallCreate(allowTeardown))
 	}
 
 	switch {

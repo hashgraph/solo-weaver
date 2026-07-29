@@ -55,6 +55,14 @@ func ValidateEgressFlags(cmd *cobra.Command, linkRate string) error {
 // interactive and the flags were not supplied on the CLI. egressInterface and
 // linkRate are updated in-place by the prompts.
 //
+// egressInterface and linkRate double as seed inputs: when either already holds
+// a non-empty value (e.g. `block node reconfigure` pre-seeding it from the
+// persisted BlockNodeState.Shaping last-chosen values), that value becomes the
+// prompt's pre-filled default so a default-accept keeps the operator's
+// previously-configured NIC / link rate instead of silently reverting to
+// auto-detection. On a fresh `install` both are empty, so the detected NIC and
+// sysfs link speed are used — the original behaviour.
+//
 // When cv is non-nil the prompted values are recorded into it and no separate
 // summary is printed — the caller is responsible for printing the unified
 // summary after all prompt sections complete. When cv is nil a local collector
@@ -76,8 +84,13 @@ func ResolveEgressConfig(
 		return nil
 	}
 
-	// Detect the egress NIC to use as the prompt default.
+	// Detect the egress NIC to use as the prompt default, unless a value was
+	// already seeded (persisted last-chosen NIC on reconfigure), which wins.
 	detectedNIC, _ := shape.DetectEgressInterface()
+	egressDefault := detectedNIC
+	if *egressInterface != "" {
+		egressDefault = *egressInterface
+	}
 
 	// Speed hint from sysfs: prefer the already-set flag value over the
 	// auto-detected one so the hint reflects the NIC the operator chose.
@@ -92,13 +105,23 @@ func ResolveEgressConfig(
 		}
 	}
 
+	// Seed the link-rate prompt from the persisted last-chosen rate (when the
+	// caller pre-seeded linkRate, e.g. reconfigure reading BlockNodeState.Shaping)
+	// so a default-accept keeps the operator's configured rate instead of
+	// reverting to the NIC's raw sysfs line speed. Falls back to the sysfs hint
+	// on a fresh install where nothing was chosen yet.
+	linkRateDefault := speedHint
+	if *linkRate != "" {
+		linkRateDefault = *linkRate
+	}
+
 	localCV := cv
 	if localCV == nil {
 		localCV = prompt.NewChosenValues()
 	}
 	if err := prompt.RunInputPrompts(cmd, []prompt.InputPrompt{
-		prompt.EgressInterfaceInputPrompt(detectedNIC, speedHint, egressInterface),
-		prompt.LinkRateInputPrompt(speedHint, linkRate),
+		prompt.EgressInterfaceInputPrompt(egressDefault, speedHint, egressInterface),
+		prompt.LinkRateInputPrompt(linkRateDefault, linkRate),
 	}, localCV); err != nil {
 		return err
 	}
