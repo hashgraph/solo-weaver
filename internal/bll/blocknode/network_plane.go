@@ -29,7 +29,11 @@ import (
 //
 // trafficShapingEnabled is the resolved traffic-shaping target. force is the
 // operator's --force, threaded into NetworkPolicyCreate for the enable path.
-func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled, allowTeardown bool) []automa.Builder {
+// healthPort is the resolved block-node health/statusz port (from
+// blocknode.ResolveHealthPort against the operator's effective values), threaded
+// into NetworkPolicyCreate so the bn-mgmt set tracks the port the BN actually
+// listens on — matching the install path.
+func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled, allowTeardown bool, healthPort string) []automa.Builder {
 	var out []automa.Builder
 
 	// Host firewall: desired-state convergence. NetworkFirewallCreate self-gates
@@ -58,7 +62,7 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 		// enable), where post-workflow ensureBlockNodeDaemon installs and starts it.
 		shapeOverrides := toClassOverrides(ins.ShapeOverrides)
 		out = append(out,
-			steps.NetworkPolicyCreate(force),
+			steps.NetworkPolicyCreate(force, healthPort),
 			steps.NftWeaverPersist(),
 			steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate, shapeOverrides),
 			steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate, shapeOverrides),
