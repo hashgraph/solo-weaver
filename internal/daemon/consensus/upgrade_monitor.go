@@ -28,7 +28,7 @@ import (
 )
 
 var networkUpgradeExecuteGVR = schema.GroupVersionResource{
-	Group:    "hedera.com",
+	Group:    "operator.solo.hedera.com",
 	Version:  "v1alpha1",
 	Resource: "networkupgradeexecutes",
 }
@@ -74,7 +74,7 @@ const (
 // coordinates the daemon needs to watch NetworkUpgradeExecute CRs. Used by
 // RequiredProbe to build the KubeRBACProbe for this monitor.
 const (
-	networkUpgradeExecuteGroup    = "hedera.com"
+	networkUpgradeExecuteGroup    = "operator.solo.hedera.com"
 	networkUpgradeExecuteResource = "networkupgradeexecutes"
 )
 

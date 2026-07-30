@@ -26,7 +26,7 @@ func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []st
 			Namespace:      cn.Orbit,
 			KubeconfigPath: paths.DaemonCNKubeconfigPath,
 			PolicyRules: []rbacv1.PolicyRule{{
-				APIGroups: []string{"hedera.com"},
+				APIGroups: []string{"operator.solo.hedera.com"},
 				Resources: []string{"networkupgradeexecutes"},
 				Verbs:     []string{"list", "watch"},
 			}},

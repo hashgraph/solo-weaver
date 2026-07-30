@@ -40,7 +40,7 @@ type KubeRBACProbe struct {
 	// Namespace is the Kubernetes namespace to check permissions in.
 	Namespace string
 
-	// Group is the API group (e.g. "hedera.com"). Use "" for core resources.
+	// Group is the API group (e.g. "operator.solo.hedera.com"). Use "" for core resources.
 	Group string
 
 	// Resource is the plural resource name (e.g. "networkupgradeexecutes").
