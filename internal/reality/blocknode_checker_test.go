@@ -197,3 +197,68 @@ metadata:
 		t.Error("TrafficShapingDisabled must be preserved as true across a reality refresh, got false")
 	}
 }
+
+// TestRefreshState_PreservesShaping verifies that the persisted traffic-shaping
+// content (egress NIC, link rate, per-class overrides) — which, like
+// TrafficShapingDisabled, cannot be recovered from the Helm release or the live
+// cluster — survives a reality refresh that rebuilds BlockNodeState from a found
+// release. Without preservation, upgrade/reconfigure would auto-detect the NIC and
+// drop the operator's original rate/overrides instead of re-asserting them.
+func TestRefreshState_PreservesShaping(t *testing.T) {
+	const manifest = `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-node-block-node-server
+  namespace: block-node
+  labels:
+    app.kubernetes.io/instance: block-node
+`
+	re := &release.Release{
+		Name:      "block-node",
+		Namespace: "block-node",
+		Info:      &release.Info{Status: release.StatusDeployed},
+		Chart: &chart.Chart{
+			Metadata: &chart.Metadata{Name: "block-node-server", Version: "0.28.0", AppVersion: "0.28.0"},
+		},
+		Manifest: manifest,
+	}
+
+	prio := 0
+	persisted := state.NewBlockNodeState()
+	persisted.ReleaseInfo.Status = release.StatusDeployed
+	persisted.Shaping = &state.ShapingState{
+		EgressInterface: "eth0",
+		LinkRate:        "1gbit",
+		ShapeOverrides: map[string]models.ShapeOverride{
+			"publisher": {Rate: "800mbit", Ceil: "1gbit", Prio: &prio},
+		},
+	}
+
+	full := state.State{}
+	full.BlockNodeState = persisted
+
+	checker := &blockNodeChecker{
+		sm:            fakeStateManager{st: full},
+		newHelm:       func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube:       func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		clusterExists: func() (bool, error) { return true, nil },
+	}
+
+	got, err := checker.RefreshState(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ReleaseInfo.Name != "block-node" {
+		t.Fatalf("expected release to be found and rebuilt, got name %q", got.ReleaseInfo.Name)
+	}
+	if got.Shaping == nil {
+		t.Fatal("Shaping must be preserved across a reality refresh, got nil")
+	}
+	if got.Shaping.EgressInterface != "eth0" || got.Shaping.LinkRate != "1gbit" {
+		t.Errorf("Shaping NIC/rate not preserved: got %q/%q, want eth0/1gbit",
+			got.Shaping.EgressInterface, got.Shaping.LinkRate)
+	}
+	if ov, ok := got.Shaping.ShapeOverrides["publisher"]; !ok || ov.Rate != "800mbit" {
+		t.Errorf("Shaping overrides not preserved: got %+v", got.Shaping.ShapeOverrides)
+	}
+}

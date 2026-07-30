@@ -78,6 +78,12 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// attempt to install the daemon) for a block node deliberately installed
 	// without it.
 	trafficShapingDisabled := bn.TrafficShapingDisabled
+	// Shaping (egress NIC, link rate, per-class overrides) is a weaver-only record
+	// that, like TrafficShapingDisabled, cannot be recovered from the Helm release or
+	// the live cluster. Capture it before rebuilding so a reality refresh does not
+	// drop it — otherwise upgrade/reconfigure would auto-detect the NIC/rate instead
+	// of re-asserting the operator's original shaping.
+	shaping := bn.Shaping
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
@@ -93,6 +99,7 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 		},
 		Storage:                models.BlockNodeStorage{},
 		TrafficShapingDisabled: trafficShapingDisabled,
+		Shaping:                shaping,
 		LastSync:               now,
 	}
 

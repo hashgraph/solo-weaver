@@ -122,8 +122,38 @@ type ProvisionerInfo struct {
 type MachineState struct {
 	Profile  string                   `yaml:"profile,omitempty" json:"profile,omitempty"` // deployment profile (e.g. "mainnet", "testnet", "local")
 	Software map[string]SoftwareState `yaml:"software" json:"software"`
-	Hardware map[string]HardwareState `yaml:"hardware" json:"hardware"`                     // e.g. CPU, RAM, Disk info
-	LastSync htime.Time               `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Hardware map[string]HardwareState `yaml:"hardware" json:"hardware"` // e.g. CPU, RAM, Disk info
+	// Firewall records the last-resolved host-firewall configuration so
+	// reconfigure/upgrade can re-assert the inet host table (especially after a
+	// disable→re-enable) without the operator re-supplying --mgmt-cidrs. It is
+	// host-scoped — it lives here, not on BlockNodeState, so it survives a
+	// block-node uninstall. Nil means "never configured" (old state files, or a
+	// host this tool never managed the firewall on). See HostFirewallState.
+	Firewall *HostFirewallState `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	LastSync htime.Time         `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+}
+
+// HostFirewallState is the persisted record of the operator's last-chosen host
+// firewall configuration. It mirrors the operator-supplied fields of
+// models.HostConfig and is populated from the resolved effective config on
+// install/reconfigure; it is read back as a fallback below explicit flags/config
+// when the operator does not re-supply the values.
+//
+// Disabled carries the last enable/disable decision (negative polarity so the
+// zero value means "enabled", matching HostConfig.Disabled). It is kept in sync
+// on every install/reconfigure. The CIDR/port content is updated only when the
+// firewall is enabled with a non-empty allowlist — a disable (or an enable with
+// an empty allowlist) flips Disabled but preserves the stored content, so a
+// later bare re-enable restores the last-known-good allowlist rather than
+// skipping with the SSH-lockout guard. upgrade reads Disabled to decide whether
+// to re-assert (enabled) or skip (disabled) the firewall.
+type HostFirewallState struct {
+	Disabled        bool     `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	ManagementCIDRs []string `yaml:"managementCidrs,omitempty" json:"managementCidrs,omitempty"`
+	BlockedCIDRs    []string `yaml:"blockedCidrs,omitempty" json:"blockedCidrs,omitempty"`
+	SSHPort         int      `yaml:"sshPort,omitempty" json:"sshPort,omitempty"`
+	PodCIDR         string   `yaml:"podCidr,omitempty" json:"podCidr,omitempty"`
+	InClusterPorts  []int    `yaml:"inClusterPorts,omitempty" json:"inClusterPorts,omitempty"`
 }
 
 type SoftwareState struct {
@@ -158,8 +188,25 @@ type BlockNodeState struct {
 	// install` ever writes this (see patchBlockNodeStateAfterInstall); reconfigure
 	// and upgrade read it to durably skip re-provisioning tc shaping for a block
 	// node that was deliberately installed without it.
-	TrafficShapingDisabled bool       `yaml:"trafficShapingDisabled,omitempty" json:"trafficShapingDisabled,omitempty"`
-	LastSync               htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	TrafficShapingDisabled bool `yaml:"trafficShapingDisabled,omitempty" json:"trafficShapingDisabled,omitempty"`
+	// Shaping records the last-resolved traffic-shaping content (egress NIC, link
+	// rate, per-class overrides) that cannot be recovered from the Helm release or
+	// the live cluster. It is written on install/reconfigure when traffic shaping is
+	// enabled, and read back on upgrade/reconfigure so the tc steps re-assert the
+	// operator's original NIC/rate/overrides instead of falling back to auto-detect.
+	// Nil means "never set" (old state files, or a node installed without shaping).
+	Shaping  *ShapingState `yaml:"shaping,omitempty" json:"shaping,omitempty"`
+	LastSync htime.Time    `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+}
+
+// ShapingState is the persisted record of the traffic-shaping content bundle.
+// The enable/disable decision lives separately on
+// BlockNodeState.TrafficShapingDisabled; this holds only the values needed to
+// reproduce the shaping when it is enabled.
+type ShapingState struct {
+	EgressInterface string                          `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
+	LinkRate        string                          `yaml:"linkRate,omitempty" json:"linkRate,omitempty"`
+	ShapeOverrides  map[string]models.ShapeOverride `yaml:"shapeOverrides,omitempty" json:"shapeOverrides,omitempty"`
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.

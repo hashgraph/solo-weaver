@@ -65,7 +65,15 @@ type ProvisionerVersionDoc struct {
 type PromptDefaultsDoc struct {
 	State struct {
 		MachineState struct {
-			Profile string `yaml:"profile"`
+			Profile  string `yaml:"profile"`
+			Firewall *struct {
+				Disabled        bool     `yaml:"disabled"`
+				ManagementCIDRs []string `yaml:"managementCidrs"`
+				BlockedCIDRs    []string `yaml:"blockedCidrs"`
+				SSHPort         int      `yaml:"sshPort"`
+				PodCIDR         string   `yaml:"podCidr"`
+				InClusterPorts  []int    `yaml:"inClusterPorts"`
+			} `yaml:"firewall"`
 		} `yaml:"machineState"`
 		BlockNodeState struct {
 			Name                   string `yaml:"name"`
@@ -76,7 +84,11 @@ type PromptDefaultsDoc struct {
 			PluginPreset           string `yaml:"pluginPreset"`
 			PluginList             string `yaml:"pluginList"`
 			TrafficShapingDisabled bool   `yaml:"trafficShapingDisabled"`
-			Storage                struct {
+			Shaping                *struct {
+				EgressInterface string `yaml:"egressInterface"`
+				LinkRate        string `yaml:"linkRate"`
+			} `yaml:"shaping"`
+			Storage struct {
 				BasePath             string `yaml:"basePath"`
 				ArchivePath          string `yaml:"archivePath"`
 				LivePath             string `yaml:"livePath"`
@@ -167,7 +179,13 @@ type BlockNodeSummary struct {
 	PluginPreset           string
 	PluginList             string
 	TrafficShapingDisabled bool
-	Storage                models.BlockNodeStorage
+	// EgressInterface and LinkRate are the last-persisted traffic-shaping content
+	// from blockNodeState.shaping, empty when shaping was never configured. They
+	// seed the reconfigure egress prompts so a default-accept keeps the operator's
+	// previously-chosen NIC / link rate instead of reverting to auto-detection.
+	EgressInterface string
+	LinkRate        string
+	Storage         models.BlockNodeStorage
 }
 
 // PromptDefaults holds all prompt-relevant fields extracted from the on-disk
@@ -175,6 +193,11 @@ type BlockNodeSummary struct {
 type PromptDefaults struct {
 	Profile   string
 	BlockNode BlockNodeSummary
+	// Firewall is the last-persisted host-firewall configuration (decision +
+	// allowlist content) from machineState.firewall, or nil when the firewall was
+	// never configured. It seeds reconfigure/upgrade so the operator does not have
+	// to re-supply --mgmt-cidrs on a re-enable.
+	Firewall *models.HostConfig
 }
 
 // ReadPromptDefaultsFromDisk extracts all prompt-relevant fields from the
@@ -193,9 +216,27 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		return PromptDefaults{}, err
 	}
 
+	var firewall *models.HostConfig
+	if fw := doc.State.MachineState.Firewall; fw != nil {
+		firewall = &models.HostConfig{
+			Disabled:        fw.Disabled,
+			ManagementCIDRs: fw.ManagementCIDRs,
+			BlockedCIDRs:    fw.BlockedCIDRs,
+			SSHPort:         fw.SSHPort,
+			PodCIDR:         fw.PodCIDR,
+			InClusterPorts:  fw.InClusterPorts,
+		}
+	}
+
 	bn := doc.State.BlockNodeState
+	var egressInterface, linkRate string
+	if bn.Shaping != nil {
+		egressInterface = bn.Shaping.EgressInterface
+		linkRate = bn.Shaping.LinkRate
+	}
 	return PromptDefaults{
-		Profile: doc.State.MachineState.Profile,
+		Profile:  doc.State.MachineState.Profile,
+		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
 			ReleaseName:            bn.Name,
 			Namespace:              bn.Namespace,
@@ -205,6 +246,8 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 			PluginPreset:           bn.PluginPreset,
 			PluginList:             bn.PluginList,
 			TrafficShapingDisabled: bn.TrafficShapingDisabled,
+			EgressInterface:        egressInterface,
+			LinkRate:               linkRate,
 			Storage: models.BlockNodeStorage{
 				BasePath:             bn.Storage.BasePath,
 				ArchivePath:          bn.Storage.ArchivePath,

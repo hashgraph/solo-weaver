@@ -42,6 +42,17 @@ var (
 				return err
 			}
 
+			// Upgrade exposes no firewall flags and never prompts; seed the effective
+			// host-firewall config from the last-persisted state so the network-plane's
+			// NetworkFirewallCreate step re-asserts the operator's last-known allowlist
+			// (create-if-missing) instead of skipping on an empty one. The persisted
+			// enable/disable decision is honored — a firewall that was disabled stays
+			// off (the step self-gates on config.Host.Disabled). Traffic-shaping content
+			// is re-asserted separately via the shared effective-inputs resolver.
+			if err := common.SeedHostFirewallFromState(); err != nil {
+				return err
+			}
+
 			intent := models.Intent{
 				Action: models.ActionUpgrade,
 				Target: models.TargetBlockNode,
