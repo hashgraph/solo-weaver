@@ -88,8 +88,8 @@ func resolveFeatureGate(cmd *cobra.Command, args []string, f gatedFeature, seedE
 }
 
 // effectiveBool returns the effective value for a bool flag: the flag when
-// explicitly set, else cfgVal (the caller-supplied "unset" default). Shared by
-// the gated-feature gates and the host-firewall content resolution.
+// explicitly set, else cfgVal (the caller-supplied "unset" default). Used by
+// resolveFeatureGate to resolve each feature's enable/disable gate.
 func effectiveBool(cmd *cobra.Command, name string, cfgVal bool) bool {
 	if cmd.Flags().Changed(name) {
 		v, _ := cmd.Flags().GetBool(name)
