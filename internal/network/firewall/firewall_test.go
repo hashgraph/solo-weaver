@@ -4,6 +4,7 @@ package firewall
 
 import (
 	"context"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+// update regenerates the golden .nft fixtures instead of comparing against
+// them: `go test ./internal/network/firewall/... -update`. Review the diff
+// before committing a regenerated golden.
+var update = flag.Bool("update", false, "regenerate golden testdata files")
 
 // fakeRunner is an in-memory Runner for tests: it tracks table existence
 // without touching the kernel. Apply is intentionally absent — live rule
@@ -32,6 +38,19 @@ func sampleTable() *Table {
 		InClusterPorts: []int{4244, 6443, 7472, 10250},
 		SSHPort:        22,
 		PodCIDR:        "10.4.0.0/24",
+	}
+}
+
+// dualStackTable is sampleTable with IPv6 members mixed into every dimension,
+// exercising the ipv6_addr sets, the `ip6` rules, and the v6 in-cluster rule.
+func dualStackTable() *Table {
+	return &Table{
+		MgmtCIDRs:      []string{"10.0.0.0/8", "2001:db8:a11::/48"},
+		BlockedCIDRs:   []string{"203.0.113.0/24", "2001:db8:bad::/48"},
+		InClusterPorts: []int{4244, 6443, 7472, 10250},
+		SSHPort:        22,
+		PodCIDR:        "10.4.0.0/24",
+		PodCIDR6:       "2001:db8:c0de::/64",
 	}
 }
 
@@ -105,18 +124,55 @@ func TestRender_NoMgmtNoPod(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty mgmt set renders without an elements clause; no pod CIDR means no
-	// in-cluster rule line.
+	// in-cluster rule line. Both families' sets are always declared (dual-stack).
 	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; }")
+	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; }")
 	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; }")
+	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; }")
 	require.NotContains(t, doc, "tcp dport @in_cluster_ports accept")
+}
+
+func TestRender_DualStack(t *testing.T) {
+	doc, err := dualStackTable().Render()
+	require.NoError(t, err)
+
+	// Each family's members land in its own set; mixed --mgmt/--blocked lists
+	// are split by family, not smuggled into the wrong-typed set.
+	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; elements = { 10.0.0.0/8 }; }")
+	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:a11::/48 }; }")
+	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; elements = { 203.0.113.0/24 }; }")
+	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:bad::/48 }; }")
+
+	// Parallel v6 match rules.
+	require.Contains(t, doc, "ip6 saddr @blocked_addrs6 drop")
+	require.Contains(t, doc, "ip6 saddr @mgmt_addrs6 tcp dport 22 accept")
+	require.Contains(t, doc, "ip saddr 10.4.0.0/24 tcp dport @in_cluster_ports accept")
+	require.Contains(t, doc, "ip6 saddr 2001:db8:c0de::/64 tcp dport @in_cluster_ports accept")
+
+	// ICMPv6 Neighbor Discovery + MLD are mandatory under the default-drop policy
+	// or IPv6 is dead; packet-too-big is the v6 PMTUD signal. nd-redirect must NOT
+	// be accepted (on-link MITM). Hop-limit 255 guards the NDP accept.
+	require.Contains(t, doc, "icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } ip6 hoplimit 255 accept")
+	require.Contains(t, doc, "icmpv6 type { mld-listener-query, mld-listener-report, mld-listener-done } accept")
+	require.Contains(t, doc, "icmpv6 type packet-too-big accept")
+	require.NotContains(t, doc, "nd-redirect")
+
+	// NDP must precede the established/related fast-path, same reasoning as the
+	// v4 ICMP ordering.
+	ndpIdx := strings.Index(doc, "nd-neighbor-solicit")
+	estIdx := strings.LastIndex(doc, "ct state established,related accept")
+	require.Greater(t, ndpIdx, 0)
+	require.Less(t, ndpIdx, estIdx, "NDP accepts must precede established,related accept")
 }
 
 func TestRoundTrip_RenderParseRender(t *testing.T) {
 	cases := map[string]*Table{
-		"full":      sampleTable(),
-		"defaults":  NewTable(),
-		"mgmt-only": {MgmtCIDRs: []string{"10.1.0.0/16"}, SSHPort: 2222},
-		"no-mgmt":   {SSHPort: 22},
+		"full":       sampleTable(),
+		"dual-stack": dualStackTable(),
+		"defaults":   NewTable(),
+		"mgmt-only":  {MgmtCIDRs: []string{"10.1.0.0/16"}, SSHPort: 2222},
+		"v6-only":    {MgmtCIDRs: []string{"2001:db8:a11::/48"}, BlockedCIDRs: []string{"2001:db8:bad::/48"}, SSHPort: 22, PodCIDR6: "2001:db8:c0de::/64", InClusterPorts: []int{6443}},
+		"no-mgmt":    {SSHPort: 22},
 	}
 	for name, tbl := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -223,23 +279,45 @@ func TestManager_AddRejectsBadInput(t *testing.T) {
 
 	require.Error(t, m.AddMgmtCIDR(ctx, "not-a-cidr"))
 	require.Error(t, m.AddPort(ctx, 70000))
-	require.Error(t, m.AddMgmtCIDR(ctx, "2001:db8::/32")) // IPv6 not supported by ipv4_addr sets
 	require.Error(t, m.AddBlockedCIDR(ctx, "not-a-cidr"))
-	require.Error(t, m.AddBlockedCIDR(ctx, "2001:db8::/32")) // IPv6 not supported by ipv4_addr sets
+	// A bare IP without a prefix length is still rejected (both families).
+	require.Error(t, m.AddMgmtCIDR(ctx, "2001:db8::1"))
 }
 
-func TestTable_Validate_RejectsIPv6(t *testing.T) {
+func TestManager_AddAcceptsIPv6(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+	_, err := m.Create(ctx, NewTable(), false)
+	require.NoError(t, err)
+
+	// IPv6 CIDRs are now accepted and land in the ipv6_addr sets.
+	require.NoError(t, m.AddMgmtCIDR(ctx, "2001:db8:a11::/48"))
+	require.NoError(t, m.AddBlockedCIDR(ctx, "2001:db8:bad::/48"))
+	data, err := os.ReadFile(nftPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "set mgmt_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:a11::/48 }; }")
+	require.Contains(t, string(data), "set blocked_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:bad::/48 }; }")
+}
+
+func TestTable_Validate_AcceptsIPv6(t *testing.T) {
 	mgmt := sampleTable()
 	mgmt.MgmtCIDRs = []string{"2001:db8::/32"}
-	require.ErrorContains(t, mgmt.Validate(), "IPv6 CIDRs are not yet supported")
+	require.NoError(t, mgmt.Validate())
 
 	pod := sampleTable()
-	pod.PodCIDR = "2001:db8::/32"
-	require.ErrorContains(t, pod.Validate(), "IPv6 CIDRs are not yet supported")
+	pod.PodCIDR6 = "2001:db8::/32"
+	require.NoError(t, pod.Validate())
 
 	blocked := sampleTable()
 	blocked.BlockedCIDRs = []string{"2001:db8::/32"}
-	require.ErrorContains(t, blocked.Validate(), "IPv6 CIDRs are not yet supported")
+	require.NoError(t, blocked.Validate())
+
+	// A bare IPv6 address without a prefix length is still rejected.
+	bare := sampleTable()
+	bare.MgmtCIDRs = []string{"2001:db8::1"}
+	require.Error(t, bare.Validate())
 }
 
 func TestManager_MutateBeforeCreateFails(t *testing.T) {
@@ -286,10 +364,15 @@ func TestRender_GoldenStable(t *testing.T) {
 	// Guards against accidental rule reordering/whitespace drift. If the
 	// ruleset legitimately changes, regenerate testdata/network-host.golden.nft
 	// deliberately and review the diff.
-	want, err := os.ReadFile(filepath.Join("testdata", "network-host.golden.nft"))
+	goldenPath := filepath.Join("testdata", "network-host.golden.nft")
+	doc, err := sampleTable().Render()
 	require.NoError(t, err)
 
-	doc, err := sampleTable().Render()
+	if *update {
+		require.NoError(t, os.WriteFile(goldenPath, []byte(doc), 0o644))
+	}
+
+	want, err := os.ReadFile(goldenPath)
 	require.NoError(t, err)
 	require.Equal(t, strings.TrimSpace(string(want)), strings.TrimSpace(doc))
 }

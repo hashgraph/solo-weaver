@@ -26,7 +26,7 @@ var (
 	flagPorts      []string
 	flagCIDRs      []string
 	flagCIDRsFile  string
-	flagPodCIDR    string
+	flagPodCIDR    []string
 	// flagCIDR is used by add/remove (singular --cidr, repeatable) to match
 	// the element-verb flag name the issue specifies, distinct from create/set's
 	// --cidrs (which take a full list in one shot).

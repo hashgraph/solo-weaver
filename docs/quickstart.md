@@ -198,10 +198,10 @@ sudo solo-provisioner block node install \
 | `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`). See [Block-node service exposure](./block-node-service-exposure.md) for how this interacts with `service.type` and the chart's split topology. |
 | `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
-| `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs. Empty skips the host firewall.                                                          |
-| `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs, dropped before any other rule including established connections. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
+| `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs (IPv4 and/or IPv6 — each entry is routed to the matching `ipv4_addr`/`ipv6_addr` set). Empty skips the host firewall. |
+| `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs (IPv4 and/or IPv6), dropped before any other rule including established connections. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
 | `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
-| `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet)                                |
+| `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet). May be IPv4 and/or IPv6 (repeat or comma-separate for dual-stack). |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
 | `--traffic-shaping-enabled` | Create the BN workload network-policy plane (`inet weaver` classification) and tc HTB traffic shaping, and install the traffic-shaper daemon. Opt-in (default: `false`); set to `true` to get all three |
 | `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and installs `solo-provisioner-tc-egress.service` so the HTB hierarchy survives reboot. |
@@ -226,6 +226,18 @@ sudo solo-provisioner block node install \
 > list, dropped before every other rule (including established connections),
 > and is purely operator-managed for its whole lifecycle, unlike the
 > daemon-owned `bn-restricted` set on the BN workload plane.
+
+> **IPv6 / dual-stack**: both the host firewall (`inet host`) and the BN workload
+> plane (`inet weaver`, which drives traffic-shaping classification) are
+> dual-stack. The v4 and v6 sets are always rendered; `--mgmt-cidrs`,
+> `--blocked-cidrs`, `--pod-cidr` (and `network policy --cidrs`) accept mixed
+> IPv4/IPv6 lists and route each entry to the matching family's set. The host
+> firewall's default-drop input chain explicitly admits ICMPv6 Neighbor Discovery
+> (NS/NA/RS/RA, hop-limit-255 guarded), MLD, and `packet-too-big` (the IPv6 PMTUD
+> signal) — without these IPv6 would be non-functional under the drop policy.
+> IPv6 workload classification is active once a v6 `--pod-cidr` is supplied
+> (auto-detection resolves only the v4 pod CIDR today; pass the v6 companion
+> explicitly).
 
 > **Traffic shaping gate**: daemon activation is not a separate decision from
 > traffic shaping — `block node install` automatically installs and provisions

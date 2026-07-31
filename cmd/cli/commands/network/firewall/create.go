@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	fw "github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/spf13/cobra"
 )
 
@@ -49,14 +50,25 @@ var createCmd = &cobra.Command{
 			t.SSHPort = flagSSHPort
 		}
 
-		// --pod-cidr defaults to auto-detection: when the operator does not
-		// pass it, resolve the local node's .spec.podCIDR from the cluster.
-		// Detection is best-effort — `network firewall create` is node-agnostic
-		// and may run before a cluster exists, so if no cluster is reachable we
-		// fall back to omitting the in-cluster-ports rule and tell the operator
-		// how to set it explicitly.
-		t.PodCIDR = flagPodCIDR
-		if t.PodCIDR == "" {
+		// --pod-cidr accepts a mixed v4/v6 list; route each entry to the matching
+		// family slot so a dual-stack node can admit in-cluster traffic over both.
+		// A value that fails family classification is slotted as v4 so Table.Validate
+		// surfaces a clear --pod-cidr error rather than dropping it silently.
+		//
+		// When the operator passes nothing, auto-detection resolves the local
+		// node's .spec.podCIDR (a single, v4 value today). Detection is
+		// best-effort — `network firewall create` is node-agnostic and may run
+		// before a cluster exists, so if no cluster is reachable we fall back to
+		// omitting the in-cluster-ports rule and tell the operator how to set it.
+		if len(flagPodCIDR) > 0 {
+			for _, c := range flagPodCIDR {
+				if isV6, err := sanity.CIDRIsIPv6(c); err == nil && isV6 {
+					t.PodCIDR6 = c
+				} else {
+					t.PodCIDR = c
+				}
+			}
+		} else {
 			if cidr, err := detectPodCIDR(cmd.Context()); err != nil {
 				logx.As().Warn().Err(err).Msg(
 					"could not auto-detect pod CIDR; the in-cluster host-service ports rule will be omitted — pass --pod-cidr to set it explicitly")
@@ -93,5 +105,5 @@ func init() {
 	createCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Operator-curated block list CIDRs, dropped before any other rule (comma-separated or repeated)")
 	createCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", fw.DefaultInClusterPorts, "Host-service ports reachable from the pod CIDR")
 	createCmd.Flags().IntVar(&flagSSHPort, "ssh-port", fw.DefaultSSHPort, "SSH/management TCP port accepted from the allowlist")
-	createCmd.Flags().StringVar(&flagPodCIDR, "pod-cidr", "", "Pod CIDR allowed to reach the in-cluster host-service ports (default: auto-detected from the local node's .spec.podCIDR; the rule is omitted if no cluster is reachable)")
+	createCmd.Flags().StringSliceVar(&flagPodCIDR, "pod-cidr", nil, "Pod CIDR(s) allowed to reach the in-cluster host-service ports; may be IPv4 and/or IPv6 (comma-separated or repeated). Default: auto-detected from the local node's .spec.podCIDR; the rule is omitted if no cluster is reachable")
 }

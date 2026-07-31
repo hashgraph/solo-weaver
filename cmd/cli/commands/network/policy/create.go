@@ -46,26 +46,28 @@ var createCmd = &cobra.Command{
 			return err
 		}
 
-		podCIDR := flagPodCIDR
-		if podCIDR == "" && p.Action != pol.ActionDeny {
+		podCIDRs := flagPodCIDR
+		if len(podCIDRs) == 0 && p.Action != pol.ActionDeny {
 			// A --deny rule never references POD_CIDR (see Render), so skip
 			// resolving it entirely for --deny -- no point requiring a
 			// reachable cluster (or --pod-cidr) for a quarantine-only policy.
 			// If a sibling --stamp policy in the registry still needs it,
 			// Manager.Create's Render call below surfaces that clearly.
 			//
-			// An explicit --pod-cidr works offline; only auto-detection needs a
-			// reachable cluster. Unlike `network firewall create` (best-effort,
-			// node-agnostic), `network policy create` is expected to run against a
-			// live cluster, so a detection failure with no
-			// --pod-cidr is a hard error rather than a warning.
+			// An explicit --pod-cidr works offline (and may carry both an IPv4 and
+			// an IPv6 pod CIDR for dual-stack classification); only auto-detection
+			// needs a reachable cluster. Unlike `network firewall create`
+			// (best-effort, node-agnostic), `network policy create` is expected to
+			// run against a live cluster, so a detection failure with no --pod-cidr
+			// is a hard error rather than a warning. Auto-detection resolves a
+			// single (v4) pod CIDR today; pass --pod-cidr for the v6 companion.
 			detected, derr := detectPodCIDR(cmd.Context())
 			if derr != nil {
 				return errorx.IllegalState.Wrap(derr,
 					"could not auto-detect the pod CIDR; pass --pod-cidr explicitly")
 			}
-			podCIDR = detected
-			logx.As().Info().Str("pod_cidr", podCIDR).Msg("auto-detected pod CIDR from the local node")
+			podCIDRs = []string{detected}
+			logx.As().Info().Str("pod_cidr", detected).Msg("auto-detected pod CIDR from the local node")
 		}
 
 		force, err := common.FlagForce().Value(cmd, args)
@@ -73,7 +75,7 @@ var createCmd = &cobra.Command{
 			return err
 		}
 
-		changed, err := newManager().Create(cmd.Context(), p, cidrs, podCIDR, force)
+		changed, err := newManager().Create(cmd.Context(), p, cidrs, podCIDRs, force)
 		if err != nil {
 			return err
 		}
@@ -160,6 +162,6 @@ func init() {
 	createCmd.Flags().StringSliceVar(&flagPorts, "ports", nil, "Workload listener ports for the match key (comma-separated or repeated)")
 	createCmd.Flags().StringSliceVar(&flagCIDRs, "cidrs", nil, "Initial set membership (comma-separated or repeated); ip:port entries for --reply-stamp")
 	createCmd.Flags().StringVar(&flagCIDRsFile, "cidrs-file", "", "Alternative to --cidrs: a file of CIDRs (one per line or comma-separated)")
-	createCmd.Flags().StringVar(&flagPodCIDR, "pod-cidr", "", "Pod CIDR to scope classification to (default: auto-detected from the local node's .spec.podCIDR)")
+	createCmd.Flags().StringSliceVar(&flagPodCIDR, "pod-cidr", nil, "Pod CIDR(s) to scope classification to; may be IPv4 and/or IPv6 for dual-stack (comma-separated or repeated). Default: auto-detected (v4) from the local node's .spec.podCIDR")
 	_ = createCmd.MarkFlagRequired("name")
 }

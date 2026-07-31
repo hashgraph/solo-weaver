@@ -27,9 +27,10 @@ const maxPort = 65535
 // token "<ip> . <port>" used by --reply-stamp policies' sets (e.g. bn-backfill).
 // It is the single conversion the apply path (`network policy set`) and the
 // daemon poll loop's diff both call, so desired membership is built byte for
-// byte identical to what gets written to the kernel. The set is
-// `ipv4_addr . inet_service`, so the host must be IPv4 and the port in range;
-// the returned token is canonical (host normalized, port stripped of any leading
+// byte identical to what gets written to the kernel. Both address families are
+// accepted (IPv6 hosts must be bracketed, e.g. "[2001:db8::1]:443"); the caller
+// routes the element to the ipv4_addr or ipv6_addr compound set by family. The
+// returned token is canonical (host normalized, port stripped of any leading
 // zeros) and a malformed pair is rejected here rather than poisoning a later
 // batch apply.
 func CompoundElement(ipPort string) (string, error) {
@@ -38,8 +39,8 @@ func CompoundElement(ipPort string) (string, error) {
 		return "", errorx.IllegalArgument.Wrap(err, "invalid ip:port %q: compound-set entries require an ip:port pair", ipPort)
 	}
 	addr, err := netip.ParseAddr(host)
-	if err != nil || !addr.Is4() {
-		return "", errorx.IllegalArgument.New("invalid ip:port %q: %q is not an IPv4 address", ipPort, host)
+	if err != nil {
+		return "", errorx.IllegalArgument.New("invalid ip:port %q: %q is not an IP address", ipPort, host)
 	}
 	if err := sanity.ValidatePort(port); err != nil {
 		return "", errorx.IllegalArgument.Wrap(err, "invalid ip:port %q", ipPort)
@@ -137,12 +138,13 @@ type elemKey struct {
 func parseElement(tok string) elemKey {
 	tok = strings.TrimSpace(tok)
 
-	// These are ipv4_addr(. inet_service) sets, so only IPv4 hosts and in-range
-	// ports count as parsed/authoritative; anything else falls through to the
-	// unparseable path (preserved as-is, sorted last) rather than being ordered
-	// among valid elements.
+	// These are ipv4_addr / ipv6_addr(. inet_service) sets, so any valid host of
+	// either family plus an in-range port counts as parsed/authoritative;
+	// anything else falls through to the unparseable path (preserved as-is,
+	// sorted last) rather than being ordered among valid elements. Family is
+	// carried in elemKey.addr and orders v4 before v6 (netip.Addr.Compare).
 	if host, port, ok := splitCompound(tok); ok {
-		if addr, err := netip.ParseAddr(host); err == nil && addr.Is4() {
+		if addr, err := netip.ParseAddr(host); err == nil {
 			if p, err := strconv.Atoi(port); err == nil && p >= 1 && p <= maxPort {
 				return elemKey{
 					canon:  addr.String() + compoundSep + strconv.Itoa(p),
@@ -157,10 +159,12 @@ func parseElement(tok string) elemKey {
 	}
 
 	if strings.Contains(tok, "/") {
-		if pfx, err := netip.ParsePrefix(tok); err == nil && pfx.Addr().Is4() {
+		if pfx, err := netip.ParsePrefix(tok); err == nil {
 			pfx = pfx.Masked()
 			// A full-length prefix is a single host; nft prints an interval
-			// set's /32 as the bare address, so collapse it to match.
+			// set's /32 (v4) or /128 (v6) as the bare address, so collapse it to
+			// match. Addr.BitLen() is 32 for v4 and 128 for v6, so this handles
+			// both families with the same check.
 			if pfx.Bits() == pfx.Addr().BitLen() {
 				return elemKey{canon: pfx.Addr().String(), addr: pfx.Addr(), bits: pfx.Bits(), port: -1, parsed: true}
 			}
@@ -169,7 +173,7 @@ func parseElement(tok string) elemKey {
 		return elemKey{canon: tok, bits: -1, port: -1}
 	}
 
-	if addr, err := netip.ParseAddr(tok); err == nil && addr.Is4() {
+	if addr, err := netip.ParseAddr(tok); err == nil {
 		return elemKey{canon: addr.String(), addr: addr, bits: addr.BitLen(), port: -1, parsed: true}
 	}
 	return elemKey{canon: tok, bits: -1, port: -1}

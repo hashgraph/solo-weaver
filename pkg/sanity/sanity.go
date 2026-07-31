@@ -749,6 +749,23 @@ func ValidateIPv4CIDR(s string) error {
 	return nil
 }
 
+// CIDRIsIPv6 reports whether s is an IPv6 CIDR (as opposed to IPv4). It is the
+// family classifier that lets the dual-stack `inet host` / `inet weaver`
+// renderers route each entry of a mixed --mgmt-cidrs / --blocked-cidrs / --cidrs
+// list into the matching nft set (ipv4_addr vs ipv6_addr). s should already have
+// passed ValidateCIDR; an unparseable value returns an error rather than a
+// misleading family verdict. Classification is by net.IP.To4(): it returns
+// non-nil for an IPv4-mapped IPv6 address (e.g. "::ffff:10.0.0.1"), so such an
+// address classifies as IPv4 — the family nft would place it in — even though
+// net.ParseCIDR keeps the address in 16-byte form.
+func CIDRIsIPv6(s string) (bool, error) {
+	ip, _, err := net.ParseCIDR(s)
+	if err != nil {
+		return false, errorx.IllegalArgument.New("invalid CIDR: %s", s)
+	}
+	return ip.To4() == nil, nil
+}
+
 // ValidatePort rejects any string that is not a valid TCP/UDP port number in
 // the range 1–65535. It is the boundary check for `--in-cluster-port` values
 // before they are rendered into the `inet host` nftables ruleset.

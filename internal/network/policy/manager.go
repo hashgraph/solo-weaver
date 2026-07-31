@@ -90,20 +90,25 @@ func NewManagerWithConfig(cfg Config) *Manager {
 // true, in which case its config and membership are replaced (not merged)
 // from p and cidrs. cidrs is set membership, applied to the live kernel
 // only — never persisted.
-func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR string, force bool) (bool, error) {
+func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDRs []string, force bool) (bool, error) {
 	if err := p.Validate(cidrs); err != nil {
 		return false, err
 	}
 	// No blanket podCIDR requirement here: Render (below) only requires it
 	// when the merged policy set actually contains a --stamp policy -- a
 	// --deny-only chain never references POD_CIDR. When the caller doesn't
-	// supply one (as --deny never does), recover the value last used to
+	// supply one (as --deny never does), recover the value(s) last used to
 	// render network-weaver.nft -- it's a deployment-wide constant, not a
 	// per-call argument, so an unrelated --deny create shouldn't need it
 	// re-supplied just to correctly re-render an unchanged --stamp sibling.
-	if podCIDR == "" {
+	//
+	// Drop empty entries first (e.g. a Cobra StringSlice from `--pod-cidr ""`)
+	// so recovery still fires instead of treating "" as one explicit-but-empty
+	// pod CIDR — same normalization as RenderWeaverNft.
+	podCIDRs = nonEmptyStrings(podCIDRs)
+	if len(podCIDRs) == 0 {
 		if existing, err := os.ReadFile(m.weaverNftPath); err == nil {
-			podCIDR = ExtractPodCIDR(string(existing))
+			podCIDRs = ExtractPodCIDRs(string(existing))
 		}
 	}
 
@@ -190,7 +195,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 		// Render the prospective full chain BEFORE touching disk so a render or
 		// kernel-apply failure leaves the registry untouched.
 		merged := upsert(policies, target)
-		doc, err := Render(merged, podCIDR)
+		doc, err := Render(merged, podCIDRs...)
 		if err != nil {
 			return err
 		}
@@ -198,25 +203,27 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 			return err
 		}
 		// The table is now live in the kernel, emptied of all membership.
-		// Restore every sibling's snapshot as-is; target's membership is
-		// replaced with exactly newCIDRs, not merged with what was live
-		// before (force means "this is the new desired state"). Any failure
-		// from here leaves the kernel ahead of disk; decorate so the caller
-		// reads it as "re-run to reconcile" (create is idempotent) rather
-		// than "nothing happened".
+		// Restore every sibling's snapshot as-is, per family; target's
+		// membership is replaced with exactly newCIDRs (split by family into its
+		// v4/v6 sets), not merged with what was live before (force means "this
+		// is the new desired state"). Any failure from here leaves the kernel
+		// ahead of disk; decorate so the caller reads it as "re-run to
+		// reconcile" (create is idempotent) rather than "nothing happened".
+		targetV4, targetV6 := setElementsByFamily(target, newCIDRs)
 		for _, lp := range merged {
 			if !lp.hasCIDRSet() {
 				continue
 			}
-			elements := snapshot[lp.Name]
+			v4Set, v6Set := lp.Name, V6SetName(lp.Name)
+			v4Elems, v6Elems := snapshot[v4Set], snapshot[v6Set]
 			if lp.Name == target.Name {
-				elements = setElements(target, newCIDRs)
+				v4Elems, v6Elems = targetV4, targetV6
 			}
-			if len(elements) == 0 {
-				continue
+			if err := m.restoreSet(ctx, v4Set, v4Elems); err != nil {
+				return err
 			}
-			if err := m.runner.AddElements(ctx, lp.Name, elements); err != nil {
-				return errorx.Decorate(err, "inet weaver chain applied to the kernel but restoring %q membership failed; re-run to reconcile", lp.Name)
+			if err := m.restoreSet(ctx, v6Set, v6Elems); err != nil {
+				return err
 			}
 		}
 		if err := writeEntry(m.registryDir, target); err != nil {
@@ -236,24 +243,48 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 
 // snapshotMembership captures the live membership of every policy that
 // carries a CIDR set, before the caller runs a destructive Apply() that would
-// otherwise wipe it. A ListElements failure aborts immediately (returned to
-// the caller) rather than silently proceeding with a partial snapshot into a
-// destructive apply.
+// otherwise wipe it. Both the IPv4 (@<name>) and IPv6 (@<name>6) sets are
+// snapshotted, keyed by set name. A ListElements failure aborts immediately
+// (returned to the caller) rather than silently proceeding with a partial
+// snapshot into a destructive apply.
 func (m *Manager) snapshotMembership(ctx context.Context, policies []*Policy) (map[string][]string, error) {
 	snapshot := make(map[string][]string, len(policies))
 	for _, lp := range policies {
-		if !lp.hasCIDRSet() {
-			continue
-		}
-		elements, err := m.runner.ListElements(ctx, lp.Name)
-		if err != nil {
-			return nil, errorx.Decorate(err, "failed to snapshot live membership for policy %q before re-render", lp.Name)
-		}
-		if len(elements) > 0 {
-			snapshot[lp.Name] = elements
+		for _, setName := range cidrSetNames(lp) {
+			elements, err := m.runner.ListElements(ctx, setName)
+			if err != nil {
+				return nil, errorx.Decorate(err, "failed to snapshot live membership for set %q before re-render", setName)
+			}
+			if len(elements) > 0 {
+				snapshot[setName] = elements
+			}
 		}
 	}
 	return snapshot, nil
+}
+
+// cidrSetNames returns the nft set names that hold a policy's CIDR membership:
+// the IPv4 set (the bare policy name) and its IPv6 companion (@<name>6). A
+// --from-entity world policy has no membership set and returns nil.
+func cidrSetNames(p *Policy) []string {
+	if !p.hasCIDRSet() {
+		return nil
+	}
+	return []string{p.Name, V6SetName(p.Name)}
+}
+
+// restoreSet re-adds a set's snapshotted membership after a destructive
+// re-render emptied it. An empty slice is a no-op (the freshly recreated set is
+// already empty). A failure is decorated as "re-run to reconcile" since the
+// kernel is now ahead of disk.
+func (m *Manager) restoreSet(ctx context.Context, setName string, elements []string) error {
+	if len(elements) == 0 {
+		return nil
+	}
+	if err := m.runner.AddElements(ctx, setName, elements); err != nil {
+		return errorx.Decorate(err, "inet weaver chain applied to the kernel but restoring %q membership failed; re-run to reconcile", setName)
+	}
+	return nil
 }
 
 // findByName returns the policy with the given name, or nil.
@@ -300,7 +331,11 @@ func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
 		if err := m.requireTableExists(ctx, name); err != nil {
 			return err
 		}
-		return m.runner.AddElements(ctx, name, setElements(p, cidrs))
+		v4, v6 := setElementsByFamily(p, cidrs)
+		if err := m.runner.AddElements(ctx, name, v4); err != nil {
+			return err
+		}
+		return m.runner.AddElements(ctx, V6SetName(name), v6)
 	})
 }
 
@@ -321,7 +356,11 @@ func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error
 		if err := m.requireTableExists(ctx, name); err != nil {
 			return err
 		}
-		return m.runner.DeleteElements(ctx, name, setElements(p, cidrs))
+		v4, v6 := setElementsByFamily(p, cidrs)
+		if err := m.runner.DeleteElements(ctx, name, v4); err != nil {
+			return err
+		}
+		return m.runner.DeleteElements(ctx, V6SetName(name), v6)
 	})
 }
 
@@ -351,7 +390,14 @@ func (m *Manager) applySet(ctx context.Context, name string, cidrs []string) err
 	if err := m.requireTableExists(ctx, name); err != nil {
 		return err
 	}
-	return m.runner.SetElements(ctx, name, setElements(p, cidrs))
+	// Full-replace each family's set. SetElements flushes then adds, so a family
+	// with no members in cidrs is cleared (not left stale) — required for the
+	// daemon's present/absent reconcile semantics to hold per family.
+	v4, v6 := setElementsByFamily(p, cidrs)
+	if err := m.runner.SetElements(ctx, name, v4); err != nil {
+		return err
+	}
+	return m.runner.SetElements(ctx, V6SetName(name), v6)
 }
 
 // ApplyMembership pushes desired CIDR membership into one or more policies'
@@ -626,16 +672,19 @@ func (m *Manager) showOne(ctx context.Context, p *Policy) (string, error) {
 		return b.String(), nil
 	}
 
-	elements, err := m.runner.ListElements(ctx, p.Name)
-	if err != nil {
-		return "", err
-	}
-	fmt.Fprintf(&b, "  live set @%s:\n", p.Name)
-	if len(elements) == 0 {
-		b.WriteString("    (empty)\n")
-	} else {
-		for _, e := range elements {
-			fmt.Fprintf(&b, "    %s\n", e)
+	// Show both families' live sets (@<name> and @<name>6).
+	for _, setName := range cidrSetNames(p) {
+		elements, err := m.runner.ListElements(ctx, setName)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "  live set @%s:\n", setName)
+		if len(elements) == 0 {
+			b.WriteString("    (empty)\n")
+		} else {
+			for _, e := range elements {
+				fmt.Fprintf(&b, "    %s\n", e)
+			}
 		}
 	}
 	return b.String(), nil
@@ -698,12 +747,12 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			return nil
 		}
 
-		// Recover the pod CIDR from the existing .nft if any remaining policy
+		// Recover the pod CIDR(s) from the existing .nft if any remaining policy
 		// is a --stamp (same pattern as Create).
-		podCIDR := ""
+		var podCIDRs []string
 		if needsPodCIDR(remaining) {
 			if existing, err := os.ReadFile(m.weaverNftPath); err == nil {
-				podCIDR = ExtractPodCIDR(string(existing))
+				podCIDRs = ExtractPodCIDRs(string(existing))
 			}
 		}
 
@@ -715,7 +764,7 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			return err
 		}
 
-		doc, err := Render(remaining, podCIDR)
+		doc, err := Render(remaining, podCIDRs...)
 		if err != nil {
 			return err
 		}
@@ -723,18 +772,12 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			return err
 		}
 
-		// Restore remaining policies' membership.
+		// Restore remaining policies' membership, both families.
 		for _, lp := range remaining {
-			if !lp.hasCIDRSet() {
-				continue
-			}
-			elements := snapshot[lp.Name]
-			if len(elements) == 0 {
-				continue
-			}
-			if err := m.runner.AddElements(ctx, lp.Name, elements); err != nil {
-				return errorx.Decorate(err,
-					"inet weaver chain re-rendered but restoring %q membership failed; re-run to reconcile", lp.Name)
+			for _, setName := range cidrSetNames(lp) {
+				if err := m.restoreSet(ctx, setName, snapshot[setName]); err != nil {
+					return err
+				}
 			}
 		}
 

@@ -28,7 +28,7 @@ var (
 	flagInClusterPorts []int
 	flagInClusterPort  int
 	flagSSHPort        int
-	flagPodCIDR        string
+	flagPodCIDR        []string
 )
 
 var firewallCmd = &cobra.Command{
