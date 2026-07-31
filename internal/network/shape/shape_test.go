@@ -120,7 +120,7 @@ func TestRenderTcEgressUnshapeScript(t *testing.T) {
 // systemd), writes the unshape boot script for reboot persistence, and triggers
 // the apply. This is the runtime half of the fix for TeardownEgress leaving the
 // NIC shaped.
-func TestRenderAndApplyUnshapeEgress_DeletesLiveRootAndPersists(t *testing.T) {
+func TestApplyEgressScript_Unshape_DeletesLiveRootAndPersists(t *testing.T) {
 	tc := &recordingTCRunner{}
 	scriptPath := filepath.Join(t.TempDir(), "tc-egress.sh")
 	applied := false
@@ -133,8 +133,8 @@ func TestRenderAndApplyUnshapeEgress_DeletesLiveRootAndPersists(t *testing.T) {
 		ApplyEgress: func(_ context.Context) error { applied = true; return nil },
 	})
 
-	if err := m.renderAndApplyUnshapeEgress(context.Background()); err != nil {
-		t.Fatalf("renderAndApplyUnshapeEgress: %v", err)
+	if err := m.applyEgressScript(context.Background(), "", applyUnshape); err != nil {
+		t.Fatalf("applyEgressScript(applyUnshape): %v", err)
 	}
 
 	// Live hierarchy dropped directly on the detected NIC.
@@ -770,7 +770,7 @@ func TestEffectiveCeil_DefaultsToRate(t *testing.T) {
 // --- Device-only rendering tests ---
 //
 // When a device root is configured but no class configs exist yet,
-// renderAndApplyScript branches on defaultEgressConfig(dev.Rate): an explicit
+// renderEgressScript branches on defaultEgressConfig(dev.Rate): an explicit
 // rate yields the three default egress classes at proportional explicit rates
 // (no SPEED variable); "auto" or any unparseable rate makes defaultEgressConfig
 // fail and the render falls back to sysfs auto-detect. These tests pin that
@@ -778,7 +778,7 @@ func TestEffectiveCeil_DefaultsToRate(t *testing.T) {
 
 func TestDefaultEgressConfig_AutoRateFallsBack(t *testing.T) {
 	// "auto" is not a parseable bandwidth, so defaultEgressConfig returns an
-	// error — the signal renderAndApplyScript uses to fall back to sysfs detect.
+	// error — the signal renderEgressScript uses to fall back to sysfs detect.
 	if _, _, err := defaultEgressConfig("auto"); err == nil {
 		t.Error("expected defaultEgressConfig(\"auto\") to error, got nil")
 	}
@@ -789,7 +789,7 @@ func TestDefaultEgressConfig_AutoRateFallsBack(t *testing.T) {
 }
 
 func TestDeviceOnly_ExplicitRate_NoSpeed(t *testing.T) {
-	// Device-only explicit render reuses the same path as renderAndApplyScript:
+	// Device-only explicit render reuses the same path as renderEgressScript:
 	// defaultEgressConfig(rate) → renderTcEgressScriptFromConfig(dev, classes).
 	dev := &DeviceConfig{Dir: DirEgress, Rate: "500mbit", DefaultClass: "reserve-egress"}
 	_, classes, err := defaultEgressConfig(dev.Rate)
@@ -863,11 +863,11 @@ func TestResolveAutoRate_ExplicitRateUntouched(t *testing.T) {
 	}
 }
 
-func TestPersistEgressScript_NoServiceRestart(t *testing.T) {
+func TestApplyEgressScript_PersistOnly_NoServiceRestart(t *testing.T) {
 	// `set` persists the boot script for reboot but must NOT restart the service:
 	// its live `tc class change` already updated the kernel, and a restart would
-	// tear down and rebuild the root qdisc. persistEgressScript writes; only
-	// renderAndApplyScript restarts.
+	// tear down and rebuild the root qdisc. applyPersistOnly writes; only
+	// applyRestart restarts.
 	scriptPath := filepath.Join(t.TempDir(), "tc-egress.sh")
 	applied := false
 	m := NewManagerWithConfig(Config{
@@ -876,23 +876,23 @@ func TestPersistEgressScript_NoServiceRestart(t *testing.T) {
 		ApplyEgress: func(context.Context) error { applied = true; return nil },
 	})
 
-	if err := m.persistEgressScript("eth0"); err != nil {
-		t.Fatalf("persistEgressScript: %v", err)
+	if err := m.applyEgressScript(context.Background(), "eth0", applyPersistOnly); err != nil {
+		t.Fatalf("applyEgressScript(applyPersistOnly): %v", err)
 	}
 	if applied {
-		t.Error("persistEgressScript must not restart the service (no qdisc churn)")
+		t.Error("applyPersistOnly must not restart the service (no qdisc churn)")
 	}
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Errorf("expected boot script persisted to disk: %v", err)
 	}
 
-	// Contrast: renderAndApplyScript does restart the service.
+	// Contrast: applyRestart does restart the service.
 	applied = false
-	if err := m.renderAndApplyScript(context.Background(), "eth0"); err != nil {
-		t.Fatalf("renderAndApplyScript: %v", err)
+	if err := m.applyEgressScript(context.Background(), "eth0", applyRestart); err != nil {
+		t.Fatalf("applyEgressScript(applyRestart): %v", err)
 	}
 	if !applied {
-		t.Error("renderAndApplyScript must restart the service")
+		t.Error("applyRestart must restart the service")
 	}
 }
 
