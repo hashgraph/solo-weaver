@@ -182,6 +182,27 @@ func TestShow_StampPolicy(t *testing.T) {
 	require.Contains(t, out, "10.1.0.1/32")
 }
 
+func TestShow_Layout_DirectionLeadsAndLiveSetNested(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedPolicy(t, m, "bn-publisher", "publisher", []string{"40840"},
+		[]string{"10.1.0.1/32"}, "10.4.0.0/24")
+
+	out, err := m.Show(context.Background(), "bn-publisher")
+	require.NoError(t, err)
+
+	// direction is the first field under the policy header (before action).
+	require.Less(t, strings.Index(out, "direction:"), strings.Index(out, "action:"),
+		"direction must be listed before action")
+
+	// The live set is nested inside the policy block: its header is indented two
+	// spaces (same level as action/class/created) and its members four spaces —
+	// not flush-left as a separate top-level section.
+	require.Contains(t, out, "  live set @bn-publisher:\n")
+	require.Contains(t, out, "    10.1.0.1/32\n")
+	require.NotContains(t, out, "\nlive set @", "live set must not be a flush-left top-level section")
+}
+
 func TestShow_DenyPolicy(t *testing.T) {
 	r := newFakeRunner()
 	m, _, _ := newTestManager(t, r)

@@ -556,18 +556,51 @@ func (m *Manager) Show(ctx context.Context, name string) (string, error) {
 	if p == nil {
 		return "", errorx.IllegalState.New("policy %q not found", name)
 	}
+	return m.showOne(ctx, p)
+}
 
+// ShowAll returns a summary of every configured policy, sorted by name, in the
+// same format Show produces for a single policy. With no policies configured it
+// returns a friendly message rather than an error, mirroring `network shape
+// show`. No lock is taken — it is read-only.
+func (m *Manager) ShowAll(ctx context.Context) (string, error) {
+	policies, err := loadAll(m.registryDir)
+	if err != nil {
+		return "", err
+	}
+	if len(policies) == 0 {
+		return "no policies configured\n", nil
+	}
+	var b strings.Builder
+	for i, p := range policies {
+		out, err := m.showOne(ctx, p)
+		if err != nil {
+			return "", err
+		}
+		if i > 0 {
+			b.WriteString("\n") // blank line between policies
+		}
+		b.WriteString(out)
+	}
+	return b.String(), nil
+}
+
+// showOne renders a single policy's registry config (action, class, ports,
+// created_at) followed by its live set membership from the kernel. No lock is
+// taken — it is read-only.
+func (m *Manager) showOne(ctx context.Context, p *Policy) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "policy: %s\n", p.Name)
+	// Direction is the most operationally significant attribute, so it leads.
+	if p.Direction != "" {
+		fmt.Fprintf(&b, "  direction: %s\n", p.Direction)
+	}
 	fmt.Fprintf(&b, "  action:  %s\n", p.Action)
 	if p.Stamp != "" {
 		fmt.Fprintf(&b, "  class:   %s\n", p.Stamp)
 	}
 	if p.ReplyStamp != "" {
 		fmt.Fprintf(&b, "  reply-class: %s\n", p.ReplyStamp)
-	}
-	if p.Direction != "" {
-		fmt.Fprintf(&b, "  direction: %s\n", p.Direction)
 	}
 	if len(p.Ports) > 0 {
 		fmt.Fprintf(&b, "  ports:   %s\n", strings.Join(p.Ports, ", "))
@@ -589,20 +622,20 @@ func (m *Manager) Show(ctx context.Context, name string) (string, error) {
 	fmt.Fprintf(&b, "  created: %s\n", p.CreatedAt.Format(time.RFC3339))
 
 	if !p.hasCIDRSet() {
-		b.WriteString("\nlive set: none (--from-entity world policy; any source/dest matches, no IP-set)\n")
+		b.WriteString("  live set: none (--from-entity world policy; any source/dest matches, no IP-set)\n")
 		return b.String(), nil
 	}
 
-	elements, err := m.runner.ListElements(ctx, name)
+	elements, err := m.runner.ListElements(ctx, p.Name)
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(&b, "\nlive set @%s:\n", name)
+	fmt.Fprintf(&b, "  live set @%s:\n", p.Name)
 	if len(elements) == 0 {
-		b.WriteString("  (empty)\n")
+		b.WriteString("    (empty)\n")
 	} else {
 		for _, e := range elements {
-			fmt.Fprintf(&b, "  %s\n", e)
+			fmt.Fprintf(&b, "    %s\n", e)
 		}
 	}
 	return b.String(), nil
