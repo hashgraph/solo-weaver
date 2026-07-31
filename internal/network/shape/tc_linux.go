@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"github.com/joomcode/errorx"
@@ -51,37 +50,30 @@ func (r *execTCRunner) run(ctx context.Context, args ...string) error {
 }
 
 func (r *execTCRunner) ClassChange(ctx context.Context, nic, minor, rate, ceil string, prio int) error {
-	return r.run(ctx, "class", "change",
-		"dev", nic, "parent", "1:1", "classid", "1:"+minor,
-		"htb", "rate", rate, "ceil", ceil, "prio", strconv.Itoa(prio))
+	return r.run(ctx, tcClassChangeArgs(nic, minor, rate, ceil, prio)...)
 }
 
 func (r *execTCRunner) QdiscDelRoot(ctx context.Context, nic string) error {
 	// Best-effort: swallow the error so a fresh veth (no root qdisc yet) or a
 	// recycled veth name both start from a clean rebuild.
-	_ = exec.CommandContext(ctx, tcBin, "qdisc", "del", "dev", nic, "root").Run()
+	_ = exec.CommandContext(ctx, tcBin, tcQdiscDelRootArgs(nic)...).Run()
 	return nil
 }
 
 func (r *execTCRunner) QdiscAddRoot(ctx context.Context, nic, defaultMinor string) error {
-	return r.run(ctx, "qdisc", "add",
-		"dev", nic, "root", "handle", "1:", "htb", "default", defaultMinor)
+	return r.run(ctx, tcQdiscAddRootArgs(nic, defaultMinor)...)
 }
 
 func (r *execTCRunner) ClassAddRoot(ctx context.Context, nic, rate, ceil string) error {
-	return r.run(ctx, "class", "add",
-		"dev", nic, "parent", "1:", "classid", "1:1", "htb", "rate", rate, "ceil", ceil)
+	return r.run(ctx, tcClassAddRootArgs(nic, rate, ceil)...)
 }
 
 func (r *execTCRunner) ClassAdd(ctx context.Context, nic, minor, rate, ceil string, prio int) error {
-	return r.run(ctx, "class", "add",
-		"dev", nic, "parent", "1:1", "classid", "1:"+minor,
-		"htb", "rate", rate, "ceil", ceil, "prio", strconv.Itoa(prio))
+	return r.run(ctx, tcClassAddArgs(nic, minor, rate, ceil, prio)...)
 }
 
 func (r *execTCRunner) QdiscAddFqCodel(ctx context.Context, nic, minor, handle string) error {
-	return r.run(ctx, "qdisc", "add",
-		"dev", nic, "parent", "1:"+minor, "handle", handle+":", "fq_codel")
+	return r.run(ctx, tcQdiscAddFqCodelArgs(nic, minor, handle)...)
 }
 
 func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error) {
