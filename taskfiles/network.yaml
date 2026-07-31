@@ -33,6 +33,31 @@ vars:
   NET_DAEMON_ARCH: '{{.NET_DAEMON_ARCH | default "arm64"}}'
 
 tasks:
+  network:all:
+    desc: "End-to-end: build, self-install the provisioner on the BN VM, then up + seed-statusz + bn-deploy"
+    cmds:
+      # 1. Build the host + linux binaries (visible in the BN VM via the /mnt/solo-weaver mount).
+      - task: build
+      # 2. Self-install the provisioner on the BN VM (puts `solo-provisioner` on PATH for bn-deploy).
+      - task: vm:start
+      - |
+        set -eu
+        BN_IP="$({{.GET_VM_IP}} get_vm_ip)"
+        [ -z "$BN_IP" ] && { echo "❌ BN VM has no IP (is it running?)"; exit 1; }
+        echo "Self-installing solo-provisioner on the BN VM ($BN_IP)..."
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP \
+          "cd /mnt/solo-weaver && sudo bin/solo-provisioner-linux-{{.NET_DAEMON_ARCH}} install"
+        # Verify by effect: a failed install can leave a 0-byte binary that runs and exits 0
+        # (so every later command silently no-ops). `version` (which prints to STDERR) must
+        # return a real version, so capture 2>&1.
+        VER="$(ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP "solo-provisioner version 2>&1" | head -1)"
+        [ -z "$VER" ] && { echo "❌ self-install failed: 'solo-provisioner version' returned nothing (installed binary may be 0 bytes — check the BN VM's /etc/passwd for NUL corruption, then re-run)"; exit 1; }
+        echo "✓ provisioner installed on the BN VM: $VER"
+      # 3-5. Bring up the peers VM, seed the statusz roster, deploy the BN with shaping + firewall.
+      - task: network:up
+      - task: network:seed-statusz
+      - task: network:bn-deploy
+
   network:up:
     desc: "Clone a stripped 'peers' VM, bring up 5 macvlan source IPs + iperf3, and capture the peer IPs"
     deps:
@@ -43,19 +68,6 @@ tasks:
         mkdir -p "{{.NET_STATE_DIR}}"
         PEERS="{{.NET_PEERS_VM}}"
         GOLDEN="{{.VM_GOLDEN_NAME}}"
-        # Resolve the peers VM's real LAN IP. The golden image runs Docker, so the guest
-        # also carries a docker0 address (172.17.0.1); utmctl ip-address lists every
-        # interface and the previous `head -1` could pick that (or a loopback/link-local)
-        # instead of the bridged NIC — the address we SSH to and derive macvlan IPs from.
-        # Return ONLY the bridged address (empty until DHCP assigns it) so the wait loop
-        # below keeps polling instead of latching onto docker0, which is up from boot.
-        # Excludes docker (172.17–172.31), loopback (127.) and link-local (169.254.).
-        peers_ip() {
-          utmctl ip-address "$PEERS" 2>/dev/null \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-            | grep -Ev '^(127\.|169\.254\.|172\.(1[7-9]|2[0-9]|3[01])\.)' \
-            | head -1
-        }
 
         # 1. Clone the golden -> peers VM (reuse if already present).
         if ! utmctl status "$PEERS" >/dev/null 2>&1; then
@@ -113,83 +125,16 @@ tasks:
           sleep 3
         done
 
-        # 4. Wait for the UTM guest agent to come up. IMPORTANT: qemu-guest-agent answers
-        #    `id` probes early in boot but silently no-ops file writes until the guest is
-        #    fully up, AND utmctl exec does not forward guest stdout here — so its exit code
-        #    cannot be trusted. We therefore do not rely on exit codes: guest setup is
-        #    VERIFIED by its real effect (a working SSH login, step 7). gexec() still exists
-        #    to retry the transient OSStatus -2700 the agent throws right after boot.
-        gexec() {
-          _n=0
-          while [ "$_n" -lt 8 ]; do
-            if utmctl exec "$PEERS" --cmd /bin/bash -c "$1" 2>/dev/null; then return 0; fi
-            _n=$((_n + 1)); sleep 2
-          done
-          return 1
-        }
-        echo "Waiting for the UTM guest agent to stabilize..."
-        _hits=0
-        for _ in $(seq 1 60); do
-          if utmctl exec "$PEERS" --cmd /usr/bin/id >/dev/null 2>&1; then
-            _hits=$((_hits + 1))
-            if [ "$_hits" -ge 3 ]; then break; fi
-          else
-            _hits=0
-          fi
-          sleep 2
-        done
+        # 4. Provision the guest: DHCP de-confliction + SSH-key install, and resolve the
+        #    stable bridged LAN IP. All the finicky guest-agent shell lives in the helper
+        #    (real bash, testable); it logs progress to stderr and prints the IP on stdout.
+        echo "Provisioning peers guest (DHCP de-confliction + SSH key)..."
+        PEERS_IP="$(bash scripts/network/provision-peers.sh \
+          "$PEERS" "{{.SSH_PRIVATE_KEY}}" "{{.SSH_PUBLIC_KEY}}" "{{.VM_USER}}" "{{.NET_ROLES}}" "{{.SSH_OPTS}}" | tail -1)"
+        [ -z "$PEERS_IP" ] && { echo "❌ peers guest provisioning failed"; exit 1; }
+        echo "✓ peers VM ready at $PEERS_IP"
 
-        # 5. De-conflict DHCP and stop the dhcpcd<->macvlan ARP churn — done BEFORE the IP
-        #    wait because it restarts dhcpcd (the lease settles afterwards). A clone inherits
-        #    the golden's persistent dhcpcd DUID, so the peers and BN VMs present the SAME
-        #    DHCP identity; and dhcpcd's ARP conflict-detection on the macvlan parent makes
-        #    it decline and re-request leases endlessly (the IP "flips" through the pool).
-        #    Fix: identify by the now-unique MAC via `clientid`, drop the inherited DUID,
-        #    add `noarp`, and ignore the macvlan children. The guard runs INSIDE the guest
-        #    shell so it is reliable and idempotent; the denyinterfaces list must match the
-        #    macvlan devices created in step 8.
-        echo "Applying DHCP de-confliction (idempotent)..."
-        gexec 'if ! grep -q "^clientid" /etc/dhcpcd.conf; then sed -i "s/^duid$/clientid/" /etc/dhcpcd.conf; grep -q "^noarp$" /etc/dhcpcd.conf || echo noarp >> /etc/dhcpcd.conf; grep -q "^denyinterfaces " /etc/dhcpcd.conf || echo "denyinterfaces publisher0 partner0 public0 backfill0 restricted0" >> /etc/dhcpcd.conf; rm -f /var/lib/dhcpcd/duid; dhcpcd -k enp0s1 2>/dev/null; sleep 1; dhcpcd -b enp0s1 2>/dev/null; fi' || true
-
-        # 6. Wait for a STABLE primary LAN IP: two consecutive equal reads, so we do not
-        #    latch onto a lease that is still settling right after the dhcpcd restart.
-        #    (macvlan source IPs do not exist yet, so peers_ip only sees the primary NIC.)
-        echo "Waiting for a stable peers VM LAN IP..."
-        PEERS_IP=""; _last=""
-        for _ in $(seq 1 30); do
-          _cur="$(peers_ip)"
-          if [ -n "$_cur" ] && [ "$_cur" = "$_last" ]; then PEERS_IP="$_cur"; break; fi
-          _last="$_cur"; sleep 5
-        done
-        if [ -z "$PEERS_IP" ]; then
-          # Last resort: never stabilized. Take the current best LAN address so the run can
-          # proceed, but warn — a still-flipping IP means the de-confliction did not apply.
-          PEERS_IP="$(peers_ip)"
-          [ -n "$PEERS_IP" ] && echo "⚠️  peers LAN IP did not stabilize; proceeding with $PEERS_IP (verify it is not flipping)"
-        fi
-        [ -z "$PEERS_IP" ] && { echo "❌ peers VM never got an IP"; exit 1; }
-        echo "✓ peers VM at $PEERS_IP"
-
-        # 7. Install the SSH key and VERIFY it by an actual login. The guest agent reports
-        #    success even when an early write did not persist, so re-install and re-test in
-        #    a loop until `ssh` truly connects. BatchMode=yes keeps a failed attempt from
-        #    blocking on a password prompt.
-        echo "Installing SSH key and verifying login..."
-        PUBKEY="$(cat {{.SSH_PUBLIC_KEY}})"
-        SSH_OK=""
-        for _ in $(seq 1 15); do
-          gexec "mkdir -p /home/{{.VM_USER}}/.ssh && chmod 700 /home/{{.VM_USER}}/.ssh" || true
-          gexec "printf '%s\\n' \"$PUBKEY\" > /home/{{.VM_USER}}/.ssh/authorized_keys && chmod 600 /home/{{.VM_USER}}/.ssh/authorized_keys && chown -R {{.VM_USER}}:{{.VM_USER}} /home/{{.VM_USER}}/.ssh" || true
-          gexec "systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || true" || true
-          if ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o BatchMode=yes -o ConnectTimeout=5 {{.VM_USER}}@$PEERS_IP true 2>/dev/null; then
-            SSH_OK=1; break
-          fi
-          sleep 5
-        done
-        [ -z "$SSH_OK" ] && { echo "❌ SSH key never took effect on the peers VM (login still failing)"; exit 1; }
-        echo "✓ SSH key working on $PEERS_IP"
-
-        # 8. Provision the five macvlan source IPs + iperf3.
+        # 5. Provision the five macvlan source IPs + iperf3.
         #    macvlan (mode bridge) gives each peer a distinct MAC/IP on the peers NIC;
         #    child<->external (the BN VM) works, which is all we need for source-IP
         #    classification. ASSUMPTION: the UTM network forwards these child MACs
@@ -217,8 +162,8 @@ tasks:
         echo "✓ peer source IPs captured:"
         cat "{{.NET_HOSTS_FILE}}"
 
-  network:seed:
-    desc: "Generate the 3 application-state JSON files from captured peer IPs and copy them into the BN VM"
+  network:seed-statusz:
+    desc: "Render the 3 statusz application-state JSON files from captured peer IPs and copy them into the BN VM"
     deps:
       - vm:start   # the BN working VM's IP is the BN local address in the files
     cmds:
@@ -243,8 +188,8 @@ tasks:
           {{.VM_USER}}@$BN_IP:{{.NET_APPSTATE_DIR}}/
         echo "✓ application-state files seeded"
 
-  network:install:
-    desc: "Install the block node with firewall + traffic shaping on the BN VM (peers as the statusz roster)"
+  network:bn-deploy:
+    desc: "Deploy the block node on the BN VM with firewall + traffic shaping (peers as the statusz roster)"
     deps:
       - vm:start
     cmds:
@@ -254,6 +199,13 @@ tasks:
         . "{{.NET_HOSTS_FILE}}"
         BN_IP="$({{.GET_VM_IP}} get_vm_ip)"
         [ -z "$BN_IP" ] && { echo "❌ BN VM has no IP"; exit 1; }
+        # Pre-flight: the installed provisioner must be a working binary. A failed
+        # self-install can leave a 0-byte binary that runs and exits 0, turning the
+        # block-node install into a silent no-op that falsely reports success.
+        # `version` prints to STDERR, so capture 2>&1.
+        VER="$(ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP "solo-provisioner version 2>&1" | head -1)"
+        [ -z "$VER" ] && { echo "❌ solo-provisioner is not a working binary on the BN VM ('version' returned nothing). Run 'task network:all' (or self-install) first; if it persists, check the BN VM's /etc/passwd for NUL corruption."; exit 1; }
+        echo "Using $VER on the BN VM"
         # ASSUMPTION: mgmt allowlist must include whatever we SSH from, or --firewall-enabled
         # locks us out. Default to the BN VM's /24 (covers the host + peers). Override with
         # NET_MGMT_CIDRS=... if your host reaches the VM from a different subnet.
@@ -294,14 +246,8 @@ tasks:
       - |
         set -eu
         PEERS="{{.NET_PEERS_VM}}"
-        # Live LAN-IP resolver: skip the guest's docker0 (172.17–172.31), loopback and
-        # link-local so we get the bridged address we actually SSH to.
-        peers_ip() {
-          utmctl ip-address "$PEERS" 2>/dev/null \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-            | grep -Ev '^(127\.|169\.254\.|172\.(1[7-9]|2[0-9]|3[01])\.)' \
-            | head -1
-        }
+        # Bridged LAN IP via the shared resolver (skips docker0 / loopback / link-local).
+        peers_ip() { bash scripts/network/peers-ip.sh "$PEERS"; }
 
         # The peers VM must exist (created by network:up) — utmctl status fails otherwise.
         STATUS="$(utmctl status "$PEERS" 2>/dev/null || true)"

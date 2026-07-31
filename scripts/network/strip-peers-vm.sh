@@ -39,7 +39,30 @@ new_mac() {
   hexdump -vn5 -e '5/1 ":%02x"' /dev/urandom | sed 's/^:/02:/'
 }
 
-# Quit UTM so it releases the config files, then reopen it afterwards.
+# Gracefully stop every running VM BEFORE quitting UTM, then quit so it releases the
+# config files. Quitting the UTM app hard-stops (plug-pulls) any still-running VM,
+# which can corrupt guest files mid-write (e.g. NUL-padded /etc/passwd, a truncated
+# just-installed binary) — including unrelated VMs such as the BN working VM.
+# IMPORTANT: `utmctl stop` defaults to --force (a hard power-off = same plug-pull), so
+# we must pass --request to ask the guest OS for a clean ACPI shutdown, then wait for
+# each VM to actually power down before quitting UTM.
+echo "Gracefully stopping any running VMs (ACPI) before quitting UTM..."
+running_vms() { utmctl list 2>/dev/null | awk 'NR>1 && tolower($2)=="started" {print $1}'; }
+for uuid in $(running_vms); do
+  echo "  requesting shutdown of $uuid"
+  utmctl stop --request "$uuid" >/dev/null 2>&1 || true
+done
+# Wait (bounded, ~2min) for the guest shutdowns to complete so nothing is running at quit.
+for _ in $(seq 1 60); do
+  [ -z "$(running_vms)" ] && break
+  sleep 2
+done
+if [ -n "$(running_vms)" ]; then
+  echo "  ⚠️  some VMs did not shut down gracefully in time; NOT force-quitting to avoid"
+  echo "      corrupting them. Stop them manually, then re-run. Aborting the strip."
+  exit 1
+fi
+
 echo "Quitting UTM to release VM config files..."
 osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
 sleep 3
