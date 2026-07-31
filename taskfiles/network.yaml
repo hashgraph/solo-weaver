@@ -1,0 +1,367 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multi-VM UTM network test harness for the traffic-shaper / firewall plane (ENV-2).
+#
+# Topology: the existing single working VM (vm.yaml) runs the block node; ONE small
+# "peers" VM — a stripped clone of the golden — presents FIVE distinct, un-NAT'd
+# source IPs via macvlan sub-interfaces (publisher, partner, public, backfill,
+# restricted), each running a traffic generator. The BN classifies each peer by its
+# real source IP (requires the Service to use externalTrafficPolicy: Local).
+#
+# NOTE: several steps are UTM/host-specific and need on-hardware validation — search
+# this file for "ASSUMPTION". macvlan-over-UTM is the load-bearing unknown; if it
+# proves unreliable, the documented fallback is five tiny VMs.
+
+version: 3
+
+vars:
+  NET_PEERS_VM: "solo-weaver-{{.VM_OS_TYPE}}-peers"
+  NET_STATE_DIR: "{{.PWD}}/.network-uat"
+  NET_HOSTS_FILE: "{{.PWD}}/.network-uat/hosts.env"
+  # Peers VM resource strip (best-effort; see ASSUMPTION in network:up).
+  NET_PEERS_CPUS: '{{.NET_PEERS_CPUS | default "1"}}'
+  NET_PEERS_MEM_MIB: '{{.NET_PEERS_MEM_MIB | default "1024"}}'
+  # macvlan host-offsets within the peers VM's /24, high to dodge the DHCP range.
+  # Order matches NET_ROLES below.
+  NET_ROLES: "publisher partner public backfill restricted"
+  NET_PEER_OFFSETS: '{{.NET_PEER_OFFSETS | default "201 202 203 204 205"}}'
+  # BN application-state volume path inside the BN VM (matches --base-path/application-state).
+  NET_APPSTATE_DIR: '{{.NET_APPSTATE_DIR | default "/mnt/fast-storage/application-state"}}'
+  # BN egress NIC inside the VM. ASSUMPTION: validate with `ip route get 1.1.1.1` in the VM.
+  NET_EGRESS_IFACE: '{{.NET_EGRESS_IFACE | default "enp0s1"}}'
+  # Host arch selects the daemon binary the BN install consumes (built into bin/).
+  NET_DAEMON_ARCH: '{{.NET_DAEMON_ARCH | default "arm64"}}'
+
+tasks:
+  network:up:
+    desc: "Clone a stripped 'peers' VM, bring up 5 macvlan source IPs + iperf3, and capture the peer IPs"
+    deps:
+      - vm:setup   # ensures the golden image exists to clone from
+    cmds:
+      - |
+        set -eu
+        mkdir -p "{{.NET_STATE_DIR}}"
+        PEERS="{{.NET_PEERS_VM}}"
+        GOLDEN="{{.VM_GOLDEN_NAME}}"
+        # Resolve the peers VM's real LAN IP. The golden image runs Docker, so the guest
+        # also carries a docker0 address (172.17.0.1); utmctl ip-address lists every
+        # interface and the previous `head -1` could pick that (or a loopback/link-local)
+        # instead of the bridged NIC — the address we SSH to and derive macvlan IPs from.
+        # Return ONLY the bridged address (empty until DHCP assigns it) so the wait loop
+        # below keeps polling instead of latching onto docker0, which is up from boot.
+        # Excludes docker (172.17–172.31), loopback (127.) and link-local (169.254.).
+        peers_ip() {
+          utmctl ip-address "$PEERS" 2>/dev/null \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -Ev '^(127\.|169\.254\.|172\.(1[7-9]|2[0-9]|3[01])\.)' \
+            | head -1
+        }
+
+        # 1. Clone the golden -> peers VM (reuse if already present).
+        if ! utmctl status "$PEERS" >/dev/null 2>&1; then
+          echo "Cloning golden '$GOLDEN' -> peers VM '$PEERS'..."
+          # Remove any orphaned .utm directory left by a previous incomplete network:down.
+          # utmctl clone creates a numbered suffix (e.g. "…-peers 2.utm") when the target
+          # directory already exists, which causes the config.plist path assumed below to
+          # point at the old orphaned copy rather than the new clone — leaving the new VM
+          # with the golden's full CPU/RAM.
+          PEERS_UTM_DIR="{{.UTM_VMS_DIR}}/$PEERS.utm"
+          if [ -d "$PEERS_UTM_DIR" ]; then
+            echo "Removing orphaned VM directory: $PEERS_UTM_DIR"
+            rm -rf "$PEERS_UTM_DIR"
+          fi
+          utmctl stop "$GOLDEN" 2>/dev/null || true
+          sleep 2
+          utmctl clone "$GOLDEN" --name "$PEERS"
+          for _ in $(seq 1 15); do
+            [ "$(utmctl status "$PEERS" 2>/dev/null)" = "stopped" ] && break
+            sleep 1
+          done
+        else
+          echo "Peers VM '$PEERS' already exists; checking resource limits."
+        fi
+
+        # 2. Right-size the peers VM and give it a distinct MAC. A clone inherits the
+        #    golden's MAC, so on the bridged UTM network the peers VM and BN VM collide on
+        #    one DHCP lease; the helper assigns a locally-administered MAC and trims
+        #    vCPU/RAM. It quits and reopens UTM to make the config.plist edits stick, which
+        #    also stops any other running VMs — so we only run it when something actually
+        #    needs changing (fresh clone, or MAC/CPU/RAM not yet at target). A reused VM
+        #    that is already right-sized is left untouched (no UTM restart).
+        #    ASSUMPTION: UTM 4.x config.plist keys Network.0.MacAddress / System.CPUCount
+        #    / System.MemorySize (MiB). Non-fatal if the schema differs on your UTM.
+        CFG="{{.UTM_VMS_DIR}}/$PEERS.utm/config.plist"
+        if [ -f "$CFG" ]; then
+          CUR_MAC="$(plutil -extract Network.0.MacAddress raw -o - "$CFG" 2>/dev/null || echo "")"
+          CUR_CPU="$(plutil -extract System.CPUCount raw -o - "$CFG" 2>/dev/null || echo "")"
+          CUR_MEM="$(plutil -extract System.MemorySize raw -o - "$CFG" 2>/dev/null || echo "")"
+          if [ "${CUR_MAC#02:}" != "$CUR_MAC" ] && [ "$CUR_CPU" = "{{.NET_PEERS_CPUS}}" ] && [ "$CUR_MEM" = "{{.NET_PEERS_MEM_MIB}}" ]; then
+            echo "peers VM already right-sized (MAC=$CUR_MAC CPUs=$CUR_CPU RAM=${CUR_MEM}MiB); skipping strip"
+          else
+            bash scripts/network/strip-peers-vm.sh "$CFG" "{{.NET_PEERS_CPUS}}" "{{.NET_PEERS_MEM_MIB}}"
+          fi
+        else
+          echo "  ⚠️  config.plist not found at $CFG — skipping resource strip"
+        fi
+
+        # 3. Start it and wait until it is running. UTM was just reopened by the strip
+        #    helper, so retry start until it takes (utmctl can transiently fail while UTM
+        #    warms up).
+        for _ in $(seq 1 10); do
+          [ "$(utmctl status "$PEERS" 2>/dev/null)" = "started" ] && break
+          utmctl start --hide "$PEERS" 2>/dev/null || true
+          sleep 3
+        done
+
+        # 4. Wait for the UTM guest agent to come up. IMPORTANT: qemu-guest-agent answers
+        #    `id` probes early in boot but silently no-ops file writes until the guest is
+        #    fully up, AND utmctl exec does not forward guest stdout here — so its exit code
+        #    cannot be trusted. We therefore do not rely on exit codes: guest setup is
+        #    VERIFIED by its real effect (a working SSH login, step 7). gexec() still exists
+        #    to retry the transient OSStatus -2700 the agent throws right after boot.
+        gexec() {
+          _n=0
+          while [ "$_n" -lt 8 ]; do
+            if utmctl exec "$PEERS" --cmd /bin/bash -c "$1" 2>/dev/null; then return 0; fi
+            _n=$((_n + 1)); sleep 2
+          done
+          return 1
+        }
+        echo "Waiting for the UTM guest agent to stabilize..."
+        _hits=0
+        for _ in $(seq 1 60); do
+          if utmctl exec "$PEERS" --cmd /usr/bin/id >/dev/null 2>&1; then
+            _hits=$((_hits + 1))
+            if [ "$_hits" -ge 3 ]; then break; fi
+          else
+            _hits=0
+          fi
+          sleep 2
+        done
+
+        # 5. De-conflict DHCP and stop the dhcpcd<->macvlan ARP churn — done BEFORE the IP
+        #    wait because it restarts dhcpcd (the lease settles afterwards). A clone inherits
+        #    the golden's persistent dhcpcd DUID, so the peers and BN VMs present the SAME
+        #    DHCP identity; and dhcpcd's ARP conflict-detection on the macvlan parent makes
+        #    it decline and re-request leases endlessly (the IP "flips" through the pool).
+        #    Fix: identify by the now-unique MAC via `clientid`, drop the inherited DUID,
+        #    add `noarp`, and ignore the macvlan children. The guard runs INSIDE the guest
+        #    shell so it is reliable and idempotent; the denyinterfaces list must match the
+        #    macvlan devices created in step 8.
+        echo "Applying DHCP de-confliction (idempotent)..."
+        gexec 'if ! grep -q "^clientid" /etc/dhcpcd.conf; then sed -i "s/^duid$/clientid/" /etc/dhcpcd.conf; grep -q "^noarp$" /etc/dhcpcd.conf || echo noarp >> /etc/dhcpcd.conf; grep -q "^denyinterfaces " /etc/dhcpcd.conf || echo "denyinterfaces publisher0 partner0 public0 backfill0 restricted0" >> /etc/dhcpcd.conf; rm -f /var/lib/dhcpcd/duid; dhcpcd -k enp0s1 2>/dev/null; sleep 1; dhcpcd -b enp0s1 2>/dev/null; fi' || true
+
+        # 6. Wait for a STABLE primary LAN IP: two consecutive equal reads, so we do not
+        #    latch onto a lease that is still settling right after the dhcpcd restart.
+        #    (macvlan source IPs do not exist yet, so peers_ip only sees the primary NIC.)
+        echo "Waiting for a stable peers VM LAN IP..."
+        PEERS_IP=""; _last=""
+        for _ in $(seq 1 30); do
+          _cur="$(peers_ip)"
+          if [ -n "$_cur" ] && [ "$_cur" = "$_last" ]; then PEERS_IP="$_cur"; break; fi
+          _last="$_cur"; sleep 5
+        done
+        if [ -z "$PEERS_IP" ]; then
+          # Last resort: never stabilized. Take the current best LAN address so the run can
+          # proceed, but warn — a still-flipping IP means the de-confliction did not apply.
+          PEERS_IP="$(peers_ip)"
+          [ -n "$PEERS_IP" ] && echo "⚠️  peers LAN IP did not stabilize; proceeding with $PEERS_IP (verify it is not flipping)"
+        fi
+        [ -z "$PEERS_IP" ] && { echo "❌ peers VM never got an IP"; exit 1; }
+        echo "✓ peers VM at $PEERS_IP"
+
+        # 7. Install the SSH key and VERIFY it by an actual login. The guest agent reports
+        #    success even when an early write did not persist, so re-install and re-test in
+        #    a loop until `ssh` truly connects. BatchMode=yes keeps a failed attempt from
+        #    blocking on a password prompt.
+        echo "Installing SSH key and verifying login..."
+        PUBKEY="$(cat {{.SSH_PUBLIC_KEY}})"
+        SSH_OK=""
+        for _ in $(seq 1 15); do
+          gexec "mkdir -p /home/{{.VM_USER}}/.ssh && chmod 700 /home/{{.VM_USER}}/.ssh" || true
+          gexec "printf '%s\\n' \"$PUBKEY\" > /home/{{.VM_USER}}/.ssh/authorized_keys && chmod 600 /home/{{.VM_USER}}/.ssh/authorized_keys && chown -R {{.VM_USER}}:{{.VM_USER}} /home/{{.VM_USER}}/.ssh" || true
+          gexec "systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || true" || true
+          if ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o BatchMode=yes -o ConnectTimeout=5 {{.VM_USER}}@$PEERS_IP true 2>/dev/null; then
+            SSH_OK=1; break
+          fi
+          sleep 5
+        done
+        [ -z "$SSH_OK" ] && { echo "❌ SSH key never took effect on the peers VM (login still failing)"; exit 1; }
+        echo "✓ SSH key working on $PEERS_IP"
+
+        # 8. Provision the five macvlan source IPs + iperf3.
+        #    macvlan (mode bridge) gives each peer a distinct MAC/IP on the peers NIC;
+        #    child<->external (the BN VM) works, which is all we need for source-IP
+        #    classification. ASSUMPTION: the UTM network forwards these child MACs
+        #    (true on a bridged segment; validate on 'shared' — this is the macvlan risk).
+        NIC="$(ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$PEERS_IP "ip route get 1.1.1.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1")"
+        echo "peers primary NIC: ${NIC:-<unknown>}"
+        PREFIX="$(echo "$PEERS_IP" | cut -d. -f1-3)"
+        : > "{{.NET_HOSTS_FILE}}"
+        echo "PEERS_VM_IP=$PEERS_IP" >> "{{.NET_HOSTS_FILE}}"
+        i=0
+        for role in {{.NET_ROLES}}; do
+          i=$((i + 1))
+          off="$(echo '{{.NET_PEER_OFFSETS}}' | cut -d' ' -f$i)"
+          ip="$PREFIX.$off"
+          ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$PEERS_IP "
+            sudo ip link add ${role}0 link $NIC type macvlan mode bridge 2>/dev/null || true
+            sudo ip addr replace $ip/24 dev ${role}0
+            sudo ip link set ${role}0 up
+            command -v iperf3 >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y iperf3)
+          " 2>&1 || echo "  ⚠️  macvlan/iperf3 setup for $role may have failed (validate on-host)"
+          upper="$(echo "$role" | tr '[:lower:]' '[:upper:]')"
+          echo "${upper}_IP=$ip" >> "{{.NET_HOSTS_FILE}}"
+          echo "  $role -> $ip (${role}0)"
+        done
+        echo "✓ peer source IPs captured:"
+        cat "{{.NET_HOSTS_FILE}}"
+
+  network:seed:
+    desc: "Generate the 3 application-state JSON files from captured peer IPs and copy them into the BN VM"
+    deps:
+      - vm:start   # the BN working VM's IP is the BN local address in the files
+    cmds:
+      - |
+        set -eu
+        [ -f "{{.NET_HOSTS_FILE}}" ] || { echo "❌ run 'task network:up' first"; exit 1; }
+        . "{{.NET_HOSTS_FILE}}"
+        BN_IP="$({{.GET_VM_IP}} get_vm_ip)"
+        [ -z "$BN_IP" ] && { echo "❌ BN VM has no IP (is it running?)"; exit 1; }
+        echo "BN local address: $BN_IP"
+
+        bash scripts/network/gen-appstate.sh "{{.NET_STATE_DIR}}" \
+          "$BN_IP" "$PUBLISHER_IP" "$PARTNER_IP" "$PUBLIC_IP" "$BACKFILL_IP" "$RESTRICTED_IP"
+
+        echo "Copying application-state files -> $BN_IP:{{.NET_APPSTATE_DIR}} ..."
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP \
+          "sudo mkdir -p {{.NET_APPSTATE_DIR}} && sudo chown {{.VM_USER}}:{{.VM_USER}} {{.NET_APPSTATE_DIR}}"
+        scp -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} \
+          "{{.NET_STATE_DIR}}/known-publishers.json" \
+          "{{.NET_STATE_DIR}}/inbound-partners.json" \
+          "{{.NET_STATE_DIR}}/outbound-partners.json" \
+          {{.VM_USER}}@$BN_IP:{{.NET_APPSTATE_DIR}}/
+        echo "✓ application-state files seeded"
+
+  network:install:
+    desc: "Install the block node with firewall + traffic shaping on the BN VM (peers as the statusz roster)"
+    deps:
+      - vm:start
+    cmds:
+      - |
+        set -eu
+        [ -f "{{.NET_HOSTS_FILE}}" ] || { echo "❌ run 'task network:up' first"; exit 1; }
+        . "{{.NET_HOSTS_FILE}}"
+        BN_IP="$({{.GET_VM_IP}} get_vm_ip)"
+        [ -z "$BN_IP" ] && { echo "❌ BN VM has no IP"; exit 1; }
+        # ASSUMPTION: mgmt allowlist must include whatever we SSH from, or --firewall-enabled
+        # locks us out. Default to the BN VM's /24 (covers the host + peers). Override with
+        # NET_MGMT_CIDRS=... if your host reaches the VM from a different subnet.
+        MGMT_CIDRS="{{.NET_MGMT_CIDRS | default ""}}"
+        [ -z "$MGMT_CIDRS" ] && MGMT_CIDRS="$(echo "$BN_IP" | cut -d. -f1-3).0/24"
+        echo "Installing block node on $BN_IP (traffic shaping + firewall; mgmt=$MGMT_CIDRS)..."
+        # PREREQ: the provisioner + daemon binaries are built in the VM (task build in /mnt/solo-weaver)
+        # and solo-provisioner is installed. This task only runs the block-node install itself.
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP "
+          cd /mnt/solo-weaver &&
+          sudo solo-provisioner block node install -p local \
+            --traffic-shaping-enabled --egress-interface {{.NET_EGRESS_IFACE}} --link-rate 1gbit \
+            --firewall-enabled --mgmt-cidrs '$MGMT_CIDRS' \
+            --daemon-bin bin/solo-provisioner-daemon-linux-{{.NET_DAEMON_ARCH}} -VV
+        "
+        echo "✓ block node installed; the daemon reconciles the peer roster from statusz"
+
+  network:status:
+    desc: "Show the BN + peers VM status and the captured peer IPs"
+    cmds:
+      - |
+        echo "BN VM    ({{.VM_NAME}}):    $(utmctl status "{{.VM_NAME}}" 2>/dev/null || echo not-found)"
+        echo "Peers VM ({{.NET_PEERS_VM}}): $(utmctl status "{{.NET_PEERS_VM}}" 2>/dev/null || echo not-found)"
+        echo ""
+        if [ -f "{{.NET_HOSTS_FILE}}" ]; then cat "{{.NET_HOSTS_FILE}}"; else echo "(no captured IPs — run 'task network:up')"; fi
+
+  network:ip:
+    desc: "Print the captured peer source IPs"
+    cmds:
+      - |
+        [ -f "{{.NET_HOSTS_FILE}}" ] && cat "{{.NET_HOSTS_FILE}}" || { echo "run 'task network:up' first"; exit 1; }
+
+  network:ssh:
+    desc: "SSH into the peers VM (starts it if stopped)"
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        set -eu
+        PEERS="{{.NET_PEERS_VM}}"
+        # Live LAN-IP resolver: skip the guest's docker0 (172.17–172.31), loopback and
+        # link-local so we get the bridged address we actually SSH to.
+        peers_ip() {
+          utmctl ip-address "$PEERS" 2>/dev/null \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -Ev '^(127\.|169\.254\.|172\.(1[7-9]|2[0-9]|3[01])\.)' \
+            | head -1
+        }
+
+        # The peers VM must exist (created by network:up) — utmctl status fails otherwise.
+        STATUS="$(utmctl status "$PEERS" 2>/dev/null || true)"
+        [ -z "$STATUS" ] && { echo "❌ peers VM '$PEERS' not found — run 'task network:up' first"; exit 1; }
+
+        # Start it if it is not already running; the DHCP lease can change across boots,
+        # so we always resolve the IP live rather than trusting a possibly-stale hosts.env.
+        if [ "$STATUS" != "started" ]; then
+          echo "Peers VM is '$STATUS'; starting it..."
+          for _ in $(seq 1 10); do
+            [ "$(utmctl status "$PEERS" 2>/dev/null)" = "started" ] && break
+            utmctl start --hide "$PEERS" 2>/dev/null || true
+            sleep 3
+          done
+        fi
+
+        echo "Waiting for peers VM LAN IP..."
+        PEERS_IP=""
+        for _ in $(seq 1 24); do PEERS_IP="$(peers_ip)"; [ -n "$PEERS_IP" ] && break; sleep 5; done
+        # Fall back to the IP captured by network:up if the guest agent is not responding.
+        if [ -z "$PEERS_IP" ] && [ -f "{{.NET_HOSTS_FILE}}" ]; then
+          PEERS_IP="$(. "{{.NET_HOSTS_FILE}}"; printf '%s' "${PEERS_VM_IP:-}")"
+          [ -n "$PEERS_IP" ] && echo "⚠️  using captured IP $PEERS_IP (guest agent gave none; it may be stale)"
+        fi
+        [ -z "$PEERS_IP" ] && { echo "❌ peers VM has no reachable IP (still booting? try again shortly)"; exit 1; }
+
+        # Wait for sshd to accept connections (the VM may still be booting).
+        echo "Waiting for SSH on $PEERS_IP..."
+        for _ in $(seq 1 24); do
+          if ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -o ConnectTimeout=3 -o BatchMode=yes {{.VM_USER}}@$PEERS_IP true 2>/dev/null; then
+            break
+          fi
+          sleep 5
+        done
+
+        echo "Connecting to peers VM at $PEERS_IP..."
+        env -i HOME="$HOME" USER="$USER" TERM="${TERM:-xterm}" \
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} -t {{.VM_USER}}@$PEERS_IP "exec \$SHELL -l"
+
+  network:down:
+    desc: "Stop and delete the peers VM and clear captured state"
+    cmds:
+      - |
+        PEERS="{{.NET_PEERS_VM}}"
+        if utmctl status "$PEERS" >/dev/null 2>&1; then
+          echo "Stopping and deleting peers VM '$PEERS'..."
+          utmctl stop "$PEERS" 2>/dev/null || true
+          sleep 1
+          utmctl delete "$PEERS" 2>/dev/null || true
+          echo "✓ peers VM removed"
+        else
+          echo "Peers VM '$PEERS' not found in UTM registry."
+        fi
+        # Also remove the .utm directory; utmctl delete does not always clean up files,
+        # and a stale directory causes the next network:up clone to use a numbered suffix
+        # (e.g. "…-peers 2.utm"), breaking the config.plist resource-strip path.
+        PEERS_UTM_DIR="{{.UTM_VMS_DIR}}/$PEERS.utm"
+        if [ -d "$PEERS_UTM_DIR" ]; then
+          echo "Removing VM directory: $PEERS_UTM_DIR"
+          rm -rf "$PEERS_UTM_DIR"
+        fi
+        rm -rf "{{.NET_STATE_DIR}}"
+        echo "✓ cleared {{.NET_STATE_DIR}}"
