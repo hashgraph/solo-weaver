@@ -7,6 +7,12 @@
 # responses; authoring them is how the multi-VM network harness (taskfiles/network.yaml)
 # drives statusz deterministically. See docs/dev/traffic-shaper-test-plan.md (local).
 #
+# JSON casing: these files use snake_case ("active_endpoints") and carry scheme/protocol
+# fields — this is the BN's *input* format (per the real BN sample). It is deliberately
+# NOT the same surface as the statusz HTTP *response* the daemon decodes, which is
+# camelCase ("activeEndpoints", "tlsRequired") in internal/blocknode/shaper/statusz_client.go.
+# The BN reads snake_case files and emits camelCase statusz; do not "fix" this to camelCase.
+#
 # Usage:
 #   gen-appstate.sh <out-dir> <bn-ip> <publisher-ip> <partner-ip> \
 #                   <public-ip> <backfill-ip> <restricted-ip>

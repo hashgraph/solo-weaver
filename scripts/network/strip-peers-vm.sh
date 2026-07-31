@@ -39,6 +39,22 @@ new_mac() {
   hexdump -vn5 -e '5/1 ":%02x"' /dev/urandom | sed 's/^:/02:/'
 }
 
+# Preflight: confirm this UTM version's config.plist exposes the keys we intend to edit
+# BEFORE we disturb any running VMs or quit UTM. Stopping every VM + quitting UTM is
+# disruptive (it also stops unrelated VMs, e.g. the BN working VM), so if the schema
+# differs — the right-sizing keys are not readable — no-op with a warning rather than
+# paying that cost for an edit we cannot apply. The caller (network:up) then starts the
+# peers VM at the golden's full CPU/RAM: larger than ideal, but functional.
+pf_cpu="$(plutil -extract System.CPUCount raw -o - "$PLIST" 2>/dev/null || echo "")"
+pf_mem="$(plutil -extract System.MemorySize raw -o - "$PLIST" 2>/dev/null || echo "")"
+if [ -z "$pf_cpu" ] || [ -z "$pf_mem" ]; then
+  echo "⚠️  config.plist does not expose System.CPUCount / System.MemorySize on this UTM version" >&2
+  echo "    (CPUCount='${pf_cpu:-<missing>}', MemorySize='${pf_mem:-<missing>}'). Skipping the" >&2
+  echo "    resource strip: no VMs stopped, UTM left running. Right-size the peers VM manually" >&2
+  echo "    in the UTM app, or update this script for your UTM config schema." >&2
+  exit 0
+fi
+
 # Gracefully stop every running VM BEFORE quitting UTM, then quit so it releases the
 # config files. Quitting the UTM app hard-stops (plug-pulls) any still-running VM,
 # which can corrupt guest files mid-write (e.g. NUL-padded /etc/passwd, a truncated

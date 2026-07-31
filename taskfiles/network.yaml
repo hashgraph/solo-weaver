@@ -164,6 +164,7 @@ tasks:
 
   network:seed-statusz:
     desc: "Render the 3 statusz application-state JSON files from captured peer IPs and copy them into the BN VM"
+    aliases: [ network:seed ]
     deps:
       - vm:start   # the BN working VM's IP is the BN local address in the files
     cmds:
@@ -190,6 +191,7 @@ tasks:
 
   network:bn-deploy:
     desc: "Deploy the block node on the BN VM with firewall + traffic shaping (peers as the statusz roster)"
+    aliases: [ network:install ]
     deps:
       - vm:start
     cmds:
