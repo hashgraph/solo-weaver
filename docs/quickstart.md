@@ -753,29 +753,34 @@ For `--reply-stamp` policies the CIDR entries must be `ip:port` pairs for all th
 
 #### Inspect a Policy (show)
 
-Print a policy's registry config and current live set membership:
+Print a policy's registry config and current live set membership. Without `--name`, `show` lists **all** configured policies (sorted by name); with `--name`, it prints just that one. This mirrors `network shape show`, where a bare `show` lists everything and flags narrow the scope.
 
 ```bash
+# List every configured policy
+sudo solo-provisioner network policy show
+
+# Inspect a single policy
 sudo solo-provisioner network policy show --name bn-publisher
 ```
 
-Output example:
+Output example (single policy). `direction` leads, and the live set is nested under the policy:
 ```
 policy: bn-publisher
+  direction: ingress
   action:  stamp
   class:   publisher
-  direction: ingress
   ports:   40840
   created: 2026-01-01T00:00:00Z
-
-live set @bn-publisher:
-  10.1.0.1/32
-  10.1.0.2/32
+  live set @bn-publisher:
+    10.1.0.1/32
+    10.1.0.2/32
 ```
 
-| Flag     | Description     | Required |
-|----------|-----------------|----------|
-| `--name` | Policy name     | yes      |
+With no policies configured, a bare `show` prints `no policies configured` rather than failing.
+
+| Flag     | Description                              | Required |
+|----------|------------------------------------------|----------|
+| `--name` | Policy name (omit to list all policies)  | no       |
 
 #### Remove a Policy (delete)
 
