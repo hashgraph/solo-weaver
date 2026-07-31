@@ -10,16 +10,6 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// TCRunner abstracts live kernel tc qdisc/class operations for testability.
-type TCRunner interface {
-	ClassChange(ctx context.Context, nic, minor, rate, ceil string, prio int) error
-	QdiscDelRoot(ctx context.Context, nic string) error
-	QdiscAddRoot(ctx context.Context, nic, defaultMinor string) error
-	ClassAddRoot(ctx context.Context, nic, rate, ceil string) error
-	ClassAdd(ctx context.Context, nic, minor, rate, ceil string, prio int) error
-	QdiscAddFqCodel(ctx context.Context, nic, minor, handle string) error
-}
-
 type noopTCRunner struct{}
 
 func errUnsupported() error {
