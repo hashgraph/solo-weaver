@@ -139,4 +139,6 @@ func init() {
 			"(e.g. --shape publisher=rate=800mbit,ceil=1gbit,prio=0). Classes not overridden use the profile defaults.")
 	common.FlagDaemonBin().SetVarP(installCmd, &flagDaemonBin, false)
 	common.FlagDaemonVersion().SetVarP(installCmd, &flagDaemonVersion, false)
+	common.FlagStatuszBaseURL().SetVarP(installCmd, &flagStatuszBaseURL, false)
+	common.FlagStatuszPollInterval().SetVarP(installCmd, &flagStatuszPollInterval, false)
 }

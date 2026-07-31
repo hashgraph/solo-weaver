@@ -69,7 +69,7 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 			steps.NftWeaverPersist(),
 			steps.TcEgressPersist(ins.EgressInterface, ins.LinkRate, shapeOverrides),
 			steps.TcIngressRecord(ins.EgressInterface, ins.LinkRate, shapeOverrides),
-			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace, true),
+			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace, true, ins.StatuszBaseURL, ins.StatuszPollInterval),
 			steps.RestartDaemonServiceStep(),
 		)
 	case allowTeardown:
@@ -86,7 +86,9 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 		out = append(out,
 			steps.NetworkPolicyDeleteAll(),
 			steps.TcEgressTeardown(),
-			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace, false),
+			// Disable path: no statusz override — turning the monitor off leaves any
+			// operator-set statusz block on disk untouched.
+			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), ins.Namespace, false, "", ""),
 			steps.RestartDaemonServiceStep(),
 		)
 	}

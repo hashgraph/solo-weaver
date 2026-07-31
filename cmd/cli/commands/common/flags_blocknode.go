@@ -212,3 +212,21 @@ func FlagHelmTimeout() FlagDefinition[time.Duration] {
 		Default:     helm.DefaultTimeout,
 	}
 }
+
+func FlagStatuszBaseURL() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "statusz-base-url",
+		ShortName:   "",
+		Description: "Override the daemon's block-node statusz endpoint with an explicit http(s) base URL (e.g. http://127.0.0.1:8080) for a port-forward or directly-reachable BN; empty discovers the endpoint from the watched BN pod. Written to daemon.yaml",
+		Default:     "",
+	}
+}
+
+func FlagStatuszPollInterval() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "statusz-poll-interval",
+		ShortName:   "",
+		Description: "Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. 5s, 30s); empty uses the 5s default. Written to daemon.yaml",
+		Default:     "",
+	}
+}

@@ -60,11 +60,15 @@ func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[s
 // daemon.yaml. It wraps the single config step in a "Traffic-shaper Monitor" phase
 // so it renders under its own header rather than dangling after the "Block Node
 // Deployment" phase. It runs last, after the deployment it watches is in place.
-func BlockNodeDaemonConfigWorkflow(namespace string) *automa.WorkflowBuilder {
+//
+// statuszBaseURL and statuszPollInterval are the operator-supplied statusz
+// overrides (--statusz-base-url / --statusz-poll-interval), merged per-field into
+// daemon.yaml by the step; empty leaves the existing on-disk statusz untouched.
+func BlockNodeDaemonConfigWorkflow(namespace, statuszBaseURL, statuszPollInterval string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("block-node-daemon-config").
 		Steps(
-			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace, true),
+			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace, true, statuszBaseURL, statuszPollInterval),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Traffic-shaper Monitor")

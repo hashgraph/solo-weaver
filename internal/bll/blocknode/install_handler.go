@@ -76,7 +76,7 @@ func (h *InstallHandler) BuildWorkflow(
 	// disabled there is no inet weaver classification for the daemon to watch.
 	var daemonConfigStep []automa.Builder
 	if ins.TrafficShapingEnabled {
-		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace)}
+		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace, ins.StatuszBaseURL, ins.StatuszPollInterval)}
 	}
 
 	var wb *automa.WorkflowBuilder

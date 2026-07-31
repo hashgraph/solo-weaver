@@ -7,6 +7,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/blocknode"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -188,6 +189,18 @@ func validateBlockNodeFlags(cmd *cobra.Command) error {
 			return errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
 		}
 	}
+	// Validate operator-supplied statusz overrides (install/reconfigure only) by
+	// reusing the daemon's own StatuszConfig.Validate, so malformed input fails
+	// immediately with an actionable hint rather than only at daemon.yaml write
+	// time. The flags default to empty and are unregistered on other commands, so
+	// this is a no-op unless the operator set at least one.
+	if flagStatuszBaseURL != "" || flagStatuszPollInterval != "" {
+		sc := daemon.StatuszConfig{BaseURL: flagStatuszBaseURL, PollInterval: flagStatuszPollInterval}
+		if err := sc.Validate(); err != nil {
+			return errorx.IllegalArgument.Wrap(err,
+				"invalid --statusz-base-url / --statusz-poll-interval: base URL must be an http(s) URL with a host and poll interval a positive Go duration (e.g. 5s)")
+		}
+	}
 	return nil
 }
 
@@ -312,6 +325,8 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			EgressInterface:     flagEgressInterface,
 			LinkRate:            flagLinkRate,
 			Timeout:             flagHelmTimeout,
+			StatuszBaseURL:      flagStatuszBaseURL,
+			StatuszPollInterval: flagStatuszPollInterval,
 		},
 	}
 

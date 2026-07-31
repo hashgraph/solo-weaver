@@ -209,6 +209,8 @@ sudo solo-provisioner block node install \
 | `--shape`                 | Per-class HTB bandwidth override, repeatable: `--shape <class>=rate=<r>,ceil=<c>,prio=<p>` (e.g. `--shape publisher=rate=800mbit,ceil=1gbit,prio=0`). Any subset of `rate`/`ceil`/`prio` may be given; classes not overridden use the profile defaults. Valid classes: `publisher`, `backfill-response`, `reserve-ingress`, `partner`, `public`, `reserve-egress`. |
 | `--daemon-version`        | Version of `solo-provisioner-daemon` to auto-download when traffic shaping installs the daemon (defaults to this CLI's own version). Ignored when `--daemon-bin` is set. |
 | `--daemon-bin`            | Local path to a pre-built `solo-provisioner-daemon` binary, installed as-is instead of downloaded. **Required for `--profile=local`** — local/dev builds have no downloadable release to auto-download from. |
+| `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN; omitted discovers the endpoint from the watched BN pod. Written into `daemon.yaml` (`components.block_node.statusz.base_url`). |
+| `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`); omitted uses the `5s` default. Written into `daemon.yaml` (`components.block_node.statusz.poll_interval`). |
 
 > **Host firewall**: `block node install` can lay down the node-level `inet
 > host` firewall (SSH/management allowlist, ICMP policy, in-cluster host-service
@@ -390,6 +392,12 @@ sudo solo-provisioner block node reconfigure \
 sudo solo-provisioner block node reconfigure \
   --profile=mainnet \
   --firewall-enabled=false
+
+# Point the daemon's statusz monitor at a port-forwarded BN and slow its poll
+sudo solo-provisioner block node reconfigure \
+  --profile=mainnet \
+  --statusz-base-url=http://127.0.0.1:8080 \
+  --statusz-poll-interval=10s
 ```
 
 **Additional Flags**:
@@ -402,6 +410,8 @@ sudo solo-provisioner block node reconfigure \
 | `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
 | `--firewall-enabled` | Enable or disable the node-level host firewall (`inet host` table) on an existing install. Seeded from the firewall's current on-host state, so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
 | `--traffic-shaping-enabled` | Enable or disable the BN traffic-shaping bundle (network-policy plane + tc HTB shaping + daemon traffic-shaper monitor) on an existing install. Seeded from the persisted install decision, so a no-flag reconfigure keeps it; pass `=true` to create it (with `--egress-interface`/`--link-rate`/`--shape`/`--daemon-bin` as on `install`), `=false` to tear it down. | persisted state |
+| `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN; omitted discovers the endpoint from the watched BN pod. Merged per-field into `daemon.yaml` (`components.block_node.statusz.base_url`) — an omitted value preserves whatever is already on disk. | preserved on disk |
+| `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`); omitted uses the `5s` default. Merged per-field into `daemon.yaml` (`components.block_node.statusz.poll_interval`) — an omitted value preserves whatever is already on disk. | preserved on disk |
 
 > **Storage path changes**: Local PV `hostPath.path` is immutable. If your
 > reconfigure changes any storage path, you must pass `--purge-storage` so the

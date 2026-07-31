@@ -46,6 +46,8 @@ var (
 	flagDaemonBin            string
 	flagDaemonVersion        string
 	flagHelmTimeout          time.Duration
+	flagStatuszBaseURL       string
+	flagStatuszPollInterval  string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",

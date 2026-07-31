@@ -59,6 +59,42 @@ func TestResolveEffectiveInputs_CarriesTimeout(t *testing.T) {
 		"--timeout must be carried through effective-input resolution")
 }
 
+// TestResolveEffectiveInputs_CarriesStatusz is a regression guard (same class as
+// the #912 timeout drop): the operator-supplied statusz overrides must survive
+// resolveBlocknodeEffectiveInputs, which rebuilds BlockNodeInputs field-by-field.
+// A field omitted from that literal is silently dropped between CLI validation and
+// the daemon-config step, so daemon.yaml would never receive the operator's value.
+func TestResolveEffectiveInputs_CarriesStatusz(t *testing.T) {
+	checker := &fakeBlockNodeChecker{st: state.NewBlockNodeState()}
+	r, err := rsl.NewBlockNodeRuntimeResolver(models.Config{}, state.NewBlockNodeState(), checker, 10*time.Minute)
+	require.NoError(t, err)
+	runtime := r.(*rsl.BlockNodeRuntimeResolver)
+
+	inputs := models.UserInputs[models.BlockNodeInputs]{
+		Custom: models.BlockNodeInputs{
+			Namespace:           "block-node",
+			Release:             "block-node",
+			Chart:               "oci://example.com/block-node",
+			ChartVersion:        "0.37.1",
+			Storage:             models.BlockNodeStorage{BasePath: "/mnt/fast-storage"},
+			StatuszBaseURL:      "http://127.0.0.1:8080",
+			StatuszPollInterval: "5s",
+		},
+	}
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		runtime,
+		models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
+		inputs,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:8080", eff.Custom.StatuszBaseURL,
+		"--statusz-base-url must be carried through effective-input resolution")
+	assert.Equal(t, "5s", eff.Custom.StatuszPollInterval,
+		"--statusz-poll-interval must be carried through effective-input resolution")
+}
+
 // baseTcInputs returns valid inputs with the resolvable fields set but the
 // traffic-shaping content deliberately left empty, so the state fallback governs.
 func baseTcInputs() models.UserInputs[models.BlockNodeInputs] {

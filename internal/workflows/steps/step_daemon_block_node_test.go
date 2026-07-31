@@ -27,7 +27,7 @@ func blockNodeConfigPaths(t *testing.T) models.WeaverPaths {
 func TestWriteBlockNodeDaemonConfig_FreshFile(t *testing.T) {
 	paths := blockNodeConfigPaths(t)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true).Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true, "", "").Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -52,7 +52,7 @@ func TestWriteBlockNodeDaemonConfig_FreshFile(t *testing.T) {
 func TestWriteBlockNodeDaemonConfig_EmptyOrbitDefaults(t *testing.T) {
 	paths := blockNodeConfigPaths(t)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "", true).Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "", true, "", "").Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -86,7 +86,7 @@ func TestWriteBlockNodeDaemonConfig_DisableTurnsMonitorOff(t *testing.T) {
 	}
 	require.NoError(t, daemon.WriteDaemonConfig(paths.DaemonConfigPath, seed))
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", false).Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", false, "", "").Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -127,7 +127,7 @@ func TestWriteBlockNodeDaemonConfig_PreservesExistingBlocks(t *testing.T) {
 	priorBytes, err := os.ReadFile(paths.DaemonConfigPath)
 	require.NoError(t, err)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true).Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true, "", "").Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -148,4 +148,55 @@ func TestWriteBlockNodeDaemonConfig_PreservesExistingBlocks(t *testing.T) {
 	gotBytes, err := os.ReadFile(paths.DaemonConfigPath)
 	require.NoError(t, err)
 	assert.Equal(t, string(priorBytes), string(gotBytes))
+}
+
+func TestWriteBlockNodeDaemonConfig_OperatorStatuszOnFreshFile(t *testing.T) {
+	paths := blockNodeConfigPaths(t)
+
+	// Operator supplies both statusz overrides on a fresh install.
+	step, err := WriteBlockNodeDaemonConfigStep(
+		paths, "block-node", true, "http://127.0.0.1:9090", "7s").Build()
+	require.NoError(t, err)
+	require.NoError(t, step.Execute(context.Background()).Error)
+
+	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Components.BlockNode)
+	require.NotNil(t, cfg.Components.BlockNode.Statusz)
+	assert.Equal(t, "http://127.0.0.1:9090", cfg.Components.BlockNode.Statusz.BaseURL)
+	assert.Equal(t, "7s", cfg.Components.BlockNode.Statusz.PollInterval)
+	// Provisioner-owned fields still win.
+	assert.True(t, cfg.Components.BlockNode.Enabled)
+	assert.True(t, cfg.Components.BlockNode.Monitors.TrafficShaper)
+}
+
+func TestWriteBlockNodeDaemonConfig_OperatorStatuszPerFieldOverride(t *testing.T) {
+	paths := blockNodeConfigPaths(t)
+
+	// Seed a block_node with an operator-set statusz block (both fields set).
+	seed := daemon.DaemonConfig{
+		Components: daemon.DaemonComponents{
+			BlockNode: &daemon.BlockNodeComponentConfig{
+				Enabled:    true,
+				Kubeconfig: "/opt/solo/weaver/config/daemon-bn.kubeconfig",
+				Orbit:      "block-node",
+				Monitors:   daemon.BlockNodeMonitors{TrafficShaper: true},
+				Statusz:    &daemon.StatuszConfig{BaseURL: "http://127.0.0.1:8080", PollInterval: "3s"},
+			},
+		},
+	}
+	require.NoError(t, daemon.WriteDaemonConfig(paths.DaemonConfigPath, seed))
+
+	// Operator overrides only poll_interval; base_url must be preserved per-field.
+	step, err := WriteBlockNodeDaemonConfigStep(
+		paths, "block-node", true, "", "15s").Build()
+	require.NoError(t, err)
+	require.NoError(t, step.Execute(context.Background()).Error)
+
+	cfg, err := daemon.LoadDaemonConfig(paths.DaemonConfigPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Components.BlockNode)
+	require.NotNil(t, cfg.Components.BlockNode.Statusz)
+	assert.Equal(t, "15s", cfg.Components.BlockNode.Statusz.PollInterval, "supplied field overrides")
+	assert.Equal(t, "http://127.0.0.1:8080", cfg.Components.BlockNode.Statusz.BaseURL, "unset field preserves existing")
 }
