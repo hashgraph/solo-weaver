@@ -8,7 +8,6 @@ import (
 	"io"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/joomcode/errorx"
@@ -40,17 +39,16 @@ type ClassDelta struct {
 	DropsDelta      uint64
 }
 
-// WatchSpec parameterises Manager.WatchClasses. Device is the traffic direction
-// (egress/ingress); Iface optionally names the concrete interface to sample —
-// when empty, egress auto-detects the NIC (default route) and ingress
-// auto-detects the shaped per-pod $VETH (the interface carrying an HTB qdisc).
-// Iface is only needed to override the egress NIC or to disambiguate when more
-// than one ingress veth is shaped. Class, when set, narrows the watch to one
-// class and implies its direction.
+// WatchSpec parameterises Manager.WatchClasses. Both Device (the traffic
+// direction, which selects the class set) and Iface (the interface to sample)
+// are required and operator-supplied: `network shape watch` performs no
+// environment probing — no NIC or veth auto-detection — so it never depends on a
+// block node running or on Kubernetes. Class optionally narrows the watch to one
+// class, which must belong to Device's direction.
 type WatchSpec struct {
-	Device   string        // "egress" (default) or "ingress"
-	Iface    string        // explicit interface to sample; empty = auto-detect for the direction
-	Class    string        // single class to watch; "" watches all classes for the direction
+	Device   string        // "egress" or "ingress" — required; selects the class set
+	Iface    string        // interface to sample — required
+	Class    string        // optional: narrow to one class in Device's direction
 	Interval time.Duration // sampling interval
 	Count    int           // number of delta samples to print then stop; 0 = until ctx is cancelled
 }
@@ -67,15 +65,15 @@ func (m *Manager) WatchClasses(ctx context.Context, spec WatchSpec, w io.Writer)
 	if spec.Count < 0 {
 		return errorx.IllegalArgument.New("--count must be zero or positive (0 = run until interrupted)")
 	}
+	if spec.Iface == "" {
+		return errorx.IllegalArgument.New("--iface is required (the interface to sample)")
+	}
 
 	dir, classes, err := resolveWatchClasses(spec)
 	if err != nil {
 		return err
 	}
-	iface, err := m.resolveWatchIface(ctx, dir, spec.Iface)
-	if err != nil {
-		return err
-	}
+	iface := spec.Iface
 
 	fmt.Fprintf(w, "watching tc classes on %s (%s device), interval %s — Ctrl-C to stop\n",
 		iface, dir, spec.Interval)
@@ -137,89 +135,31 @@ func (m *Manager) sampleStats(ctx context.Context, iface string) (stats map[stri
 	return stats, time.Now(), false, nil
 }
 
-// resolveWatchClasses resolves the spec's device/class selection to a direction
-// plus the class names to display. --class selects a single class and derives its
-// direction; --device shows every class for that direction; the default (neither)
-// watches egress — the physical NIC is the common operator-verify target. --class
-// and --device are mutually exclusive at the CLI (see watch.go RunE), matching the
-// other `network shape` verbs, so both are never set here.
+// resolveWatchClasses validates the spec's device/class selection and returns the
+// direction plus the class names to display. --device (required) selects the
+// class set; --class optionally narrows it to a single class, which must belong
+// to that direction. There is no defaulting or auto-detection: the operator
+// states intent explicitly, keeping the command independent of the running block
+// node.
 func resolveWatchClasses(spec WatchSpec) (dir string, classes []string, err error) {
-	switch {
-	case spec.Class != "":
+	if spec.Device == "" {
+		return "", nil, errorx.IllegalArgument.New("--device is required (egress or ingress)")
+	}
+	if err := validateDir(spec.Device); err != nil {
+		return "", nil, err
+	}
+	if spec.Class != "" {
 		ci, err := lookupClassInfo(spec.Class)
 		if err != nil {
 			return "", nil, err
 		}
-		return ci.Dir, []string{spec.Class}, nil
-	case spec.Device != "":
-		if err := validateDir(spec.Device); err != nil {
-			return "", nil, err
+		if ci.Dir != spec.Device {
+			return "", nil, errorx.IllegalArgument.New(
+				"--class %q is a %s class but --device %s was given", spec.Class, ci.Dir, spec.Device)
 		}
-		return spec.Device, knownClassNamesForDir(spec.Device), nil
-	default:
-		return DirEgress, knownClassNamesForDir(DirEgress), nil
+		return spec.Device, []string{spec.Class}, nil
 	}
-}
-
-// resolveWatchIface resolves the concrete interface to sample. An explicit
-// --iface always wins. Otherwise egress auto-detects the NIC (default route) and
-// ingress auto-detects the shaped per-pod $VETH from the live HTB qdisc (see
-// detectIngressVeths). Ingress auto-detection resolves cleanly only when exactly
-// one veth is shaped; with none or several it returns an actionable error asking
-// for --iface.
-func (m *Manager) resolveWatchIface(ctx context.Context, dir, iface string) (string, error) {
-	if iface != "" {
-		return iface, nil
-	}
-	if dir == DirIngress {
-		veths, err := m.detectIngressVeths(ctx)
-		if err != nil {
-			return "", errorx.Decorate(err, "cannot watch ingress shape: veth auto-detection failed")
-		}
-		switch len(veths) {
-		case 0:
-			return "", errorx.IllegalState.New(
-				"no ingress-shaped veth found (no per-pod interface carries an HTB qdisc); " +
-					"is a block node running and shaped? pass --iface <veth> to watch a specific interface")
-		case 1:
-			return veths[0], nil
-		default:
-			return "", errorx.IllegalArgument.New(
-				"multiple ingress-shaped veths found (%s); pass --iface <veth> to select one",
-				strings.Join(veths, ", "))
-		}
-	}
-	nic, err := m.nicDetect()
-	if err != nil {
-		return "", errorx.Decorate(err, "cannot watch egress shape: egress NIC detection failed")
-	}
-	return nic, nil
-}
-
-// detectIngressVeths returns the host-side veth interfaces carrying an ingress
-// HTB hierarchy: every device with an HTB qdisc (from `tc -j qdisc show`), minus
-// the egress NIC (which is also HTB-rooted). Keying on the live qdisc — rather
-// than on a pod's eth0 iflink, the way the daemon's k8s-dependent VethResolver
-// does — lets the host-only CLI find the shaped veth with no pod or kubeconfig.
-//
-// Excluding the egress NIC is best-effort: if egress detection fails (e.g. an
-// ingress-only host with no default route), nothing is excluded — the HTB
-// devices are all veths in that case anyway.
-func (m *Manager) detectIngressVeths(ctx context.Context) ([]string, error) {
-	devs, err := m.tcRunner.HTBDevices(ctx)
-	if err != nil {
-		return nil, err
-	}
-	egress, _ := m.nicDetect()
-	out := make([]string, 0, len(devs))
-	for _, d := range devs {
-		if d == egress {
-			continue
-		}
-		out = append(out, d)
-	}
-	sort.Strings(out)
-	return out, nil
+	return spec.Device, knownClassNamesForDir(spec.Device), nil
 }
 
 // classDeltas computes the per-class delta between two samples for the named

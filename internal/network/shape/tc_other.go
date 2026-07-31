@@ -40,10 +40,6 @@ func (r *noopTCRunner) ClassStats(_ context.Context, _ string) (map[string]Class
 	return nil, errUnsupported()
 }
 
-func (r *noopTCRunner) HTBDevices(_ context.Context) ([]string, error) {
-	return nil, errUnsupported()
-}
-
 // newExecTCRunner returns a no-op runner on non-Linux platforms.
 func newExecTCRunner() TCRunner {
 	return &noopTCRunner{}

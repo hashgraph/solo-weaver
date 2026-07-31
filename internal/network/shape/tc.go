@@ -44,11 +44,4 @@ type TCRunner interface {
 	// cumulative counters keyed by tc handle (e.g. "1:40"). It is the read
 	// counterpart to the write verbs above, backing `network shape watch`.
 	ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error)
-
-	// HTBDevices runs `tc -j qdisc show` and returns the interfaces that
-	// currently carry an HTB qdisc — every device tc shaping has been applied to
-	// (the egress NIC and each per-pod ingress veth). It backs ingress-veth
-	// auto-detection for `network shape watch`: the read path finds the shaped
-	// veth from the live qdisc alone, needing no pod or kubeconfig.
-	HTBDevices(ctx context.Context) ([]string, error)
 }

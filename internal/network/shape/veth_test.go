@@ -16,9 +16,8 @@ import (
 // so tests can assert the exact §5.1 install sequence. An operation whose line
 // prefix is in failOn returns an error, to exercise mid-sequence failure.
 type recordingTCRunner struct {
-	calls      []string
-	failOn     map[string]bool
-	htbDevices []string // returned verbatim by HTBDevices (ingress-veth auto-detect tests)
+	calls  []string
+	failOn map[string]bool
 }
 
 func (r *recordingTCRunner) record(line string) error {
@@ -53,12 +52,6 @@ func (r *recordingTCRunner) QdiscAddFqCodel(_ context.Context, nic, minor, handl
 // scripted fake (see stats_test.go).
 func (r *recordingTCRunner) ClassStats(_ context.Context, _ string) (map[string]ClassStat, error) {
 	return nil, nil
-}
-
-// HTBDevices returns the preset htbDevices slice, letting watch tests drive
-// ingress-veth auto-detection without a live kernel.
-func (r *recordingTCRunner) HTBDevices(_ context.Context) ([]string, error) {
-	return r.htbDevices, nil
 }
 
 func newRecordingManager(t *testing.T, tc TCRunner) *Manager {

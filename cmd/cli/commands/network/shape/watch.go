@@ -27,14 +27,18 @@ var watchCmd = &cobra.Command{
 		"per-class rate-over-time — throughput, plus the change in overlimits and drops — each tick. " +
 		"Use it to confirm traffic is actually being classified and shaped (e.g. partner traffic landing " +
 		"in 1:40 with a non-zero rate and climbing overlimits).\n\n" +
-		"Read-only: it never mutates tc or the shape registry. Without flags it watches the egress NIC " +
-		"(auto-detected from the default route). --device ingress auto-detects the shaped per-pod $VETH " +
-		"(the interface carrying an HTB qdisc); pass --iface only to override or to pick one when several " +
-		"ingress veths are shaped. --class narrows the output to a single class. Runs until interrupted " +
-		"(Ctrl-C) unless --count is given.",
+		"Read-only: it never mutates tc or the shape registry. Both --device (egress or ingress) and " +
+		"--iface (the interface to sample) are required — the command does no environment probing (no NIC " +
+		"or veth auto-detection), so it stays independent of any running block node. For egress, --iface " +
+		"is the physical NIC (e.g. enp0s1); for ingress, the per-pod host veth (e.g. lxc1a2b3c). --class " +
+		"narrows the output to a single class within --device. Runs until interrupted (Ctrl-C) unless " +
+		"--count is given.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if flagClass != "" && flagDevice != "" {
-			return errorx.IllegalArgument.New("--class and --device are mutually exclusive")
+		if flagDevice == "" {
+			return errorx.IllegalArgument.New("--device is required (egress or ingress)")
+		}
+		if flagWatchIface == "" {
+			return errorx.IllegalArgument.New("--iface is required (the interface to sample)")
 		}
 		if flagWatchInterval <= 0 {
 			return errorx.IllegalArgument.New("--interval must be positive")
@@ -60,9 +64,9 @@ var watchCmd = &cobra.Command{
 }
 
 func init() {
-	watchCmd.Flags().StringVar(&flagClass, "class", "", "Watch a single class (device is derived from the class name)")
-	watchCmd.Flags().StringVar(&flagDevice, "device", "", "Traffic direction to watch: egress ($NIC, default) or ingress ($VETH)")
-	watchCmd.Flags().StringVar(&flagWatchIface, "iface", "", "Interface to sample; optional — egress auto-detects the NIC, ingress auto-detects the shaped $VETH. Pass to override, or to pick one when several ingress veths are shaped")
+	watchCmd.Flags().StringVar(&flagClass, "class", "", "Narrow output to a single class within --device (optional)")
+	watchCmd.Flags().StringVar(&flagDevice, "device", "", "Traffic direction to watch: egress ($NIC) or ingress ($VETH) (required)")
+	watchCmd.Flags().StringVar(&flagWatchIface, "iface", "", "Interface to sample, e.g. enp0s1 (egress) or lxc1a2b3c (ingress veth) (required)")
 	watchCmd.Flags().DurationVar(&flagWatchInterval, "interval", 2*time.Second, "Sampling interval (e.g. 1s, 500ms)")
 	watchCmd.Flags().IntVar(&flagWatchCount, "count", 0, "Number of samples to print then exit (0 = run until interrupted)")
 }

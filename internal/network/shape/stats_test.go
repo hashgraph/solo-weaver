@@ -93,141 +93,101 @@ func (r *scriptedStatsRunner) ClassStats(ctx context.Context, _ string) (map[str
 	return r.samples[i], nil
 }
 
+func newWatchManager(tc TCRunner) *Manager {
+	// NICDetect is intentionally unset: the watch path must never probe the NIC.
+	return NewManagerWithConfig(Config{TCRunner: tc})
+}
+
 func TestWatchClasses_CountBoundedLoop(t *testing.T) {
 	tc := &scriptedStatsRunner{samples: []map[string]ClassStat{
 		{"1:40": {ClassID: "1:40", Bytes: 0}},
 		{"1:40": {ClassID: "1:40", Bytes: 125_000, Overlimits: 1}},
 		{"1:40": {ClassID: "1:40", Bytes: 250_000, Overlimits: 3}},
 	}}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "eth0", nil },
-		TCRunner:  tc,
-	})
+	m := newWatchManager(tc)
 
 	var buf bytes.Buffer
-	spec := WatchSpec{Class: "partner", Interval: time.Millisecond, Count: 2}
+	spec := WatchSpec{Device: "egress", Iface: "enp0s1", Class: "partner", Interval: time.Millisecond, Count: 2}
 	require.NoError(t, m.WatchClasses(context.Background(), spec, &buf))
 
 	// Baseline + 2 delta samples = 3 ClassStats calls.
 	require.Equal(t, 3, tc.calls)
 	out := buf.String()
-	require.Contains(t, out, "watching tc classes on eth0 (egress device)")
+	require.Contains(t, out, "watching tc classes on enp0s1 (egress device)")
 	require.Contains(t, out, "CLASS")
 	require.Contains(t, out, "partner")
 	require.Contains(t, out, "1:40")
+}
+
+func TestWatchClasses_IngressWithIface(t *testing.T) {
+	tc := &scriptedStatsRunner{samples: []map[string]ClassStat{
+		{"1:10": {ClassID: "1:10", Bytes: 0}},
+		{"1:10": {ClassID: "1:10", Bytes: 125_000}},
+	}}
+	m := newWatchManager(tc)
+
+	var buf bytes.Buffer
+	spec := WatchSpec{Device: "ingress", Iface: "lxc1a2b3c", Interval: time.Millisecond, Count: 1}
+	require.NoError(t, m.WatchClasses(context.Background(), spec, &buf))
+	out := buf.String()
+	require.Contains(t, out, "watching tc classes on lxc1a2b3c (ingress device)")
+	require.Contains(t, out, "publisher")
 }
 
 func TestWatchClasses_CtxCancelStops(t *testing.T) {
 	tc := &scriptedStatsRunner{samples: []map[string]ClassStat{
 		{"1:40": {ClassID: "1:40", Bytes: 0}},
 	}}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "eth0", nil },
-		TCRunner:  tc,
-	})
+	m := newWatchManager(tc)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled: the baseline sample errors on the cancelled ctx
 
 	var buf bytes.Buffer
 	// A cancelled context during the (baseline) tc sample is a clean stop, not an
 	// error — WatchClasses must return nil rather than bubbling up the ctx error.
-	err := m.WatchClasses(ctx, WatchSpec{Device: "egress", Interval: time.Hour}, &buf)
+	err := m.WatchClasses(ctx, WatchSpec{Device: "egress", Iface: "enp0s1", Interval: time.Hour}, &buf)
 	require.NoError(t, err)
 }
 
-func TestWatchClasses_IngressAutoDetectsSingleVeth(t *testing.T) {
-	// One shaped veth alongside the egress NIC: ingress watch resolves to the
-	// veth automatically, no --iface needed.
-	tc := &scriptedStatsRunner{
-		recordingTCRunner: recordingTCRunner{htbDevices: []string{"enp0s1", "lxc1234"}},
-		samples: []map[string]ClassStat{
-			{"1:10": {ClassID: "1:10", Bytes: 0}},
-			{"1:10": {ClassID: "1:10", Bytes: 125_000}},
-		},
-	}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "enp0s1", nil },
-		TCRunner:  tc,
-	})
-
-	var buf bytes.Buffer
-	spec := WatchSpec{Device: "ingress", Interval: time.Millisecond, Count: 1}
-	require.NoError(t, m.WatchClasses(context.Background(), spec, &buf))
-	require.Contains(t, buf.String(), "watching tc classes on lxc1234 (ingress device)")
-}
-
-func TestWatchClasses_IngressNoVethErrors(t *testing.T) {
-	// Only the egress NIC carries an HTB qdisc → no ingress veth to watch.
-	tc := &scriptedStatsRunner{
-		recordingTCRunner: recordingTCRunner{htbDevices: []string{"enp0s1"}},
-		samples:           []map[string]ClassStat{{}},
-	}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "enp0s1", nil },
-		TCRunner:  tc,
-	})
-	err := m.WatchClasses(context.Background(), WatchSpec{Device: "ingress", Interval: time.Second}, &bytes.Buffer{})
+func TestWatchClasses_RequiresIface(t *testing.T) {
+	m := newWatchManager(&scriptedStatsRunner{samples: []map[string]ClassStat{{}}})
+	err := m.WatchClasses(context.Background(), WatchSpec{Device: "egress", Interval: time.Second}, &bytes.Buffer{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "no ingress-shaped veth")
-}
-
-func TestWatchClasses_IngressMultipleVethsError(t *testing.T) {
-	// Two shaped veths → ambiguous; the error names them and asks for --iface.
-	tc := &scriptedStatsRunner{
-		recordingTCRunner: recordingTCRunner{htbDevices: []string{"enp0s1", "lxcAAAA", "lxcBBBB"}},
-		samples:           []map[string]ClassStat{{}},
-	}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "enp0s1", nil },
-		TCRunner:  tc,
-	})
-	err := m.WatchClasses(context.Background(), WatchSpec{Device: "ingress", Interval: time.Second}, &bytes.Buffer{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "multiple ingress-shaped veths")
 	require.Contains(t, err.Error(), "--iface")
-	require.Contains(t, err.Error(), "lxcAAAA")
-	require.Contains(t, err.Error(), "lxcBBBB")
 }
 
-func TestWatchClasses_IngressExplicitIfaceSkipsDetection(t *testing.T) {
-	// An explicit --iface bypasses auto-detection entirely (htbDevices ignored).
-	tc := &scriptedStatsRunner{
-		recordingTCRunner: recordingTCRunner{htbDevices: nil}, // detection would find nothing
-		samples: []map[string]ClassStat{
-			{"1:10": {ClassID: "1:10", Bytes: 0}},
-			{"1:10": {ClassID: "1:10", Bytes: 1}},
-		},
-	}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "enp0s1", nil },
-		TCRunner:  tc,
-	})
-	var buf bytes.Buffer
-	spec := WatchSpec{Device: "ingress", Iface: "lxcDEAD", Interval: time.Millisecond, Count: 1}
-	require.NoError(t, m.WatchClasses(context.Background(), spec, &buf))
-	require.Contains(t, buf.String(), "watching tc classes on lxcDEAD (ingress device)")
+func TestWatchClasses_RequiresDevice(t *testing.T) {
+	m := newWatchManager(&scriptedStatsRunner{samples: []map[string]ClassStat{{}}})
+	err := m.WatchClasses(context.Background(), WatchSpec{Iface: "enp0s1", Interval: time.Second}, &bytes.Buffer{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--device")
 }
 
-func TestDetectIngressVeths_ExcludesEgressNICAndSorts(t *testing.T) {
-	tc := &recordingTCRunner{htbDevices: []string{"lxcZZZZ", "enp0s1", "lxcAAAA"}}
-	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "enp0s1", nil },
-		TCRunner:  tc,
-	})
-	veths, err := m.detectIngressVeths(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, []string{"lxcAAAA", "lxcZZZZ"}, veths)
+func TestWatchClasses_ClassDeviceMismatch(t *testing.T) {
+	m := newWatchManager(&scriptedStatsRunner{samples: []map[string]ClassStat{{}}})
+	// partner is an egress class; watching it under --device ingress must fail.
+	err := m.WatchClasses(context.Background(),
+		WatchSpec{Device: "ingress", Iface: "lxc1a2b3c", Class: "partner", Interval: time.Second}, &bytes.Buffer{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "egress class")
 }
 
 func TestWatchClasses_BadInterval(t *testing.T) {
-	m := NewManagerWithConfig(Config{TCRunner: &scriptedStatsRunner{samples: []map[string]ClassStat{{}}}})
-	err := m.WatchClasses(context.Background(), WatchSpec{Device: "egress", Interval: 0}, &bytes.Buffer{})
+	m := newWatchManager(&scriptedStatsRunner{samples: []map[string]ClassStat{{}}})
+	err := m.WatchClasses(context.Background(),
+		WatchSpec{Device: "egress", Iface: "enp0s1", Interval: 0}, &bytes.Buffer{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--interval")
 }
 
-func TestResolveWatchClasses_DefaultsToEgress(t *testing.T) {
-	dir, classes, err := resolveWatchClasses(WatchSpec{})
+func TestResolveWatchClasses_RequiresDevice(t *testing.T) {
+	_, _, err := resolveWatchClasses(WatchSpec{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--device")
+}
+
+func TestResolveWatchClasses_EgressDevice(t *testing.T) {
+	dir, classes, err := resolveWatchClasses(WatchSpec{Device: "egress"})
 	require.NoError(t, err)
 	require.Equal(t, DirEgress, dir)
 	require.ElementsMatch(t, []string{"partner", "public", "reserve-egress"}, classes)
@@ -240,8 +200,21 @@ func TestResolveWatchClasses_IngressDevice(t *testing.T) {
 	require.ElementsMatch(t, []string{"publisher", "backfill-response", "reserve-ingress"}, classes)
 }
 
+func TestResolveWatchClasses_ClassNarrowsWithinDevice(t *testing.T) {
+	dir, classes, err := resolveWatchClasses(WatchSpec{Device: "egress", Class: "partner"})
+	require.NoError(t, err)
+	require.Equal(t, DirEgress, dir)
+	require.Equal(t, []string{"partner"}, classes)
+}
+
+func TestResolveWatchClasses_ClassDeviceMismatch(t *testing.T) {
+	_, _, err := resolveWatchClasses(WatchSpec{Device: "ingress", Class: "partner"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "egress class")
+}
+
 func TestResolveWatchClasses_UnknownClass(t *testing.T) {
-	_, _, err := resolveWatchClasses(WatchSpec{Class: "nope"})
+	_, _, err := resolveWatchClasses(WatchSpec{Device: "egress", Class: "nope"})
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "unknown class"))
 }

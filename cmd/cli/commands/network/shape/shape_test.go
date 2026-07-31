@@ -178,17 +178,26 @@ func TestWatchCmd_FlagsRegistered(t *testing.T) {
 	}
 }
 
-func TestWatchCmd_BothClassAndDevice_Error(t *testing.T) {
+func TestWatchCmd_RequiresDevice(t *testing.T) {
 	defer resetFlags()
-	flagClass = "partner"
-	flagDevice = "egress"
+	flagWatchIface = "enp0s1" // device left empty
 
 	err := watchCmd.RunE(watchCmd, nil)
-	require.ErrorContains(t, err, "mutually exclusive")
+	require.ErrorContains(t, err, "--device is required")
+}
+
+func TestWatchCmd_RequiresIface(t *testing.T) {
+	defer resetFlags()
+	flagDevice = "egress" // iface left empty
+
+	err := watchCmd.RunE(watchCmd, nil)
+	require.ErrorContains(t, err, "--iface is required")
 }
 
 func TestWatchCmd_NonPositiveInterval_Error(t *testing.T) {
 	defer resetFlags()
+	flagDevice = "egress"
+	flagWatchIface = "enp0s1"
 	flagWatchInterval = 0
 
 	err := watchCmd.RunE(watchCmd, nil)
@@ -197,6 +206,8 @@ func TestWatchCmd_NonPositiveInterval_Error(t *testing.T) {
 
 func TestWatchCmd_NegativeCount_Error(t *testing.T) {
 	defer resetFlags()
+	flagDevice = "egress"
+	flagWatchIface = "enp0s1"
 	flagWatchCount = -1
 
 	err := watchCmd.RunE(watchCmd, nil)
