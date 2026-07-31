@@ -4,8 +4,6 @@ package common
 
 import (
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
-	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
@@ -39,58 +37,34 @@ func RegisterTrafficShapingFlags(cmd *cobra.Command) {
 // seedEnabled is the default the choice falls back to when neither the flag nor
 // an interactive prompt decides it: `install` passes false (opt-in — a fresh
 // install without the flag stays unshaped), while `reconfigure` passes the block
-// node's CURRENT traffic-shaping state (from BlockNodeState.TrafficShapingDisabled)
+// node's persisted traffic-shaping decision (BlockNodeState.TrafficShapingDisabled)
 // so a no-flag / default-accept reconfigure keeps the existing decision rather than
 // silently tearing an established plane down.
 //
 // It requires RegisterTrafficShapingFlags to have been called on cmd.
 func ResolveTrafficShapingConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, seedEnabled bool) (bool, error) {
-	force, err := FlagForce().Value(cmd, args)
-	if err != nil {
-		return false, errorx.IllegalArgument.Wrap(err, "failed to get %s flag", FlagForce().Name)
-	}
+	// Traffic shaping and the host firewall are gated identically (flag >
+	// confirm-prompt > seed, plus the content-flag-without-gate guard); the only
+	// difference is the flag/noun/prompt wording and the content-flag set, which
+	// trafficShapingFeature supplies as data.
+	return resolveFeatureGate(cmd, args, trafficShapingFeature(), seedEnabled)
+}
 
-	// Seeded from the caller-supplied default (opt-in false for install; the
-	// current persisted state for reconfigure), overridden by the flag when set.
-	enabled := effectiveBool(cmd, FlagNameTrafficShapingEnabled, seedEnabled)
-
-	// Prompt for the enable/disable choice only when it wasn't already decided
-	// on the CLI. Declining here skips the egress prompts below entirely —
-	// there's nothing left to ask once the plane itself is turned off.
-	if prompt.ShouldPrompt(force) && !cmd.Flags().Changed(FlagNameTrafficShapingEnabled) {
-		confirmed, err := prompt.RunConfirm(
-			"Enable traffic shaping?",
-			"Create the BN workload network-policy plane (inet weaver classification) and tc HTB "+
-				"traffic shaping, and install the traffic-shaper daemon. Opt-in, default No — choose Yes "+
-				"to get all three.",
-			enabled,
-		)
-		if err != nil {
-			return false, err
-		}
-		enabled = confirmed
-	}
-
-	// Non-interactive callers that supply traffic-shaping-only flags (egress
-	// NIC/link-rate, --shape overrides, daemon binary source) without also
-	// passing --traffic-shaping-enabled=true would otherwise have those flags
-	// silently ignored: with the opt-in default there's no confirm prompt to
-	// catch the mismatch, and the caller just skips configuring any of it.
-	if !enabled && !prompt.ShouldPrompt(force) {
-		for _, name := range []string{
+// trafficShapingFeature describes traffic shaping as a gated network feature for
+// resolveFeatureGate: the --traffic-shaping-enabled opt-in gate plus the
+// traffic-shaping-only flags (egress NIC/link-rate, --shape overrides, daemon
+// binary source) that are meaningless without it.
+func trafficShapingFeature() gatedFeature {
+	return gatedFeature{
+		GateFlag:    FlagNameTrafficShapingEnabled,
+		Noun:        "traffic shaping",
+		PromptTitle: "Enable traffic shaping?",
+		PromptDesc: "Create the BN workload network-policy plane (inet weaver classification) and tc HTB " +
+			"traffic shaping, and install the traffic-shaper daemon. Opt-in, default No — choose Yes " +
+			"to get all three.",
+		ContentFlags: []string{
 			FlagNameEgressInterface, FlagNameLinkRate, FlagNameShape,
 			FlagDaemonBin().Name, FlagDaemonVersion().Name,
-		} {
-			if cmd.Flags().Changed(name) {
-				return false, errorx.IllegalArgument.New(
-					"--%s was supplied but traffic shaping is not enabled (--traffic-shaping-enabled defaults to false)", name).
-					WithProperty(models.ErrPropertyResolution, []string{
-						"Pass --traffic-shaping-enabled=true to actually apply these settings",
-						"Or drop --" + name + " if you did not intend to configure traffic shaping",
-					})
-			}
-		}
+		},
 	}
-
-	return enabled, nil
 }
