@@ -74,6 +74,34 @@ func parseBandwidthBps(s string) (int64, error) {
 	return n * multiplier, nil
 }
 
+// validateClassFields checks one class's bandwidth fields together: rate is a
+// non-empty parseable bandwidth, ceil (when set) is >= rate, and prio is in
+// [0,7]. Shared by the create/set verbs and the provision-time re-check so all
+// three enforce identical per-class rules.
+func validateClassFields(rate, ceil string, prio int) error {
+	if err := validateRate(rate); err != nil {
+		return err
+	}
+	if ceil != "" {
+		if err := validateCeilGeRate(ceil, rate); err != nil {
+			return err
+		}
+	}
+	return validatePrio(prio)
+}
+
+// sumParseableRatesBps sums the bits-per-second of every class whose rate
+// parses, silently skipping any unparseable rate (a legacy shell expression).
+func sumParseableRatesBps(classes []*ClassConfig) int64 {
+	var sum int64
+	for _, c := range classes {
+		if bps, err := parseBandwidthBps(c.Rate); err == nil {
+			sum += bps
+		}
+	}
+	return sum
+}
+
 // validateRate checks that rate is a non-empty, parseable tc bandwidth string.
 func validateRate(rate string) error {
 	if strings.TrimSpace(rate) == "" {
@@ -109,22 +137,18 @@ func validateSumRates(existing []*ClassConfig, cfg *ClassConfig, deviceRate stri
 	if err != nil {
 		return nil // device rate unparseable (legacy expression): skip
 	}
-	var sum int64
-	for _, c := range existing {
-		if c.Name == cfg.Name {
-			continue // will be replaced by cfg in the sum
-		}
-		bps, err := parseBandwidthBps(c.Rate)
-		if err != nil {
-			continue // unparseable sibling: skip its contribution
-		}
-		sum += bps
-	}
 	newBps, err := parseBandwidthBps(cfg.Rate)
 	if err != nil {
 		return nil // new rate unparseable: skip
 	}
-	sum += newBps
+	siblings := make([]*ClassConfig, 0, len(existing))
+	for _, c := range existing {
+		if c.Name == cfg.Name {
+			continue // will be replaced by cfg in the sum
+		}
+		siblings = append(siblings, c)
+	}
+	sum := sumParseableRatesBps(siblings) + newBps
 	if sum > deviceBps {
 		return errorx.IllegalArgument.New(
 			"total class rates (%d bit) would exceed device root rate %s (%d bit); reduce --rate or raise the device rate",

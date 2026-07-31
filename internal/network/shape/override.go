@@ -49,17 +49,6 @@ func ValidateClassOverride(name string, o ClassOverride) error {
 	return nil
 }
 
-// ClassDirection returns the tc device direction ("ingress" or "egress") a
-// class belongs to, so callers can route a --shape override to the device it
-// applies to. Unknown class names return an error naming the known classes.
-func ClassDirection(name string) (string, error) {
-	info, err := lookupClassInfo(name)
-	if err != nil {
-		return "", err
-	}
-	return info.Dir, nil
-}
-
 // applyClassOverrides merges overrides into the matching classes by name,
 // leaving unmatched classes and unset override fields at their profile
 // defaults. Overrides naming a class not in classes (e.g. an egress class when
@@ -91,15 +80,7 @@ func applyClassOverrides(classes []*ClassConfig, overrides map[string]ClassOverr
 // budget.
 func validateProvisionedClasses(classes []*ClassConfig, deviceRate string) error {
 	for _, c := range classes {
-		if err := validateRate(c.Rate); err != nil {
-			return errorx.Decorate(err, "invalid rate for class %q", c.Name)
-		}
-		if c.Ceil != "" {
-			if err := validateCeilGeRate(c.Ceil, c.Rate); err != nil {
-				return errorx.Decorate(err, "class %q", c.Name)
-			}
-		}
-		if err := validatePrio(c.Prio); err != nil {
+		if err := validateClassFields(c.Rate, c.Ceil, c.Prio); err != nil {
 			return errorx.Decorate(err, "class %q", c.Name)
 		}
 	}
@@ -107,15 +88,7 @@ func validateProvisionedClasses(classes []*ClassConfig, deviceRate string) error
 	if err != nil {
 		return nil // device rate unparseable (legacy expression): skip the sum check
 	}
-	var sum int64
-	for _, c := range classes {
-		bps, err := parseBandwidthBps(c.Rate)
-		if err != nil {
-			continue
-		}
-		sum += bps
-	}
-	if sum > deviceBps {
+	if sum := sumParseableRatesBps(classes); sum > deviceBps {
 		return errorx.IllegalArgument.New(
 			"total class rates (%d bit) exceed the device root rate %s (%d bit) after --shape overrides; lower a --shape rate or raise --link-rate",
 			sum, deviceRate, deviceBps)

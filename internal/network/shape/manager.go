@@ -144,15 +144,7 @@ func (m *Manager) CreateClass(ctx context.Context, cls *ClassConfig, force bool)
 	if err != nil {
 		return false, err
 	}
-	if err := validateRate(cls.Rate); err != nil {
-		return false, err
-	}
-	if cls.Ceil != "" {
-		if err := validateCeilGeRate(cls.Ceil, cls.Rate); err != nil {
-			return false, err
-		}
-	}
-	if err := validatePrio(cls.Prio); err != nil {
+	if err := validateClassFields(cls.Rate, cls.Ceil, cls.Prio); err != nil {
 		return false, err
 	}
 
@@ -233,15 +225,7 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 		}
 
 		// Validate the updated state.
-		if err := validateRate(cls.Rate); err != nil {
-			return err
-		}
-		if cls.Ceil != "" {
-			if err := validateCeilGeRate(cls.Ceil, cls.Rate); err != nil {
-				return err
-			}
-		}
-		if err := validatePrio(cls.Prio); err != nil {
+		if err := validateClassFields(cls.Rate, cls.Ceil, cls.Prio); err != nil {
 			return err
 		}
 
@@ -663,41 +647,16 @@ func (m *Manager) persistEgressScript(nic string) error {
 	return m.writeEgressScript(rendered)
 }
 
-// defaultEgressConfig returns the device root and three default egress classes
-// at proportions derived from trunkRate (partner 40%/70%, public 30%/70%,
-// reserve-egress 30%/100%). Exposed as a package-internal helper so tests can
-// verify the computation without disk I/O.
-func defaultEgressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error) {
-	bps, err := parseBandwidthBps(trunkRate)
-	if err != nil {
-		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid trunk rate %q", trunkRate)
-	}
-	mbps := bps / 1_000_000
-	now := time.Now().UTC()
-	dev := &DeviceConfig{
-		Dir:          DirEgress,
-		Rate:         trunkRate,
-		DefaultClass: "reserve-egress",
-		CreatedAt:    now,
-	}
-	classes := []*ClassConfig{
-		{Name: "partner", Rate: fmt.Sprintf("%dmbit", mbps*40/100), Ceil: fmt.Sprintf("%dmbit", mbps*70/100), Prio: 0, CreatedAt: now},
-		{Name: "public", Rate: fmt.Sprintf("%dmbit", mbps*30/100), Ceil: fmt.Sprintf("%dmbit", mbps*70/100), Prio: 5, CreatedAt: now},
-		{Name: "reserve-egress", Rate: fmt.Sprintf("%dmbit", mbps*30/100), Ceil: trunkRate, Prio: 1, CreatedAt: now},
-	}
-	return dev, classes, nil
-}
-
-// ProvisionDefaultEgress configures the egress device root and three default
-// HTB classes at proportions derived from trunkRate (partner 40%/70%, public
-// 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
-// trunkRate may be "auto", which is resolved to the detected link speed at
-// create time (see resolveAutoRateString). Existing configs are always
-// replaced. Called by block node install so the shape registry is the single
-// source of truth from first install.
-func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
+// provisionDefaults resolves trunkRate (possibly "auto"), materialises the
+// profile's device + class set with any --shape overrides merged in, validates
+// the merged set against the trunk budget, and writes device + all classes
+// under a single lock. afterWrite, when non-nil, runs inside the same lock
+// after the writes (egress renders and applies the boot script; ingress writes
+// config only). Shared by ProvisionDefaultEgress and ProvisionDefaultIngress so
+// the two directions cannot drift.
+func (m *Manager) provisionDefaults(prof defaultProfile, trunkRate string, overrides map[string]ClassOverride, afterWrite func() error) error {
 	trunkRate = m.resolveAutoRateString(trunkRate)
-	dev, classes, err := defaultEgressConfig(trunkRate)
+	dev, classes, err := buildDefaultConfig(prof, trunkRate)
 	if err != nil {
 		return err
 	}
@@ -714,15 +673,24 @@ func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate
 				return err
 			}
 		}
-		return m.renderAndApplyScript(ctx, nicName)
+		if afterWrite != nil {
+			return afterWrite()
+		}
+		return nil
 	})
 }
 
-// RenderAndApplyEgress renders the tc-egress boot script for nic from stored
-// shape config (if available) or the sysfs auto-detect default, then installs
-// and restarts tc-egress.service. Idempotent.
-func (m *Manager) RenderAndApplyEgress(ctx context.Context, nic string) error {
-	return m.renderAndApplyScript(ctx, nic)
+// ProvisionDefaultEgress configures the egress device root and three default
+// HTB classes at proportions derived from trunkRate (partner 40%/70%, public
+// 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
+// trunkRate may be "auto", which is resolved to the detected link speed at
+// create time (see resolveAutoRateString). Existing configs are always
+// replaced. Called by block node install so the shape registry is the single
+// source of truth from first install.
+func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
+	return m.provisionDefaults(egressProfile, trunkRate, overrides, func() error {
+		return m.renderAndApplyScript(ctx, nicName)
+	})
 }
 
 // ProvisionDefaultEgressShape configures the egress shape registry with the
@@ -731,32 +699,6 @@ func (m *Manager) RenderAndApplyEgress(ctx context.Context, nic string) error {
 // script. Convenience wrapper over NewManager().ProvisionDefaultEgress.
 func ProvisionDefaultEgressShape(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
 	return NewManager().ProvisionDefaultEgress(ctx, nicName, trunkRate, overrides)
-}
-
-// defaultIngressConfig returns the ingress device root and three default ingress
-// classes at proportions derived from trunkRate (publisher 80%, backfill-response
-// 10%, reserve-ingress 10%; all ceil 100% of trunk). Mirrors defaultEgressConfig;
-// exposed as a package-internal helper so tests can verify the computation
-// without disk I/O.
-func defaultIngressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error) {
-	bps, err := parseBandwidthBps(trunkRate)
-	if err != nil {
-		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid trunk rate %q", trunkRate)
-	}
-	mbps := bps / 1_000_000
-	now := time.Now().UTC()
-	dev := &DeviceConfig{
-		Dir:          DirIngress,
-		Rate:         trunkRate,
-		DefaultClass: "reserve-ingress",
-		CreatedAt:    now,
-	}
-	classes := []*ClassConfig{
-		{Name: "publisher", Rate: fmt.Sprintf("%dmbit", mbps*80/100), Ceil: trunkRate, Prio: 0, CreatedAt: now},
-		{Name: "backfill-response", Rate: fmt.Sprintf("%dmbit", mbps*10/100), Ceil: trunkRate, Prio: 7, CreatedAt: now},
-		{Name: "reserve-ingress", Rate: fmt.Sprintf("%dmbit", mbps*10/100), Ceil: trunkRate, Prio: 1, CreatedAt: now},
-	}
-	return dev, classes, nil
 }
 
 // ProvisionDefaultIngress records the ingress ($VETH) device root and three
@@ -770,26 +712,7 @@ func defaultIngressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, erro
 // finds concrete ingress config on the first pod create (the per-pod replay has
 // no sysfs fallback, so the recorded rates must always be concrete).
 func (m *Manager) ProvisionDefaultIngress(_ context.Context, trunkRate string, overrides map[string]ClassOverride) error {
-	trunkRate = m.resolveAutoRateString(trunkRate)
-	dev, classes, err := defaultIngressConfig(trunkRate)
-	if err != nil {
-		return err
-	}
-	applyClassOverrides(classes, overrides)
-	if err := validateProvisionedClasses(classes, dev.Rate); err != nil {
-		return err
-	}
-	return m.withLock(func() error {
-		if err := writeDevice(dev); err != nil {
-			return err
-		}
-		for _, cls := range classes {
-			if err := writeClass(cls); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return m.provisionDefaults(ingressProfile, trunkRate, overrides, nil)
 }
 
 // ProvisionDefaultIngressShape records the ingress shape registry with the three
@@ -810,7 +733,7 @@ func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string
 // Used when no trunk rate is supplied (e.g. block node reconfigure without
 // --link-rate).
 func RenderAndApplyDefaultEgress(ctx context.Context, nic string) error {
-	return NewManager().RenderAndApplyEgress(ctx, nic)
+	return NewManager().renderAndApplyScript(ctx, nic)
 }
 
 // withLock serialises a mutation behind a cross-command flock so concurrent
