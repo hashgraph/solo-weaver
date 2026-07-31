@@ -22,7 +22,10 @@ func resetFlags() {
 	flagCeil = ""
 	flagPrio = 0
 	flagDefault = ""
-	for _, cmd := range []*cobra.Command{createCmd, setCmd, showCmd, deleteCmd} {
+	flagWatchIface = ""
+	flagWatchInterval = 2 * time.Second // watch's registered default
+	flagWatchCount = 0
+	for _, cmd := range []*cobra.Command{createCmd, setCmd, showCmd, watchCmd, deleteCmd} {
 		cmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	}
 }
@@ -34,7 +37,7 @@ func TestShapeCmd_HasExpectedSubcommands(t *testing.T) {
 	for _, c := range shapeCmd.Commands() {
 		subs[c.Name()] = true
 	}
-	for _, want := range []string{"create", "set", "show", "delete"} {
+	for _, want := range []string{"create", "set", "show", "watch", "delete"} {
 		require.True(t, subs[want], "missing subcommand %q", want)
 	}
 }
@@ -165,6 +168,39 @@ func TestShowCmd_BothClassAndDevice_Error(t *testing.T) {
 
 	err := showCmd.RunE(showCmd, nil)
 	require.ErrorContains(t, err, "mutually exclusive")
+}
+
+// --- watch: flag registration + early validation (fires before newManager) ---
+
+func TestWatchCmd_FlagsRegistered(t *testing.T) {
+	for _, flag := range []string{"class", "device", "iface", "interval", "count"} {
+		require.NotNil(t, watchCmd.Flags().Lookup(flag), "watch: missing --%s", flag)
+	}
+}
+
+func TestWatchCmd_BothClassAndDevice_Error(t *testing.T) {
+	defer resetFlags()
+	flagClass = "partner"
+	flagDevice = "egress"
+
+	err := watchCmd.RunE(watchCmd, nil)
+	require.ErrorContains(t, err, "mutually exclusive")
+}
+
+func TestWatchCmd_NonPositiveInterval_Error(t *testing.T) {
+	defer resetFlags()
+	flagWatchInterval = 0
+
+	err := watchCmd.RunE(watchCmd, nil)
+	require.ErrorContains(t, err, "--interval must be positive")
+}
+
+func TestWatchCmd_NegativeCount_Error(t *testing.T) {
+	defer resetFlags()
+	flagWatchCount = -1
+
+	err := watchCmd.RunE(watchCmd, nil)
+	require.ErrorContains(t, err, "--count")
 }
 
 // --- delete: mutual exclusion and required-one-of validation ---

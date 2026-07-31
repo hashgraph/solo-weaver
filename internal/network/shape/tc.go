@@ -39,4 +39,9 @@ type TCRunner interface {
 	// QdiscAddFqCodel runs `tc qdisc add dev <nic> parent 1:<minor> handle
 	// <handle>: fq_codel`, the leaf qdisc for a class.
 	QdiscAddFqCodel(ctx context.Context, nic, minor, handle string) error
+
+	// ClassStats runs `tc -s -j class show dev <dev>` and returns each class's
+	// cumulative counters keyed by tc handle (e.g. "1:40"). It is the read
+	// counterpart to the write verbs above, backing `network shape watch`.
+	ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error)
 }
