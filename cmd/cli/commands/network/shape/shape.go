@@ -43,6 +43,7 @@ func init() {
 	shapeCmd.AddCommand(createCmd)
 	shapeCmd.AddCommand(setCmd)
 	shapeCmd.AddCommand(showCmd)
+	shapeCmd.AddCommand(watchCmd)
 	shapeCmd.AddCommand(deleteCmd)
 }
 

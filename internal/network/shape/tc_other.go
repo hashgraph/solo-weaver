@@ -36,6 +36,10 @@ func (r *noopTCRunner) QdiscAddFqCodel(_ context.Context, _, _, _ string) error 
 	return errUnsupported()
 }
 
+func (r *noopTCRunner) ClassStats(_ context.Context, _ string) (map[string]ClassStat, error) {
+	return nil, errUnsupported()
+}
+
 // newExecTCRunner returns a no-op runner on non-Linux platforms.
 func newExecTCRunner() TCRunner {
 	return &noopTCRunner{}

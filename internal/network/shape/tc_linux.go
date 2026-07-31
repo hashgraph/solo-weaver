@@ -5,7 +5,9 @@
 package shape
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -17,6 +19,24 @@ import (
 // PATH) so a caller cannot hijack the privileged invocation via an
 // attacker-controlled directory (see docs/dev/security-model.md).
 const tcBin = "/sbin/tc"
+
+// tcClassJSON is the subset of one element of `tc -s -j class show` output we
+// consume. iproute2 emits the counters at the top level of each class object;
+// the optional nested "stats" object is decoded too as a defensive fallback for
+// versions that nest them, preferring whichever is populated.
+type tcClassJSON struct {
+	Handle     string `json:"handle"`
+	Bytes      uint64 `json:"bytes"`
+	Packets    uint64 `json:"packets"`
+	Drops      uint64 `json:"drops"`
+	Overlimits uint64 `json:"overlimits"`
+	Stats      *struct {
+		Bytes      uint64 `json:"bytes"`
+		Packets    uint64 `json:"packets"`
+		Drops      uint64 `json:"drops"`
+		Overlimits uint64 `json:"overlimits"`
+	} `json:"stats"`
+}
 
 type execTCRunner struct{}
 
@@ -62,6 +82,48 @@ func (r *execTCRunner) ClassAdd(ctx context.Context, nic, minor, rate, ceil stri
 func (r *execTCRunner) QdiscAddFqCodel(ctx context.Context, nic, minor, handle string) error {
 	return r.run(ctx, "qdisc", "add",
 		"dev", nic, "parent", "1:"+minor, "handle", handle+":", "fq_codel")
+}
+
+func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error) {
+	cmd := exec.CommandContext(ctx, tcBin, "-s", "-j", "class", "show", "dev", dev)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errorx.ExternalError.Wrap(err,
+			"tc -s -j class show dev %s failed: %s", dev, strings.TrimSpace(stderr.String()))
+	}
+
+	var raw []tcClassJSON
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, errorx.ExternalError.Wrap(err,
+			"failed to parse tc class stats JSON for dev %s", dev)
+	}
+
+	stats := make(map[string]ClassStat, len(raw))
+	for _, c := range raw {
+		if c.Handle == "" {
+			continue // qdisc-only or malformed entry
+		}
+		s := ClassStat{
+			ClassID:    c.Handle,
+			Bytes:      c.Bytes,
+			Packets:    c.Packets,
+			Drops:      c.Drops,
+			Overlimits: c.Overlimits,
+		}
+		// Fallback only when the flat form carried nothing: some iproute2 builds
+		// nest the counters under "stats" instead. Never overwrite populated
+		// top-level values with a (possibly empty) nested object.
+		if c.Stats != nil && s.Bytes == 0 && s.Packets == 0 && s.Drops == 0 && s.Overlimits == 0 {
+			s.Bytes = c.Stats.Bytes
+			s.Packets = c.Stats.Packets
+			s.Drops = c.Stats.Drops
+			s.Overlimits = c.Stats.Overlimits
+		}
+		stats[c.Handle] = s
+	}
+	return stats, nil
 }
 
 // newExecTCRunner returns the production TC runner that shells out to /sbin/tc.
