@@ -38,6 +38,14 @@ type tcClassJSON struct {
 	} `json:"stats"`
 }
 
+// tcQdiscJSON is the subset of one element of `tc -j qdisc show` we consume:
+// the qdisc kind ("htb", "fq_codel", "noqueue", …) and the device it is
+// attached to. Emitted per-qdisc when the command is run without a `dev` filter.
+type tcQdiscJSON struct {
+	Kind string `json:"kind"`
+	Dev  string `json:"dev"`
+}
+
 type execTCRunner struct{}
 
 // run execs `tc <args...>` and wraps any non-zero exit with the combined output.
@@ -124,6 +132,33 @@ func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]C
 		stats[c.Handle] = s
 	}
 	return stats, nil
+}
+
+func (r *execTCRunner) HTBDevices(ctx context.Context) ([]string, error) {
+	cmd := exec.CommandContext(ctx, tcBin, "-j", "qdisc", "show")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errorx.ExternalError.Wrap(err,
+			"tc -j qdisc show failed: %s", strings.TrimSpace(stderr.String()))
+	}
+
+	var raw []tcQdiscJSON
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, errorx.ExternalError.Wrap(err, "failed to parse tc qdisc JSON")
+	}
+
+	seen := make(map[string]bool, len(raw))
+	devs := make([]string, 0, len(raw))
+	for _, q := range raw {
+		if q.Kind != "htb" || q.Dev == "" || seen[q.Dev] {
+			continue
+		}
+		seen[q.Dev] = true
+		devs = append(devs, q.Dev)
+	}
+	return devs, nil
 }
 
 // newExecTCRunner returns the production TC runner that shells out to /sbin/tc.

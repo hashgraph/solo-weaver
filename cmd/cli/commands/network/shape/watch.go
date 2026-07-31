@@ -28,8 +28,10 @@ var watchCmd = &cobra.Command{
 		"Use it to confirm traffic is actually being classified and shaped (e.g. partner traffic landing " +
 		"in 1:40 with a non-zero rate and climbing overlimits).\n\n" +
 		"Read-only: it never mutates tc or the shape registry. Without flags it watches the egress NIC " +
-		"(auto-detected). --device ingress watches a per-pod $VETH and requires --iface. --class narrows " +
-		"the output to a single class. Runs until interrupted (Ctrl-C) unless --count is given.",
+		"(auto-detected from the default route). --device ingress auto-detects the shaped per-pod $VETH " +
+		"(the interface carrying an HTB qdisc); pass --iface only to override or to pick one when several " +
+		"ingress veths are shaped. --class narrows the output to a single class. Runs until interrupted " +
+		"(Ctrl-C) unless --count is given.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if flagClass != "" && flagDevice != "" {
 			return errorx.IllegalArgument.New("--class and --device are mutually exclusive")
@@ -60,7 +62,7 @@ var watchCmd = &cobra.Command{
 func init() {
 	watchCmd.Flags().StringVar(&flagClass, "class", "", "Watch a single class (device is derived from the class name)")
 	watchCmd.Flags().StringVar(&flagDevice, "device", "", "Traffic direction to watch: egress ($NIC, default) or ingress ($VETH)")
-	watchCmd.Flags().StringVar(&flagWatchIface, "iface", "", "Interface to sample; required for ingress (a per-pod $VETH), optional override for egress")
+	watchCmd.Flags().StringVar(&flagWatchIface, "iface", "", "Interface to sample; optional — egress auto-detects the NIC, ingress auto-detects the shaped $VETH. Pass to override, or to pick one when several ingress veths are shaped")
 	watchCmd.Flags().DurationVar(&flagWatchInterval, "interval", 2*time.Second, "Sampling interval (e.g. 1s, 500ms)")
 	watchCmd.Flags().IntVar(&flagWatchCount, "count", 0, "Number of samples to print then exit (0 = run until interrupted)")
 }

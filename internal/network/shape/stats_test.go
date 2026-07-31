@@ -135,14 +135,88 @@ func TestWatchClasses_CtxCancelStops(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestWatchClasses_IngressRequiresIface(t *testing.T) {
+func TestWatchClasses_IngressAutoDetectsSingleVeth(t *testing.T) {
+	// One shaped veth alongside the egress NIC: ingress watch resolves to the
+	// veth automatically, no --iface needed.
+	tc := &scriptedStatsRunner{
+		recordingTCRunner: recordingTCRunner{htbDevices: []string{"enp0s1", "lxc1234"}},
+		samples: []map[string]ClassStat{
+			{"1:10": {ClassID: "1:10", Bytes: 0}},
+			{"1:10": {ClassID: "1:10", Bytes: 125_000}},
+		},
+	}
 	m := NewManagerWithConfig(Config{
-		NICDetect: func() (string, error) { return "eth0", nil },
-		TCRunner:  &scriptedStatsRunner{samples: []map[string]ClassStat{{}}},
+		NICDetect: func() (string, error) { return "enp0s1", nil },
+		TCRunner:  tc,
+	})
+
+	var buf bytes.Buffer
+	spec := WatchSpec{Device: "ingress", Interval: time.Millisecond, Count: 1}
+	require.NoError(t, m.WatchClasses(context.Background(), spec, &buf))
+	require.Contains(t, buf.String(), "watching tc classes on lxc1234 (ingress device)")
+}
+
+func TestWatchClasses_IngressNoVethErrors(t *testing.T) {
+	// Only the egress NIC carries an HTB qdisc → no ingress veth to watch.
+	tc := &scriptedStatsRunner{
+		recordingTCRunner: recordingTCRunner{htbDevices: []string{"enp0s1"}},
+		samples:           []map[string]ClassStat{{}},
+	}
+	m := NewManagerWithConfig(Config{
+		NICDetect: func() (string, error) { return "enp0s1", nil },
+		TCRunner:  tc,
 	})
 	err := m.WatchClasses(context.Background(), WatchSpec{Device: "ingress", Interval: time.Second}, &bytes.Buffer{})
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "no ingress-shaped veth")
+}
+
+func TestWatchClasses_IngressMultipleVethsError(t *testing.T) {
+	// Two shaped veths → ambiguous; the error names them and asks for --iface.
+	tc := &scriptedStatsRunner{
+		recordingTCRunner: recordingTCRunner{htbDevices: []string{"enp0s1", "lxcAAAA", "lxcBBBB"}},
+		samples:           []map[string]ClassStat{{}},
+	}
+	m := NewManagerWithConfig(Config{
+		NICDetect: func() (string, error) { return "enp0s1", nil },
+		TCRunner:  tc,
+	})
+	err := m.WatchClasses(context.Background(), WatchSpec{Device: "ingress", Interval: time.Second}, &bytes.Buffer{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "multiple ingress-shaped veths")
 	require.Contains(t, err.Error(), "--iface")
+	require.Contains(t, err.Error(), "lxcAAAA")
+	require.Contains(t, err.Error(), "lxcBBBB")
+}
+
+func TestWatchClasses_IngressExplicitIfaceSkipsDetection(t *testing.T) {
+	// An explicit --iface bypasses auto-detection entirely (htbDevices ignored).
+	tc := &scriptedStatsRunner{
+		recordingTCRunner: recordingTCRunner{htbDevices: nil}, // detection would find nothing
+		samples: []map[string]ClassStat{
+			{"1:10": {ClassID: "1:10", Bytes: 0}},
+			{"1:10": {ClassID: "1:10", Bytes: 1}},
+		},
+	}
+	m := NewManagerWithConfig(Config{
+		NICDetect: func() (string, error) { return "enp0s1", nil },
+		TCRunner:  tc,
+	})
+	var buf bytes.Buffer
+	spec := WatchSpec{Device: "ingress", Iface: "lxcDEAD", Interval: time.Millisecond, Count: 1}
+	require.NoError(t, m.WatchClasses(context.Background(), spec, &buf))
+	require.Contains(t, buf.String(), "watching tc classes on lxcDEAD (ingress device)")
+}
+
+func TestDetectIngressVeths_ExcludesEgressNICAndSorts(t *testing.T) {
+	tc := &recordingTCRunner{htbDevices: []string{"lxcZZZZ", "enp0s1", "lxcAAAA"}}
+	m := NewManagerWithConfig(Config{
+		NICDetect: func() (string, error) { return "enp0s1", nil },
+		TCRunner:  tc,
+	})
+	veths, err := m.detectIngressVeths(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"lxcAAAA", "lxcZZZZ"}, veths)
 }
 
 func TestWatchClasses_BadInterval(t *testing.T) {

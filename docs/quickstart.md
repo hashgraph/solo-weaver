@@ -858,11 +858,14 @@ sudo solo-provisioner network shape watch
 # Faster sampling of a single class, bounded to 5 samples then exit.
 sudo solo-provisioner network shape watch --class partner --interval 1s --count 5
 
-# Ingress classes live on per-pod $VETH interfaces, so name the interface:
-sudo solo-provisioner network shape watch --device ingress --iface veth1234
+# Ingress: the shaped per-pod $VETH is auto-detected — no --iface needed.
+sudo solo-provisioner network shape watch --device ingress
+
+# Only when several veths are shaped (multiple block-node pods) name one:
+sudo solo-provisioner network shape watch --device ingress --iface lxc1a2b3c
 ```
 
-`watch` samples `tc -s class show dev <device>` at `--interval` and prints, per class, the throughput (from the byte delta) plus the change in overlimits and drops since the previous sample — "rate over time". It is read-only: it never mutates tc or the shape registry. Use it to confirm traffic is actually being classified and shaped — e.g. partner traffic landing in `1:40` with a non-zero rate and climbing overlimits. Without flags it watches the auto-detected egress NIC; `--device ingress` requires `--iface` (there is no single ingress device — the HTB lives on ephemeral per-pod veths). This complements the Prometheus counters, which target dashboards rather than an operator at a terminal.
+`watch` samples `tc -s class show dev <device>` at `--interval` and prints, per class, the throughput (from the byte delta) plus the change in overlimits and drops since the previous sample — "rate over time". It is read-only: it never mutates tc or the shape registry. Use it to confirm traffic is actually being classified and shaped — e.g. partner traffic landing in `1:40` with a non-zero rate and climbing overlimits. Without flags it watches the auto-detected egress NIC (the default-route interface); `--device ingress` auto-detects the shaped per-pod `$VETH` (the interface carrying an HTB qdisc, found via `tc qdisc show` — no Kubernetes needed). `--iface` is only needed to override the detected interface or to pick one when several ingress veths are shaped. This complements the Prometheus counters, which target dashboards rather than an operator at a terminal.
 
 **Delete**
 
@@ -880,7 +883,7 @@ sudo solo-provisioner network shape delete --class reserve-egress
 | `--prio`    | HTB scheduling priority `[0,7]`; 0 is highest                                   | no (default 0)        |
 | `--default` | Default class for unmatched traffic (`--device` form only)                      | yes (`--device`)      |
 | `--force`   | Replace an existing device or class config                                       | no                    |
-| `--iface`   | Interface to sample (`watch`); required for `--device ingress` (a per-pod `$VETH`) | `watch` ingress       |
+| `--iface`   | Interface to sample (`watch`); optional — egress auto-detects the NIC, ingress auto-detects the shaped `$VETH`. Pass to override, or to pick one when several ingress veths are shaped | no |
 | `--interval`| Sampling interval for `watch` (e.g. `1s`, `500ms`); default `2s`                 | no                    |
 | `--count`   | Number of `watch` samples to print then exit; `0` = run until interrupted        | no                    |
 
