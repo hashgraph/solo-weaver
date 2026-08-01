@@ -155,8 +155,8 @@ func resetFlags() {
 	flagName, flagStamp = "", ""
 	flagDeny = false
 	flagReplyStamp, flagFromEntity = "", ""
-	flagPorts, flagCIDRs, flagCIDR = nil, nil, nil
-	flagCIDRsFile, flagPodCIDR = "", ""
+	flagPorts, flagCIDRs, flagCIDR, flagPodCIDR = nil, nil, nil, nil
+	flagCIDRsFile = ""
 	// Command singletons share cobra flag state across Execute() calls; clear
 	// Changed so prior-test values don't trip mutual-exclusion guards.
 	for _, cmd := range []*cobra.Command{createCmd, addCmd, removeCmd, setCmd, showCmd, deleteCmd} {

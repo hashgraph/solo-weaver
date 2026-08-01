@@ -22,11 +22,20 @@ func Parse(content string) (*Table, error) {
 		return nil, errorx.IllegalFormat.New("not a recognised inet host ruleset")
 	}
 
+	// Merge each family's set back into the single mixed list the Table holds.
+	// Render re-splits by family, so a render→parse→render round-trip is the
+	// identity regardless of the mixed-list order (pinned by TestRoundTrip).
 	if cidrs, ok := parseElements(content, reMgmtSet); ok {
-		t.MgmtCIDRs = splitElements(cidrs)
+		t.MgmtCIDRs = append(t.MgmtCIDRs, splitElements(cidrs)...)
+	}
+	if cidrs, ok := parseElements(content, reMgmtSet6); ok {
+		t.MgmtCIDRs = append(t.MgmtCIDRs, splitElements(cidrs)...)
 	}
 	if cidrs, ok := parseElements(content, reBlockedSet); ok {
-		t.BlockedCIDRs = splitElements(cidrs)
+		t.BlockedCIDRs = append(t.BlockedCIDRs, splitElements(cidrs)...)
+	}
+	if cidrs, ok := parseElements(content, reBlockedSet6); ok {
+		t.BlockedCIDRs = append(t.BlockedCIDRs, splitElements(cidrs)...)
 	}
 	if ports, ok := parseElements(content, rePortSet); ok {
 		for _, p := range splitElements(ports) {
@@ -48,16 +57,22 @@ func Parse(content string) (*Table, error) {
 	if m := rePodCIDR.FindStringSubmatch(content); m != nil {
 		t.PodCIDR = m[1]
 	}
+	if m := rePodCIDR6.FindStringSubmatch(content); m != nil {
+		t.PodCIDR6 = m[1]
+	}
 
 	return t, nil
 }
 
 var (
-	reMgmtSet    = regexp.MustCompile(`set mgmt_addrs \{[^}]*elements = \{ ([^}]*) \}`)
-	reBlockedSet = regexp.MustCompile(`set blocked_addrs \{[^}]*elements = \{ ([^}]*) \}`)
-	rePortSet    = regexp.MustCompile(`set in_cluster_ports \{[^}]*elements = \{ ([^}]*) \}`)
-	reSSHPort    = regexp.MustCompile(`ip saddr @mgmt_addrs tcp dport (\d+) accept`)
-	rePodCIDR    = regexp.MustCompile(`ip saddr (\S+) tcp dport @in_cluster_ports accept`)
+	reMgmtSet     = regexp.MustCompile(`set mgmt_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	reMgmtSet6    = regexp.MustCompile(`set mgmt_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
+	reBlockedSet  = regexp.MustCompile(`set blocked_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	reBlockedSet6 = regexp.MustCompile(`set blocked_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
+	rePortSet     = regexp.MustCompile(`set in_cluster_ports \{[^}]*elements = \{ ([^}]*) \}`)
+	reSSHPort     = regexp.MustCompile(`ip saddr @mgmt_addrs tcp dport (\d+) accept`)
+	rePodCIDR     = regexp.MustCompile(`ip saddr (\S+) tcp dport @in_cluster_ports accept`)
+	rePodCIDR6    = regexp.MustCompile(`ip6 saddr (\S+) tcp dport @in_cluster_ports accept`)
 )
 
 func parseElements(content string, re *regexp.Regexp) (string, bool) {

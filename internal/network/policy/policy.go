@@ -4,6 +4,7 @@ package policy
 
 import (
 	"net"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -160,8 +161,10 @@ func (p *Policy) validateDeny() error {
 }
 
 // validateCIDRs checks the initial membership entries against the set type the
-// policy renders: compound ip:port keys for a --reply-stamp policy (matching a
-// `ipv4_addr . inet_service` set), plain IPv4 CIDRs otherwise.
+// policy renders: compound ip:port keys for a --reply-stamp policy (matching an
+// `ipv4_addr . inet_service` / `ipv6_addr . inet_service` set), plain CIDRs
+// otherwise. Both address families are accepted; each entry is routed to the
+// policy's v4 (@name) or v6 (@name6) set by family at render/apply time.
 func (p *Policy) validateCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
 		if p.isCompoundSet() {
@@ -173,13 +176,18 @@ func (p *Policy) validateCIDRs(cidrs []string) error {
 		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --cidrs entry %q", c)
 		}
-		if ip, _, _ := net.ParseCIDR(c); ip.To4() == nil {
-			return errorx.IllegalArgument.New(
-				"invalid --cidrs entry %q: IPv6 is not yet supported; the inet weaver sets use ipv4_addr", c)
-		}
 	}
 	return nil
 }
+
+// V6SetName returns the IPv6 companion set name for a policy (or its compound
+// set): the base policy name with a "6" suffix. The IPv4 set keeps the bare
+// policy name so the on-disk registry and existing element tooling are
+// unchanged; the v6 set is the parallel ipv6_addr(. inet_service) set the
+// dual-stack renderer declares. The renderer, the Manager's apply/snapshot
+// paths, and the traffic-shaper daemon all derive the v6 set name through this
+// one function so render, diff, and apply can never disagree on the spelling.
+func V6SetName(name string) string { return name + "6" }
 
 // isCompoundSet reports whether the policy's nft set is a compound
 // `ipv4_addr . inet_service` key set — true only for --reply-stamp policies,
@@ -205,10 +213,10 @@ func (p *Policy) hasPortsSet() bool {
 func validateIPPort(s string) error {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
-		return errorx.IllegalArgument.New("invalid --cidrs entry %q: --reply-stamp policies require ip:port pairs", s)
+		return errorx.IllegalArgument.New("invalid --cidrs entry %q: --reply-stamp policies require ip:port pairs (bracket IPv6 hosts, e.g. [2001:db8::1]:443)", s)
 	}
-	if ip := net.ParseIP(host); ip == nil || ip.To4() == nil {
-		return errorx.IllegalArgument.New("invalid --cidrs entry %q: %q is not an IPv4 address", s, host)
+	if ip := net.ParseIP(host); ip == nil {
+		return errorx.IllegalArgument.New("invalid --cidrs entry %q: %q is not an IP address", s, host)
 	}
 	if err := sanity.ValidatePort(port); err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid --cidrs entry %q", s)
@@ -216,22 +224,53 @@ func validateIPPort(s string) error {
 	return nil
 }
 
-// setElements converts initial --cidrs entries into nft element tokens for the
-// policy's set: `<ip> . <port>` compound keys for --reply-stamp policies, plain
-// CIDRs otherwise. The input is assumed already validated, so the compound
-// conversion's error (only possible on a malformed ip:port) cannot fire here;
-// it shares CompoundElement so the CLI apply path and the daemon poll loop's
-// diff render compound elements identically.
-func setElements(p *Policy, cidrs []string) []string {
-	if !p.isCompoundSet() {
-		return cidrs
+// elementToken renders one --cidrs entry into its nft set element token and
+// reports its address family, so the caller can route it to the policy's IPv4
+// (@name) or IPv6 (@name6) set. Compound (--reply-stamp) entries are ip:port
+// pairs converted through CompoundElement; plain entries are CIDRs passed
+// through as-is. Input is assumed already validated.
+func elementToken(p *Policy, cidr string) (token string, isV6 bool, err error) {
+	if p.isCompoundSet() {
+		tok, err := CompoundElement(cidr)
+		if err != nil {
+			return "", false, err
+		}
+		host, _, splitErr := net.SplitHostPort(cidr)
+		if splitErr != nil {
+			return "", false, errorx.IllegalArgument.Wrap(splitErr, "invalid ip:port %q", cidr)
+		}
+		addr, addrErr := netip.ParseAddr(host)
+		if addrErr != nil {
+			return "", false, errorx.IllegalArgument.New("invalid ip:port %q: %q is not an IP address", cidr, host)
+		}
+		return tok, addr.Is6() && !addr.Is4In6(), nil
 	}
-	out := make([]string, 0, len(cidrs))
+	isV6, err = sanity.CIDRIsIPv6(cidr)
+	if err != nil {
+		return "", false, err
+	}
+	return cidr, isV6, nil
+}
+
+// setElementsByFamily converts initial --cidrs entries into nft element tokens,
+// partitioned by address family so each lands in the policy's IPv4 (@name) or
+// IPv6 (@name6) set. The input is assumed already validated, so a token
+// conversion error (only possible on a malformed entry) cannot fire here; it
+// shares CompoundElement so the CLI apply path and the daemon poll loop's diff
+// render compound elements identically.
+func setElementsByFamily(p *Policy, cidrs []string) (v4, v6 []string) {
 	for _, c := range cidrs {
-		tok, _ := CompoundElement(c)
-		out = append(out, tok)
+		tok, isV6, err := elementToken(p, c)
+		if err != nil {
+			continue
+		}
+		if isV6 {
+			v6 = append(v6, tok)
+		} else {
+			v4 = append(v4, tok)
+		}
 	}
-	return out
+	return v4, v6
 }
 
 // portElements returns the --ports values joined for an nft `elements = { … }`

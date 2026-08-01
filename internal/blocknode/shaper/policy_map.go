@@ -193,11 +193,20 @@ func computePolicyDeltas(ctx context.Context, lister elementLister, ce categoryE
 		if err != nil {
 			return nil, err
 		}
+		// Read live membership from BOTH families' sets and merge before diffing:
+		// desired may carry v4 and v6 endpoints (routed to @<name> and @<name>6 on
+		// apply), so a diff against only the v4 set would report every v6 element
+		// as a perpetual add and re-apply the set every tick. DiffElements
+		// canonicalizes both families, so the merged live compares correctly.
 		live, err := lister.ListElements(ctx, b.policyName)
 		if err != nil {
 			return nil, errorx.Decorate(err, "read live membership for policy %s", b.policyName)
 		}
-		delta := policy.DiffElements(desired, live)
+		live6, err := lister.ListElements(ctx, policy.V6SetName(b.policyName))
+		if err != nil {
+			return nil, errorx.Decorate(err, "read live IPv6 membership for policy %s", b.policyName)
+		}
+		delta := policy.DiffElements(desired, append(live, live6...))
 		if delta.Empty() {
 			continue
 		}

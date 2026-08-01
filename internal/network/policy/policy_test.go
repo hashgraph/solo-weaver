@@ -5,6 +5,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+// update regenerates the golden .nft fixtures instead of comparing against
+// them: `go test ./internal/network/policy/... -update`. Review the diff before
+// committing a regenerated golden.
+var update = flag.Bool("update", false, "regenerate golden testdata files")
 
 // fakeRunner is an in-memory Runner for tests: it records the applied document
 // and the elements added per set without touching the kernel. Apply clears
@@ -135,9 +141,36 @@ func TestRender_GoldenMatchesBNInstallSet(t *testing.T) {
 	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
 	require.NoError(t, err)
 
-	want, err := os.ReadFile("testdata/network-weaver.golden.nft")
+	goldenPath := "testdata/network-weaver.golden.nft"
+	if *update {
+		require.NoError(t, os.WriteFile(goldenPath, []byte(doc), 0o644))
+	}
+	want, err := os.ReadFile(goldenPath)
 	require.NoError(t, err)
-	require.Equal(t, string(want), doc, "render drifted from golden; if intentional, regenerate testdata/network-weaver.golden.nft")
+	require.Equal(t, string(want), doc, "render drifted from golden; if intentional, regenerate with -update")
+}
+
+// TestRender_DualStackGolden pins the dual-stack render: the same BN install set
+// with both an IPv4 and an IPv6 pod CIDR. It asserts the v6 sets and `ip6` rules
+// appear alongside their v4 counterparts.
+func TestRender_DualStackGolden(t *testing.T) {
+	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
+	require.NoError(t, err)
+
+	goldenPath := "testdata/network-weaver-dualstack.golden.nft"
+	if *update {
+		require.NoError(t, os.WriteFile(goldenPath, []byte(doc), 0o644))
+	}
+	want, err := os.ReadFile(goldenPath)
+	require.NoError(t, err)
+	require.Equal(t, string(want), doc, "dual-stack render drifted from golden; if intentional, regenerate with -update")
+
+	// Spot-check the key v6 constructs are present.
+	require.Contains(t, doc, "set bn-publisher6 { type ipv6_addr; flags interval; }")
+	require.Contains(t, doc, "set bn-backfill6 { type ipv6_addr . inet_service; }")
+	require.Contains(t, doc, "ip6 saddr @bn-restricted6 drop")
+	require.Contains(t, doc, "ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6")
+	require.Contains(t, doc, "ip6 saddr 2001:db8:c0de::/64 accept")
 }
 
 func TestRender_DeterministicRegardlessOfInputOrder(t *testing.T) {
@@ -232,7 +265,7 @@ func TestCreate_PersistsAndSeedsMembership(t *testing.T) {
 	m, nftPath, regDir := newTestManager(t, r)
 	p := &Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}
 
-	changed, err := m.Create(context.Background(), p, []string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+	changed, err := m.Create(context.Background(), p, []string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -253,7 +286,7 @@ func TestCreate_ExistingWithoutForceIsNoOp(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		[]string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, r.applyCount)
 
@@ -261,7 +294,7 @@ func TestCreate_ExistingWithoutForceIsNoOp(t *testing.T) {
 	// matching internal/network/firewall's create-if-missing convention.
 	changed, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840", "50000"}},
-		[]string{"10.1.0.2/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.2/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.False(t, changed, "an existing policy without --force must not change")
 	require.Equal(t, 1, r.applyCount, "no --force on an existing policy must never re-render")
@@ -274,14 +307,14 @@ func TestCreate_ForceReplacesConfigAndMembership(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-mgmt-in", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40983"}, CreatedAt: fixedTime()},
-		[]string{"10.0.0.0/8"}, "10.4.0.0/24", false)
+		[]string{"10.0.0.0/8"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	// --force with a changed port set and a different --cidrs: re-renders,
 	// replaces (not merges) membership, and keeps the original created_at.
 	changed, err := m.Create(context.Background(),
 		&Policy{Name: "bn-mgmt-in", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40983", "40984"}},
-		[]string{"192.168.0.0/16"}, "10.4.0.0/24", true)
+		[]string{"192.168.0.0/16"}, []string{"10.4.0.0/24"}, true)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -303,12 +336,12 @@ func TestCreate_ForceWithoutCIDRsClearsMembership(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		[]string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	_, err = m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		nil, "10.4.0.0/24", true)
+		nil, []string{"10.4.0.0/24"}, true)
 	require.NoError(t, err)
 	require.Empty(t, r.elements["bn-publisher"], "--force without --cidrs replaces membership with nothing")
 }
@@ -319,7 +352,7 @@ func TestCreate_PreservesSiblingMembershipAcrossRerender(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		[]string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
 
@@ -329,7 +362,7 @@ func TestCreate_PreservesSiblingMembershipAcrossRerender(t *testing.T) {
 	// rendered rule.
 	_, err = m.Create(context.Background(),
 		&Policy{Name: "bn-partner-out", Action: ActionStamp, Stamp: "partner", Ports: []string{"40980"}},
-		[]string{"10.20.0.0/16"}, "10.4.0.0/24", false)
+		[]string{"10.20.0.0/16"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"],
@@ -343,7 +376,7 @@ func TestCreate_SelfHealsMissingTableWithoutForce(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		[]string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, r.applyCount)
 
@@ -358,7 +391,7 @@ func TestCreate_SelfHealsMissingTableWithoutForce(t *testing.T) {
 	// persisted), so it comes back empty.
 	changed, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840", "50000"}},
-		[]string{"10.1.0.99/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.99/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err, "a missing table must be restored, not error")
 	require.True(t, changed)
 	require.Equal(t, 2, r.applyCount, "the table must be re-rendered when the kernel table is missing")
@@ -376,14 +409,14 @@ func TestCreate_SnapshotFailureAbortsBeforeApply(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		[]string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+		[]string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, r.applyCount)
 
 	r.listElemErr = errors.New("nft: permission denied")
 	_, err = m.Create(context.Background(),
 		&Policy{Name: "bn-partner-out", Action: ActionStamp, Stamp: "partner", Ports: []string{"40980"}},
-		nil, "10.4.0.0/24", false)
+		nil, []string{"10.4.0.0/24"}, false)
 	require.ErrorContains(t, err, "failed to snapshot live membership")
 	require.Equal(t, 1, r.applyCount, "a snapshot failure must abort before the kernel is touched")
 }
@@ -393,7 +426,7 @@ func TestCreate_DenyDoesNotRequirePodCIDR(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 
 	changed, err := m.Create(context.Background(),
-		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, "", false)
+		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, nil, false)
 	require.NoError(t, err, "a deny-only policy must not require a pod CIDR")
 	require.True(t, changed)
 	require.Equal(t, []string{"10.99.0.0/16"}, r.elements["bn-restricted"])
@@ -405,7 +438,7 @@ func TestCreate_DenyRecoversPodCIDRFromExistingNftFile(t *testing.T) {
 
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
-		nil, "10.4.0.0/24", false)
+		nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	// bn-restricted's own --deny rule never needs a pod CIDR, but the merged
@@ -413,13 +446,20 @@ func TestCreate_DenyRecoversPodCIDRFromExistingNftFile(t *testing.T) {
 	// passed here: it must be recovered from network-weaver.nft instead of
 	// erroring, mirroring internal/network/firewall's Parse().
 	changed, err := m.Create(context.Background(),
-		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, "", false)
+		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, nil, false)
 	require.NoError(t, err, "must recover the pod CIDR from the existing network-weaver.nft artifact")
 	require.True(t, changed)
 
 	doc, err := os.ReadFile(nftPath)
 	require.NoError(t, err)
 	require.Contains(t, string(doc), "10.4.0.0/24", "bn-publisher's rule must still be rendered with the recovered pod CIDR")
+
+	// A slice carrying only an empty string (e.g. Cobra StringSlice from
+	// `--pod-cidr ""`) must be normalized away so recovery still fires, rather
+	// than being treated as one explicit-but-empty pod CIDR that fails Render.
+	_, err = m.Create(context.Background(),
+		&Policy{Name: "bn-partner-out", Action: ActionDeny}, []string{"10.88.0.0/16"}, []string{""}, false)
+	require.NoError(t, err, "an empty --pod-cidr entry must not defeat pod-CIDR recovery")
 }
 
 func TestCreate_StampSiblingStillRequiresPodCIDRWhenNftFileMissing(t *testing.T) {
@@ -434,14 +474,14 @@ func TestCreate_StampSiblingStillRequiresPodCIDRWhenNftFileMissing(t *testing.T)
 	}))
 
 	_, err := m.Create(context.Background(),
-		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, "", false)
+		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, nil, false)
 	require.ErrorContains(t, err, "pod CIDR is required")
 }
 
 func TestCreate_UnknownClassRejected(t *testing.T) {
 	r := newFakeRunner()
 	m, _, _ := newTestManager(t, r)
-	_, err := m.Create(context.Background(), &Policy{Name: "bad", Action: ActionStamp, Stamp: "nonexistent"}, nil, "10.4.0.0/24", false)
+	_, err := m.Create(context.Background(), &Policy{Name: "bad", Action: ActionStamp, Stamp: "nonexistent"}, nil, []string{"10.4.0.0/24"}, false)
 	require.ErrorContains(t, err, "unknown class")
 	require.Empty(t, r.applied, "invalid policy must never reach the kernel")
 }
@@ -456,7 +496,7 @@ func TestCreate_CorruptSiblingRegistryRejected(t *testing.T) {
 	bad := `{"name":"bn-bad","action":"stamp","stamp":"retired-class","direction":"","ports":null,"from_entity_world":false}`
 	require.NoError(t, os.WriteFile(filepath.Join(regDir, "bn-bad.json"), []byte(bad), 0o644))
 
-	_, err := m.Create(context.Background(), &Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}, nil, "10.4.0.0/24", false)
+	_, err := m.Create(context.Background(), &Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}, nil, []string{"10.4.0.0/24"}, false)
 	require.ErrorContains(t, err, "corrupt policy registry entry")
 	require.Empty(t, r.applied, "a corrupt sibling entry must fail before the kernel is touched")
 }
@@ -468,13 +508,13 @@ func TestCreate_OverlappingSpecificPoliciesRejected(t *testing.T) {
 	// publisher and reserve-ingress are both DirectionIngress; same --ports
 	// makes the two policies claim the same (Direction, Ports) group.
 	a := &Policy{Name: "bn-a", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}
-	changed, err := m.Create(context.Background(), a, []string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+	changed, err := m.Create(context.Background(), a, []string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 	require.True(t, changed)
 	firstApplyCount := r.applyCount
 
 	b := &Policy{Name: "bn-b", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40840"}}
-	_, err = m.Create(context.Background(), b, []string{"10.1.0.2/32"}, "10.4.0.0/24", false)
+	_, err = m.Create(context.Background(), b, []string{"10.1.0.2/32"}, []string{"10.4.0.0/24"}, false)
 	require.ErrorContains(t, err, "overlaps with existing policy")
 
 	require.Equal(t, firstApplyCount, r.applyCount, "a rejected overlap must never reach the kernel")
@@ -486,12 +526,12 @@ func TestCreate_OverlapCheckExcludesSelfOnForce(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 
 	a := &Policy{Name: "bn-a", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}}
-	_, err := m.Create(context.Background(), a, []string{"10.1.0.1/32"}, "10.4.0.0/24", false)
+	_, err := m.Create(context.Background(), a, []string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	// Re-creating the SAME name with --force must not trip the overlap check
 	// against its own prior registry entry.
-	changed, err := m.Create(context.Background(), a, []string{"10.1.0.2/32"}, "10.4.0.0/24", true)
+	changed, err := m.Create(context.Background(), a, []string{"10.1.0.2/32"}, []string{"10.4.0.0/24"}, true)
 	require.NoError(t, err)
 	require.True(t, changed)
 }
@@ -501,11 +541,11 @@ func TestCreate_FromEntityWorldNotSubjectToOverlapCheck(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 
 	a := &Policy{Name: "bn-a", Action: ActionStamp, Stamp: "public", FromEntityWorld: true, Ports: []string{"9000"}}
-	_, err := m.Create(context.Background(), a, nil, "10.4.0.0/24", false)
+	_, err := m.Create(context.Background(), a, nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	b := &Policy{Name: "bn-b", Action: ActionStamp, Stamp: "reserve-egress", FromEntityWorld: true, Ports: []string{"9000"}}
-	changed, err := m.Create(context.Background(), b, nil, "10.4.0.0/24", false)
+	changed, err := m.Create(context.Background(), b, nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err, "fallthrough policies sharing direction+ports are not overlap-checked")
 	require.True(t, changed)
 
