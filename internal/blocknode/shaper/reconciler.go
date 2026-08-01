@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -234,7 +235,10 @@ func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 		if conn.Remote.Port == "" || conn.Remote.Port == "*" {
 			continue
 		}
-		ce[k] = append(ce[k], conn.Remote.Address+":"+conn.Remote.Port)
+		// net.JoinHostPort brackets an IPv6 host ("[2001:db8::1]:443") so the
+		// compound token parses unambiguously downstream; a v4 host is joined
+		// plainly ("1.2.3.4:443"), unchanged from before.
+		ce[k] = append(ce[k], net.JoinHostPort(conn.Remote.Address, conn.Remote.Port))
 	}
 }
 
@@ -243,19 +247,24 @@ func bucketize(ce categoryEndpoints, dir Direction, data NetworkData) {
 // as a bare host IP ("198.51.100.7"), but policy.Manager.ApplySets validates
 // every plain-set element as a CIDR and rejects a bare IP outright
 // (sanity.ValidateCIDR: callers must be explicit about the mask). A bare IPv4
-// host is therefore rendered as an explicit /32; a value that already carries a
-// prefix ("10.0.0.0/24"), or that does not parse as a bare IPv4 address (an
-// unexpected wildcard or IPv6 token), is returned unchanged so the downstream
-// validator surfaces a precise error rather than this stage silently mangling
-// it. The /32 is diff-stable: policy.CanonicalizeElements collapses it back to
-// the bare address nft prints, so digests and membership deltas are identical to
-// the pre-normalization form.
+// host is therefore rendered as an explicit /32, and a bare IPv6 host as an
+// explicit /128; a value that already carries a prefix ("10.0.0.0/24"), or that
+// does not parse as a bare IP address (an unexpected wildcard token), is
+// returned unchanged so the downstream validator surfaces a precise error rather
+// than this stage silently mangling it. The /32 (and /128) is diff-stable:
+// policy.CanonicalizeElements collapses it back to the bare address nft prints,
+// so digests and membership deltas are identical to the pre-normalization form.
 func hostCIDR(addr string) string {
 	if strings.Contains(addr, "/") {
 		return addr
 	}
-	if a, err := netip.ParseAddr(addr); err == nil && a.Is4() {
-		return addr + "/32"
+	if a, err := netip.ParseAddr(addr); err == nil {
+		if a.Is4() {
+			return addr + "/32"
+		}
+		if a.Is6() {
+			return addr + "/128"
+		}
 	}
 	return addr
 }

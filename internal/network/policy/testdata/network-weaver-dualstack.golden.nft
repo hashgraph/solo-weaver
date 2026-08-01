@@ -32,15 +32,21 @@ table inet weaver {
 
 		# Classification — specific matches.
 		ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill ct mark set 0x20 meta priority set 0x10060 accept
+		ip6 saddr 2001:db8:c0de::/64 ip6 daddr . tcp dport @bn-backfill6 ct mark set 0x20 meta priority set 0x10060 accept
 		ip saddr 10.4.0.0/24 ip daddr @bn-partner-out tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
+		ip6 saddr 2001:db8:c0de::/64 ip6 daddr @bn-partner-out6 tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
 		ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept
+		ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6 tcp dport @bn-publisher_ports meta priority set 0x10010 accept
 
 		# Classification — fallthrough (any source/dest).
 		ip saddr 10.4.0.0/24 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
+		ip6 saddr 2001:db8:c0de::/64 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
 		ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
+		ip6 daddr 2001:db8:c0de::/64 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
 
 		# Unclassified pod egress (no meta priority; HTB default class).
 		ip saddr 10.4.0.0/24 accept
+		ip6 saddr 2001:db8:c0de::/64 accept
 
 		ct state established,related accept
 		drop

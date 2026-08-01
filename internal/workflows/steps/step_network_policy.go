@@ -204,7 +204,10 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 				}
 
 				cidrs := initialCIDRs(c, mgmtCIDRs)
-				changed, err := mgr.Create(ctx, c.toPolicy(healthPort), cidrs, podCIDR, force)
+				// Install-time wiring auto-detects a single (v4) pod CIDR; dual-stack
+				// v6 classification is opt-in via the `network policy create --pod-cidr`
+				// CLI (Manager.Create accepts a mixed v4/v6 list).
+				changed, err := mgr.Create(ctx, c.toPolicy(healthPort), cidrs, []string{podCIDR}, force)
 				if err != nil {
 					stp.State().Local().Set(policyCreatedNamesKey, created)
 					return automa.FailureReport(stp, automa.WithError(

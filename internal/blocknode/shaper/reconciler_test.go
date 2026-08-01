@@ -174,6 +174,26 @@ func TestBucketizeEndpoints_NormalizesBareHostToSlash32(t *testing.T) {
 	assert.Equal(t, []string{"198.51.100.0/24"}, ce[bindingKey{Inbound, CategoryPartner}])
 }
 
+// TestBucketizeEndpoints_IPv6 mirrors the /32 normalization for IPv6: a bare v6
+// peer becomes an explicit /128 (the form the policy layer accepts), and a
+// compound (outbound partner) v6 endpoint is bracketed so its ip:port token
+// parses unambiguously downstream in CompoundElement.
+func TestBucketizeEndpoints_IPv6(t *testing.T) {
+	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		conn("publisher", "2001:db8::1", "*"),   // bare v6 host → /128
+		conn("partner", "2001:db8:a::/48", "*"), // already a CIDR → unchanged
+	}}
+	outbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		conn("partner", "2001:db8::2", "43473"), // compound v6 → bracketed ip:port
+	}}
+
+	ce := bucketizeEndpoints(inbound, outbound)
+
+	assert.Equal(t, []string{"2001:db8::1/128"}, ce[bindingKey{Inbound, CategoryPublisher}])
+	assert.Equal(t, []string{"2001:db8:a::/48"}, ce[bindingKey{Inbound, CategoryPartner}])
+	assert.Equal(t, []string{"[2001:db8::2]:43473"}, ce[bindingKey{Outbound, CategoryPartner}])
+}
+
 // TestReconciler_Apply_NormalizesBareHostMembership is the end-to-end guard: a
 // statusz snapshot carrying a bare host IP must reach ApplySets as an explicit
 // /32 CIDR (the form policy.Manager.ApplySets accepts), not the bare address

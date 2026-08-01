@@ -122,7 +122,7 @@ func TestRenderWeaverNft_RecoversPodCIDRFromExistingFile(t *testing.T) {
 	out := filepath.Join(dir, "network-weaver.nft")
 
 	// Seed the output file with content that embeds the pod CIDR so
-	// ExtractPodCIDR can recover it when podCIDR="" is passed.
+	// ExtractPodCIDRs can recover it when no pod CIDR is passed.
 	const podCIDR = "10.244.0.0/16"
 	require.NoError(t, os.WriteFile(out, []byte("ip daddr "+podCIDR+" placeholder\n"), 0o644))
 
