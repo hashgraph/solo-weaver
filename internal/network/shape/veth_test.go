@@ -48,6 +48,12 @@ func (r *recordingTCRunner) QdiscAddFqCodel(_ context.Context, nic, minor, handl
 	return r.record(fmt.Sprintf("qdisc-fqcodel %s 1:%s handle=%s", nic, minor, handle))
 }
 
+// ClassStats is unused by the write-path tests; the watch tests use a dedicated
+// scripted fake (see stats_test.go).
+func (r *recordingTCRunner) ClassStats(_ context.Context, _ string) (map[string]ClassStat, error) {
+	return nil, nil
+}
+
 func newRecordingManager(t *testing.T, tc TCRunner) *Manager {
 	t.Helper()
 	return NewManagerWithConfig(Config{

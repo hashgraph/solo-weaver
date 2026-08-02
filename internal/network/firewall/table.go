@@ -43,8 +43,16 @@ type Table struct {
 	// SSHPort is the TCP port accepted from @mgmt_addrs for management access.
 	SSHPort int
 	// PodCIDR is the source range allowed to reach @in_cluster_ports. Empty
-	// means no in-cluster port rule is rendered.
+	// means no in-cluster port rule is rendered. It may hold either an IPv4 or
+	// IPv6 CIDR; Render routes it to the matching (`ip`/`ip6`) rule by family.
 	PodCIDR string
+	// PodCIDR6 is the optional IPv6 companion to PodCIDR so a dual-stack node can
+	// admit in-cluster traffic over both families. It is a separate field (rather
+	// than folding PodCIDR into a slice) to keep the existing single-value callers
+	// — the block-node install/reconfigure wiring — untouched. Render family-routes
+	// whichever of PodCIDR/PodCIDR6 is set, so mis-slotting a value by family still
+	// renders correctly.
+	PodCIDR6 string
 }
 
 // NewTable returns a Table populated with the design defaults. Callers override
@@ -65,20 +73,26 @@ func NewTable() *Table {
 // break the atomic transaction or smuggle in nft syntax.
 func (t *Table) Validate() error {
 	for _, c := range t.MgmtCIDRs {
-		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", c)
 		}
 	}
 
 	for _, c := range t.BlockedCIDRs {
-		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --blocked-cidr %q", c)
 		}
 	}
 
 	if t.PodCIDR != "" {
-		if err := sanity.ValidateIPv4CIDR(t.PodCIDR); err != nil {
+		if err := sanity.ValidateCIDR(t.PodCIDR); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --pod-cidr %q", t.PodCIDR)
+		}
+	}
+
+	if t.PodCIDR6 != "" {
+		if err := sanity.ValidateCIDR(t.PodCIDR6); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid --pod-cidr %q", t.PodCIDR6)
 		}
 	}
 
@@ -97,7 +111,7 @@ func (t *Table) Validate() error {
 
 // AddMgmtCIDR adds a single CIDR to the management allowlist (idempotent).
 func (t *Table) AddMgmtCIDR(cidr string) error {
-	if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+	if err := sanity.ValidateCIDR(cidr); err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", cidr)
 	}
 	if sanity.Contains(cidr, t.MgmtCIDRs) {
@@ -123,7 +137,7 @@ func (t *Table) RemoveMgmtCIDR(cidr string) {
 // SetMgmtCIDRs atomically replaces the full management allowlist.
 func (t *Table) SetMgmtCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
-		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --mgmt-cidr %q", c)
 		}
 	}
@@ -135,7 +149,7 @@ func (t *Table) SetMgmtCIDRs(cidrs []string) error {
 
 // AddBlockedCIDR adds a single CIDR to the operator block list (idempotent).
 func (t *Table) AddBlockedCIDR(cidr string) error {
-	if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+	if err := sanity.ValidateCIDR(cidr); err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid --blocked-cidr %q", cidr)
 	}
 	if sanity.Contains(cidr, t.BlockedCIDRs) {
@@ -161,7 +175,7 @@ func (t *Table) RemoveBlockedCIDR(cidr string) {
 // SetBlockedCIDRs atomically replaces the full operator block list.
 func (t *Table) SetBlockedCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
-		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --blocked-cidr %q", c)
 		}
 	}

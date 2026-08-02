@@ -12,12 +12,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// podCIDRArg wraps a single pod CIDR for Manager.Create's []string parameter,
+// mapping "" to nil so the empty case still triggers .nft pod-CIDR recovery
+// rather than passing a stray empty element.
+func podCIDRArg(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return []string{s}
+}
+
+func TestManager_MembershipRoutesByFamily(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedPolicy(t, m, "bn-publisher", "publisher", []string{"40840"}, nil, "10.4.0.0/24")
+
+	ctx := context.Background()
+
+	// A mixed v4/v6 Add routes each family to its own set (@name and @name6).
+	require.NoError(t, m.Add(ctx, "bn-publisher", []string{"10.1.0.1/32", "2001:db8::1/128"}))
+	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
+	require.Equal(t, []string{"2001:db8::1/128"}, r.elements["bn-publisher6"])
+
+	// Set full-replaces each family independently: a v6-only Set clears the v4
+	// set (present/absent reconcile semantics per family).
+	require.NoError(t, m.Set(ctx, "bn-publisher", []string{"2001:db8::2/128"}))
+	require.Empty(t, r.elements["bn-publisher"])
+	require.Equal(t, []string{"2001:db8::2/128"}, r.elements["bn-publisher6"])
+
+	// Show surfaces both families' live sets.
+	out, err := m.Show(ctx, "bn-publisher")
+	require.NoError(t, err)
+	require.Contains(t, out, "live set @bn-publisher:")
+	require.Contains(t, out, "live set @bn-publisher6:")
+}
+
 // seedPolicy creates a policy via Create and verifies no error.
 func seedPolicy(t *testing.T, m *Manager, name, stamp string, ports []string, cidrs []string, podCIDR string) {
 	t.Helper()
 	_, err := m.Create(context.Background(),
 		&Policy{Name: name, Action: ActionStamp, Stamp: stamp, Ports: ports},
-		cidrs, podCIDR, false)
+		cidrs, podCIDRArg(podCIDR), false)
 	require.NoError(t, err)
 }
 
@@ -25,7 +60,7 @@ func seedDenyPolicy(t *testing.T, m *Manager, name string, cidrs []string) {
 	t.Helper()
 	_, err := m.Create(context.Background(),
 		&Policy{Name: name, Action: ActionDeny},
-		cidrs, "", false)
+		cidrs, nil, false)
 	require.NoError(t, err)
 }
 
@@ -63,7 +98,7 @@ func TestAdd_FromEntityWorldPolicyRejected(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-public-out", Action: ActionStamp, Stamp: "public", FromEntityWorld: true, Ports: []string{"40980"}},
-		nil, "10.4.0.0/24", false)
+		nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	err = m.Add(context.Background(), "bn-public-out", []string{"10.0.0.1/32"})
@@ -182,6 +217,27 @@ func TestShow_StampPolicy(t *testing.T) {
 	require.Contains(t, out, "10.1.0.1/32")
 }
 
+func TestShow_Layout_DirectionLeadsAndLiveSetNested(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedPolicy(t, m, "bn-publisher", "publisher", []string{"40840"},
+		[]string{"10.1.0.1/32"}, "10.4.0.0/24")
+
+	out, err := m.Show(context.Background(), "bn-publisher")
+	require.NoError(t, err)
+
+	// direction is the first field under the policy header (before action).
+	require.Less(t, strings.Index(out, "direction:"), strings.Index(out, "action:"),
+		"direction must be listed before action")
+
+	// The live set is nested inside the policy block: its header is indented two
+	// spaces (same level as action/class/created) and its members four spaces —
+	// not flush-left as a separate top-level section.
+	require.Contains(t, out, "  live set @bn-publisher:\n")
+	require.Contains(t, out, "    10.1.0.1/32\n")
+	require.NotContains(t, out, "\nlive set @", "live set must not be a flush-left top-level section")
+}
+
 func TestShow_DenyPolicy(t *testing.T) {
 	r := newFakeRunner()
 	m, _, _ := newTestManager(t, r)
@@ -199,7 +255,7 @@ func TestShow_FromEntityWorldPolicy(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-public-out", Action: ActionStamp, Stamp: "public", FromEntityWorld: true, Ports: []string{"40980"}},
-		nil, "10.4.0.0/24", false)
+		nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	out, err := m.Show(context.Background(), "bn-public-out")
@@ -316,7 +372,7 @@ func TestDelete_CompoundSetPolicy(t *testing.T) {
 	m, _, regDir := newTestManager(t, r)
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
-		[]string{"10.30.5.7:43473"}, "10.4.0.0/24", false)
+		[]string{"10.30.5.7:43473"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	require.NoError(t, m.Delete(context.Background(), "bn-backfill"))
@@ -331,7 +387,7 @@ func TestAdd_CompoundSetPolicy(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
-		nil, "10.4.0.0/24", false)
+		nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	require.NoError(t, m.Add(context.Background(), "bn-backfill", []string{"10.30.5.7:43473"}))
@@ -344,7 +400,7 @@ func TestSet_CompoundSetPolicy(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
-		[]string{"10.30.5.7:43473"}, "10.4.0.0/24", false)
+		[]string{"10.30.5.7:43473"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	require.NoError(t, m.Set(context.Background(), "bn-backfill", []string{"10.30.5.8:43473"}))
@@ -356,7 +412,7 @@ func TestShow_ReplyStampPolicy(t *testing.T) {
 	m, _, _ := newTestManager(t, r)
 	_, err := m.Create(context.Background(),
 		&Policy{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
-		[]string{"10.30.5.7:43473"}, "10.4.0.0/24", false)
+		[]string{"10.30.5.7:43473"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	out, err := m.Show(context.Background(), "bn-backfill")

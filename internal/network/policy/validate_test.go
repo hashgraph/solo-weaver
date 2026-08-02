@@ -97,10 +97,22 @@ func TestValidate(t *testing.T) {
 			wantErr: "invalid --cidrs entry",
 		},
 		{
-			name:    "ipv6 cidr rejected",
+			name:    "ipv6 cidr accepted (dual-stack)",
 			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
 			cidrs:   []string{"2001:db8::/32"},
-			wantErr: "IPv6 is not yet supported",
+			wantErr: "",
+		},
+		{
+			name:    "mixed v4/v6 cidrs accepted",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
+			cidrs:   []string{"10.1.0.0/16", "2001:db8::/32"},
+			wantErr: "",
+		},
+		{
+			name:    "reply-stamp accepts bracketed ipv6 ip:port",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
+			cidrs:   []string{"[2001:db8::7]:443"},
+			wantErr: "",
 		},
 		{
 			name:    "reply-stamp cidr without port rejected",

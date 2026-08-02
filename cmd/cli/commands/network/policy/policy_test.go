@@ -155,8 +155,8 @@ func resetFlags() {
 	flagName, flagStamp = "", ""
 	flagDeny = false
 	flagReplyStamp, flagFromEntity = "", ""
-	flagPorts, flagCIDRs, flagCIDR = nil, nil, nil
-	flagCIDRsFile, flagPodCIDR = "", ""
+	flagPorts, flagCIDRs, flagCIDR, flagPodCIDR = nil, nil, nil, nil
+	flagCIDRsFile = ""
 	// Command singletons share cobra flag state across Execute() calls; clear
 	// Changed so prior-test values don't trip mutual-exclusion guards.
 	for _, cmd := range []*cobra.Command{createCmd, addCmd, removeCmd, setCmd, showCmd, deleteCmd} {
@@ -376,7 +376,10 @@ func TestSetCmd_CIDRsAndFileMutuallyExclusive(t *testing.T) {
 // --- show verb ---
 
 func TestShowCmd_Flags(t *testing.T) {
-	require.NotNil(t, showCmd.Flags().Lookup("name"), "show is missing --name")
+	f := showCmd.Flags().Lookup("name")
+	require.NotNil(t, f, "show is missing --name")
+	require.NotContains(t, f.Annotations, cobra.BashCompOneRequiredFlag,
+		"--name must not be required: a bare `show` lists all policies (parity with `shape show`)")
 }
 
 func TestShowCmd_PrintsOutput(t *testing.T) {
@@ -396,6 +399,31 @@ func TestShowCmd_PolicyNotFound(t *testing.T) {
 	env := newTestEnv(t)
 	_, err := env.runShow(t, "--name", "bn-nonexistent")
 	require.ErrorContains(t, err, "not found")
+}
+
+func TestShowCmd_NoName_ListsAllPolicies(t *testing.T) {
+	env := newTestEnv(t)
+	_, err := env.runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840",
+		"--cidrs", "10.1.0.1/32")
+	require.NoError(t, err)
+	_, err = env.runCreate(t, "--name", "bn-partner-out", "--stamp", "partner", "--ports", "40841",
+		"--cidrs", "10.2.0.1/32")
+	require.NoError(t, err)
+
+	// Bare `show` (no --name) lists every configured policy.
+	out, err := env.runShow(t)
+	require.NoError(t, err)
+	require.Contains(t, out, "policy: bn-publisher")
+	require.Contains(t, out, "policy: bn-partner-out")
+}
+
+func TestShowCmd_NoName_EmptyRegistry(t *testing.T) {
+	env := newTestEnv(t)
+	// With no policies configured, a bare `show` is not an error — it reports
+	// the empty state, mirroring `network shape show`.
+	out, err := env.runShow(t)
+	require.NoError(t, err)
+	require.Contains(t, out, "no policies configured")
 }
 
 // --- delete verb ---

@@ -46,6 +46,35 @@ func TestSanity_ValidateCIDR(t *testing.T) {
 	}
 }
 
+func TestSanity_CIDRIsIPv6(t *testing.T) {
+	testCases := []struct {
+		name    string
+		cidr    string
+		wantV6  bool
+		wantErr bool
+	}{
+		{name: "ipv4", cidr: "10.0.0.0/8", wantV6: false},
+		{name: "ipv4 host", cidr: "192.168.68.117/32", wantV6: false},
+		{name: "ipv6", cidr: "2001:db8::/32", wantV6: true},
+		{name: "ipv6 host", cidr: "2001:db8::1/128", wantV6: true},
+		{name: "ipv4-mapped ipv6 classifies as ipv4", cidr: "::ffff:10.0.0.1/128", wantV6: false},
+		{name: "not a cidr", cidr: "not-a-cidr", wantErr: true},
+		{name: "bare ip", cidr: "10.0.0.1", wantErr: true},
+		{name: "empty", cidr: "", wantErr: true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			isV6, err := CIDRIsIPv6(tc.cidr)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantV6, isV6)
+		})
+	}
+}
+
 func TestSanity_ValidatePort(t *testing.T) {
 	testCases := []struct {
 		name        string
