@@ -33,6 +33,10 @@ const (
 	ctxKeyManager    = "blocknode.manager"
 	ctxKeyProfile    = "blocknode.profile"
 	ctxKeyValuesFile = "blocknode.valuesFile"
+	// ctxKeyManagePlugins carries the #913 plugins-baked signal (a bool) into
+	// StorageMigration.Applies. It is set before migration filtering, unlike
+	// ctxKeyManager which is only available for Execute/Rollback.
+	ctxKeyManagePlugins = "blocknode.managePlugins"
 )
 
 // StorageMigration handles the breaking change pattern where a new storage PV/PVC
@@ -75,7 +79,27 @@ func (m *StorageMigration) Applies(mctx *migration.Context) (bool, error) {
 	}
 
 	targetVersion, _ := mctx.Data.String(migration.CtxKeyTargetVersion)
-	return m.storage.RequiredByVersion(targetVersion), nil
+	if !m.storage.RequiredByVersion(targetVersion) {
+		return false, nil
+	}
+
+	// #913: the plugins storage is only managed when the effective plugins.names
+	// is non-empty. For a plugins-baked image (empty names) the chart renders no
+	// plugins volume, so an upgrade must not (re-)provision the plugins PV/PVC —
+	// otherwise the empty managed PVC would shadow the image's baked plugins.
+	// The signal is read from a context bool set by BuildMigrationWorkflow before
+	// migration filtering (the Manager itself is only added to the context later,
+	// for Execute/Rollback). When the key is absent (e.g. unit tests exercising
+	// pure version logic) the migration stays applicable — the pre-#913 default.
+	if m.storage.Name == "plugins" {
+		if v, ok := mctx.Data.Get(ctxKeyManagePlugins); ok {
+			if managePlugins, isBool := v.(bool); isBool && !managePlugins {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
 }
 
 // Execute creates the storage directory on the host and the PV/PVC in Kubernetes.
