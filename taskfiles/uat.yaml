@@ -168,37 +168,28 @@ tasks:
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 
-        echo -e '\n▶ Upgrade to latest (v0.35.1) using updated chartVersion in config'
+        echo -e '\n▶ Upgrade to latest (v0.39.0) using updated chartVersion in config'
         sudo solo-provisioner block node upgrade -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 
 
-        echo -e '\n▶ Verify upgrade to latest (v0.35.1)'
+        echo -e '\n▶ Verify upgrade to latest (v0.39.0)'
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
-        [ "$CHART_VER" = "0.35.1" ] || { echo "FAIL: expected chart version 0.35.1, got $CHART_VER"; exit 1; }
+        [ "$CHART_VER" = "0.39.0" ] || { echo "FAIL: expected chart version 0.39.0, got $CHART_VER"; exit 1; }
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
 
-        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.35.1'
+        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.39.0'
         ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
-        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.35.1 upgrade, got: '$ANNOTATION'"; exit 1; }
+        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.39.0 upgrade, got: '$ANNOTATION'"; exit 1; }
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 
-        echo -e '\n▶ Verify application-state PVC is NOT created on the upgrade path to 0.35.1'
-        # The application-state registry MinVersion is BlockNodeApplicationStateRequiredVersion
-        # = 0.37.0 — the chart version where hiero-ledger/hiero-block-node#3025 introduces the
-        # new volume in lockstep with verification retirement. An existing cluster upgraded
-        # through 0.29.0 → 0.30.2 → 0.35.1 never crosses 0.37.0, so neither the registry's
-        # CreatePersistentVolumes nor the migration creates the PVC here. Once a tagged
-        # release containing #3025 is published, extend this chain with a step to that
-        # release and flip the assertion.
-        if kubectl get pvc -n block-node application-state-storage-pvc >/dev/null 2>&1; then
-          echo "FAIL: application-state-storage-pvc should not be created on the upgrade path to 0.35.1 (MinVersion is 0.37.0)"
-          exit 1
-        fi
-        echo "   ✓ application-state PVC absent (MinVersion correctly at 0.37.0)"
+        echo -e '\n▶ Verify application-state PVC is created after upgrade to 0.39.0'
+        PHASE=$(kubectl get pvc -n block-node application-state-storage-pvc -o jsonpath='{.status.phase}' 2>/dev/null || echo "MISSING")
+        [ "$PHASE" = "Bound" ] || { echo "FAIL: expected application-state-storage-pvc to be Bound at chart 0.39.0, got: $PHASE"; exit 1; }
+        echo "   ✓ application-state-storage-pvc (Bound)"
 
 
         echo -e '\n▶ Block node reset'
