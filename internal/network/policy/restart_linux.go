@@ -13,7 +13,7 @@ import (
 // RestartNetworkNftService restarts the shared solo-provisioner-network-nft.service
 // oneshot so the kernel picks up any nft files written since the last restart.
 // The unit's RemainAfterExit=yes state is updated to reflect both
-// network-host.nft and network-weaver.nft as loaded.
+// network-weaver-host-firewall.nft and network-weaver-blocknode-classifier.nft as loaded.
 func RestartNetworkNftService(ctx context.Context) error {
 	return soos.RestartService(ctx, NetworkNftService)
 }

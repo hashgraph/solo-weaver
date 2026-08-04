@@ -3,7 +3,7 @@
 // Package shape wires the `solo-provisioner network shape` verbs to the
 // internal/network/shape manager. The shape scope manages the tc HTB bandwidth
 // plane on $EGRESS (physical NIC) and $VETH (pod traffic), maintaining
-// per-class rate/ceil/prio configurations that drive the tc-egress.sh boot
+// per-class rate/ceil/prio configurations that drive the bandwidth-shaper.sh boot
 // script and the daemon pod-lifecycle watcher.
 //
 // Two forms of `create` are supported, mutually exclusive via --class/--device:
@@ -34,7 +34,7 @@ var shapeCmd = &cobra.Command{
 	Short: "Manage tc HTB bandwidth classes on $EGRESS and $VETH",
 	Long: "Manage the tc HTB bandwidth plane: configure root qdisc devices and per-class " +
 		"rate/ceil/prio bandwidth parameters. Egress mutations re-render " +
-		"solo-provisioner-tc-egress.sh and restart the boot service. Ingress mutations " +
+		"solo-provisioner-bandwidth-shaper.sh and restart the boot service. Ingress mutations " +
 		"write config for the daemon pod-lifecycle watcher to apply to each new veth interface.",
 	RunE: common.DefaultRunE,
 }

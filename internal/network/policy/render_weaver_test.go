@@ -16,7 +16,7 @@ import (
 
 func TestRenderWeaverNft_EmptyRegistry(t *testing.T) {
 	dir := t.TempDir()
-	out := filepath.Join(dir, "network-weaver.nft")
+	out := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
 
 	// Missing registry dir is treated as an empty registry: must be a no-op.
 	// Writing a forward chain with policy drop for zero policies would silently
@@ -29,23 +29,23 @@ func TestRenderWeaverNft_EmptyRegistry(t *testing.T) {
 
 func TestRenderWeaverNft_EmptyRegistryRemovesStaleFile(t *testing.T) {
 	dir := t.TempDir()
-	out := filepath.Join(dir, "network-weaver.nft")
+	out := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
 
 	// A stale file left over from a previous non-empty render. An empty registry
 	// must remove it so the boot oneshot never replays a harmful/old table.
-	require.NoError(t, os.WriteFile(out, []byte("table inet weaver { }\n"), 0o644))
+	require.NoError(t, os.WriteFile(out, []byte("table inet weaver-blocknode-classifier { }\n"), 0o644))
 
 	require.NoError(t, RenderWeaverNft(filepath.Join(dir, "policies"), out, ""))
 
 	_, err := os.Stat(out)
-	require.True(t, os.IsNotExist(err), "stale network-weaver.nft must be removed for an empty registry")
+	require.True(t, os.IsNotExist(err), "stale network-weaver-blocknode-classifier.nft must be removed for an empty registry")
 }
 
 func TestRenderWeaverNft_DenyPolicy(t *testing.T) {
 	dir := t.TempDir()
 	regDir := filepath.Join(dir, "policies")
 	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	out := filepath.Join(dir, "network-weaver.nft")
+	out := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
 
 	p := &Policy{
 		Name:      "bn-restricted",
@@ -68,7 +68,7 @@ func TestRenderWeaverNft_IdempotentWrite(t *testing.T) {
 	dir := t.TempDir()
 	regDir := filepath.Join(dir, "policies")
 	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	out := filepath.Join(dir, "network-weaver.nft")
+	out := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
 
 	// Use a deny policy so the registry is non-empty and a file is actually written.
 	p := &Policy{
@@ -105,7 +105,7 @@ func TestRenderWeaverNft_CorruptRegistry(t *testing.T) {
 	dir := t.TempDir()
 	regDir := filepath.Join(dir, "policies")
 	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	out := filepath.Join(dir, "network-weaver.nft")
+	out := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
 
 	require.NoError(t, os.WriteFile(filepath.Join(regDir, "bad.json"), []byte("not json"), 0o644))
 
@@ -119,7 +119,7 @@ func TestRenderWeaverNft_RecoversPodCIDRFromExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	regDir := filepath.Join(dir, "policies")
 	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	out := filepath.Join(dir, "network-weaver.nft")
+	out := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
 
 	// Seed the output file with content that embeds the pod CIDR so
 	// ExtractPodCIDRs can recover it when no pod CIDR is passed.

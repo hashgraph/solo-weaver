@@ -17,7 +17,7 @@ import (
 
 // defaultApplyViaService installs the network-nft unit file if absent, enables
 // it for boot, and restarts it so the kernel picks up the just-written
-// network-host.nft immediately — all via DBus, no nft exec for the apply path.
+// network-weaver-host-firewall.nft immediately — all via DBus, no nft exec for the apply path.
 func defaultApplyViaService(ctx context.Context) error {
 	if err := EnsureNetworkNftUnit(ctx); err != nil {
 		return err

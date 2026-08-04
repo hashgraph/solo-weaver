@@ -124,7 +124,7 @@ type MachineState struct {
 	Software map[string]SoftwareState `yaml:"software" json:"software"`
 	Hardware map[string]HardwareState `yaml:"hardware" json:"hardware"` // e.g. CPU, RAM, Disk info
 	// Firewall records the last-resolved host-firewall configuration so
-	// reconfigure/upgrade can re-assert the inet host table (especially after a
+	// reconfigure/upgrade can re-assert the inet weaver-host-firewall table (especially after a
 	// disable→re-enable) without the operator re-supplying --mgmt-cidrs. It is
 	// host-scoped — it lives here, not on BlockNodeState, so it survives a
 	// block-node uninstall. Nil means "never configured" (old state files, or a

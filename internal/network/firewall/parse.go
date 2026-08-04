@@ -10,7 +10,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// Parse reconstructs a Table from the on-disk network-host.nft artifact. It
+// Parse reconstructs a Table from the on-disk network-weaver-host-firewall.nft artifact. It
 // understands only the exact format this package renders (see the embedded
 // template) — it is not a general nft parser. A render→parse→render round-trip
 // is the identity, which is pinned by TestRoundTrip. Element verbs (add/remove/
@@ -19,7 +19,7 @@ func Parse(content string) (*Table, error) {
 	t := &Table{SSHPort: DefaultSSHPort}
 
 	if !strings.Contains(content, "table "+TableName+" {") {
-		return nil, errorx.IllegalFormat.New("not a recognised inet host ruleset")
+		return nil, errorx.IllegalFormat.New("not a recognised inet weaver-host-firewall ruleset")
 	}
 
 	// Merge each family's set back into the single mixed list the Table holds.

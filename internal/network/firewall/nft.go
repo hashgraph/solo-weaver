@@ -18,12 +18,12 @@ import (
 // interface. Tests substitute a fake so the package builds and unit-tests on
 // any platform (including macOS) without touching the kernel.
 type Runner interface {
-	// List returns the rendered ruleset for the inet host table
-	// (`nft list table inet host`).
+	// List returns the rendered ruleset for the inet weaver-host-firewall table
+	// (`nft list table inet weaver-host-firewall`).
 	List(ctx context.Context) (string, error)
-	// Delete removes the inet host table (`nft delete table inet host`).
+	// Delete removes the inet weaver-host-firewall table (`nft delete table inet weaver-host-firewall`).
 	Delete(ctx context.Context) error
-	// Exists reports whether the inet host table is present in the kernel.
+	// Exists reports whether the inet weaver-host-firewall table is present in the kernel.
 	Exists(ctx context.Context) (bool, error)
 }
 
@@ -35,7 +35,7 @@ var nftBinCandidates = []string{"/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft"}
 // tableArgs splits TableName into the argv tokens nft expects for sub-commands
 // that take a family and table name as separate arguments (list, delete).
 // exec.Command does not tokenise arguments on whitespace, so passing TableName
-// as a single arg would send "inet host" as one token instead of two.
+// as a single arg would send "inet weaver-host-firewall" as one token instead of two.
 var tableArgs = strings.Fields(TableName) // ["inet", "host"]
 
 // execRunner shells out to the system nft binary.
@@ -78,7 +78,7 @@ func (r *execRunner) Delete(ctx context.Context) error {
 }
 
 func (r *execRunner) Exists(ctx context.Context) (bool, error) {
-	// `nft list table inet host` exits zero when the table is present and
+	// `nft list table inet weaver-host-firewall` exits zero when the table is present and
 	// non-zero (with "No such file or directory" on stderr) when it is absent.
 	// There is no false-positive risk in treating any failure as "absent": the
 	// subsequent Apply will surface a genuine nft/permission error if one exists.

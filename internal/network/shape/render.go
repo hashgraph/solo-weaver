@@ -15,7 +15,7 @@ import (
 // hyphens, underscores, and periods; 1–15 characters (kernel IFNAMSIZ limit).
 var nicNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,15}$`)
 
-// scriptData is the template context for the tc-egress.sh boot script.
+// scriptData is the template context for the bandwidth-shaper.sh boot script.
 type scriptData struct {
 	NIC       string
 	SpeedMbit int // <0 omits the SPEED block (explicit per-class rates); >=0 emits sysfs auto-detect
@@ -43,14 +43,14 @@ type classRenderData struct {
 	Prio   int
 }
 
-// renderTcEgressScript renders the tc-egress.sh template with default
+// renderTcEgressScript renders the bandwidth-shaper.sh template with default
 // SPEED-based rate expressions, preserving backward compatibility when no
 // shape config exists. SpeedMbit is left at 0 (sysfs auto-detect at boot).
 func renderTcEgressScript(nicName string) (string, error) {
 	return renderTcEgressScriptFromData(defaultScriptData(nicName))
 }
 
-// renderTcEgressUnshapeScript renders a teardown-only tc-egress.sh: it deletes
+// renderTcEgressUnshapeScript renders a teardown-only bandwidth-shaper.sh: it deletes
 // the root qdisc and re-adds nothing, leaving the NIC unshaped both live (on
 // service restart) and across reboots. TeardownEgress uses this instead of the
 // default-shaping render so disabling traffic shaping actually removes the HTB
@@ -59,7 +59,7 @@ func renderTcEgressUnshapeScript(nicName string) (string, error) {
 	return renderTcEgressScriptFromData(scriptData{NIC: nicName, SpeedMbit: -1, Unshape: true})
 }
 
-// renderTcEgressScriptFromConfig renders the tc-egress.sh template from the
+// renderTcEgressScriptFromConfig renders the bandwidth-shaper.sh template from the
 // provided device and class configurations. Classes are rendered in the order
 // supplied by the caller; loadClassesForDir returns them sorted by name.
 func renderTcEgressScriptFromConfig(nicName string, dev *DeviceConfig, classes []*ClassConfig) (string, error) {
@@ -94,7 +94,7 @@ func renderTcEgressScriptFromConfig(nicName string, dev *DeviceConfig, classes [
 
 // defaultScriptData returns the legacy SPEED-based scriptData for the egress
 // device: the three default egress classes (partner/public/reserve-egress) with
-// shell arithmetic rate expressions. This matches the pre-shape-config tc-egress.sh
+// shell arithmetic rate expressions. This matches the pre-shape-config bandwidth-shaper.sh
 // template content so install-time rendering is backward-compatible.
 func defaultScriptData(nicName string) scriptData {
 	return scriptData{

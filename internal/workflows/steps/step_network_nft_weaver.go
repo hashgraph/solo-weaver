@@ -16,9 +16,9 @@ import (
 // NftWeaverPersistStepId is the step ID for NftWeaverPersist.
 const NftWeaverPersistStepId = "nft-weaver-persist"
 
-// NftWeaverPersist re-renders /etc/solo-provisioner/network-weaver.nft from
+// NftWeaverPersist re-renders /etc/solo-provisioner/network-weaver-blocknode-classifier.nft from
 // the policy registry and restarts the shared solo-provisioner-network-nft.service
-// oneshot so the kernel loads both network-host.nft and network-weaver.nft via
+// oneshot so the kernel loads both network-weaver-host-firewall.nft and network-weaver-blocknode-classifier.nft via
 // systemd — bringing the service's RemainAfterExit state in sync with the full
 // static plane installed by `network policy create`.
 //
@@ -47,8 +47,8 @@ func NftWeaverPersist() *automa.StepBuilder {
 						})))
 			}
 			// Reconcile the persisted file to the registry. On an empty registry
-			// this removes any stale network-weaver.nft so the boot oneshot never
-			// replays a harmful/old inet weaver table (an empty chain renders as
+			// this removes any stale network-weaver-blocknode-classifier.nft so the boot oneshot never
+			// replays a harmful/old inet weaver-blocknode-classifier table (an empty chain renders as
 			// policy drop with no accept for new connections).
 			if err := policy.RenderWeaverNft(policy.RegistryDir, policy.WeaverNftPath, ""); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
@@ -61,7 +61,7 @@ func NftWeaverPersist() *automa.StepBuilder {
 			}
 			if empty {
 				return automa.SkippedReport(stp,
-					automa.WithDetail("policy registry is empty; ensured no network-weaver.nft is persisted — weaver rules are written after `network policy create` runs"))
+					automa.WithDetail("policy registry is empty; ensured no network-weaver-blocknode-classifier.nft is persisted — weaver rules are written after `network policy create` runs"))
 			}
 			if err := firewall.EnsureNetworkNftUnit(ctx); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
@@ -84,8 +84,8 @@ func NftWeaverPersist() *automa.StepBuilder {
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// Rollback is a no-op: the rendered file and restarted service are
-			// idempotent artifacts. Removing network-weaver.nft on rollback would
-			// leave the live inet weaver table present but un-replayed on next
+			// idempotent artifacts. Removing network-weaver-blocknode-classifier.nft on rollback would
+			// leave the live inet weaver-blocknode-classifier table present but un-replayed on next
 			// reboot — no worse than before this step ran. Teardown is owned by
 			// the `block node uninstall` workflow.
 			return automa.SkippedReport(stp,

@@ -11,8 +11,8 @@ import (
 var removeCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove one or more CIDRs from a policy's live set",
-	Long: "Remove CIDRs from the live nft set for a named policy (`nft delete element inet weaver <name> { … }`). " +
-		"Like `add`, only the live kernel set is mutated — no chain re-render and no update to network-weaver.nft. " +
+	Long: "Remove CIDRs from the live nft set for a named policy (`nft delete element inet weaver-blocknode-classifier <name> { … }`). " +
+		"Like `add`, only the live kernel set is mutated — no chain re-render and no update to network-weaver-blocknode-classifier.nft. " +
 		"Use `--cidr` one or more times, or pass a comma-separated list in a single `--cidr` flag.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(flagCIDR) == 0 {

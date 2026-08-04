@@ -8,7 +8,7 @@ import "time"
 // direction. One JSON file per device under DeviceConfigDir (named by Dir).
 //
 // Dir "egress" targets the $EGRESS physical NIC and drives the re-rendered
-// tc-egress.sh boot script. Dir "ingress" targets $VETH and is consumed by
+// bandwidth-shaper.sh boot script. Dir "ingress" targets $VETH and is consumed by
 // the daemon pod-lifecycle watcher; no script is rendered for it.
 type DeviceConfig struct {
 	Dir          string    `json:"dir"`           // "ingress" or "egress"

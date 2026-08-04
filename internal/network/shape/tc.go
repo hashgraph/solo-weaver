@@ -23,7 +23,7 @@ type TCRunner interface {
 	// QdiscDelRoot runs `tc qdisc del dev <nic> root`, tearing down any existing
 	// hierarchy (cascading to all classes and leaf qdiscs). It is best-effort: a
 	// missing root qdisc (a fresh veth) is not an error, so the caller can
-	// unconditionally rebuild — matching the tc-egress boot script's `|| true`.
+	// unconditionally rebuild — matching the bandwidth-shaper boot script's `|| true`.
 	QdiscDelRoot(ctx context.Context, nic string) error
 
 	// QdiscAddRoot runs `tc qdisc add dev <nic> root handle 1: htb default
@@ -52,7 +52,7 @@ type TCRunner interface {
 // The tc*Args helpers are the single source of the tc command argument
 // encoding: HTB argument order and the field set for each qdisc/class verb.
 // The live path (execTCRunner, tc_linux.go) executes these arg slices, and the
-// tc-egress boot-script template renders the same commands as shell text; a
+// bandwidth-shaper boot-script template renders the same commands as shell text; a
 // lockstep test (tc_encoding_test.go) asserts the two encodings match token for
 // token so a change to one side cannot silently drift from the other. They are
 // build-tag-free (this file) so the live path, the render path, and that test

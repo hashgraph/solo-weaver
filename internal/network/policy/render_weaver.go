@@ -10,7 +10,7 @@ import (
 )
 
 // RenderWeaverNft loads all policies from registryDir, renders the full
-// `inet weaver` nft document, and atomically writes it to weaverNftPath
+// `inet weaver-blocknode-classifier` nft document, and atomically writes it to weaverNftPath
 // (mode 0644). If the on-disk content is already identical (SHA-256 match)
 // the write is skipped — making it safe to call from idempotent install flows.
 //
@@ -29,7 +29,7 @@ func RenderWeaverNft(registryDir, weaverNftPath string, podCIDRs ...string) erro
 		// would be `policy drop` with no accept rule for new connections —
 		// blackholing all forwarded traffic (pod startup, image pulls, inter-pod
 		// DNS). Remove any stale persisted file so the boot oneshot's `test -e`
-		// guard skips it and never replays a harmful or out-of-date inet weaver
+		// guard skips it and never replays a harmful or out-of-date inet weaver-blocknode-classifier
 		// table. "Empty registry" thus means "no file", not "an empty table".
 		if err := os.Remove(weaverNftPath); err != nil && !os.IsNotExist(err) {
 			return errorx.ExternalError.Wrap(err, "failed to remove stale %s for an empty policy registry", weaverNftPath)

@@ -26,7 +26,7 @@ func readLinkSpeedMbitFrom(path string) (int, bool) {
 
 // DefaultLinkSpeedMbit is the link speed assumed when sysfs cannot report one
 // (common on virtual NICs and at early boot, where /sys/class/net/<nic>/speed
-// reads -1). It mirrors the fallback baked into the tc-egress boot script's
+// reads -1). It mirrors the fallback baked into the bandwidth-shaper boot script's
 // sysfs-detection block; keep the two in sync.
 const DefaultLinkSpeedMbit = 1000
 

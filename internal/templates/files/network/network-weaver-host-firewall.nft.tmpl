@@ -1,7 +1,7 @@
-add table inet host
-delete table inet host
-add table inet host
-table inet host {
+add table inet weaver-host-firewall
+delete table inet weaver-host-firewall
+add table inet weaver-host-firewall
+table inet weaver-host-firewall {
 	set mgmt_addrs { type ipv4_addr; flags interval;{{if .MgmtElements}} elements = { {{.MgmtElements}} };{{end}} }
 	set mgmt_addrs6 { type ipv6_addr; flags interval;{{if .MgmtElements6}} elements = { {{.MgmtElements6}} };{{end}} }
 	set blocked_addrs { type ipv4_addr; flags interval;{{if .BlockedElements}} elements = { {{.BlockedElements}} };{{end}} }

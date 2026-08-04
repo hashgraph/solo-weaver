@@ -15,7 +15,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// EnsureTcEgressUnit installs (or updates) the solo-provisioner-tc-egress.service
+// EnsureTcEgressUnit installs (or updates) the solo-provisioner-bandwidth-shaper.service
 // unit file, daemon-reloads systemd, and enables the unit for boot. SHA-256
 // comparison is used so the write, reload, and enable are skipped when the
 // on-disk content already matches the embedded template — making repeated installs
@@ -41,7 +41,7 @@ func EnsureTcEgressUnit(ctx context.Context) error {
 		return err
 	}
 	if err := soos.EnableService(ctx, TcEgressService); err != nil {
-		logx.As().Warn().Err(err).Str("service", TcEgressService).Msg("could not enable tc-egress service at boot")
+		logx.As().Warn().Err(err).Str("service", TcEgressService).Msg("could not enable bandwidth-shaper service at boot")
 	}
 	return nil
 }

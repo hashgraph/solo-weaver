@@ -61,7 +61,7 @@ func dualStackTable() *Table {
 func newTestManager(t *testing.T, r *fakeRunner, applyCount *int) (*Manager, string) {
 	t.Helper()
 	dir := t.TempDir()
-	nftPath := filepath.Join(dir, "network-host.nft")
+	nftPath := filepath.Join(dir, "network-weaver-host-firewall.nft")
 	m := NewManagerWithConfig(Config{
 		Runner:   r,
 		NftPath:  nftPath,
@@ -214,8 +214,8 @@ func TestManager_CreateIsCreateIfMissing(t *testing.T) {
 	// cleared on every re-apply (flush table only clears chain rules, not sets).
 	data, err := os.ReadFile(nftPath)
 	require.NoError(t, err)
-	require.Contains(t, string(data), "add table inet host")
-	require.Contains(t, string(data), "delete table inet host")
+	require.Contains(t, string(data), "add table inet weaver-host-firewall")
+	require.Contains(t, string(data), "delete table inet weaver-host-firewall")
 
 	// Second create without --force is a no-op (table now exists).
 	changed, err = m.Create(ctx, sampleTable(), false)
@@ -350,7 +350,7 @@ func TestManager_ServiceFailureReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagerWithConfig(Config{
 		Runner:   r,
-		NftPath:  filepath.Join(dir, "network-host.nft"),
+		NftPath:  filepath.Join(dir, "network-weaver-host-firewall.nft"),
 		LockPath: filepath.Join(dir, ".applying"),
 		ApplyViaService: func(context.Context) error {
 			return context.DeadlineExceeded

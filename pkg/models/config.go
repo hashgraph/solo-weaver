@@ -66,15 +66,15 @@ const DefaultClusterPodCIDR = "10.4.0.0/14"
 // settings applied by the block-node workflow (`block node install` /
 // `reconfigure` / `upgrade` — not the generic `kube cluster install`, which is
 // used for cluster provisioning independent of any specific node type). These
-// drive the `inet host` nftables table (see the `network firewall` command).
+// drive the `inet weaver-host-firewall` nftables table (see the `network firewall` command).
 // ManagementCIDRs is the SSH/management allowlist; because the table's input
 // chain is default-drop, an empty allowlist would lock the host out of new SSH
 // connections, so the firewall step skips applying it when empty.
 type HostConfig struct {
 	ManagementCIDRs []string `yaml:"managementCidrs" json:"managementCidrs"` // SSH/management allowlist CIDRs
 	// BlockedCIDRs is the operator-curated deny list, dropped before every
-	// other rule (set @blocked_addrs in the `inet host` table). It is distinct
-	// from the BN workload plane's `bn-restricted` set (`inet weaver`), which
+	// other rule (set @blocked_addrs in the `inet weaver-host-firewall` table). It is distinct
+	// from the BN workload plane's `bn-restricted` set (`inet weaver-blocknode-classifier`), which
 	// the traffic-shaper daemon reconciles automatically from block-node
 	// statusz; this list is purely operator-managed and nothing else writes it.
 	BlockedCIDRs   []string `yaml:"blockedCidrs" json:"blockedCidrs"`

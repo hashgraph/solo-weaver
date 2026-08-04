@@ -2,7 +2,7 @@
 
 // Package policy wires the `solo-provisioner network policy` verbs to the
 // internal/network/policy manager. It is a generic, category-agnostic primitive:
-// the verbs manage per-category classification and ACL rules in the `inet weaver`
+// the verbs manage per-category classification and ACL rules in the `inet weaver-blocknode-classifier`
 // nftables table (the workload traffic plane), keyed only on the operator-supplied
 // --name, --stamp/--deny, --ports, and --cidrs. It knows nothing about
 // block/consensus/mirror/relay nodes; today `block node install` is its only
@@ -35,10 +35,10 @@ var (
 
 var policyCmd = &cobra.Command{
 	Use:   "policy",
-	Short: "Manage per-category traffic policies (`inet weaver` nftables table)",
-	Long: "Manage the workload traffic plane: named policies in the `inet weaver` nftables table that " +
+	Short: "Manage per-category traffic policies (`inet weaver-blocknode-classifier` nftables table)",
+	Long: "Manage the workload traffic plane: named policies in the `inet weaver-blocknode-classifier` nftables table that " +
 		"map source CIDRs (or any source) to an HTB priority class on a set of ports, or quarantine a set " +
-		"of CIDRs. This table is separate from the `inet host` node firewall.",
+		"of CIDRs. This table is separate from the `inet weaver-host-firewall` node firewall.",
 	RunE: common.DefaultRunE,
 }
 

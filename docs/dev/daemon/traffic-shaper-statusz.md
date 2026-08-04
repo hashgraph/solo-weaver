@@ -75,7 +75,7 @@ Both endpoints are REST/JSON, resolved relative to the configured base URL:
 
 The statusz-category to policy-name mapping is **internal to the monitor** and
 not operator-configurable. The policy name is also the nftables set name, in the
-`inet weaver` table. These are the same names `block node install` uses when it
+`inet weaver-blocknode-classifier` table. These are the same names `block node install` uses when it
 creates the policies, so install and the monitor agree on the namespace without
 a shared config file.
 

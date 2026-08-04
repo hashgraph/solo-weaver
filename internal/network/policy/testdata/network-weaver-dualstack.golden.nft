@@ -1,7 +1,7 @@
-add table inet weaver
-delete table inet weaver
-add table inet weaver
-table inet weaver {
+add table inet weaver-blocknode-classifier
+delete table inet weaver-blocknode-classifier
+add table inet weaver-blocknode-classifier
+table inet weaver-blocknode-classifier {
 	set bn-backfill { type ipv4_addr . inet_service; }
 	set bn-backfill6 { type ipv6_addr . inet_service; }
 	set bn-partner-out { type ipv4_addr; flags interval; }

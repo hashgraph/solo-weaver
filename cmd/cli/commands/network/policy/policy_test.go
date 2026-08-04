@@ -102,11 +102,11 @@ type testEnv struct {
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
-	return &testEnv{dir: dir, nftPath: filepath.Join(dir, "network-weaver.nft"), runner: newFakeRunner()}
+	return &testEnv{dir: dir, nftPath: filepath.Join(dir, "network-weaver-blocknode-classifier.nft"), runner: newFakeRunner()}
 }
 
 // runCreate executes the real create command against this env's manager and
-// stubbed pod-CIDR detection, returning the persisted network-weaver.nft.
+// stubbed pod-CIDR detection, returning the persisted network-weaver-blocknode-classifier.nft.
 func (e *testEnv) runCreate(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	origMgr, origDetect := newManager, detectPodCIDR
@@ -440,9 +440,9 @@ func TestDeleteCmd_RemovesPolicy(t *testing.T) {
 	require.NoError(t, env.runVerb(t, "delete", "--name", "bn-restricted"))
 	// Deleting the last policy tears the table down rather than persisting an
 	// empty policy-drop chain: the .nft file is removed (boot replays nothing)
-	// and the live inet weaver table is deleted.
+	// and the live inet weaver-blocknode-classifier table is deleted.
 	require.NoFileExists(t, env.nftPath)
-	require.Empty(t, env.runner.applied, "live inet weaver table must be torn down after the last policy is deleted")
+	require.Empty(t, env.runner.applied, "live inet weaver-blocknode-classifier table must be torn down after the last policy is deleted")
 }
 
 func TestDeleteCmd_PolicyNotFound(t *testing.T) {

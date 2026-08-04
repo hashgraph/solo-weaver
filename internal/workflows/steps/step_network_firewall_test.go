@@ -32,7 +32,7 @@ func (f *fakeFwRunner) Exists(context.Context) (bool, error) { return f.exists, 
 func withStubbedFirewall(t *testing.T, r *fakeFwRunner) string {
 	t.Helper()
 	dir := t.TempDir()
-	nftPath := filepath.Join(dir, "network-host.nft")
+	nftPath := filepath.Join(dir, "network-weaver-host-firewall.nft")
 	orig := newFirewallManager
 	newFirewallManager = func() *firewall.Manager {
 		return firewall.NewManagerWithConfig(firewall.Config{
