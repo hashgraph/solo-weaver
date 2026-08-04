@@ -144,9 +144,11 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 		existing := findByName(policies, p.Name)
 		target, newCIDRs := p, cidrs
 		if existing != nil && !force {
-			// nft tables don't survive a reboot, and the boot oneshot doesn't
-			// reload network-weaver-blocknode-classifier.nft yet -- so "the registry has this
-			// policy" does not imply "the live table has it too".
+			// The live kernel table can be missing even though the registry
+			// has this policy -- e.g. a manual `nft delete table`, the shared
+			// nft oneshot disabled, or network-weaver-blocknode-classifier.nft
+			// absent -- so "the registry has this policy" does not imply "the
+			// live table has it too".
 			tableExists, err := m.runner.Exists(ctx)
 			if err != nil {
 				return err

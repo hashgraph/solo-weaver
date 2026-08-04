@@ -36,7 +36,7 @@ var nftBinCandidates = []string{"/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft"}
 // that take a family and table name as separate arguments (list, delete).
 // exec.Command does not tokenise arguments on whitespace, so passing TableName
 // as a single arg would send "inet weaver-host-firewall" as one token instead of two.
-var tableArgs = strings.Fields(TableName) // ["inet", "host"]
+var tableArgs = strings.Fields(TableName) // ["inet", "weaver-host-firewall"]
 
 // execRunner shells out to the system nft binary.
 type execRunner struct {

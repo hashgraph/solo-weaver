@@ -14,9 +14,10 @@ import (
 
 // Runner is the seam over the system `nft` binary. Unlike the firewall package
 // (which applies via a systemd service restart), `network policy` applies the
-// rendered chain directly with `nft -f` — the shared boot oneshot does not
-// load network-weaver-blocknode-classifier.nft yet. Tests substitute a fake so the package builds
-// and unit-tests on any platform (including macOS) without touching the kernel.
+// rendered chain directly with `nft -f` for the live path, and separately
+// persists network-weaver-blocknode-classifier.nft so the shared nft oneshot can
+// replay it at boot. Tests substitute a fake so the package builds and
+// unit-tests on any platform (including macOS) without touching the kernel.
 type Runner interface {
 	// Apply loads a full nft document into the kernel (`nft -f -`). The
 	// rendered document carries the idempotent `add table / delete table / add
