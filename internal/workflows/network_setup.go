@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -29,6 +30,13 @@ type NetworkPlaneOptions struct {
 	// Namespace is the block-node namespace, used by the daemon-config step when
 	// WithDaemonReload is set.
 	Namespace string
+	// Statusz carries the operator-supplied statusz overrides (--statusz-base-url /
+	// --statusz-poll-interval), threaded into the enable-path daemon-config write
+	// when WithDaemonReload is set. The step merges it per-field into daemon.yaml;
+	// an empty field leaves the existing on-disk value untouched. The disable path
+	// deliberately writes a zero-value statusz so turning the monitor off never
+	// touches an operator-set block.
+	Statusz daemon.StatuszConfig
 	// EgressInterface / LinkRate / ShapeOverrides feed the tc egress/ingress steps.
 	EgressInterface string
 	LinkRate        string
@@ -99,7 +107,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 		)
 		if opts.WithDaemonReload {
 			out = append(out,
-				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), opts.Namespace, true),
+				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), opts.Namespace, opts.Statusz, true),
 				steps.RestartDaemonServiceStep(),
 			)
 		}
@@ -119,7 +127,10 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 		)
 		if opts.WithDaemonReload {
 			out = append(out,
-				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), opts.Namespace, false),
+				// Disable path carries no statusz override: turning the monitor off must
+				// never touch an operator-set statusz block, and the step's per-field
+				// merge leaves any on-disk block intact for a zero-value statusz.
+				steps.WriteBlockNodeDaemonConfigStep(models.Paths(), opts.Namespace, daemon.StatuszConfig{}, false),
 				steps.RestartDaemonServiceStep(),
 			)
 		}
@@ -181,11 +192,15 @@ func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[s
 // daemon.yaml. It wraps the single config step in a "Traffic-shaper Monitor" phase
 // so it renders under its own header rather than dangling after the "Block Node
 // Deployment" phase. It runs last, after the deployment it watches is in place.
-func BlockNodeDaemonConfigWorkflow(namespace string) *automa.WorkflowBuilder {
+//
+// statusz carries the operator-supplied overrides (--statusz-base-url /
+// --statusz-poll-interval), merged per-field into daemon.yaml by the step; an
+// empty field leaves the existing on-disk statusz untouched.
+func BlockNodeDaemonConfigWorkflow(namespace string, statusz daemon.StatuszConfig) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("block-node-daemon-config").
 		Steps(
-			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace, true),
+			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace, statusz, true),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Traffic-shaper Monitor")

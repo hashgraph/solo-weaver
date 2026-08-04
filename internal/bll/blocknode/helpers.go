@@ -265,6 +265,8 @@ func resolveBlocknodeEffectiveInputs(
 			ShapeOverrides:        shapeOverrides,
 			TrafficShapingEnabled: inputs.Custom.TrafficShapingEnabled,
 			Timeout:               inputs.Custom.Timeout,
+			StatuszBaseURL:        inputs.Custom.StatuszBaseURL,
+			StatuszPollInterval:   inputs.Custom.StatuszPollInterval,
 		},
 	}
 

@@ -4,6 +4,7 @@ package blocknode
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
@@ -34,6 +35,7 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 		TrafficShapingEnabled: trafficShapingEnabled,
 		HealthPort:            healthPort,
 		Namespace:             ins.Namespace,
+		Statusz:               daemon.StatuszConfig{BaseURL: ins.StatuszBaseURL, PollInterval: ins.StatuszPollInterval},
 		EgressInterface:       ins.EgressInterface,
 		LinkRate:              ins.LinkRate,
 		ShapeOverrides:        toClassOverrides(ins.ShapeOverrides),

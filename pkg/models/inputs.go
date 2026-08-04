@@ -93,6 +93,16 @@ type BlockNodeInputs struct {
 	// budget), set from `--timeout`. Zero means "unset" — the install/upgrade
 	// call site falls back to helm.DefaultTimeout (5m).
 	Timeout time.Duration
+	// StatuszBaseURL and StatuszPollInterval are operator-supplied overrides for
+	// the daemon's block-node statusz monitor, from `--statusz-base-url` and
+	// `--statusz-poll-interval` on `block node install` / `reconfigure`. They are
+	// merged into daemon.yaml's components.block_node.statusz block at write time,
+	// per-field: a set value overrides that field, an empty one preserves the
+	// existing on-disk value. Empty for both means "leave the operator's daemon.yaml
+	// statusz block untouched". Validated via daemon.StatuszConfig.Validate at the
+	// CLI layer; see internal/workflows/steps.WriteBlockNodeDaemonConfigStep.
+	StatuszBaseURL      string
+	StatuszPollInterval string
 }
 
 // ShapeOverride is one class's operator-supplied HTB bandwidth override, parsed

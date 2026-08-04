@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -77,7 +78,7 @@ func (h *InstallHandler) BuildWorkflow(
 	// disabled there is no inet weaver classification for the daemon to watch.
 	var daemonConfigStep []automa.Builder
 	if ins.TrafficShapingEnabled {
-		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace)}
+		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace, daemon.StatuszConfig{BaseURL: ins.StatuszBaseURL, PollInterval: ins.StatuszPollInterval})}
 	}
 
 	var wb *automa.WorkflowBuilder

@@ -184,4 +184,6 @@ func init() {
 			"(e.g. --shape publisher=rate=800mbit,ceil=1gbit,prio=0). Only applied when traffic shaping is enabled.")
 	common.FlagDaemonBin().SetVarP(reconfigureCmd, &flagDaemonBin, false)
 	common.FlagDaemonVersion().SetVarP(reconfigureCmd, &flagDaemonVersion, false)
+	common.FlagStatuszBaseURL().SetVarP(reconfigureCmd, &flagStatuszBaseURL, false)
+	common.FlagStatuszPollInterval().SetVarP(reconfigureCmd, &flagStatuszPollInterval, false)
 }

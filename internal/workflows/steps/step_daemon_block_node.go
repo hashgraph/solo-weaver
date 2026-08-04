@@ -38,8 +38,8 @@ const (
 // in daemon.yaml. It loads the existing config (or starts a fresh one), merges in
 // the block_node component block — enabled/monitors.traffic_shaper set to the
 // requested state, the scoped daemon-bn.kubeconfig, and the BN orbit (namespace)
-// — while preserving any operator-set statusz block and the consensus_node block,
-// then writes it back.
+// — merges the operator-owned statusz block (see below), preserves the
+// consensus_node block, then writes it back.
 //
 // enabled drives both Components.BlockNode.Enabled and Monitors.TrafficShaper:
 //   - true  (install / reconfigure enable): the traffic-shaper monitor runs once
@@ -49,11 +49,19 @@ const (
 //     co-located component (e.g. consensus-node monitoring) that shares the same
 //     daemon keeps running.
 //
+// statusz carries the operator-supplied overrides (from `block node install`/
+// `reconfigure`'s --statusz-base-url / --statusz-poll-interval). The
+// provisioner-owned fields above always win; the statusz block is merged
+// per-field: starting from any block already on disk, each non-empty override
+// overlays its field, and an empty override preserves the existing on-disk value.
+// So a bare reconfigure/upgrade (a zero-value statusz) never clobbers a
+// hand-edited statusz block, while an explicit flag updates just that field.
+//
 // The daemon binary and systemd service are installed separately by `daemon
 // service install`; this step only records the enablement. The write is fully
 // reversed on rollback (the file is restored to its prior content, or removed if
 // it did not exist).
-func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, enabled bool) *automa.StepBuilder {
+func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, statusz daemon.StatuszConfig, enabled bool) *automa.StepBuilder {
 	cfgPath := paths.DaemonConfigPath
 	kubeconfig := paths.DaemonBNKubeconfigPath
 	if orbit == "" {
@@ -110,8 +118,12 @@ func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, enab
 				cfg = loaded
 			}
 
-			// Preserve an operator-set statusz block (local-fallback source) if
-			// one already exists; this step only owns the enablement fields.
+			// Provisioner-owned fields (enabled, kubeconfig, orbit, monitors) always
+			// win. The operator-owned statusz block is merged per-field: start from
+			// any block already on disk, then overlay each supplied override
+			// (--statusz-base-url / --statusz-poll-interval). An unset override
+			// preserves the existing on-disk value, so a bare reconfigure/upgrade
+			// never clobbers a hand-edited statusz block.
 			bn := &daemon.BlockNodeComponentConfig{
 				Enabled:    enabled,
 				Kubeconfig: kubeconfig,
@@ -120,6 +132,19 @@ func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, enab
 			}
 			if cfg.Components.BlockNode != nil {
 				bn.Statusz = cfg.Components.BlockNode.Statusz
+			}
+			if statusz.BaseURL != "" || statusz.PollInterval != "" {
+				merged := daemon.StatuszConfig{}
+				if bn.Statusz != nil {
+					merged = *bn.Statusz
+				}
+				if statusz.BaseURL != "" {
+					merged.BaseURL = statusz.BaseURL
+				}
+				if statusz.PollInterval != "" {
+					merged.PollInterval = statusz.PollInterval
+				}
+				bn.Statusz = &merged
 			}
 			cfg.Components.BlockNode = bn
 
