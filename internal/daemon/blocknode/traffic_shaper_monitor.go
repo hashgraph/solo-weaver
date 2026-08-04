@@ -274,6 +274,12 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			return nil
 		}
 
+		logx.As().Debug().
+			Str("reason", "TrafficShaperStatuszPolling").
+			Str("monitor", m.Name()).
+			Str("statusz_url", statuszURL).
+			Msg("polling statusz")
+
 		digest, err := m.delegator.ReconcileShaperCheck(ctx, statuszURL)
 		if err != nil {
 			return err
@@ -282,8 +288,18 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 		// the force-resync window has not elapsed. lastApply.IsZero() forces the
 		// first reconcile against a (new) URL to apply.
 		if digest == lastDigest && !lastApply.IsZero() && time.Since(lastApply) < statuszForceResyncInterval {
+			logx.As().Debug().
+				Str("reason", "TrafficShaperStatuszUnchanged").
+				Str("monitor", m.Name()).
+				Str("statusz_url", statuszURL).
+				Msg("desired membership digest unchanged — skipping apply")
 			return nil
 		}
+		logx.As().Info().
+			Str("reason", "TrafficShaperStatuszApplying").
+			Str("monitor", m.Name()).
+			Str("statusz_url", statuszURL).
+			Msg("applying nft policy membership from statusz")
 		if err := m.delegator.ReconcileShaper(ctx, statuszURL); err != nil {
 			return err
 		}
