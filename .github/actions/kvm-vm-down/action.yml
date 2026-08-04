@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+name: "KVM VM Down"
+description: >
+  Stop the QEMU/KVM VM started by the kvm-vm-up action and remove its working
+  directory.
+
+inputs:
+  vm-dir:
+    description: "Host working directory of the VM (output of kvm-vm-up)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cleanup VM
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ inputs.vm-dir }}"
+
+        if [ -z "${VM_DIR}" ] || [ ! -d "${VM_DIR}" ]; then
+          echo "No VM working directory to clean up."
+          exit 0
+        fi
+
+        if [ -f "${VM_DIR}/vm.pid" ]; then
+          VM_PID="$(cat "${VM_DIR}/vm.pid" || true)"
+          if [ -n "${VM_PID}" ]; then
+            echo "Stopping VM (PID: ${VM_PID})..."
+            kill "${VM_PID}" 2>/dev/null || true
+            sleep 2
+            kill -9 "${VM_PID}" 2>/dev/null || true
+          fi
+        fi
+
+        echo "Removing VM working directory..."
+        rm -rf "${VM_DIR}"

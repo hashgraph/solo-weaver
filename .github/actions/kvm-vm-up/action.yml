@@ -1,0 +1,438 @@
+# SPDX-License-Identifier: Apache-2.0
+name: "KVM VM Up"
+description: >
+  Boot a throwaway QEMU/KVM VM on a self-hosted runner, wait for SSH, install
+  Go + Task and the proxy CA inside it, and sync the checked-out workspace into
+  it. Shared by the UAT and integration test workflows.
+
+inputs:
+  vm-os:
+    description: "VM OS (debian or ubuntu)"
+    required: false
+    default: "debian"
+  vm-cpus:
+    description: "VM vCPUs"
+    required: false
+    default: "3"
+  vm-mem-mb:
+    description: "VM memory (MB)"
+    required: false
+    default: "4096"
+  vm-disk-gb:
+    description: "Overlay disk size (GB)"
+    required: false
+    default: "20"
+  go-version:
+    description: "Go version installed inside the VM"
+    required: false
+    default: "1.26.5"
+  vm-ready-timeout-minutes:
+    description: "Timeout waiting for VM SSH to accept connections"
+    required: false
+    default: "10"
+  bootstrap-timeout-minutes:
+    description: "Timeout for the in-VM Go + Task bootstrap"
+    required: false
+    default: "20"
+  image-dir:
+    description: "Host directory holding pre-cached cloud base images"
+    required: false
+    default: "/var/lib/weaver/images"
+  ca-cert-path:
+    description: "Host path to the cache-proxy CA certificate installed in the VM"
+    required: false
+    default: "/home/github-runner/ca-cert.pem"
+  workspace-path:
+    description: "Directory inside the VM the workspace is synced to"
+    required: false
+    default: "/home/provisioner/solo-weaver"
+  extra-sync-excludes:
+    description: "Newline-separated extra rsync exclude patterns for the workspace sync"
+    required: false
+    default: ""
+
+outputs:
+  vm-dir:
+    description: "Host working directory for this VM (disk, keys, logs, pidfile)"
+    value: ${{ steps.vm-dir.outputs.vm-dir }}
+  vm-port:
+    description: "Host port forwarded to the VM's SSH port"
+    value: ${{ steps.vm-dir.outputs.vm-port }}
+  ssh-key:
+    description: "Host path to the private key that authenticates to the VM"
+    value: ${{ steps.vm-dir.outputs.ssh-key }}
+  workspace-path:
+    description: "Directory inside the VM the workspace was synced to"
+    value: ${{ inputs.workspace-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create VM working directory + pick unique SSH port
+      id: vm-dir
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        JOB_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}-${RANDOM}"
+        VM_DIR="${RUNNER_TEMP}/weaver-vm-${JOB_ID}"
+        mkdir -p "${VM_DIR}"
+
+        # Pick a random high port in a safe range to avoid conflicts.
+        # Retry a few times if already in use.
+        pick_port() {
+          local tries=20
+          while [ $tries -gt 0 ]; do
+            local p=$(( 2200 + (RANDOM % 400) ))
+            if ! ss -lnt "( sport = :$p )" | grep -q ":$p"; then
+              echo "$p"
+              return 0
+            fi
+            tries=$((tries - 1))
+          done
+          return 1
+        }
+
+        VM_PORT="$(pick_port)" || { echo "Failed to pick available port" >&2; exit 1; }
+
+        {
+          echo "job-id=${JOB_ID}"
+          echo "vm-dir=${VM_DIR}"
+          echo "vm-port=${VM_PORT}"
+          echo "ssh-key=${VM_DIR}/.ssh/id_ed25519_vm"
+        } >> "$GITHUB_OUTPUT"
+
+        # Also exported to the job env: a composite action that fails midway
+        # does not publish its outputs, and the teardown action still has to
+        # find the directory to remove.
+        echo "KVM_VM_DIR=${VM_DIR}" >> "$GITHUB_ENV"
+
+        echo "VM_DIR=${VM_DIR}"
+        echo "VM_PORT=${VM_PORT}"
+
+    - name: Generate SSH key for VM access
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        mkdir -p "${VM_DIR}/.ssh"
+        ssh-keygen -t ed25519 -f "${VM_DIR}/.ssh/id_ed25519_vm" -N "" -C "ci-vm-key"
+        chmod 600 "${VM_DIR}/.ssh/id_ed25519_vm"
+        chmod 644 "${VM_DIR}/.ssh/id_ed25519_vm.pub"
+
+    - name: Resolve base image path (pre-cached)
+      id: base-image
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_OS="${{ inputs.vm-os }}"
+        IMAGE_BASE="${{ inputs.image-dir }}"
+
+        case "$VM_OS" in
+          debian)
+            BASE_IMAGE="${IMAGE_BASE}/debian-12-genericcloud-amd64.qcow2"
+            ;;
+          ubuntu)
+            BASE_IMAGE="${IMAGE_BASE}/jammy-server-cloudimg-amd64.img"
+            ;;
+          *)
+            echo "Unsupported vm-os: ${VM_OS}"
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f "$BASE_IMAGE" ]; then
+          echo "Base image not found: $BASE_IMAGE"
+          echo "Runner host must pre-cache images under ${IMAGE_BASE}"
+          exit 1
+        fi
+
+        echo "base-image=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+        echo "Using base image: ${BASE_IMAGE}"
+
+    - name: Create cloud-init ISO
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        SSH_PUB_KEY="$(cat "${VM_DIR}/.ssh/id_ed25519_vm.pub")"
+
+        cat > "${VM_DIR}/meta-data" <<EOF
+        instance-id: ci-vm-${{ steps.vm-dir.outputs.job-id }}
+        local-hostname: ci-vm
+        EOF
+
+        # Keep cloud-init minimal; bring SSH up quickly.
+        cat > "${VM_DIR}/user-data" <<EOF
+        #cloud-config
+        users:
+          - name: provisioner
+            groups: sudo
+            shell: /bin/bash
+            sudo: ['ALL=(ALL) NOPASSWD:ALL']
+            ssh_authorized_keys:
+              - ${SSH_PUB_KEY}
+
+        system_info:
+          default_user:
+            name: provisioner
+
+        bootcmd:
+          - systemctl disable systemd-networkd-wait-online.service || true
+          - systemctl mask systemd-networkd-wait-online.service || true
+
+        packages:
+          - openssh-server
+          - sudo
+          - ca-certificates
+          - rsync
+          - git
+          - build-essential
+          - binutils
+          - gcc
+          - libc6-dev
+          - curl
+          - net-tools
+          - netcat-openbsd
+
+        runcmd:
+          - systemctl enable --now ssh || systemctl enable --now sshd
+          - sed -i 's/^#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config || true
+          - systemctl restart ssh || systemctl restart sshd || true
+        EOF
+
+        genisoimage -output "${VM_DIR}/cloud-init.iso" \
+          -volid cidata \
+          -joliet \
+          -rock \
+          "${VM_DIR}/user-data" "${VM_DIR}/meta-data"
+
+    - name: Create overlay disk from base image
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        BASE_IMAGE="${{ steps.base-image.outputs.base-image }}"
+        VM_DISK_GB="${{ inputs.vm-disk-gb }}"
+
+        BASE_FMT="$(qemu-img info --output=json "$BASE_IMAGE" | jq -r '.format')"
+        if [ -z "$BASE_FMT" ] || [ "$BASE_FMT" = "null" ]; then
+          echo "Could not determine base format for $BASE_IMAGE"
+          qemu-img info "$BASE_IMAGE"
+          exit 1
+        fi
+
+        echo "Base image format: ${BASE_FMT}"
+        qemu-img create -f qcow2 -F "${BASE_FMT}" -b "$BASE_IMAGE" "${VM_DIR}/vm-disk.qcow2" "${VM_DISK_GB}G"
+
+    - name: Start QEMU VM (KVM)
+      id: qemu
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        VM_CPUS="${{ inputs.vm-cpus }}"
+        VM_MEM_MB="${{ inputs.vm-mem-mb }}"
+
+        # Start QEMU in background. Log serial output to file.
+        nohup qemu-system-x86_64 \
+          -enable-kvm -cpu host \
+          -m "${VM_MEM_MB}" -smp "${VM_CPUS}" \
+          -drive file="${VM_DIR}/vm-disk.qcow2",if=virtio,format=qcow2 \
+          -drive file="${VM_DIR}/cloud-init.iso",media=cdrom,readonly=on \
+          -nographic \
+          -serial "file:${VM_DIR}/vm-console.log" \
+          -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${VM_PORT}-:22 \
+          -device virtio-net-pci,netdev=net0 \
+          -pidfile "${VM_DIR}/vm.pid" \
+          </dev/null >/dev/null 2>&1 &
+
+        # Wait a moment for pidfile to appear
+        for i in $(seq 1 20); do
+          if [ -f "${VM_DIR}/vm.pid" ]; then
+            break
+          fi
+          sleep 0.2
+        done
+
+        if [ ! -f "${VM_DIR}/vm.pid" ]; then
+          echo "vm.pid not created; QEMU may have failed to start."
+          tail -200 "${VM_DIR}/vm-console.log" || true
+          exit 1
+        fi
+
+        echo "QEMU PID: $(cat "${VM_DIR}/vm.pid")"
+        ss -lntp | grep ":${VM_PORT}" || true
+
+    - name: Wait for VM SSH to be ready
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        VM_PID="$(cat "${VM_DIR}/vm.pid")"
+        TIMEOUT_MINUTES="${{ inputs.vm-ready-timeout-minutes }}"
+
+        echo "Waiting up to ${TIMEOUT_MINUTES}m for VM SSH on localhost:${VM_PORT}..."
+
+        # `timeout-minutes:` is not available on composite action steps, so the
+        # caller's timeout is enforced here as a deadline on the poll loop.
+        DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))
+        ATTEMPT=0
+
+        while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
+          ATTEMPT=$(( ATTEMPT + 1 ))
+          echo -n "Attempt ${ATTEMPT}: "
+
+          if ! kill -0 "$VM_PID" 2>/dev/null; then
+            echo "QEMU process exited (PID: ${VM_PID})"
+            tail -200 "${VM_DIR}/vm-console.log" || true
+            exit 1
+          fi
+
+          if nc -z 127.0.0.1 "${VM_PORT}"; then
+            echo -n "port open; "
+          else
+            echo -n "port closed; "
+          fi
+
+          if ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+               -o ConnectTimeout=5 \
+               -o StrictHostKeyChecking=no \
+               -o UserKnownHostsFile=/dev/null \
+               -o BatchMode=yes \
+               -p "${VM_PORT}" \
+               provisioner@127.0.0.1 \
+               "echo 'SSH ready'" >/dev/null 2>&1; then
+            echo "VM is ready!"
+            exit 0
+          fi
+
+          echo "not ready yet..."
+          sleep 10
+        done
+
+        echo "VM failed to become ready"
+        tail -200 "${VM_DIR}/vm-console.log" || true
+        exit 1
+
+    - name: Bootstrap VM tools (Go + Task inside VM)
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        GO_VER="${{ inputs.go-version }}"
+
+        timeout "${{ inputs.bootstrap-timeout-minutes }}m" \
+        ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -p "${VM_PORT}" \
+            provisioner@127.0.0.1 << EOSSH
+        set -euo pipefail
+
+        GO_VER="${GO_VER}"
+
+        sudo cloud-init status --wait || true
+
+        curl -sSLO "https://go.dev/dl/go\${GO_VER}.linux-amd64.tar.gz"
+        sudo rm -rf /usr/local/go
+        sudo tar -C /usr/local -xzf "go\${GO_VER}.linux-amd64.tar.gz"
+        rm "go\${GO_VER}.linux-amd64.tar.gz"
+
+        echo 'export PATH=\$PATH:/usr/local/go/bin:\$HOME/go/bin' | sudo tee /etc/profile.d/go.sh >/dev/null
+        sudo chmod +x /etc/profile.d/go.sh
+        sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+        sudo ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
+        /usr/local/go/bin/go env -w GOTOOLCHAIN=local
+        /usr/local/bin/go version
+
+        if ! command -v task >/dev/null 2>&1; then
+          curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | sudo -E bash
+          sudo apt-get update
+          sudo apt-get install -y task
+        fi
+
+        task --version
+        EOSSH
+
+    - name: Install Proxy CA Certificates in VM
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        CA_CERT_PATH="${{ inputs.ca-cert-path }}"
+
+        if [ ! -f "${CA_CERT_PATH}" ]; then
+          echo "Error: CA certificate file '${CA_CERT_PATH}' not found. Cannot install proxy CA certificates in VM."
+          exit 1
+        fi
+
+        echo "Copying CA certificate to VM..."
+        rsync -az \
+          -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p ${VM_PORT}" \
+          "${CA_CERT_PATH}" \
+          provisioner@127.0.0.1:/tmp/
+
+        ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -p "${VM_PORT}" \
+            provisioner@127.0.0.1 << 'EOSSH'
+        set -euo pipefail
+        sudo cp /tmp/ca-cert.pem /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+        sudo chmod 644 /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+        sudo update-ca-certificates --fresh && \
+        echo 'Verifying CA certificate was added to bundle...' && \
+        if grep -q 'Solo Weaver Cache Proxy CA' /etc/ssl/certs/ca-certificates.crt; then \
+          echo 'CA certificate verified in bundle'; \
+        else \
+          echo 'Warning: CA certificate not found in bundle'; \
+        fi
+        EOSSH
+
+    - name: Sync code to VM
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        WORKSPACE_PATH="${{ inputs.workspace-path }}"
+
+        RSYNC_ARGS=(
+          -az
+          -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p ${VM_PORT}"
+          "--exclude=vendor"
+          "--exclude=bin"
+          "--exclude=*.log"
+          "--exclude=.ssh"
+          "--exclude=*.iso"
+          "--exclude=*.img"
+          "--exclude=*.qcow2"
+        )
+
+        while IFS= read -r pattern; do
+          [ -n "${pattern}" ] || continue
+          RSYNC_ARGS+=( "--exclude=${pattern}" )
+        done <<'EOEXCLUDES'
+        ${{ inputs.extra-sync-excludes }}
+        EOEXCLUDES
+
+        ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -p "${VM_PORT}" \
+            provisioner@127.0.0.1 \
+            "mkdir -p ${WORKSPACE_PATH}"
+
+        rsync "${RSYNC_ARGS[@]}" ./ "provisioner@127.0.0.1:${WORKSPACE_PATH}/"
