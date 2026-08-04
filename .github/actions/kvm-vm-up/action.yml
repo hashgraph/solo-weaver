@@ -50,6 +50,18 @@ inputs:
     description: "Newline-separated extra rsync exclude patterns for the workspace sync"
     required: false
     default: ""
+  port-range-start:
+    description: "First host port considered for the SSH forward"
+    required: false
+    default: "2200"
+  port-range-size:
+    description: "Size of the host port range considered for the SSH forward"
+    required: false
+    default: "400"
+  port-attempts:
+    description: "How many host ports to try before giving up"
+    required: false
+    default: "25"
 
 outputs:
   vm-dir:
@@ -57,7 +69,10 @@ outputs:
     value: ${{ steps.vm-dir.outputs.vm-dir }}
   vm-port:
     description: "Host port forwarded to the VM's SSH port"
-    value: ${{ steps.vm-dir.outputs.vm-port }}
+    value: ${{ steps.qemu.outputs.vm-port }}
+  vm-pid:
+    description: "PID of the QEMU process"
+    value: ${{ steps.qemu.outputs.vm-pid }}
   ssh-key:
     description: "Host path to the private key that authenticates to the VM"
     value: ${{ steps.vm-dir.outputs.ssh-key }}
@@ -68,7 +83,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Create VM working directory + pick unique SSH port
+    - name: Create VM working directory
       id: vm-dir
       shell: bash
       run: |
@@ -78,27 +93,9 @@ runs:
         VM_DIR="${RUNNER_TEMP}/weaver-vm-${JOB_ID}"
         mkdir -p "${VM_DIR}"
 
-        # Pick a random high port in a safe range to avoid conflicts.
-        # Retry a few times if already in use.
-        pick_port() {
-          local tries=20
-          while [ $tries -gt 0 ]; do
-            local p=$(( 2200 + (RANDOM % 400) ))
-            if ! ss -lnt "( sport = :$p )" | grep -q ":$p"; then
-              echo "$p"
-              return 0
-            fi
-            tries=$((tries - 1))
-          done
-          return 1
-        }
-
-        VM_PORT="$(pick_port)" || { echo "Failed to pick available port" >&2; exit 1; }
-
         {
           echo "job-id=${JOB_ID}"
           echo "vm-dir=${VM_DIR}"
-          echo "vm-port=${VM_PORT}"
           echo "ssh-key=${VM_DIR}/.ssh/id_ed25519_vm"
         } >> "$GITHUB_OUTPUT"
 
@@ -108,7 +105,6 @@ runs:
         echo "KVM_VM_DIR=${VM_DIR}" >> "$GITHUB_ENV"
 
         echo "VM_DIR=${VM_DIR}"
-        echo "VM_PORT=${VM_PORT}"
 
     - name: Generate SSH key for VM access
       shell: bash
@@ -231,53 +227,164 @@ runs:
       run: |
         set -euo pipefail
         VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
-        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
         VM_CPUS="${{ inputs.vm-cpus }}"
         VM_MEM_MB="${{ inputs.vm-mem-mb }}"
+        PORT_START="${{ inputs.port-range-start }}"
+        PORT_SIZE="${{ inputs.port-range-size }}"
+        PORT_ATTEMPTS="${{ inputs.port-attempts }}"
 
-        # Start QEMU in background. Log serial output to file.
-        nohup qemu-system-x86_64 \
-          -enable-kvm -cpu host \
-          -m "${VM_MEM_MB}" -smp "${VM_CPUS}" \
-          -drive file="${VM_DIR}/vm-disk.qcow2",if=virtio,format=qcow2 \
-          -drive file="${VM_DIR}/cloud-init.iso",media=cdrom,readonly=on \
-          -nographic \
-          -serial "file:${VM_DIR}/vm-console.log" \
-          -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${VM_PORT}-:22 \
-          -device virtio-net-pci,netdev=net0 \
-          -pidfile "${VM_DIR}/vm.pid" \
-          </dev/null >/dev/null 2>&1 &
+        PID_FILE="${VM_DIR}/vm.pid"
+        STDERR_LOG="${VM_DIR}/qemu-stderr.log"
+        CONSOLE_LOG="${VM_DIR}/vm-console.log"
 
-        # Wait a moment for pidfile to appear
-        for i in $(seq 1 20); do
-          if [ -f "${VM_DIR}/vm.pid" ]; then
+        # QEMU is the only authority on whether a host forwarding port is free,
+        # because QEMU is what binds it. Probing the port with `ss` and binding
+        # it several steps later leaves a window in which another job on this
+        # runner host can take it. So the port is chosen here, immediately
+        # before the bind, and only accepted once `ss` confirms our own QEMU
+        # process holds the listener. A lost race costs one restart, not a
+        # ten-minute SSH timeout.
+        qemu_start() {
+          local port="$1"
+          rm -f "${PID_FILE}" "${STDERR_LOG}"
+          nohup qemu-system-x86_64 \
+            -enable-kvm -cpu host \
+            -m "${VM_MEM_MB}" -smp "${VM_CPUS}" \
+            -drive file="${VM_DIR}/vm-disk.qcow2",if=virtio,format=qcow2 \
+            -drive file="${VM_DIR}/cloud-init.iso",media=cdrom,readonly=on \
+            -nographic \
+            -serial "file:${CONSOLE_LOG}" \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22" \
+            -device virtio-net-pci,netdev=net0 \
+            -pidfile "${PID_FILE}" \
+            </dev/null >/dev/null 2>"${STDERR_LOG}" &
+          QEMU_PID=$!
+        }
+
+        forward_held_by() {
+          local port="$1" pid="$2" out
+          out="$(ss -lntp "( sport = :${port} )" 2>/dev/null || true)"
+          case "${out}" in
+            *"pid=${pid},"*) return 0 ;;
+          esac
+          # Some `ss` builds report no process info at all (missing privileges,
+          # no /proc mapping). If the socket is listening and nothing is
+          # attributed to any PID, trust the alive-check done by the caller:
+          # had another process owned this port, our QEMU would have exited.
+          if printf '%s' "${out}" | grep -q ":${port}" && ! printf '%s' "${out}" | grep -q "pid="; then
+            return 0
+          fi
+          return 1
+        }
+
+        dump_qemu_logs() {
+          echo "=== qemu-stderr.log ==="
+          cat "${STDERR_LOG}" 2>/dev/null || true
+          echo "=== vm-console.log (last 200 lines) ==="
+          tail -200 "${CONSOLE_LOG}" 2>/dev/null || true
+        }
+
+        TRIED=""
+        VM_PORT=""
+        for attempt in $(seq 1 "${PORT_ATTEMPTS}"); do
+          CANDIDATE=$(( PORT_START + (RANDOM % PORT_SIZE) ))
+          case " ${TRIED} " in
+            *" ${CANDIDATE} "*) continue ;;
+          esac
+          TRIED="${TRIED} ${CANDIDATE}"
+
+          # Cheap pre-filter so an obviously occupied port does not cost a QEMU
+          # start. Not authoritative; the post-bind check below is.
+          if ss -lnt "( sport = :${CANDIDATE} )" 2>/dev/null | grep -q ":${CANDIDATE}"; then
+            echo "Attempt ${attempt}: port ${CANDIDATE} is already listening, trying another"
+            continue
+          fi
+
+          echo "Attempt ${attempt}: starting QEMU with host forward 127.0.0.1:${CANDIDATE} -> :22"
+          qemu_start "${CANDIDATE}"
+
+          HELD=0
+          for _ in $(seq 1 50); do
+            if ! kill -0 "${QEMU_PID}" 2>/dev/null; then
+              break
+            fi
+            if forward_held_by "${CANDIDATE}" "${QEMU_PID}"; then
+              HELD=1
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ "${HELD}" -eq 1 ]; then
+            VM_PORT="${CANDIDATE}"
             break
           fi
-          sleep 0.2
+
+          kill "${QEMU_PID}" 2>/dev/null || true
+          wait "${QEMU_PID}" 2>/dev/null || true
+
+          if grep -q "Could not set up host forwarding rule" "${STDERR_LOG}" 2>/dev/null; then
+            echo "Port ${CANDIDATE} was taken between selection and bind; retrying with a different port."
+            continue
+          fi
+
+          echo "QEMU failed to start: host forward 127.0.0.1:${CANDIDATE} -> :22 was never established."
+          dump_qemu_logs
+          exit 1
         done
 
-        if [ ! -f "${VM_DIR}/vm.pid" ]; then
-          echo "vm.pid not created; QEMU may have failed to start."
-          tail -200 "${VM_DIR}/vm-console.log" || true
+        if [ -z "${VM_PORT}" ]; then
+          echo "Could not obtain a free host forwarding port in ${PORT_START}-$(( PORT_START + PORT_SIZE - 1 )) after ${PORT_ATTEMPTS} attempts."
+          echo "Tried:${TRIED}"
+          dump_qemu_logs
           exit 1
         fi
 
-        echo "QEMU PID: $(cat "${VM_DIR}/vm.pid")"
-        ss -lntp | grep ":${VM_PORT}" || true
+        for _ in $(seq 1 25); do
+          [ -s "${PID_FILE}" ] && break
+          sleep 0.2
+        done
+        if [ ! -s "${PID_FILE}" ]; then
+          echo "QEMU holds 127.0.0.1:${VM_PORT} but never wrote ${PID_FILE}."
+          dump_qemu_logs
+          exit 1
+        fi
+
+        VM_PID="$(cat "${PID_FILE}")"
+        echo "QEMU PID: ${VM_PID}"
+        echo "Host forward confirmed on 127.0.0.1:${VM_PORT}:"
+        ss -lntp "( sport = :${VM_PORT} )"
+
+        {
+          echo "vm-port=${VM_PORT}"
+          echo "vm-pid=${VM_PID}"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "KVM_VM_PORT=${VM_PORT}"
+          echo "KVM_VM_PID=${VM_PID}"
+        } >> "$GITHUB_ENV"
 
     - name: Wait for VM SSH to be ready
       shell: bash
       run: |
         set -euo pipefail
         VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
-        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
-        VM_PID="$(cat "${VM_DIR}/vm.pid")"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
+        VM_PID="${{ steps.qemu.outputs.vm-pid }}"
         TIMEOUT_MINUTES="${{ inputs.vm-ready-timeout-minutes }}"
 
-        echo "Waiting up to ${TIMEOUT_MINUTES}m for VM SSH on localhost:${VM_PORT}..."
+        STDERR_LOG="${VM_DIR}/qemu-stderr.log"
+        CONSOLE_LOG="${VM_DIR}/vm-console.log"
 
-        # `timeout-minutes:` is not available on composite action steps, so the
-        # caller's timeout is enforced here as a deadline on the poll loop.
+        dump_qemu_logs() {
+          echo "=== qemu-stderr.log ==="
+          cat "${STDERR_LOG}" 2>/dev/null || true
+          echo "=== vm-console.log (last 200 lines) ==="
+          tail -200 "${CONSOLE_LOG}" 2>/dev/null || true
+        }
+
+        echo "Waiting up to ${TIMEOUT_MINUTES}m for VM SSH on localhost:${VM_PORT}..."
         DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))
         ATTEMPT=0
 
@@ -285,16 +392,16 @@ runs:
           ATTEMPT=$(( ATTEMPT + 1 ))
           echo -n "Attempt ${ATTEMPT}: "
 
-          if ! kill -0 "$VM_PID" 2>/dev/null; then
+          if ! kill -0 "${VM_PID}" 2>/dev/null; then
             echo "QEMU process exited (PID: ${VM_PID})"
-            tail -200 "${VM_DIR}/vm-console.log" || true
+            dump_qemu_logs
             exit 1
           fi
 
-          if nc -z 127.0.0.1 "${VM_PORT}"; then
-            echo -n "port open; "
-          else
-            echo -n "port closed; "
+          if ! ss -lnt "( sport = :${VM_PORT} )" 2>/dev/null | grep -q ":${VM_PORT}"; then
+            echo "host forward 127.0.0.1:${VM_PORT} is no longer listening"
+            dump_qemu_logs
+            exit 1
           fi
 
           if ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
@@ -313,8 +420,8 @@ runs:
           sleep 10
         done
 
-        echo "VM failed to become ready"
-        tail -200 "${VM_DIR}/vm-console.log" || true
+        echo "VM failed to become ready within ${TIMEOUT_MINUTES}m (host forward on 127.0.0.1:${VM_PORT} was established, so this is a guest boot problem)."
+        dump_qemu_logs
         exit 1
 
     - name: Bootstrap VM tools (Go + Task inside VM)
@@ -322,7 +429,7 @@ runs:
       run: |
         set -euo pipefail
         VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
-        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
         GO_VER="${{ inputs.go-version }}"
 
         timeout "${{ inputs.bootstrap-timeout-minutes }}m" \
@@ -366,7 +473,7 @@ runs:
       run: |
         set -euo pipefail
         VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
-        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
         CA_CERT_PATH="${{ inputs.ca-cert-path }}"
 
         if [ ! -f "${CA_CERT_PATH}" ]; then
@@ -404,7 +511,7 @@ runs:
       run: |
         set -euo pipefail
         VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
-        VM_PORT="${{ steps.vm-dir.outputs.vm-port }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
         WORKSPACE_PATH="${{ inputs.workspace-path }}"
 
         RSYNC_ARGS=(
