@@ -27,8 +27,8 @@ var detectPodCIDR = func(ctx context.Context) (string, error) {
 
 var createCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a policy: render its rule(s) into the `inet weaver` chain",
-	Long: "Render one named category's classification/ACL rule(s) into the `inet weaver` forward chain and " +
+	Short: "Create a policy: render its rule(s) into the `inet weaver-workload-policy` chain",
+	Long: "Render one named category's classification/ACL rule(s) into the `inet weaver-workload-policy` forward chain and " +
 		"ensure its nft set exists. Specify exactly one action: --stamp <class> (classify into an HTB priority " +
 		"class), or --deny (drop the CIDRs both directions). There is no --direction flag: --stamp's class fixes " +
 		"the direction. --reply-stamp adds an asymmetric conntrack reply rule to an egress-direction --stamp " +

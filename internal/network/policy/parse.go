@@ -15,7 +15,7 @@ var (
 	rePodCIDR6 = regexp.MustCompile(`ip6 (?:daddr|saddr) ([0-9A-Fa-f:]+/\d{1,3})\b`)
 )
 
-// ExtractPodCIDRs recovers the pod CIDR(s) last used to render network-weaver.nft
+// ExtractPodCIDRs recovers the pod CIDR(s) last used to render network-weaver-workload-policy.nft
 // (IPv4 first, then IPv6 if present). Mirrors internal/network/firewall's Parse():
 // it understands only the exact format Render produces, not a general nft parser,
 // and exists so a caller that doesn't supply --pod-cidr (as --deny never does)

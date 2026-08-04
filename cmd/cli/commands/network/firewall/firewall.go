@@ -2,7 +2,7 @@
 
 // Package firewall wires the `solo-provisioner network firewall` verbs to the
 // internal/network/firewall manager. The verbs manage the node-agnostic
-// `inet host` nftables table (SSH/mgmt allowlist, ICMP policy, in-cluster
+// `inet weaver-host-firewall` nftables table (SSH/mgmt allowlist, ICMP policy, in-cluster
 // host-service ports).
 package firewall
 
@@ -33,10 +33,10 @@ var (
 
 var firewallCmd = &cobra.Command{
 	Use:   "firewall",
-	Short: "Manage the node-level host firewall (`inet host` nftables table)",
-	Long: "Manage the node-agnostic host firewall: the `inet host` nftables table that protects the " +
+	Short: "Manage the node-level host firewall (`inet weaver-host-firewall` nftables table)",
+	Long: "Manage the node-agnostic host firewall: the `inet weaver-host-firewall` nftables table that protects the " +
 		"bare-metal host (SSH/management allowlist, ICMP policy, in-cluster host-service ports). " +
-		"This table is separate from the `inet weaver` workload plane and applies to every node type.",
+		"This table is separate from the `inet weaver-workload-policy` workload plane and applies to every node type.",
 	RunE: common.DefaultRunE,
 }
 

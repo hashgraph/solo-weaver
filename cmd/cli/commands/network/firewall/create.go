@@ -25,8 +25,8 @@ var detectPodCIDR = func(ctx context.Context) (string, error) {
 
 var createCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create the `inet host` table (create-if-missing; --force re-renders)",
-	Long: "Render and apply the full `inet host` table. create-if-missing: if the table already " +
+	Short: "Create the `inet weaver-host-firewall` table (create-if-missing; --force re-renders)",
+	Long: "Render and apply the full `inet weaver-host-firewall` table. create-if-missing: if the table already " +
 		"exists, no changes are made unless --force is passed, which re-renders from the flags.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// NewTable() seeds the design defaults (SSH 22, the stack in-cluster
@@ -94,7 +94,7 @@ var createCmd = &cobra.Command{
 			return err
 		}
 		if changed {
-			logx.As().Info().Msg("inet host firewall is in the desired state")
+			logx.As().Info().Msg("inet weaver-host-firewall firewall is in the desired state")
 		}
 		return nil
 	},

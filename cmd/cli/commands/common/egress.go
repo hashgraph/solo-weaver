@@ -12,8 +12,8 @@ import (
 )
 
 // FlagNameEgressInterface and FlagNameLinkRate are the CLI flag names for
-// the tc-egress NIC and link-rate settings, shared by every block-node command
-// that renders the tc-egress script (install, reconfigure).
+// the bandwidth-shaper NIC and link-rate settings, shared by every block-node command
+// that renders the bandwidth-shaper script (install, reconfigure).
 const (
 	FlagNameEgressInterface = "egress-interface"
 	FlagNameLinkRate        = "link-rate"

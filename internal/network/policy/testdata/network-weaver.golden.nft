@@ -1,7 +1,7 @@
-add table inet weaver
-delete table inet weaver
-add table inet weaver
-table inet weaver {
+add table inet weaver-workload-policy
+delete table inet weaver-workload-policy
+add table inet weaver-workload-policy
+table inet weaver-workload-policy {
 	set bn-backfill { type ipv4_addr . inet_service; }
 	set bn-backfill6 { type ipv6_addr . inet_service; }
 	set bn-partner-out { type ipv4_addr; flags interval; }

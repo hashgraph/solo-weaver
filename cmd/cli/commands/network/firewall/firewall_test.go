@@ -60,7 +60,7 @@ func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
 	// This executes the real command so the shared-var registration is exercised.
 	r := &captureRunner{}
 	dir := t.TempDir()
-	nftPath := filepath.Join(dir, "network-host.nft")
+	nftPath := filepath.Join(dir, "network-weaver-host-firewall.nft")
 
 	origMgr, origDetect := newManager, detectPodCIDR
 	newManager = func() *fw.Manager {

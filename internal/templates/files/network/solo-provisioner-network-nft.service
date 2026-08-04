@@ -8,8 +8,8 @@ Before=solo-provisioner-daemon.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-host.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-host.nft'
-ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-weaver.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-weaver.nft'
+ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-weaver-host-firewall.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-weaver-host-firewall.nft'
+ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-weaver-workload-policy.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-weaver-workload-policy.nft'
 
 [Install]
 WantedBy=multi-user.target

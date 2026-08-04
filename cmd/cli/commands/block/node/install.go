@@ -42,6 +42,14 @@ var installCmd = &cobra.Command{
 		// in the install-only network field here.
 		inputs.Custom.ShapeOverrides = shapeOverrides
 
+		// Host firewall is independently gated from traffic shaping — it applies
+		// regardless of whether the BN policy plane/tc shaping is enabled. Prompted
+		// first so the operator answers the firewall question (and its settings)
+		// before the traffic-shaper question.
+		if err := common.ResolveHostFirewallConfig(cmd, args, cv, false); err != nil {
+			return err
+		}
+
 		// The traffic-shaping gate is independent of the host firewall — it
 		// covers the BN workload network-policy plane and tc HTB shaping, not
 		// the host's own SSH/mgmt firewall.
@@ -67,12 +75,6 @@ var installCmd = &cobra.Command{
 		// prepareBlocknodeInputs ran before the prompts; patch in the final values.
 		inputs.Custom.EgressInterface = flagEgressInterface
 		inputs.Custom.LinkRate = flagLinkRate
-
-		// Host firewall is independently gated from traffic shaping above — it
-		// applies regardless of whether the BN policy plane/tc shaping is enabled.
-		if err := common.ResolveHostFirewallConfig(cmd, args, cv, false); err != nil {
-			return err
-		}
 
 		// Print the unified summary of all prompted values (block node inputs +
 		// firewall) now that both prompt sections have completed.

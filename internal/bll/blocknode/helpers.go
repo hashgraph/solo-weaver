@@ -72,7 +72,7 @@ func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInpu
 			Msg("Persisted block node traffic-shaping decision into runtime state")
 
 		// Persist the host-firewall decision + content (host-scoped) so a later
-		// reconfigure/upgrade can re-assert the inet host table without the operator
+		// reconfigure/upgrade can re-assert the inet weaver-host-firewall table without the operator
 		// re-supplying the allowlist. Written even when the block node is not (yet)
 		// deployed, mirroring TrafficShapingDisabled — the firewall is host-scoped and
 		// its application is independent of the Helm release status.

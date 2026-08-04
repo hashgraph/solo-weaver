@@ -23,7 +23,7 @@ const NetworkFirewallCreateStepId = "network-firewall-create"
 // (the production manager restarts a systemd service, which is Linux-only).
 var newFirewallManager = func() *firewall.Manager { return firewall.NewManager() }
 
-// NetworkFirewallCreate lays down the node-level `inet host` nftables table
+// NetworkFirewallCreate lays down the node-level `inet weaver-host-firewall` nftables table
 // (SSH/management allowlist, ICMP policy, in-cluster host-service ports) by
 // invoking the same logic as `network firewall create`. It is wired into the
 // block-node workflow (`block node install` / `reconfigure` / `upgrade`) — not
@@ -50,7 +50,7 @@ var newFirewallManager = func() *firewall.Manager { return firewall.NewManager()
 func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkFirewallCreateStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Applying host firewall (inet host)")
+			notify.As().StepStart(ctx, stp, "Applying host firewall (inet weaver-host-firewall)")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -69,7 +69,7 @@ func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 
 			if len(hostCfg.ManagementCIDRs) == 0 {
 				logx.As().Warn().Msg(
-					"host firewall not applied: no management CIDRs configured. The inet host table uses a " +
+					"host firewall not applied: no management CIDRs configured. The inet weaver-host-firewall table uses a " +
 						"default-drop input chain, so applying it without an SSH/management allowlist would lock " +
 						"this host out of new SSH connections. Set host.managementCidrs in config or pass " +
 						"`--mgmt-cidrs <cidr,...>` to 'block node install' (or 'reconfigure'/'upgrade' to retrofit " +

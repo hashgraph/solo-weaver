@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package policy implements the `solo-provisioner network policy` verb family:
-// it renders per-category classification / ACL rules into the `inet weaver`
+// it renders per-category classification / ACL rules into the `inet weaver-workload-policy`
 // nftables table (the workload traffic plane), maintains a per-policy registry
 // under /etc/solo-provisioner/policies/, and applies the full rendered chain to
 // the live kernel with `nft -f` while atomically persisting
-// /etc/solo-provisioner/network-weaver.nft.
+// /etc/solo-provisioner/network-weaver-workload-policy.nft.
 package policy
 
 const (
 	// TableName is the nftables table this package owns.
-	TableName = "inet weaver"
+	TableName = "inet weaver-workload-policy"
 
 	// WeaverNftPath is the on-disk artifact replayed at boot by the shared
 	// solo-provisioner-network-nft.service oneshot. It lives under /etc (host OS
 	// config on the root filesystem) so it is available early at boot, before any
 	// late mounts. This package only writes the file and ensures the unit is
 	// enabled.
-	WeaverNftPath = "/etc/solo-provisioner/network-weaver.nft"
+	WeaverNftPath = "/etc/solo-provisioner/network-weaver-workload-policy.nft"
 
-	// HostNftPath is the inet host artifact, owned by internal/network/firewall.
+	// HostNftPath is the inet weaver-host-firewall artifact, owned by internal/network/firewall.
 	// This package never writes it; it only checks for its presence to decide
 	// whether the shared oneshot may be disabled.
-	HostNftPath = "/etc/solo-provisioner/network-host.nft"
+	HostNftPath = "/etc/solo-provisioner/network-weaver-host-firewall.nft"
 
 	// RegistryDir holds one JSON file per policy. The registry is the source of
 	// truth for the static policy definition and drives the tier-order chain

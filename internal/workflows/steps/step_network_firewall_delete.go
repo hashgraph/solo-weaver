@@ -16,7 +16,7 @@ import (
 // NetworkFirewallDeleteStepId is the step ID for NetworkFirewallDelete.
 const NetworkFirewallDeleteStepId = "network-firewall-delete"
 
-// NetworkFirewallDelete removes the node-level `inet host` nftables table (the
+// NetworkFirewallDelete removes the node-level `inet weaver-host-firewall` nftables table (the
 // same teardown as `network firewall delete`). It is the disable counterpart to
 // NetworkFirewallCreate, wired into `block node reconfigure` when the operator
 // turns the host firewall off on an already-provisioned host.
@@ -24,12 +24,12 @@ const NetworkFirewallDeleteStepId = "network-firewall-delete"
 // The delete is idempotent (firewall.Manager.Delete existence-checks before
 // removing), so running it when no table is present is a no-op. It deliberately
 // does NOT disable the shared solo-provisioner-network-nft.service — that unit is
-// also used by the `inet weaver` plane and is only torn down by a full cluster
+// also used by the `inet weaver-workload-policy` plane and is only torn down by a full cluster
 // uninstall.
 func NetworkFirewallDelete() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkFirewallDeleteStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Removing host firewall (inet host)")
+			notify.As().StepStart(ctx, stp, "Removing host firewall (inet weaver-host-firewall)")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -41,14 +41,14 @@ func NetworkFirewallDelete() *automa.StepBuilder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			if err := newFirewallManager().Delete(ctx); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
-					errorx.Decorate(err, "failed to remove the host firewall (inet host) table").
+					errorx.Decorate(err, "failed to remove the host firewall (inet weaver-host-firewall) table").
 						WithProperty(models.ErrPropertyResolution, []string{
-							"Inspect the live table: nft list table inet host",
-							"Remove it manually if needed: nft delete table inet host",
+							"Inspect the live table: nft list table inet weaver-host-firewall",
+							"Remove it manually if needed: nft delete table inet weaver-host-firewall",
 							"Check the persisted artifact: ls -la " + firewall.HostNftPath,
 						})))
 			}
-			logx.As().Info().Msg("host firewall (inet host) table removed")
+			logx.As().Info().Msg("host firewall (inet weaver-host-firewall) table removed")
 			return automa.SuccessReport(stp)
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {

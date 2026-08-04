@@ -14,7 +14,7 @@ import (
 )
 
 // TcEgressPersistStepId is the step ID for TcEgressPersist.
-const TcEgressPersistStepId = "tc-egress-persist"
+const TcEgressPersistStepId = "bandwidth-shaper-persist"
 
 // TcEgressPersist provisions the egress tc HTB hierarchy for reboot persistence.
 // It writes the egress device root and three default classes
@@ -37,14 +37,14 @@ const TcEgressPersistStepId = "tc-egress-persist"
 func TcEgressPersist(nicName string, trunkRate string, overrides map[string]shape.ClassOverride) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcEgressPersistStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Persisting tc-egress HTB hierarchy for reboot")
+			notify.As().StepStart(ctx, stp, "Persisting bandwidth-shaper HTB hierarchy for reboot")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to persist tc-egress hierarchy")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to persist bandwidth-shaper hierarchy")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "tc-egress hierarchy persisted")
+			notify.As().StepCompletion(ctx, stp, rpt, "bandwidth-shaper hierarchy persisted")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			nic := nicName
@@ -63,7 +63,7 @@ func TcEgressPersist(nicName string, trunkRate string, overrides map[string]shap
 			}
 
 			tcEgressResolution := []string{
-				"Check the tc-egress service journal for the actual tc error: journalctl -u solo-provisioner-tc-egress.service -n 20",
+				"Check the bandwidth-shaper service journal for the actual tc error: journalctl -u solo-provisioner-bandwidth-shaper.service -n 20",
 				"Verify the NIC name exists on this host: ip link show",
 				"If the NIC is wrong, specify the correct one: block node install --egress-interface <nic>",
 				"Find the NIC used by the default route: ip route get 8.8.8.8 | grep dev",
@@ -101,7 +101,7 @@ func TcEgressPersist(nicName string, trunkRate string, overrides map[string]shap
 			// from that existing shape config, then apply.
 			if err := shape.RenderAndApplyDefaultEgress(ctx, nic); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
-					errorx.Decorate(err, "failed to apply tc-egress script").
+					errorx.Decorate(err, "failed to apply bandwidth-shaper script").
 						WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
 			}
 			return automa.SuccessReport(stp)
@@ -112,6 +112,6 @@ func TcEgressPersist(nicName string, trunkRate string, overrides map[string]shap
 			// persisted — no worse than before this step ran. Teardown is handled
 			// by block node uninstall.
 			return automa.SkippedReport(stp,
-				automa.WithDetail("tc-egress rollback is a no-op; teardown is handled by block node uninstall"))
+				automa.WithDetail("bandwidth-shaper rollback is a no-op; teardown is handled by block node uninstall"))
 		})
 }

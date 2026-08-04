@@ -11,7 +11,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// ApplyTcEgressScript ensures the tc-egress systemd unit is installed, then
+// ApplyTcEgressScript ensures the bandwidth-shaper systemd unit is installed, then
 // restarts it so the kernel picks up the HTB hierarchy immediately without
 // waiting for a reboot. EnsureTcEgressUnit is idempotent (SHA-256 gated) so
 // repeated calls are cheap. RestartService resets a previously-failed unit
@@ -21,10 +21,10 @@ import (
 // failed — matching what operators see after a reboot.
 func ApplyTcEgressScript(ctx context.Context) error {
 	if err := EnsureTcEgressUnit(ctx); err != nil {
-		return errorx.Decorate(err, "failed to install tc-egress service unit")
+		return errorx.Decorate(err, "failed to install bandwidth-shaper service unit")
 	}
 	if err := soos.RestartService(ctx, TcEgressService); err != nil {
-		return errorx.Decorate(err, "tc-egress script failed")
+		return errorx.Decorate(err, "bandwidth-shaper script failed")
 	}
 	return nil
 }

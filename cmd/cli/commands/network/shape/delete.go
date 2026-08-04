@@ -16,7 +16,7 @@ var deleteCmd = &cobra.Command{
 		"                  the device default or by any network policy --stamp/--reply-stamp.\n\n" +
 		"  --device <dir>  Remove the device configuration. Fails if any classes are still\n" +
 		"                  configured for this device (delete classes first).\n\n" +
-		"For egress targets, tc-egress.sh is re-rendered and tc-egress.service is restarted.",
+		"For egress targets, bandwidth-shaper.sh is re-rendered and bandwidth-shaper.service is restarted.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if flagClass != "" && flagDevice != "" {
 			return errorx.IllegalArgument.New("--class and --device are mutually exclusive")

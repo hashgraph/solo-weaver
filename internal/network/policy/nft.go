@@ -14,38 +14,39 @@ import (
 
 // Runner is the seam over the system `nft` binary. Unlike the firewall package
 // (which applies via a systemd service restart), `network policy` applies the
-// rendered chain directly with `nft -f` — the shared boot oneshot does not
-// load network-weaver.nft yet. Tests substitute a fake so the package builds
-// and unit-tests on any platform (including macOS) without touching the kernel.
+// rendered chain directly with `nft -f` for the live path, and separately
+// persists network-weaver-workload-policy.nft so the shared nft oneshot can
+// replay it at boot. Tests substitute a fake so the package builds and
+// unit-tests on any platform (including macOS) without touching the kernel.
 type Runner interface {
 	// Apply loads a full nft document into the kernel (`nft -f -`). The
 	// rendered document carries the idempotent `add table / delete table / add
-	// table` prefix, so a re-apply atomically replaces the inet weaver table.
+	// table` prefix, so a re-apply atomically replaces the inet weaver-workload-policy table.
 	Apply(ctx context.Context, doc string) error
 	// AddElements adds initial membership to a policy's set
-	// (`nft add element inet weaver <set> { … }`). Applied to the live kernel
+	// (`nft add element inet weaver-workload-policy <set> { … }`). Applied to the live kernel
 	// only — set membership is never persisted.
 	AddElements(ctx context.Context, set string, elements []string) error
 	// DeleteElements removes specific elements from a policy's set
-	// (`nft delete element inet weaver <set> { … }`). Applied to the live
+	// (`nft delete element inet weaver-workload-policy <set> { … }`). Applied to the live
 	// kernel only.
 	DeleteElements(ctx context.Context, set string, elements []string) error
 	// SetElements atomically replaces a policy's set membership
-	// (`flush set inet weaver <set>` followed by `add element … { … }` in a
+	// (`flush set inet weaver-workload-policy <set>` followed by `add element … { … }` in a
 	// single nft document — one kernel transaction). An empty elements slice
 	// clears the set without adding any new entries.
 	SetElements(ctx context.Context, set string, elements []string) error
 	// ListElements returns one set's live elements
-	// (`nft list set inet weaver <set>`), or nil if the set has no elements
+	// (`nft list set inet weaver-workload-policy <set>`), or nil if the set has no elements
 	// or does not exist. Used by Manager.Create to snapshot every policy's
 	// membership before the destructive delete/recreate Apply() performs, so
 	// it can be restored afterward (see Manager.Create for why).
 	ListElements(ctx context.Context, set string) ([]string, error)
-	// List returns the rendered inet weaver table (`nft list table inet weaver`).
+	// List returns the rendered inet weaver-workload-policy table (`nft list table inet weaver-workload-policy`).
 	List(ctx context.Context) (string, error)
-	// Delete removes the inet weaver table (`nft delete table inet weaver`).
+	// Delete removes the inet weaver-workload-policy table (`nft delete table inet weaver-workload-policy`).
 	Delete(ctx context.Context) error
-	// Exists reports whether the inet weaver table is present in the kernel.
+	// Exists reports whether the inet weaver-workload-policy table is present in the kernel.
 	Exists(ctx context.Context) (bool, error)
 }
 
@@ -56,7 +57,7 @@ var nftBinCandidates = []string{"/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft"}
 
 // tableArgs splits TableName into the argv tokens nft expects for sub-commands
 // that take a family and table name as separate arguments (list, delete).
-var tableArgs = strings.Fields(TableName) // ["inet", "weaver"]
+var tableArgs = strings.Fields(TableName) // ["inet", "weaver-workload-policy"]
 
 // execRunner shells out to the system nft binary.
 type execRunner struct {
@@ -220,7 +221,7 @@ func (r *execRunner) Delete(ctx context.Context) error {
 }
 
 func (r *execRunner) Exists(ctx context.Context) (bool, error) {
-	// `nft list table inet weaver` exits zero when the table is present and
+	// `nft list table inet weaver-workload-policy` exits zero when the table is present and
 	// non-zero when absent. Treating any failure as "absent" is safe: a genuine
 	// nft/permission error surfaces on the subsequent Apply.
 	cmd := exec.CommandContext(ctx, r.bin, append([]string{"list", "table"}, tableArgs...)...)

@@ -333,7 +333,7 @@ func TestDelete_LastPolicy_TearsDownTable(t *testing.T) {
 
 	// Deleting the last policy tears the whole table down rather than applying
 	// an empty policy-drop chain that would blackhole all forwarded traffic.
-	require.False(t, r.exists, "inet weaver table must be deleted after the last policy is removed")
+	require.False(t, r.exists, "inet weaver-workload-policy table must be deleted after the last policy is removed")
 	// The persisted file is removed so the boot oneshot replays nothing.
 	require.NoFileExists(t, nftPath)
 	// The registry entry is gone.
