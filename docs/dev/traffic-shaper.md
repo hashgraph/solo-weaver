@@ -16,17 +16,23 @@ three packages under `internal/network/`:
 | Plane | nft table / tc object | Package | Role |
 |---|---|---|---|
 | Host firewall | `inet weaver-host-firewall` | `internal/network/firewall` | INPUT-hook filter protecting the host: SSH/mgmt allowlist, blocked CIDRs, ICMP policy, in-cluster host-service ports. No shaping. Static — never reconciled by the daemon. |
-| Block-node classifier | `inet weaver-blocknode-classifier` | `internal/network/policy` | FORWARD-hook filter: per-category ACL/quarantine **and** `meta priority` marking of classified pod traffic. Marks only — it does not shape bandwidth. |
-| Bandwidth shaper | tc/HTB hierarchies | `internal/network/shape` | The actual bandwidth enforcement: an egress HTB hierarchy on the `$EGRESS` physical NIC and one on each pod's host-side `$VETH`. Classifies natively on the priority the classifier stamped. |
+| Workload policy | `inet weaver-workload-policy` | `internal/network/policy` | FORWARD-hook filter over forwarded pod/workload traffic: per-category ACL/quarantine **and** `meta priority` marking (classification). Marks and filters only — it does not shape bandwidth. |
+| Bandwidth shaper | tc/HTB hierarchies | `internal/network/shape` | The actual bandwidth enforcement: an egress HTB hierarchy on the `$EGRESS` physical NIC and one on each pod's host-side `$VETH`. Classifies natively on the priority the policy plane stamped. |
 
-The classifier and the shaper are two halves of traffic shaping: the classifier
-**marks** a packet with a priority; the tc HTB hierarchy **rate-limits** it into
-the matching class. The host firewall is independent, applies to every node type,
-and is out of scope for the daemon.
+The policy plane and the shaper are two halves of traffic shaping: the policy
+plane **marks** a packet with a priority; the tc HTB hierarchy **rate-limits** it
+into the matching class. The host firewall is independent, applies to every node
+type, and is out of scope for the daemon.
+
+The plane is named for the FORWARD hook it governs — *workload* traffic — not for
+the block node specifically. It is only ever provisioned for block nodes today,
+and its traffic categories and daemon reconciler are block-node-specific (below),
+but the table itself holds whatever `network policy` writes, block-node-related
+or not.
 
 ## How classify-and-shape fits together
 
-The classifier and the shaper are decoupled and meet through exactly one thing:
+The policy plane and the shaper are decoupled and meet through exactly one thing:
 the skb priority, encoded as a tc class id.
 
 Each traffic category has a fixed mark, skb priority, and direction
@@ -46,7 +52,7 @@ The priority is just the class id encoded into an skb priority:
 is `1:40`, and so on (major `1` in the high 16 bits, the mark as the minor in the
 low 16). Those minors are exactly the HTB leaf classes the shaper installs.
 
-The classifier stamps that priority with an nft rule ending in
+The policy plane stamps that priority with an nft rule ending in
 `meta priority set <hexPriority> accept` (`internal/network/policy/render.go`).
 Asymmetric flows are handled with conntrack: the forward rule writes
 `ct mark set <mark>` plus the forward priority, and a reply-restore rule
@@ -56,7 +62,7 @@ so it falls to the HTB default class.
 
 The shaper installs **no tc filters**. The kernel's HTB qdisc classifies natively
 on `skb->priority` whenever it decodes to a valid `major:minor` class id, so the
-priority the classifier stamped *is* the class selector. This is why the two
+priority the policy plane stamped *is* the class selector. This is why the two
 packages need no shared runtime state: `policy` owns the fixed name-to-priority
 map, `shape` owns each class's bandwidth (rate/ceil/prio), and they meet only
 through the class-id encoding.
@@ -114,7 +120,7 @@ The monitor runs two independently-supervised responsibilities (each retried wit
    execs `block node tc-attach --veth <veth>` via sudo to build that pod's
    ingress HTB from the persisted class configs. On pod delete it best-effort
    `tc-detach`es (the kernel removes veth qdiscs with the interface anyway).
-2. **Statusz poll loop -> the classifier's nft set membership.** Every
+2. **Statusz poll loop -> the policy plane's nft set membership.** Every
    `poll_interval` (default 5 s) it resolves the block node's statusz base URL
    (operator override, else discovered from the ready pod's IP + health port),
    runs an unprivileged `--check` digest probe, and only when the digest changed
@@ -146,8 +152,8 @@ the systemd units under `/usr/lib/systemd/system/`.
 ```
 /etc/solo-provisioner/
   network-weaver-host-firewall.nft          # inet weaver-host-firewall table (full ruleset)
-  network-weaver-blocknode-classifier.nft   # inet weaver-blocknode-classifier table (chain + set decls)
-  policies/                                 # one JSON per policy; source of truth for classifier rules
+  network-weaver-workload-policy.nft        # inet weaver-workload-policy table (chain + set decls)
+  policies/                                 # one JSON per policy; source of truth for workload-policy rules
   network/shape/
     devices/                                # one JSON per tc device (egress/ingress): root qdisc rate + default class
     classes/                                # one JSON per tc class: rate/ceil/prio (daemon reads this to rebuild $VETH)
@@ -176,7 +182,7 @@ reconciling.
 
 ### solo-provisioner-network-nft.service (nftables loader)
 
-Shared by the firewall and classifier packages. Rendered from
+Shared by the firewall and policy packages. Rendered from
 `internal/templates/files/network/solo-provisioner-network-nft.service`.
 
 ```ini
@@ -189,7 +195,7 @@ Before=solo-provisioner-daemon.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-weaver-host-firewall.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-weaver-host-firewall.nft'
-ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-weaver-blocknode-classifier.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-weaver-blocknode-classifier.nft'
+ExecStart=/bin/sh -c 'test -e /etc/solo-provisioner/network-weaver-workload-policy.nft || exit 0; exec /usr/sbin/nft -f /etc/solo-provisioner/network-weaver-workload-policy.nft'
 
 [Install]
 WantedBy=multi-user.target
@@ -200,7 +206,7 @@ a `test -e`, so the unit is a no-op for whichever table has not been provisioned
 The same unit is restarted on every live mutation (a `network firewall` /
 `network policy` command, or the install/reconfigure workflow) so the on-disk
 file and the kernel stay in sync. Note this replays the table structure only —
-the classifier's set *membership* is not in the file (see boot persistence
+the policy plane's set *membership* is not in the file (see boot persistence
 below).
 
 ### solo-provisioner-bandwidth-shaper.service (tc HTB loader)
@@ -248,7 +254,7 @@ Two things are intentionally left out of boot persistence:
 
 - **Set membership** (which CIDRs belong to each `bn-*` category) is never written
   to the `.nft` file — statusz is the source of truth and the daemon reconciles
-  it. On a fresh boot the classifier chain is present but its sets are empty
+  it. On a fresh boot the policy plane's chain is present but its sets are empty
   until the daemon's first poll rehydrates them.
 - **The `$VETH` HTB** would be meaningless to persist because the veth interface
   does not survive reboot (Cilium recreates it on pod start). The daemon
@@ -266,9 +272,9 @@ asked first**, then traffic shaping:
   Configured by `--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`,
   `--in-cluster-ports`.
 - `--traffic-shaping-enabled` — the single switch that wires up **all three**
-  shaping pieces: the classifier (`inet weaver-blocknode-classifier`), the tc HTB
-  hierarchies, and the traffic-shaper daemon. Only when this is accepted does
-  install prompt for the egress NIC (`--egress-interface`) and its line rate
+  shaping pieces: the workload policy plane (`inet weaver-workload-policy`), the
+  tc HTB hierarchies, and the traffic-shaper daemon. Only when this is accepted
+  does install prompt for the egress NIC (`--egress-interface`) and its line rate
   (`--link-rate`, accepts `auto`), take per-class overrides via repeatable
   `--shape <class>=rate=<r>,ceil=<c>,prio=<p>`, and set the daemon poll cadence
   with `--statusz-poll-interval`.
@@ -289,8 +295,8 @@ provisioned node.
   `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`; `add`/`remove` take the
   singular forms; `set` atomically replaces a full list.
 - **`network policy`** (`create`/`add`/`remove`/`set`/`show`/`delete`) — the
-  classifier. `create` takes `--name` (the nft set name), `--stamp` (the HTB
-  class to classify into, which also fixes direction) or `--deny`, plus
+  workload policy plane. `create` takes `--name` (the nft set name), `--stamp`
+  (the HTB class to classify into, which also fixes direction) or `--deny`, plus
   `--reply-stamp`, `--from-entity world`, `--ports`, `--cidrs`/`--cidrs-file`,
   `--pod-cidr`.
 - **`network shape`** (`create`/`set`/`show`/`delete`/`watch`) — the tc HTB
@@ -306,9 +312,9 @@ During `block node install` / `reconfigure` the workflow lays these down:
 - **Host firewall** — the firewall-create step renders
   `network-weaver-host-firewall.nft`, then `EnsureNetworkNftUnit` installs and
   enables `solo-provisioner-network-nft.service` and restarts it.
-- **Classifier** — `NftWeaverPersist`
+- **Workload policy** — `NftWeaverPersist`
   (`internal/workflows/steps/step_network_nft_weaver.go`) re-renders
-  `network-weaver-blocknode-classifier.nft` from the policy registry, ensures the
+  `network-weaver-workload-policy.nft` from the policy registry, ensures the
   shared nft unit, and restarts it.
 - **Bandwidth shaper** — `TcEgressPersist`
   (`internal/workflows/steps/step_network_tc_egress.go`) renders
@@ -325,7 +331,7 @@ poll loop never interleave nft transactions.
 ```bash
 # nft: table definitions (rules persist; set elements are daemon-managed)
 sudo nft list table inet weaver-host-firewall
-sudo nft list table inet weaver-blocknode-classifier
+sudo nft list table inet weaver-workload-policy
 
 # tc: the live egress HTB hierarchy (physical NIC) and a pod's ingress veth
 tc -s class show dev "$EGRESS_NIC"

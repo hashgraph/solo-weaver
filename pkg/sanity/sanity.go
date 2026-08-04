@@ -750,7 +750,7 @@ func ValidateIPv4CIDR(s string) error {
 }
 
 // CIDRIsIPv6 reports whether s is an IPv6 CIDR (as opposed to IPv4). It is the
-// family classifier that lets the dual-stack `inet weaver-host-firewall` / `inet weaver-blocknode-classifier`
+// family classifier that lets the dual-stack `inet weaver-host-firewall` / `inet weaver-workload-policy`
 // renderers route each entry of a mixed --mgmt-cidrs / --blocked-cidrs / --cidrs
 // list into the matching nft set (ipv4_addr vs ipv6_addr). s should already have
 // passed ValidateCIDR; an unparseable value returns an error rather than a

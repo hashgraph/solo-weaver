@@ -9,7 +9,7 @@ import (
 )
 
 func TestIsSetNotExistError(t *testing.T) {
-	require.True(t, isSetNotExistError("/dev/stdin:1:18-23: Error: No such file or directory\nlist set inet weaver-blocknode-classifier bn-publisher\n"))
+	require.True(t, isSetNotExistError("/dev/stdin:1:18-23: Error: No such file or directory\nlist set inet weaver-workload-policy bn-publisher\n"))
 	require.False(t, isSetNotExistError("Error: Operation not permitted"))
 	require.False(t, isSetNotExistError(""))
 }

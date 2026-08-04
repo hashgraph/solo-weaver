@@ -10,9 +10,9 @@ import (
 var deleteCmd = &cobra.Command{
 	Use:   "delete",
 	Short: "Delete a policy (removes its rules, set, and registry entry; re-renders chain)",
-	Long: "Remove a named policy from the `inet weaver-blocknode-classifier` table: re-renders the chain without it, " +
+	Long: "Remove a named policy from the `inet weaver-workload-policy` table: re-renders the chain without it, " +
 		"applies the result to the live kernel, restores remaining policies' live membership, " +
-		"removes the registry file, and atomically rewrites network-weaver-blocknode-classifier.nft. " +
+		"removes the registry file, and atomically rewrites network-weaver-workload-policy.nft. " +
 		"If this is the last policy, an empty chain (policy drop, no rules) is applied and the " +
 		"boot oneshot is left enabled.",
 	RunE: func(cmd *cobra.Command, args []string) error {

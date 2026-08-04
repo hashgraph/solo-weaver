@@ -15,7 +15,7 @@ var networkCmd = &cobra.Command{
 	Short: "Manage node-level network state (firewall, policy, shaping, load balancing)",
 	Long: "Manage node-level network state behind the solo-provisioner traffic shaper. " +
 		"The firewall scope manages the node-agnostic `inet weaver-host-firewall` nftables table; the policy scope " +
-		"manages per-category traffic rules in the `inet weaver-blocknode-classifier` table. Both are generic primitives " +
+		"manages per-category traffic rules in the `inet weaver-workload-policy` table. Both are generic primitives " +
 		"driven by CIDRs and class names, not tied to any specific node type.",
 	RunE: common.DefaultRunE, // runnable group; sub-commands inherit parent/root flags
 }

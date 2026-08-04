@@ -13,7 +13,7 @@ var setCmd = &cobra.Command{
 	Long: "Replace the full CIDR membership of a named policy's nft set in a single kernel transaction " +
 		"(`flush set + add element` in one `nft -f -` document). Omitting `--cidrs`/`--cidrs-file` clears " +
 		"the set. Like `add`/`remove`, only the live kernel set is mutated — no chain re-render and no " +
-		"update to network-weaver-blocknode-classifier.nft.",
+		"update to network-weaver-workload-policy.nft.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cidrs, err := resolveCIDRs(cmd)
 		if err != nil {

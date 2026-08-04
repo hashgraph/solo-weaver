@@ -31,7 +31,7 @@ type Table struct {
 	// BlockedCIDRs is the operator-curated deny list (set @blocked_addrs). It is
 	// purely operator-managed for its whole lifecycle — nothing in this package
 	// or the daemon ever writes to it automatically. This is deliberately
-	// distinct from the BN workload plane's `bn-restricted` set (`inet weaver-blocknode-classifier`),
+	// distinct from the BN workload plane's `bn-restricted` set (`inet weaver-workload-policy`),
 	// which the traffic-shaper daemon reconciles from the block node's statusz
 	// "restricted" category; an operator block list needs a home the daemon
 	// never overwrites.

@@ -11,7 +11,7 @@ var showCmd = &cobra.Command{
 	Short: "Show policy config and live set membership (all policies, or one with --name)",
 	Long: "Without --name, list every configured policy. With --name, print just that policy's " +
 		"registry config (action, class, ports, created_at) followed by its current live CIDR set " +
-		"membership from the kernel (`nft list set inet weaver-blocknode-classifier <name>`). No lock is taken — show is a " +
+		"membership from the kernel (`nft list set inet weaver-workload-policy <name>`). No lock is taken — show is a " +
 		"read-only operation. This mirrors `network shape show`, where a bare `show` lists everything " +
 		"and flags narrow the scope.",
 	RunE: func(cmd *cobra.Command, args []string) error {

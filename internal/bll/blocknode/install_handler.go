@@ -75,7 +75,7 @@ func (h *InstallHandler) BuildWorkflow(
 
 	// Enable the traffic-shaper monitor in daemon.yaml only when the policy
 	// plane it reconciles against was actually created — with traffic shaping
-	// disabled there is no inet weaver-blocknode-classifier classification for the daemon to watch.
+	// disabled there is no inet weaver-workload-policy classification for the daemon to watch.
 	var daemonConfigStep []automa.Builder
 	if ins.TrafficShapingEnabled {
 		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace, daemon.StatuszConfig{BaseURL: ins.StatuszBaseURL, PollInterval: ins.StatuszPollInterval})}

@@ -22,7 +22,7 @@ import (
 // daemon builds its statusz base URL on it.
 //
 // The publisher / subscriber / block-access / server-status listener ports are
-// deliberately NOT pinned here: the daemon reconciles them into the inet weaver-blocknode-classifier
+// deliberately NOT pinned here: the daemon reconciles them into the inet weaver-workload-policy
 // `<name>_ports` sets from the BN's statusz `local.port` at runtime.
 const DefaultBlockNodeHealthPort = "40983"
 

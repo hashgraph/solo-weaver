@@ -74,7 +74,7 @@ type HostConfig struct {
 	ManagementCIDRs []string `yaml:"managementCidrs" json:"managementCidrs"` // SSH/management allowlist CIDRs
 	// BlockedCIDRs is the operator-curated deny list, dropped before every
 	// other rule (set @blocked_addrs in the `inet weaver-host-firewall` table). It is distinct
-	// from the BN workload plane's `bn-restricted` set (`inet weaver-blocknode-classifier`), which
+	// from the BN workload plane's `bn-restricted` set (`inet weaver-workload-policy`), which
 	// the traffic-shaper daemon reconciles automatically from block-node
 	// statusz; this list is purely operator-managed and nothing else writes it.
 	BlockedCIDRs   []string `yaml:"blockedCidrs" json:"blockedCidrs"`

@@ -24,7 +24,7 @@ const NetworkFirewallDeleteStepId = "network-firewall-delete"
 // The delete is idempotent (firewall.Manager.Delete existence-checks before
 // removing), so running it when no table is present is a no-op. It deliberately
 // does NOT disable the shared solo-provisioner-network-nft.service — that unit is
-// also used by the `inet weaver-blocknode-classifier` plane and is only torn down by a full cluster
+// also used by the `inet weaver-workload-policy` plane and is only torn down by a full cluster
 // uninstall.
 func NetworkFirewallDelete() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkFirewallDeleteStepId).

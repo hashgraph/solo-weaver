@@ -113,7 +113,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 		}
 	case opts.AllowTeardown:
 		// Disable (reconfigure only): remove every BN policy (the last delete tears
-		// the inet weaver-blocknode-classifier table down, so no NftWeaverPersist is needed), drop the tc
+		// the inet weaver-workload-policy table down, so no NftWeaverPersist is needed), drop the tc
 		// egress hierarchy, then turn the daemon's monitor off and restart the daemon.
 		// The restart matters because the daemon reads daemon.yaml only at startup:
 		// without it the live monitor keeps re-applying the ingress $VETH HTB on the
@@ -141,7 +141,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 
 // NetworkSetupWorkflow lays down the block node's static network plane: the
 // node-level host firewall (inet weaver-host-firewall), the weaver policy-table persistence
-// (inet weaver-blocknode-classifier), and the $EGRESS / $VETH tc HTB shape config. It is rendered as
+// (inet weaver-workload-policy), and the $EGRESS / $VETH tc HTB shape config. It is rendered as
 // the "Network Setup" phase so these steps group under their own header in the
 // TUI instead of dangling as loose sub-steps after the "Kubernetes Setup" phase.
 //
@@ -155,7 +155,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 // (NetworkPolicyCreate, NftWeaverPersist, TcEgressPersist, TcIngressRecord) as
 // one bundle, independent of the host firewall (NetworkFirewallCreate, always
 // included — it is gated separately by hostCfg.Disabled inside its own step).
-// When false, none of the four steps are added: there is no inet weaver-blocknode-classifier table
+// When false, none of the four steps are added: there is no inet weaver-workload-policy table
 // to persist and no tc config to shape traffic with.
 func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool, healthPort string) *automa.WorkflowBuilder {
 	// Install shares the network-plane bundle with reconfigure/upgrade via

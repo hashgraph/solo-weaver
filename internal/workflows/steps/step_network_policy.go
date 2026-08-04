@@ -55,7 +55,7 @@ type canonicalPolicy struct {
 	// reconciled by the traffic-shaper daemon from the BN's statusz local.port,
 	// not seeded here. Such a set is rendered empty at install and filled on the
 	// first poll tick (the same empty-and-fill contract the CIDR membership sets
-	// have), so no port literal is baked into the inet weaver-blocknode-classifier chain.
+	// have), so no port literal is baked into the inet weaver-workload-policy chain.
 	managedPorts bool
 	// healthPort marks the bn-mgmt sets, whose ports come from the resolved
 	// block-node health port (chart blockNode.ports.health) rather than a literal
@@ -138,7 +138,7 @@ func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
 // weaver` table) by running the create-if-missing equivalent of `network policy
 // create` for each canonical BN category. It must run before NftWeaverPersist so
 // the policy registry is populated when that step re-renders and persists
-// network-weaver-blocknode-classifier.nft (an empty registry would render a policy-drop chain).
+// network-weaver-workload-policy.nft (an empty registry would render a policy-drop chain).
 //
 // Every create is idempotent: a re-run leaves existing policies and their
 // operator-mutated set membership untouched. When force is set, each policy's
@@ -154,7 +154,7 @@ func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
 func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkPolicyCreateStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating network policies (inet weaver-blocknode-classifier)")
+			notify.As().StepStart(ctx, stp, "Creating network policies (inet weaver-workload-policy)")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -245,7 +245,7 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 					return automa.FailureReport(stp, automa.WithError(
 						errorx.Decorate(err, "failed to remove obsolete network policy %q", name).
 							WithProperty(models.ErrPropertyResolution, []string{
-								"Inspect the live weaver table: nft list table inet weaver-blocknode-classifier",
+								"Inspect the live weaver table: nft list table inet weaver-workload-policy",
 								"Check the policy registry for leftover entries: ls " + policy.RegistryDir,
 							})))
 				}
@@ -275,7 +275,7 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 					return automa.FailureReport(stp, automa.WithError(
 						errorx.Decorate(err, "failed to roll back network policy %q", created[i]).
 							WithProperty(models.ErrPropertyResolution, []string{
-								"Inspect the live weaver table: nft list table inet weaver-blocknode-classifier",
+								"Inspect the live weaver table: nft list table inet weaver-workload-policy",
 								"Complete teardown of the workload plane: block node uninstall",
 								"Check the policy registry for leftover entries: ls " + policy.RegistryDir,
 							})))

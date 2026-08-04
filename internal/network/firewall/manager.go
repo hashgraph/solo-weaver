@@ -165,7 +165,7 @@ func (m *Manager) Show(ctx context.Context) (string, error) {
 
 // Delete removes the inet weaver-host-firewall table and its on-disk artifact. It is
 // idempotent. It deliberately does NOT disable the shared
-// solo-provisioner-network-nft.service (shared with inet weaver-blocknode-classifier) — that is
+// solo-provisioner-network-nft.service (shared with inet weaver-workload-policy) — that is
 // orchestrated by `kube cluster uninstall` (#791).
 func (m *Manager) Delete(ctx context.Context) error {
 	return m.withLock(func() error {

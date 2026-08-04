@@ -9,9 +9,9 @@
 // teardown into `kube cluster uninstall`) is owned by the host/cluster layer
 // (#777 → #778/#791); this package only implements the verbs.
 //
-// The `inet weaver-host-firewall` table is kept deliberately separate from `inet weaver-blocknode-classifier` (the
+// The `inet weaver-host-firewall` table is kept deliberately separate from `inet weaver-workload-policy` (the
 // BN workload plane). The two tables have opposite lifecycles: `inet weaver-host-firewall` is
-// set once and rarely changes, while `inet weaver-blocknode-classifier` churns continuously as the
+// set once and rarely changes, while `inet weaver-workload-policy` churns continuously as the
 // daemon rewrites set elements.
 package firewall
 
@@ -26,16 +26,16 @@ const (
 	// boot.
 	HostNftPath = "/etc/solo-provisioner/network-weaver-host-firewall.nft"
 
-	// WeaverNftPath is the inet weaver-blocknode-classifier artifact, owned by `block node install`
+	// WeaverNftPath is the inet weaver-workload-policy artifact, owned by `block node install`
 	// (TS_2 #743). This package never writes it; it only checks for its presence
 	// to decide whether the shared oneshot may be disabled (teardown is #791).
-	WeaverNftPath = "/etc/solo-provisioner/network-weaver-blocknode-classifier.nft"
+	WeaverNftPath = "/etc/solo-provisioner/network-weaver-workload-policy.nft"
 
 	// NetworkNftService is the oneshot unit that loads network-weaver-host-firewall.nft at boot
 	// and is restarted on every live mutation so the kernel and the on-disk file
 	// are always in sync. This package authors, installs, and enables the unit;
 	// it never disables it — that is orchestrated by `kube cluster uninstall`
-	// (#791). The unit is extended by #780 to also load network-weaver-blocknode-classifier.nft.
+	// (#791). The unit is extended by #780 to also load network-weaver-workload-policy.nft.
 	NetworkNftService = "solo-provisioner-network-nft.service"
 
 	// NetworkNftServiceUnitPath is the absolute path where the unit file is

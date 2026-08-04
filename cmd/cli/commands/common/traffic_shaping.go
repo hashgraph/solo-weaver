@@ -8,7 +8,7 @@ import (
 )
 
 // FlagNameTrafficShapingEnabled is the CLI flag name for the top-level gate
-// over the BN workload network-policy plane (`inet weaver-blocknode-classifier` classification) and
+// over the BN workload network-policy plane (`inet weaver-workload-policy` classification) and
 // tc HTB traffic shaping. It is only registered on `block node install` today:
 // `reconfigure`/`upgrade` only re-persist an already-created plane and have no
 // equivalent toggle — tearing an existing plane down is a separate concern.
@@ -18,7 +18,7 @@ const FlagNameTrafficShapingEnabled = "traffic-shaping-enabled"
 // on cmd. The value is read back by name in ResolveTrafficShapingConfig.
 func RegisterTrafficShapingFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool(FlagNameTrafficShapingEnabled, false,
-		"Create the BN workload network-policy plane (inet weaver-blocknode-classifier classification) and tc HTB traffic "+
+		"Create the BN workload network-policy plane (inet weaver-workload-policy classification) and tc HTB traffic "+
 			"shaping, and install the traffic-shaper daemon. Opt-in (default: false) so existing "+
 			"non-interactive callers are unaffected; enable explicitly to get all three.")
 }
@@ -59,7 +59,7 @@ func trafficShapingFeature() gatedFeature {
 		GateFlag:    FlagNameTrafficShapingEnabled,
 		Noun:        "traffic shaping",
 		PromptTitle: "Enable traffic shaping?",
-		PromptDesc: "Create the BN workload network-policy plane (inet weaver-blocknode-classifier classification) and tc HTB " +
+		PromptDesc: "Create the BN workload network-policy plane (inet weaver-workload-policy classification) and tc HTB " +
 			"traffic shaping, and install the traffic-shaper daemon. Opt-in, default No — choose Yes " +
 			"to get all three.",
 		ContentFlags: []string{

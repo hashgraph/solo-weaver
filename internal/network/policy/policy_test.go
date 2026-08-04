@@ -110,7 +110,7 @@ func (f *fakeRunner) Exists(context.Context) (bool, error) { return f.exists, ni
 func newTestManager(t *testing.T, r *fakeRunner) (*Manager, string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	nftPath := filepath.Join(dir, "network-weaver-blocknode-classifier.nft")
+	nftPath := filepath.Join(dir, "network-weaver-workload-policy.nft")
 	regDir := filepath.Join(dir, "policies")
 	m := NewManagerWithConfig(Config{
 		Runner:        r,
@@ -380,7 +380,7 @@ func TestCreate_SelfHealsMissingTableWithoutForce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, r.applyCount)
 
-	// Simulate `nft delete table inet weaver-blocknode-classifier` (or a reboot): the registry
+	// Simulate `nft delete table inet weaver-workload-policy` (or a reboot): the registry
 	// still says bn-publisher exists, but the live kernel table is gone.
 	require.NoError(t, r.Delete(context.Background()))
 
@@ -443,11 +443,11 @@ func TestCreate_DenyRecoversPodCIDRFromExistingNftFile(t *testing.T) {
 
 	// bn-restricted's own --deny rule never needs a pod CIDR, but the merged
 	// chain still includes bn-publisher's rule, which does. No --pod-cidr is
-	// passed here: it must be recovered from network-weaver-blocknode-classifier.nft instead of
+	// passed here: it must be recovered from network-weaver-workload-policy.nft instead of
 	// erroring, mirroring internal/network/firewall's Parse().
 	changed, err := m.Create(context.Background(),
 		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, nil, false)
-	require.NoError(t, err, "must recover the pod CIDR from the existing network-weaver-blocknode-classifier.nft artifact")
+	require.NoError(t, err, "must recover the pod CIDR from the existing network-weaver-workload-policy.nft artifact")
 	require.True(t, changed)
 
 	doc, err := os.ReadFile(nftPath)
@@ -466,7 +466,7 @@ func TestCreate_StampSiblingStillRequiresPodCIDRWhenNftFileMissing(t *testing.T)
 	r := newFakeRunner()
 	m, _, regDir := newTestManager(t, r)
 
-	// A stamp policy already in the registry, but network-weaver-blocknode-classifier.nft was
+	// A stamp policy already in the registry, but network-weaver-workload-policy.nft was
 	// never written (e.g. deleted independently of the JSON registry) --
 	// there is nothing to recover a pod CIDR from.
 	require.NoError(t, writeEntry(regDir, &Policy{

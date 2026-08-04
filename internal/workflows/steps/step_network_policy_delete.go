@@ -17,7 +17,7 @@ import (
 const NetworkPolicyDeleteAllStepId = "network-policy-delete-all"
 
 // NetworkPolicyDeleteAll tears down the BN workload classification plane (the
-// `inet weaver-blocknode-classifier` table) by deleting every canonical BN policy. It is the disable
+// `inet weaver-workload-policy` table) by deleting every canonical BN policy. It is the disable
 // counterpart to NetworkPolicyCreate, wired into `block node reconfigure` when
 // the operator turns traffic shaping off on an already-provisioned block node.
 //
@@ -25,12 +25,12 @@ const NetworkPolicyDeleteAllStepId = "network-policy-delete-all"
 // (Manager.Delete errors on a missing policy, so each is Exists-checked first),
 // making the step idempotent. Each delete re-renders the live weaver chain
 // without that policy; deleting the last remaining policy tears the whole `inet
-// weaver` table down and removes the persisted network-weaver-blocknode-classifier.nft, so no
+// weaver` table down and removes the persisted network-weaver-workload-policy.nft, so no
 // separate NftWeaverPersist is needed on the disable path.
 func NetworkPolicyDeleteAll() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkPolicyDeleteAllStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Removing network policies (inet weaver-blocknode-classifier)")
+			notify.As().StepStart(ctx, stp, "Removing network policies (inet weaver-workload-policy)")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -58,7 +58,7 @@ func NetworkPolicyDeleteAll() *automa.StepBuilder {
 					return automa.FailureReport(stp, automa.WithError(
 						errorx.Decorate(err, "failed to delete network policy %q", c.name).
 							WithProperty(models.ErrPropertyResolution, []string{
-								"Inspect the live weaver table: nft list table inet weaver-blocknode-classifier",
+								"Inspect the live weaver table: nft list table inet weaver-workload-policy",
 								"Check the policy registry for leftover entries: ls " + policy.RegistryDir,
 								"Re-run the reconfigure; policy deletion is idempotent (delete-if-present)",
 							})))

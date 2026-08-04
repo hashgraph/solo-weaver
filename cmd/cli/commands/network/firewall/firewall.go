@@ -36,7 +36,7 @@ var firewallCmd = &cobra.Command{
 	Short: "Manage the node-level host firewall (`inet weaver-host-firewall` nftables table)",
 	Long: "Manage the node-agnostic host firewall: the `inet weaver-host-firewall` nftables table that protects the " +
 		"bare-metal host (SSH/management allowlist, ICMP policy, in-cluster host-service ports). " +
-		"This table is separate from the `inet weaver-blocknode-classifier` workload plane and applies to every node type.",
+		"This table is separate from the `inet weaver-workload-policy` workload plane and applies to every node type.",
 	RunE: common.DefaultRunE,
 }
 

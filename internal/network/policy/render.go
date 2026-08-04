@@ -13,7 +13,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// Render produces the full `inet weaver-blocknode-classifier` nft document for the given set of
+// Render produces the full `inet weaver-workload-policy` nft document for the given set of
 // registry policies, in tier order. The same output feeds both the kernel apply
 // (`nft -f`) and the on-disk artifact, so the live table and the persisted file
 // can never diverge. Set *membership* is deliberately not rendered here — only
@@ -35,7 +35,7 @@ import (
 func Render(policies []*Policy, podCIDRs ...string) (string, error) {
 	podV4, podV6 := partitionPodCIDRs(podCIDRs)
 	if podV4 == "" && podV6 == "" && needsPodCIDR(policies) {
-		return "", errorx.IllegalArgument.New("pod CIDR is required to render a --stamp policy in the inet weaver-blocknode-classifier chain")
+		return "", errorx.IllegalArgument.New("pod CIDR is required to render a --stamp policy in the inet weaver-workload-policy chain")
 	}
 
 	// renderSetDecls's own doc comment promises name-sorted output; sort

@@ -18,10 +18,10 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// Manager implements `network policy create` against the `inet weaver-blocknode-classifier` table.
+// Manager implements `network policy create` against the `inet weaver-workload-policy` table.
 // create takes the shared apply lock, writes the policy's registry file,
 // re-renders the full chain from the registry in tier order, applies it to the
-// live kernel with `nft -f`, atomically rewrites network-weaver-blocknode-classifier.nft, and ensures
+// live kernel with `nft -f`, atomically rewrites network-weaver-workload-policy.nft, and ensures
 // the shared boot oneshot is enabled.
 //
 // create is create-if-missing, mirroring internal/network/firewall: an
@@ -98,7 +98,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 	// when the merged policy set actually contains a --stamp policy -- a
 	// --deny-only chain never references POD_CIDR. When the caller doesn't
 	// supply one (as --deny never does), recover the value(s) last used to
-	// render network-weaver-blocknode-classifier.nft -- it's a deployment-wide constant, not a
+	// render network-weaver-workload-policy.nft -- it's a deployment-wide constant, not a
 	// per-call argument, so an unrelated --deny create shouldn't need it
 	// re-supplied just to correctly re-render an unchanged --stamp sibling.
 	//
@@ -146,7 +146,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 		if existing != nil && !force {
 			// The live kernel table can be missing even though the registry
 			// has this policy -- e.g. a manual `nft delete table`, the shared
-			// nft oneshot disabled, or network-weaver-blocknode-classifier.nft
+			// nft oneshot disabled, or network-weaver-workload-policy.nft
 			// absent -- so "the registry has this policy" does not imply "the
 			// live table has it too".
 			tableExists, err := m.runner.Exists(ctx)
@@ -229,13 +229,13 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 			}
 		}
 		if err := writeEntry(m.registryDir, target); err != nil {
-			return errorx.Decorate(err, "inet weaver-blocknode-classifier chain applied to the kernel but persisting the policy registry failed; re-run to reconcile")
+			return errorx.Decorate(err, "inet weaver-workload-policy chain applied to the kernel but persisting the policy registry failed; re-run to reconcile")
 		}
 		if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
-			return errorx.Decorate(err, "inet weaver-blocknode-classifier chain applied to the kernel but persisting %s failed; re-run to reconcile", m.weaverNftPath)
+			return errorx.Decorate(err, "inet weaver-workload-policy chain applied to the kernel but persisting %s failed; re-run to reconcile", m.weaverNftPath)
 		}
 		if err := m.ensureService(ctx); err != nil {
-			return errorx.Decorate(err, "inet weaver-blocknode-classifier chain applied and persisted but enabling %s failed", NetworkNftService)
+			return errorx.Decorate(err, "inet weaver-workload-policy chain applied and persisted but enabling %s failed", NetworkNftService)
 		}
 		changed = true
 		return nil
@@ -284,7 +284,7 @@ func (m *Manager) restoreSet(ctx context.Context, setName string, elements []str
 		return nil
 	}
 	if err := m.runner.AddElements(ctx, setName, elements); err != nil {
-		return errorx.Decorate(err, "inet weaver-blocknode-classifier chain applied to the kernel but restoring %q membership failed; re-run to reconcile", setName)
+		return errorx.Decorate(err, "inet weaver-workload-policy chain applied to the kernel but restoring %q membership failed; re-run to reconcile", setName)
 	}
 	return nil
 }
@@ -315,7 +315,7 @@ func upsert(policies []*Policy, p *Policy) []*Policy {
 
 // Add appends cidrs to the live set for a named policy. The set is mutated
 // directly with `nft add element` — no chain re-render occurs, so
-// network-weaver-blocknode-classifier.nft is not updated (membership is never persisted).
+// network-weaver-workload-policy.nft is not updated (membership is never persisted).
 // Returns an error if the policy does not exist, has no CIDR set
 // (--from-entity world), or the live kernel table is not present.
 func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
@@ -403,7 +403,7 @@ func (m *Manager) applySet(ctx context.Context, name string, cidrs []string) err
 }
 
 // ApplyMembership pushes desired CIDR membership into one or more policies'
-// live `inet weaver-blocknode-classifier` sets. It is the traffic-shaper daemon's write path, and
+// live `inet weaver-workload-policy` sets. It is the traffic-shaper daemon's write path, and
 // it reuses the same per-policy transaction as the hand-run `network policy
 // set` CLI (applySet -> runner.SetElements), so both produce identical kernel
 // state for the same input.
@@ -594,7 +594,7 @@ func (m *Manager) requirePolicyWithPortsSet(name string) (*Policy, error) {
 
 // Show returns a human-readable summary of a named policy: its registry config
 // (action, class, ports, created_at) followed by the live set membership from
-// the kernel (`nft list set inet weaver-blocknode-classifier <name>`). No lock is taken — Show is
+// the kernel (`nft list set inet weaver-workload-policy <name>`). No lock is taken — Show is
 // read-only.
 func (m *Manager) Show(ctx context.Context, name string) (string, error) {
 	p, err := readEntry(m.registryDir, name)
@@ -692,10 +692,10 @@ func (m *Manager) showOne(ctx context.Context, p *Policy) (string, error) {
 	return b.String(), nil
 }
 
-// Delete removes a named policy: re-renders the `inet weaver-blocknode-classifier` chain without
+// Delete removes a named policy: re-renders the `inet weaver-workload-policy` chain without
 // it, applies the result to the live kernel, restores the remaining policies'
 // live membership (which the destructive re-render wipes), removes the
-// registry file, and atomically rewrites network-weaver-blocknode-classifier.nft.
+// registry file, and atomically rewrites network-weaver-workload-policy.nft.
 //
 // If this is the last policy, an empty chain (policy drop, no rules) is
 // applied and the boot oneshot is left enabled.
@@ -729,23 +729,23 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			// accept rule for new connections — a blackhole that Apply() would
 			// load into the kernel and atomicWrite would persist for replay at
 			// boot. Remove the live table (if present) and the persisted file so
-			// an empty registry means "no inet weaver-blocknode-classifier table", live or on disk.
+			// an empty registry means "no inet weaver-workload-policy table", live or on disk.
 			if exists, err := m.runner.Exists(ctx); err != nil {
-				return errorx.Decorate(err, "failed to check the inet weaver-blocknode-classifier table while removing the last policy")
+				return errorx.Decorate(err, "failed to check the inet weaver-workload-policy table while removing the last policy")
 			} else if exists {
 				if err := m.runner.Delete(ctx); err != nil {
-					return errorx.Decorate(err, "failed to delete the inet weaver-blocknode-classifier table while removing the last policy")
+					return errorx.Decorate(err, "failed to delete the inet weaver-workload-policy table while removing the last policy")
 				}
 			}
 			if err := os.Remove(m.weaverNftPath); err != nil && !os.IsNotExist(err) {
 				return errorx.Decorate(errorx.ExternalError.Wrap(err, "failed to remove %s", m.weaverNftPath),
-					"inet weaver-blocknode-classifier table deleted but removing the persisted file failed; re-run to reconcile")
+					"inet weaver-workload-policy table deleted but removing the persisted file failed; re-run to reconcile")
 			}
 			if err := os.Remove(registryPath(m.registryDir, name)); err != nil && !os.IsNotExist(err) {
 				return errorx.Decorate(errorx.ExternalError.Wrap(err, "failed to remove registry file for %q", name),
-					"inet weaver-blocknode-classifier table and file removed but removing the registry entry failed; re-run to reconcile")
+					"inet weaver-workload-policy table and file removed but removing the registry entry failed; re-run to reconcile")
 			}
-			logx.As().Info().Str("policy", name).Msg("network policy deleted (last policy — inet weaver-blocknode-classifier table torn down)")
+			logx.As().Info().Str("policy", name).Msg("network policy deleted (last policy — inet weaver-workload-policy table torn down)")
 			return nil
 		}
 
@@ -787,12 +787,12 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 		// write leaves the registry intact and a re-run can find the policy.
 		if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
 			return errorx.Decorate(err,
-				"inet weaver-blocknode-classifier chain re-rendered but persisting %s failed; re-run to reconcile", m.weaverNftPath)
+				"inet weaver-workload-policy chain re-rendered but persisting %s failed; re-run to reconcile", m.weaverNftPath)
 		}
 		if err := os.Remove(registryPath(m.registryDir, name)); err != nil && !os.IsNotExist(err) {
 			return errorx.Decorate(
 				errorx.ExternalError.Wrap(err, "failed to remove registry file for %q", name),
-				"inet weaver-blocknode-classifier chain persisted but removing the registry file failed; re-run to reconcile",
+				"inet weaver-workload-policy chain persisted but removing the registry file failed; re-run to reconcile",
 			)
 		}
 		logx.As().Info().Str("policy", name).Msg("network policy deleted")
@@ -820,7 +820,7 @@ func (m *Manager) requirePolicyWithCIDRSet(name string) (*Policy, error) {
 	return p, nil
 }
 
-// requireTableExists returns a clear error when the inet weaver-blocknode-classifier table is
+// requireTableExists returns a clear error when the inet weaver-workload-policy table is
 // absent from the kernel, so element verbs (add/remove/set) surface a helpful
 // message instead of propagating the raw nft "No such file" error.
 func (m *Manager) requireTableExists(ctx context.Context, name string) error {
