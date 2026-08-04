@@ -43,7 +43,7 @@ func TestStatuszConfig_EffectivePollInterval(t *testing.T) {
 		in   string
 		want time.Duration
 	}{
-		{"empty defaults to 5s", "", daemon.DefaultStatuszPollInterval},
+		{"empty defaults to 5m", "", daemon.DefaultStatuszPollInterval},
 		{"parses value", "10s", 10 * time.Second},
 		{"unparseable falls back to default", "banana", daemon.DefaultStatuszPollInterval},
 		{"non-positive falls back to default", "0s", daemon.DefaultStatuszPollInterval},

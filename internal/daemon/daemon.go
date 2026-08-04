@@ -112,7 +112,7 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 	if bn != nil && bn.Enabled {
 		// statusz is optional (see BlockNodeComponentConfig.Statusz): when it is
 		// nil or its base_url is empty, the poll loop idles. EffectivePollInterval
-		// already applies the 5s default.
+		// already applies the 5m default.
 		var statuszBaseURL string
 		var statuszPollInterval time.Duration
 		if bn.Statusz != nil {

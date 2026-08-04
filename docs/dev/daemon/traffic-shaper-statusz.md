@@ -20,7 +20,7 @@ statusz endpoint — discovered from the watched BN pod, with an optional
 ## What the poll loop does
 
 The traffic-shaper monitor runs a poll loop that, on a fixed cadence
-(default 5s):
+(default 5m):
 
 1. fetches the BN's `statusz/inbound` and `statusz/outbound` endpoints,
 2. buckets the returned endpoints by category,
@@ -31,13 +31,32 @@ The loop reconciles **nftables set membership only** — the dynamic plane. The
 tc HTB class hierarchy is static (installed once); traffic lands in the correct
 class via nftables `skb->priority` marking, not via runtime tc changes.
 
-### Outage behaviour
+### Startup and reboot behaviour
+
+The poll loop reconciles **once immediately on entry** — before the first
+ticker tick fires. This means:
+
+- After a **daemon restart**, the nft set membership is rehydrated as soon as
+  the daemon starts and the BN statusz endpoint is reachable, without waiting
+  a full poll interval.
+- After a **host reboot**, the nft set elements are not boot-persistent (the
+  static table structure is replayed from `.nft` files, but membership is not).
+  The entry reconcile rehydrates the sets as soon as the daemon starts and
+  statusz responds. If statusz is not yet up, `superviseResponsibility` retries
+  with exponential back-off — convergence is bounded by BN startup time, not
+  the poll interval.
+
+### Steady-state behaviour
 
 A failed poll (statusz unreachable, diff error, or apply error) is logged and
 retried on the next tick, leaving the **last-good** nftables state in place. A
 BN outage therefore never drops existing rules; once the BN's statusz is
 reachable again, membership re-converges within one poll cycle. During initial
 BN bootstrap the sets simply stay empty until statusz responds.
+
+Even when the membership digest is unchanged, the loop forces a full apply every
+`statuszForceResyncInterval` (default 1 h) to self-heal any out-of-band edits
+to the daemon-owned nft sets.
 
 ## statusz endpoints
 
@@ -120,19 +139,26 @@ components:
       traffic_shaper: true
     statusz:                          # optional
       base_url: http://127.0.0.1:8080 # where the poll loop fetches statusz
-      poll_interval: 5s               # optional; defaults to 5s
+      poll_interval: 5m               # optional; defaults to 5m
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
 | `base_url` | no | Root URL the `statusz/...` paths resolve against. Must be `http(s)` with a host. When set, **overrides** pod discovery. |
-| `poll_interval` | no | Poll cadence as a Go duration (e.g. `5s`, `10s`). Defaults to `5s`. |
+| `poll_interval` | no | Poll cadence as a Go duration (e.g. `5m`, `30s`). Defaults to `5m`. |
 
 When `base_url` is set it takes precedence over discovery — an explicit override
 pointing at a directly reachable BN or a port-forward. When it is empty (or the
 `statusz` block is absent), the monitor discovers the endpoint from the BN pod;
 until a ready BN pod is observed the poll loop idles quietly and starts polling
 as soon as one appears.
+
+**Using pod discovery without `base_url`:** after a daemon restart or host
+reboot, the entry reconcile fires immediately but skips if no URL has been
+discovered yet. Convergence then waits until the pod watcher observes a ready
+BN pod, after which the next ticker tick (up to one poll interval) triggers
+the reconcile. For the lowest post-reboot convergence latency, set `base_url`
+to a stable statusz endpoint (e.g. a node-local port-forward).
 
 ### Enablement at install time
 

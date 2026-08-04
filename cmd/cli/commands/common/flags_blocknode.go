@@ -226,7 +226,7 @@ func FlagStatuszPollInterval() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "statusz-poll-interval",
 		ShortName:   "",
-		Description: "Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. 5s, 30s). Merged into daemon.yaml (components.block_node.statusz.poll_interval); omitting the flag preserves any value already on disk. Only when no poll_interval is set at all does the daemon fall back to its 5s default",
+		Description: "Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. 5m, 30s). Merged into daemon.yaml (components.block_node.statusz.poll_interval); omitting the flag preserves any value already on disk. Only when no poll_interval is set at all does the daemon fall back to its 5m default",
 		Default:     "",
 	}
 }

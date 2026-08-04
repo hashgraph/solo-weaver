@@ -198,7 +198,7 @@ func validateBlockNodeFlags(cmd *cobra.Command) error {
 		sc := daemon.StatuszConfig{BaseURL: flagStatuszBaseURL, PollInterval: flagStatuszPollInterval}
 		if err := sc.Validate(); err != nil {
 			return errorx.IllegalArgument.Wrap(err,
-				"invalid --statusz-base-url / --statusz-poll-interval: base URL must be an http(s) URL with a host and poll interval a positive Go duration (e.g. 5s)")
+				"invalid --statusz-base-url / --statusz-poll-interval: base URL must be an http(s) URL with a host and poll interval a positive Go duration (e.g. 5m)")
 		}
 	}
 	return nil
