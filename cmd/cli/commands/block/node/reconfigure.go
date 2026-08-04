@@ -3,13 +3,11 @@
 package node
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
@@ -46,15 +44,23 @@ var (
 
 			// Seed the enable/disable prompts from the block node's CURRENT state so a
 			// no-flag / default-accept reconfigure keeps whatever is already deployed
-			// and only an explicit toggle enables or tears a feature down. Traffic
-			// shaping's current state comes from the persisted install decision; the
-			// host firewall's from whether the inet host table currently exists.
+			// and only an explicit toggle enables or tears a feature down. Both features
+			// now use the same source of truth — the persisted install/reconfigure
+			// decision (#947): traffic shaping from BlockNodeState.TrafficShapingDisabled,
+			// the host firewall from MachineState.Firewall. (The live inet-table probe is
+			// a reconciliation detail inside NetworkFirewallCreate, not a prompt seed.)
+			// On an unreadable state file, bias both to enabled so a default-accept never
+			// tears an established plane down.
 			stateDefaults, err := state.ReadPromptDefaultsFromDisk()
 			if err != nil {
 				logx.As().Debug().Err(err).Msg("could not read state file for reconfigure seeds; using conservative defaults")
 			}
-			currentTrafficShaping := !stateDefaults.BlockNode.TrafficShapingDisabled
-			firewallSeed := currentFirewallEnabledSeed(cmd, cmd.Context())
+			firewallSeed := true
+			currentTrafficShaping := true
+			if err == nil {
+				firewallSeed = stateDefaults.Firewall != nil && !stateDefaults.Firewall.Disabled
+				currentTrafficShaping = !stateDefaults.BlockNode.TrafficShapingDisabled
+			}
 
 			// Traffic shaping is independently gated from the host firewall — it covers
 			// the BN workload network-policy plane, tc HTB shaping, and the daemon's
@@ -163,24 +169,6 @@ var (
 		},
 	}
 )
-
-// currentFirewallEnabledSeed returns the default the reconfigure host-firewall
-// prompt should fall back to: whether the inet host table is currently present on
-// the host. When the flag was set on the CLI the seed is unused (the flag wins),
-// so it returns false without probing. If the probe fails it biases to enabled so
-// an unreadable state never leads to an accidental teardown on default-accept.
-func currentFirewallEnabledSeed(cmd *cobra.Command, ctx context.Context) bool {
-	if cmd.Flags().Changed(common.FlagNameFirewallEnabled) {
-		return false
-	}
-	active, err := firewall.NewManager().IsActive(ctx)
-	if err != nil {
-		logx.As().Debug().Err(err).Msg(
-			"could not probe the inet host table; seeding the firewall prompt as enabled to avoid accidental teardown")
-		return true
-	}
-	return active
-}
 
 func init() {
 	common.FlagWithStorageReset().SetVarP(reconfigureCmd, &flagWithReset, false)

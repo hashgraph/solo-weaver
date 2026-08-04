@@ -61,6 +61,10 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledVersion, installedVersion)
 	mctx.Data.Set(migration.CtxKeyTargetVersion, manager.blockNodeInputs.ChartVersion)
+	// #913: expose the plugins-baked signal to StorageMigration.Applies. It must be
+	// set before GetApplicableMigrations (which evaluates Applies); the Manager
+	// itself is only added to the context afterwards, for Execute/Rollback.
+	mctx.Data.Set(ctxKeyManagePlugins, manager.managesPluginsStorage())
 
 	migrations, err := migration.GetApplicableMigrations(migration.ScopeBlockNode, mctx)
 	if err != nil {

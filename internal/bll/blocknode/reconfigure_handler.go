@@ -49,7 +49,8 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	}
 
 	// Fail fast if storage paths can't be resolved.
-	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion); err != nil {
+	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion,
+		!bnpkg.EffectivePluginsNamesEmpty(inputs.Custom.PluginList, inputs.Custom.ValuesFile)); err != nil {
 		return nil, err
 	}
 

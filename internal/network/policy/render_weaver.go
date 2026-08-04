@@ -14,12 +14,12 @@ import (
 // (mode 0644). If the on-disk content is already identical (SHA-256 match)
 // the write is skipped — making it safe to call from idempotent install flows.
 //
-// podCIDR is required only when at least one registered policy is a --stamp
-// policy. If the caller passes "" and the existing weaverNftPath is readable,
-// the pod CIDR is recovered from that file automatically — the same recovery
-// path Manager.Create uses. An error is returned only when a stamp policy is
-// present and no podCIDR can be resolved.
-func RenderWeaverNft(registryDir, weaverNftPath, podCIDR string) error {
+// podCIDRs (mixed IPv4/IPv6) are required only when at least one registered
+// policy is a --stamp policy. If the caller passes none and the existing
+// weaverNftPath is readable, the pod CIDRs are recovered from that file
+// automatically — the same recovery path Manager.Create uses. An error is
+// returned only when a stamp policy is present and no podCIDR can be resolved.
+func RenderWeaverNft(registryDir, weaverNftPath string, podCIDRs ...string) error {
 	policies, err := loadAll(registryDir)
 	if err != nil {
 		return err
@@ -47,13 +47,17 @@ func RenderWeaverNft(registryDir, weaverNftPath, podCIDR string) error {
 		}
 	}
 
-	if podCIDR == "" && needsPodCIDR(policies) {
+	// Drop empty entries so a caller passing a single "" (the common
+	// "recover from the existing file" invocation) still triggers recovery
+	// rather than being treated as one explicit-but-empty pod CIDR.
+	podCIDRs = nonEmptyStrings(podCIDRs)
+	if len(podCIDRs) == 0 && needsPodCIDR(policies) {
 		if existing, readErr := os.ReadFile(weaverNftPath); readErr == nil {
-			podCIDR = ExtractPodCIDR(string(existing))
+			podCIDRs = ExtractPodCIDRs(string(existing))
 		}
 	}
 
-	doc, err := Render(policies, podCIDR)
+	doc, err := Render(policies, podCIDRs...)
 	if err != nil {
 		return errorx.Decorate(err, "failed to render %s", weaverNftPath)
 	}

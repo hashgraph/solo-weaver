@@ -19,18 +19,24 @@ func TestCompoundElement(t *testing.T) {
 	require.Equal(t, "10.30.5.7 . 80", tok)
 
 	for _, bad := range []string{
-		"not-an-ip-port",   // no port
-		"10.30.5.7",        // missing port
-		"10.30.5.7:-1",     // negative port
-		"10.30.5.7:0",      // port below range
-		"10.30.5.7:99999",  // port above range
-		"10.30.5.7:http",   // non-numeric port
-		"::1:80",           // IPv6 host
-		"[2001:db8::1]:80", // IPv6 host
+		"not-an-ip-port",  // no port
+		"10.30.5.7",       // missing port
+		"10.30.5.7:-1",    // negative port
+		"10.30.5.7:0",     // port below range
+		"10.30.5.7:99999", // port above range
+		"10.30.5.7:http",  // non-numeric port
+		"::1:80",          // unbracketed IPv6 host (ambiguous colons)
+		"2001:db8::1:443", // unbracketed IPv6 host
 	} {
 		_, err := CompoundElement(bad)
 		require.Error(t, err, "expected %q to be rejected", bad)
 	}
+
+	// Bracketed IPv6 hosts are accepted (dual-stack) and canonicalized to the
+	// compact "<ip> . <port>" token nft prints for an ipv6_addr . inet_service set.
+	tok, err = CompoundElement("[2001:db8::1]:80")
+	require.NoError(t, err)
+	require.Equal(t, "2001:db8::1 . 80", tok)
 }
 
 func TestCanonicalizeElements(t *testing.T) {

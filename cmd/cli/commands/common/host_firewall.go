@@ -99,6 +99,20 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 		"Host-service ports reachable from the pod CIDR by the node host firewall (comma-separated)")
 }
 
+// hostFirewallFeature describes the host firewall as a gated network feature for
+// resolveFeatureGate: the --firewall-enabled opt-in gate plus the content flags
+// that are meaningless without it.
+func hostFirewallFeature() gatedFeature {
+	return gatedFeature{
+		GateFlag:    FlagNameFirewallEnabled,
+		Noun:        "the host firewall",
+		PromptTitle: "Enable host firewall?",
+		PromptDesc: "Apply the node-level inet host firewall (SSH/mgmt allowlist, ICMP policy, in-cluster ports). " +
+			"Opt-in, default No — choose Yes to have this tool manage the host firewall.",
+		ContentFlags: []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs, FlagNameSSHPort, FlagNamePodCIDR, FlagNameInClusterPorts},
+	}
+}
+
 // ResolveHostFirewallConfig determines the effective host firewall configuration
 // (enabled, management CIDR allowlist, SSH port, pod CIDR, in-cluster
 // host-service ports) and applies it to the global config so the
@@ -118,10 +132,11 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 // seedEnabled is the default the enable/disable choice falls back to when neither
 // the flag nor an interactive prompt decides it. `install` passes false (opt-in —
 // a fresh install without the flag installs no firewall), while `reconfigure`
-// passes whether the inet host table currently exists on the host, so a no-flag /
-// default-accept reconfigure keeps the current state rather than silently tearing
-// an established firewall down. It is intentionally NOT derived from cfg.Disabled:
-// config.yaml's zero value cannot distinguish "enabled" from "never configured".
+// passes the block node's persisted firewall decision (MachineState.Firewall), so
+// a no-flag / default-accept reconfigure keeps the last-chosen state rather than
+// silently tearing an established firewall down. It is intentionally NOT derived
+// from cfg.Disabled: config.yaml's zero value cannot distinguish "enabled" from
+// "never configured".
 //
 // It requires RegisterHostFirewallFlags to have been called on cmd.
 func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, seedEnabled bool) error {
@@ -131,39 +146,13 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	}
 
 	cfg := config.Get().Host
-	firewallEnabled := effectiveBool(cmd, FlagNameFirewallEnabled, seedEnabled)
 
-	// Prompt for the enable/disable choice only when it wasn't already decided
-	// on the CLI. Declining here skips the allowlist/port prompts below entirely
-	// — there's nothing left to ask once the firewall itself is turned off.
-	if prompt.ShouldPrompt(force) && !cmd.Flags().Changed(FlagNameFirewallEnabled) {
-		enabled, err := prompt.RunConfirm(
-			"Enable host firewall?",
-			"Apply the node-level inet host firewall (SSH/mgmt allowlist, ICMP policy, in-cluster ports). "+
-				"Opt-in, default No — choose Yes to have this tool manage the host firewall.",
-			firewallEnabled,
-		)
-		if err != nil {
-			return err
-		}
-		firewallEnabled = enabled
-	}
-
-	// Non-interactive callers that supply host-firewall config flags without also
-	// passing --firewall-enabled=true would otherwise have those flags silently
-	// ignored: with the opt-in default there's no confirm prompt to catch the
-	// mismatch, and the early return below drops out without applying anything.
-	if !firewallEnabled && !prompt.ShouldPrompt(force) {
-		for _, name := range []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs, FlagNameSSHPort, FlagNamePodCIDR, FlagNameInClusterPorts} {
-			if cmd.Flags().Changed(name) {
-				return errorx.IllegalArgument.New(
-					"--%s was supplied but the host firewall is not enabled (--firewall-enabled defaults to false)", name).
-					WithProperty(models.ErrPropertyResolution, []string{
-						"Pass --firewall-enabled=true to actually apply the host firewall settings",
-						"Or drop --" + name + " if you did not intend to configure the host firewall",
-					})
-			}
-		}
+	// Resolve the enable/disable gate through the shared gated-feature resolver
+	// (flag > confirm-prompt > seed, plus the content-flag-without-gate guard),
+	// identical to how traffic shaping is gated.
+	firewallEnabled, err := resolveFeatureGate(cmd, args, hostFirewallFeature(), seedEnabled)
+	if err != nil {
+		return err
 	}
 
 	// An explicit opt-out skips resolving/prompting for the allowlist/port
@@ -239,17 +228,6 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	return nil
 }
 
-// effectiveBool returns the effective value for a bool flag: the flag when
-// explicitly set, else cfgVal (which already carries the correct "unset"
-// default via HostConfig.Disabled's negative polarity).
-func effectiveBool(cmd *cobra.Command, name string, cfgVal bool) bool {
-	if cmd.Flags().Changed(name) {
-		v, _ := cmd.Flags().GetBool(name)
-		return v
-	}
-	return cfgVal
-}
-
 // effectiveCSV returns the effective comma-joined value for a StringSlice flag:
 // the flag when explicitly set, else the config value.
 func effectiveCSV(cmd *cobra.Command, name string, cfgVal []string) string {
@@ -313,8 +291,8 @@ func joinInts(in []int) string {
 // It is the "state" tier of the flag > config > state > default precedence for the
 // firewall allowlist: the returned config seeds the effective* helpers, where a
 // CLI flag still takes priority. Only the allowlist content is merged — the
-// enable/disable decision is resolved separately (flag / prompt / live probe), so
-// the persisted Firewall.Disabled is intentionally ignored here. Returns cfg
+// enable/disable decision is resolved separately (flag / prompt / persisted
+// state), so the persisted Firewall.Disabled is intentionally ignored here. Returns cfg
 // unchanged when no firewall was ever persisted or the state read fails.
 func mergeHostFirewallFromState(cfg models.HostConfig) models.HostConfig {
 	defaults, err := state.ReadPromptDefaultsFromDisk()

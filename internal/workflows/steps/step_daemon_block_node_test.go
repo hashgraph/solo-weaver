@@ -27,7 +27,7 @@ func blockNodeConfigPaths(t *testing.T) models.WeaverPaths {
 func TestWriteBlockNodeDaemonConfig_FreshFile(t *testing.T) {
 	paths := blockNodeConfigPaths(t)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true, "", "").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", daemon.StatuszConfig{}, true).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -52,7 +52,7 @@ func TestWriteBlockNodeDaemonConfig_FreshFile(t *testing.T) {
 func TestWriteBlockNodeDaemonConfig_EmptyOrbitDefaults(t *testing.T) {
 	paths := blockNodeConfigPaths(t)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "", true, "", "").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "", daemon.StatuszConfig{}, true).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -86,7 +86,7 @@ func TestWriteBlockNodeDaemonConfig_DisableTurnsMonitorOff(t *testing.T) {
 	}
 	require.NoError(t, daemon.WriteDaemonConfig(paths.DaemonConfigPath, seed))
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", false, "", "").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", daemon.StatuszConfig{}, false).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -127,7 +127,7 @@ func TestWriteBlockNodeDaemonConfig_PreservesExistingBlocks(t *testing.T) {
 	priorBytes, err := os.ReadFile(paths.DaemonConfigPath)
 	require.NoError(t, err)
 
-	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", true, "", "").Build()
+	step, err := WriteBlockNodeDaemonConfigStep(paths, "block-node", daemon.StatuszConfig{}, true).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -155,7 +155,7 @@ func TestWriteBlockNodeDaemonConfig_OperatorStatuszOnFreshFile(t *testing.T) {
 
 	// Operator supplies both statusz overrides on a fresh install.
 	step, err := WriteBlockNodeDaemonConfigStep(
-		paths, "block-node", true, "http://127.0.0.1:9090", "7s").Build()
+		paths, "block-node", daemon.StatuszConfig{BaseURL: "http://127.0.0.1:9090", PollInterval: "7s"}, true).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 
@@ -189,7 +189,7 @@ func TestWriteBlockNodeDaemonConfig_OperatorStatuszPerFieldOverride(t *testing.T
 
 	// Operator overrides only poll_interval; base_url must be preserved per-field.
 	step, err := WriteBlockNodeDaemonConfigStep(
-		paths, "block-node", true, "", "15s").Build()
+		paths, "block-node", daemon.StatuszConfig{PollInterval: "15s"}, true).Build()
 	require.NoError(t, err)
 	require.NoError(t, step.Execute(context.Background()).Error)
 

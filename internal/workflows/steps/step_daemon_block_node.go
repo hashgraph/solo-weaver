@@ -49,19 +49,19 @@ const (
 //     co-located component (e.g. consensus-node monitoring) that shares the same
 //     daemon keeps running.
 //
-// statuszBaseURL and statuszPollInterval are operator-supplied overrides (from
-// `block node install`/`reconfigure`'s --statusz-base-url / --statusz-poll-interval).
-// The provisioner-owned fields above always win; the statusz block is merged
+// statusz carries the operator-supplied overrides (from `block node install`/
+// `reconfigure`'s --statusz-base-url / --statusz-poll-interval). The
+// provisioner-owned fields above always win; the statusz block is merged
 // per-field: starting from any block already on disk, each non-empty override
 // overlays its field, and an empty override preserves the existing on-disk value.
-// So a bare reconfigure/upgrade (both empty) never clobbers a hand-edited statusz
-// block, while an explicit flag updates just that field.
+// So a bare reconfigure/upgrade (a zero-value statusz) never clobbers a
+// hand-edited statusz block, while an explicit flag updates just that field.
 //
 // The daemon binary and systemd service are installed separately by `daemon
 // service install`; this step only records the enablement. The write is fully
 // reversed on rollback (the file is restored to its prior content, or removed if
 // it did not exist).
-func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, enabled bool, statuszBaseURL, statuszPollInterval string) *automa.StepBuilder {
+func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, statusz daemon.StatuszConfig, enabled bool) *automa.StepBuilder {
 	cfgPath := paths.DaemonConfigPath
 	kubeconfig := paths.DaemonBNKubeconfigPath
 	if orbit == "" {
@@ -133,16 +133,16 @@ func WriteBlockNodeDaemonConfigStep(paths models.WeaverPaths, orbit string, enab
 			if cfg.Components.BlockNode != nil {
 				bn.Statusz = cfg.Components.BlockNode.Statusz
 			}
-			if statuszBaseURL != "" || statuszPollInterval != "" {
+			if statusz.BaseURL != "" || statusz.PollInterval != "" {
 				merged := daemon.StatuszConfig{}
 				if bn.Statusz != nil {
 					merged = *bn.Statusz
 				}
-				if statuszBaseURL != "" {
-					merged.BaseURL = statuszBaseURL
+				if statusz.BaseURL != "" {
+					merged.BaseURL = statusz.BaseURL
 				}
-				if statuszPollInterval != "" {
-					merged.PollInterval = statuszPollInterval
+				if statusz.PollInterval != "" {
+					merged.PollInterval = statusz.PollInterval
 				}
 				bn.Statusz = &merged
 			}

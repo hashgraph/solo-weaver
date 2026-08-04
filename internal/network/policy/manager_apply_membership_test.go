@@ -49,8 +49,16 @@ func TestApplyMembership_OnePolicyPerTransactionInSortedOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, applied)
-	// One SetElements transaction per policy, in deterministic sorted name order.
-	require.Equal(t, []string{"bn-partner", "bn-publisher", "bn-restricted"}, r.setElemOrder)
+	// One SetElements transaction per policy PER FAMILY, in deterministic sorted
+	// name order: each policy's IPv4 set (@<name>) then its IPv6 set (@<name>6).
+	// The v6 sets receive an empty (flush-only) transaction here since every
+	// input CIDR is IPv4, which is how the full-replace reconcile clears a stale
+	// v6 member.
+	require.Equal(t, []string{
+		"bn-partner", "bn-partner6",
+		"bn-publisher", "bn-publisher6",
+		"bn-restricted", "bn-restricted6",
+	}, r.setElemOrder)
 }
 
 func TestApplyMembership_FullListReplace(t *testing.T) {
@@ -178,7 +186,7 @@ func TestApplyMembership_IdenticalKernelStateToLoopedSet(t *testing.T) {
 		seedDenyPolicy(t, m, "bn-restricted", nil)
 		_, err := m.Create(context.Background(),
 			&Policy{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
-			nil, "10.4.0.0/24", false)
+			nil, []string{"10.4.0.0/24"}, false)
 		require.NoError(t, err)
 	}
 

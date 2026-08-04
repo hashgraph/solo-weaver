@@ -369,6 +369,9 @@ docs/playbooks/production/dir-structure.txt
 
 ### SSH Keys for connecting to local development VM###
 .ssh/
+
+### Multi-VM network test harness scratch (taskfiles/network.yaml)###
+.network-uat/
 integration-test-report.md
 integration-test.json
 .aiassistant

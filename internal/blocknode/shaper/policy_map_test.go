@@ -88,6 +88,29 @@ func TestComputePolicyDeltas_EmptyCategoryClearsSet(t *testing.T) {
 	}, deltas)
 }
 
+func TestComputePolicyDeltas_MergesBothFamilyLiveSets(t *testing.T) {
+	l := newFakeLister()
+	// A v4 member lives in @bn-publisher and a v6 member in @bn-publisher6; the
+	// desired set spans both families. Reading only the v4 set would report the
+	// v6 member as a perpetual add and re-apply every tick — merging both
+	// families' live sets yields no delta when live already matches desired.
+	l.elements["bn-publisher"] = []string{"10.1.0.1/32"}
+	l.elements[policy.V6SetName("bn-publisher")] = []string{"2001:db8::1/128"}
+
+	deltas, err := computePolicyDeltas(context.Background(), l,
+		categoryEndpoints{{Inbound, CategoryPublisher}: {"10.1.0.1/32", "2001:db8::1/128"}})
+	require.NoError(t, err)
+	require.Empty(t, deltas, "desired already live across both families → no delta")
+
+	// A new v6 member (absent from the live v6 set) surfaces as an add.
+	deltas, err = computePolicyDeltas(context.Background(), l,
+		categoryEndpoints{{Inbound, CategoryPublisher}: {"10.1.0.1/32", "2001:db8::1/128", "2001:db8::2/128"}})
+	require.NoError(t, err)
+	require.Equal(t, []PolicyDelta{
+		{Policy: "bn-publisher", SetDelta: setDelta([]string{"2001:db8::2"}, nil)},
+	}, deltas)
+}
+
 func TestComputePolicyDeltas_AbsentCategoryLeavesSetUntouched(t *testing.T) {
 	l := newFakeLister()
 	l.elements["bn-publisher"] = []string{"10.1.0.1/32"}

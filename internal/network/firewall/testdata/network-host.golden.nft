@@ -3,22 +3,38 @@ delete table inet host
 add table inet host
 table inet host {
 	set mgmt_addrs { type ipv4_addr; flags interval; elements = { 10.0.0.0/8, 192.168.0.0/16 }; }
+	set mgmt_addrs6 { type ipv6_addr; flags interval; }
 	set blocked_addrs { type ipv4_addr; flags interval; elements = { 203.0.113.0/24 }; }
+	set blocked_addrs6 { type ipv6_addr; flags interval; }
 	set in_cluster_ports { type inet_service; elements = { 4244, 6443, 7472, 10250 }; }
 
 	chain input {
 		type filter hook input priority 0; policy drop;
 
-		# Drop invalid; admit loopback.
+		# Drop invalid; admit loopback. `iif "lo"` covers both 127.0.0.0/8 and
+		# ::1 since this is an `inet` (dual-family) table.
 		ct state invalid drop
 
 		# Operator-curated block list (`network firewall --blocked-cidrs`). Runs
 		# before every other rule, including established/related, so an entry
 		# added here drops already-open connections too. Purely operator-managed:
-		# nothing else ever writes to this set.
+		# nothing else ever writes to these sets. One rule per family.
 		ip saddr @blocked_addrs drop
+		ip6 saddr @blocked_addrs6 drop
 
 		iif "lo" accept
+
+		# --- IPv6 Neighbor Discovery + MLD (REQUIRED under policy drop) ---
+		# IPv6 is non-functional without Neighbor Discovery: address resolution
+		# (neighbor solicit/advert) and router discovery (router solicit/advert)
+		# ride on ICMPv6 and would otherwise be dropped, breaking all IPv6. NDP
+		# packets use a hop limit of 255 (RFC 4861 §11.2); enforce it so an
+		# off-link (routed) forgery cannot satisfy the accept. ICMPv6 Redirect is
+		# deliberately excluded here (accepting it enables on-link MITM).
+		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } ip6 hoplimit 255 accept
+		# Multicast Listener Discovery — the switch needs these reports to forward
+		# the solicited-node multicast that NDP relies on.
+		icmpv6 type { mld-listener-query, mld-listener-report, mld-listener-done } accept
 
 		# ICMP is evaluated BEFORE the established/related fast-path. netfilter
 		# conntrack DOES track ICMP echo as a flow (keyed on the echo id), so a
@@ -31,6 +47,7 @@ table inet host {
 
 		# Full ICMP from management sources (ping, traceroute, diagnostics) — no rate limit.
 		ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
+		ip6 saddr @mgmt_addrs6 icmpv6 type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem, packet-too-big } accept
 
 		# From everyone else: always allow the path-health subset (Path MTU
 		# Discovery + traceroute), and rate-limit echo-request to prevent floods.
@@ -42,11 +59,22 @@ table inet host {
 		icmp type echo-request limit rate 10/second accept
 		icmp type echo-request drop
 
+		# IPv6 path health for everyone. packet-too-big is the IPv6 PMTUD signal —
+		# IPv6 routers never fragment, so dropping it silently blackholes any flow
+		# whose path MTU is smaller than the sender's.
+		icmpv6 type packet-too-big accept
+		icmpv6 type destination-unreachable accept
+		icmpv6 type time-exceeded accept
+		icmpv6 type parameter-problem accept
+		icmpv6 type echo-request limit rate 10/second accept
+		icmpv6 type echo-request drop
+
 		# Conntrack fast-path for TCP/UDP (and solicited ICMP replies).
 		ct state established,related accept
 
-		# SSH / management access from the allowlist only.
+		# SSH / management access from the allowlist only (both families).
 		ip saddr @mgmt_addrs tcp dport 22 accept
+		ip6 saddr @mgmt_addrs6 tcp dport 22 accept
 
 		# In-cluster host-service ports, reachable from the pod CIDR only.
 		ip saddr 10.4.0.0/24 tcp dport @in_cluster_ports accept

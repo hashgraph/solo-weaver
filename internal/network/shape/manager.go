@@ -122,7 +122,7 @@ func (m *Manager) CreateDevice(ctx context.Context, dev *DeviceConfig, force boo
 			return err
 		}
 		if dev.Dir == DirEgress {
-			if err := m.renderAndApplyEgress(ctx); err != nil {
+			if err := m.applyEgressScript(ctx, "", applyRestart); err != nil {
 				return err
 			}
 		}
@@ -144,15 +144,7 @@ func (m *Manager) CreateClass(ctx context.Context, cls *ClassConfig, force bool)
 	if err != nil {
 		return false, err
 	}
-	if err := validateRate(cls.Rate); err != nil {
-		return false, err
-	}
-	if cls.Ceil != "" {
-		if err := validateCeilGeRate(cls.Ceil, cls.Rate); err != nil {
-			return false, err
-		}
-	}
-	if err := validatePrio(cls.Prio); err != nil {
+	if err := validateClassFields(cls.Rate, cls.Ceil, cls.Prio); err != nil {
 		return false, err
 	}
 
@@ -194,7 +186,7 @@ func (m *Manager) CreateClass(ctx context.Context, cls *ClassConfig, force bool)
 			return err
 		}
 		if ci.Dir == DirEgress {
-			if err := m.renderAndApplyEgress(ctx); err != nil {
+			if err := m.applyEgressScript(ctx, "", applyRestart); err != nil {
 				return err
 			}
 		}
@@ -233,15 +225,7 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 		}
 
 		// Validate the updated state.
-		if err := validateRate(cls.Rate); err != nil {
-			return err
-		}
-		if cls.Ceil != "" {
-			if err := validateCeilGeRate(cls.Ceil, cls.Rate); err != nil {
-				return err
-			}
-		}
-		if err := validatePrio(cls.Prio); err != nil {
+		if err := validateClassFields(cls.Rate, cls.Ceil, cls.Prio); err != nil {
 			return err
 		}
 
@@ -274,8 +258,9 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 			}
 			// Persist the boot script for reboot without restarting the service:
 			// the live tc class change above already updated the kernel, and a
-			// restart would tear down and rebuild the root qdisc.
-			if err := m.persistEgressScript(nic); err != nil {
+			// restart would tear down and rebuild the root qdisc. Reuse the NIC
+			// detected above rather than re-detecting.
+			if err := m.applyEgressScript(ctx, nic, applyPersistOnly); err != nil {
 				return errorx.Decorate(err,
 					"live tc class change applied but boot script re-render failed; reboot may revert the change")
 			}
@@ -421,7 +406,7 @@ func (m *Manager) DeleteClass(ctx context.Context, name string) error {
 			return err
 		}
 		if ci.Dir == DirEgress {
-			if err := m.renderAndApplyEgress(ctx); err != nil {
+			if err := m.applyEgressScript(ctx, "", applyRestart); err != nil {
 				return errorx.Decorate(err,
 					"class config deleted but boot script re-render failed; restart tc-egress.service to sync")
 			}
@@ -462,7 +447,7 @@ func (m *Manager) DeleteDevice(ctx context.Context, dir string) error {
 		}
 		if dir == DirEgress {
 			// Re-render with default (empty) egress config.
-			if err := m.renderAndApplyEgress(ctx); err != nil {
+			if err := m.applyEgressScript(ctx, "", applyRestart); err != nil {
 				return errorx.Decorate(err,
 					"device config deleted but boot script re-render failed; restart tc-egress.service to sync")
 			}
@@ -498,11 +483,11 @@ func (m *Manager) TeardownEgress(ctx context.Context) error {
 		}
 		// Re-render an unshape boot script (delete root qdisc, re-add nothing) and
 		// apply it so both the boot script and the live kernel hierarchy are reset
-		// to unshaped. This must NOT go through renderAndApplyEgress: with the
-		// device/class registry now empty, that path falls through to the default
-		// shaping render and would re-apply the stock HTB hierarchy instead of
-		// removing it.
-		if err := m.renderAndApplyUnshapeEgress(ctx); err != nil {
+		// to unshaped. applyUnshape (not applyRestart) is required: with the
+		// device/class registry now empty, the normal render falls through to the
+		// default shaping render and would re-apply the stock HTB hierarchy instead
+		// of removing it.
+		if err := m.applyEgressScript(ctx, "", applyUnshape); err != nil {
 			return errorx.Decorate(err,
 				"egress shape config removed but boot script re-render failed; restart tc-egress.service to sync")
 		}
@@ -552,45 +537,84 @@ func (m *Manager) resolveAutoRate(dev *DeviceConfig) {
 	dev.Rate = m.resolveAutoRateString(dev.Rate)
 }
 
-// renderAndApplyEgress detects the egress NIC, re-renders the boot script from
-// stored config (or the default if no device config exists), and applies via
-// service restart.
-func (m *Manager) renderAndApplyEgress(ctx context.Context) error {
-	nic, err := m.nicDetect()
-	if err != nil {
-		return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
-	}
-	return m.renderAndApplyScript(ctx, nic)
-}
+// egressApplyMode selects what applyEgressScript does after (re-)rendering the
+// tc-egress boot script. It turns the "restart vs no-restart vs direct
+// qdisc-del" reasoning — previously scattered across four near-synonymous
+// methods — into one explicit decision.
+type egressApplyMode int
 
-// renderAndApplyUnshapeEgress renders the teardown-only (unshape) boot script for
-// the detected egress NIC, persists it, drops the live HTB hierarchy directly,
-// and restarts the tc-egress oneshot so the on-disk state matches. Used
-// exclusively by TeardownEgress — the registry is already empty at that point, so
-// the normal render would re-apply default shaping instead of removing it.
+const (
+	// applyRestart writes the freshly rendered boot script and restarts the
+	// tc-egress oneshot so the kernel replays the full HTB hierarchy. Used by
+	// structural mutations (device/class create or delete), where a full
+	// re-apply is the correct way to reach the new state.
+	applyRestart egressApplyMode = iota
+
+	// applyPersistOnly writes the boot script for reboot persistence WITHOUT
+	// restarting the service. Used by `set`, whose live `tc class change` has
+	// already updated the running kernel: restarting the oneshot would run the
+	// boot script, which deletes and re-adds the root qdisc — reintroducing
+	// exactly the qdisc teardown a live update is meant to avoid.
+	applyPersistOnly
+
+	// applyUnshape writes a teardown-only boot script (delete the root qdisc,
+	// re-add nothing) and drops the live HTB hierarchy directly via the tc
+	// runner. Used by TeardownEgress: the registry is empty at that point, so a
+	// normal render would fall through to the default-shaping render and
+	// re-apply the stock hierarchy instead of removing it. The direct
+	// `tc qdisc del dev <nic> root` makes teardown immediate and deterministic
+	// rather than relying on the (now unshape) boot script re-running via a
+	// restart — the boot script's job is to ADD the hierarchy, so restarting to
+	// REMOVE it would be indirect. The unshape script keeps the NIC unshaped
+	// across reboots.
+	applyUnshape
+)
+
+// applyEgressScript (re-)renders the tc-egress boot script and reconciles it
+// with the live kernel according to mode. It is the single egress apply path,
+// replacing the former renderAndApplyEgress / renderAndApplyScript /
+// persistEgressScript / renderAndApplyUnshapeEgress tangle.
 //
-// The live root qdisc is deleted directly via the tc runner rather than relying
-// solely on the systemd oneshot re-running the (now unshape) boot script: the
-// boot script's job is to ADD the hierarchy, so using a service restart to REMOVE
-// it is indirect. A direct `tc qdisc del dev <nic> root` makes the teardown
-// immediate and deterministic; the unshape boot script written above keeps the
-// NIC unshaped across reboots.
-func (m *Manager) renderAndApplyUnshapeEgress(ctx context.Context) error {
-	nic, err := m.nicDetect()
-	if err != nil {
-		return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
+// nic is the target egress interface. When empty it is auto-detected (the
+// operator-verb path: create/delete). Callers that already hold the NIC pass it
+// explicitly to avoid a redundant detection — `block node install` passing the
+// operator-chosen --egress-interface, and `set` reusing the NIC it detected for
+// the live `tc class change`.
+func (m *Manager) applyEgressScript(ctx context.Context, nic string, mode egressApplyMode) error {
+	if nic == "" {
+		var err error
+		if nic, err = m.nicDetect(); err != nil {
+			return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
+		}
 	}
-	rendered, err := renderTcEgressUnshapeScript(nic)
+
+	// applyUnshape renders a teardown-only script; every other mode renders from
+	// the current registry (or the sysfs-detect default when no device exists).
+	var rendered string
+	var err error
+	if mode == applyUnshape {
+		rendered, err = renderTcEgressUnshapeScript(nic)
+	} else {
+		rendered, err = m.renderEgressScript(nic)
+	}
 	if err != nil {
 		return err
 	}
 	if err := m.writeEgressScript(rendered); err != nil {
 		return err
 	}
-	// Drop the live hierarchy now, independent of systemd. Best-effort: a NIC with
-	// no root qdisc is not an error (see TCRunner.QdiscDelRoot).
-	if err := m.tcRunner.QdiscDelRoot(ctx, nic); err != nil {
-		return errorx.Decorate(err, "failed to delete live tc-egress root qdisc on %s", nic)
+
+	switch mode {
+	case applyPersistOnly:
+		// Live `tc class change` already applied by the caller; the boot script is
+		// now persisted for reboot. A restart would churn the root qdisc, so skip it.
+		return nil
+	case applyUnshape:
+		// Drop the live hierarchy now, independent of systemd. Best-effort: a NIC
+		// with no root qdisc is not an error (see TCRunner.QdiscDelRoot).
+		if err := m.tcRunner.QdiscDelRoot(ctx, nic); err != nil {
+			return errorx.Decorate(err, "failed to delete live tc-egress root qdisc on %s", nic)
+		}
 	}
 	return m.applyEgress(ctx)
 }
@@ -635,69 +659,16 @@ func (m *Manager) writeEgressScript(rendered string) error {
 	return atomicWriteFile(m.scriptPath, rendered, 0o755)
 }
 
-// renderAndApplyScript renders the boot script, persists it, and restarts the
-// tc-egress oneshot so the kernel replays the full hierarchy. Used by mutations
-// that change the qdisc structure (create/delete of a device or class), where a
-// full re-apply is the correct way to reach the new state.
-func (m *Manager) renderAndApplyScript(ctx context.Context, nic string) error {
-	rendered, err := m.renderEgressScript(nic)
-	if err != nil {
-		return err
-	}
-	if err := m.writeEgressScript(rendered); err != nil {
-		return err
-	}
-	return m.applyEgress(ctx)
-}
-
-// persistEgressScript renders and writes the boot script for reboot persistence
-// WITHOUT restarting the service. Used by `set`, whose live `tc class change`
-// has already updated the running kernel: restarting the oneshot would run the
-// boot script, which deletes and re-adds the root qdisc — reintroducing exactly
-// the qdisc teardown a live update is meant to avoid.
-func (m *Manager) persistEgressScript(nic string) error {
-	rendered, err := m.renderEgressScript(nic)
-	if err != nil {
-		return err
-	}
-	return m.writeEgressScript(rendered)
-}
-
-// defaultEgressConfig returns the device root and three default egress classes
-// at proportions derived from trunkRate (partner 40%/70%, public 30%/70%,
-// reserve-egress 30%/100%). Exposed as a package-internal helper so tests can
-// verify the computation without disk I/O.
-func defaultEgressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error) {
-	bps, err := parseBandwidthBps(trunkRate)
-	if err != nil {
-		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid trunk rate %q", trunkRate)
-	}
-	mbps := bps / 1_000_000
-	now := time.Now().UTC()
-	dev := &DeviceConfig{
-		Dir:          DirEgress,
-		Rate:         trunkRate,
-		DefaultClass: "reserve-egress",
-		CreatedAt:    now,
-	}
-	classes := []*ClassConfig{
-		{Name: "partner", Rate: fmt.Sprintf("%dmbit", mbps*40/100), Ceil: fmt.Sprintf("%dmbit", mbps*70/100), Prio: 0, CreatedAt: now},
-		{Name: "public", Rate: fmt.Sprintf("%dmbit", mbps*30/100), Ceil: fmt.Sprintf("%dmbit", mbps*70/100), Prio: 5, CreatedAt: now},
-		{Name: "reserve-egress", Rate: fmt.Sprintf("%dmbit", mbps*30/100), Ceil: trunkRate, Prio: 1, CreatedAt: now},
-	}
-	return dev, classes, nil
-}
-
-// ProvisionDefaultEgress configures the egress device root and three default
-// HTB classes at proportions derived from trunkRate (partner 40%/70%, public
-// 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
-// trunkRate may be "auto", which is resolved to the detected link speed at
-// create time (see resolveAutoRateString). Existing configs are always
-// replaced. Called by block node install so the shape registry is the single
-// source of truth from first install.
-func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
+// provisionDefaults resolves trunkRate (possibly "auto"), materialises the
+// profile's device + class set with any --shape overrides merged in, validates
+// the merged set against the trunk budget, and writes device + all classes
+// under a single lock. afterWrite, when non-nil, runs inside the same lock
+// after the writes (egress renders and applies the boot script; ingress writes
+// config only). Shared by ProvisionDefaultEgress and ProvisionDefaultIngress so
+// the two directions cannot drift.
+func (m *Manager) provisionDefaults(prof defaultProfile, trunkRate string, overrides map[string]ClassOverride, afterWrite func() error) error {
 	trunkRate = m.resolveAutoRateString(trunkRate)
-	dev, classes, err := defaultEgressConfig(trunkRate)
+	dev, classes, err := buildDefaultConfig(prof, trunkRate)
 	if err != nil {
 		return err
 	}
@@ -714,15 +685,24 @@ func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate
 				return err
 			}
 		}
-		return m.renderAndApplyScript(ctx, nicName)
+		if afterWrite != nil {
+			return afterWrite()
+		}
+		return nil
 	})
 }
 
-// RenderAndApplyEgress renders the tc-egress boot script for nic from stored
-// shape config (if available) or the sysfs auto-detect default, then installs
-// and restarts tc-egress.service. Idempotent.
-func (m *Manager) RenderAndApplyEgress(ctx context.Context, nic string) error {
-	return m.renderAndApplyScript(ctx, nic)
+// ProvisionDefaultEgress configures the egress device root and three default
+// HTB classes at proportions derived from trunkRate (partner 40%/70%, public
+// 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
+// trunkRate may be "auto", which is resolved to the detected link speed at
+// create time (see resolveAutoRateString). Existing configs are always
+// replaced. Called by block node install so the shape registry is the single
+// source of truth from first install.
+func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
+	return m.provisionDefaults(egressProfile, trunkRate, overrides, func() error {
+		return m.applyEgressScript(ctx, nicName, applyRestart)
+	})
 }
 
 // ProvisionDefaultEgressShape configures the egress shape registry with the
@@ -731,32 +711,6 @@ func (m *Manager) RenderAndApplyEgress(ctx context.Context, nic string) error {
 // script. Convenience wrapper over NewManager().ProvisionDefaultEgress.
 func ProvisionDefaultEgressShape(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
 	return NewManager().ProvisionDefaultEgress(ctx, nicName, trunkRate, overrides)
-}
-
-// defaultIngressConfig returns the ingress device root and three default ingress
-// classes at proportions derived from trunkRate (publisher 80%, backfill-response
-// 10%, reserve-ingress 10%; all ceil 100% of trunk). Mirrors defaultEgressConfig;
-// exposed as a package-internal helper so tests can verify the computation
-// without disk I/O.
-func defaultIngressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, error) {
-	bps, err := parseBandwidthBps(trunkRate)
-	if err != nil {
-		return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid trunk rate %q", trunkRate)
-	}
-	mbps := bps / 1_000_000
-	now := time.Now().UTC()
-	dev := &DeviceConfig{
-		Dir:          DirIngress,
-		Rate:         trunkRate,
-		DefaultClass: "reserve-ingress",
-		CreatedAt:    now,
-	}
-	classes := []*ClassConfig{
-		{Name: "publisher", Rate: fmt.Sprintf("%dmbit", mbps*80/100), Ceil: trunkRate, Prio: 0, CreatedAt: now},
-		{Name: "backfill-response", Rate: fmt.Sprintf("%dmbit", mbps*10/100), Ceil: trunkRate, Prio: 7, CreatedAt: now},
-		{Name: "reserve-ingress", Rate: fmt.Sprintf("%dmbit", mbps*10/100), Ceil: trunkRate, Prio: 1, CreatedAt: now},
-	}
-	return dev, classes, nil
 }
 
 // ProvisionDefaultIngress records the ingress ($VETH) device root and three
@@ -770,26 +724,7 @@ func defaultIngressConfig(trunkRate string) (*DeviceConfig, []*ClassConfig, erro
 // finds concrete ingress config on the first pod create (the per-pod replay has
 // no sysfs fallback, so the recorded rates must always be concrete).
 func (m *Manager) ProvisionDefaultIngress(_ context.Context, trunkRate string, overrides map[string]ClassOverride) error {
-	trunkRate = m.resolveAutoRateString(trunkRate)
-	dev, classes, err := defaultIngressConfig(trunkRate)
-	if err != nil {
-		return err
-	}
-	applyClassOverrides(classes, overrides)
-	if err := validateProvisionedClasses(classes, dev.Rate); err != nil {
-		return err
-	}
-	return m.withLock(func() error {
-		if err := writeDevice(dev); err != nil {
-			return err
-		}
-		for _, cls := range classes {
-			if err := writeClass(cls); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return m.provisionDefaults(ingressProfile, trunkRate, overrides, nil)
 }
 
 // ProvisionDefaultIngressShape records the ingress shape registry with the three
@@ -810,7 +745,7 @@ func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string
 // Used when no trunk rate is supplied (e.g. block node reconfigure without
 // --link-rate).
 func RenderAndApplyDefaultEgress(ctx context.Context, nic string) error {
-	return NewManager().RenderAndApplyEgress(ctx, nic)
+	return NewManager().applyEgressScript(ctx, nic, applyRestart)
 }
 
 // withLock serialises a mutation behind a cross-command flock so concurrent

@@ -7,6 +7,7 @@ import (
 	oslib "os"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -98,7 +99,10 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		case "verification":
 			includeVerification = true
 		case "plugins":
-			includePlugins = true
+			// #913: only mount the plugins volume when the effective plugins.names
+			// is non-empty. For a plugins-baked image the chart reads the image's
+			// baked plugins directly, so weaver must not render the volume/mount.
+			includePlugins = m.managesPluginsStorage()
 		case "application-state":
 			includeApplicationState = true
 		}
@@ -202,28 +206,88 @@ func mergeValues(base, operator []byte) ([]byte, error) {
 // to decide a smart default, and the deploy-time path (ComputeValuesFile) surfaces any
 // real read/parse error later.
 func ValuesFileDefinesPlugins(valuesFile string) bool {
+	_, defined := pluginsNamesFromValuesFile(valuesFile)
+	return defined
+}
+
+// pluginsNamesFromValuesFile reads plugins.names from an operator values file,
+// returning its raw value and whether the key is defined at all. It is the
+// shared parse behind ValuesFileDefinesPlugins and EffectivePluginsNamesEmpty.
+// It is intentionally error-tolerant: an empty path, an unreadable file, a parse
+// failure, or a missing plugins/names key all return (nil, false) rather than an
+// error — callers use it only for smart-defaults and provisioning gates, and the
+// deploy-time path surfaces any real read/parse error later.
+func pluginsNamesFromValuesFile(valuesFile string) (value interface{}, defined bool) {
 	if valuesFile == "" {
-		return false
+		return nil, false
 	}
 	sanitizedPath, err := sanity.ValidateInputFile(valuesFile)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	content, err := oslib.ReadFile(sanitizedPath)
 	if err != nil {
-		return false
+		return nil, false
 	}
 
 	var vals map[string]interface{}
 	if err := yaml.Unmarshal(content, &vals); err != nil {
-		return false
+		return nil, false
 	}
 	plugins, ok := vals["plugins"].(map[string]interface{})
 	if !ok {
+		return nil, false
+	}
+	v, ok := plugins["names"]
+	return v, ok
+}
+
+// pluginsNamesValueEmpty reports whether a plugins.names value read from a values
+// file is empty — nil (a YAML `names:` with no value), a blank/whitespace string,
+// or an empty sequence. Any other shape (a non-blank string, a non-empty list) is
+// treated as non-empty.
+func pluginsNamesValueEmpty(v interface{}) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(t) == ""
+	case []interface{}:
+		return len(t) == 0
+	default:
 		return false
 	}
-	_, ok = plugins["names"]
-	return ok
+}
+
+// EffectivePluginsNamesEmpty reports whether the plugins.names that will reach the
+// block-node chart is empty — the "plugins-baked image" signal for issue #913.
+// Precedence mirrors how weaver builds the final values:
+//  1. A weaver-resolved PluginList (from --plugins/--plugin-preset) is injected
+//     into plugins.names, so a non-empty list means non-empty.
+//  2. Otherwise an operator --values file that defines plugins.names decides: an
+//     explicit empty/null empties it (baked image), a concrete value keeps it.
+//  3. Otherwise weaver's base-template default (a non-empty list) reaches the chart.
+//
+// When true, weaver must skip provisioning the managed plugins PVC and injecting
+// existingClaim, and must emit an explicit empty plugins.names, so the chart
+// renders no plugins volume and the container reads the image's baked plugins.
+func EffectivePluginsNamesEmpty(pluginList, valuesFile string) bool {
+	if strings.TrimSpace(pluginList) != "" {
+		return false
+	}
+	if names, defined := pluginsNamesFromValuesFile(valuesFile); defined {
+		return pluginsNamesValueEmpty(names)
+	}
+	return false
+}
+
+// managesPluginsStorage reports whether weaver should provision and wire the
+// managed plugins PVC for this operation. It is the inverse of the baked-image
+// signal (EffectivePluginsNamesEmpty): when the effective plugins.names is empty
+// the chart needs no plugins volume (issue #913), so weaver provisions and
+// injects nothing.
+func (m *Manager) managesPluginsStorage() bool {
+	return !EffectivePluginsNamesEmpty(m.blockNodeInputs.PluginList, m.blockNodeInputs.ValuesFile)
 }
 
 // persistenceEntry represents the required persistence settings for a storage type.
@@ -256,6 +320,13 @@ func (m *Manager) injectPersistenceOverrides(valuesContent []byte) ([]byte, erro
 	// leaving its StatefulSet to fall back to a volumeClaimTemplate (PVC stuck
 	// Pending). PersistenceKey defaults to Name when unset (verification, plugins).
 	for _, optStor := range GetApplicableOptionalStorages(m.blockNodeInputs.ChartVersion) {
+		// #913: when the effective plugins.names is empty (plugins-baked image)
+		// the chart renders no plugins volume, so weaver must not force an
+		// existingClaim — doing so would mount an empty PVC read-only over the
+		// image's baked plugins directory.
+		if optStor.Name == "plugins" && !m.managesPluginsStorage() {
+			continue
+		}
 		key := optStor.PersistenceKey
 		if key == "" {
 			key = optStor.Name
@@ -374,7 +445,17 @@ func (m *Manager) injectRetentionConfig(valuesContent []byte) ([]byte, error) {
 // leaving the chart's built-in default plugin list intact.
 func (m *Manager) injectPluginsConfig(valuesContent []byte) ([]byte, error) {
 	pluginList := m.blockNodeInputs.PluginList
-	if pluginList == "" {
+
+	// #913: for a plugins-baked image the effective plugins.names is empty, and we
+	// must set it explicitly to "" so Helm does not re-apply the chart's own
+	// non-empty plugins.names default (which would render a plugins volume/mount +
+	// the Maven resolve init). bakedEmpty implies pluginList == "".
+	bakedEmpty := !m.managesPluginsStorage()
+
+	// Nothing to inject unless we have a resolved list to set, or must force an
+	// explicit empty for a baked image. Leaving it untouched keeps the base
+	// template's / chart's default plugin list intact.
+	if pluginList == "" && !bakedEmpty {
 		return valuesContent, nil
 	}
 
@@ -390,12 +471,17 @@ func (m *Manager) injectPluginsConfig(valuesContent []byte) ([]byte, error) {
 		vals["plugins"] = plugins
 	}
 
-	logx.As().Info().
-		Str("preset", m.blockNodeInputs.PluginPreset).
-		Str("plugins_names", pluginList).
-		Msg("Applying plugin list to block node config")
-
-	plugins["names"] = pluginList
+	if bakedEmpty {
+		logx.As().Info().
+			Msg("Plugins-baked image (effective plugins.names empty): forcing plugins.names=\"\" and skipping the managed plugins PVC")
+		plugins["names"] = ""
+	} else {
+		logx.As().Info().
+			Str("preset", m.blockNodeInputs.PluginPreset).
+			Str("plugins_names", pluginList).
+			Msg("Applying plugin list to block node config")
+		plugins["names"] = pluginList
+	}
 
 	result, err := yaml.Marshal(vals)
 	if err != nil {

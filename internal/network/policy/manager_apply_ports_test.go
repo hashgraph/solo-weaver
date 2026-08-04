@@ -17,7 +17,7 @@ func seedManagedPortsPolicy(t *testing.T, m *Manager, name, stamp string) {
 	t.Helper()
 	_, err := m.Create(context.Background(),
 		&Policy{Name: name, Action: ActionStamp, Stamp: stamp, ManagedPorts: true},
-		nil, "10.4.0.0/24", false)
+		nil, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 }
 

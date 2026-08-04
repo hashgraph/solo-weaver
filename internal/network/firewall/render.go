@@ -9,18 +9,23 @@ import (
 	"strings"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 )
 
 // renderData is the flattened view of a Table passed to the nft template.
 // Strings are pre-joined here because templates.Render parses without a FuncMap,
-// so the template itself cannot call join.
+// so the template itself cannot call join. The `*6` fields carry the IPv6-family
+// members so the template can declare parallel ipv6_addr sets and `ip6` rules.
 type renderData struct {
-	MgmtElements    string
-	BlockedElements string
-	PortElements    string
-	SSHPort         int
-	PodCIDR         string
+	MgmtElements     string
+	MgmtElements6    string
+	BlockedElements  string
+	BlockedElements6 string
+	PortElements     string
+	SSHPort          int
+	PodCIDR          string
+	PodCIDR6         string
 }
 
 // Render produces the full `inet host` nft document for this table. The same
@@ -36,12 +41,19 @@ func (t *Table) Render() (string, error) {
 		ports[i] = strconv.Itoa(p)
 	}
 
+	mgmtV4, mgmtV6 := splitCIDRsByFamily(t.MgmtCIDRs)
+	blockedV4, blockedV6 := splitCIDRsByFamily(t.BlockedCIDRs)
+	podV4, podV6 := routePodCIDRs(t.PodCIDR, t.PodCIDR6)
+
 	data := renderData{
-		MgmtElements:    strings.Join(t.MgmtCIDRs, ", "),
-		BlockedElements: strings.Join(t.BlockedCIDRs, ", "),
-		PortElements:    strings.Join(ports, ", "),
-		SSHPort:         t.SSHPort,
-		PodCIDR:         t.PodCIDR,
+		MgmtElements:     strings.Join(mgmtV4, ", "),
+		MgmtElements6:    strings.Join(mgmtV6, ", "),
+		BlockedElements:  strings.Join(blockedV4, ", "),
+		BlockedElements6: strings.Join(blockedV6, ", "),
+		PortElements:     strings.Join(ports, ", "),
+		SSHPort:          t.SSHPort,
+		PodCIDR:          podV4,
+		PodCIDR6:         podV6,
 	}
 
 	rendered, err := templates.Render(hostNftTemplate, data)
@@ -50,6 +62,44 @@ func (t *Table) Render() (string, error) {
 	}
 
 	return rendered, nil
+}
+
+// splitCIDRsByFamily partitions a validated mixed CIDR list into its IPv4 and
+// IPv6 members, preserving order. Table.Validate has already run, so a
+// classification error is not expected here; a value that somehow fails to
+// classify is dropped from both lists rather than smuggled into the wrong-family
+// nft set (which nft would reject at apply time anyway).
+func splitCIDRsByFamily(cidrs []string) (v4, v6 []string) {
+	for _, c := range cidrs {
+		isV6, err := sanity.CIDRIsIPv6(c)
+		if err != nil {
+			continue
+		}
+		if isV6 {
+			v6 = append(v6, c)
+		} else {
+			v4 = append(v4, c)
+		}
+	}
+	return v4, v6
+}
+
+// routePodCIDRs assigns the two pod-CIDR fields to the v4/v6 render slots by
+// their actual family, so a value placed in either Table field renders into the
+// correct `ip`/`ip6` in-cluster rule even if a caller slotted it by the wrong
+// field. When both fields carry the same family the later one wins that slot.
+func routePodCIDRs(pod, pod6 string) (v4, v6 string) {
+	for _, c := range []string{pod, pod6} {
+		if c == "" {
+			continue
+		}
+		if isV6, err := sanity.CIDRIsIPv6(c); err == nil && isV6 {
+			v6 = c
+		} else {
+			v4 = c
+		}
+	}
+	return v4, v6
 }
 
 // atomicWriteFile writes content to path via a temp file in the same directory

@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/network/shape"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -56,7 +57,8 @@ func (h *InstallHandler) BuildWorkflow(
 	}
 
 	// Fail fast if storage paths can't be resolved — don't set up a cluster for nothing.
-	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion); err != nil {
+	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion,
+		!bnpkg.EffectivePluginsNamesEmpty(inputs.Custom.PluginList, inputs.Custom.ValuesFile)); err != nil {
 		return nil, err
 	}
 
@@ -76,7 +78,7 @@ func (h *InstallHandler) BuildWorkflow(
 	// disabled there is no inet weaver classification for the daemon to watch.
 	var daemonConfigStep []automa.Builder
 	if ins.TrafficShapingEnabled {
-		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace, ins.StatuszBaseURL, ins.StatuszPollInterval)}
+		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace, daemon.StatuszConfig{BaseURL: ins.StatuszBaseURL, PollInterval: ins.StatuszPollInterval})}
 	}
 
 	var wb *automa.WorkflowBuilder

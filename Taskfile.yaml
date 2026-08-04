@@ -70,6 +70,9 @@ includes:
   daemon:
     taskfile: ./taskfiles/daemon.yaml
     flatten: true
+  network:
+    taskfile: ./taskfiles/network.yaml
+    flatten: true
 
 tasks:
   clean:
