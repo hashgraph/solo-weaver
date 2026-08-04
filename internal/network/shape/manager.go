@@ -21,7 +21,7 @@ import (
 // operations for tc HTB device roots and per-class bandwidth configurations.
 //
 // Egress mutations (Dir "egress") re-render TcEgressScriptPath and restart the
-// tc-egress.service oneshot so the kernel picks up changes immediately. Ingress
+// bandwidth-shaper.service oneshot so the kernel picks up changes immediately. Ingress
 // mutations (Dir "ingress") only write config; the daemon pod-lifecycle watcher
 // reads them and applies them to each new veth interface.
 type Manager struct {
@@ -81,7 +81,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 }
 
 // CreateDevice creates (or replaces with --force) the root device configuration.
-// For "egress": re-renders TcEgressScriptPath and restarts tc-egress.service.
+// For "egress": re-renders TcEgressScriptPath and restarts bandwidth-shaper.service.
 // For "ingress": writes config only (daemon pod-lifecycle watcher handles VETH apply).
 //
 // Returns true if the config was created or replaced, false if it already
@@ -134,7 +134,7 @@ func (m *Manager) CreateDevice(ctx context.Context, dev *DeviceConfig, force boo
 
 // CreateClass creates (or replaces with --force) a per-class bandwidth configuration.
 // The device for the class direction must exist before adding classes.
-// For egress classes: re-renders TcEgressScriptPath and restarts tc-egress.service.
+// For egress classes: re-renders TcEgressScriptPath and restarts bandwidth-shaper.service.
 // For ingress classes: writes config only (daemon pod-lifecycle watcher handles VETH apply).
 //
 // Returns true if the config was created or replaced, false if it already
@@ -254,7 +254,7 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 			}
 			if err := m.tcRunner.ClassChange(ctx, nic, ci.Minor, cls.Rate, cls.effectiveCeil(), cls.Prio); err != nil {
 				return errorx.Decorate(err,
-					"class config updated on disk but live tc class change failed; reboot or restart tc-egress.service to sync")
+					"class config updated on disk but live tc class change failed; reboot or restart bandwidth-shaper.service to sync")
 			}
 			// Persist the boot script for reboot without restarting the service:
 			// the live tc class change above already updated the kernel, and a
@@ -365,7 +365,7 @@ func (m *Manager) ShowAll() (string, error) {
 
 // DeleteClass removes a class configuration. Fails if the class is referenced
 // as the device's default class or by any policy's --stamp/--reply-stamp.
-// For egress classes: re-renders TcEgressScriptPath and restarts tc-egress.service.
+// For egress classes: re-renders TcEgressScriptPath and restarts bandwidth-shaper.service.
 func (m *Manager) DeleteClass(ctx context.Context, name string) error {
 	ci, err := lookupClassInfo(name)
 	if err != nil {
@@ -408,7 +408,7 @@ func (m *Manager) DeleteClass(ctx context.Context, name string) error {
 		if ci.Dir == DirEgress {
 			if err := m.applyEgressScript(ctx, "", applyRestart); err != nil {
 				return errorx.Decorate(err,
-					"class config deleted but boot script re-render failed; restart tc-egress.service to sync")
+					"class config deleted but boot script re-render failed; restart bandwidth-shaper.service to sync")
 			}
 		}
 		return nil
@@ -449,7 +449,7 @@ func (m *Manager) DeleteDevice(ctx context.Context, dir string) error {
 			// Re-render with default (empty) egress config.
 			if err := m.applyEgressScript(ctx, "", applyRestart); err != nil {
 				return errorx.Decorate(err,
-					"device config deleted but boot script re-render failed; restart tc-egress.service to sync")
+					"device config deleted but boot script re-render failed; restart bandwidth-shaper.service to sync")
 			}
 		}
 		return nil
@@ -489,7 +489,7 @@ func (m *Manager) TeardownEgress(ctx context.Context) error {
 		// of removing it.
 		if err := m.applyEgressScript(ctx, "", applyUnshape); err != nil {
 			return errorx.Decorate(err,
-				"egress shape config removed but boot script re-render failed; restart tc-egress.service to sync")
+				"egress shape config removed but boot script re-render failed; restart bandwidth-shaper.service to sync")
 		}
 		return nil
 	})
@@ -538,14 +538,14 @@ func (m *Manager) resolveAutoRate(dev *DeviceConfig) {
 }
 
 // egressApplyMode selects what applyEgressScript does after (re-)rendering the
-// tc-egress boot script. It turns the "restart vs no-restart vs direct
+// bandwidth-shaper boot script. It turns the "restart vs no-restart vs direct
 // qdisc-del" reasoning — previously scattered across four near-synonymous
 // methods — into one explicit decision.
 type egressApplyMode int
 
 const (
 	// applyRestart writes the freshly rendered boot script and restarts the
-	// tc-egress oneshot so the kernel replays the full HTB hierarchy. Used by
+	// bandwidth-shaper oneshot so the kernel replays the full HTB hierarchy. Used by
 	// structural mutations (device/class create or delete), where a full
 	// re-apply is the correct way to reach the new state.
 	applyRestart egressApplyMode = iota
@@ -570,7 +570,7 @@ const (
 	applyUnshape
 )
 
-// applyEgressScript (re-)renders the tc-egress boot script and reconciles it
+// applyEgressScript (re-)renders the bandwidth-shaper boot script and reconciles it
 // with the live kernel according to mode. It is the single egress apply path,
 // replacing the former renderAndApplyEgress / renderAndApplyScript /
 // persistEgressScript / renderAndApplyUnshapeEgress tangle.
@@ -584,7 +584,7 @@ func (m *Manager) applyEgressScript(ctx context.Context, nic string, mode egress
 	if nic == "" {
 		var err error
 		if nic, err = m.nicDetect(); err != nil {
-			return errorx.Decorate(err, "cannot re-render tc-egress script: egress NIC detection failed")
+			return errorx.Decorate(err, "cannot re-render bandwidth-shaper script: egress NIC detection failed")
 		}
 	}
 
@@ -613,13 +613,13 @@ func (m *Manager) applyEgressScript(ctx context.Context, nic string, mode egress
 		// Drop the live hierarchy now, independent of systemd. Best-effort: a NIC
 		// with no root qdisc is not an error (see TCRunner.QdiscDelRoot).
 		if err := m.tcRunner.QdiscDelRoot(ctx, nic); err != nil {
-			return errorx.Decorate(err, "failed to delete live tc-egress root qdisc on %s", nic)
+			return errorx.Decorate(err, "failed to delete live bandwidth-shaper root qdisc on %s", nic)
 		}
 	}
 	return m.applyEgress(ctx)
 }
 
-// renderEgressScript renders the tc-egress boot script for nic from the current
+// renderEgressScript renders the bandwidth-shaper boot script for nic from the current
 // registry (stored device + classes), or the sysfs-detect default when no
 // device config exists.
 func (m *Manager) renderEgressScript(nic string) (string, error) {
@@ -740,7 +740,7 @@ func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string
 	return NewManagerWithConfig(cfg).ProvisionDefaultIngress(ctx, trunkRate, overrides)
 }
 
-// RenderAndApplyDefaultEgress renders the tc-egress script for nic from the
+// RenderAndApplyDefaultEgress renders the bandwidth-shaper script for nic from the
 // shape registry (or sysfs fallback when no config exists) and applies it.
 // Used when no trunk rate is supplied (e.g. block node reconfigure without
 // --link-rate).

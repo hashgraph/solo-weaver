@@ -22,7 +22,7 @@ const (
 // with --in-cluster-ports.
 var DefaultInClusterPorts = []int{6443, 4244, 7472, 10250}
 
-// Table is the in-memory model of the `inet host` nftables table. It is the
+// Table is the in-memory model of the `inet weaver-host-firewall` nftables table. It is the
 // single source of truth that both the kernel apply (via `nft -f`) and the
 // on-disk artifact are rendered from, so the two can never diverge.
 type Table struct {
@@ -31,7 +31,7 @@ type Table struct {
 	// BlockedCIDRs is the operator-curated deny list (set @blocked_addrs). It is
 	// purely operator-managed for its whole lifecycle — nothing in this package
 	// or the daemon ever writes to it automatically. This is deliberately
-	// distinct from the BN workload plane's `bn-restricted` set (`inet weaver`),
+	// distinct from the BN workload plane's `bn-restricted` set (`inet weaver-workload-policy`),
 	// which the traffic-shaper daemon reconciles from the block node's statusz
 	// "restricted" category; an operator block list needs a home the daemon
 	// never overwrites.

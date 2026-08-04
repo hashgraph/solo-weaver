@@ -234,6 +234,7 @@ Detailed framework docs live in `docs/dev/`:
 - `proxy.md` — HTTP proxy configuration and activation
 - `tui-output.md` — TUI output modes and formatting
 - `tui-workflow-mapping.md` — Mapping of workflow steps to TUI messages
+- `traffic-shaper.md` — Block-node traffic-shaper/firewall files, systemd units, and boot persistence
 
 ## Key Conventions
 

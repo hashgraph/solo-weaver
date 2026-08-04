@@ -82,7 +82,7 @@ func ValidateHostFirewallFlags(cmd *cobra.Command) error {
 // so the same registration works for any command that provisions a host.
 func RegisterHostFirewallFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool(FlagNameFirewallEnabled, false,
-		"Apply the node-level host firewall (inet host table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). "+
+		"Apply the node-level host firewall (inet weaver-host-firewall table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). "+
 			"Opt-in (default: false) so existing non-interactive callers are unaffected; enable explicitly for "+
 			"hosts you want this tool to manage the firewall on.")
 	cmd.Flags().StringSlice(FlagNameMgmtCIDRs, nil,
@@ -107,7 +107,7 @@ func hostFirewallFeature() gatedFeature {
 		GateFlag:    FlagNameFirewallEnabled,
 		Noun:        "the host firewall",
 		PromptTitle: "Enable host firewall?",
-		PromptDesc: "Apply the node-level inet host firewall (SSH/mgmt allowlist, ICMP policy, in-cluster ports). " +
+		PromptDesc: "Apply the node-level inet weaver-host-firewall firewall (SSH/mgmt allowlist, ICMP policy, in-cluster ports). " +
 			"Opt-in, default No — choose Yes to have this tool manage the host firewall.",
 		ContentFlags: []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs, FlagNameSSHPort, FlagNamePodCIDR, FlagNameInClusterPorts},
 	}
@@ -117,7 +117,7 @@ func hostFirewallFeature() gatedFeature {
 // (enabled, management CIDR allowlist, SSH port, pod CIDR, in-cluster
 // host-service ports) and applies it to the global config so the
 // NetworkFirewallCreate step (wired into the block-node install/reconfigure/
-// upgrade workflows) can render the inet host table. Precedence per value:
+// upgrade workflows) can render the inet weaver-host-firewall table. Precedence per value:
 // CLI flag > interactive prompt > config file > built-in default. When the
 // session is interactive, any value not supplied on the CLI is presented as a
 // pre-filled prompt the operator can confirm with Enter. An empty management

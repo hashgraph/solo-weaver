@@ -16,7 +16,7 @@ func TestRenderTcEgressScript_NICInterpolated(t *testing.T) {
 	dir := t.TempDir()
 
 	const testNIC = "eth0"
-	testPath := filepath.Join(dir, "solo-provisioner-tc-egress.sh")
+	testPath := filepath.Join(dir, "solo-provisioner-bandwidth-shaper.sh")
 
 	rendered, err := renderScript(testNIC)
 	if err != nil {
@@ -122,7 +122,7 @@ func TestRenderTcEgressUnshapeScript(t *testing.T) {
 // NIC shaped.
 func TestApplyEgressScript_Unshape_DeletesLiveRootAndPersists(t *testing.T) {
 	tc := &recordingTCRunner{}
-	scriptPath := filepath.Join(t.TempDir(), "tc-egress.sh")
+	scriptPath := filepath.Join(t.TempDir(), "bandwidth-shaper.sh")
 	applied := false
 
 	m := NewManagerWithConfig(Config{
@@ -164,7 +164,7 @@ func TestApplyEgressScript_Unshape_DeletesLiveRootAndPersists(t *testing.T) {
 func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 	dir := t.TempDir()
 	const testNIC = "ens3"
-	path := filepath.Join(dir, "tc-egress.sh")
+	path := filepath.Join(dir, "bandwidth-shaper.sh")
 
 	rendered, err := renderScript(testNIC)
 	if err != nil {
@@ -868,7 +868,7 @@ func TestApplyEgressScript_PersistOnly_NoServiceRestart(t *testing.T) {
 	// its live `tc class change` already updated the kernel, and a restart would
 	// tear down and rebuild the root qdisc. applyPersistOnly writes; only
 	// applyRestart restarts.
-	scriptPath := filepath.Join(t.TempDir(), "tc-egress.sh")
+	scriptPath := filepath.Join(t.TempDir(), "bandwidth-shaper.sh")
 	applied := false
 	m := NewManagerWithConfig(Config{
 		ScriptPath:  scriptPath,

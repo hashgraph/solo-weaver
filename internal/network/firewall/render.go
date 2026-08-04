@@ -28,7 +28,7 @@ type renderData struct {
 	PodCIDR6         string
 }
 
-// Render produces the full `inet host` nft document for this table. The same
+// Render produces the full `inet weaver-host-firewall` nft document for this table. The same
 // output feeds both the kernel apply (`nft -f`) and the on-disk artifact, so
 // the live table and the persisted file can never diverge.
 func (t *Table) Render() (string, error) {
@@ -58,7 +58,7 @@ func (t *Table) Render() (string, error) {
 
 	rendered, err := templates.Render(hostNftTemplate, data)
 	if err != nil {
-		return "", errorx.InternalError.Wrap(err, "failed to render inet host table")
+		return "", errorx.InternalError.Wrap(err, "failed to render inet weaver-host-firewall table")
 	}
 
 	return rendered, nil

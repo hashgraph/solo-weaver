@@ -10,7 +10,7 @@ import (
 
 var showCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show the live `inet host` table",
+	Short: "Show the live `inet weaver-host-firewall` table",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		out, err := newManager().Show(cmd.Context())
 		if err != nil {

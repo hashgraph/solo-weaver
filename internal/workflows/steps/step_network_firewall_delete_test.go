@@ -19,7 +19,7 @@ func TestNetworkFirewallDelete_RemovesTable(t *testing.T) {
 	nftPath := withStubbedFirewall(t, r)
 	// Seed an on-disk artifact so we can assert the delete removes it.
 	require.NoError(t, os.MkdirAll(filepath.Dir(nftPath), 0o755))
-	require.NoError(t, os.WriteFile(nftPath, []byte("table inet host {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(nftPath, []byte("table inet weaver-host-firewall {}\n"), 0o644))
 
 	step, err := NetworkFirewallDelete().Build()
 	require.NoError(t, err)

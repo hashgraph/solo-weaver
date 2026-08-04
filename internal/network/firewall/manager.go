@@ -12,7 +12,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// Manager implements the `network firewall` verbs against the `inet host`
+// Manager implements the `network firewall` verbs against the `inet weaver-host-firewall`
 // table. Every mutating verb takes the shared apply lock, atomically rewrites
 // the on-disk artifact, and then restarts the systemd service via DBus so the
 // kernel is updated in one consistent operation — no separate nft apply exec.
@@ -77,7 +77,7 @@ func (m *Manager) Create(ctx context.Context, t *Table, force bool) (bool, error
 			return err
 		}
 		if exists && !force {
-			logx.As().Warn().Str("table", TableName).Msg("inet host firewall already exists — supplied flags were not applied; pass --force to re-render from the current flags")
+			logx.As().Warn().Str("table", TableName).Msg("inet weaver-host-firewall firewall already exists — supplied flags were not applied; pass --force to re-render from the current flags")
 			return nil
 		}
 		changed = true
@@ -140,7 +140,7 @@ func (m *Manager) Set(ctx context.Context, mgmtCIDRs, blockedCIDRs []string, por
 	})
 }
 
-// IsActive reports whether the inet host table is currently present in the
+// IsActive reports whether the inet weaver-host-firewall table is currently present in the
 // kernel. It is a read-only probe (no lock, no mutation) used by callers that
 // need the firewall's current on-host state — e.g. seeding the reconfigure
 // enable/disable prompt from ground truth rather than from config.yaml, whose
@@ -149,7 +149,7 @@ func (m *Manager) IsActive(ctx context.Context) (bool, error) {
 	return m.runner.Exists(ctx)
 }
 
-// Show returns the live inet host table. If the table is not active it returns
+// Show returns the live inet weaver-host-firewall table. If the table is not active it returns
 // a human-readable message (not an error) so the caller can print it cleanly.
 func (m *Manager) Show(ctx context.Context) (string, error) {
 	exists, err := m.runner.Exists(ctx)
@@ -157,15 +157,15 @@ func (m *Manager) Show(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if !exists {
-		return "No inet host firewall table is currently active.\n" +
+		return "No inet weaver-host-firewall firewall table is currently active.\n" +
 			"Run `solo-provisioner network firewall create` to install one.", nil
 	}
 	return m.runner.List(ctx)
 }
 
-// Delete removes the inet host table and its on-disk artifact. It is
+// Delete removes the inet weaver-host-firewall table and its on-disk artifact. It is
 // idempotent. It deliberately does NOT disable the shared
-// solo-provisioner-network-nft.service (shared with inet weaver) — that is
+// solo-provisioner-network-nft.service (shared with inet weaver-workload-policy) — that is
 // orchestrated by `kube cluster uninstall` (#791).
 func (m *Manager) Delete(ctx context.Context) error {
 	return m.withLock(func() error {
@@ -221,7 +221,7 @@ func (m *Manager) load() (*Table, error) {
 	data, err := os.ReadFile(m.nftPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errorx.IllegalState.New("inet host firewall not found at %s; run `solo-provisioner network firewall create` first", m.nftPath)
+			return nil, errorx.IllegalState.New("inet weaver-host-firewall firewall not found at %s; run `solo-provisioner network firewall create` first", m.nftPath)
 		}
 		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.nftPath)
 	}

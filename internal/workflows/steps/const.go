@@ -23,7 +23,7 @@ const (
 	ConfiguredByThisStep = "configured"
 
 	// FirewallCreatedByThisStep records whether NetworkFirewallCreate actually
-	// created the inet host table (true) or found it already present (false), so
+	// created the inet weaver-host-firewall table (true) or found it already present (false), so
 	// rollback only deletes a table this step introduced.
 	FirewallCreatedByThisStep = "firewallCreated"
 

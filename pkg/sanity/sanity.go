@@ -707,7 +707,7 @@ func Contains[T comparable](item T, slice []T) bool {
 
 // ValidateCIDR rejects any string that is not a syntactically valid IPv4 or
 // IPv6 CIDR (e.g. "10.0.0.0/8", "2001:db8::/32"). It is the boundary check for
-// management / in-cluster CIDRs that flow into the `inet host` nftables ruleset
+// management / in-cluster CIDRs that flow into the `inet weaver-host-firewall` nftables ruleset
 // rendered to disk and applied via `nft -f`; a malformed value must never reach
 // the renderer, where it could break the atomic transaction or smuggle in nft
 // syntax. A bare IP without a prefix length is rejected — callers must be
@@ -732,7 +732,7 @@ func ValidateCIDR(s string) error {
 
 // ValidateIPv4CIDR rejects any string that is not a syntactically valid CIDR,
 // or that is a valid CIDR but not IPv4. It is the boundary check for CIDRs
-// that flow into the `inet host` nftables ruleset (management allowlist, pod
+// that flow into the `inet weaver-host-firewall` nftables ruleset (management allowlist, pod
 // CIDR): the table only supports ipv4_addr sets, so an IPv6 value must be
 // rejected at the earliest input point (CLI flag / TUI prompt / config load)
 // rather than surfacing later as a render-time failure after other work
@@ -744,13 +744,13 @@ func ValidateIPv4CIDR(s string) error {
 	ip, _, _ := net.ParseCIDR(s)
 	if ip.To4() == nil {
 		return errorx.IllegalArgument.New(
-			"invalid CIDR %q: IPv6 CIDRs are not yet supported; the inet host table uses ipv4_addr sets", s)
+			"invalid CIDR %q: IPv6 CIDRs are not yet supported; the inet weaver-host-firewall table uses ipv4_addr sets", s)
 	}
 	return nil
 }
 
 // CIDRIsIPv6 reports whether s is an IPv6 CIDR (as opposed to IPv4). It is the
-// family classifier that lets the dual-stack `inet host` / `inet weaver`
+// family classifier that lets the dual-stack `inet weaver-host-firewall` / `inet weaver-workload-policy`
 // renderers route each entry of a mixed --mgmt-cidrs / --blocked-cidrs / --cidrs
 // list into the matching nft set (ipv4_addr vs ipv6_addr). s should already have
 // passed ValidateCIDR; an unparseable value returns an error rather than a
@@ -768,7 +768,7 @@ func CIDRIsIPv6(s string) (bool, error) {
 
 // ValidatePort rejects any string that is not a valid TCP/UDP port number in
 // the range 1–65535. It is the boundary check for `--in-cluster-port` values
-// before they are rendered into the `inet host` nftables ruleset.
+// before they are rendered into the `inet weaver-host-firewall` nftables ruleset.
 func ValidatePort(s string) error {
 	if s == "" {
 		return errorx.IllegalArgument.New("port cannot be empty")

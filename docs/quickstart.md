@@ -197,14 +197,14 @@ sudo solo-provisioner block node install \
 | `--historic-retention`    | Historic block retention threshold (`0` = unlimited)                                                                                  |
 | `--recent-retention`      | Recent block retention threshold (default: `96000`)                                                                                   |
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`). See [Block-node service exposure](./block-node-service-exposure.md) for how this interacts with `service.type` and the chart's split topology. |
-| `--firewall-enabled`      | Apply the node-level host firewall (`inet host` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
+| `--firewall-enabled`      | Apply the node-level host firewall (`inet weaver-host-firewall` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
 | `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs (IPv4 and/or IPv6 — each entry is routed to the matching `ipv4_addr`/`ipv6_addr` set). Empty skips the host firewall. |
 | `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs (IPv4 and/or IPv6), dropped before any other rule including established connections. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
 | `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
 | `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet). May be IPv4 and/or IPv6 (repeat or comma-separate for dual-stack). |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
-| `--traffic-shaping-enabled` | Create the BN workload network-policy plane (`inet weaver` classification) and tc HTB traffic shaping, and install the traffic-shaper daemon. Opt-in (default: `false`); set to `true` to get all three |
-| `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and installs `solo-provisioner-tc-egress.service` so the HTB hierarchy survives reboot. |
+| `--traffic-shaping-enabled` | Create the BN workload network-policy plane (`inet weaver-workload-policy` classification) and tc HTB traffic shaping, and install the traffic-shaper daemon. Opt-in (default: `false`); set to `true` to get all three |
+| `--egress-interface`      | Physical NIC for the `$EGRESS` HTB traffic-shaper hierarchy (e.g. `eth0`). Auto-detected from the default route when omitted; use this flag to override on multi-NIC hosts. Renders `/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh` and installs `solo-provisioner-bandwidth-shaper.service` so the HTB hierarchy survives reboot. |
 | `--link-rate`             | NIC line rate in tc-style format (e.g. `1gbit`, `100mbit`), or `auto` to detect and store the link speed at install time (written as explicit proportional class rates). Auto-detected from sysfs at each boot when omitted. Interactively, the prompt accepts a rate, `auto`, or blank. The link is full-duplex, so this rate parameterizes both the `$EGRESS` and `$VETH` HTB trunks. |
 | `--shape`                 | Per-class HTB bandwidth override, repeatable: `--shape <class>=rate=<r>,ceil=<c>,prio=<p>` (e.g. `--shape publisher=rate=800mbit,ceil=1gbit,prio=0`). Any subset of `rate`/`ceil`/`prio` may be given; classes not overridden use the profile defaults. Valid classes: `publisher`, `backfill-response`, `reserve-ingress`, `partner`, `public`, `reserve-egress`. |
 | `--daemon-version`        | Version of `solo-provisioner-daemon` to auto-download when traffic shaping installs the daemon (defaults to this CLI's own version). Ignored when `--daemon-bin` is set. |
@@ -229,8 +229,8 @@ sudo solo-provisioner block node install \
 > and is purely operator-managed for its whole lifecycle, unlike the
 > daemon-owned `bn-restricted` set on the BN workload plane.
 
-> **IPv6 / dual-stack**: both the host firewall (`inet host`) and the BN workload
-> plane (`inet weaver`, which drives traffic-shaping classification) are
+> **IPv6 / dual-stack**: both the host firewall (`inet weaver-host-firewall`) and the BN workload
+> plane (`inet weaver-workload-policy`, which drives traffic-shaping classification) are
 > dual-stack. The v4 and v6 sets are always rendered; `--mgmt-cidrs`,
 > `--blocked-cidrs`, `--pod-cidr` (and `network policy --cidrs`) accept mixed
 > IPv4/IPv6 lists and route each entry to the matching family's set. The host
@@ -246,7 +246,7 @@ sudo solo-provisioner block node install \
 > the traffic-shaper daemon whenever traffic shaping is enabled, with no
 > separate prompt or flag. `--traffic-shaping-enabled` is opt-in (default
 > `false`) so existing non-interactive callers are unaffected; enabling it
-> creates the BN workload network-policy plane (`inet weaver` classification),
+> creates the BN workload network-policy plane (`inet weaver-workload-policy` classification),
 > tc HTB shaping, and installs the daemon, all together — declining (or the
 > default) skips the egress NIC/link-rate prompts too, since there would be
 > nothing left for any of it to reconcile. This decision is durable: it's
@@ -259,18 +259,18 @@ sudo solo-provisioner block node install \
 > (physical NIC) and the `$VETH` (per-pod ingress) HTB shapes using the design's
 > default per-class budgets, so the daemon can install the ingress hierarchy on
 > the next pod create without any manual `network shape` step. The `$EGRESS` shape
-> is persisted for reboot replay (`solo-provisioner-tc-egress.service`); the
+> is persisted for reboot replay (`solo-provisioner-bandwidth-shaper.service`); the
 > ingress shape is recorded as config only (the `$VETH` is ephemeral and replayed
 > per-pod). Ingress bandwidth defaults to the egress `--link-rate`. Tune any class
 > afterward with `network shape set --class <name> --rate/--ceil/--prio`, or at
 > install time with `--shape <class>=rate=...,ceil=...,prio=...`.
 
 > **Network policies**: when traffic shaping is enabled (see the traffic shaping
-> gate above), `block node install` lays down the `inet weaver`
+> gate above), `block node install` lays down the `inet weaver-workload-policy`
 > classification plane by creating the fixed set of BN policies (`bn-publisher`,
 > `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-status-in/out`,
 > `bn-mgmt-in/out`, `bn-restricted`, `bn-backfill`) idempotently, then persists the
-> rendered `network-weaver.nft` for reboot replay. The one operator-curated set,
+> rendered `network-weaver-workload-policy.nft` for reboot replay. The one operator-curated set,
 > `bn-mgmt-in/out`, is seeded here from the host management allowlist
 > (`--mgmt-cidrs`). Every other set's membership — including `bn-restricted` —
 > is reconciled at runtime by the traffic-shaper daemon from the block node's
@@ -420,7 +420,7 @@ sudo solo-provisioner block node reconfigure \
 | `--no-restart`      | Skip rollout-restart of the block node pod after reconfiguring                                        | `false` |
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
 | `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
-| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet host` table) on an existing install. Seeded from the firewall's current on-host state, so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
+| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state, so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
 | `--traffic-shaping-enabled` | Enable or disable the BN traffic-shaping bundle (network-policy plane + tc HTB shaping + daemon traffic-shaper monitor) on an existing install. Seeded from the persisted install decision, so a no-flag reconfigure keeps it; pass `=true` to create it (with `--egress-interface`/`--link-rate`/`--shape`/`--daemon-bin` as on `install`), `=false` to tear it down. | persisted state |
 | `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN. Merged per-field into `daemon.yaml` (`components.block_node.statusz.base_url`); omitting the flag preserves whatever is already on disk. Only when no `base_url` exists on disk does the daemon fall back to discovering the endpoint from the watched BN pod. | preserved on disk |
 | `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`). Merged per-field into `daemon.yaml` (`components.block_node.statusz.poll_interval`); omitting the flag preserves whatever is already on disk. Only when no `poll_interval` exists on disk does the daemon fall back to its `5s` default. | preserved on disk |
@@ -435,11 +435,11 @@ sudo solo-provisioner block node reconfigure \
 > `install`, so an operator can turn either feature on or off on an
 > already-deployed block node without a full `install --force` reinstall. Both
 > gates are seeded from the block node's **current** state — the host firewall from
-> whether the `inet host` table exists, traffic shaping from the persisted install
+> whether the `inet weaver-host-firewall` table exists, traffic shaping from the persisted install
 > decision — so a routine reconfigure that doesn't pass the flag (or accepts the
 > interactive default) never changes enablement. Teardown only happens on an
 > explicit toggle: answering **No** (or passing `=false`) for a currently-enabled
-> feature removes it — the `inet host` table for the firewall; every `bn-*` policy,
+> feature removes it — the `inet weaver-host-firewall` table for the firewall; every `bn-*` policy,
 > the tc egress shaping, and the daemon's block-node traffic-shaper monitor for
 > traffic shaping. Disabling the traffic-shaper monitor does **not** uninstall the
 > shared daemon service, so a co-located component (e.g. consensus-node monitoring)
@@ -486,7 +486,7 @@ sudo solo-provisioner block node uninstall \
 
 #### Reconcile Traffic Shaper
 
-Reconcile the block node traffic-shaper's `inet weaver` nft policy set membership
+Reconcile the block node traffic-shaper's `inet weaver-workload-policy` nft policy set membership
 from the block node's statusz endpoints. The command fetches the active
 inbound/outbound endpoints, maps them to the owned policy sets
 (`bn-publisher`, `bn-partner`, `bn-restricted`, `bn-backfill`), and applies only
@@ -516,7 +516,7 @@ sudo solo-provisioner block node reconcile-shaper \
 | `--check`        | Only fetch and print the desired-membership digest; read/write no nft state (unprivileged) | `false` |
 
 > **Privilege**: `--check` never touches nft and needs no privilege. The apply
-> path (no `--check`) reads and writes the live `inet weaver` sets and must run as
+> path (no `--check`) reads and writes the live `inet weaver-workload-policy` sets and must run as
 > root; the daemon invokes it via sudo.
 
 #### Attach Ingress Traffic Shaper (`tc-attach`)
@@ -569,7 +569,7 @@ Sets up a complete single-node Kubernetes environment with all required componen
 - **k9s**: Terminal-based Kubernetes UI
 - **Metrics Server**: Resource metrics for pods and nodes
 
-`kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet host` nftables table) is applied by the block-node workflow instead (see [Install Block Node](#install-block-node) below).
+`kube cluster install` provisions a Kubernetes cluster independent of any specific node type — it does **not** apply any node-specific firewall rules. The node-level **host firewall** (the `inet weaver-host-firewall` nftables table) is applied by the block-node workflow instead (see [Install Block Node](#install-block-node) below).
 
 Cluster install is **workload-agnostic**: it validates only the Kubernetes substrate
 hardware floor (what Kubernetes itself needs to run), not any per-workload sizing. It
@@ -616,11 +616,11 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 
 ### Network Commands
 
-Manage node-level network state behind the traffic shaper. The `firewall` scope manages the node-agnostic `inet host` nftables table — the host's own SSH/management allowlist, ICMP policy, and in-cluster host-service ports. It is separate from the `inet weaver` workload plane and applies to every node type (block, consensus, mirror, relay).
+Manage node-level network state behind the traffic shaper. The `firewall` scope manages the node-agnostic `inet weaver-host-firewall` nftables table — the host's own SSH/management allowlist, ICMP policy, and in-cluster host-service ports. It is separate from the `inet weaver-workload-policy` workload plane and applies to every node type (block, consensus, mirror, relay).
 
 #### Create the Host Firewall
 
-create-if-missing: if the `inet host` table already exists, the command makes no changes unless `--force` is passed (which re-renders from the flags). Every mutation applies to the live kernel in one atomic `nft -f` transaction and atomically rewrites `/etc/solo-provisioner/network-host.nft`.
+create-if-missing: if the `inet weaver-host-firewall` table already exists, the command makes no changes unless `--force` is passed (which re-renders from the flags). Every mutation applies to the live kernel in one atomic `nft -f` transaction and atomically rewrites `/etc/solo-provisioner/network-weaver-host-firewall.nft`.
 
 ```bash
 # Create with a management allowlist and the default in-cluster ports
@@ -676,18 +676,18 @@ sudo solo-provisioner network firewall set    --in-cluster-ports 6443,4244
 #### Show / Delete the Host Firewall
 
 ```bash
-# Show the live inet host table
+# Show the live inet weaver-host-firewall table
 sudo solo-provisioner network firewall show
 
-# Remove the table and /etc/solo-provisioner/network-host.nft
+# Remove the table and /etc/solo-provisioner/network-weaver-host-firewall.nft
 sudo solo-provisioner network firewall delete
 ```
 
-> `delete` removes the table and `/etc/solo-provisioner/network-host.nft` but does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver`); disable it manually if you need it off.
+> `delete` removes the table and `/etc/solo-provisioner/network-weaver-host-firewall.nft` but does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
 
 #### Create a Traffic Policy
 
-The `policy` scope is a generic, category-agnostic primitive that manages the `inet weaver` workload traffic plane: named per-category rules that classify traffic into an HTB priority class, or quarantine a set of CIDRs. It is not tied to any specific node type — the CLI takes CIDRs and class names directly (statusz-agnostic); the examples below use the block-node categories because `block node install` is the only caller today. Each `create` renders the rule(s) into the `inet weaver` forward chain, ensures the policy's nft set `@<name>` exists, writes a per-policy registry file under `/etc/solo-provisioner/policies/`, applies the full chain to the live kernel with `nft -f`, and atomically rewrites `/etc/solo-provisioner/network-weaver.nft`.
+The `policy` scope is a generic, category-agnostic primitive that manages the `inet weaver-workload-policy` workload traffic plane: named per-category rules that classify traffic into an HTB priority class, or quarantine a set of CIDRs. It is not tied to any specific node type — the CLI takes CIDRs and class names directly (statusz-agnostic); the examples below use the block-node categories because `block node install` is the only caller today. Each `create` renders the rule(s) into the `inet weaver-workload-policy` forward chain, ensures the policy's nft set `@<name>` exists, writes a per-policy registry file under `/etc/solo-provisioner/policies/`, applies the full chain to the live kernel with `nft -f`, and atomically rewrites `/etc/solo-provisioner/network-weaver-workload-policy.nft`.
 
 `create` is create-if-missing, mirroring `network firewall create`: a policy that already exists is left untouched unless `--force` is passed, in which case its config and membership are **replaced** (not merged) from the given flags/`--cidrs`. Without `--force`, an existing policy warns and makes no changes — even if the flags/`--cidrs` given this time differ from before.
 
@@ -733,14 +733,14 @@ sudo solo-provisioner network policy create --name bn-restricted \
 
 `--stamp` references a QoS class name — `publisher`, `reserve-ingress` (ingress); `partner`, `public`, `reserve-egress` (egress); `backfill-response` (ingress, `--reply-stamp` only) — referencing an unknown class is an error. Rule position in the chain is determined by action type and match specificity (deny → reply-restore → specific stamp → fallthrough stamp), never by creation order.
 
-When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
+When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver-workload-policy.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
 
 
-> Set **membership** (the CIDRs) is never persisted to `network-weaver.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).
+> Set **membership** (the CIDRs) is never persisted to `network-weaver-workload-policy.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).
 
 #### Mutate Set Membership (add / remove / set)
 
-Use these verbs to modify a policy's live CIDR set after it has been created. **None of them re-render `network-weaver.nft`** — only the live kernel set changes (§8.3.1).
+Use these verbs to modify a policy's live CIDR set after it has been created. **None of them re-render `network-weaver-workload-policy.nft`** — only the live kernel set changes (§8.3.1).
 
 ```bash
 # Add one or more CIDRs to a policy's live set (repeatable or comma-separated)
@@ -806,13 +806,13 @@ With no policies configured, a bare `show` prints `no policies configured` rathe
 
 #### Remove a Policy (delete)
 
-Remove a policy's rules, set, and registry file, and re-render the `inet weaver` chain:
+Remove a policy's rules, set, and registry file, and re-render the `inet weaver-workload-policy` chain:
 
 ```bash
 sudo solo-provisioner network policy delete --name bn-restricted
 ```
 
-`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver.nft`. If this is the last policy, an empty chain (`policy drop`, no rules) is applied; the boot oneshot stays enabled.
+`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver-workload-policy.nft`. If this is the last policy, an empty chain (`policy drop`, no rules) is applied; the boot oneshot stays enabled.
 
 | Flag     | Description     | Required |
 |----------|-----------------|----------|
@@ -822,7 +822,7 @@ sudo solo-provisioner network policy delete --name bn-restricted
 
 #### `network shape` — tc HTB Bandwidth Class Management
 
-Manage the tc HTB shaping hierarchy for the node's egress NIC. Each `create/set/delete` mutation atomically re-renders `/usr/local/sbin/solo-provisioner-tc-egress.sh` and restarts `solo-provisioner-tc-egress.service` so the live kernel and boot script stay in sync.
+Manage the tc HTB shaping hierarchy for the node's egress NIC. Each `create/set/delete` mutation atomically re-renders `/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh` and restarts `solo-provisioner-bandwidth-shaper.service` so the live kernel and boot script stay in sync.
 
 `block node install` drives the shape registry automatically (from `--link-rate`); `network shape` lets you inspect or adjust individual classes after install.
 

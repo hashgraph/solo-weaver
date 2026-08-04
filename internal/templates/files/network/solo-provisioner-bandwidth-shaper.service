@@ -1,5 +1,5 @@
 [Unit]
-Description=Solo Provisioner TC Egress Shaper
+Description=Solo Provisioner Bandwidth Shaper (tc HTB egress)
 Documentation=https://github.com/hashgraph/solo-weaver
 DefaultDependencies=no
 After=network-pre.target
@@ -8,7 +8,7 @@ Before=network.target solo-provisioner-daemon.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/solo-provisioner-tc-egress.sh
+ExecStart=/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh
 
 [Install]
 WantedBy=multi-user.target

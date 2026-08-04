@@ -62,6 +62,13 @@ var (
 				currentTrafficShaping = !stateDefaults.BlockNode.TrafficShapingDisabled
 			}
 
+			// Host firewall is prompted first (before the traffic-shaper question) so
+			// the operator answers the firewall gate and its settings before moving on
+			// to traffic shaping.
+			if err := common.ResolveHostFirewallConfig(cmd, args, cv, firewallSeed); err != nil {
+				return err
+			}
+
 			// Traffic shaping is independently gated from the host firewall — it covers
 			// the BN workload network-policy plane, tc HTB shaping, and the daemon's
 			// traffic-shaper monitor. Enabling on a previously-declined install creates
@@ -96,10 +103,6 @@ var (
 			// prepareBlocknodeInputs ran before the prompts; patch in the final values.
 			inputs.Custom.EgressInterface = flagEgressInterface
 			inputs.Custom.LinkRate = flagLinkRate
-
-			if err := common.ResolveHostFirewallConfig(cmd, args, cv, firewallSeed); err != nil {
-				return err
-			}
 
 			if cv != nil {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr())

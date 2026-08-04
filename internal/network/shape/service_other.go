@@ -6,7 +6,7 @@ package shape
 
 import "context"
 
-// EnsureTcEgressUnit is a no-op on non-Linux platforms. The tc-egress oneshot
+// EnsureTcEgressUnit is a no-op on non-Linux platforms. The bandwidth-shaper oneshot
 // unit is a Linux systemd concept; the package compiles and tests on all
 // platforms, but the service management calls only run on Linux.
 func EnsureTcEgressUnit(_ context.Context) error { return nil }

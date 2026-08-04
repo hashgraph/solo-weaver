@@ -25,7 +25,7 @@ func normalizeTcLine(line string) []string {
 
 // TestBootScriptTcEncodingMatchesArgBuilders is the lockstep guard for #946
 // AC#2: the tc command encoding must live in one place. The live path
-// (execTCRunner) executes the tc*Args slices; the tc-egress boot script renders
+// (execTCRunner) executes the tc*Args slices; the bandwidth-shaper boot script renders
 // the same commands as shell text. This renders the explicit-rate boot script
 // for a concrete egress config and asserts every `tc ...` line equals the
 // arg-builder encoding token for token (whitespace- and quote-insensitive), so
