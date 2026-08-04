@@ -182,15 +182,18 @@ func (m *TrafficShaperMonitor) superviseResponsibility(ctx context.Context, name
 // a monitor constructed with a non-positive interval — only reachable in tests;
 // daemon.go always passes StatuszConfig.EffectivePollInterval() — still ticks at
 // a sane cadence rather than panicking in time.NewTicker.
-const defaultStatuszPollInterval = 5 * time.Second
+const defaultStatuszPollInterval = 5 * time.Minute
 
 // statuszForceResyncInterval bounds how long the poll loop trusts the
 // desired-membership digest before forcing a full apply even when the digest is
 // unchanged. The digest is computed over the desired membership (from statusz),
 // not the live nft sets, so a pure digest gate would never notice an
 // out-of-band edit to the daemon-owned sets; a periodic forced apply re-diffs
-// live nft and self-heals that drift. A var (not const) so tests can shrink it.
-var statuszForceResyncInterval = time.Minute
+// live nft and self-heals that drift. Must be greater than the poll interval so
+// the digest-delta optimisation has teeth; at the default 5m poll cadence a 1h
+// force-resync means only one in twelve ticks is a forced apply. A var (not
+// const) so tests can shrink it.
+var statuszForceResyncInterval = time.Hour
 
 // effectiveStatuszURL returns the statusz base URL the poll loop should reconcile
 // against this tick: the operator-configured base_url override when set,
@@ -223,7 +226,7 @@ func (m *TrafficShaperMonitor) effectiveStatuszURL() string {
 // apply (a root sudo exec) fires only when the desired membership changed, the
 // resolved URL changed, or the force-resync interval has elapsed since the last
 // apply. A worker-exec failure is returned to superviseResponsibility, which
-// retries with the 5s→5min back-off; a ctx cancellation returns nil (clean
+// retries with exponential back-off; a ctx cancellation returns nil (clean
 // shutdown).
 func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 	interval := m.pollInterval
@@ -324,8 +327,19 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 		return nil
 	}
 
-	// Reconcile once on entry so a fresh daemon converges immediately instead of
-	// waiting a full interval for the first tick.
+	// Reconcile once on entry so the daemon converges immediately on startup
+	// (including after a host reboot) without waiting a full interval for the
+	// first tick. The nft set elements are not boot-persistent; this entry probe
+	// is what rehydrates them as soon as the daemon starts and the BN statusz
+	// endpoint is reachable. If statusz is not yet up, runReconcile returns an
+	// error and superviseResponsibility retries with back-off — convergence is
+	// bounded by BN startup time, not the poll interval.
+	//
+	// Pod-discovery caveat: when base_url is not configured, effectiveStatuszURL
+	// returns "" until the pod watcher observes a ready BN pod. In that case this
+	// entry reconcile is a silent no-op (not an error), and convergence after a
+	// restart waits for pod discovery plus up to one poll interval for the next
+	// tick. Set base_url for guaranteed immediate convergence after a reboot.
 	if err := runReconcile(); err != nil {
 		return err
 	}

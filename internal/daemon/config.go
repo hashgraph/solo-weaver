@@ -21,8 +21,14 @@ const (
 
 	// DefaultStatuszPollInterval is the steady-state cadence at which the
 	// traffic-shaper monitor polls statusz when statusz.poll_interval is unset.
-	// The design specifies a 5-second poll loop.
-	DefaultStatuszPollInterval = 5 * time.Second
+	// 5 minutes is appropriate for a steady-state background reconciler: the
+	// daemon reconciles once immediately on startup (before the first tick) so
+	// convergence after a restart is bounded by how fast the BN pod responds to
+	// statusz, not by the poll interval — provided base_url is configured. When
+	// relying on pod discovery (no base_url), the entry reconcile skips until a
+	// ready BN pod is observed; convergence is then bounded by pod readiness plus
+	// up to one poll interval.
+	DefaultStatuszPollInterval = 5 * time.Minute
 )
 
 // DaemonConfig is parsed from daemon.yaml at startup.
@@ -48,7 +54,7 @@ const (
 //	      traffic_shaper: true
 //	    statusz:                     # optional local-fallback statusz source
 //	      base_url: http://127.0.0.1:8080
-//	      poll_interval: 5s
+//	      poll_interval: 5m
 type DaemonConfig struct {
 	// SchemaVersion identifies the config file format. Always written as
 	// CurrentSchemaVersion by WriteDaemonConfig. A value of 0 means the file
@@ -142,9 +148,10 @@ type StatuszConfig struct {
 	PollInterval string `yaml:"poll_interval,omitempty"`
 }
 
-// EffectivePollInterval returns the configured poll interval, or the 5-second
-// default when unset. It assumes the value has already passed Validate, and
-// falls back to the default for any residual parse failure rather than erroring.
+// EffectivePollInterval returns the configured poll interval, or
+// DefaultStatuszPollInterval when unset. It assumes the value has already
+// passed Validate, and falls back to the default for any residual parse failure
+// rather than erroring.
 func (s StatuszConfig) EffectivePollInterval() time.Duration {
 	if s.PollInterval == "" {
 		return DefaultStatuszPollInterval

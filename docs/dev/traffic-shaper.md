@@ -121,12 +121,14 @@ The monitor runs two independently-supervised responsibilities (each retried wit
    ingress HTB from the persisted class configs. On pod delete it best-effort
    `tc-detach`es (the kernel removes veth qdiscs with the interface anyway).
 2. **Statusz poll loop -> the policy plane's nft set membership.** Every
-   `poll_interval` (default 5 s) it resolves the block node's statusz base URL
+   `poll_interval` (default 5 m) it resolves the block node's statusz base URL
    (operator override, else discovered from the ready pod's IP + health port),
    runs an unprivileged `--check` digest probe, and only when the digest changed
-   (or the URL changed, or a periodic force-resync elapses) execs `block node
+   (or the URL changed, or the hourly force-resync elapses) execs `block node
    reconcile-shaper` via sudo to apply. The periodic forced apply self-heals
-   out-of-band nft edits.
+   out-of-band nft edits. On daemon startup (including after a host reboot) the
+   loop reconciles once immediately before the first tick, so nft set membership
+   is rehydrated as soon as the daemon starts and statusz is reachable.
 
 **statusz** is the block node's own health API — `statusz/inbound` and
 `statusz/outbound` JSON endpoints served on the pod's health port (default
@@ -246,7 +248,7 @@ fill in the parts that are deliberately **not** persisted (see below).
 | Artifact | Persisted at boot? | Rebuilt by |
 |---|---|---|
 | nft tables, chains, rules (both tables) | Yes — replayed from the `.nft` files via `nft -f` | — |
-| nft **set elements** (the CIDR membership of `bn-*` sets) | **No** | daemon statusz poll loop, ~5 s after boot |
+| nft **set elements** (the CIDR membership of `bn-*` sets) | **No** | daemon statusz poll loop — entry reconcile fires immediately on daemon start; bounded by BN startup time when `base_url` is set, or by pod readiness + up to one poll interval with pod discovery |
 | `$EGRESS` HTB hierarchy | Yes — the `solo-provisioner-bandwidth-shaper.sh` script | — |
 | `$VETH` (per-pod) HTB hierarchy | **No** | daemon pod-lifecycle watcher, on the next pod-create event |
 
