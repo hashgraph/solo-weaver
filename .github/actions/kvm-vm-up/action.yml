@@ -89,6 +89,17 @@ runs:
       run: |
         set -euo pipefail
 
+        WORKSPACE_PATH="${{ inputs.workspace-path }}"
+
+        # workspace-path is interpolated into a command run by the guest's
+        # shell and into an rsync destination, both of which re-parse it.
+        # Validate here, before a VM is booted, rather than failing minutes
+        # later on a malformed path.
+        if ! printf '%s' "${WORKSPACE_PATH}" | grep -Eq '^/[A-Za-z0-9._/-]+$'; then
+          echo "Invalid workspace-path '${WORKSPACE_PATH}': must be an absolute path made up of [A-Za-z0-9._/-]."
+          exit 1
+        fi
+
         JOB_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}-${RANDOM}"
         VM_DIR="${RUNNER_TEMP}/weaver-vm-${JOB_ID}"
         mkdir -p "${VM_DIR}"
@@ -246,7 +257,11 @@ runs:
         # ten-minute SSH timeout.
         qemu_start() {
           local port="$1"
-          rm -f "${PID_FILE}" "${STDERR_LOG}"
+          # Clear all three per-attempt artifacts. `-serial file:` truncates on
+          # open today, but that is a QEMU default rather than a guarantee we
+          # make; removing the console log here keeps a failed attempt's output
+          # out of the next attempt's diagnostics regardless.
+          rm -f "${PID_FILE}" "${STDERR_LOG}" "${CONSOLE_LOG}"
           nohup qemu-system-x86_64 \
             -enable-kvm -cpu host \
             -m "${VM_MEM_MB}" -smp "${VM_CPUS}" \
@@ -282,6 +297,20 @@ runs:
           cat "${STDERR_LOG}" 2>/dev/null || true
           echo "=== vm-console.log (last 200 lines) ==="
           tail -200 "${CONSOLE_LOG}" 2>/dev/null || true
+        }
+
+        # SIGTERM, a five-second grace period, then SIGKILL. A bare `wait`
+        # after `kill` would hang this step for as long as the process chose to
+        # ignore the signal.
+        kill_qemu() {
+          local pid="$1"
+          kill "${pid}" 2>/dev/null || true
+          for _ in $(seq 1 25); do
+            kill -0 "${pid}" 2>/dev/null || { wait "${pid}" 2>/dev/null || true; return 0; }
+            sleep 0.2
+          done
+          kill -9 "${pid}" 2>/dev/null || true
+          wait "${pid}" 2>/dev/null || true
         }
 
         TRIED=""
@@ -320,8 +349,7 @@ runs:
             break
           fi
 
-          kill "${QEMU_PID}" 2>/dev/null || true
-          wait "${QEMU_PID}" 2>/dev/null || true
+          kill_qemu "${QEMU_PID}"
 
           if grep -q "Could not set up host forwarding rule" "${STDERR_LOG}" 2>/dev/null; then
             echo "Port ${CANDIDATE} was taken between selection and bind; retrying with a different port."
@@ -346,6 +374,11 @@ runs:
         done
         if [ ! -s "${PID_FILE}" ]; then
           echo "QEMU holds 127.0.0.1:${VM_PORT} but never wrote ${PID_FILE}."
+          # We only get here with QEMU alive and holding the port, and the
+          # teardown action reaps by pidfile -- which is exactly what is
+          # missing. Nothing else would ever kill this process, so it would
+          # hold its guest memory and the port for the life of the runner.
+          kill_qemu "${QEMU_PID}"
           dump_qemu_logs
           exit 1
         fi
