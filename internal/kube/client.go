@@ -53,6 +53,7 @@ const (
 	KindPVC         ResourceKind = "PersistentVolumeClaim"
 	KindPV          ResourceKind = "PersistentVolume"
 	KindCRD         ResourceKind = "CustomResourceDefinition"
+	KindEvent       ResourceKind = "Event"
 )
 
 var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
@@ -68,6 +69,7 @@ var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
 	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	KindPV:          {Group: "", Version: "v1", Resource: "persistentvolumes"},
 	KindCRD:         {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
+	KindEvent:       {Group: "", Version: "v1", Resource: "events"},
 }
 
 func RegisterKind(kind ResourceKind, gvr schema.GroupVersionResource) {
