@@ -1,0 +1,578 @@
+# SPDX-License-Identifier: Apache-2.0
+name: "KVM VM Up"
+description: >
+  Boot a throwaway QEMU/KVM VM on a self-hosted runner, wait for SSH, install
+  Go + Task and the proxy CA inside it, and sync the checked-out workspace into
+  it. Shared by the UAT and integration test workflows.
+
+inputs:
+  vm-os:
+    description: "VM OS (debian or ubuntu)"
+    required: false
+    default: "debian"
+  vm-cpus:
+    description: "VM vCPUs"
+    required: false
+    default: "3"
+  vm-mem-mb:
+    description: "VM memory (MB)"
+    required: false
+    default: "4096"
+  vm-disk-gb:
+    description: "Overlay disk size (GB)"
+    required: false
+    default: "20"
+  go-version:
+    description: "Go version installed inside the VM"
+    required: false
+    default: "1.26.5"
+  vm-ready-timeout-minutes:
+    description: "Timeout waiting for VM SSH to accept connections"
+    required: false
+    default: "10"
+  bootstrap-timeout-minutes:
+    description: "Timeout for the in-VM Go + Task bootstrap"
+    required: false
+    default: "20"
+  image-dir:
+    description: "Host directory holding pre-cached cloud base images"
+    required: false
+    default: "/var/lib/weaver/images"
+  ca-cert-path:
+    description: "Host path to the cache-proxy CA certificate installed in the VM"
+    required: false
+    default: "/home/github-runner/ca-cert.pem"
+  workspace-path:
+    description: "Directory inside the VM the workspace is synced to"
+    required: false
+    default: "/home/provisioner/solo-weaver"
+  extra-sync-excludes:
+    description: "Newline-separated extra rsync exclude patterns for the workspace sync"
+    required: false
+    default: ""
+  port-range-start:
+    description: "First host port considered for the SSH forward"
+    required: false
+    default: "2200"
+  port-range-size:
+    description: "Size of the host port range considered for the SSH forward"
+    required: false
+    default: "400"
+  port-attempts:
+    description: "How many host ports to try before giving up"
+    required: false
+    default: "25"
+
+outputs:
+  vm-dir:
+    description: "Host working directory for this VM (disk, keys, logs, pidfile)"
+    value: ${{ steps.vm-dir.outputs.vm-dir }}
+  vm-port:
+    description: "Host port forwarded to the VM's SSH port"
+    value: ${{ steps.qemu.outputs.vm-port }}
+  vm-pid:
+    description: "PID of the QEMU process"
+    value: ${{ steps.qemu.outputs.vm-pid }}
+  ssh-key:
+    description: "Host path to the private key that authenticates to the VM"
+    value: ${{ steps.vm-dir.outputs.ssh-key }}
+  workspace-path:
+    description: "Directory inside the VM the workspace was synced to"
+    value: ${{ inputs.workspace-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create VM working directory
+      id: vm-dir
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        WORKSPACE_PATH="${{ inputs.workspace-path }}"
+
+        # workspace-path is interpolated into a command run by the guest's
+        # shell and into an rsync destination, both of which re-parse it.
+        # Validate here, before a VM is booted, rather than failing minutes
+        # later on a malformed path.
+        if ! printf '%s' "${WORKSPACE_PATH}" | grep -Eq '^/[A-Za-z0-9._/-]+$'; then
+          echo "Invalid workspace-path '${WORKSPACE_PATH}': must be an absolute path made up of [A-Za-z0-9._/-]."
+          exit 1
+        fi
+
+        JOB_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}-${RANDOM}"
+        VM_DIR="${RUNNER_TEMP}/weaver-vm-${JOB_ID}"
+        mkdir -p "${VM_DIR}"
+
+        {
+          echo "job-id=${JOB_ID}"
+          echo "vm-dir=${VM_DIR}"
+          echo "ssh-key=${VM_DIR}/.ssh/id_ed25519_vm"
+        } >> "$GITHUB_OUTPUT"
+
+        # Also exported to the job env: a composite action that fails midway
+        # does not publish its outputs, and the teardown action still has to
+        # find the directory to remove.
+        echo "KVM_VM_DIR=${VM_DIR}" >> "$GITHUB_ENV"
+
+        echo "VM_DIR=${VM_DIR}"
+
+    - name: Generate SSH key for VM access
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        mkdir -p "${VM_DIR}/.ssh"
+        ssh-keygen -t ed25519 -f "${VM_DIR}/.ssh/id_ed25519_vm" -N "" -C "ci-vm-key"
+        chmod 600 "${VM_DIR}/.ssh/id_ed25519_vm"
+        chmod 644 "${VM_DIR}/.ssh/id_ed25519_vm.pub"
+
+    - name: Resolve base image path (pre-cached)
+      id: base-image
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_OS="${{ inputs.vm-os }}"
+        IMAGE_BASE="${{ inputs.image-dir }}"
+
+        case "$VM_OS" in
+          debian)
+            BASE_IMAGE="${IMAGE_BASE}/debian-12-genericcloud-amd64.qcow2"
+            ;;
+          ubuntu)
+            BASE_IMAGE="${IMAGE_BASE}/jammy-server-cloudimg-amd64.img"
+            ;;
+          *)
+            echo "Unsupported vm-os: ${VM_OS}"
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f "$BASE_IMAGE" ]; then
+          echo "Base image not found: $BASE_IMAGE"
+          echo "Runner host must pre-cache images under ${IMAGE_BASE}"
+          exit 1
+        fi
+
+        echo "base-image=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+        echo "Using base image: ${BASE_IMAGE}"
+
+    - name: Create cloud-init ISO
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        SSH_PUB_KEY="$(cat "${VM_DIR}/.ssh/id_ed25519_vm.pub")"
+
+        cat > "${VM_DIR}/meta-data" <<EOF
+        instance-id: ci-vm-${{ steps.vm-dir.outputs.job-id }}
+        local-hostname: ci-vm
+        EOF
+
+        # Keep cloud-init minimal; bring SSH up quickly.
+        cat > "${VM_DIR}/user-data" <<EOF
+        #cloud-config
+        users:
+          - name: provisioner
+            groups: sudo
+            shell: /bin/bash
+            sudo: ['ALL=(ALL) NOPASSWD:ALL']
+            ssh_authorized_keys:
+              - ${SSH_PUB_KEY}
+
+        system_info:
+          default_user:
+            name: provisioner
+
+        bootcmd:
+          - systemctl disable systemd-networkd-wait-online.service || true
+          - systemctl mask systemd-networkd-wait-online.service || true
+
+        packages:
+          - openssh-server
+          - sudo
+          - ca-certificates
+          - rsync
+          - git
+          - build-essential
+          - binutils
+          - gcc
+          - libc6-dev
+          - curl
+          - net-tools
+          - netcat-openbsd
+
+        runcmd:
+          - systemctl enable --now ssh || systemctl enable --now sshd
+          - sed -i 's/^#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config || true
+          - systemctl restart ssh || systemctl restart sshd || true
+        EOF
+
+        genisoimage -output "${VM_DIR}/cloud-init.iso" \
+          -volid cidata \
+          -joliet \
+          -rock \
+          "${VM_DIR}/user-data" "${VM_DIR}/meta-data"
+
+    - name: Create overlay disk from base image
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        BASE_IMAGE="${{ steps.base-image.outputs.base-image }}"
+        VM_DISK_GB="${{ inputs.vm-disk-gb }}"
+
+        BASE_FMT="$(qemu-img info --output=json "$BASE_IMAGE" | jq -r '.format')"
+        if [ -z "$BASE_FMT" ] || [ "$BASE_FMT" = "null" ]; then
+          echo "Could not determine base format for $BASE_IMAGE"
+          qemu-img info "$BASE_IMAGE"
+          exit 1
+        fi
+
+        echo "Base image format: ${BASE_FMT}"
+        qemu-img create -f qcow2 -F "${BASE_FMT}" -b "$BASE_IMAGE" "${VM_DIR}/vm-disk.qcow2" "${VM_DISK_GB}G"
+
+    - name: Start QEMU VM (KVM)
+      id: qemu
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_CPUS="${{ inputs.vm-cpus }}"
+        VM_MEM_MB="${{ inputs.vm-mem-mb }}"
+        PORT_START="${{ inputs.port-range-start }}"
+        PORT_SIZE="${{ inputs.port-range-size }}"
+        PORT_ATTEMPTS="${{ inputs.port-attempts }}"
+
+        PID_FILE="${VM_DIR}/vm.pid"
+        STDERR_LOG="${VM_DIR}/qemu-stderr.log"
+        CONSOLE_LOG="${VM_DIR}/vm-console.log"
+
+        # QEMU is the only authority on whether a host forwarding port is free,
+        # because QEMU is what binds it. Probing the port with `ss` and binding
+        # it several steps later leaves a window in which another job on this
+        # runner host can take it. So the port is chosen here, immediately
+        # before the bind, and only accepted once `ss` confirms our own QEMU
+        # process holds the listener. A lost race costs one restart, not a
+        # ten-minute SSH timeout.
+        qemu_start() {
+          local port="$1"
+          # Clear all three per-attempt artifacts. `-serial file:` truncates on
+          # open today, but that is a QEMU default rather than a guarantee we
+          # make; removing the console log here keeps a failed attempt's output
+          # out of the next attempt's diagnostics regardless.
+          rm -f "${PID_FILE}" "${STDERR_LOG}" "${CONSOLE_LOG}"
+          nohup qemu-system-x86_64 \
+            -enable-kvm -cpu host \
+            -m "${VM_MEM_MB}" -smp "${VM_CPUS}" \
+            -drive file="${VM_DIR}/vm-disk.qcow2",if=virtio,format=qcow2 \
+            -drive file="${VM_DIR}/cloud-init.iso",media=cdrom,readonly=on \
+            -nographic \
+            -serial "file:${CONSOLE_LOG}" \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22" \
+            -device virtio-net-pci,netdev=net0 \
+            -pidfile "${PID_FILE}" \
+            </dev/null >/dev/null 2>"${STDERR_LOG}" &
+          QEMU_PID=$!
+        }
+
+        forward_held_by() {
+          local port="$1" pid="$2" out
+          out="$(ss -lntp "( sport = :${port} )" 2>/dev/null || true)"
+          case "${out}" in
+            *"pid=${pid},"*) return 0 ;;
+          esac
+          # Some `ss` builds report no process info at all (missing privileges,
+          # no /proc mapping). If the socket is listening and nothing is
+          # attributed to any PID, trust the alive-check done by the caller:
+          # had another process owned this port, our QEMU would have exited.
+          if printf '%s' "${out}" | grep -q ":${port}" && ! printf '%s' "${out}" | grep -q "pid="; then
+            return 0
+          fi
+          return 1
+        }
+
+        dump_qemu_logs() {
+          echo "=== qemu-stderr.log ==="
+          cat "${STDERR_LOG}" 2>/dev/null || true
+          echo "=== vm-console.log (last 200 lines) ==="
+          tail -200 "${CONSOLE_LOG}" 2>/dev/null || true
+        }
+
+        # SIGTERM, a five-second grace period, then SIGKILL. A bare `wait`
+        # after `kill` would hang this step for as long as the process chose to
+        # ignore the signal.
+        kill_qemu() {
+          local pid="$1"
+          kill "${pid}" 2>/dev/null || true
+          for _ in $(seq 1 25); do
+            kill -0 "${pid}" 2>/dev/null || { wait "${pid}" 2>/dev/null || true; return 0; }
+            sleep 0.2
+          done
+          kill -9 "${pid}" 2>/dev/null || true
+          wait "${pid}" 2>/dev/null || true
+        }
+
+        TRIED=""
+        VM_PORT=""
+        for attempt in $(seq 1 "${PORT_ATTEMPTS}"); do
+          CANDIDATE=$(( PORT_START + (RANDOM % PORT_SIZE) ))
+          case " ${TRIED} " in
+            *" ${CANDIDATE} "*) continue ;;
+          esac
+          TRIED="${TRIED} ${CANDIDATE}"
+
+          # Cheap pre-filter so an obviously occupied port does not cost a QEMU
+          # start. Not authoritative; the post-bind check below is.
+          if ss -lnt "( sport = :${CANDIDATE} )" 2>/dev/null | grep -q ":${CANDIDATE}"; then
+            echo "Attempt ${attempt}: port ${CANDIDATE} is already listening, trying another"
+            continue
+          fi
+
+          echo "Attempt ${attempt}: starting QEMU with host forward 127.0.0.1:${CANDIDATE} -> :22"
+          qemu_start "${CANDIDATE}"
+
+          HELD=0
+          for _ in $(seq 1 50); do
+            if ! kill -0 "${QEMU_PID}" 2>/dev/null; then
+              break
+            fi
+            if forward_held_by "${CANDIDATE}" "${QEMU_PID}"; then
+              HELD=1
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ "${HELD}" -eq 1 ]; then
+            VM_PORT="${CANDIDATE}"
+            break
+          fi
+
+          kill_qemu "${QEMU_PID}"
+
+          if grep -q "Could not set up host forwarding rule" "${STDERR_LOG}" 2>/dev/null; then
+            echo "Port ${CANDIDATE} was taken between selection and bind; retrying with a different port."
+            continue
+          fi
+
+          echo "QEMU failed to start: host forward 127.0.0.1:${CANDIDATE} -> :22 was never established."
+          dump_qemu_logs
+          exit 1
+        done
+
+        if [ -z "${VM_PORT}" ]; then
+          echo "Could not obtain a free host forwarding port in ${PORT_START}-$(( PORT_START + PORT_SIZE - 1 )) after ${PORT_ATTEMPTS} attempts."
+          echo "Tried:${TRIED}"
+          dump_qemu_logs
+          exit 1
+        fi
+
+        for _ in $(seq 1 25); do
+          [ -s "${PID_FILE}" ] && break
+          sleep 0.2
+        done
+        if [ ! -s "${PID_FILE}" ]; then
+          echo "QEMU holds 127.0.0.1:${VM_PORT} but never wrote ${PID_FILE}."
+          # We only get here with QEMU alive and holding the port, and the
+          # teardown action reaps by pidfile -- which is exactly what is
+          # missing. Nothing else would ever kill this process, so it would
+          # hold its guest memory and the port for the life of the runner.
+          kill_qemu "${QEMU_PID}"
+          dump_qemu_logs
+          exit 1
+        fi
+
+        VM_PID="$(cat "${PID_FILE}")"
+        echo "QEMU PID: ${VM_PID}"
+        echo "Host forward confirmed on 127.0.0.1:${VM_PORT}:"
+        ss -lntp "( sport = :${VM_PORT} )"
+
+        {
+          echo "vm-port=${VM_PORT}"
+          echo "vm-pid=${VM_PID}"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "KVM_VM_PORT=${VM_PORT}"
+          echo "KVM_VM_PID=${VM_PID}"
+        } >> "$GITHUB_ENV"
+
+    - name: Wait for VM SSH to be ready
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
+        VM_PID="${{ steps.qemu.outputs.vm-pid }}"
+        TIMEOUT_MINUTES="${{ inputs.vm-ready-timeout-minutes }}"
+
+        STDERR_LOG="${VM_DIR}/qemu-stderr.log"
+        CONSOLE_LOG="${VM_DIR}/vm-console.log"
+
+        dump_qemu_logs() {
+          echo "=== qemu-stderr.log ==="
+          cat "${STDERR_LOG}" 2>/dev/null || true
+          echo "=== vm-console.log (last 200 lines) ==="
+          tail -200 "${CONSOLE_LOG}" 2>/dev/null || true
+        }
+
+        echo "Waiting up to ${TIMEOUT_MINUTES}m for VM SSH on localhost:${VM_PORT}..."
+        DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))
+        ATTEMPT=0
+
+        while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
+          ATTEMPT=$(( ATTEMPT + 1 ))
+          echo -n "Attempt ${ATTEMPT}: "
+
+          if ! kill -0 "${VM_PID}" 2>/dev/null; then
+            echo "QEMU process exited (PID: ${VM_PID})"
+            dump_qemu_logs
+            exit 1
+          fi
+
+          if ! ss -lnt "( sport = :${VM_PORT} )" 2>/dev/null | grep -q ":${VM_PORT}"; then
+            echo "host forward 127.0.0.1:${VM_PORT} is no longer listening"
+            dump_qemu_logs
+            exit 1
+          fi
+
+          if ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+               -o ConnectTimeout=5 \
+               -o StrictHostKeyChecking=no \
+               -o UserKnownHostsFile=/dev/null \
+               -o BatchMode=yes \
+               -p "${VM_PORT}" \
+               provisioner@127.0.0.1 \
+               "echo 'SSH ready'" >/dev/null 2>&1; then
+            echo "VM is ready!"
+            exit 0
+          fi
+
+          echo "not ready yet..."
+          sleep 10
+        done
+
+        echo "VM failed to become ready within ${TIMEOUT_MINUTES}m (host forward on 127.0.0.1:${VM_PORT} was established, so this is a guest boot problem)."
+        dump_qemu_logs
+        exit 1
+
+    - name: Bootstrap VM tools (Go + Task inside VM)
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
+        GO_VER="${{ inputs.go-version }}"
+
+        timeout "${{ inputs.bootstrap-timeout-minutes }}m" \
+        ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -p "${VM_PORT}" \
+            provisioner@127.0.0.1 << EOSSH
+        set -euo pipefail
+
+        GO_VER="${GO_VER}"
+
+        sudo cloud-init status --wait || true
+
+        curl -sSLO "https://go.dev/dl/go\${GO_VER}.linux-amd64.tar.gz"
+        sudo rm -rf /usr/local/go
+        sudo tar -C /usr/local -xzf "go\${GO_VER}.linux-amd64.tar.gz"
+        rm "go\${GO_VER}.linux-amd64.tar.gz"
+
+        echo 'export PATH=\$PATH:/usr/local/go/bin:\$HOME/go/bin' | sudo tee /etc/profile.d/go.sh >/dev/null
+        sudo chmod +x /etc/profile.d/go.sh
+        sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+        sudo ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
+        /usr/local/go/bin/go env -w GOTOOLCHAIN=local
+        /usr/local/bin/go version
+
+        if ! command -v task >/dev/null 2>&1; then
+          curl -1sLf 'https://dl.cloudsmith.io/public/task/task/setup.deb.sh' | sudo -E bash
+          sudo apt-get update
+          sudo apt-get install -y task
+        fi
+
+        task --version
+        EOSSH
+
+    - name: Install Proxy CA Certificates in VM
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
+        CA_CERT_PATH="${{ inputs.ca-cert-path }}"
+
+        if [ ! -f "${CA_CERT_PATH}" ]; then
+          echo "Error: CA certificate file '${CA_CERT_PATH}' not found. Cannot install proxy CA certificates in VM."
+          exit 1
+        fi
+
+        echo "Copying CA certificate to VM..."
+        rsync -az \
+          -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p ${VM_PORT}" \
+          "${CA_CERT_PATH}" \
+          provisioner@127.0.0.1:/tmp/
+
+        ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -p "${VM_PORT}" \
+            provisioner@127.0.0.1 << 'EOSSH'
+        set -euo pipefail
+        sudo cp /tmp/ca-cert.pem /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+        sudo chmod 644 /usr/local/share/ca-certificates/solo-weaver-ca.crt && \
+        sudo update-ca-certificates --fresh && \
+        echo 'Verifying CA certificate was added to bundle...' && \
+        if grep -q 'Solo Weaver Cache Proxy CA' /etc/ssl/certs/ca-certificates.crt; then \
+          echo 'CA certificate verified in bundle'; \
+        else \
+          echo 'Warning: CA certificate not found in bundle'; \
+        fi
+        EOSSH
+
+    - name: Sync code to VM
+      shell: bash
+      run: |
+        set -euo pipefail
+        VM_DIR="${{ steps.vm-dir.outputs.vm-dir }}"
+        VM_PORT="${{ steps.qemu.outputs.vm-port }}"
+        WORKSPACE_PATH="${{ inputs.workspace-path }}"
+
+        RSYNC_ARGS=(
+          -az
+          -e "ssh -i ${VM_DIR}/.ssh/id_ed25519_vm -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -p ${VM_PORT}"
+          "--exclude=vendor"
+          "--exclude=bin"
+          "--exclude=*.log"
+          "--exclude=.ssh"
+          "--exclude=*.iso"
+          "--exclude=*.img"
+          "--exclude=*.qcow2"
+        )
+
+        while IFS= read -r pattern; do
+          [ -n "${pattern}" ] || continue
+          RSYNC_ARGS+=( "--exclude=${pattern}" )
+        done <<'EOEXCLUDES'
+        ${{ inputs.extra-sync-excludes }}
+        EOEXCLUDES
+
+        ssh -i "${VM_DIR}/.ssh/id_ed25519_vm" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -p "${VM_PORT}" \
+            provisioner@127.0.0.1 \
+            "mkdir -p ${WORKSPACE_PATH}"
+
+        rsync "${RSYNC_ARGS[@]}" ./ "provisioner@127.0.0.1:${WORKSPACE_PATH}/"
