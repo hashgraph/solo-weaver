@@ -15,6 +15,7 @@ import (
 	"helm.sh/helm/v3/pkg/cli/values"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // HelmOwnedServiceDeleteTimeout caps how long DeleteHelmOwnedServices waits for
@@ -289,6 +290,92 @@ func (m *Manager) GetInstalledVersion() (string, error) {
 		return rel.Chart.Metadata.Version, nil
 	}
 	return "", nil
+}
+
+// PodDiagnostics returns a slice of human-readable lines describing the current
+// state of block-node pods and their recent Warning events. Intended to be
+// appended to a Helm timeout error so operators see live cluster state rather
+// than static kubectl hints. All internal errors are suppressed — the caller
+// always receives a slice (possibly nil on total failure).
+func (m *Manager) PodDiagnostics(ctx context.Context) []string {
+	pods, err := m.kubeClient.List(ctx, kube.KindPod, m.blockNodeInputs.Namespace, kube.WaitOptions{
+		LabelSelector: PodLabelSelector,
+	})
+	if err != nil {
+		m.logger.Warn().Err(err).Msg("pod diagnostics: failed to list pods")
+		return nil
+	}
+
+	var lines []string
+
+	if len(pods.Items) == 0 {
+		lines = append(lines, fmt.Sprintf("  no block-node pods found in namespace %s", m.blockNodeInputs.Namespace))
+		return lines
+	}
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		phase, _, _ := unstructured.NestedString(pod.Object, "status", "phase")
+		lines = append(lines, fmt.Sprintf("  pod/%s  phase=%s", pod.GetName(), phase))
+
+		for _, statusKey := range []string{"initContainerStatuses", "containerStatuses"} {
+			statuses, _, _ := unstructured.NestedSlice(pod.Object, "status", statusKey)
+			for _, s := range statuses {
+				sm, ok := s.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _, _ := unstructured.NestedString(sm, "name")
+				ready, _, _ := unstructured.NestedBool(sm, "ready")
+				reason, _, _ := unstructured.NestedString(sm, "state", "waiting", "reason")
+				message, _, _ := unstructured.NestedString(sm, "state", "waiting", "message")
+
+				line := fmt.Sprintf("    container/%s  ready=%v", name, ready)
+				if reason != "" {
+					line += "  waiting=" + reason
+				}
+				lines = append(lines, line)
+				if message != "" {
+					if len(message) > 200 {
+						message = message[:200] + "..."
+					}
+					lines = append(lines, "      "+message)
+				}
+			}
+		}
+	}
+
+	events, err := m.kubeClient.List(ctx, kube.KindEvent, m.blockNodeInputs.Namespace, kube.WaitOptions{
+		FieldSelector: "involvedObject.kind=Pod",
+	})
+	if err != nil {
+		m.logger.Warn().Err(err).Msg("pod diagnostics: failed to list pod events")
+		return lines
+	}
+
+	var warnLines []string
+	for _, ev := range events.Items {
+		evType, _, _ := unstructured.NestedString(ev.Object, "type")
+		if evType != "Warning" {
+			continue
+		}
+		reason, _, _ := unstructured.NestedString(ev.Object, "reason")
+		message, _, _ := unstructured.NestedString(ev.Object, "message")
+		objName, _, _ := unstructured.NestedString(ev.Object, "involvedObject", "name")
+		if len(message) > 200 {
+			message = message[:200] + "..."
+		}
+		warnLines = append(warnLines, fmt.Sprintf("    Warning  %-15s  %s: %s", reason, objName, message))
+	}
+	if len(warnLines) > 8 {
+		warnLines = warnLines[len(warnLines)-8:]
+	}
+	if len(warnLines) > 0 {
+		lines = append(lines, "  recent warning events:")
+		lines = append(lines, warnLines...)
+	}
+
+	return lines
 }
 
 // GetReleaseValues returns the user-supplied values from the currently installed release.

@@ -230,19 +230,25 @@ func uninstallBlockNode(profile string, valuesFile string, getManager func() (*b
 // blockNodeChartError enriches a failed Helm install/upgrade with an
 // operator-actionable resolution. When the failure is a --timeout budget
 // overrun (Helm rolled the release back under --atomic before the resources
-// became ready), it points the operator at raising --timeout; otherwise it
-// falls back to the generic pod-inspection steps. action is "install" or
-// "upgrade".
-func blockNodeChartError(err error, manager *blocknode.Manager, action string) error {
+// became ready), it fetches live pod state and recent Warning events from the
+// cluster and includes them in the error so the operator sees the actual failure
+// reason (e.g. ImagePullBackOff) without having to run kubectl manually.
+// action is "install" or "upgrade".
+func blockNodeChartError(ctx context.Context, err error, manager *blocknode.Manager, action string) error {
 	namespace := manager.Namespace()
 	if blocknode.IsHelmTimeoutError(err) {
+		hints := []string{
+			fmt.Sprintf("The block node did not become ready within the --timeout budget (%s) and was rolled back (--atomic).", manager.ResolveHelmTimeout()),
+			"Re-run with a longer --timeout, e.g.:",
+			fmt.Sprintf("  solo-provisioner block node %s --timeout 15m ...", action),
+			"A cold first boot can be slow when the chart's resolve-plugins init container resolves plugins from Maven.",
+		}
+		if diag := manager.PodDiagnostics(ctx); len(diag) > 0 {
+			hints = append(hints, "Pod state at timeout:")
+			hints = append(hints, diag...)
+		}
 		return errorx.Decorate(err, "block node %s exceeded the --timeout budget", action).
-			WithProperty(models.ErrPropertyResolution, []string{
-				fmt.Sprintf("The block node did not become ready within the --timeout budget (%s) and was rolled back (--atomic).", manager.ResolveHelmTimeout()),
-				"Re-run with a longer --timeout, e.g.:",
-				fmt.Sprintf("  solo-provisioner block node %s --timeout 15m ...", action),
-				"A cold first boot can be slow when the chart's resolve-plugins init container resolves plugins from Maven.",
-			})
+			WithProperty(models.ErrPropertyResolution, hints)
 	}
 	return errorx.Decorate(err, "block node %s failed", action).
 		WithProperty(models.ErrPropertyResolution, []string{
@@ -271,7 +277,7 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 
 			installed, err := manager.InstallChart(ctx, valuesFilePath)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(err, manager, "install")))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(ctx, err, manager, "install")))
 			}
 
 			if !installed {
@@ -436,7 +442,7 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 
 			err = manager.UpgradeChart(ctx, valuesFilePath, inputs.ReuseValues)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(err, manager, "upgrade")))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(ctx, err, manager, "upgrade")))
 			}
 
 			meta["upgraded"] = "true"

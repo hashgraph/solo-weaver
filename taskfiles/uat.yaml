@@ -50,7 +50,7 @@ tasks:
         [ "$NON_INTERACTIVE" = "true" ] && INSTALL_ARGS="$INSTALL_ARGS --non-interactive"
 
         echo -e "\n▶ Block node install (${BN_VERSION:-config default})"
-        sudo solo-provisioner block node install $INSTALL_ARGS
+        sudo solo-provisioner --skip-hardware-checks block node install $INSTALL_ARGS
 
 
         echo -e "\n▶ Verify install (${BN_VERSION:-config default})"
@@ -131,7 +131,7 @@ tasks:
 
 
         echo -e '\n▶ Upgrade to v0.29.0'
-        sudo solo-provisioner block node upgrade -p local \
+        sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           --chart-version 0.29.0 \
           -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 
@@ -150,7 +150,7 @@ tasks:
 
 
         echo -e '\n▶ Upgrade to v0.30.2 using --chart-version flag'
-        sudo solo-provisioner block node upgrade -p local \
+        sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           --chart-version 0.30.2 \
           -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 
@@ -169,7 +169,7 @@ tasks:
 
 
         echo -e '\n▶ Upgrade to latest (v0.39.0) using updated chartVersion in config'
-        sudo solo-provisioner block node upgrade -p local \
+        sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 
 
@@ -193,7 +193,7 @@ tasks:
 
 
         echo -e '\n▶ Block node reset'
-        sudo solo-provisioner block node reset -p local \
+        sudo solo-provisioner --skip-hardware-checks block node reset -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 
         echo ''
@@ -261,7 +261,7 @@ tasks:
 
 
         echo -e '\n▶ Re-installing for variant 2'
-        sudo solo-provisioner block node install -p local -c "$CONFIG"
+        sudo solo-provisioner --skip-hardware-checks block node install -p local -c "$CONFIG"
 
 
         echo -e '\n▶ Variant 2/3: uninstall --with-reset — helm + data should go; PV/PVC should stay'
@@ -276,7 +276,7 @@ tasks:
 
 
         echo -e '\n▶ Re-installing for variant 3'
-        sudo solo-provisioner block node install -p local -c "$CONFIG"
+        sudo solo-provisioner --skip-hardware-checks block node install -p local -c "$CONFIG"
 
 
         echo -e '\n▶ Variant 3/3: uninstall --purge-storage — everything (helm + data + PV/PVC) should go'
@@ -450,7 +450,7 @@ tasks:
 
 
         echo -e '\n▶ Step 4: Deploy block node with released version'
-        sudo solo-provisioner block node install -p local \
+        sudo solo-provisioner --skip-hardware-checks block node install -p local \
           -c /mnt/solo-weaver/test/config/config.yaml
 
 
@@ -476,7 +476,7 @@ tasks:
 
 
         echo -e '\n▶ Step 9: Upgrade block node (triggers startup migrations if needed)'
-        sudo solo-provisioner block node upgrade -p local \
+        sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 
 
@@ -512,7 +512,7 @@ tasks:
         command -v solo-provisioner > /dev/null 2>&1 || task uat:bootstrap
 
         echo -e '\n▶ Step 1: Install cluster with soloOperator.enabled=true'
-        sudo solo-provisioner kube cluster install -p local --node-type=block\
+        sudo solo-provisioner --skip-hardware-checks kube cluster install -p local --node-type=block\
           -c /mnt/solo-weaver/test/config/config_with_solo_operator.yaml
 
 
@@ -544,7 +544,7 @@ tasks:
 
 
         echo -e '\n▶ Step 5: Re-run install to verify idempotency'
-        sudo solo-provisioner kube cluster install -p local --node-type=block \
+        sudo solo-provisioner --skip-hardware-checks kube cluster install -p local --node-type=block \
           -c /mnt/solo-weaver/test/config/config_with_solo_operator.yaml
         echo "   Idempotent re-run completed successfully"
 
@@ -593,7 +593,7 @@ tasks:
 
 
         echo -e "\n▶ Upgrade to BN ${POST_35_VERSION} with tier1-rfh preset"
-        sudo solo-provisioner block node upgrade -p local \
+        sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           --chart-version "$POST_35_VERSION" \
           --plugin-preset tier1-rfh \
           --non-interactive \
