@@ -72,6 +72,7 @@ jobs:
       custom-job-label: UAT Compat
       uat-scenario: compat
       vm-os: debian
+      vm-cpus: 2
 
   uat-core:
     name: UAT Core Lifecycle
@@ -84,6 +85,7 @@ jobs:
       custom-job-label: UAT Core
       uat-scenario: lifecycle
       vm-os: debian
+      vm-cpus: 2
 
   uat-purge-storage:
     name: UAT Purge Storage
@@ -96,6 +98,7 @@ jobs:
       custom-job-label: UAT Purge Storage
       uat-scenario: purge-storage
       vm-os: debian
+      vm-cpus: 2
 
   uat-plugin-preset-upgrade:
     name: UAT Plugin Preset Upgrade
@@ -108,6 +111,7 @@ jobs:
       custom-job-label: UAT Plugin Preset Upgrade
       uat-scenario: plugin-preset-upgrade
       vm-os: debian
+      vm-cpus: 2
 
   integration-tests:
     name: Integration Tests
