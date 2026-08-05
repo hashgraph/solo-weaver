@@ -20,6 +20,7 @@ func NewSelfInstallWorkflow() *automa.WorkflowBuilder {
 		steps.EnsureWeaverOwnerStep(),
 		steps.SetupHomeDirectoryStructure(models.Paths()),
 		steps.InstallWeaver(models.Paths().BinDir),
+		steps.InstallColocatedDaemonBinary(models.Paths().BinDir),
 		steps.InstallSudoersStep(),
 	)
 }

@@ -208,7 +208,7 @@ sudo solo-provisioner block node install \
 | `--link-rate`             | NIC line rate in tc-style format (e.g. `1gbit`, `100mbit`), or `auto` to detect and store the link speed at install time (written as explicit proportional class rates). Auto-detected from sysfs at each boot when omitted. Interactively, the prompt accepts a rate, `auto`, or blank. The link is full-duplex, so this rate parameterizes both the `$EGRESS` and `$VETH` HTB trunks. |
 | `--shape`                 | Per-class HTB bandwidth override, repeatable: `--shape <class>=rate=<r>,ceil=<c>,prio=<p>` (e.g. `--shape publisher=rate=800mbit,ceil=1gbit,prio=0`). Any subset of `rate`/`ceil`/`prio` may be given; classes not overridden use the profile defaults. Valid classes: `publisher`, `backfill-response`, `reserve-ingress`, `partner`, `public`, `reserve-egress`. |
 | `--daemon-version`        | Version of `solo-provisioner-daemon` to auto-download when traffic shaping installs the daemon (defaults to this CLI's own version). Ignored when `--daemon-bin` is set. |
-| `--daemon-bin`            | Local path to a pre-built `solo-provisioner-daemon` binary, installed as-is instead of downloaded. **Required for `--profile=local`** — local/dev builds have no downloadable release to auto-download from. |
+| `--daemon-bin`            | Local path to a pre-built `solo-provisioner-daemon` binary, installed as-is instead of downloaded. Highest-precedence source; omit it to resolve the binary automatically (`SOLO_PROVISIONER_DAEMON_BIN`, then an already-installed binary, then the catalog). |
 | `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN. Merged into `daemon.yaml` (`components.block_node.statusz.base_url`); omitting the flag preserves any value already on disk. Only when no `base_url` is set at all does the daemon discover the endpoint from the watched BN pod. |
 | `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`). Merged into `daemon.yaml` (`components.block_node.statusz.poll_interval`); omitting the flag preserves any value already on disk. Only when no `poll_interval` is set at all does the daemon fall back to its `5s` default. |
 
@@ -287,12 +287,18 @@ sudo solo-provisioner block node install \
 > install, `block node install` installs and provisions the daemon for this
 > block node's namespace automatically whenever traffic shaping is enabled (see
 > the traffic-shaping gate above) — no separate prompt or flag. If the daemon is
-> already active, this is a no-op. By default the daemon binary is auto-downloaded
-> from the infrastructure catalog at `--daemon-version` (defaulting to this CLI's
-> own version); pass `--daemon-bin` to install a local binary instead. For
-> `--profile=local`, `--daemon-bin` is required — local/dev builds have no
-> downloadable release, so interactive sessions prompt for the path and
-> non-interactive ones fail fast with a resolution hint.
+> already active, this is a no-op.
+>
+> The daemon binary itself is resolved automatically, in this order: `--daemon-bin`,
+> then `SOLO_PROVISIONER_DAEMON_BIN`, then a daemon binary already installed in the
+> weaver bin directory, then a download from the infrastructure catalog at
+> `--daemon-version` (defaulting to this CLI's own version). Locally-built CLIs carry
+> a placeholder version (`0.0.0`) with no release to download, but
+> `sudo solo-provisioner install` copies the co-built `solo-provisioner-daemon` from
+> the same `bin/` directory onto the host, so a `task build` followed by a self-install
+> leaves a matching daemon already in place and nothing needs to be supplied. When every
+> source comes up empty the command fails with a resolution hint listing the ways to
+> supply a binary — it never prompts for a path.
 
 #### Upgrade Block Node
 

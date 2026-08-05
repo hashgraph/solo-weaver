@@ -9,7 +9,6 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -95,7 +94,13 @@ var (
 				logx.As().Warn().Err(sErr).Msg(
 					"skipping traffic-shaper daemon activation on upgrade: could not read the persisted traffic-shaping decision")
 			case !stateDefaults.BlockNode.TrafficShapingDisabled:
-				if err := ensureBlockNodeDaemon(cmd, stateDefaults.BlockNode.Namespace, workflowsteps.DaemonBinarySource{}); err != nil {
+				// A locally-built host picks up its installed daemon binary here rather
+				// than attempting a download for a version that has no release.
+				daemonSource, dErr := resolveDaemonBinarySource(cmd)
+				if dErr != nil {
+					return dErr
+				}
+				if err := ensureBlockNodeDaemon(cmd, stateDefaults.BlockNode.Namespace, daemonSource); err != nil {
 					return err
 				}
 			}

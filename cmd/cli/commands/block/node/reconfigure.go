@@ -150,7 +150,7 @@ var (
 				// succeeded — so a missing --daemon-bin on --profile=local cannot mask
 				// that clearer precondition error. This mirrors upgrade, which likewise
 				// activates the daemon post-workflow.
-				daemonSource, err := resolveDaemonBinarySource(cmd, args, inputs.Custom.Profile, cv)
+				daemonSource, err := resolveDaemonBinarySource(cmd)
 				if err != nil {
 					return err
 				}

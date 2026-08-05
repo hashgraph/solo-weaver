@@ -67,7 +67,7 @@ var installCmd = &cobra.Command{
 			if err := common.ResolveEgressConfig(cmd, args, cv, &flagEgressInterface, &flagLinkRate); err != nil {
 				return err
 			}
-			daemonSource, err = resolveDaemonBinarySource(cmd, args, inputs.Custom.Profile, cv)
+			daemonSource, err = resolveDaemonBinarySource(cmd)
 			if err != nil {
 				return err
 			}
