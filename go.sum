@@ -28,8 +28,8 @@ github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3d
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
-github.com/automa-saga/automa v0.11.0 h1:uc8T4syrLhM4FEKqfhmZ1GwsC9MXfsUJPRgUv4WhEiM=
-github.com/automa-saga/automa v0.11.0/go.mod h1:pXFvdJeabtZmpDVcZNE64ijwS8WSpkUKa3kyjBfO7zI=
+github.com/automa-saga/automa v0.11.1 h1:VU+jHIVv0qBKn/gbtHxo86Tc4uJZCkz1TZE+zjRO0b4=
+github.com/automa-saga/automa v0.11.1/go.mod h1:IHVYjjri82jKo5VODY0di9W8zmjFtwmNEvoZonRU7PY=
 github.com/automa-saga/daemonkit v0.1.0 h1:/ph77RqJnBAsx79oROEmlgZ63/aFNg0Tiy5GsdckI4M=
 github.com/automa-saga/daemonkit v0.1.0/go.mod h1:SljBxNkAAfJMfnC2hurv+NRZzwC2LRf2QZJR/waHwQA=
 github.com/automa-saga/logx v0.5.0 h1:yuFC7JlEQRbEKr+6t9eg1kXAvRIIgzdu9Bz7a0gSJYo=
