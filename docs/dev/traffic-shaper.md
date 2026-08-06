@@ -262,6 +262,86 @@ Two things are intentionally left out of boot persistence:
   does not survive reboot (Cilium recreates it on pod start). The daemon
   reinstalls it from `network/shape/classes/` on each pod-create event.
 
+## Coexistence with the host's existing network stack
+
+A provisioned node already has other writers in nftables and tc — Cilium, kube-proxy,
+possibly `ufw`/`firewalld`, and whatever netplan configured. None of them are displaced,
+but the interaction is not symmetric and is worth spelling out.
+
+### nftables: weaver never flushes, but it is always the strictest filter
+
+Both `.nft` files open with the scoped replace idiom rather than a global flush:
+
+```
+add table inet weaver-host-firewall
+delete table inet weaver-host-firewall
+add table inet weaver-host-firewall
+```
+
+`add` before `delete` makes the delete succeed on a first-ever load; the pair then makes
+re-application idempotent. Crucially the blast radius is one table — weaver never issues
+`flush ruleset`, so `iptables-nft` tables (`KUBE-*`, `CILIUM_*`), `ufw`, and `firewalld`
+are untouched. Multiple base chains on one hook is a supported nftables pattern; the two
+weaver tables simply register alongside the others.
+
+What that pattern does **not** give you is additive permissiveness. Within a base chain,
+`accept` ends evaluation *of that chain only* — the packet still traverses every other base
+chain registered on the same hook. A `drop` (or `reject`) is final for the packet across all
+of them. Both weaver chains are `policy drop`, so anything they do not explicitly accept is
+dropped; the `forward` chain also ends in an explicit `drop`, while `input` falls through to
+its chain policy. That makes **weaver the binding filter on the node**: nothing Cilium or
+kube-proxy accepts can rescue traffic weaver does not match.
+
+Concretely, the only broad escapes are:
+
+| Hook | Escapes |
+|---|---|
+| `input` (host firewall) | mgmt allowlist on the SSH port, `in_cluster_ports` from the pod CIDR, ICMP path-health, `ct state established,related` |
+| `forward` (workload policy) | `ip saddr <podCIDR> accept` (unclassified pod egress), `ct state established,related accept` |
+
+Everything else forwarded or delivered on that host is dropped on new connections. On a
+single-purpose block-node host that is the intent, but it is a node-wide decision, not a
+block-node-scoped one — a second CNI, a docker bridge, a VPN, DHCPv6, or cross-node
+kubelet/etcd/NodePort traffic all need an explicit rule or they are dropped.
+
+### tc: why the HTB hierarchies do not fight Cilium
+
+Three interactions, each already resolved, each fragile enough to be worth naming:
+
+- **`tc qdisc del dev <nic> root` does not disturb Cilium's datapath.** Cilium attaches its
+  BPF programs to `clsact` (handle `ffff:`), which is a distinct qdisc from `root`. Both
+  the boot-replay script and `ApplyIngressVeth` delete and rebuild `root` only, so
+  `from-netdev`/`to-netdev` and the per-endpoint programs survive untouched.
+- **Cilium's Bandwidth Manager is a hard conflict.** It installs `mq`+`fq` on native devices
+  and is the only other BPF writer of `skb->priority` — it would void the classification the
+  policy plane stamps. `migration_cilium_host_legacy_routing.go` fails fast when
+  `enable-bandwidth-manager=true` rather than letting the two fight.
+- **`bpf_redirect_peer()` would bypass the veth qdisc entirely.** With BPF host routing,
+  Cilium moves packets straight into the pod netns, so an egress HTB on the host-side veth
+  would never see a packet and the ingress plane would be silently dead code. This is why
+  `bpf.hostLegacyRouting: true` is pinned in `cilium-config.yaml` — it is a shaper
+  requirement, not a performance preference.
+
+**netplan** does not manage qdiscs: systemd-networkd only touches them when a
+traffic-control section is present, which netplan does not emit. It can therefore conflict
+only indirectly, by recreating the egress device (see the gaps below).
+
+### Known gaps
+
+Coexistence holds while everyone leaves everyone else alone. Nothing currently re-asserts
+weaver state when a third party removes it, and every such loss is silent:
+
+| Trigger | Effect | Tracked by |
+|---|---|---|
+| `nftables.service` starts or restarts (stock `/etc/nftables.conf` begins with `flush ruleset`); a `firewalld` reload; an operator's `nft -f` with a flush | Both weaver tables destroyed. Host firewall gone; policy plane gone, so nothing stamps `meta priority` and every flow falls to the HTB default class at wire speed — no error, no counter, no log | #981 (re-assert), #982 (unit ordering + install preflight) |
+| `netplan apply` recreating the egress device, a driver reload, a stray `tc qdisc del` | `$EGRESS` HTB hierarchy gone; no egress shaping | #981 |
+| Egress interface is a netplan-created bond, bridge, or VLAN | The boot-replay unit runs before systemd-networkd creates the device, fails, and never retries; the NIC stays unshaped for the whole boot | #980 |
+
+The daemon's hourly force-resync reconciles nft **set membership** and the per-pod `$VETH`
+hierarchy; it does not verify that the tables or the `$EGRESS` root qdisc still exist.
+Until that changes, `systemctl status` on the two loader units and the inspection commands
+at the end of this document are the only signal.
+
 ## Operator setup and configuration
 
 ### Turning it on at install time
