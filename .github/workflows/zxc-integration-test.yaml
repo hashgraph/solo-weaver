@@ -48,7 +48,7 @@ on:
         description: "Timeout for integration tests in VM"
         type: number
         required: false
-        default: 90
+        default: 120
 
 defaults:
   run:
