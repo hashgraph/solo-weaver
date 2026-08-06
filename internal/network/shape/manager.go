@@ -495,6 +495,26 @@ func (m *Manager) TeardownEgress(ctx context.Context) error {
 	})
 }
 
+// TeardownIngress removes the entire ingress tc shape configuration — every
+// ingress class and the ingress device root — from the shape registry. Unlike
+// TeardownEgress there is no boot script to re-render: the $VETH HTB is
+// ephemeral (Cilium recreates the veth per pod) and was never persisted for
+// boot replay. Idempotent — with no ingress config present it returns nil.
+func (m *Manager) TeardownIngress(_ context.Context) error {
+	return m.withLock(func() error {
+		classes, err := loadClassesForDir(DirIngress)
+		if err != nil {
+			return err
+		}
+		for _, c := range classes {
+			if err := removeClass(c.Name); err != nil {
+				return err
+			}
+		}
+		return removeDevice(DirIngress)
+	})
+}
+
 // isAutoRate reports whether rate is the literal "auto" (case-insensitive),
 // the operator-facing request to detect the egress link speed at create time.
 func isAutoRate(rate string) bool {

@@ -45,3 +45,42 @@ func EnsureTcEgressUnit(ctx context.Context) error {
 	}
 	return nil
 }
+
+// RemoveTcEgressUnit is the teardown counterpart to EnsureTcEgressUnit: it
+// stops and disables solo-provisioner-bandwidth-shaper.service, removes the unit
+// file and the boot script it executes, then daemon-reloads. Callers must have
+// torn the egress hierarchy down first — this only removes the boot-replay
+// machinery, not the live tc state.
+//
+// Idempotent: an already-absent unit or script is not an error, and a stop that
+// fails on an inactive oneshot is logged and ignored.
+func RemoveTcEgressUnit(ctx context.Context) error {
+	_, statErr := os.Stat(TcEgressServiceUnitPath)
+	unitPresent := statErr == nil
+
+	if unitPresent {
+		if running, _ := soos.IsServiceRunning(ctx, TcEgressService); running {
+			if err := soos.StopService(ctx, TcEgressService); err != nil {
+				logx.As().Warn().Err(err).Str("service", TcEgressService).
+					Msg("could not stop bandwidth-shaper service; continuing teardown")
+			}
+		}
+		if err := soos.DisableService(ctx, TcEgressService); err != nil {
+			return errorx.ExternalError.Wrap(err, "failed to disable %s", TcEgressService)
+		}
+		if err := os.Remove(TcEgressServiceUnitPath); err != nil && !os.IsNotExist(err) {
+			return errorx.ExternalError.Wrap(err, "failed to remove unit file %s", TcEgressServiceUnitPath)
+		}
+	}
+
+	// Remove the boot script even when the unit was already gone, so a partial
+	// teardown does not leave an orphaned script behind.
+	if err := os.Remove(TcEgressScriptPath); err != nil && !os.IsNotExist(err) {
+		return errorx.ExternalError.Wrap(err, "failed to remove boot script %s", TcEgressScriptPath)
+	}
+
+	if !unitPresent {
+		return nil
+	}
+	return soos.DaemonReload(ctx)
+}

@@ -36,8 +36,9 @@ func uninstallInputs(resetStorage, purgeStorage bool) models.UserInputs[models.B
 	}
 }
 
-// TestUninstall_NoFlags_HelmOnly verifies the plain uninstall workflow only
-// runs UninstallBlockNode (helm release removed, data and PVs/PVCs preserved).
+// TestUninstall_NoFlags_HelmOnly verifies the plain uninstall workflow turns the
+// daemon's traffic-shaper monitor off, removes the helm release, and then tears
+// down the network plane (data and PVs/PVCs are preserved).
 func TestUninstall_NoFlags_HelmOnly(t *testing.T) {
 	h := newMinimalUninstallHandler()
 	currentState := state.State{
@@ -53,11 +54,21 @@ func TestUninstall_NoFlags_HelmOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, wb)
 	assert.Equal(t, "block-node-uninstall", wb.Id())
-	assert.Equal(t, []string{steps.UninstallBlockNodeStepId}, workflowStepIDs(t, wb))
+	assert.Equal(t, []string{
+		steps.BlockNodeDaemonConfigStepId,
+		steps.RestartDaemonServiceStepId,
+		steps.UninstallBlockNodeStepId,
+		steps.NetworkPolicyDeleteAllStepId,
+		steps.NftServiceTeardownStepId,
+		steps.TcEgressTeardownStepId,
+		steps.TcEgressServiceTeardownStepId,
+		steps.TcIngressTeardownStepId,
+	}, workflowStepIDs(t, wb))
 }
 
-// TestUninstall_WithReset_PurgeThenUninstall verifies --with-reset wipes data
-// before uninstalling, but does NOT delete PVs/PVCs.
+// TestUninstall_WithReset_PurgeThenUninstall verifies --with-reset turns the
+// monitor off, wipes data, uninstalls the helm release, and then tears down the
+// network plane — PVs/PVCs are NOT deleted.
 func TestUninstall_WithReset_PurgeThenUninstall(t *testing.T) {
 	h := newMinimalUninstallHandler()
 	currentState := state.State{
@@ -74,13 +85,21 @@ func TestUninstall_WithReset_PurgeThenUninstall(t *testing.T) {
 	require.NotNil(t, wb)
 	assert.Equal(t, "block-node-uninstall-with-reset", wb.Id())
 	assert.Equal(t, []string{
+		steps.BlockNodeDaemonConfigStepId,
+		steps.RestartDaemonServiceStepId,
 		steps.PurgeBlockNodeStorageStepId,
 		steps.UninstallBlockNodeStepId,
+		steps.NetworkPolicyDeleteAllStepId,
+		steps.NftServiceTeardownStepId,
+		steps.TcEgressTeardownStepId,
+		steps.TcEgressServiceTeardownStepId,
+		steps.TcIngressTeardownStepId,
 	}, workflowStepIDs(t, wb))
 }
 
-// TestUninstall_PurgeStorage_FullCleanup verifies --purge-storage wipes data,
-// deletes PVCs/PVs, and then uninstalls the helm release.
+// TestUninstall_PurgeStorage_FullCleanup verifies --purge-storage turns the
+// monitor off, wipes data, deletes PVCs/PVs, uninstalls the helm release, and
+// then tears down the network plane.
 func TestUninstall_PurgeStorage_FullCleanup(t *testing.T) {
 	h := newMinimalUninstallHandler()
 	currentState := state.State{
@@ -97,9 +116,16 @@ func TestUninstall_PurgeStorage_FullCleanup(t *testing.T) {
 	require.NotNil(t, wb)
 	assert.Equal(t, "block-node-uninstall-purge-storage", wb.Id())
 	assert.Equal(t, []string{
+		steps.BlockNodeDaemonConfigStepId,
+		steps.RestartDaemonServiceStepId,
 		steps.PurgeBlockNodeStorageStepId,
 		steps.DeleteBlockNodePVsStepId,
 		steps.UninstallBlockNodeStepId,
+		steps.NetworkPolicyDeleteAllStepId,
+		steps.NftServiceTeardownStepId,
+		steps.TcEgressTeardownStepId,
+		steps.TcEgressServiceTeardownStepId,
+		steps.TcIngressTeardownStepId,
 	}, workflowStepIDs(t, wb))
 }
 

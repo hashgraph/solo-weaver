@@ -10,3 +10,7 @@ import "context"
 // unit is a Linux systemd concept; the package compiles and tests on all
 // platforms, but the service management calls only run on Linux.
 func EnsureTcEgressUnit(_ context.Context) error { return nil }
+
+// RemoveTcEgressUnit is a no-op on non-Linux platforms, for the same reason as
+// EnsureTcEgressUnit.
+func RemoveTcEgressUnit(_ context.Context) error { return nil }
