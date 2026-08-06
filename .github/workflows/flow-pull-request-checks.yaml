@@ -67,6 +67,7 @@ jobs:
     needs:
       - changes
       - build
+      - unit-tests
     if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: UAT Compat
@@ -80,6 +81,7 @@ jobs:
     needs:
       - changes
       - build
+      - unit-tests
     if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: UAT Core
@@ -93,6 +95,7 @@ jobs:
     needs:
       - changes
       - build
+      - unit-tests
     if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: UAT Purge Storage
@@ -106,6 +109,7 @@ jobs:
     needs:
       - changes
       - build
+      - unit-tests
     if: needs.changes.outputs.non_docs == 'true'
     with:
       custom-job-label: UAT Plugin Preset Upgrade
