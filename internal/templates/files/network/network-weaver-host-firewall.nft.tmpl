@@ -8,21 +8,70 @@ table inet weaver-host-firewall {
 	set blocked_addrs6 { type ipv6_addr; flags interval;{{if .BlockedElements6}} elements = { {{.BlockedElements6}} };{{end}} }
 	set in_cluster_ports { type inet_service;{{if .PortElements}} elements = { {{.PortElements}} };{{end}} }
 
+	# The hooked chain carries only what applies to every packet regardless of
+	# address family, then dispatches into the regular chains below — so an IPv4
+	# packet never evaluates an IPv6 rule and vice versa. A jump that returns
+	# without a verdict falls through to the rest of this chain, ending at the
+	# `policy drop`.
 	chain input {
 		type filter hook input priority 0; policy drop;
 
-		# Drop invalid; admit loopback. `iif "lo"` covers both 127.0.0.0/8 and
-		# ::1 since this is an `inet` (dual-family) table.
-		ct state invalid drop
-
 		# Operator-curated block list (`network firewall --blocked-cidrs`). Runs
-		# before every other rule, including established/related, so an entry
-		# added here drops already-open connections too. Purely operator-managed:
-		# nothing else ever writes to these sets. One rule per family.
+		# before every other rule, including the conntrack fast-path below, so an
+		# entry added here drops already-open connections too. Purely
+		# operator-managed: nothing else ever writes to these sets. One rule per
+		# family — two address compares are cheaper than a dispatch.
 		ip saddr @blocked_addrs drop
 		ip6 saddr @blocked_addrs6 drop
 
+		# Admit loopback. `iif "lo"` covers both 127.0.0.0/8 and ::1 since this is
+		# an `inet` (dual-family) table. It precedes the ICMP dispatch so pinging
+		# localhost is not rate-limited, which also means loopback is admitted
+		# without a conntrack state check — the host talking to itself.
 		iif "lo" accept
+
+		# ICMP is dispatched BEFORE the conntrack fast-path below. netfilter
+		# conntrack DOES track ICMP echo as a flow (keyed on the echo id), so a
+		# sustained ping shares one entry and every packet after the first would
+		# otherwise match `established` and bypass the echo-request rate limit.
+		# Handling ICMP first keeps the limit effective. `meta l4proto` selects
+		# the family on its own (protocol 1 vs 58) and resolves past IPv6
+		# extension headers, so it doubles as the family split for ICMP.
+		meta l4proto vmap { icmp : jump input_icmp_ipv4, icmpv6 : jump input_icmp_ipv6 }
+
+		# Conntrack fast-path for everything else (TCP/UDP). A single state
+		# lookup covers both the invalid drop and the established/related accept.
+		# ICMP that fell through the chains above lands here too, so a solicited
+		# echo-reply is still admitted as `established`.
+		ct state vmap { established : accept, related : accept, invalid : drop }
+
+		meta nfproto vmap { ipv4 : jump input_ipv4, ipv6 : jump input_ipv6 }
+	}
+
+	# ICMPv4. Runs ahead of the base chain's conntrack vmap, so it re-drops
+	# invalid itself: that ordering is what stops a forged ICMP error from being
+	# admitted by the blanket path-health accepts below.
+	chain input_icmp_ipv4 {
+		ct state invalid drop
+
+		# Full ICMP from management sources (ping, traceroute, diagnostics) — no rate limit.
+		ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
+
+		# From everyone else: always allow the path-health subset (Path MTU
+		# Discovery + traceroute), and rate-limit echo-request to prevent floods.
+		# The trailing drop keeps over-budget echo from falling back to the base
+		# chain's established accept (a sustained ping is established after the
+		# first reply).
+		icmp type destination-unreachable accept
+		icmp type time-exceeded accept
+		icmp type echo-request limit rate 10/second accept
+		icmp type echo-request drop
+	}
+
+	# ICMPv6. Same invalid-first ordering, and for the same reason, as the IPv4
+	# chain above.
+	chain input_icmp_ipv6 {
+		ct state invalid drop
 
 		# --- IPv6 Neighbor Discovery + MLD (REQUIRED under policy drop) ---
 		# IPv6 is non-functional without Neighbor Discovery: address resolution
@@ -36,28 +85,8 @@ table inet weaver-host-firewall {
 		# the solicited-node multicast that NDP relies on.
 		icmpv6 type { mld-listener-query, mld-listener-report, mld-listener-done } accept
 
-		# ICMP is evaluated BEFORE the established/related fast-path. netfilter
-		# conntrack DOES track ICMP echo as a flow (keyed on the echo id), so a
-		# sustained ping shares one entry and every packet after the first would
-		# otherwise match `ct state established,related accept` and bypass the
-		# echo-request rate limit. Handling ICMP first keeps the limit effective.
-		# Explicit accepts are still required because the default-drop policy
-		# would otherwise break new-flow ping and path diagnostics (PMTUD,
-		# traceroute), which the established state does not cover for a NEW flow.
-
-		# Full ICMP from management sources (ping, traceroute, diagnostics) — no rate limit.
-		ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
+		# Full ICMPv6 from management sources — no rate limit.
 		ip6 saddr @mgmt_addrs6 icmpv6 type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem, packet-too-big } accept
-
-		# From everyone else: always allow the path-health subset (Path MTU
-		# Discovery + traceroute), and rate-limit echo-request to prevent floods.
-		# The trailing drop keeps over-budget echo from being rescued by the
-		# established accept below (a sustained ping is established after the
-		# first reply).
-		icmp type destination-unreachable accept
-		icmp type time-exceeded accept
-		icmp type echo-request limit rate 10/second accept
-		icmp type echo-request drop
 
 		# IPv6 path health for everyone. packet-too-big is the IPv6 PMTUD signal —
 		# IPv6 routers never fragment, so dropping it silently blackholes any flow
@@ -68,19 +97,24 @@ table inet weaver-host-firewall {
 		icmpv6 type parameter-problem accept
 		icmpv6 type echo-request limit rate 10/second accept
 		icmpv6 type echo-request drop
+	}
 
-		# Conntrack fast-path for TCP/UDP (and solicited ICMP replies).
-		ct state established,related accept
-
-		# SSH / management access from the allowlist only (both families).
+	chain input_ipv4 {
+		# SSH / management access from the allowlist only.
 		ip saddr @mgmt_addrs tcp dport {{.SSHPort}} accept
-		ip6 saddr @mgmt_addrs6 tcp dport {{.SSHPort}} accept
 {{- if .PodCIDR}}
 
 		# In-cluster host-service ports, reachable from the pod CIDR only.
 		ip saddr {{.PodCIDR}} tcp dport @in_cluster_ports accept
 {{- end}}
+	}
+
+	chain input_ipv6 {
+		# SSH / management access from the allowlist only.
+		ip6 saddr @mgmt_addrs6 tcp dport {{.SSHPort}} accept
 {{- if .PodCIDR6}}
+
+		# In-cluster host-service ports, reachable from the pod CIDR only.
 		ip6 saddr {{.PodCIDR6}} tcp dport @in_cluster_ports accept
 {{- end}}
 	}

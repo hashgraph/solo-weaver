@@ -54,6 +54,28 @@ func dualStackTable() *Table {
 	}
 }
 
+// chainBody returns the rules of the named chain from a rendered document,
+// excluding the `chain <name> {` header and the closing brace. Ordering
+// assertions have to be made per-chain: once the family dispatch is in place
+// the document order is no longer the evaluation order, because the jumped-to
+// chains are defined below the base chain but run before it reaches the rules
+// that follow the dispatch.
+//
+// The header is excluded so that negative assertions stay meaningful — the
+// chain names themselves carry family tokens, so leaving `chain input_ipv6 {`
+// in the returned text would make a NotContains check for "ipv6" match the
+// header instead of a rule.
+func chainBody(t *testing.T, doc, name string) string {
+	t.Helper()
+	header := "\tchain " + name + " {\n"
+	start := strings.Index(doc, header)
+	require.Greater(t, start, -1, "chain %s not found in rendered document", name)
+	rest := doc[start+len(header):]
+	end := strings.Index(rest, "\n\t}\n")
+	require.Greater(t, end, -1, "chain %s is not terminated", name)
+	return rest[:end]
+}
+
 // newTestManager wires a Manager with a fakeRunner and temp paths. The
 // applyViaService closure sets r.exists = true and increments applyCount so
 // tests can assert on how many times rules were applied without touching
@@ -99,23 +121,60 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	require.Contains(t, doc, "icmp type echo-request drop")
 	require.Contains(t, doc, "ip saddr 10.4.0.0/24 tcp dport @in_cluster_ports accept")
 
-	// Ordering is load-bearing: the echo-request rate limit must be evaluated
-	// BEFORE `ct state established,related accept`. netfilter conntrack tracks
-	// ICMP echo flows, so if the established fast-path ran first, every packet
-	// of a sustained ping after the first would bypass the limit.
-	limitIdx := strings.Index(doc, "icmp type echo-request limit rate 10/second accept")
-	dropIdx := strings.Index(doc, "icmp type echo-request drop")
-	// LastIndex: the comment above the rule also references the phrase; the real
-	// rule is the last occurrence.
-	estIdx := strings.LastIndex(doc, "ct state established,related accept")
-	require.Greater(t, dropIdx, limitIdx, "echo drop must follow the echo rate limit")
-	require.Greater(t, estIdx, dropIdx, "established,related accept must come after the ICMP echo rules")
+	// Ordering is load-bearing. ICMP must be evaluated BEFORE the conntrack
+	// fast-path: netfilter conntrack tracks ICMP echo flows, so if the
+	// established fast-path ran first, every packet of a sustained ping after
+	// the first would bypass the rate limit. The l4proto dispatch is what puts
+	// ICMP first, so it must precede the ct vmap in the base chain.
+	base := chainBody(t, doc, "input")
+	icmpDispatchIdx := strings.Index(base, "meta l4proto vmap { icmp : jump input_icmp_ipv4, icmpv6 : jump input_icmp_ipv6 }")
+	ctIdx := strings.Index(base, "ct state vmap { established : accept, related : accept, invalid : drop }")
+	require.Greater(t, icmpDispatchIdx, -1, "base chain must dispatch ICMP by l4proto")
+	require.Greater(t, ctIdx, -1, "base chain must carry the collapsed conntrack vmap")
+	require.Less(t, icmpDispatchIdx, ctIdx, "ICMP dispatch must precede the conntrack fast-path")
 
-	// The block list must be evaluated before established/related so an
+	// Within the ICMP chain: invalid is dropped first, so a forged ICMP error
+	// cannot be admitted by the blanket path-health accepts that follow; then
+	// the rate limit; then the explicit drop for over-budget echo.
+	icmp4 := chainBody(t, doc, "input_icmp_ipv4")
+	invalidIdx := strings.Index(icmp4, "ct state invalid drop")
+	limitIdx := strings.Index(icmp4, "icmp type echo-request limit rate 10/second accept")
+	dropIdx := strings.Index(icmp4, "icmp type echo-request drop")
+	require.Greater(t, invalidIdx, -1, "ICMPv4 chain must drop invalid before the path-health accepts")
+	require.Less(t, invalidIdx, limitIdx, "invalid drop must precede the ICMP accepts")
+	require.Greater(t, dropIdx, limitIdx, "echo drop must follow the echo rate limit")
+
+	// The block list must be evaluated before the conntrack fast-path so an
 	// operator-added CIDR also kills already-open connections, not just new ones.
-	blockedIdx := strings.Index(doc, "ip saddr @blocked_addrs drop")
-	require.Greater(t, blockedIdx, 0)
-	require.Less(t, blockedIdx, estIdx, "blocked-CIDR drop must precede established,related accept")
+	blockedIdx := strings.Index(base, "ip saddr @blocked_addrs drop")
+	require.Greater(t, blockedIdx, -1)
+	require.Less(t, blockedIdx, ctIdx, "blocked-CIDR drop must precede the conntrack fast-path")
+}
+
+// TestRender_FamilySplit pins the point of the per-family chains: a packet must
+// never be evaluated against a rule belonging to the other address family.
+func TestRender_FamilySplit(t *testing.T) {
+	doc, err := dualStackTable().Render()
+	require.NoError(t, err)
+
+	require.Contains(t, chainBody(t, doc, "input"),
+		"meta nfproto vmap { ipv4 : jump input_ipv4, ipv6 : jump input_ipv6 }")
+
+	v4 := chainBody(t, doc, "input_ipv4")
+	require.Contains(t, v4, "ip saddr @mgmt_addrs tcp dport 22 accept")
+	require.NotContains(t, v4, "ip6 ")
+
+	v6 := chainBody(t, doc, "input_ipv6")
+	require.Contains(t, v6, "ip6 saddr @mgmt_addrs6 tcp dport 22 accept")
+	require.NotContains(t, v6, "ip saddr")
+
+	icmp4 := chainBody(t, doc, "input_icmp_ipv4")
+	require.Contains(t, icmp4, "icmp type echo-request drop")
+	require.NotContains(t, icmp4, "icmpv6")
+
+	icmp6 := chainBody(t, doc, "input_icmp_ipv6")
+	require.Contains(t, icmp6, "icmpv6 type echo-request drop")
+	require.NotContains(t, icmp6, "icmp type")
 }
 
 func TestRender_NoMgmtNoPod(t *testing.T) {
@@ -157,12 +216,24 @@ func TestRender_DualStack(t *testing.T) {
 	require.Contains(t, doc, "icmpv6 type packet-too-big accept")
 	require.NotContains(t, doc, "nd-redirect")
 
-	// NDP must precede the established/related fast-path, same reasoning as the
-	// v4 ICMP ordering.
-	ndpIdx := strings.Index(doc, "nd-neighbor-solicit")
-	estIdx := strings.LastIndex(doc, "ct state established,related accept")
-	require.Greater(t, ndpIdx, 0)
-	require.Less(t, ndpIdx, estIdx, "NDP accepts must precede established,related accept")
+	// NDP must be reached before the conntrack fast-path, same reasoning as the
+	// v4 ICMP ordering: the NDP accepts live in the ICMPv6 chain, and the
+	// dispatch into it precedes the ct vmap in the base chain. The invalid drop
+	// still leads that chain, preserving the pre-split relative order.
+	// Assert both anchors are present before comparing offsets: a missing rule
+	// yields index -1, which would satisfy the Less() check vacuously and let
+	// the invalid drop be deleted without failing this test.
+	icmp6 := chainBody(t, doc, "input_icmp_ipv6")
+	require.Contains(t, icmp6, "ct state invalid drop")
+	require.Contains(t, icmp6, "nd-neighbor-solicit")
+	require.Less(t, strings.Index(icmp6, "ct state invalid drop"), strings.Index(icmp6, "nd-neighbor-solicit"),
+		"invalid drop must still precede the NDP accepts")
+
+	base := chainBody(t, doc, "input")
+	icmpDispatchIdx := strings.Index(base, "meta l4proto vmap { icmp : jump input_icmp_ipv4, icmpv6 : jump input_icmp_ipv6 }")
+	ctIdx := strings.Index(base, "ct state vmap { established : accept, related : accept, invalid : drop }")
+	require.Greater(t, icmpDispatchIdx, -1)
+	require.Less(t, icmpDispatchIdx, ctIdx, "ICMPv6 dispatch must precede the conntrack fast-path")
 }
 
 func TestRoundTrip_RenderParseRender(t *testing.T) {
