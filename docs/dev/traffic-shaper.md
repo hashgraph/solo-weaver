@@ -292,10 +292,19 @@ nothing Cilium or kube-proxy accepts can rescue traffic weaver does not match.
 
 The two tables sit on opposite sides of that line, and the distinction matters:
 
-| Hook | Chain policy | Role |
-|---|---|---|
-| `input` (host firewall) | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
-| `forward` (workload policy) | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the explicit `bn-restricted` quarantine rules. |
+| Hook | Table | Chain policy | Role |
+|---|---|---|---|
+| `prerouting` (priority `raw`, −300) | host firewall | `accept` | Drops the operator block list ahead of conntrack. Covers the forward path too, so a blocked CIDR is blocked for pod-bound traffic as well. |
+| `input` (priority `filter`, 0) | host firewall | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
+| `output` (priority `filter`, 0) | host firewall | `accept` | Block-list symmetry only — drops traffic *to* a blocked CIDR. Deliberately not an egress allowlist. |
+| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the explicit `bn-restricted` quarantine rules. |
+
+The block list is spelled on three hooks because one is not enough. Dropping a peer inbound
+does not stop the host from dialing it, and once the host initiates, the replies come back in
+under `ct state established` — so an inbound-only block list does not block the connection at
+all. The `input` copy is redundant with `prerouting` for anything arriving on a wire; it is
+kept so the block list's ordering relative to the conntrack fast-path stays a property of the
+`input` chain itself rather than a consequence of a chain on another hook.
 
 On `input`, the only broad escapes are the mgmt allowlist on the SSH port, `in_cluster_ports`
 from the pod CIDR, the ICMP path-health subset, and `ct state established,related`. Everything

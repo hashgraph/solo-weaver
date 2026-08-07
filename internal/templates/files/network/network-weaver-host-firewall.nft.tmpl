@@ -8,6 +8,19 @@ table inet weaver-host-firewall {
 	set blocked_addrs6 { type ipv6_addr; flags interval;{{if .BlockedElements6}} elements = { {{.BlockedElements6}} };{{end}} }
 	set in_cluster_ports { type inet_service;{{if .PortElements}} elements = { {{.PortElements}} };{{end}} }
 
+	# Operator block list, dropped as early as the packet can be seen. Priority
+	# -300 is the `raw` band, ahead of conntrack at -200, so a blocked source
+	# never gets a conntrack lookup or a provisional entry allocated.
+	#
+	# This hook covers the forward path as well as the host path, so a blocked
+	# CIDR is blocked for pod-bound traffic too — the block list means "this peer
+	# is blocked on this node", not "blocked from the host's own services".
+	chain prerouting_blocklist {
+		type filter hook prerouting priority -300; policy accept;
+		ip saddr @blocked_addrs drop
+		ip6 saddr @blocked_addrs6 drop
+	}
+
 	# The hooked chain carries only what applies to every packet regardless of
 	# address family, then dispatches into the regular chains below — so an IPv4
 	# packet never evaluates an IPv6 rule and vice versa. A jump that returns
@@ -21,6 +34,12 @@ table inet weaver-host-firewall {
 		# entry added here drops already-open connections too. Purely
 		# operator-managed: nothing else ever writes to these sets. One rule per
 		# family — two address compares are cheaper than a dispatch.
+		#
+		# Redundant for anything arriving on a wire, since prerouting_blocklist
+		# already dropped it. Kept because this ordering — block list ahead of the
+		# conntrack fast-path — is the tested definition of what the block list
+		# does on the host path, and it should not become contingent on a chain
+		# registered on a different hook.
 		ip saddr @blocked_addrs drop
 		ip6 saddr @blocked_addrs6 drop
 
@@ -117,5 +136,20 @@ table inet weaver-host-firewall {
 		# In-cluster host-service ports, reachable from the pod CIDR only.
 		ip6 saddr {{.PodCIDR6}} tcp dport @in_cluster_ports accept
 {{- end}}
+	}
+
+	# Block-list symmetry on locally-generated traffic. Dropping a peer inbound
+	# does not stop this host from dialing it, and once the host initiates, the
+	# replies are admitted by the input chain's `ct state established` accept —
+	# so an inbound-only block list does not actually block the connection.
+	#
+	# `policy accept`: this is not an egress allowlist. Enumerating legitimate
+	# outbound traffic on a Kubernetes node (kubelet to the API server, etcd,
+	# DNS, NTP, image pulls from arbitrary registries, Cilium, Teleport) is both
+	# large and brittle, and getting it wrong strands the node.
+	chain output {
+		type filter hook output priority 0; policy accept;
+		ip daddr @blocked_addrs drop
+		ip6 daddr @blocked_addrs6 drop
 	}
 }
