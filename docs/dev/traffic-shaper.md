@@ -287,22 +287,27 @@ weaver tables simply register alongside the others.
 What that pattern does **not** give you is additive permissiveness. Within a base chain,
 `accept` ends evaluation *of that chain only* — the packet still traverses every other base
 chain registered on the same hook. A `drop` (or `reject`) is final for the packet across all
-of them. Both weaver chains are `policy drop`, so anything they do not explicitly accept is
-dropped; the `forward` chain also ends in an explicit `drop`, while `input` falls through to
-its chain policy. That makes **weaver the binding filter on the node**: nothing Cilium or
-kube-proxy accepts can rescue traffic weaver does not match.
+of them. So on any hook where a weaver chain is `policy drop`, weaver is the binding filter:
+nothing Cilium or kube-proxy accepts can rescue traffic weaver does not match.
 
-Concretely, the only broad escapes are:
+The two tables sit on opposite sides of that line, and the distinction matters:
 
-| Hook | Escapes |
-|---|---|
-| `input` (host firewall) | mgmt allowlist on the SSH port, `in_cluster_ports` from the pod CIDR, ICMP path-health, `ct state established,related` |
-| `forward` (workload policy) | `ip saddr <podCIDR> accept` (unclassified pod egress), `ct state established,related accept` |
+| Hook | Chain policy | Role |
+|---|---|---|
+| `input` (host firewall) | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
+| `forward` (workload policy) | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the explicit `bn-restricted` quarantine rules. |
 
-Everything else forwarded or delivered on that host is dropped on new connections. On a
-single-purpose block-node host that is the intent, but it is a node-wide decision, not a
-block-node-scoped one — a second CNI, a docker bridge, a VPN, DHCPv6, or cross-node
-kubelet/etcd/NodePort traffic all need an explicit rule or they are dropped.
+On `input`, the only broad escapes are the mgmt allowlist on the SSH port, `in_cluster_ports`
+from the pod CIDR, the ICMP path-health subset, and `ct state established,related`. Everything
+else delivered to that host is dropped on new connections. On a single-purpose block-node host
+that is the intent, but it is a node-wide decision, not a block-node-scoped one — a second CNI,
+a docker bridge, a VPN, DHCPv6, or cross-node kubelet/etcd/NodePort traffic all need an
+explicit rule or they are dropped.
+
+On `forward`, weaver constrains nothing. A packet matching no classification rule is accepted
+carrying no `meta priority` and lands in the HTB default class. Workload isolation on that hook
+rests entirely on Cilium — which also means a host whose Cilium datapath is degraded or not yet
+up has no weaver-side backstop for forwarded traffic.
 
 ### tc: why the HTB hierarchies do not fight Cilium
 

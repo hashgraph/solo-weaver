@@ -138,7 +138,7 @@ func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
 // weaver` table) by running the create-if-missing equivalent of `network policy
 // create` for each canonical BN category. It must run before NftWeaverPersist so
 // the policy registry is populated when that step re-renders and persists
-// network-weaver-workload-policy.nft (an empty registry would render a policy-drop chain).
+// network-weaver-workload-policy.nft (an empty registry persists no file at all).
 //
 // Every create is idempotent: a re-run leaves existing policies and their
 // operator-mutated set membership untouched. When force is set, each policy's
