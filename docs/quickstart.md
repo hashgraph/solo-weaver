@@ -33,8 +33,31 @@ solo-provisioner --help
 ### Uninstall
 
 ```bash
-sudo solo-provisioner uninstall
+sudo solo-provisioner uninstall --yes
 ```
+
+`--yes` is required — the command refuses to run without it. It removes, irreversibly:
+
+- the `solo-provisioner` CLI and its `/usr/local/bin` symlink
+- the `solo-provisioner-daemon` binary and its systemd service
+- the `solo-provisioner-network-nft` and `solo-provisioner-bandwidth-shaper` boot units
+- the configuration tree under `/etc/solo-provisioner` (rendered `.nft` files, the policy registry, tc device/class configs)
+
+Tear down the workloads first — the command fails while a Kubernetes cluster is still provisioned, since every teardown command lives in the binary it is about to delete:
+
+```bash
+sudo solo-provisioner block node uninstall
+sudo solo-provisioner kube cluster uninstall
+sudo solo-provisioner uninstall --yes
+```
+
+Loaded nft tables and tc qdiscs are left alone; they do not survive a reboot once the boot-replay units and their inputs are gone.
+
+**Additional Flags**
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Confirm removal of the CLI, the daemon and its service, the network boot units, and `/etc/solo-provisioner` |
 
 ---
 
@@ -1558,8 +1581,8 @@ sudo solo-provisioner alloy cluster uninstall
 # Remove Kubernetes cluster (removes block node)
 sudo solo-provisioner kube cluster uninstall
 
-# Uninstall Solo Provisioner itself
-sudo solo-provisioner uninstall
+# Uninstall Solo Provisioner itself (--yes is required)
+sudo solo-provisioner uninstall --yes
 ```
 
 ---
