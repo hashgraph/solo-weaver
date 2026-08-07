@@ -48,8 +48,7 @@ func NftWeaverPersist() *automa.StepBuilder {
 			}
 			// Reconcile the persisted file to the registry. On an empty registry
 			// this removes any stale network-weaver-workload-policy.nft so the boot oneshot never
-			// replays a harmful/old inet weaver-workload-policy table (an empty chain renders as
-			// policy drop with no accept for new connections).
+			// replays an out-of-date inet weaver-workload-policy table.
 			if err := policy.RenderWeaverNft(policy.RegistryDir, policy.WeaverNftPath, ""); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
 					errorx.Decorate(err, "failed to render %s", policy.WeaverNftPath).

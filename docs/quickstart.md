@@ -841,7 +841,7 @@ Remove a policy's rules, set, and registry file, and re-render the `inet weaver-
 sudo solo-provisioner network policy delete --name bn-restricted
 ```
 
-`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver-workload-policy.nft`. If this is the last policy, an empty chain (`policy drop`, no rules) is applied; the boot oneshot stays enabled.
+`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver-workload-policy.nft`. If this is the last policy, the table is torn down entirely (live and on disk); the boot oneshot stays enabled.
 
 | Flag     | Description     | Required |
 |----------|-----------------|----------|

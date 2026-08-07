@@ -331,8 +331,8 @@ func TestDelete_LastPolicy_TearsDownTable(t *testing.T) {
 
 	require.NoError(t, m.Delete(context.Background(), "bn-restricted"))
 
-	// Deleting the last policy tears the whole table down rather than applying
-	// an empty policy-drop chain that would blackhole all forwarded traffic.
+	// Deleting the last policy tears the whole table down rather than leaving an
+	// empty table registered on the forward hook.
 	require.False(t, r.exists, "inet weaver-workload-policy table must be deleted after the last policy is removed")
 	// The persisted file is removed so the boot oneshot replays nothing.
 	require.NoFileExists(t, nftPath)
