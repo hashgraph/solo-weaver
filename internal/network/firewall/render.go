@@ -111,7 +111,7 @@ func atomicWriteFile(path, content string, perm os.FileMode) error {
 		return errorx.ExternalError.Wrap(err, "failed to create directory %s", dir)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".network-host-*.nft.tmp")
+	tmp, err := os.CreateTemp(dir, ".network-weaver-host-firewall-*.nft.tmp")
 	if err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to create temp file in %s", dir)
 	}

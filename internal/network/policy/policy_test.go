@@ -141,7 +141,7 @@ func TestRender_GoldenMatchesBNInstallSet(t *testing.T) {
 	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
 	require.NoError(t, err)
 
-	goldenPath := "testdata/network-weaver.golden.nft"
+	goldenPath := "testdata/network-weaver-workload-policy.golden.nft"
 	if *update {
 		require.NoError(t, os.WriteFile(goldenPath, []byte(doc), 0o644))
 	}
@@ -157,7 +157,7 @@ func TestRender_DualStackGolden(t *testing.T) {
 	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
-	goldenPath := "testdata/network-weaver-dualstack.golden.nft"
+	goldenPath := "testdata/network-weaver-workload-policy-dualstack.golden.nft"
 	if *update {
 		require.NoError(t, os.WriteFile(goldenPath, []byte(doc), 0o644))
 	}

@@ -362,9 +362,10 @@ func TestManager_ServiceFailureReturnsError(t *testing.T) {
 
 func TestRender_GoldenStable(t *testing.T) {
 	// Guards against accidental rule reordering/whitespace drift. If the
-	// ruleset legitimately changes, regenerate testdata/network-host.golden.nft
-	// deliberately and review the diff.
-	goldenPath := filepath.Join("testdata", "network-host.golden.nft")
+	// ruleset legitimately changes, regenerate
+	// testdata/network-weaver-host-firewall.golden.nft deliberately and review
+	// the diff.
+	goldenPath := filepath.Join("testdata", "network-weaver-host-firewall.golden.nft")
 	doc, err := sampleTable().Render()
 	require.NoError(t, err)
 
