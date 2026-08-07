@@ -292,13 +292,15 @@ func FlagDaemonFromConfig() FlagDefinition[string] {
 }
 
 // FlagDaemonBin is the optional path to a locally-built solo-provisioner-daemon
-// binary. When omitted the binary is auto-downloaded from the official GitHub
+// binary, and the highest-precedence source for it. When omitted the binary is
+// resolved automatically — from SOLO_PROVISIONER_DAEMON_BIN, from an existing
+// install in the weaver bin directory, or by download from the official GitHub
 // Releases URL embedded in the infrastructure catalog.
 func FlagDaemonBin() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "daemon-bin",
 		ShortName:   "",
-		Description: "Path to a locally-built solo-provisioner-daemon binary to install; omit to auto-download from the embedded catalog",
+		Description: "Path to a locally-built solo-provisioner-daemon binary to install; omit to resolve it automatically ($SOLO_PROVISIONER_DAEMON_BIN, then an already-installed binary, then the embedded catalog)",
 		Default:     "",
 	}
 }
@@ -318,9 +320,13 @@ func FlagDaemonChecksum() FlagDefinition[string] {
 // FlagDaemonVersion is the solo-provisioner-daemon version to auto-download
 // from the infrastructure catalog. Ignored when --daemon-bin is set (the local
 // binary is installed as-is; no version resolution needed). Defaults to this
-// CLI's own running version — meaningful once the CLI and daemon are
-// co-released under one version scheme; for unstamped local/dev builds this
-// resolves to "dev", which has no catalog entry, hence --daemon-bin instead.
+// CLI's own running version, which resolves to a real artifact because the CLI
+// and daemon are co-released under one tag.
+//
+// Locally-built binaries carry a placeholder version instead — 0.0.0 from the
+// Taskfile's VERSION default, or "dev" when nothing stamped it at all — neither
+// of which has a release to download. Those builds get their daemon binary from
+// the install-time resolution order instead (see resolveDaemonBinarySource).
 func FlagDaemonVersion() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "daemon-version",

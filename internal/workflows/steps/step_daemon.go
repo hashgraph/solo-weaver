@@ -167,6 +167,44 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 				logx.As().Info().Str("path", src.BinPath).Msg("Daemon binary sha256 verified")
 			}
 
+			if err := os.MkdirAll(paths.BinDir, 0o755); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to create bin directory %s", paths.BinDir).
+						WithProperty(models.ErrPropertyResolution, []string{
+							"Check available disk space: df -h " + paths.BinDir,
+							"Ensure the parent directory is writable: ls -la " + filepath.Dir(paths.BinDir),
+						})))
+			}
+			// Reassert root:root 0755 on BinDir. The sudoers policy grants weaver
+			// passwordless root to exec the solo-provisioner CLI living here; if the
+			// directory is group-writable by weaver (older installs provisioned it
+			// root:weaver 2775), any weaver-group member could replace the binary and
+			// escalate to root. MkdirAll is a no-op on an existing dir and does not
+			// fix its mode/owner, so enforce it explicitly here — daemon install runs
+			// as root, so only root can ever write this dir afterwards. Must stay ahead
+			// of the short-circuit below: the hosts that already have the binary are
+			// exactly the older installs carrying the 2775 mode.
+			if err := os.Chmod(paths.BinDir, 0o755); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to set bin directory permissions on %s", paths.BinDir)))
+			}
+			if err := os.Chown(paths.BinDir, 0, 0); err != nil {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errorx.InternalError.Wrap(err, "failed to set root:root ownership on bin directory %s", paths.BinDir)))
+			}
+
+			// The resolved source can already BE the installed binary, so there is
+			// nothing to install — and copyBinaryFile opens the destination O_TRUNC,
+			// which would erase it. This precedes the --version probe below: the probe
+			// guards a binary that is about to replace a working one, and this binary
+			// already cleared it when it was installed.
+			if sameFile(src.BinPath, dstPath) {
+				logx.As().Info().
+					Str("path", dstPath).
+					Msg("Daemon binary is already installed at the destination, skipping copy")
+				return automa.StepSuccessReport(stp.Id())
+			}
+
 			// TOCTOU note: the checksum above (when supplied) verifies src.BinPath,
 			// then this exec and the copyBinaryFile below independently re-open the
 			// same path — a swap between verify and use is theoretically possible.
@@ -204,29 +242,6 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 				Str("commit", vout.Commit).
 				Msg("Daemon binary platform verified")
 
-			if err := os.MkdirAll(paths.BinDir, 0o755); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to create bin directory %s", paths.BinDir).
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Check available disk space: df -h " + paths.BinDir,
-							"Ensure the parent directory is writable: ls -la " + filepath.Dir(paths.BinDir),
-						})))
-			}
-			// Reassert root:root 0755 on BinDir. The sudoers policy grants weaver
-			// passwordless root to exec the solo-provisioner CLI living here; if the
-			// directory is group-writable by weaver (older installs provisioned it
-			// root:weaver 2775), any weaver-group member could replace the binary and
-			// escalate to root. MkdirAll is a no-op on an existing dir and does not
-			// fix its mode/owner, so enforce it explicitly here — daemon install runs
-			// as root, so only root can ever write this dir afterwards.
-			if err := os.Chmod(paths.BinDir, 0o755); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to set bin directory permissions on %s", paths.BinDir)))
-			}
-			if err := os.Chown(paths.BinDir, 0, 0); err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to set root:root ownership on bin directory %s", paths.BinDir)))
-			}
 			if err := copyBinaryFile(src.BinPath, dstPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.InternalError.Wrap(err, "failed to install daemon binary to %s", dstPath).
@@ -260,6 +275,77 @@ func InstallDaemonBinaryStep(src DaemonBinarySource, paths models.WeaverPaths) *
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Daemon binary installed")
 		})
+}
+
+// sameFile reports whether src and dst name the same file on disk, resolving
+// symlinks and hard links. Copying a file onto itself with copyBinaryFile
+// truncates it to zero bytes, so callers must check this first.
+func sameFile(src, dst string) bool {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return false
+	}
+	dstInfo, err := os.Stat(dst)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(srcInfo, dstInfo)
+}
+
+// copyBinaryAtomic installs src at dst by copying into a temp file alongside dst
+// and renaming it into place, so dst is either the old binary or the complete new
+// one — never a half-written file. A copy that fails partway (disk full, signal)
+// leaves the existing dst untouched.
+//
+// Prefer this over copyBinaryFile whenever a valid binary may already exist at dst
+// and the caller cannot surface a partial-write failure to the operator.
+//
+// Renaming over a running executable succeeds on Linux: the running process keeps
+// its own inode, so it is unaffected and picks up the new binary only when it next
+// restarts. Callers that need the running process to match dst must restart it.
+func copyBinaryAtomic(src, dst string) error {
+	dstDir := filepath.Dir(dst)
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return err
+	}
+
+	in, err := os.Open(src) //nolint:gosec
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	// The temp file must live in dst's directory so the rename is a same-filesystem
+	// move, which is what makes it atomic.
+	tmp, err := os.CreateTemp(dstDir, filepath.Base(dst)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 // copyBinaryFile copies src to dst with executable permissions (0755).

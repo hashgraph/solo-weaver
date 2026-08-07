@@ -3,15 +3,18 @@
 package node
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
-	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
-	"github.com/hashgraph/solo-weaver/pkg/sanity"
+	"github.com/hashgraph/solo-weaver/pkg/semver"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -52,75 +55,126 @@ func ensureBlockNodeDaemon(cmd *cobra.Command, namespace string, source workflow
 	return provisionBlockNodeDaemon(cmd, namespace, source)
 }
 
-// resolveDaemonBinarySource determines where ensureBlockNodeDaemon should get
-// the daemon binary from: --daemon-bin (bypasses the catalog entirely) or
-// --daemon-version (selects which catalog version to auto-download; defaults
-// to this CLI's own version — meaningful once CLI and daemon are co-released
-// under one version scheme).
-//
-// --profile=local is a special case: local/dev builds report an unstamped
-// version (e.g. "dev") that has no corresponding catalog entry, so
-// auto-download can never succeed there. When traffic shaping is enabled and
-// --daemon-bin wasn't supplied, this becomes a required value — prompted for
-// interactively, or a fail-fast error non-interactively.
-func resolveDaemonBinarySource(cmd *cobra.Command, args []string, profile string, cv *prompt.ChosenValues) (workflowsteps.DaemonBinarySource, error) {
-	source := workflowsteps.DaemonBinarySource{BinPath: flagDaemonBin, Version: flagDaemonVersion}
+// envDaemonBin is the environment-variable equivalent of --daemon-bin, for dev
+// loops that would otherwise repeat the flag on every invocation.
+const envDaemonBin = "SOLO_PROVISIONER_DAEMON_BIN"
 
-	if profile != models.ProfileLocal || source.BinPath != "" {
+// resolveDaemonBinarySource determines where ensureBlockNodeDaemon should get the
+// daemon binary from, in descending precedence:
+//
+//  1. --daemon-bin — an explicit operator override; bypasses the catalog entirely.
+//  2. SOLO_PROVISIONER_DAEMON_BIN — the same override without repeating the flag.
+//  3. A daemon binary already installed at paths.BinDir. CLI self-install puts the
+//     co-built binary there (see steps.InstallColocatedDaemonBinary), so a host
+//     provisioned from a local build already has a matching daemon to install.
+//  4. Auto-download from the infrastructure catalog, at --daemon-version (which
+//     defaults to this CLI's own version — the CLI and daemon are co-released
+//     under one tag, so a released build always resolves to a real artifact).
+//
+// An exhausted list is an error, never a prompt — which is what lets `upgrade`
+// share this resolver despite its silent-convergence contract.
+func resolveDaemonBinarySource(cmd *cobra.Command) (workflowsteps.DaemonBinarySource, error) {
+	source := workflowsteps.DaemonBinarySource{BinPath: flagDaemonBin, Version: flagDaemonVersion}
+	if source.BinPath != "" {
 		return source, nil
 	}
 
-	var rootFlags common.RootFlags
-	_ = common.ExtractRootFlags(cmd, args, &rootFlags)
-	if !prompt.ShouldPrompt(rootFlags.Force) {
-		return source, errorx.IllegalArgument.New(
-			"--daemon-bin is required for --profile=local: local/dev builds have no downloadable "+
-				"solo-provisioner-daemon release to auto-download").
-			WithProperty(models.ErrPropertyResolution, []string{
-				"Build the daemon locally: task build:daemon GOOS=linux GOARCH=<arch>",
-				"Then pass its path: --daemon-bin=<path-to-binary>",
-			})
+	// ensureBlockNodeDaemon returns early when the service is up, so any source
+	// resolved here would be discarded. Don't fail for the want of one.
+	if running, err := pkgos.IsServiceRunning(cmd.Context(), daemonServiceName); err == nil && running {
+		return source, nil
 	}
 
-	localCV := cv
-	if localCV == nil {
-		localCV = prompt.NewChosenValues()
+	if envPath := os.Getenv(envDaemonBin); envPath != "" {
+		logx.As().Info().Str("path", envPath).Str("env", envDaemonBin).
+			Msg("Using the daemon binary from the environment")
+		source.BinPath = envPath
+		return source, nil
 	}
-	if err := prompt.RunInputPrompts(cmd, []prompt.InputPrompt{
-		daemonBinInputPrompt(source.BinPath, &source.BinPath),
-	}, localCV); err != nil {
-		return source, err
+
+	if installed := installedDaemonBinaryPath(); installed != "" {
+		logx.As().Info().Str("path", installed).
+			Msg("Using the daemon binary already present on this host")
+		source.BinPath = installed
+		return source, nil
 	}
-	if source.BinPath == "" {
-		return source, errorx.IllegalArgument.New("--daemon-bin is required for --profile=local").
-			WithProperty(models.ErrPropertyResolution, []string{
-				"Build the daemon locally: task build:daemon GOOS=linux GOARCH=<arch>",
-				"Then pass its path: --daemon-bin=<path-to-binary>",
-			})
+
+	// An empty BinPath selects the catalog download.
+	if isDownloadableDaemonVersion(cmd, source.Version) {
+		return source, nil
 	}
-	return source, nil
+
+	return source, unresolvedDaemonBinaryError()
 }
 
-// daemonBinInputPrompt returns the interactive prompt for --daemon-bin, shown
-// only when --profile=local requires a local daemon binary path (see
-// resolveDaemonBinarySource).
-func daemonBinInputPrompt(eff string, target *string) prompt.InputPrompt {
-	return prompt.InputPrompt{
-		FlagName:       "daemon-bin",
-		Title:          "Daemon Binary Path (required for --profile=local)",
-		Description:    "Path to a locally-built solo-provisioner-daemon binary. Local/dev builds have no downloadable release to auto-download.",
-		Placeholder:    "bin/solo-provisioner-daemon-linux-amd64",
-		EffectiveValue: eff,
-		Target:         target,
-		Validate: func(s string) error {
-			if s == "" {
-				return errorx.IllegalArgument.New("daemon binary path cannot be empty for --profile=local")
-			}
-			_, err := sanity.SanitizePath(s)
-			return err
-		},
-	}
+// unresolvedDaemonBinaryError reports that every source in resolveDaemonBinarySource's
+// precedence list came up empty, and lists the ways an operator can supply one.
+func unresolvedDaemonBinaryError() error {
+	return errorx.IllegalArgument.New(
+		"no solo-provisioner-daemon binary could be resolved: this build's version (%s) has no "+
+			"downloadable release and no binary is installed at %s",
+		flagDaemonVersion, models.Paths().BinDir).
+		WithProperty(models.ErrPropertyResolution, []string{
+			"Build the daemon locally: task build:daemon GOOS=linux GOARCH=<arch>",
+			"Then either re-run the self-install so it is picked up automatically:",
+			"  sudo bin/solo-provisioner-linux-<arch> install",
+			"or pass the path explicitly: --daemon-bin=<path-to-binary>",
+			"or set " + envDaemonBin + "=<path-to-binary>",
+			"For a released build, pass a published version: --daemon-version=<x.y.z>",
+		})
 }
+
+// installedDaemonBinaryPath returns the path of an executable daemon binary
+// already installed at paths.BinDir, or "" if there is none. Only stat'ed: this
+// path is the install destination, so InstallDaemonBinaryStep short-circuits
+// ahead of both its platform probe and the copy.
+//
+// This deliberately does not go through software.Installer.IsInstalled(): that
+// gates on a recorded install-manifest entry, which a binary placed by CLI
+// self-install does not have.
+func installedDaemonBinaryPath() string {
+	p := filepath.Join(models.Paths().BinDir, software.DaemonBinaryName)
+	info, err := os.Stat(p)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return ""
+	}
+	return p
+}
+
+// isDownloadableDaemonVersion reports whether v can plausibly resolve to a
+// published release, i.e. whether the catalog auto-download path is worth trying.
+//
+// An explicitly-supplied --daemon-version is always trusted: the operator named a
+// version, so let the download attempt produce the error rather than second-guessing
+// it here. Otherwise v is this build's own stamped version, and the placeholders
+// that unstamped and locally-built binaries carry — "dev" from the version package's
+// default and 0.0.0 from the Taskfile's VERSION default — have no release to fetch.
+func isDownloadableDaemonVersion(cmd *cobra.Command, v string) bool {
+	// cmd.Flag resolves through the persistent set too — SetVarP registers these on
+	// PersistentFlags, which cmd.Flags() only reflects after cobra's pre-Execute merge.
+	if f := cmd.Flag(common.FlagDaemonVersion().Name); f != nil && f.Changed {
+		return true
+	}
+	if v == "" || v == devVersionPlaceholder {
+		return false
+	}
+	parsed, err := semver.NewSemver(v)
+	if err != nil {
+		return false
+	}
+	return !parsed.EqualTo(zeroVersion)
+}
+
+// devVersionPlaceholder is what github.com/automa-saga/version reports for a build
+// that was not stamped via -ldflags (`go run`, a plain `go build`).
+const devVersionPlaceholder = "dev"
+
+// zeroVersion is the Taskfile's default VERSION, carried by every local `task build`
+// binary. No v0.0.0 release exists or ever will.
+var zeroVersion = func() semver.Semver {
+	v, _ := semver.NewSemver("0.0.0")
+	return v
+}()
 
 // provisionBlockNodeDaemon runs the daemon install + provisioning workflow for
 // the block-node component. daemon.yaml has already been written by the install

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/automa-saga/automa"
@@ -16,7 +17,9 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/hashgraph/solo-weaver/pkg/security/sudoers"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 )
 
@@ -205,6 +208,106 @@ func InstallWeaver(binDir string) *automa.StepBuilder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Solo Provisioner installed successfully")
 		})
+}
+
+// InstallColocatedDaemonBinary installs a solo-provisioner-daemon binary found
+// beside the running executable into binDir, so that a block-node install with
+// traffic shaping enabled has a daemon binary to use without the operator
+// supplying a path.
+//
+// Self-install is the only command that runs from outside binDir — every other
+// command is pinned there by CheckWeaverInstallation — so it is also the only
+// point at which the CLI can still see the daemon binary that was built next to
+// it. `task build` emits both binaries into the same bin/, so after
+// `sudo bin/solo-provisioner-<os>-<arch> install` the CLI and the daemon on the
+// host are always a matching pair, and rebuilding refreshes both.
+//
+// The step is best-effort: an official install downloads the CLI on its own and
+// has no sibling daemon binary to find, in which case this is a no-op and the
+// daemon is obtained later from the infrastructure catalog. Nothing here can
+// fail the self-install.
+func InstallColocatedDaemonBinary(binDir string) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("install-colocated-daemon-binary").
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			exePath, err := os.Executable()
+			if err != nil {
+				logx.As().Warn().Err(err).Msg(
+					"could not locate the current executable; skipping co-located daemon binary install")
+				return automa.StepSuccessReport(stp.Id())
+			}
+
+			srcPath := findColocatedDaemonBinary(filepath.Dir(exePath))
+			if srcPath == "" {
+				logx.As().Debug().
+					Str("search_dir", filepath.Dir(exePath)).
+					Msg("No co-located solo-provisioner-daemon binary found; it will be downloaded when needed")
+				return automa.StepSuccessReport(stp.Id())
+			}
+
+			// Re-running `install` from the already-installed location makes the
+			// search dir and binDir the same, so the sibling found above IS the
+			// destination. copyBinaryFile opens the destination O_TRUNC, which would
+			// erase the installed daemon binary.
+			dstPath := filepath.Join(binDir, software.DaemonBinaryName)
+			if sameFile(srcPath, dstPath) {
+				logx.As().Debug().Str("path", dstPath).
+					Msg("Co-located solo-provisioner-daemon binary is already the installed one; nothing to copy")
+				return automa.StepSuccessReport(stp.Id())
+			}
+
+			// Atomic copy, not copyBinaryFile: this step swallows its own errors, so a
+			// half-written destination would be left behind AND reported as success,
+			// corrupting a daemon binary that was working before self-install ran.
+			if err := copyBinaryAtomic(srcPath, dstPath); err != nil {
+				logx.As().Warn().Err(err).
+					Str("src", srcPath).
+					Str("dst", dstPath).
+					Msg("Failed to install co-located solo-provisioner-daemon binary; it will be downloaded when needed")
+				return automa.StepSuccessReport(stp.Id())
+			}
+
+			logx.As().Info().
+				Str("src", srcPath).
+				Str("dst", dstPath).
+				Msg("Co-located solo-provisioner-daemon binary installed")
+
+			// The rename above leaves a running daemon on its old inode, so the process
+			// keeps executing the previous binary. Say so rather than letting the
+			// on-disk and running versions diverge silently.
+			if running, err := pkgos.IsServiceRunning(ctx, daemonServiceName); err == nil && running {
+				logx.As().Info().Str("service", daemonServiceName).Msg(
+					"solo-provisioner-daemon is running and keeps its current binary; " +
+						"restart the service to run the newly installed one")
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Installing co-located solo-provisioner-daemon binary")
+			return ctx, nil
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Co-located solo-provisioner-daemon binary handled")
+		})
+}
+
+// findColocatedDaemonBinary returns the path to a daemon binary in dir, or "" if
+// none is present. The plain name is preferred over the platform-suffixed one so
+// that a dir holding both (an install target that already has the daemon, plus
+// leftover build artifacts) resolves to the canonical name.
+func findColocatedDaemonBinary(dir string) string {
+	candidates := []string{
+		software.DaemonBinaryName,
+		fmt.Sprintf("%s-%s-%s", software.DaemonBinaryName, runtime.GOOS, runtime.GOARCH),
+	}
+	for _, name := range candidates {
+		p := filepath.Join(dir, name)
+		info, err := os.Stat(p)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			continue
+		}
+		return p
+	}
+	return ""
 }
 
 const (
