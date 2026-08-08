@@ -17,8 +17,16 @@
 #   gen-appstate.sh <out-dir> <bn-ip> <publisher-ip> <partner-ip> \
 #                   <public-ip> <backfill-ip> <restricted-ip>
 #
-# Ports are the current per-deployment BN listener assignments:
-#   publisher 40984 | subscriber 40980 | block-access 40981 | server-status 40982
+# Ports come from the caller, which reads them out of the chart values the harness
+# deploys with (test/config/network_uat_values.yaml) so the fixture cannot claim a
+# listener the block node does not have. A wrong port here is invisible: the daemon
+# programs it into the `<policy>_ports` set, real traffic on the true port then
+# matches no rule and lands in the default class, and the run reads as a
+# classification regression rather than a seeding bug.
+#
+# On the single-service topology every facility shares one port, so the fixture's
+# four ports collapse to the same value and only the source-IP sets separate
+# publisher/partner from public. Override individually for a split-topology run.
 set -eu
 
 if [ "$#" -ne 7 ]; then
@@ -34,11 +42,12 @@ PUBLIC=$5
 BACKFILL=$6
 RESTRICTED=$7
 
-PORT_PUBLISHER=40984
-PORT_SUBSCRIBER=40980
-PORT_BLOCKACCESS=40981
-PORT_STATUS=40982
-BACKFILL_PEER_PORT=50980  # the peer-BN API port for the outbound backfill entry
+BN_PORT=${BN_PORT:?BN_PORT is required (read from the harness chart values)}
+PORT_PUBLISHER=${PORT_PUBLISHER:-$BN_PORT}
+PORT_SUBSCRIBER=${PORT_SUBSCRIBER:-$BN_PORT}
+PORT_BLOCKACCESS=${PORT_BLOCKACCESS:-$BN_PORT}
+PORT_STATUS=${PORT_STATUS:-$BN_PORT}
+BACKFILL_PEER_PORT=${BACKFILL_PEER_PORT:-50980}  # the peer-BN API port for the outbound backfill entry
 
 mkdir -p "$OUT_DIR"
 
