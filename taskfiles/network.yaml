@@ -140,7 +140,16 @@ tasks:
         #    classification. ASSUMPTION: the UTM network forwards these child MACs
         #    (true on a bridged segment; validate on 'shared' — this is the macvlan risk).
         NIC="$(ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$PEERS_IP "ip route get 1.1.1.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1")"
-        echo "peers primary NIC: ${NIC:-<unknown>}"
+        [ -z "$NIC" ] && { echo "❌ could not resolve the peers VM's primary NIC (no default route yet? retry once it has finished booting)"; exit 1; }
+        echo "peers primary NIC: $NIC"
+
+        # iperf3 is the traffic generator for every role, so install it once here
+        # rather than re-running apt inside the per-role loop below.
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$PEERS_IP \
+          "command -v iperf3 >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y iperf3 >/dev/null)" || true
+        ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$PEERS_IP "command -v iperf3 >/dev/null" \
+          || { echo "❌ iperf3 is missing on the peers VM (apt failed — is the guest online?)"; exit 1; }
+
         PREFIX="$(echo "$PEERS_IP" | cut -d. -f1-3)"
         : > "{{.NET_HOSTS_FILE}}"
         echo "PEERS_VM_IP=$PEERS_IP" >> "{{.NET_HOSTS_FILE}}"
@@ -149,15 +158,19 @@ tasks:
           i=$((i + 1))
           off="$(echo '{{.NET_PEER_OFFSETS}}' | cut -d' ' -f$i)"
           ip="$PREFIX.$off"
+          # Verify the address by effect and fail hard. sudo that cannot prompt, or
+          # a segment that will not forward the child MAC, both leave the address
+          # absent — and a hosts.env listing peer IPs that do not exist sends every
+          # downstream task chasing a classification bug that is really a setup bug.
           ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$PEERS_IP "
             sudo ip link add ${role}0 link $NIC type macvlan mode bridge 2>/dev/null || true
             sudo ip addr replace $ip/24 dev ${role}0
             sudo ip link set ${role}0 up
-            command -v iperf3 >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y iperf3)
-          " 2>&1 || echo "  ⚠️  macvlan/iperf3 setup for $role may have failed (validate on-host)"
+            ip -4 -br addr show ${role}0 | grep -q '$ip/24'
+          " || { echo "❌ could not bring up $ip on ${role}0 — check passwordless sudo on the peers VM and macvlan forwarding on this network segment"; exit 1; }
           upper="$(echo "$role" | tr '[:lower:]' '[:upper:]')"
           echo "${upper}_IP=$ip" >> "{{.NET_HOSTS_FILE}}"
-          echo "  $role -> $ip (${role}0)"
+          echo "  ✓ $role -> $ip (${role}0)"
         done
         echo "✓ peer source IPs captured:"
         cat "{{.NET_HOSTS_FILE}}"

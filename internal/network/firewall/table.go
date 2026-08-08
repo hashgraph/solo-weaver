@@ -35,6 +35,13 @@ type Table struct {
 	// which the traffic-shaper daemon reconciles from the block node's statusz
 	// "restricted" category; an operator block list needs a home the daemon
 	// never overwrites.
+	//
+	// A blocked CIDR means "blocked on this node", not "blocked from the host's
+	// own services": it is dropped on prerouting (which covers pod-bound
+	// forwarded traffic and runs ahead of conntrack), again on input, and as a
+	// destination on output — because blocking a peer inbound does not stop this
+	// host from dialing it, and the replies to a host-initiated connection are
+	// admitted by the input chain's established accept.
 	BlockedCIDRs []string
 	// InClusterPorts are host-service ports reachable from PodCIDR (set
 	// @in_cluster_ports). Per design there is deliberately no --service-ports:
