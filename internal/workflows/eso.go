@@ -7,15 +7,11 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 )
 
-// ESOInstallOptions aliases the steps-layer options so cmd callers need not
-// import internal/workflows/steps.
-type ESOInstallOptions = steps.ESOInstallOptions
-
 // NewESOInstallWorkflow creates a workflow to install the External Secrets
-// Operator (ESO) Helm chart into the cluster. It returns an error when the
-// requested version is not declared in the infrastructure catalog.
-func NewESOInstallWorkflow(opts ESOInstallOptions) (*automa.WorkflowBuilder, error) {
-	return steps.SetupExternalSecrets(opts)
+// Operator (ESO) Helm chart at the catalog default version. An empty namespace
+// selects the catalog default.
+func NewESOInstallWorkflow(namespace string) *automa.WorkflowBuilder {
+	return steps.SetupExternalSecrets(namespace)
 }
 
 // NewESOUninstallWorkflow creates a workflow to uninstall the External Secrets

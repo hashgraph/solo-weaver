@@ -10,40 +10,29 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 )
 
-var flagESOChartVersion string
-
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install the External Secrets Operator",
 	Long: `Install the External Secrets Operator (ESO) Helm chart into the cluster.
 
 The command is idempotent: when ESO is already installed in the target
-namespace, installation is skipped with a clear message.
+namespace, installation is skipped with a clear message. The chart version is
+pinned by the infrastructure catalog.
 
 Examples:
-  # Install ESO with defaults (namespace: external-secrets, catalog default version)
+  # Install ESO with defaults (namespace: external-secrets)
   solo-provisioner eso operator install
 
   # Install into a custom namespace
-  solo-provisioner eso operator install --namespace my-eso
-
-  # Pin a specific catalog-declared chart version
-  solo-provisioner eso operator install --chart-version 0.20.2`,
+  solo-provisioner eso operator install --namespace my-eso`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		l := logx.As()
 		l.Debug().
 			Strs("args", args).
 			Str("namespace", flagESONamespace).
-			Str("chartVersion", flagESOChartVersion).
 			Msg("Installing External Secrets Operator")
 
-		wb, err := workflows.NewESOInstallWorkflow(workflows.ESOInstallOptions{
-			Namespace: flagESONamespace,
-			Version:   flagESOChartVersion,
-		})
-		if err != nil {
-			return err
-		}
+		wb := workflows.NewESOInstallWorkflow(flagESONamespace)
 
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
@@ -56,5 +45,4 @@ Examples:
 
 func init() {
 	common.FlagESONamespace().SetVar(installCmd, &flagESONamespace, false)
-	common.FlagESOChartVersion().SetVar(installCmd, &flagESOChartVersion, false)
 }
