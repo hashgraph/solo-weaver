@@ -8,9 +8,11 @@ import (
 	"strconv"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 )
@@ -51,15 +53,14 @@ func EnsureHederaOwnerStep() *automa.StepBuilder {
 			} else {
 				// Group exists — verify GID matches.
 				if hederaGroup.Gid() != hederaGroupId {
-					instructions := fmt.Sprintf(
-						"Group %q exists with GID %s but GID %s is required.\n"+
-							"Fix it with: sudo groupmod -g %s %s",
-						hederaGroupName, hederaGroup.Gid(), hederaGroupId, hederaGroupId, hederaGroupName)
 					return automa.FailureReport(stp,
-						automa.WithError(errorx.IllegalState.New(
-							"hedera owner group %q has incorrect GID: expected %s, got %s",
-							hederaGroupName, hederaGroupId, hederaGroup.Gid())),
-						automa.WithMetadata(map[string]string{"instructions": instructions}))
+						automa.WithError(errx.Decorate(
+							errorx.IllegalState.New(
+								"hedera owner group %q has incorrect GID: expected %s, got %s",
+								hederaGroupName, hederaGroupId, hederaGroup.Gid()),
+							reasons.PreconditionNotMet,
+							fmt.Sprintf("sudo groupmod -g %s %s", hederaGroupId, hederaGroupName),
+							"Re-run this command once the GID matches.")))
 				}
 				meta["hedera_group_created"] = "false"
 			}
@@ -81,29 +82,27 @@ func EnsureHederaOwnerStep() *automa.StepBuilder {
 			} else {
 				// User exists — verify UID matches.
 				if hederaUser.Uid() != hederaUserId {
-					instructions := fmt.Sprintf(
-						"User %q exists with UID %s but UID %s is required.\n"+
-							"Fix it with: sudo usermod -u %s %s",
-						hederaUserName, hederaUser.Uid(), hederaUserId, hederaUserId, hederaUserName)
 					return automa.FailureReport(stp,
-						automa.WithError(errorx.IllegalState.New(
-							"hedera owner user %q has incorrect UID: expected %s, got %s",
-							hederaUserName, hederaUserId, hederaUser.Uid())),
-						automa.WithMetadata(map[string]string{"instructions": instructions}))
+						automa.WithError(errx.Decorate(
+							errorx.IllegalState.New(
+								"hedera owner user %q has incorrect UID: expected %s, got %s",
+								hederaUserName, hederaUserId, hederaUser.Uid()),
+							reasons.PreconditionNotMet,
+							fmt.Sprintf("sudo usermod -u %s %s", hederaUserId, hederaUserName),
+							"Re-run this command once the UID matches.")))
 				}
 				meta["hedera_user_created"] = "false"
 			}
 
 			// Add weaver to the hedera group so it can write to setgid block-node storage dirs.
 			if err := pm.AddUserToGroup(weaverUserName, hederaGroupName); err != nil {
-				instructions := fmt.Sprintf(
-					"Could not add %q to group %q.\n"+
-						"Fix it with: sudo usermod -aG %s %s",
-					weaverUserName, hederaGroupName, hederaGroupName, weaverUserName)
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.Wrap(err,
-						"failed to add %s to group %s", weaverUserName, hederaGroupName)),
-					automa.WithMetadata(map[string]string{"instructions": instructions}))
+					automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err,
+							"failed to add %s to group %s", weaverUserName, hederaGroupName),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("sudo usermod -aG %s %s", hederaGroupName, weaverUserName),
+						"Re-run this command once the membership is in place.")))
 			}
 			logx.As().Info().Msgf("Ensured %s is a member of group %s", weaverUserName, hederaGroupName)
 			meta["weaver_in_hedera_group"] = "true"

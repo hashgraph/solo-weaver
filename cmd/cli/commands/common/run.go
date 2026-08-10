@@ -233,7 +233,7 @@ func finalizeWorkflowReport(report *automa.Report) error {
 		printJSONSummary(report, totalDuration, reportPath)
 	}
 
-	if err := deepestFailureError(report); err != nil {
+	if err := doctor.DeepestFailureError(report); err != nil {
 		return err
 	}
 	return report.Error
@@ -270,30 +270,6 @@ func printJSONSummary(report *automa.Report, duration time.Duration, reportPath 
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
-}
-
-// deepestFailureError descends through nested StepReports to return the
-// leaf-level failed step's Error. Mirrors doctor.GetInstructionsFromReport's
-// recursion so that errorx properties attached on a deeply nested step
-// (e.g. preflight superuser check, weaver installation check) are not masked
-// by automa's workflow-level "completed with N failures" wrapper.
-func deepestFailureError(r *automa.Report) error {
-	if r == nil {
-		return nil
-	}
-	for _, sr := range r.StepReports {
-		if sr == nil || sr.Status != automa.StatusFailed {
-			continue
-		}
-		if deeper := deepestFailureError(sr); deeper != nil {
-			return deeper
-		}
-		if sr.Error != nil {
-			return sr.Error
-		}
-		return errorx.IllegalState.New("step %q failed", sr.Id)
-	}
-	return nil
 }
 
 // RunPersistentPreRun is the body of the root PersistentPreRunE hook.

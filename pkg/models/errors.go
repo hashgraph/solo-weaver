@@ -2,19 +2,19 @@
 
 package models
 
-import "github.com/joomcode/errorx"
+import (
+	"github.com/automa-saga/errx"
+	"github.com/joomcode/errorx"
+)
 
 var (
-	// ErrPropertyResolution is the errorx property key used to attach remediation
-	// hints to precondition errors — mirrors doctor.ErrPropertyResolution without
-	// creating a circular import.
-	ErrPropertyResolution = errorx.RegisterProperty("resolution")
+	// ErrPropertyResolution holds remediation hints. Must alias errx's property —
+	// errorx compares properties by pointer, so a re-registration is invisible to errx.Hints.
+	ErrPropertyResolution = errx.PropertyResolution
 
-	// ErrPropertyReason is the errorx property key used to attach a stable,
-	// machine-readable reason code to an error (e.g. "UpgradeDirOwnershipCheckFailed").
-	// Mirrors the log-line reason= field convention so structured tooling can
-	// correlate /status JSON output with journal entries.
-	ErrPropertyReason = errorx.RegisterProperty("reason")
+	// ErrPropertyReason holds the machine-readable reason code. Prefer errx.WithReason
+	// or errx.Decorate over setting it directly. Printable: it renders in err.Error().
+	ErrPropertyReason = errx.PropertyReason
 
 	// ErrPropertyWhyFloor is the errorx property key used to attach the rule
 	// attribution string ("Why:") that produced the binding hardware floor for a

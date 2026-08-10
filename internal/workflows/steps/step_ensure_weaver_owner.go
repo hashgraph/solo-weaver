@@ -9,10 +9,12 @@ import (
 	"strconv"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 )
@@ -50,15 +52,14 @@ func EnsureWeaverOwnerStep() *automa.StepBuilder {
 				meta["weaver_group_created"] = "true"
 			} else {
 				if weaverGroup.Gid() != weaverGroupId {
-					instructions := fmt.Sprintf(
-						"Group %q exists with GID %s but GID %s is required.\n"+
-							"Fix it with: sudo groupmod -g %s %s",
-						weaverGroupName, weaverGroup.Gid(), weaverGroupId, weaverGroupId, weaverGroupName)
 					return automa.FailureReport(stp,
-						automa.WithError(errorx.IllegalState.New(
-							"weaver owner group %q has incorrect GID: expected %s, got %s",
-							weaverGroupName, weaverGroupId, weaverGroup.Gid())),
-						automa.WithMetadata(map[string]string{"instructions": instructions}))
+						automa.WithError(errx.Decorate(
+							errorx.IllegalState.New(
+								"weaver owner group %q has incorrect GID: expected %s, got %s",
+								weaverGroupName, weaverGroupId, weaverGroup.Gid()),
+							reasons.PreconditionNotMet,
+							fmt.Sprintf("sudo groupmod -g %s %s", weaverGroupId, weaverGroupName),
+							"Re-run this command once the GID matches.")))
 				}
 				meta["weaver_group_created"] = "false"
 			}
@@ -78,15 +79,14 @@ func EnsureWeaverOwnerStep() *automa.StepBuilder {
 				meta["weaver_user_created"] = "true"
 			} else {
 				if weaverUser.Uid() != weaverUserId {
-					instructions := fmt.Sprintf(
-						"User %q exists with UID %s but UID %s is required.\n"+
-							"Fix it with: sudo usermod -u %s %s",
-						weaverUserName, weaverUser.Uid(), weaverUserId, weaverUserId, weaverUserName)
 					return automa.FailureReport(stp,
-						automa.WithError(errorx.IllegalState.New(
-							"weaver owner user %q has incorrect UID: expected %s, got %s",
-							weaverUserName, weaverUserId, weaverUser.Uid())),
-						automa.WithMetadata(map[string]string{"instructions": instructions}))
+						automa.WithError(errx.Decorate(
+							errorx.IllegalState.New(
+								"weaver owner user %q has incorrect UID: expected %s, got %s",
+								weaverUserName, weaverUserId, weaverUser.Uid()),
+							reasons.PreconditionNotMet,
+							fmt.Sprintf("sudo usermod -u %s %s", weaverUserId, weaverUserName),
+							"Re-run this command once the UID matches.")))
 				}
 				meta["weaver_user_created"] = "false"
 			}
