@@ -30,6 +30,37 @@ and its traffic categories and daemon reconciler are block-node-specific (below)
 but the table itself holds whatever `network policy` writes, block-node-related
 or not.
 
+### Which plane sees which traffic
+
+The two tables register on different hooks, so they see **disjoint traffic**. That is why
+neither carries a rule for the other's ports, and why no block-node service port appears
+anywhere in the host firewall's rules or templates.
+
+| Traffic | Outcome | Decided by |
+|---|---|---|
+| External → node address, **non**-service port | Dropped | Host firewall `input` (`policy drop`) |
+| External → node address, service port | Translated, then forwarded. Classified when the port is in a managed `<name>_ports` set, otherwise forwarded unclassified | Workload policy `forward` |
+| In-cluster → pod address directly, any port | Not constrained here — forwarded under `policy accept` | Cilium |
+| Either endpoint in `@bn-restricted` | Dropped, both directions and both families | Workload policy `forward` |
+
+The first row misleads, because the mechanism is not the one the rule layout suggests. A packet
+addressed to a port with no service behind it gets **no load-balancer translation** — only
+exposed service ports have translation entries. Untranslated, its destination is still the
+node's own address, so the routing decision delivers it locally, it arrives at `input`, and the
+default drop catches it. It never becomes pod-bound traffic, so the classifier never sees it.
+
+Service traffic takes the opposite path: translation happens *before* the routing decision
+(Cilium's eBPF at the tc ingress hook, or `prerouting` when kube-proxy performs the DNAT), so
+the packet is forwarded and bypasses `input` entirely. That is why a block node serves traffic
+on its service ports while the host firewall opens none of them.
+
+One consequence worth knowing, because it is silent: **an exposed port absent from the managed
+`<name>_ports` sets is forwarded and unshaped.** It matches no classification rule, carries no
+`meta priority`, and lands in the HTB default class — `reserve-ingress` inbound, a 10%
+guarantee. Since those sets are reconciled from statusz, a listener the block node does not
+report gets no shaping rather than an error. For what each hook does and does not enforce, see
+[Coexistence with the host's existing network stack](#coexistence-with-the-hosts-existing-network-stack).
+
 ## How classify-and-shape fits together
 
 The policy plane and the shaper are decoupled and meet through exactly one thing:
