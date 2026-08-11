@@ -195,15 +195,26 @@ tasks:
         # Read the facility ports out of the same values file network:bn-deploy
         # installs with, so the fixture and the deployed chart cannot disagree.
         yamlport() { sed -n "s/^[[:space:]]*$1:[[:space:]]*\([0-9]\{1,\}\).*/\1/p" "{{.NET_BN_VALUES}}" | head -1; }
+        # Spelled as if/fi rather than `[ -z ... ] && { ...; }`. Under go-task's
+        # mvdan/sh with `set -e`, an && list that ends false is a failure even on the
+        # path where the guard is simply not tripped, so the idiom aborts the task with
+        # a bare "exit status 1" and no message.
+        needport() {
+          if [ -z "$2" ]; then
+            echo "❌ $1 not found in {{.NET_BN_VALUES}}"
+            exit 1
+          fi
+        }
         BN_PORT="$(yamlport port)"
         PORT_PUBLISHER="$(yamlport publisher)"
         PORT_SUBSCRIBER="$(yamlport subscriber)"
         PORT_BLOCKACCESS="$(yamlport blockAccess)"
         PORT_STATUS="$(yamlport serverStatus)"
-        for v in BN_PORT PORT_PUBLISHER PORT_SUBSCRIBER PORT_BLOCKACCESS PORT_STATUS; do
-          eval "val=\$$v"
-          [ -z "$val" ] && { echo "❌ $v not found in {{.NET_BN_VALUES}}"; exit 1; }
-        done
+        needport "service.port" "$BN_PORT"
+        needport "blockNode.ports.publisher" "$PORT_PUBLISHER"
+        needport "blockNode.ports.subscriber" "$PORT_SUBSCRIBER"
+        needport "blockNode.ports.blockAccess" "$PORT_BLOCKACCESS"
+        needport "blockNode.ports.serverStatus" "$PORT_STATUS"
         echo "BN facility ports (from {{.NET_BN_VALUES}}): publisher=$PORT_PUBLISHER subscriber=$PORT_SUBSCRIBER blockAccess=$PORT_BLOCKACCESS serverStatus=$PORT_STATUS"
 
         BN_PORT="$BN_PORT" PORT_PUBLISHER="$PORT_PUBLISHER" PORT_SUBSCRIBER="$PORT_SUBSCRIBER" \
