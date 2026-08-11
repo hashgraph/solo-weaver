@@ -1068,6 +1068,31 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 |---------------|--------------------|--------------------------------------------------------------------|
 | `--namespace` | `external-secrets` | Kubernetes namespace for the External Secrets Operator |
 
+#### Create an ExternalSecret
+
+Create (or update) an `ExternalSecret` that ESO reconciles into a Kubernetes Secret. The command uses server-side apply, so re-running it with the same `--name`/`--namespace` updates the existing `ExternalSecret` in place.
+
+> **Prerequisite:** a `ClusterSecretStore` named by `--store` and the target `--namespace` must both already exist in the cluster (the store points to your secrets backend — Vault, AWS, GCP, …). Setting up the `ClusterSecretStore` is cluster-operator configuration and is out of scope for this command.
+
+```bash
+sudo solo-provisioner eso secret create \
+  --store=vault-store \
+  --name=grafana-alloy-secrets \
+  --namespace=grafana-alloy \
+  --set PROMETHEUS_PASSWORD_PRIMARY=secret/data/grafana/alloy/prod/prometheus/primary#password \
+  --set LOKI_PASSWORD_PRIMARY=secret/data/grafana/alloy/prod/loki/primary#password
+```
+
+**Additional Flags**:
+
+| Flag                 | Default | Description                                                                             |
+|----------------------|---------|-----------------------------------------------------------------------------------------|
+| `--store`            | —       | **Required.** Name of the `ClusterSecretStore` resource to sync from                    |
+| `--name`             | —       | **Required.** Name of the resulting Kubernetes Secret (and the ExternalSecret)          |
+| `--namespace`        | —       | **Required.** Namespace for both the ExternalSecret and the Kubernetes Secret           |
+| `--set`              | —       | Repeatable. Map a Secret key to a store path: `KEY=store/path[#field]`. At least one required |
+| `--refresh-interval` | `1h`    | How often ESO re-syncs the secret from the store                                        |
+
 ---
 
 ### Alloy Commands
@@ -1677,6 +1702,7 @@ sudo solo-provisioner teleport cluster uninstall
 # EXTERNAL SECRETS OPERATOR (ESO)
 sudo solo-provisioner eso operator install    [--namespace=<ns>] [--chart-version=<version>]
 sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
+sudo solo-provisioner eso secret create       --store=<name> --name=<secret> --namespace=<ns> --set KEY=store/path[#field] [--refresh-interval=<interval>]
 
 # ALLOY
 sudo solo-provisioner alloy cluster install   [--monitor-block-node] [--cluster-name=<name>]

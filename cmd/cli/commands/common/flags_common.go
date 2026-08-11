@@ -121,6 +121,51 @@ func FlagESOChartVersion() FlagDefinition[string] {
 	}
 }
 
+func FlagESOSecretStore() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "store",
+		ShortName:   "",
+		Description: "Name of the ClusterSecretStore resource to sync from",
+		Default:     "",
+	}
+}
+
+func FlagESOSecretName() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "name",
+		ShortName:   "",
+		Description: "Name of the resulting Kubernetes Secret (and the ExternalSecret)",
+		Default:     "",
+	}
+}
+
+func FlagESOSecretNamespace() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "namespace",
+		ShortName:   "",
+		Description: "Namespace for both the ExternalSecret and the Kubernetes Secret",
+		Default:     "",
+	}
+}
+
+func FlagESORefreshInterval() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "refresh-interval",
+		ShortName:   "",
+		Description: "How often ESO re-syncs the secret from the store",
+		Default:     "1h",
+	}
+}
+
+func FlagESOSecretSet() RepeatableStringFlagDefinition {
+	return RepeatableStringFlagDefinition{
+		Name:        "set",
+		ShortName:   "",
+		Description: "Map a Secret key to a store path (format: KEY=store/path[#field]). Can be specified multiple times.",
+		Default:     nil,
+	}
+}
+
 func FlagMetricsServer() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
 		Name:        "metrics-server",
