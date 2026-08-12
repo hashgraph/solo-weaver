@@ -3,31 +3,29 @@
 package firewall
 
 import (
-	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
 var removeCmd = &cobra.Command{
 	Use:   "remove",
-	Short: "Remove a single --mgmt-cidr, --blocked-cidr, or --in-cluster-port",
+	Short: "Remove CIDRs and/or ports from a rule (--name)",
+	Long: "Remove addresses and/or ports from one rule of the host firewall. --name selects the rule: a reserved " +
+		"block (mgmt, blocked, in_cluster) or a named allow rule. Removing an entry that is not there is a no-op.\n\n" +
+		"Ports are removed by exact spec, so removing 2379 from a rule holding the range 2379-2380 does nothing — " +
+		"replace the range with `set --ports` instead of splitting it implicitly.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		mgr := newManager()
-		switch {
-		case cmd.Flags().Changed("mgmt-cidr"):
-			return mgr.RemoveMgmtCIDR(cmd.Context(), flagMgmtCIDR)
-		case cmd.Flags().Changed("blocked-cidr"):
-			return mgr.RemoveBlockedCIDR(cmd.Context(), flagBlockedCIDR)
-		case cmd.Flags().Changed("in-cluster-port"):
-			return mgr.RemovePort(cmd.Context(), flagInClusterPort)
-		default:
-			return errorx.IllegalArgument.New("one of --mgmt-cidr, --blocked-cidr, or --in-cluster-port is required")
+		name, cidrs, ports, err := resolveTarget(cmd)
+		if err != nil {
+			return err
 		}
+		return newManager().Remove(cmd.Context(), name, cidrs, ports)
 	},
 }
 
 func init() {
-	removeCmd.Flags().StringVar(&flagMgmtCIDR, "mgmt-cidr", "", "A single management CIDR to remove")
-	removeCmd.Flags().StringVar(&flagBlockedCIDR, "blocked-cidr", "", "A single operator block-list CIDR to remove")
-	removeCmd.Flags().IntVar(&flagInClusterPort, "in-cluster-port", 0, "A single in-cluster host-service port to remove")
+	registerTargetFlags(removeCmd, "remove")
+	removeCmd.Flags().StringVar(&flagMgmtCIDR, "mgmt-cidr", "", "A single management CIDR to remove (shorthand for --name mgmt --cidr)")
+	removeCmd.Flags().StringVar(&flagBlockedCIDR, "blocked-cidr", "", "A single operator block-list CIDR to remove (shorthand for --name blocked --cidr)")
+	removeCmd.Flags().IntVar(&flagInClusterPort, "in-cluster-port", 0, "A single in-cluster host-service port to remove (shorthand for --name in_cluster --port)")
 	removeCmd.MarkFlagsMutuallyExclusive("mgmt-cidr", "blocked-cidr", "in-cluster-port")
 }
