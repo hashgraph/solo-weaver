@@ -172,30 +172,3 @@ func Test_uninstallESOChart_UninstallChartError(t *testing.T) {
 	require.ErrorIs(t, err, wantErr)
 	assert.False(t, uninstalled)
 }
-
-func Test_SetupExternalSecrets_VersionResolution(t *testing.T) {
-	t.Run("default version", func(t *testing.T) {
-		def, err := resolveCatalogChart("external-secrets")
-		require.NoError(t, err)
-
-		spec, err := resolveCatalogChartVersion("external-secrets", "")
-		require.NoError(t, err)
-		assert.Equal(t, def.Version, spec.Version)
-	})
-
-	t.Run("declared version accepted", func(t *testing.T) {
-		def, err := resolveCatalogChart("external-secrets")
-		require.NoError(t, err)
-
-		spec, err := resolveCatalogChartVersion("external-secrets", def.Version)
-		require.NoError(t, err)
-		assert.Equal(t, def.Version, spec.Version)
-		assert.NotEmpty(t, spec.Checksum)
-	})
-
-	t.Run("undeclared version rejected", func(t *testing.T) {
-		_, err := SetupExternalSecrets(ESOInstallOptions{Version: "0.0.0-nonexistent"})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "0.0.0-nonexistent")
-	})
-}

@@ -1028,17 +1028,14 @@ Manage the External Secrets Operator (ESO), which syncs secrets from external st
 
 #### Install External Secrets Operator
 
-Install the `external-secrets/external-secrets` Helm chart into the cluster. The command is idempotent: if ESO is already installed in the target namespace, installation is skipped with a clear message.
+Install the `external-secrets/external-secrets` Helm chart into the cluster. The command is idempotent: if ESO is already installed in the target namespace, installation is skipped with a clear message. The chart version is pinned by the infrastructure catalog.
 
 ```bash
-# Install with defaults (namespace: external-secrets, catalog default version)
+# Install with defaults (namespace: external-secrets)
 sudo solo-provisioner eso operator install
 
 # Install into a custom namespace
 sudo solo-provisioner eso operator install --namespace my-eso
-
-# Pin a specific catalog-declared chart version
-sudo solo-provisioner eso operator install --chart-version 0.20.2
 ```
 
 **Additional Flags**:
@@ -1046,7 +1043,6 @@ sudo solo-provisioner eso operator install --chart-version 0.20.2
 | Flag              | Default            | Description                                                                                                          |
 |-------------------|--------------------|----------------------------------------------------------------------------------------------------------------------|
 | `--namespace`     | `external-secrets` | Kubernetes namespace for the External Secrets Operator                                                               |
-| `--chart-version` | _(catalog default)_ | External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default) |
 
 #### Uninstall External Secrets Operator
 
@@ -1700,7 +1696,7 @@ sudo solo-provisioner teleport cluster install --values=<file>
 sudo solo-provisioner teleport cluster uninstall
 
 # EXTERNAL SECRETS OPERATOR (ESO)
-sudo solo-provisioner eso operator install    [--namespace=<ns>] [--chart-version=<version>]
+sudo solo-provisioner eso operator install    [--namespace=<ns>]
 sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
 sudo solo-provisioner eso secret create       --store=<name> --name=<secret> --namespace=<ns> --set KEY=store/path[#field] [--refresh-interval=<interval>]
 

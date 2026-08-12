@@ -112,15 +112,6 @@ func FlagESONamespace() FlagDefinition[string] {
 	}
 }
 
-func FlagESOChartVersion() FlagDefinition[string] {
-	return FlagDefinition[string]{
-		Name:        "chart-version",
-		ShortName:   "",
-		Description: "External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default)",
-		Default:     "",
-	}
-}
-
 func FlagESOSecretStore() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "store",

@@ -25,21 +25,13 @@ const (
 	UninstallExternalSecretsStepId = "uninstall-external-secrets"
 )
 
-// ESOInstallOptions parameterizes the External Secrets Operator install workflow.
-// Empty fields select the catalog default namespace and version.
-type ESOInstallOptions struct {
-	Namespace string
-	Version   string
-}
-
-// SetupExternalSecrets returns a workflow builder that installs the External Secrets Operator.
-func SetupExternalSecrets(opts ESOInstallOptions) (*automa.WorkflowBuilder, error) {
-	spec, err := resolveCatalogChartVersion("external-secrets", opts.Version)
-	if err != nil {
-		return nil, err
-	}
-	if opts.Namespace != "" {
-		spec.Namespace = opts.Namespace
+// SetupExternalSecrets returns a workflow builder that installs the External
+// Secrets Operator at the catalog default version. An empty namespace selects
+// the catalog default namespace.
+func SetupExternalSecrets(namespace string) *automa.WorkflowBuilder {
+	spec := chartSpec("external-secrets")
+	if namespace != "" {
+		spec.Namespace = namespace
 	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(
@@ -55,7 +47,7 @@ func SetupExternalSecrets(opts ESOInstallOptions) (*automa.WorkflowBuilder, erro
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator setup successfully")
-		}), nil
+		})
 }
 
 // TeardownExternalSecrets returns a workflow builder that uninstalls the External
