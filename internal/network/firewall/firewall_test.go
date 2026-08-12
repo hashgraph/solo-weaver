@@ -114,11 +114,11 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	// ICMP is a static, safe ruleset: full ICMP from mgmt, and from everyone
 	// else the path-health subset (PMTUD + traceroute) plus rate-limited echo.
 	require.Contains(t, doc, "ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept")
-	require.Contains(t, doc, "icmp type destination-unreachable accept")
-	require.Contains(t, doc, "icmp type time-exceeded accept")
-	require.Contains(t, doc, "icmp type echo-request limit rate 10/second accept")
-	// Over-budget echo must be dropped explicitly, not left to fall through.
-	require.Contains(t, doc, "icmp type echo-request drop")
+	// Over-budget echo is discarded first, so a single accept can cover every
+	// admitted type. The meter stays scoped to echo-request: metering the whole
+	// set would share one bucket and let a ping flood starve the error signals.
+	require.Contains(t, doc, "icmp type echo-request limit rate over 10/second drop")
+	require.Contains(t, doc, "icmp type { destination-unreachable, time-exceeded, echo-request } accept")
 	require.Contains(t, doc, "ip saddr 10.4.0.0/24 tcp dport @in_cluster_ports accept")
 
 	// Ordering is load-bearing. ICMP must be evaluated BEFORE the conntrack
@@ -134,15 +134,16 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	require.Less(t, icmpDispatchIdx, ctIdx, "ICMP dispatch must precede the conntrack fast-path")
 
 	// Within the ICMP chain: invalid is dropped first, so a forged ICMP error
-	// cannot be admitted by the blanket path-health accepts that follow; then
-	// the rate limit; then the explicit drop for over-budget echo.
+	// cannot be admitted by the blanket path-health accept that follows; then the
+	// over-budget drop, which must precede that accept or the meter never binds.
 	icmp4 := chainBody(t, doc, "input_icmp_ipv4")
 	invalidIdx := strings.Index(icmp4, "ct state invalid drop")
-	limitIdx := strings.Index(icmp4, "icmp type echo-request limit rate 10/second accept")
-	dropIdx := strings.Index(icmp4, "icmp type echo-request drop")
-	require.Greater(t, invalidIdx, -1, "ICMPv4 chain must drop invalid before the path-health accepts")
-	require.Less(t, invalidIdx, limitIdx, "invalid drop must precede the ICMP accepts")
-	require.Greater(t, dropIdx, limitIdx, "echo drop must follow the echo rate limit")
+	limitIdx := strings.Index(icmp4, "icmp type echo-request limit rate over 10/second drop")
+	acceptIdx := strings.Index(icmp4, "icmp type { destination-unreachable, time-exceeded, echo-request } accept")
+	require.Greater(t, invalidIdx, -1, "ICMPv4 chain must drop invalid before the path-health accept")
+	require.Greater(t, limitIdx, -1, "ICMPv4 chain must meter echo-request")
+	require.Less(t, invalidIdx, limitIdx, "invalid drop must precede the ICMP rules")
+	require.Less(t, limitIdx, acceptIdx, "the over-budget drop must precede the accept it guards")
 
 	// The block list must be evaluated before the conntrack fast-path so an
 	// operator-added CIDR also kills already-open connections, not just new ones.
@@ -205,11 +206,11 @@ func TestRender_FamilySplit(t *testing.T) {
 	require.NotContains(t, v6, "ip saddr")
 
 	icmp4 := chainBody(t, doc, "input_icmp_ipv4")
-	require.Contains(t, icmp4, "icmp type echo-request drop")
+	require.Contains(t, icmp4, "icmp type echo-request limit rate over 10/second drop")
 	require.NotContains(t, icmp4, "icmpv6")
 
 	icmp6 := chainBody(t, doc, "input_icmp_ipv6")
-	require.Contains(t, icmp6, "icmpv6 type echo-request drop")
+	require.Contains(t, icmp6, "icmpv6 type echo-request limit rate over 10/second drop")
 	require.NotContains(t, icmp6, "icmp type")
 }
 
@@ -249,7 +250,7 @@ func TestRender_DualStack(t *testing.T) {
 	// be accepted (on-link MITM). Hop-limit 255 guards the NDP accept.
 	require.Contains(t, doc, "icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } ip6 hoplimit 255 accept")
 	require.Contains(t, doc, "icmpv6 type { mld-listener-query, mld-listener-report, mld-listener-done } accept")
-	require.Contains(t, doc, "icmpv6 type packet-too-big accept")
+	require.Contains(t, doc, "icmpv6 type { packet-too-big, destination-unreachable, time-exceeded, parameter-problem, echo-request } accept")
 	require.NotContains(t, doc, "nd-redirect")
 
 	// NDP must be reached before the conntrack fast-path, same reasoning as the

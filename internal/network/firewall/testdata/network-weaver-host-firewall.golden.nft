@@ -78,13 +78,14 @@ table inet weaver-host-firewall {
 
 		# From everyone else: always allow the path-health subset (Path MTU
 		# Discovery + traceroute), and rate-limit echo-request to prevent floods.
-		# The trailing drop keeps over-budget echo from falling back to the base
-		# chain's established accept (a sustained ping is established after the
-		# first reply).
-		icmp type destination-unreachable accept
-		icmp type time-exceeded accept
-		icmp type echo-request limit rate 10/second accept
-		icmp type echo-request drop
+		# Discarding the excess first lets one accept cover every admitted type,
+		# and keeps over-budget echo from falling back to the base chain's
+		# established accept (a sustained ping is established after the first
+		# reply). The meter must stay scoped to echo-request: metering the whole
+		# set would share one bucket, so a ping flood would starve the error
+		# signals below and blackhole PMTUD exactly when the host is loaded.
+		icmp type echo-request limit rate over 10/second drop
+		icmp type { destination-unreachable, time-exceeded, echo-request } accept
 	}
 
 	# ICMPv6. Same invalid-first ordering, and for the same reason, as the IPv4
@@ -109,13 +110,12 @@ table inet weaver-host-firewall {
 
 		# IPv6 path health for everyone. packet-too-big is the IPv6 PMTUD signal —
 		# IPv6 routers never fragment, so dropping it silently blackholes any flow
-		# whose path MTU is smaller than the sender's.
-		icmpv6 type packet-too-big accept
-		icmpv6 type destination-unreachable accept
-		icmpv6 type time-exceeded accept
-		icmpv6 type parameter-problem accept
-		icmpv6 type echo-request limit rate 10/second accept
-		icmpv6 type echo-request drop
+		# whose path MTU is smaller than the sender's. Discarding over-budget echo
+		# first lets one accept cover every admitted type; the meter must stay
+		# scoped to echo-request, since metering the whole set would share one
+		# bucket and let a ping flood starve packet-too-big.
+		icmpv6 type echo-request limit rate over 10/second drop
+		icmpv6 type { packet-too-big, destination-unreachable, time-exceeded, parameter-problem, echo-request } accept
 	}
 
 	chain input_ipv4 {
