@@ -18,9 +18,9 @@ func TestRenderWeaverNft_EmptyRegistry(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "network-weaver-workload-policy.nft")
 
-	// Missing registry dir is treated as an empty registry: must be a no-op.
-	// Writing a forward chain with policy drop for zero policies would silently
-	// block all new forwarded traffic (pod startup, image pulls, DNS).
+	// Missing registry dir is treated as an empty registry: must be a no-op, so
+	// the boot oneshot has nothing to replay rather than a table that classifies
+	// nothing.
 	require.NoError(t, RenderWeaverNft(filepath.Join(dir, "policies"), out, ""))
 
 	_, err := os.Stat(out)

@@ -151,6 +151,42 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	require.Less(t, blockedIdx, ctIdx, "blocked-CIDR drop must precede the conntrack fast-path")
 }
 
+// TestRender_BlockListReachesEveryPath pins the block list's scope. A CIDR in
+// @blocked_addrs means "blocked on this node": dropped ahead of conntrack on the
+// way in (which also covers pod-bound forwarded traffic), and dropped as a
+// destination on the way out. Inbound-only is not enough — blocking a peer does
+// not stop this host from dialing it, and the replies to a host-initiated
+// connection are admitted by the input chain's established accept.
+func TestRender_BlockListReachesEveryPath(t *testing.T) {
+	doc, err := dualStackTable().Render()
+	require.NoError(t, err)
+
+	// Priority must be below conntrack's -200, or the early drop buys nothing.
+	pre := chainBody(t, doc, "prerouting_blocklist")
+	require.Contains(t, pre, "type filter hook prerouting priority -300; policy accept;")
+	require.Contains(t, pre, "ip saddr @blocked_addrs drop")
+	require.Contains(t, pre, "ip6 saddr @blocked_addrs6 drop")
+
+	// The output chain is block-list symmetry, NOT an egress allowlist: it must
+	// stay `policy accept` and must never grow a rule that gates normal traffic.
+	out := chainBody(t, doc, "output")
+	require.Contains(t, out, "type filter hook output priority 0; policy accept;")
+	require.Contains(t, out, "ip daddr @blocked_addrs drop")
+	require.Contains(t, out, "ip6 daddr @blocked_addrs6 drop")
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "type filter") {
+			continue
+		}
+		require.Contains(t, line, "@blocked_addrs", "output chain must carry block-list rules only, got %q", line)
+	}
+
+	// The input copy is redundant with prerouting for wire traffic but is kept
+	// deliberately, so the block list's position relative to the conntrack
+	// fast-path remains a property of the input chain itself.
+	require.Contains(t, chainBody(t, doc, "input"), "ip saddr @blocked_addrs drop")
+}
+
 // TestRender_FamilySplit pins the point of the per-family chains: a packet must
 // never be evaluated against a rule belonging to the other address family.
 func TestRender_FamilySplit(t *testing.T) {

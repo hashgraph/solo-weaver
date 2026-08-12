@@ -170,7 +170,67 @@ func TestRender_DualStackGolden(t *testing.T) {
 	require.Contains(t, doc, "set bn-backfill6 { type ipv6_addr . inet_service; }")
 	require.Contains(t, doc, "ip6 saddr @bn-restricted6 drop")
 	require.Contains(t, doc, "ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6")
-	require.Contains(t, doc, "ip6 saddr 2001:db8:c0de::/64 accept")
+}
+
+// chainBody returns the body of the named chain, so an ordering assertion can be
+// scoped to one chain. Document order stopped being evaluation order when the
+// forward chain was split by family: the per-family chains are defined below the
+// hooked chain but run before it falls through, via the nfproto dispatch.
+func chainBody(t *testing.T, doc, name string) string {
+	t.Helper()
+	// An empty chain renders on one line as `chain <name> { }`; matching only the
+	// multi-line form would fail here with "not found" for a chain that is present
+	// and legitimately empty.
+	if strings.Contains(doc, "\tchain "+name+" { }\n") {
+		return ""
+	}
+	header := "\tchain " + name + " {\n"
+	start := strings.Index(doc, header)
+	require.Greater(t, start, -1, "chain %s not found in rendered document", name)
+	rest := doc[start+len(header):]
+	end := strings.Index(rest, "\n\t}\n")
+	require.Greater(t, end, -1, "chain %s is not terminated", name)
+	return rest[:end]
+}
+
+// TestRender_SingleStackEmitsAnEmptyChainForTheAbsentFamily covers the one input
+// that produces a chain with no rules at all: stamp-only policies (no deny tier,
+// the only tier a family without a pod CIDR renders) on a single-stack
+// deployment. The chain must still exist, because the hooked chain's vmap jumps
+// to it unconditionally and an unresolved jump fails the whole load.
+func TestRender_SingleStackEmitsAnEmptyChainForTheAbsentFamily(t *testing.T) {
+	stampOnly := []*Policy{
+		{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Direction: DirectionIngress, Ports: []string{"40840"}, CreatedAt: fixedTime()},
+	}
+	doc, err := Render(stampOnly, "10.4.0.0/24")
+	require.NoError(t, err)
+
+	require.Contains(t, doc, "jump "+chainV6, "the dispatch always jumps to both families")
+	require.Contains(t, doc, "\tchain "+chainV6+" { }\n", "the absent family's chain must still be declared")
+	require.Contains(t, chainBody(t, doc, chainV4), "ip daddr 10.4.0.0/24 ip saddr @bn-publisher")
+}
+
+// TestRender_AbsentFamilyOmitsTheReplyRestore pins the reply-restore tier to the
+// same pod-CIDR gate as the stamp tiers. The ct mark it matches is only written
+// by a stamp rule, which renders solely for a family that has a pod CIDR, so
+// emitting the restore for the absent family would add a rule no packet can ever
+// match.
+func TestRender_AbsentFamilyOmitsTheReplyRestore(t *testing.T) {
+	replyStamp := []*Policy{
+		{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response", Direction: DirectionEgress, CreatedAt: fixedTime()},
+		{Name: "bn-restricted", Action: ActionDeny, CreatedAt: fixedTime()},
+	}
+
+	single, err := Render(replyStamp, "10.4.0.0/24")
+	require.NoError(t, err)
+	require.Contains(t, chainBody(t, single, chainV4), "ct direction reply")
+	require.NotContains(t, chainBody(t, single, chainV6), "ct direction reply",
+		"a family with no pod CIDR carries the deny tier only")
+
+	dual, err := Render(replyStamp, "10.4.0.0/24", "2001:db8:c0de::/64")
+	require.NoError(t, err)
+	require.Contains(t, chainBody(t, dual, chainV6), "ct direction reply",
+		"both families keep the restore once both have a pod CIDR")
 }
 
 func TestRender_DeterministicRegardlessOfInputOrder(t *testing.T) {
@@ -188,25 +248,90 @@ func TestRender_DeterministicRegardlessOfInputOrder(t *testing.T) {
 	require.Equal(t, want, got, "Render must sort internally, not rely on the caller's order")
 }
 
+// TestRender_TierOrderInvariants pins tier order *within* a family chain. Every
+// assertion is scoped to one chain body: a whole-document strings.Index compares
+// positions across chains that never evaluate the same packet, which would make
+// the assertion meaningless.
 func TestRender_TierOrderInvariants(t *testing.T) {
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
+	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
-	// Quarantine drops and the reply restore must both precede `ct state
-	// established,related accept`, otherwise open connections survive a
-	// quarantine and reply packets are misclassified.
-	estIdx := strings.Index(doc, "ct state established,related accept")
-	require.Positive(t, estIdx)
-	require.Less(t, strings.Index(doc, "ip saddr @bn-restricted drop"), estIdx, "deny must precede est,rel accept")
-	require.Less(t, strings.Index(doc, "ct direction reply ct mark 0x20"), estIdx, "reply restore must precede est,rel accept")
+	for _, tc := range []struct {
+		chain, deny, specific, fallthr string
+	}{
+		{chainV4, "ip saddr @bn-restricted drop", "@bn-partner-out ", "@bn-public-out_ports"},
+		{chainV6, "ip6 saddr @bn-restricted6 drop", "@bn-partner-out6 ", "@bn-public-out_ports"},
+	} {
+		t.Run(tc.chain, func(t *testing.T) {
+			body := chainBody(t, doc, tc.chain)
 
-	// Specific (partner) must precede the fallthrough (public) so partner-bound
-	// replies hit 1:40 and everyone else 1:50.
-	require.Less(t, strings.Index(doc, "@bn-partner-out"), strings.Index(doc, "@bn-public-out_ports"))
+			// The quarantine drops must lead the chain: every rule below them
+			// ends in `accept`, so a deny that sorted lower would let a
+			// restricted peer's traffic be stamped and accepted instead.
+			denyIdx := strings.Index(body, tc.deny)
+			restoreIdx := strings.Index(body, "ct direction reply ct mark 0x20")
+			specificIdx := strings.Index(body, tc.specific)
+			require.Positive(t, denyIdx)
+			require.Positive(t, restoreIdx)
+			require.Positive(t, specificIdx)
+			require.Less(t, denyIdx, restoreIdx, "deny must precede the reply restore")
+			require.Less(t, restoreIdx, specificIdx, "reply restore must precede classification")
 
-	// Chain must default-drop and end with a trailing drop.
-	require.Contains(t, doc, "policy drop;")
-	require.True(t, strings.HasSuffix(strings.TrimSpace(doc), "}\n}") || strings.Contains(doc, "\n\t\tdrop\n"))
+			// Specific (partner) must precede the fallthrough (public) so
+			// partner-bound replies hit 1:40 and everyone else 1:50.
+			require.Less(t, specificIdx, strings.Index(body, tc.fallthr))
+		})
+	}
+}
+
+// TestRender_FamilySplit pins the structural change: a minimal hooked chain that
+// only dispatches, per-family chains that carry no rule from the other family,
+// and no conntrack-state rule or terminal drop anywhere.
+func TestRender_FamilySplit(t *testing.T) {
+	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
+	require.NoError(t, err)
+
+	base := chainBody(t, doc, chainBase)
+	require.Contains(t, base, "type filter hook forward priority 0; policy accept;")
+	require.Contains(t, base, "meta nfproto vmap { ipv4 : jump forward_ipv4, ipv6 : jump forward_ipv6 }")
+
+	// The hooked chain must carry nothing but the policy line and the dispatch —
+	// a rule that creeps in here is evaluated for every forwarded packet.
+	var baseRules []string
+	for _, line := range strings.Split(base, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			baseRules = append(baseRules, line)
+		}
+	}
+	require.Len(t, baseRules, 2, "hooked chain must hold only the policy line and the dispatch, got %v", baseRules)
+
+	// No rule may match a family it cannot belong to.
+	for _, line := range strings.Split(chainBody(t, doc, chainV4), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		require.NotContains(t, line, "ip6 ", "IPv6 match in the IPv4 chain: %s", line)
+	}
+	for _, line := range strings.Split(chainBody(t, doc, chainV6), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		require.False(t, strings.HasPrefix(line, "ip "), "IPv4 match in the IPv6 chain: %s", line)
+	}
+
+	// The reply restore matches conntrack only, so it belongs in both chains —
+	// it cannot be hoisted into the hooked chain above the dispatch, where its
+	// `accept` would let a quarantined peer's replies escape the deny tier.
+	require.Contains(t, chainBody(t, doc, chainV4), "ct direction reply ct mark 0x20")
+	require.Contains(t, chainBody(t, doc, chainV6), "ct direction reply ct mark 0x20")
+
+	// The chain classifies; it no longer enforces.
+	require.NotContains(t, doc, "policy drop;")
+	require.NotContains(t, doc, "ct state")
+	require.NotContains(t, doc, "\n\t\tdrop\n")
 }
 
 func TestRender_WorkedExamples(t *testing.T) {

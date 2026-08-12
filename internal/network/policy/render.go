@@ -22,16 +22,20 @@ import (
 // (`<name>_ports` for a ManagedPorts policy) is likewise declared empty here and
 // filled from statusz at runtime, exactly like the CIDR membership set.
 //
-// Rule position is determined by action type and match specificity, never by
-// creation order:
+// The hooked `forward` chain holds no rules of its own beyond a `meta nfproto`
+// dispatch into forward_ipv4 / forward_ipv6, so a packet never evaluates rules
+// belonging to the other address family. Its policy is `accept`: this table
+// classifies traffic for the HTB hierarchy, it does not enforce workload
+// isolation (Cilium does). Traffic no rule matches therefore falls through
+// carrying no `meta priority` and lands in the HTB default class.
+//
+// Rule position *within a family chain* is determined by action type and match
+// specificity, never by creation order:
 //
 //  1. deny drops (both directions)
 //  2. asymmetric reply-stamp restore
 //  3. stamp classification — specific (has an IP-set match)
 //  4. stamp classification — fallthrough (--from-entity world)
-//  5. unclassified pod egress                (structural; only when podCIDR is set)
-//  6. ct state established,related accept   (structural)
-//  7. drop                                   (structural)
 func Render(policies []*Policy, podCIDRs ...string) (string, error) {
 	podV4, podV6 := partitionPodCIDRs(podCIDRs)
 	if podV4 == "" && podV6 == "" && needsPodCIDR(policies) {
@@ -50,7 +54,11 @@ func Render(policies []*Policy, podCIDRs ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	chainLines, err := renderChain(policies, podV4, podV6)
+	v4Lines, err := renderFamilyChain(policies, familyV4(podV4))
+	if err != nil {
+		return "", err
+	}
+	v6Lines, err := renderFamilyChain(policies, familyV6(podV6))
 	if err != nil {
 		return "", err
 	}
@@ -67,11 +75,77 @@ func Render(policies []*Policy, podCIDRs ...string) (string, error) {
 		b.WriteString(strings.Join(setLines, "\n"))
 		b.WriteString("\n\n")
 	}
-	b.WriteString("\tchain forward {\n")
-	b.WriteString(strings.Join(chainLines, "\n"))
-	b.WriteString("\n\t}\n")
+	b.WriteString(strings.Join(baseChainLines(), "\n"))
+	b.WriteString("\n\n")
+	writeChain(&b, chainV4, v4Lines)
+	b.WriteString("\n")
+	writeChain(&b, chainV6, v6Lines)
 	b.WriteString("}\n")
 	return b.String(), nil
+}
+
+// writeChain emits one regular chain. A chain with no rules renders as a bare
+// `chain <name> { }` — reachable on a single-stack deployment with no deny
+// policies, since the deny tier is the only one a family without a pod CIDR
+// renders at all.
+func writeChain(b *strings.Builder, name string, lines []string) {
+	if len(lines) == 0 {
+		b.WriteString("\tchain " + name + " { }\n")
+		return
+	}
+	b.WriteString("\tchain " + name + " {\n")
+	b.WriteString(strings.Join(lines, "\n"))
+	b.WriteString("\n\t}\n")
+}
+
+// Chain names. The hooked chain keeps its original name so `nft list chain inet
+// weaver-workload-policy forward` and the operator docs still resolve.
+const (
+	chainBase = "forward"
+	chainV4   = "forward_ipv4"
+	chainV6   = "forward_ipv6"
+)
+
+// baseChainLines renders the hooked chain: a policy declaration and the family
+// dispatch, nothing else.
+//
+// `meta nfproto` rather than `meta protocol`: in an `inet` table nfproto reads
+// the netfilter protocol family straight off the hook, whereas `meta protocol`
+// depends on the skb's ethertype being populated — not guaranteed for locally
+// generated traffic or non-Ethernet interfaces.
+func baseChainLines() []string {
+	return []string{
+		"\t# The hooked chain carries no rules of its own — it only dispatches into",
+		"\t# the per-family chains below, so an IPv4 packet never evaluates an IPv6",
+		"\t# rule and vice versa.",
+		"\t#",
+		"\t# Policy is `accept` because this table classifies traffic for the HTB",
+		"\t# hierarchy rather than enforcing workload isolation, which is Cilium's",
+		"\t# job. A packet no rule matches falls through carrying no `meta priority`",
+		"\t# and therefore lands in the HTB default class.",
+		"\tchain " + chainBase + " {",
+		"\t\ttype filter hook forward priority 0; policy accept;",
+		"\t\tmeta nfproto vmap { ipv4 : jump " + chainV4 + ", ipv6 : jump " + chainV6 + " }",
+		"\t}",
+	}
+}
+
+// family carries the per-address-family spelling differences between the two
+// generated chains: the nft L3 match keyword, that family's pod CIDR (empty on a
+// single-stack deployment's absent family, which suppresses its stamp rules),
+// and the selector for a policy's membership set.
+type family struct {
+	proto   string
+	podCIDR string
+	setName func(string) string
+}
+
+func familyV4(podCIDR string) family {
+	return family{proto: "ip", podCIDR: podCIDR, setName: func(name string) string { return name }}
+}
+
+func familyV6(podCIDR string) family {
+	return family{proto: "ip6", podCIDR: podCIDR, setName: V6SetName}
 }
 
 // needsPodCIDR reports whether any policy in the set is a --stamp policy.
@@ -164,47 +238,54 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 	return lines, nil
 }
 
-// renderChain builds the forward chain body lines (indented two tabs), grouped
-// into the seven tiers above.
-func renderChain(policies []*Policy, podV4, podV6 string) ([]string, error) {
-	lines := []string{
-		"\t\ttype filter hook forward priority 0; policy drop;",
-		"\t\tct state invalid drop",
-	}
+// renderFamilyChain builds one address family's chain body (indented two tabs),
+// grouped into the four tiers above. Both chains are rendered from the same
+// policy set; f decides how each rule is spelled and which membership set it
+// references, so no rule can match a family it cannot belong to.
+func renderFamilyChain(policies []*Policy, f family) ([]string, error) {
+	var lines []string
 
-	// Tier 1: quarantine drops, both families.
+	// Tier 1: quarantine drops, both directions.
 	var deny []string
 	for _, p := range policies {
 		if p.Action == ActionDeny {
 			deny = append(deny,
-				fmt.Sprintf("\t\tip saddr @%s drop", p.Name),
-				fmt.Sprintf("\t\tip daddr @%s drop", p.Name),
-				fmt.Sprintf("\t\tip6 saddr @%s drop", V6SetName(p.Name)),
-				fmt.Sprintf("\t\tip6 daddr @%s drop", V6SetName(p.Name)))
+				fmt.Sprintf("\t\t%s saddr @%s drop", f.proto, f.setName(p.Name)),
+				fmt.Sprintf("\t\t%s daddr @%s drop", f.proto, f.setName(p.Name)))
 		}
 	}
 	if len(deny) > 0 {
-		lines = append(lines, "",
-			"\t\t# Quarantine (deny), both directions. Runs before est,rel accept",
-			"\t\t# so already-open connections are also killed.")
+		lines = appendSection(lines,
+			"\t\t# Quarantine (deny), both directions. Runs ahead of the classification",
+			"\t\t# accepts below so a quarantined peer's traffic is dropped rather than",
+			"\t\t# stamped. There is no conntrack fast-path in this chain, so packets on",
+			"\t\t# already-open connections are evaluated against these drops too.")
 		lines = append(lines, deny...)
 	}
 
-	// Tier 2: asymmetric reply-stamp restore.
+	// Tier 2: asymmetric reply-stamp restore. Gated on this family's pod CIDR for
+	// the same reason as the stamp tiers below: the ct mark it matches is only ever
+	// written by renderStampRule, which is itself pod-CIDR-gated, so in a family
+	// with no pod CIDR no packet can carry the mark and the rule is unreachable.
 	var restore []string
-	for _, p := range policies {
-		if p.Action == ActionStamp && p.ReplyStamp != "" {
-			rule, err := renderReplyRestoreRule(p)
-			if err != nil {
-				return nil, err
+	if f.podCIDR != "" {
+		for _, p := range policies {
+			if p.Action == ActionStamp && p.ReplyStamp != "" {
+				rule, err := renderReplyRestoreRule(p)
+				if err != nil {
+					return nil, err
+				}
+				restore = append(restore, rule)
 			}
-			restore = append(restore, rule)
 		}
 	}
 	if len(restore) > 0 {
-		lines = append(lines, "",
-			"\t\t# Asymmetric reply restore. Must precede est,rel accept so every",
-			"\t\t# reply packet is reclassified, not just the SYN.")
+		lines = appendSection(lines,
+			"\t\t# Asymmetric reply restore. Matches conntrack only, so it is spelled",
+			"\t\t# identically in both family chains that have a pod CIDR. Must precede",
+			"\t\t# the classification tiers: on the reply the addresses are reversed, so a",
+			"\t\t# broad fallthrough rule below would otherwise claim the packet and stamp",
+			"\t\t# it with the forward class instead of the reply class.")
 		lines = append(lines, restore...)
 	}
 
@@ -230,51 +311,43 @@ func renderChain(policies []*Policy, podV4, podV6 string) ([]string, error) {
 
 	var specific, fallthr []string
 	for _, p := range specificPolicies {
-		rules, err := renderStampRule(p, podV4, podV6)
+		rule, err := renderStampRule(p, f)
 		if err != nil {
 			return nil, err
 		}
-		specific = append(specific, rules...)
+		if rule != "" {
+			specific = append(specific, rule)
+		}
 	}
 	for _, p := range fallthrPolicies {
-		rules, err := renderStampRule(p, podV4, podV6)
+		rule, err := renderStampRule(p, f)
 		if err != nil {
 			return nil, err
 		}
-		fallthr = append(fallthr, rules...)
+		if rule != "" {
+			fallthr = append(fallthr, rule)
+		}
 	}
 	if len(specific) > 0 {
-		lines = append(lines, "", "\t\t# Classification — specific matches.")
+		lines = appendSection(lines, "\t\t# Classification — specific matches.")
 		lines = append(lines, specific...)
 	}
 	if len(fallthr) > 0 {
-		lines = append(lines, "", "\t\t# Classification — fallthrough (any source/dest).")
+		lines = appendSection(lines, "\t\t# Classification — fallthrough (any source/dest).")
 		lines = append(lines, fallthr...)
 	}
 
-	// Tier 5: unclassified pod egress. Only rendered when a pod CIDR is known
-	// (the canonical BN install set always supplies one; a deny-only chain
-	// built without one just skips this tier rather than erroring, since
-	// nothing above requires it either). Deliberately no meta priority: this
-	// is a default-allow escape hatch for outbound traffic this registry
-	// doesn't otherwise classify (e.g. the chart's Maven-based plugin
-	// resolution), so it falls to the HTB default class instead of one of
-	// the classified priority bands.
-	if podV4 != "" || podV6 != "" {
-		lines = append(lines, "",
-			"\t\t# Unclassified pod egress (no meta priority; HTB default class).")
-		if podV4 != "" {
-			lines = append(lines, fmt.Sprintf("\t\tip saddr %s accept", podV4))
-		}
-		if podV6 != "" {
-			lines = append(lines, fmt.Sprintf("\t\tip6 saddr %s accept", podV6))
-		}
-	}
-
-	lines = append(lines, "",
-		"\t\tct state established,related accept",
-		"\t\tdrop")
 	return lines, nil
+}
+
+// appendSection appends a tier's comment block, separated from any preceding
+// tier by a blank line. A chain whose first tier is empty (a stamp-only registry
+// has no deny rules) therefore does not open with a stray blank line.
+func appendSection(lines []string, comment ...string) []string {
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+	return append(lines, comment...)
 }
 
 // orderByGroupThenCreatedAt returns policies reordered so that members of the
@@ -322,76 +395,53 @@ func renderReplyRestoreRule(p *Policy) (string, error) {
 		hex(reply.Mark), hex(reply.Priority)), nil
 }
 
-// renderStampRule renders a stamp policy's classification rule(s) for its
-// direction, honoring --from-entity world (no IP-set clause) and --reply-stamp
-// (compound-key egress forward rule with a ct mark write). It emits one rule per
-// pod-CIDR family supplied: an `ip` rule (against @<name>) when podV4 is set and
-// an `ip6` rule (against @<name>6) when podV6 is set, so a dual-stack deployment
-// classifies both families and a single-stack one renders only its family.
-func renderStampRule(p *Policy, podV4, podV6 string) ([]string, error) {
+// renderStampRule renders one address family's classification rule for a stamp
+// policy, honoring --from-entity world (no IP-set clause) and --reply-stamp
+// (compound-key egress forward rule with a ct mark write). It returns "" when
+// this family has no pod CIDR, so a single-stack deployment renders only its own
+// family's rules while the other family's chain carries the deny tier alone.
+func renderStampRule(p *Policy, f family) (string, error) {
+	if f.podCIDR == "" {
+		return "", nil
+	}
 	fwd, err := lookupClass(p.Stamp)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	var rules []string
 
 	if p.isCompoundSet() {
 		// --reply-stamp forward rule: egress, compound ip:port destination key,
-		// ct mark write for the reply restore to read back. One per pod family.
+		// ct mark write for the reply restore to read back.
 		reply, err := lookupClass(p.ReplyStamp)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		if podV4 != "" {
-			rules = append(rules, fmt.Sprintf("\t\tip saddr %s ip daddr . tcp dport @%s ct mark set %s meta priority set %s accept",
-				podV4, p.Name, hex(reply.Mark), hex(fwd.Priority)))
-		}
-		if podV6 != "" {
-			rules = append(rules, fmt.Sprintf("\t\tip6 saddr %s ip6 daddr . tcp dport @%s ct mark set %s meta priority set %s accept",
-				podV6, V6SetName(p.Name), hex(reply.Mark), hex(fwd.Priority)))
-		}
-		return rules, nil
+		return fmt.Sprintf("\t\t%s saddr %s %s daddr . tcp dport @%s ct mark set %s meta priority set %s accept",
+			f.proto, f.podCIDR, f.proto, f.setName(p.Name), hex(reply.Mark), hex(fwd.Priority)), nil
 	}
 
-	if podV4 != "" {
-		rule, err := renderPlainStampRule(p, podV4, "ip", p.Name, fwd)
-		if err != nil {
-			return nil, err
-		}
-		rules = append(rules, rule)
-	}
-	if podV6 != "" {
-		rule, err := renderPlainStampRule(p, podV6, "ip6", V6SetName(p.Name), fwd)
-		if err != nil {
-			return nil, err
-		}
-		rules = append(rules, rule)
-	}
-	return rules, nil
+	return renderPlainStampRule(p, f, fwd)
 }
 
 // renderPlainStampRule renders one address family's plain stamp classification
-// rule. proto is the nft L3 keyword ("ip" or "ip6"); setName is that family's
-// membership set (@<name> or @<name>6). The listener-ports set is a shared
-// family-agnostic inet_service set, so it is referenced by the same @<name>_ports
-// name in both families.
-func renderPlainStampRule(p *Policy, podCIDR, proto, setName string, fwd class) (string, error) {
+// rule. The listener-ports set is a shared family-agnostic inet_service set, so
+// it is referenced by the same @<name>_ports name in both families.
+func renderPlainStampRule(p *Policy, f family, fwd class) (string, error) {
 	var b strings.Builder
 	b.WriteString("\t\t")
 	switch p.Direction {
 	case DirectionIngress:
-		b.WriteString(proto + " daddr " + podCIDR)
+		b.WriteString(f.proto + " daddr " + f.podCIDR)
 		if p.hasCIDRSet() {
-			b.WriteString(" " + proto + " saddr @" + setName)
+			b.WriteString(" " + f.proto + " saddr @" + f.setName(p.Name))
 		}
 		if p.hasPortsSet() {
 			b.WriteString(" tcp dport @" + PortsSetName(p.Name))
 		}
 	case DirectionEgress:
-		b.WriteString(proto + " saddr " + podCIDR)
+		b.WriteString(f.proto + " saddr " + f.podCIDR)
 		if p.hasCIDRSet() {
-			b.WriteString(" " + proto + " daddr @" + setName)
+			b.WriteString(" " + f.proto + " daddr @" + f.setName(p.Name))
 		}
 		if p.hasPortsSet() {
 			b.WriteString(" tcp sport @" + PortsSetName(p.Name))

@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Block node chart values for the multi-VM network harness (taskfiles/network.yaml).
+#
+# Splits the block node's facilities onto distinct listener ports so the harness can
+# exercise port-based classification. Without this the chart binds every facility to
+# the single blockNode.config.SERVER_PORT, all the `<policy>_ports` sets collapse to
+# one value, and the only thing separating publisher from partner from public is the
+# source-address set — leaving the port half of every rule untested.
+#
+# Deep-merged over the profile's base template by ComputeValuesFile, so this carries
+# only the deltas; initContainers, persistence wiring and the rest come from the base.
+#
+# health is deliberately NOT set here. The base template pins it from
+# DefaultBlockNodeHealthPort so the port weaver opens for bn-mgmt is the same port it
+# dials for statusz; overriding it here would win the merge and break statusz
+# discovery, which is what bootstraps every other port in this file.
+#
+# This file is also the single source of truth for the ports network:seed-statusz
+# writes into the application-state fixtures, so what the block node reports through
+# statusz — and therefore what the daemon programs into the nft sets — cannot drift
+# from what the chart actually exposes.
+
+blockNode:
+  ports:
+    publisher: 40984
+    subscriber: 40980
+    blockAccess: 40981
+    serverStatus: 40982
+  config:
+    # Fallback listener for any facility not split out above.
+    SERVER_PORT: "40840"
+
+plugins:
+  names: "facility-messaging,health,server-status,block-access-service,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill"
+
+service:
+  type: LoadBalancer
+  port: 40840
+
+# Sized for the UTM VM, which is smaller than a real node.
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "1"
+    memory: "1.5Gi"
+
+kubepromstack:
+  enabled: false
+
+loki:
+  enabled: false
+
+promtail:
+  enabled: false

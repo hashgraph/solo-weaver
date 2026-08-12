@@ -30,6 +30,37 @@ and its traffic categories and daemon reconciler are block-node-specific (below)
 but the table itself holds whatever `network policy` writes, block-node-related
 or not.
 
+### Which plane sees which traffic
+
+The two tables register on different hooks, so they see **disjoint traffic**. That is why
+neither carries a rule for the other's ports, and why no block-node service port appears
+anywhere in the host firewall's rules or templates.
+
+| Traffic | Outcome | Decided by |
+|---|---|---|
+| External → node address, **non**-service port | Dropped | Host firewall `input` (`policy drop`) |
+| External → node address, service port | Translated, then forwarded. Classified when the port is in a managed `<name>_ports` set, otherwise forwarded unclassified | Workload policy `forward` |
+| In-cluster → pod address directly, any port | Not constrained here — forwarded under `policy accept` | Cilium |
+| Either endpoint in `@bn-restricted` | Dropped, both directions and both families | Workload policy `forward` |
+
+The first row misleads, because the mechanism is not the one the rule layout suggests. A packet
+addressed to a port with no service behind it gets **no load-balancer translation** — only
+exposed service ports have translation entries. Untranslated, its destination is still the
+node's own address, so the routing decision delivers it locally, it arrives at `input`, and the
+default drop catches it. It never becomes pod-bound traffic, so the classifier never sees it.
+
+Service traffic takes the opposite path: translation happens *before* the routing decision
+(Cilium's eBPF at the tc ingress hook, or `prerouting` when kube-proxy performs the DNAT), so
+the packet is forwarded and bypasses `input` entirely. That is why a block node serves traffic
+on its service ports while the host firewall opens none of them.
+
+One consequence worth knowing, because it is silent: **an exposed port absent from the managed
+`<name>_ports` sets is forwarded and unshaped.** It matches no classification rule, carries no
+`meta priority`, and lands in the HTB default class — `reserve-ingress` inbound, a 10%
+guarantee. Since those sets are reconciled from statusz, a listener the block node does not
+report gets no shaping rather than an error. For what each hook does and does not enforce, see
+[Coexistence with the host's existing network stack](#coexistence-with-the-hosts-existing-network-stack).
+
 ## How classify-and-shape fits together
 
 The policy plane and the shaper are decoupled and meet through exactly one thing:
@@ -287,22 +318,36 @@ weaver tables simply register alongside the others.
 What that pattern does **not** give you is additive permissiveness. Within a base chain,
 `accept` ends evaluation *of that chain only* — the packet still traverses every other base
 chain registered on the same hook. A `drop` (or `reject`) is final for the packet across all
-of them. Both weaver chains are `policy drop`, so anything they do not explicitly accept is
-dropped; the `forward` chain also ends in an explicit `drop`, while `input` falls through to
-its chain policy. That makes **weaver the binding filter on the node**: nothing Cilium or
-kube-proxy accepts can rescue traffic weaver does not match.
+of them. So on any hook where a weaver chain is `policy drop`, weaver is the binding filter:
+nothing Cilium or kube-proxy accepts can rescue traffic weaver does not match.
 
-Concretely, the only broad escapes are:
+The two tables sit on opposite sides of that line, and the distinction matters:
 
-| Hook | Escapes |
-|---|---|
-| `input` (host firewall) | mgmt allowlist on the SSH port, `in_cluster_ports` from the pod CIDR, ICMP path-health, `ct state established,related` |
-| `forward` (workload policy) | `ip saddr <podCIDR> accept` (unclassified pod egress), `ct state established,related accept` |
+| Hook | Table | Chain policy | Role |
+|---|---|---|---|
+| `prerouting` (priority `raw`, −300) | host firewall | `accept` | Drops the operator block list ahead of conntrack. Covers the forward path too, so a blocked CIDR is blocked for pod-bound traffic as well. |
+| `input` (priority `filter`, 0) | host firewall | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
+| `output` (priority `filter`, 0) | host firewall | `accept` | Block-list symmetry only — drops traffic *to* a blocked CIDR. Deliberately not an egress allowlist. |
+| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the explicit `bn-restricted` quarantine rules. |
 
-Everything else forwarded or delivered on that host is dropped on new connections. On a
-single-purpose block-node host that is the intent, but it is a node-wide decision, not a
-block-node-scoped one — a second CNI, a docker bridge, a VPN, DHCPv6, or cross-node
-kubelet/etcd/NodePort traffic all need an explicit rule or they are dropped.
+The block list is spelled on three hooks because one is not enough. Dropping a peer inbound
+does not stop the host from dialing it, and once the host initiates, the replies come back in
+under `ct state established` — so an inbound-only block list does not block the connection at
+all. The `input` copy is redundant with `prerouting` for anything arriving on a wire; it is
+kept so the block list's ordering relative to the conntrack fast-path stays a property of the
+`input` chain itself rather than a consequence of a chain on another hook.
+
+On `input`, the only broad escapes are the mgmt allowlist on the SSH port, `in_cluster_ports`
+from the pod CIDR, the ICMP path-health subset, and `ct state established,related`. Everything
+else delivered to that host is dropped on new connections. On a single-purpose block-node host
+that is the intent, but it is a node-wide decision, not a block-node-scoped one — a second CNI,
+a docker bridge, a VPN, DHCPv6, or cross-node kubelet/etcd/NodePort traffic all need an
+explicit rule or they are dropped.
+
+On `forward`, weaver constrains nothing. A packet matching no classification rule is accepted
+carrying no `meta priority` and lands in the HTB default class. Workload isolation on that hook
+rests entirely on Cilium — which also means a host whose Cilium datapath is degraded or not yet
+up has no weaver-side backstop for forwarded traffic.
 
 ### tc: why the HTB hierarchies do not fight Cilium
 

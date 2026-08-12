@@ -697,8 +697,9 @@ func (m *Manager) showOne(ctx context.Context, p *Policy) (string, error) {
 // live membership (which the destructive re-render wipes), removes the
 // registry file, and atomically rewrites network-weaver-workload-policy.nft.
 //
-// If this is the last policy, an empty chain (policy drop, no rules) is
-// applied and the boot oneshot is left enabled.
+// If this is the last policy, the table is torn down entirely — live and on
+// disk — rather than left registered with nothing to classify. The boot oneshot
+// is left enabled.
 func (m *Manager) Delete(ctx context.Context, name string) error {
 	return m.withLock(func() error {
 		policies, err := loadAll(m.registryDir)
@@ -725,11 +726,10 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 
 		if len(remaining) == 0 {
 			// Deleting the last policy: tear the whole table down rather than
-			// render an empty chain. Render([]) emits `policy drop` with no
-			// accept rule for new connections — a blackhole that Apply() would
-			// load into the kernel and atomicWrite would persist for replay at
-			// boot. Remove the live table (if present) and the persisted file so
-			// an empty registry means "no inet weaver-workload-policy table", live or on disk.
+			// render a chain with no rules, which Apply() would load into the
+			// kernel and atomicWrite would persist for replay at boot. Remove the
+			// live table (if present) and the persisted file so an empty registry
+			// means "no inet weaver-workload-policy table", live or on disk.
 			if exists, err := m.runner.Exists(ctx); err != nil {
 				return errorx.Decorate(err, "failed to check the inet weaver-workload-policy table while removing the last policy")
 			} else if exists {

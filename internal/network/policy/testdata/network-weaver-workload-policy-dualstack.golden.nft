@@ -15,40 +15,66 @@ table inet weaver-workload-policy {
 	set bn-restricted6 { type ipv6_addr; flags interval; }
 	set bn-subscriber-in_ports { type inet_service; elements = { 40980, 40981 }; }
 
+	# The hooked chain carries no rules of its own — it only dispatches into
+	# the per-family chains below, so an IPv4 packet never evaluates an IPv6
+	# rule and vice versa.
+	#
+	# Policy is `accept` because this table classifies traffic for the HTB
+	# hierarchy rather than enforcing workload isolation, which is Cilium's
+	# job. A packet no rule matches falls through carrying no `meta priority`
+	# and therefore lands in the HTB default class.
 	chain forward {
-		type filter hook forward priority 0; policy drop;
-		ct state invalid drop
+		type filter hook forward priority 0; policy accept;
+		meta nfproto vmap { ipv4 : jump forward_ipv4, ipv6 : jump forward_ipv6 }
+	}
 
-		# Quarantine (deny), both directions. Runs before est,rel accept
-		# so already-open connections are also killed.
+	chain forward_ipv4 {
+		# Quarantine (deny), both directions. Runs ahead of the classification
+		# accepts below so a quarantined peer's traffic is dropped rather than
+		# stamped. There is no conntrack fast-path in this chain, so packets on
+		# already-open connections are evaluated against these drops too.
 		ip saddr @bn-restricted drop
 		ip daddr @bn-restricted drop
-		ip6 saddr @bn-restricted6 drop
-		ip6 daddr @bn-restricted6 drop
 
-		# Asymmetric reply restore. Must precede est,rel accept so every
-		# reply packet is reclassified, not just the SYN.
+		# Asymmetric reply restore. Matches conntrack only, so it is spelled
+		# identically in both family chains that have a pod CIDR. Must precede
+		# the classification tiers: on the reply the addresses are reversed, so a
+		# broad fallthrough rule below would otherwise claim the packet and stamp
+		# it with the forward class instead of the reply class.
 		ct direction reply ct mark 0x20 meta priority set 0x10020 accept
 
 		# Classification — specific matches.
 		ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill ct mark set 0x20 meta priority set 0x10060 accept
-		ip6 saddr 2001:db8:c0de::/64 ip6 daddr . tcp dport @bn-backfill6 ct mark set 0x20 meta priority set 0x10060 accept
 		ip saddr 10.4.0.0/24 ip daddr @bn-partner-out tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
-		ip6 saddr 2001:db8:c0de::/64 ip6 daddr @bn-partner-out6 tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
 		ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept
-		ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6 tcp dport @bn-publisher_ports meta priority set 0x10010 accept
 
 		# Classification — fallthrough (any source/dest).
 		ip saddr 10.4.0.0/24 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
-		ip6 saddr 2001:db8:c0de::/64 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
 		ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
+	}
+
+	chain forward_ipv6 {
+		# Quarantine (deny), both directions. Runs ahead of the classification
+		# accepts below so a quarantined peer's traffic is dropped rather than
+		# stamped. There is no conntrack fast-path in this chain, so packets on
+		# already-open connections are evaluated against these drops too.
+		ip6 saddr @bn-restricted6 drop
+		ip6 daddr @bn-restricted6 drop
+
+		# Asymmetric reply restore. Matches conntrack only, so it is spelled
+		# identically in both family chains that have a pod CIDR. Must precede
+		# the classification tiers: on the reply the addresses are reversed, so a
+		# broad fallthrough rule below would otherwise claim the packet and stamp
+		# it with the forward class instead of the reply class.
+		ct direction reply ct mark 0x20 meta priority set 0x10020 accept
+
+		# Classification — specific matches.
+		ip6 saddr 2001:db8:c0de::/64 ip6 daddr . tcp dport @bn-backfill6 ct mark set 0x20 meta priority set 0x10060 accept
+		ip6 saddr 2001:db8:c0de::/64 ip6 daddr @bn-partner-out6 tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
+		ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6 tcp dport @bn-publisher_ports meta priority set 0x10010 accept
+
+		# Classification — fallthrough (any source/dest).
+		ip6 saddr 2001:db8:c0de::/64 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
 		ip6 daddr 2001:db8:c0de::/64 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
-
-		# Unclassified pod egress (no meta priority; HTB default class).
-		ip saddr 10.4.0.0/24 accept
-		ip6 saddr 2001:db8:c0de::/64 accept
-
-		ct state established,related accept
-		drop
 	}
 }
