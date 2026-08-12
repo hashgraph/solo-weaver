@@ -279,7 +279,7 @@ fill in the parts that are deliberately **not** persisted (see below).
 | Artifact | Persisted at boot? | Rebuilt by |
 |---|---|---|
 | nft tables, chains, rules (both tables) | Yes — replayed from the `.nft` files via `nft -f` | — |
-| nft **set elements** (the CIDR membership of `bn-*` sets) | **No** | daemon statusz poll loop — entry reconcile fires immediately on daemon start; bounded by BN startup time when `base_url` is set, or by pod readiness + up to one poll interval with pod discovery |
+| nft **set elements** (the CIDR membership of `bn-*` sets) | **No** | daemon statusz poll loop — entry reconcile fires immediately on daemon start, and the pod watcher wakes the loop the moment it discovers the endpoint, so convergence is bounded by BN startup time on both the `base_url` and pod-discovery paths |
 | `$EGRESS` HTB hierarchy | Yes — the `solo-provisioner-bandwidth-shaper.sh` script | — |
 | `$VETH` (per-pod) HTB hierarchy | **No** | daemon pod-lifecycle watcher, on the next pod-create event |
 

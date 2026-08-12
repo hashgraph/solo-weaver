@@ -154,11 +154,22 @@ until a ready BN pod is observed the poll loop idles quietly and starts polling
 as soon as one appears.
 
 **Using pod discovery without `base_url`:** after a daemon restart or host
-reboot, the entry reconcile fires immediately but skips if no URL has been
-discovered yet. Convergence then waits until the pod watcher observes a ready
-BN pod, after which the next ticker tick (up to one poll interval) triggers
-the reconcile. For the lowest post-reboot convergence latency, set `base_url`
-to a stable statusz endpoint (e.g. a node-local port-forward).
+reboot, the entry reconcile fires immediately and skips if no URL has been
+discovered yet — the pod watcher runs concurrently, so on a cold start it has
+usually not recorded an endpoint yet. Convergence is **not** deferred to the next
+tick in that case: the watcher signals the poll loop as soon as it records an
+endpoint, and the loop wakes on that signal as well as on the ticker. Both paths
+therefore converge as fast as the BN statusz endpoint responds — bounded by BN
+startup time, not by `poll_interval`.
+
+The same signal fires when a rescheduled pod changes the endpoint, and when the
+owning pod is deleted (the loop wakes, observes an empty URL, and logs the loss
+promptly instead of up to one interval later).
+
+> Before #1000 convergence on this path was bounded by *pod discovery plus up to
+> one poll interval*, because the ticker was the loop's only wake-up source.
+> Setting `base_url` was the documented workaround; it is no longer needed to get
+> prompt convergence.
 
 ### Enablement at install time
 

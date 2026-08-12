@@ -89,6 +89,21 @@ type TrafficShaperMonitor struct {
 	// a delete only clears the endpoint when it is that pod (not some other pod in
 	// a multi-pod window) that went away.
 	discoveredStatuszPod types.UID
+
+	// urlChanged wakes the statusz poll loop when the pod watcher discovers,
+	// changes, or loses the statusz endpoint, so convergence is not deferred to
+	// the next ticker tick. The two responsibilities start concurrently, so the
+	// entry reconcile usually runs before the watcher's initial list has recorded
+	// an endpoint; without this signal the loop would sleep a full poll interval
+	// with a ready pod and a reachable statusz (#1000).
+	//
+	// Capacity 1 with a non-blocking send is load-bearing: it makes the signal
+	// order-independent. A send that lands before the loop reaches its select is
+	// retained in the buffer and returns immediately on arrival, whereas an
+	// unbuffered send would find no receiver, drop, and reintroduce the race it
+	// exists to close. Extra wake-ups are harmless — the digest gate skips the
+	// privileged apply when the desired state has not changed.
+	urlChanged chan struct{}
 }
 
 // NewTrafficShaperMonitor constructs a TrafficShaperMonitor. resolver and client
@@ -107,6 +122,27 @@ func NewTrafficShaperMonitor(resolver *VethResolver, client kubernetes.Interface
 		pollInterval: pollInterval,
 		attached:     make(map[types.UID]string),
 		inflight:     make(map[types.UID]bool),
+		urlChanged:   make(chan struct{}, 1),
+	}
+}
+
+// signalURLChanged wakes the statusz poll loop after the discovered endpoint
+// changed. The send is non-blocking: when a signal is already buffered the loop
+// has not consumed the previous one yet and will observe the latest URL when it
+// wakes, so coalescing loses nothing. Safe to call with no loop running (e.g.
+// while runStatuszPoll is restarting after a fault) — the buffered signal is
+// consumed by the next loop, costing one extra reconcile, which is idempotent.
+//
+// Never call this while holding m.mu: the send must not be able to interleave
+// with a reader of the discovered-statusz fields.
+func (m *TrafficShaperMonitor) signalURLChanged() {
+	if m.urlChanged == nil {
+		// Zero-value monitor (unit-test scaffolding); nothing to wake.
+		return
+	}
+	select {
+	case m.urlChanged <- struct{}{}:
+	default:
 	}
 }
 
@@ -335,11 +371,12 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 	// error and superviseResponsibility retries with back-off — convergence is
 	// bounded by BN startup time, not the poll interval.
 	//
-	// Pod-discovery caveat: when base_url is not configured, effectiveStatuszURL
-	// returns "" until the pod watcher observes a ready BN pod. In that case this
-	// entry reconcile is a silent no-op (not an error), and convergence after a
-	// restart waits for pod discovery plus up to one poll interval for the next
-	// tick. Set base_url for guaranteed immediate convergence after a reboot.
+	// Pod-discovery path: when base_url is not configured, effectiveStatuszURL
+	// returns "" until the pod watcher observes a ready BN pod, so this entry
+	// reconcile is a silent no-op (not an error) on a cold start. Convergence is
+	// not deferred to the next tick in that case — the watcher signals urlChanged
+	// as soon as it records an endpoint and the select below wakes on it, so both
+	// the discovery and base_url paths converge as fast as statusz responds.
 	if err := runReconcile(); err != nil {
 		return err
 	}
@@ -349,6 +386,13 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			if err := runReconcile(); err != nil {
+				return err
+			}
+		case <-m.urlChanged:
+			// The pod watcher discovered, changed, or lost the endpoint. Reconcile
+			// now rather than waiting out the interval. reconcile() no-ops when the
+			// URL is empty (endpoint lost), so a teardown signal costs nothing.
 			if err := runReconcile(); err != nil {
 				return err
 			}
