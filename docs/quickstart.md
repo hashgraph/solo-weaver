@@ -695,15 +695,15 @@ ICMP is a fixed, safe ruleset: full ICMP from the management allowlist, and from
 ```yaml
 version: 1
 
-mgmt:
-  cidrs: ["192.168.68.0/24"]
-  ports: ["22"]
+mgmt:                                          # required
+  cidrs: ["192.168.68.0/24"]                   # required
+  ports: ["22"]                                # omitted -> 22
 
-blocked:
-  cidrs: []
+blocked:                                       # required
+  cidrs: []                                    # required; [] means block nobody
 
-in_cluster:                                    # both fields optional
-  cidrs: ["10.4.0.0/14"]                       # omitted -> auto-detected
+in_cluster:                                    # required
+  cidrs: ["10.4.0.0/14"]                       # omitted -> auto-detected; [] -> no rule
   ports: ["4244", "6443", "7472", "10250"]     # omitted -> the defaults above
 
 allow:
@@ -735,10 +735,27 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 | `proto`     | no       | `tcp` (default) or `udp`. nft has no combined match, so a service on both is two rules |
 | `icmp_echo` | no       | Grants unmetered `echo-request`, rendered above the rate meter                |
 
-Two semantics differ deliberately between the record kinds:
+**The file is the whole table.** Nothing is inherited from the host's current firewall — only `add`/`remove`/`set` merge with what is already there. Two consequences:
 
 - **`allow:` is declarative** — a rule absent from the file is **deleted**.
-- **Reserved blocks absent from the file are derived or defaulted, never deleted**, so a partial file cannot silently drop management access. To disable one, give it an empty list (`in_cluster: {cidrs: []}`).
+- **All three reserved blocks are required**, as is `cidrs` inside `mgmt` and `blocked`. An omitted block would fall back to a weaver default the file never stated, and for `mgmt` that default is an empty allowlist under the default-drop policy — a lockout nobody wrote down. To render no rule for a block, state it with an empty list (`in_cluster: {cidrs: []}`); the block still cannot be removed.
+
+| Key                | Required | Omitted means                                                     |
+|--------------------|----------|-------------------------------------------------------------------|
+| `version`          | no       | the current schema version (`1`)                                   |
+| `mgmt`             | **yes**  | — (rejected)                                                       |
+| `blocked`          | **yes**  | — (rejected)                                                       |
+| `in_cluster`       | **yes**  | — (rejected)                                                       |
+| `mgmt.cidrs`       | **yes**  | — (rejected: no safe default exists)                               |
+| `mgmt.ports`       | no       | `22`                                                               |
+| `blocked.cidrs`    | **yes**  | — (rejected; write `[]` to block nobody)                           |
+| `in_cluster.cidrs` | no       | auto-detect this node's pod CIDR (`[]` renders no in-cluster rule) |
+| `in_cluster.ports` | no       | `4244,6443,7472,10250`                                             |
+| `allow`            | no       | no named allow rules — **and any that exist are deleted**          |
+
+`in_cluster.cidrs` is the one address list weaver can legitimately derive on its own, which is why it stays optional; its absence costs a rule rather than access to the host.
+
+The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. Re-run `create --from-file` to repair one.
 
 #### Modify a Rule's Addresses / Ports
 

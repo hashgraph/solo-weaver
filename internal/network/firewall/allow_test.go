@@ -211,6 +211,18 @@ func TestRemovePortsIsExact(t *testing.T) {
 	require.Equal(t, []string{"6443"}, r.Ports)
 }
 
+// mgmtBlockedYAML is the required-block preamble a config must carry before it
+// can say anything else: every reserved block has to be stated, so a fixture
+// exercising one field still has to write the other blocks down. Callers append
+// their own `in_cluster:` section; allReservedYAML closes it off for the cases
+// that do not care about in-cluster at all.
+const (
+	mgmtBlockedYAML = "version: 1\n" +
+		"mgmt:\n  cidrs: [\"10.0.0.0/8\"]\n" +
+		"blocked:\n  cidrs: []\n"
+	allReservedYAML = mgmtBlockedYAML + "in_cluster:\n  cidrs: []\n"
+)
+
 func TestConfig_RoundTrip(t *testing.T) {
 	first, err := FileConfigFromTable(allowTable()).Marshal()
 	require.NoError(t, err)
@@ -232,18 +244,18 @@ func TestConfig_RoundTrip(t *testing.T) {
 	require.Equal(t, wantDoc, gotDoc)
 }
 
-// TestConfig_OmittedVsEmptyReservedBlock pins the distinction the reserved-block
+// TestConfig_OmittedVsEmptyInClusterCIDRs pins the distinction the in-cluster
 // semantics rest on, which is carried by nil-vs-empty on a decoded slice: an
-// omitted block is derived or defaulted, while a block present with an empty
-// list renders no rule. If the YAML decoder ever stopped distinguishing the two,
+// omitted `cidrs` is auto-detected, while an explicitly empty one renders no
+// rule. If the YAML decoder ever stopped distinguishing the two,
 // `in_cluster: {cidrs: []}` would silently start auto-detecting the pod CIDR
 // again.
-func TestConfig_OmittedVsEmptyReservedBlock(t *testing.T) {
-	omitted, err := ParseConfig([]byte("version: 1\nmgmt:\n  cidrs: [\"10.0.0.0/8\"]\n"))
+func TestConfig_OmittedVsEmptyInClusterCIDRs(t *testing.T) {
+	omitted, err := ParseConfig([]byte(mgmtBlockedYAML + "in_cluster:\n  ports: [\"6443\"]\n"))
 	require.NoError(t, err)
-	require.True(t, omitted.InClusterCIDRsUnset(), "an omitted in_cluster block must be reported as unset")
+	require.True(t, omitted.InClusterCIDRsUnset(), "an omitted in_cluster cidrs list must be reported as unset")
 
-	present, err := ParseConfig([]byte("version: 1\nmgmt:\n  cidrs: [\"10.0.0.0/8\"]\nin_cluster:\n  cidrs: []\n"))
+	present, err := ParseConfig([]byte(mgmtBlockedYAML + "in_cluster:\n  cidrs: []\n"))
 	require.NoError(t, err)
 	require.False(t, present.InClusterCIDRsUnset(), "an explicitly empty cidrs list must be reported as set")
 
@@ -261,14 +273,28 @@ func TestConfig_OmittedVsEmptyReservedBlock(t *testing.T) {
 
 func TestConfig_Rejects(t *testing.T) {
 	cases := map[string]string{
-		"unknown top-level key": "version: 1\nallowed:\n  - name: x\n",
-		"unknown rule key":      "version: 1\nallow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n    protocol: tcp\n",
-		"future version":        "version: 99\nmgmt:\n  cidrs: []\n",
-		"reserved allow name":   "version: 1\nallow:\n  - name: mgmt\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n",
-		"duplicate allow name":  "version: 1\nallow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n  - name: x\n    cidrs: [\"10.1.0.0/16\"]\n    ports: [\"80\"]\n",
-		"bad cidr":              "version: 1\nmgmt:\n  cidrs: [\"10.0.0.0\"]\n",
-		"bad port range":        "version: 1\nallow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"2380-2379\"]\n",
-		"blocked with ports":    "version: 1\nblocked:\n  cidrs: []\n  ports: [\"22\"]\n",
+		"unknown top-level key": allReservedYAML + "allowed:\n  - name: x\n",
+		"unknown rule key":      allReservedYAML + "allow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n    protocol: tcp\n",
+		"future version":        "version: 99\nmgmt:\n  cidrs: []\nblocked:\n  cidrs: []\nin_cluster:\n  cidrs: []\n",
+		"reserved allow name":   allReservedYAML + "allow:\n  - name: mgmt\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n",
+		"duplicate allow name":  allReservedYAML + "allow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n  - name: x\n    cidrs: [\"10.1.0.0/16\"]\n    ports: [\"80\"]\n",
+		"bad cidr":              "version: 1\nmgmt:\n  cidrs: [\"10.0.0.0\"]\nblocked:\n  cidrs: []\nin_cluster:\n  cidrs: []\n",
+		"bad port range":        allReservedYAML + "allow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"2380-2379\"]\n",
+		"blocked with ports":    "version: 1\nmgmt:\n  cidrs: [\"10.0.0.0/8\"]\nblocked:\n  cidrs: []\n  ports: [\"22\"]\nin_cluster:\n  cidrs: []\n",
+
+		// The reserved blocks are structural: a file that omits one is refused
+		// rather than quietly rendered against a weaver default the operator never
+		// wrote down. mgmt is the dangerous one — its default is an empty
+		// allowlist under a default-drop input chain — but all three are required
+		// so the file alone tells you the whole posture.
+		"missing mgmt block":      "version: 1\nblocked:\n  cidrs: []\nin_cluster:\n  cidrs: []\n",
+		"missing blocked block":   "version: 1\nmgmt:\n  cidrs: [\"10.0.0.0/8\"]\nin_cluster:\n  cidrs: []\n",
+		"missing in_cluster":      mgmtBlockedYAML,
+		"empty file":              "version: 1\n",
+		"null mgmt block":         "version: 1\nmgmt:\nblocked:\n  cidrs: []\nin_cluster:\n  cidrs: []\n",
+		"mgmt without cidrs":      "version: 1\nmgmt:\n  ports: [\"22\"]\nblocked:\n  cidrs: []\nin_cluster:\n  cidrs: []\n",
+		"blocked without cidrs":   "version: 1\nmgmt:\n  cidrs: [\"10.0.0.0/8\"]\nblocked: {}\nin_cluster:\n  cidrs: []\n",
+		"allow-only partial file": "version: 1\nallow:\n  - name: x\n    cidrs: [\"10.0.0.0/8\"]\n    ports: [\"22\"]\n",
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -281,19 +307,21 @@ func TestConfig_Rejects(t *testing.T) {
 // TestConfig_MissingVersionIsAccepted keeps a hand-written file that forgot
 // `version:` working, while a version this build does not know is still refused
 // (covered above) — ignoring a field a newer weaver understands could leave the
-// host with a firewall that does not match the file.
+// host with a firewall that does not match the file. `version` is the one
+// top-level key that may be omitted; the reserved blocks may not.
 func TestConfig_MissingVersionIsAccepted(t *testing.T) {
-	cfg, err := ParseConfig([]byte("mgmt:\n  cidrs: [\"10.0.0.0/8\"]\n"))
+	cfg, err := ParseConfig([]byte("mgmt:\n  cidrs: [\"10.0.0.0/8\"]\nblocked:\n  cidrs: []\nin_cluster:\n  cidrs: []\n"))
 	require.NoError(t, err)
 	tbl, err := cfg.Table()
 	require.NoError(t, err)
 	require.Equal(t, []string{"10.0.0.0/8"}, tbl.Mgmt.CIDRs)
 }
 
-// TestManager_ApplyIsDeclarativeForAllowOnly pins the deliberate asymmetry
-// between the two kinds of record: an allow rule absent from an applied config is
-// removed, while a reserved block absent from it is defaulted rather than wiped —
-// so a partial file cannot silently drop management access.
+// TestManager_ApplyIsDeclarativeForAllowOnly pins that an allow rule absent from
+// an applied config is removed. The reserved blocks cannot go missing from a file
+// at all — they are required — so the only thing a config can leave to a default
+// is a field inside a block it stated, which is checked here for in_cluster's
+// port list.
 func TestManager_ApplyIsDeclarativeForAllowOnly(t *testing.T) {
 	r := &fakeRunner{}
 	applyCount := 0
@@ -307,6 +335,8 @@ func TestManager_ApplyIsDeclarativeForAllowOnly(t *testing.T) {
 	cfg, err := ParseConfig([]byte(
 		"version: 1\n" +
 			"mgmt:\n  cidrs: [\"10.0.0.0/8\"]\n  ports: [\"22\"]\n" +
+			"blocked:\n  cidrs: []\n" +
+			"in_cluster:\n  cidrs: [\"10.4.0.0/14\"]\n" +
 			"allow:\n  - name: k8s-node\n    cidrs: [\"10.0.0.0/24\"]\n    ports: [\"6443\"]\n"))
 	require.NoError(t, err)
 	tbl, err := cfg.Table()
@@ -318,8 +348,8 @@ func TestManager_ApplyIsDeclarativeForAllowOnly(t *testing.T) {
 	require.NotContains(t, doc, "@cilium-vxlan")
 	require.NotContains(t, doc, "@admin")
 
-	// The omitted in_cluster block came back as the default port set rather than
-	// as nothing.
+	// in_cluster's ports were omitted inside a block that was stated, so they came
+	// back as the default port set rather than as nothing.
 	require.Contains(t, doc, "set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 10250 }; }")
 }
 

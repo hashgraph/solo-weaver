@@ -452,7 +452,11 @@ provisioned node.
   the per-block flags retained as shorthands. Structure (which rules exist, and
   their protocol) is file-only; membership is CLI-mutable, because adding a rule
   is a reviewed change while unblocking an operator is sometimes urgent.
-  `show --output yaml` emits the same schema `--from-file` accepts.
+  `show --output yaml` emits the same schema `--from-file` accepts. A file is
+  the whole table and inherits nothing from the host, so all three reserved
+  blocks must be stated in it (as must `cidrs` inside `mgmt` and `blocked`) —
+  otherwise a file that forgot `mgmt` would render an empty management
+  allowlist under the default-drop policy.
 - **`network policy`** (`create`/`add`/`remove`/`set`/`show`/`delete`) — the
   workload policy plane. `create` takes `--name` (the nft set name), `--stamp`
   (the HTB class to classify into, which also fixes direction) or `--deny`, plus

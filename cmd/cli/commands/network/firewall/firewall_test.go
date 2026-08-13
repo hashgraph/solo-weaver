@@ -236,6 +236,32 @@ allow:
 	require.Error(t, run(t, "create", "--from-file", path, "--mgmt-cidrs", "10.0.0.0/8"))
 }
 
+// TestCreateCmd_FromFileRequiresReservedBlocks is the operator-facing half of the
+// required-block rule: a file that omits mgmt must fail before anything is
+// rendered, rather than applying a default-drop table with an empty management
+// allowlist and reporting success.
+func TestCreateCmd_FromFileRequiresReservedBlocks(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	dir := t.TempDir()
+
+	partial := filepath.Join(dir, "partial.yaml")
+	require.NoError(t, os.WriteFile(partial, []byte(`version: 1
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: []
+allow:
+  - name: k8s-node
+    cidrs: ["10.0.0.0/24"]
+    ports: ["6443"]
+`), 0o600))
+
+	err := run(t, "create", "--from-file", partial)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mgmt")
+	require.NoFileExists(t, nftPath, "a rejected config must not render a ruleset")
+}
+
 func TestShowCmd_YAMLRoundTrips(t *testing.T) {
 	nftPath, _ := stubManager(t)
 	dir := t.TempDir()
@@ -244,6 +270,8 @@ func TestShowCmd_YAMLRoundTrips(t *testing.T) {
 mgmt:
   cidrs: ["192.168.68.0/24"]
   ports: ["22"]
+blocked:
+  cidrs: []
 in_cluster:
   cidrs: []
 allow:
@@ -290,6 +318,10 @@ func TestDeleteCmd_ByName(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`version: 1
 mgmt:
   cidrs: ["192.168.68.0/24"]
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: []
 allow:
   - name: k8s-node
     cidrs: ["10.0.0.0/24"]

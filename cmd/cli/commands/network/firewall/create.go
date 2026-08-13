@@ -29,10 +29,13 @@ var createCmd = &cobra.Command{
 	Long: "Render and apply the full `inet weaver-host-firewall` table, either from flags or from a declarative " +
 		"config file (--from-file). create-if-missing: if the table already exists, no changes are made unless " +
 		"--force is passed, which re-renders from the current flags or file.\n\n" +
-		"--from-file is the only way to declare named allow rules. It is fully declarative: an allow rule absent " +
-		"from the file is removed. The reserved blocks behave differently — one absent from the file is derived or " +
-		"defaulted, never removed, so a partial file cannot silently drop management access. To disable a reserved " +
-		"block, give it an empty address list (`in_cluster: {cidrs: []}`).",
+		"--from-file is the only way to declare named allow rules. It is fully declarative: the file states the whole " +
+		"table, nothing is inherited from the host's current firewall, and an allow rule absent from the file is " +
+		"removed. The three reserved blocks (mgmt, blocked, in_cluster) are therefore required, as is `cidrs` inside " +
+		"mgmt and blocked — a block left out would fall back to a weaver default the file never stated, which for " +
+		"mgmt is an empty allowlist under the default-drop policy. To disable a reserved block, give it an empty " +
+		"address list (`in_cluster: {cidrs: []}`); omitting `in_cluster.cidrs` instead means \"auto-detect this " +
+		"node's pod CIDR\".",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		t, err := buildTable(cmd)
 		if err != nil {

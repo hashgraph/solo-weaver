@@ -25,10 +25,11 @@ const ConfigVersion = 1
 // not by coincidence.
 //
 // The reserved blocks are pointers so an absent section is distinguishable from
-// an empty one, which the semantics depend on: an omitted block is derived or
-// defaulted, while a block present with an empty list renders no rule. `allow`
-// needs no such distinction because it is wholly declarative — an entry absent
-// from the file is deleted.
+// an empty one. A file must state all three (see requireReservedBlocks): the
+// file is the whole table, and a block left out would silently fall back to a
+// compiled-in default — for `mgmt` that default is an empty allowlist under a
+// default-drop policy, i.e. a lockout the operator never wrote down. A block
+// present with an empty list renders no rule, which is how one is disabled.
 type FileConfig struct {
 	Version   int    `yaml:"version"`
 	Mgmt      *Block `yaml:"mgmt,omitempty"`
@@ -80,6 +81,9 @@ func ParseConfig(data []byte) (*FileConfig, error) {
 		return nil, errorx.IllegalFormat.New(
 			"unsupported firewall config version %d: this build understands version %d", c.Version, ConfigVersion)
 	}
+	if err := c.requireReservedBlocks(); err != nil {
+		return nil, err
+	}
 
 	// Validate through the model rather than field by field, so the config path
 	// and the CLI path can never disagree about what is acceptable.
@@ -91,6 +95,50 @@ func ParseConfig(data []byte) (*FileConfig, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// requireReservedBlocks rejects a config that leaves a reserved block to a
+// compiled-in default. The file states the whole table — nothing is carried over
+// from the host's current firewall — so an omitted block is not "keep what is
+// there", it is "take weaver's default". For `mgmt` that default is an empty
+// address list under the input chain's default drop, which locks the operator
+// out of new connections without the file ever saying so. Requiring all three to
+// be written down makes the rendered posture readable from the file alone.
+//
+// `cidrs` is required inside `mgmt` and `blocked` for the same reason: a block
+// header with only `ports` under it would re-open the same hole one level down.
+// It stays optional inside `in_cluster`, where omitting it means "auto-detect
+// this node's pod CIDR" — the one address list weaver can legitimately derive,
+// and one whose absence costs a rule rather than access to the host.
+//
+// This runs on the persisted state file too, not only on --from-file.
+// FileConfigFromTable always writes all three blocks, so a file weaver wrote
+// passes by construction; one that fails has been truncated or hand-edited, and
+// failing loudly beats loading it with a defaulted management allowlist.
+func (c *FileConfig) requireReservedBlocks() error {
+	for _, b := range []struct {
+		name string
+		// cidrsRequired is false only for in_cluster, whose omitted address list
+		// means "auto-detect the pod CIDR" rather than "fall back to a default".
+		cidrsRequired bool
+		block         *Block
+	}{
+		{RuleMgmt, true, c.Mgmt},
+		{RuleBlocked, true, c.Blocked},
+		{RuleInCluster, false, c.InCluster},
+	} {
+		if b.block == nil {
+			return errorx.IllegalFormat.New(
+				"firewall config is missing the required %q block: the file states the whole table and reserved blocks are never "+
+					"inherited from the host, so each one must be written down (use %q to render no rule for it)",
+				b.name, b.name+": {cidrs: []}")
+		}
+		if b.cidrsRequired && b.block.CIDRs == nil {
+			return errorx.IllegalFormat.New(
+				"firewall config block %q is missing \"cidrs\": state the address list explicitly (use \"cidrs: []\" for none)", b.name)
+		}
+	}
+	return nil
 }
 
 // Table builds the Table this config describes, applying the defaults for any
@@ -139,6 +187,10 @@ func (c *FileConfig) Table() (*Table, error) {
 // list unspecified, so the caller knows to auto-detect the node's pod CIDR. An
 // explicitly empty list (`in_cluster: {cidrs: []}`) is *specified* — it means
 // "render no in-cluster rule" — and must not trigger detection.
+//
+// A parsed config always has the block itself (requireReservedBlocks), so in
+// practice this reports on the `cidrs` field alone; the nil-block arm covers a
+// config assembled in Go rather than decoded.
 func (c *FileConfig) InClusterCIDRsUnset() bool {
 	return c.InCluster == nil || c.InCluster.CIDRs == nil
 }
