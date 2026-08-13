@@ -79,6 +79,8 @@ func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 					automa.WithDetail("no management CIDRs configured; host firewall skipped to avoid SSH lock-out"))
 			}
 
+			mgr := newFirewallManager()
+
 			// NewTable() seeds the design defaults (SSH 22, the stack in-cluster
 			// port set). hostCfg is already the fully resolved effective config
 			// (ResolveHostFirewallConfig applies flag > prompt > config file >
@@ -88,15 +90,25 @@ func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 			// keeps a zero-value guard, since 0 is never a valid port and would
 			// otherwise indicate a config the resolver never touched.
 			t := firewall.NewTable()
-			t.MgmtCIDRs = hostCfg.ManagementCIDRs
-			t.BlockedCIDRs = hostCfg.BlockedCIDRs
+			t.Mgmt.CIDRs = hostCfg.ManagementCIDRs
+			t.Blocked.CIDRs = hostCfg.BlockedCIDRs
 			if hostCfg.SSHPort != 0 {
-				t.SSHPort = hostCfg.SSHPort
+				t.Mgmt.Ports = firewall.PortStrings([]int{hostCfg.SSHPort})
 			}
-			t.InClusterPorts = hostCfg.InClusterPorts
-			t.PodCIDR = hostCfg.PodCIDR
+			t.InCluster.Ports = firewall.PortStrings(hostCfg.InClusterPorts)
+			t.InCluster.CIDRs = nil
+			if hostCfg.PodCIDR != "" {
+				t.InCluster.CIDRs = []string{hostCfg.PodCIDR}
+			}
 
-			mgr := newFirewallManager()
+			// Named allow rules are not part of this step's input: they are
+			// declared with `network firewall create --from-file`, and config.yaml
+			// has no field for them. Carry any that already exist across, or a
+			// reconfigure (which force re-renders) would silently drop the
+			// operator's k8s/Cilium/admin rules while appearing to succeed.
+			if existing, err := mgr.Table(ctx); err == nil {
+				t.Allow = existing.Allow
+			}
 
 			// Determine whether the table pre-existed so rollback only deletes a
 			// table this step actually introduced. In create-if-missing mode

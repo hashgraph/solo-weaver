@@ -26,6 +26,17 @@ const (
 	// boot.
 	HostNftPath = "/etc/solo-provisioner/network-weaver-host-firewall.nft"
 
+	// HostConfigPath is the declarative config this table is rendered from, and
+	// the source of truth for every mutating verb. It sits beside the nft
+	// artifact and holds exactly the schema `network firewall create --from-file`
+	// accepts, so `show --output yaml` re-applied through --from-file is a no-op
+	// by construction.
+	//
+	// A single file rather than one per rule: a change to the management
+	// allowlist must be all-or-nothing, and a partial write across several files
+	// could leave a host reachable by nobody.
+	HostConfigPath = "/etc/solo-provisioner/network-weaver-host-firewall.yaml"
+
 	// WeaverNftPath is the inet weaver-workload-policy artifact, owned by `block node install`
 	// (TS_2 #743). This package never writes it; it only checks for its presence
 	// to decide whether the shared oneshot may be disabled (teardown is #791).
