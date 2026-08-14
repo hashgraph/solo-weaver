@@ -792,6 +792,10 @@ sudo solo-provisioner network firewall set    --mgmt-cidrs 10.0.0.0/8 --in-clust
 
 > Ports are removed by exact spec: removing `2379` from a rule holding `2379-2380` does nothing. An nft range is a single set element, so replace the range with `set --ports` rather than relying on an implicit split.
 
+> Adding a CIDR already covered by one in the rule — `10.0.0.5/32` into a rule holding `10.0.0.0/24` — is accepted. The config keeps both entries, so removing the wider prefix later leaves the narrower one in force, but the kernel folds them into one interval. `show` dumps the kernel and will print the folded form; `show --output yaml` reads the config and prints what you authored.
+>
+> A ruleset the kernel would refuse is rejected before anything is written: the CLI errors, and `/etc/solo-provisioner/network-weaver-host-firewall.{yaml,nft}` are left exactly as they were, so the ruleset that replays at boot is always one that loads.
+
 #### Show / Delete the Host Firewall
 
 ```bash

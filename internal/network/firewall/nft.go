@@ -5,6 +5,7 @@ package firewall
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// Runner is the seam over the system `nft` binary for read and delete
+// Runner is the seam over the system `nft` binary for read, check and delete
 // operations. Live rule application is done by writing the on-disk artifact
 // and restarting the systemd service via DBus — so Apply is not part of this
 // interface. Tests substitute a fake so the package builds and unit-tests on
@@ -21,6 +22,10 @@ type Runner interface {
 	// List returns the rendered ruleset for the inet weaver-host-firewall table
 	// (`nft list table inet weaver-host-firewall`).
 	List(ctx context.Context) (string, error)
+	// Check dry-runs a rendered ruleset file (`nft -c -f <path>`) without
+	// committing it, so a document the kernel would reject is caught before it
+	// becomes the persisted boot artifact.
+	Check(ctx context.Context, path string) error
 	// Delete removes the inet weaver-host-firewall table (`nft delete table inet weaver-host-firewall`).
 	Delete(ctx context.Context) error
 	// Exists reports whether the inet weaver-host-firewall table is present in the kernel.
@@ -65,6 +70,27 @@ func (r *execRunner) List(ctx context.Context) (string, error) {
 		return "", errorx.ExternalError.Wrap(err, "nft list table %s failed: %s", TableName, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+// Check dry-runs the document at path. `-c` makes nft parse and evaluate the
+// ruleset against the current kernel state without committing it, so this is
+// the same verdict a real load would give without any of the side effects.
+func (r *execRunner) Check(ctx context.Context, path string) error {
+	cmd := exec.CommandContext(ctx, r.bin, "-c", "-f", path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// A non-zero exit means nft read the document and refused it, and its
+		// stderr names the offending line — that is a malformed ruleset, not a
+		// broken host. Anything else (binary missing, not permitted to exec) is
+		// an environment failure and keeps the cause attached.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return errorx.IllegalFormat.New("nft rejected the rendered ruleset: %s", strings.TrimSpace(stderr.String()))
+		}
+		return errorx.ExternalError.Wrap(err, "failed to run %s -c -f %s", r.bin, path)
+	}
+	return nil
 }
 
 func (r *execRunner) Delete(ctx context.Context) error {

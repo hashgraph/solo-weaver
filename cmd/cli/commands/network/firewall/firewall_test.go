@@ -28,6 +28,10 @@ func (c *captureRunner) List(_ context.Context) (string, error) { return "", nil
 func (c *captureRunner) Delete(_ context.Context) error         { c.exists = false; return nil }
 func (c *captureRunner) Exists(_ context.Context) (bool, error) { return c.exists, nil }
 
+// Check accepts every document: these tests exercise the CLI's flag handling,
+// not nft's verdict on the rendered ruleset (that lives in internal/network/firewall).
+func (c *captureRunner) Check(_ context.Context, _ string) error { return nil }
+
 func TestFirewallCmd_Structure(t *testing.T) {
 	cmd := GetCmd()
 	require.Equal(t, "firewall", cmd.Use)
