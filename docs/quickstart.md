@@ -449,7 +449,7 @@ sudo solo-provisioner block node reconfigure \
 | `--no-restart`      | Skip rollout-restart of the block node pod after reconfiguring                                        | `false` |
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
 | `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
-| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state, so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
+| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state — a live table always seeds enabled, however it was created — so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
 | `--traffic-shaping-enabled` | Enable or disable the BN traffic-shaping bundle (network-policy plane + tc HTB shaping + daemon traffic-shaper monitor) on an existing install. Seeded from the persisted install decision, so a no-flag reconfigure keeps it; pass `=true` to create it (with `--egress-interface`/`--link-rate`/`--shape`/`--daemon-bin` as on `install`), `=false` to tear it down. | persisted state |
 | `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN. Merged per-field into `daemon.yaml` (`components.block_node.statusz.base_url`); omitting the flag preserves whatever is already on disk. Only when no `base_url` exists on disk does the daemon fall back to discovering the endpoint from the watched BN pod. | preserved on disk |
 | `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`). Merged per-field into `daemon.yaml` (`components.block_node.statusz.poll_interval`); omitting the flag preserves whatever is already on disk. Only when no `poll_interval` exists on disk does the daemon fall back to its `5s` default. | preserved on disk |
@@ -464,7 +464,9 @@ sudo solo-provisioner block node reconfigure \
 > `install`, so an operator can turn either feature on or off on an
 > already-deployed block node without a full `install --force` reinstall. Both
 > gates are seeded from the block node's **current** state — the host firewall from
-> whether the `inet weaver-host-firewall` table exists, traffic shaping from the persisted install
+> the last enable/disable decision *and* from whether the `inet weaver-host-firewall` table is
+> live (a table that exists always seeds enabled, including one created by hand with
+> `network firewall create`), traffic shaping from the persisted install
 > decision — so a routine reconfigure that doesn't pass the flag (or accepts the
 > interactive default) never changes enablement. Teardown only happens on an
 > explicit toggle: answering **No** (or passing `=false`) for a currently-enabled
@@ -825,6 +827,16 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force   #
 > `delete --all` (the default when `--name` is omitted, which is what this verb has always done) removes the table and both `/etc/solo-provisioner/network-weaver-host-firewall.{nft,yaml}`, leaving the host with no weaver-managed firewall — including no management allowlist. It asks for confirmation in an interactive session; pass `--force` to skip the prompt. It does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
 >
 > The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set --name mgmt --cidrs ""`).
+
+> **`create` and `delete --all` record the enable decision.** Both write it into the host's runtime
+> state (`machineState.firewall.disabled`), so `block node reconfigure` agrees with what you did
+> here: a firewall you created by hand survives a later reconfigure instead of being torn down, and
+> one you deleted here is not re-created by it. A live table always wins over the recorded decision,
+> so removing an active host firewall through `block node reconfigure` needs an explicit
+> `--firewall-enabled=false`. The membership verbs (`add`, `remove`, `set`) change no decision —
+> `reconfigure` reads their result straight out of
+> `/etc/solo-provisioner/network-weaver-host-firewall.yaml`, so an urgent
+> `add --name mgmt --cidr …` is not reverted by the next reconfigure.
 
 #### Create a Traffic Policy
 

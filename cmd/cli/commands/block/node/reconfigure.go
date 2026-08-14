@@ -45,12 +45,13 @@ var (
 			// Seed the enable/disable prompts from the block node's CURRENT state so a
 			// no-flag / default-accept reconfigure keeps whatever is already deployed
 			// and only an explicit toggle enables or tears a feature down. Both features
-			// now use the same source of truth — the persisted install/reconfigure
-			// decision (#947): traffic shaping from BlockNodeState.TrafficShapingDisabled,
-			// the host firewall from MachineState.Firewall. (The live inet-table probe is
-			// a reconciliation detail inside NetworkFirewallCreate, not a prompt seed.)
-			// On an unreadable state file, bias both to enabled so a default-accept never
-			// tears an established plane down.
+			// read the persisted install/reconfigure decision (#947): traffic shaping
+			// from BlockNodeState.TrafficShapingDisabled, the host firewall from
+			// MachineState.Firewall — except that the firewall's seed also consults the
+			// live inet table, because the standalone `network firewall` verbs can create
+			// one without the block node ever recording a decision (#1003). On an
+			// unreadable state file, bias both to enabled so a default-accept never tears
+			// an established plane down.
 			stateDefaults, err := state.ReadPromptDefaultsFromDisk()
 			if err != nil {
 				logx.As().Debug().Err(err).Msg("could not read state file for reconfigure seeds; using conservative defaults")
@@ -58,7 +59,7 @@ var (
 			firewallSeed := true
 			currentTrafficShaping := true
 			if err == nil {
-				firewallSeed = stateDefaults.Firewall != nil && !stateDefaults.Firewall.Disabled
+				firewallSeed = common.ResolveFirewallSeed(cmd.Context(), stateDefaults.Firewall)
 				currentTrafficShaping = !stateDefaults.BlockNode.TrafficShapingDisabled
 			}
 

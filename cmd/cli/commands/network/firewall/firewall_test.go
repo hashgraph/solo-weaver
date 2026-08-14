@@ -89,6 +89,11 @@ func stubManager(t *testing.T) (nftPath, configPath string) {
 	nftPath = filepath.Join(dir, "network-weaver-host-firewall.nft")
 	configPath = filepath.Join(dir, "network-weaver-host-firewall.yaml")
 
+	// The mutating verbs also record the enable decision into machine state
+	// (issue #1003), so every stubbed verb needs a state file under t.TempDir()
+	// too — otherwise a unit test would write to the host's real state.
+	stubStateManager(t)
+
 	origMgr, origDetect := newManager, detectPodCIDR
 	newManager = func() *fw.Manager {
 		return fw.NewManagerWithConfig(fw.Config{
