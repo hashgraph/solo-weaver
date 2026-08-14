@@ -412,7 +412,7 @@ func ipv4Only(cidrs []string, desc string) []string {
 		logx.As().Warn().Strs("cidrs", skipped).Msg(
 			"the live host firewall's " + desc + " block holds non-IPv4 addresses, which the flag-shaped config " +
 				"cannot express; they are not seeded and a re-render would drop them — re-apply them afterwards " +
-				"with `network firewall set --cidrs`")
+				"with `network firewall set --name <rule> --cidrs ...`")
 	}
 	return out
 }
