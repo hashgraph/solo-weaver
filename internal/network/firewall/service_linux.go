@@ -5,6 +5,7 @@
 package firewall
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -26,14 +27,26 @@ func defaultApplyViaService(ctx context.Context) error {
 }
 
 // EnsureNetworkNftUnit writes the embedded service unit file to
-// NetworkNftServiceUnitPath if it is absent, then daemon-reloads and enables
-// the unit for boot. Stat-and-skip so repeated calls are a fast no-op.
+// NetworkNftServiceUnitPath, then daemon-reloads and enables the unit for boot.
+//
+// The on-disk unit is compared against the embedded copy, not merely stat-ed, so
+// an already-provisioned host converges on the current unit the next time a
+// mutation runs. Stat-and-skip would have stranded every existing host on the
+// unit that shipped when it was first provisioned — including the missing
+// StartLimitIntervalSec=0 that lets a run of failed applies wedge every later
+// command behind systemd's start limit (#1002). An unchanged unit is still a
+// fast no-op: no write, no daemon-reload.
 func EnsureNetworkNftUnit(ctx context.Context) error {
-	if _, err := os.Stat(NetworkNftServiceUnitPath); err == nil {
-		return nil // already installed — fast path
+	content, err := templates.Files.ReadFile(networkNftServiceTemplate)
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to read embedded %s", networkNftServiceTemplate)
 	}
 
-	if err := writeEmbedded(networkNftServiceTemplate, NetworkNftServiceUnitPath); err != nil {
+	if current, err := os.ReadFile(NetworkNftServiceUnitPath); err == nil && bytes.Equal(current, content) {
+		return nil // already installed and current — fast path
+	}
+
+	if err := writeEmbedded(content, NetworkNftServiceUnitPath); err != nil {
 		return err
 	}
 	if err := soos.DaemonReload(ctx); err != nil {
@@ -45,11 +58,7 @@ func EnsureNetworkNftUnit(ctx context.Context) error {
 	return nil
 }
 
-func writeEmbedded(tmplPath, destPath string) error {
-	content, err := templates.Files.ReadFile(tmplPath)
-	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to read embedded %s", tmplPath)
-	}
+func writeEmbedded(content []byte, destPath string) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to create %s", filepath.Dir(destPath))
 	}

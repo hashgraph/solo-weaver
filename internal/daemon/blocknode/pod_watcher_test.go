@@ -65,10 +65,11 @@ func (f *fakeDelegator) ReconcileShaperCheck(context.Context, string) (string, e
 
 func newTestMonitor(r vethResolver, d *fakeDelegator) *TrafficShaperMonitor {
 	return &TrafficShaperMonitor{
-		resolver:  r,
-		delegator: d,
-		attached:  make(map[types.UID]string),
-		inflight:  make(map[types.UID]bool),
+		resolver:   r,
+		delegator:  d,
+		attached:   make(map[types.UID]string),
+		inflight:   make(map[types.UID]bool),
+		urlChanged: make(chan struct{}, 1),
 	}
 }
 
@@ -303,6 +304,56 @@ func TestHandlePodDelete_ClearsDiscoveredStatuszForOwningPod(t *testing.T) {
 	m.handlePodDelete(context.Background(), pod)
 	require.Empty(t, m.discoveredStatuszURL, "owning pod delete clears the discovered endpoint")
 	require.Equal(t, types.UID(""), m.discoveredStatuszPod)
+}
+
+// signalled reports whether a wake-up is pending, consuming it so successive
+// assertions in one test observe only new signals.
+func signalled(m *TrafficShaperMonitor) bool {
+	select {
+	case <-m.urlChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// TestRecordDiscoveredStatusz_SignalsOnlyOnChange verifies the poll loop is woken
+// when the endpoint actually changes, and is left alone when a repeat event
+// records the same URL — otherwise every watch event would cost a probe (#1000).
+func TestRecordDiscoveredStatusz_SignalsOnlyOnChange(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+
+	m.recordDiscoveredStatusz(pod)
+	require.True(t, signalled(m), "first discovery wakes the poll loop")
+
+	m.recordDiscoveredStatusz(pod)
+	require.False(t, signalled(m), "an unchanged endpoint must not wake the loop")
+
+	// A rescheduled pod on a new IP is a change and must wake the loop so the
+	// roster is re-read against the new endpoint.
+	moved := readyPodWithNet("u2", "bn-0", "10.1.2.9",
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+	m.recordDiscoveredStatusz(moved)
+	require.True(t, signalled(m), "a changed endpoint wakes the poll loop")
+}
+
+// TestHandlePodDelete_SignalsWhenEndpointCleared verifies losing the endpoint also
+// wakes the loop, so the endpoint-lost transition is logged promptly rather than
+// up to a full poll interval later. An unrelated pod delete must stay silent.
+func TestHandlePodDelete_SignalsWhenEndpointCleared(t *testing.T) {
+	m := newTestMonitor(&fakeResolver{results: []resolveResult{{veth: "lxc1"}}}, &fakeDelegator{})
+	pod := readyPodWithNet("u1", "bn-0", "10.1.2.3",
+		corev1.ContainerPort{Name: bnHealthPortName, ContainerPort: 40983})
+	m.recordDiscoveredStatusz(pod)
+	require.True(t, signalled(m), "drain the discovery signal")
+
+	m.handlePodDelete(context.Background(), readyPod("u2", "bn-1"))
+	require.False(t, signalled(m), "an unrelated pod delete must not wake the loop")
+
+	m.handlePodDelete(context.Background(), pod)
+	require.True(t, signalled(m), "clearing the endpoint wakes the loop")
 }
 
 func TestHandlePodDelete_KeepsDiscoveredStatuszForOtherPod(t *testing.T) {

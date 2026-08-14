@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/automa-saga/logx"
@@ -19,6 +20,7 @@ import (
 type Manager struct {
 	runner          Runner
 	nftPath         string
+	configPath      string
 	lockPath        string
 	applyViaService func(ctx context.Context) error
 }
@@ -29,6 +31,7 @@ type Manager struct {
 type Config struct {
 	Runner          Runner
 	NftPath         string
+	ConfigPath      string
 	LockPath        string
 	ApplyViaService func(ctx context.Context) error
 }
@@ -45,6 +48,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 	m := &Manager{
 		runner:          cfg.Runner,
 		nftPath:         cfg.NftPath,
+		configPath:      cfg.ConfigPath,
 		lockPath:        cfg.LockPath,
 		applyViaService: cfg.ApplyViaService,
 	}
@@ -53,6 +57,9 @@ func NewManagerWithConfig(cfg Config) *Manager {
 	}
 	if m.nftPath == "" {
 		m.nftPath = HostNftPath
+	}
+	if m.configPath == "" {
+		m.configPath = HostConfigPath
 	}
 	if m.lockPath == "" {
 		m.lockPath = LockPath
@@ -86,58 +93,102 @@ func (m *Manager) Create(ctx context.Context, t *Table, force bool) (bool, error
 	return changed, err
 }
 
-// AddMgmtCIDR adds one CIDR to the management allowlist and re-renders.
-func (m *Manager) AddMgmtCIDR(ctx context.Context, cidr string) error {
-	return m.mutate(ctx, func(t *Table) error { return t.AddMgmtCIDR(cidr) })
+// Apply replaces the whole table from a declarative config and re-renders,
+// regardless of whether one already exists. It is what `create --from-file`
+// runs: unlike Create it is not create-if-missing, because a config file the
+// operator just edited is an instruction, not a default.
+func (m *Manager) Apply(ctx context.Context, t *Table) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	return m.withLock(func() error { return m.applyAndPersist(ctx, t) })
 }
 
-// RemoveMgmtCIDR removes one CIDR from the management allowlist and re-renders.
-func (m *Manager) RemoveMgmtCIDR(ctx context.Context, cidr string) error {
-	return m.mutate(ctx, func(t *Table) error { t.RemoveMgmtCIDR(cidr); return nil })
+// Add adds CIDRs and/or port specs to the named rule and re-renders. Adding is
+// idempotent: an entry already present is left alone.
+func (m *Manager) Add(ctx context.Context, name string, cidrs, ports []string) error {
+	return m.mutateRule(ctx, name, func(r *Rule) error {
+		if err := r.AddCIDRs(cidrs); err != nil {
+			return err
+		}
+		return r.AddPorts(ports)
+	})
 }
 
-// AddBlockedCIDR adds one CIDR to the operator block list and re-renders.
-func (m *Manager) AddBlockedCIDR(ctx context.Context, cidr string) error {
-	return m.mutate(ctx, func(t *Table) error { return t.AddBlockedCIDR(cidr) })
+// Remove drops CIDRs and/or port specs from the named rule and re-renders.
+// Removing an absent entry is a no-op.
+func (m *Manager) Remove(ctx context.Context, name string, cidrs, ports []string) error {
+	return m.mutateRule(ctx, name, func(r *Rule) error {
+		r.RemoveCIDRs(cidrs)
+		r.RemovePorts(ports)
+		return nil
+	})
 }
 
-// RemoveBlockedCIDR removes one CIDR from the operator block list and re-renders.
-func (m *Manager) RemoveBlockedCIDR(ctx context.Context, cidr string) error {
-	return m.mutate(ctx, func(t *Table) error { t.RemoveBlockedCIDR(cidr); return nil })
+// Update is one rule's replacement membership for SetMany. A nil slice leaves
+// that dimension unchanged; an empty (non-nil) slice clears it.
+type Update struct {
+	Name  string
+	CIDRs []string
+	Ports []string
 }
 
-// AddPort adds one in-cluster host-service port and re-renders.
-func (m *Manager) AddPort(ctx context.Context, port int) error {
-	return m.mutate(ctx, func(t *Table) error { return t.AddPort(port) })
+// Set atomically replaces the named rule's address list and/or port list.
+func (m *Manager) Set(ctx context.Context, name string, cidrs, ports []string) error {
+	return m.SetMany(ctx, []Update{{Name: name, CIDRs: cidrs, Ports: ports}})
 }
 
-// RemovePort removes one in-cluster host-service port and re-renders.
-func (m *Manager) RemovePort(ctx context.Context, port int) error {
-	return m.mutate(ctx, func(t *Table) error { t.RemovePort(port); return nil })
-}
-
-// Set atomically replaces the management CIDR list, the operator block list,
-// and/or the in-cluster port list. A nil slice leaves that dimension unchanged;
-// an empty (non-nil) slice clears it.
-func (m *Manager) Set(ctx context.Context, mgmtCIDRs, blockedCIDRs []string, ports []int) error {
+// SetMany applies several rules' replacement membership in a single re-render,
+// so a `set` naming more than one block lands as one nft transaction rather than
+// several — a half-applied management allowlist is exactly the state worth
+// avoiding here.
+func (m *Manager) SetMany(ctx context.Context, updates []Update) error {
 	return m.mutate(ctx, func(t *Table) error {
-		if mgmtCIDRs != nil {
-			if err := t.SetMgmtCIDRs(mgmtCIDRs); err != nil {
-				return err
+		for _, u := range updates {
+			r, ok := t.Rule(u.Name)
+			if !ok {
+				return errorx.IllegalArgument.New(
+					"no rule named %q; known rules are %s. New allow rules are declared in the config file (`network firewall create --from-file`)",
+					u.Name, strings.Join(t.Names(), ", "))
 			}
-		}
-		if blockedCIDRs != nil {
-			if err := t.SetBlockedCIDRs(blockedCIDRs); err != nil {
-				return err
+			if u.CIDRs != nil {
+				if err := r.SetCIDRs(u.CIDRs); err != nil {
+					return err
+				}
 			}
-		}
-		if ports != nil {
-			if err := t.SetPorts(ports); err != nil {
-				return err
+			if u.Ports != nil {
+				if err := r.SetPorts(u.Ports); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
 	})
+}
+
+// DeleteRule removes one named allow rule and re-renders. The reserved blocks
+// cannot be deleted; see Table.DeleteRule.
+func (m *Manager) DeleteRule(ctx context.Context, name string) error {
+	return m.mutate(ctx, func(t *Table) error { return t.DeleteRule(name) })
+}
+
+// Config returns the declarative config of the currently-configured table, for
+// `show --output yaml`. Unlike Show it reads the persisted config rather than
+// the kernel, so its output is the same shape that produced the ruleset — a
+// kernel dump has already lost the distinction between an authored rule and a
+// default, and auto-merge may have rewritten the port sets.
+func (m *Manager) Config(ctx context.Context) (*FileConfig, error) {
+	t, err := m.Table(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return FileConfigFromTable(t), nil
+}
+
+// Table returns the currently-configured table. Read-only: no lock is taken,
+// because a torn read cannot happen — the config is replaced by rename.
+func (m *Manager) Table(_ context.Context) (*Table, error) {
+	return m.load()
 }
 
 // IsActive reports whether the inet weaver-host-firewall table is currently present in the
@@ -178,8 +229,10 @@ func (m *Manager) Delete(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := os.Remove(m.nftPath); err != nil && !os.IsNotExist(err) {
-			return errorx.ExternalError.Wrap(err, "failed to remove %s", m.nftPath)
+		for _, p := range []string{m.nftPath, m.configPath} {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				return errorx.ExternalError.Wrap(err, "failed to remove %s", p)
+			}
 		}
 		return nil
 	})
@@ -200,13 +253,55 @@ func (m *Manager) mutate(ctx context.Context, fn func(*Table) error) error {
 	})
 }
 
-// applyAndPersist atomically rewrites the on-disk artifact and then restarts
-// the systemd service via DBus so the kernel picks up the new rules. The
-// rendered file already contains the idempotent `add table / flush table`
-// prefix, so it is safe for both the boot-time oneshot and live re-applies.
+// mutateRule resolves name to a rule and applies fn to it. An unknown name is
+// rejected with the valid names listed, rather than silently creating a rule:
+// structure (which rules exist, and their protocol) is config-file territory,
+// while the CLI verbs move membership in and out of rules that already exist.
+func (m *Manager) mutateRule(ctx context.Context, name string, fn func(*Rule) error) error {
+	return m.mutate(ctx, func(t *Table) error {
+		r, ok := t.Rule(name)
+		if !ok {
+			return errorx.IllegalArgument.New(
+				"no rule named %q; known rules are %s. New allow rules are declared in the config file (`network firewall create --from-file`)",
+				name, strings.Join(t.Names(), ", "))
+		}
+		return fn(r)
+	})
+}
+
+// applyAndPersist dry-runs the rendered ruleset, then atomically rewrites the
+// declarative config and the nft artifact, then restarts the systemd service via
+// DBus so the kernel picks up the new rules. The rendered file contains the
+// idempotent scoped-replace prefix, so it is safe for both the boot-time oneshot
+// and live re-applies.
+//
+// The dry run comes first, and nothing is written unless it passes. The unit has
+// no ExecStop, so a ruleset nft refuses leaves the live table untouched and the
+// failure looks harmless — but persisting first would have made that document
+// the boot artifact, and the host would come up with no weaver firewall at all
+// (#1002). Validating up front means a rejected ruleset never reaches disk.
+//
+// Past the dry run, the config is written before the nft artifact: it is what
+// the next mutation loads, so a crash between the two writes leaves the
+// operator's intent recorded and the kernel merely stale, which the next apply
+// fixes. The reverse order would lose the intent while leaving the ruleset live,
+// and there would be nothing left to re-derive it from.
 func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	block, err := t.Render()
 	if err != nil {
+		return err
+	}
+
+	cfg, err := FileConfigFromTable(t).Marshal()
+	if err != nil {
+		return err
+	}
+
+	if err := m.check(ctx, block); err != nil {
+		return err
+	}
+
+	if err := atomicWriteFile(m.configPath, string(cfg), 0o600); err != nil {
 		return err
 	}
 
@@ -217,15 +312,64 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	return m.applyViaService(ctx)
 }
 
+// check dry-runs a rendered ruleset through nft without committing it. The
+// document is staged in the nft artifact's own directory rather than the system
+// temp dir, so the check runs on the same filesystem and permissions the real
+// load will see, and is removed either way.
+func (m *Manager) check(ctx context.Context, block string) error {
+	dir := filepath.Dir(m.nftPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to create directory %s", dir)
+	}
+
+	staged, err := os.CreateTemp(dir, ".network-weaver-host-firewall-*.nft.check")
+	if err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to create temp file in %s", dir)
+	}
+	name := staged.Name()
+	defer func() { _ = os.Remove(name) }()
+
+	if _, err := staged.WriteString(block); err != nil {
+		_ = staged.Close()
+		return errorx.ExternalError.Wrap(err, "failed to write temp file %s", name)
+	}
+	if err := staged.Close(); err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to close temp file %s", name)
+	}
+
+	if err := m.runner.Check(ctx, name); err != nil {
+		return errorx.Decorate(err, "the host firewall ruleset was not applied and nothing was written to %s or %s", m.configPath, m.nftPath)
+	}
+	return nil
+}
+
+// load returns the currently-configured table. The declarative config is the
+// source of truth; the rendered nft artifact is a fallback for a host
+// provisioned before the config file existed, or one that lost it. See Parse for
+// what the fallback can and cannot recover.
 func (m *Manager) load() (*Table, error) {
-	data, err := os.ReadFile(m.nftPath)
+	data, err := os.ReadFile(m.configPath)
+	switch {
+	case err == nil:
+		cfg, err := ParseConfig(data)
+		if err != nil {
+			return nil, errorx.Decorate(err, "failed to load %s", m.configPath)
+		}
+		return cfg.Table()
+	case !os.IsNotExist(err):
+		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.configPath)
+	}
+
+	nft, err := os.ReadFile(m.nftPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errorx.IllegalState.New("inet weaver-host-firewall firewall not found at %s; run `solo-provisioner network firewall create` first", m.nftPath)
+			return nil, errorx.IllegalState.New("inet weaver-host-firewall firewall not found at %s; run `solo-provisioner network firewall create` first", m.configPath)
 		}
 		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.nftPath)
 	}
-	return Parse(string(data))
+	logx.As().Info().Str("path", m.nftPath).Msg(
+		"no host firewall config file; recovering the reserved blocks from the rendered ruleset (any named allow rules must be re-applied with --from-file)")
+	return Parse(string(nft))
 }
 
 // withLock serialises a mutation behind the shared cross-command flock so a

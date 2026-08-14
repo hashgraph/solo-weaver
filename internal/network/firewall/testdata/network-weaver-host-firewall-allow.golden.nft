@@ -16,21 +16,23 @@ table inet weaver-host-firewall {
 	# auto-merge collapses overlapping and adjacent entries, so the live set can
 	# read back differently from what was written — which is why the persisted
 	# YAML config, not the kernel, is this table's source of truth.
-	set mgmt_addrs { type ipv4_addr; flags interval; auto-merge;{{if .Mgmt.Elements}} elements = { {{.Mgmt.Elements}} };{{end}} }
-	set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge;{{if .Mgmt.Elements6}} elements = { {{.Mgmt.Elements6}} };{{end}} }
-	set mgmt_ports { type inet_service; flags interval; auto-merge;{{if .Mgmt.PortElements}} elements = { {{.Mgmt.PortElements}} };{{end}} }
-	set blocked_addrs { type ipv4_addr; flags interval; auto-merge;{{if .Blocked.Elements}} elements = { {{.Blocked.Elements}} };{{end}} }
-	set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge;{{if .Blocked.Elements6}} elements = { {{.Blocked.Elements6}} };{{end}} }
-	set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge;{{if .InCluster.Elements}} elements = { {{.InCluster.Elements}} };{{end}} }
-	set in_cluster_addrs6 { type ipv6_addr; flags interval; auto-merge;{{if .InCluster.Elements6}} elements = { {{.InCluster.Elements6}} };{{end}} }
-	set in_cluster_ports { type inet_service; flags interval; auto-merge;{{if .InCluster.PortElements}} elements = { {{.InCluster.PortElements}} };{{end}} }
-{{- range .Allow}}
-	set {{.AddrSet}} { type ipv4_addr; flags interval; auto-merge;{{if .Elements}} elements = { {{.Elements}} };{{end}} }
-	set {{.AddrSet6}} { type ipv6_addr; flags interval; auto-merge;{{if .Elements6}} elements = { {{.Elements6}} };{{end}} }
-{{- if .HasPorts}}
-	set {{.PortsSet}} { type inet_service; flags interval; auto-merge; elements = { {{.PortElements}} }; }
-{{- end}}
-{{- end}}
+	set mgmt_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/8 }; }
+	set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:a11::/48 }; }
+	set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 22 }; }
+	set blocked_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.0/24 }; }
+	set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:bad::/48 }; }
+	set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.4.0.0/24 }; }
+	set in_cluster_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:c0de::/64 }; }
+	set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 10250 }; }
+	set admin { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.5/32 }; }
+	set admin6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:5e5::/64 }; }
+	set admin_ports { type inet_service; flags interval; auto-merge; elements = { 22 }; }
+	set cilium-vxlan { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/24 }; }
+	set cilium-vxlan6 { type ipv6_addr; flags interval; auto-merge; }
+	set cilium-vxlan_ports { type inet_service; flags interval; auto-merge; elements = { 8472 }; }
+	set k8s-node { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/24 }; }
+	set k8s-node6 { type ipv6_addr; flags interval; auto-merge; }
+	set k8s-node_ports { type inet_service; flags interval; auto-merge; elements = { 2379-2380, 6443, 10250, 10256-10259 }; }
 
 	# Operator block list, dropped as early as the packet can be seen. Priority
 	# -300 is the `raw` band, ahead of conntrack at -200, so a blocked source
@@ -99,15 +101,11 @@ table inet weaver-host-firewall {
 
 		# Full ICMP from management sources (ping, traceroute, diagnostics) — no rate limit.
 		ip saddr @mgmt_addrs icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
-{{- range .Allow}}
-{{- if and .ICMPEcho .HasV4}}
-		# Unmetered echo for the {{.Name}} rule's sources. Must stay above the
+		# Unmetered echo for the admin rule's sources. Must stay above the
 		# rate meter below: the meter drops over-budget echo outright, so a named
 		# accept placed after it would never be reached under a flood — which is
 		# exactly when an operator needs ping to still work.
-		ip saddr @{{.AddrSet}} icmp type echo-request accept
-{{- end}}
-{{- end}}
+		ip saddr @admin icmp type echo-request accept
 
 		# From everyone else: always allow the path-health subset (Path MTU
 		# Discovery + traceroute), and rate-limit echo-request to prevent floods.
@@ -141,13 +139,9 @@ table inet weaver-host-firewall {
 
 		# Full ICMPv6 from management sources — no rate limit.
 		ip6 saddr @mgmt_addrs6 icmpv6 type { echo-request, echo-reply, destination-unreachable, time-exceeded, parameter-problem, packet-too-big } accept
-{{- range .Allow}}
-{{- if and .ICMPEcho .HasV6}}
-		# Unmetered echo for the {{.Name}} rule's sources — above the meter, same
+		# Unmetered echo for the admin rule's sources — above the meter, same
 		# reasoning as the IPv4 chain.
-		ip6 saddr @{{.AddrSet6}} icmpv6 type echo-request accept
-{{- end}}
-{{- end}}
+		ip6 saddr @admin6 icmpv6 type echo-request accept
 
 		# IPv6 path health for everyone. packet-too-big is the IPv6 PMTUD signal —
 		# IPv6 routers never fragment, so dropping it silently blackholes any flow
@@ -166,31 +160,21 @@ table inet weaver-host-firewall {
 	chain input_ipv4 {
 		# SSH / management access from the allowlist only.
 		ip saddr @mgmt_addrs tcp dport @mgmt_ports accept
-{{- if .InCluster.HasV4}}
 
 		# In-cluster host-service ports, reachable from the pod CIDR only.
 		ip saddr @in_cluster_addrs tcp dport @in_cluster_ports accept
-{{- end}}
-{{- range .Allow}}
-{{- if and .HasV4 .HasPorts}}
-		ip saddr @{{.AddrSet}} {{.Proto}} dport @{{.PortsSet}} accept
-{{- end}}
-{{- end}}
+		ip saddr @admin tcp dport @admin_ports accept
+		ip saddr @cilium-vxlan udp dport @cilium-vxlan_ports accept
+		ip saddr @k8s-node tcp dport @k8s-node_ports accept
 	}
 
 	chain input_ipv6 {
 		# SSH / management access from the allowlist only.
 		ip6 saddr @mgmt_addrs6 tcp dport @mgmt_ports accept
-{{- if .InCluster.HasV6}}
 
 		# In-cluster host-service ports, reachable from the pod CIDR only.
 		ip6 saddr @in_cluster_addrs6 tcp dport @in_cluster_ports accept
-{{- end}}
-{{- range .Allow}}
-{{- if and .HasV6 .HasPorts}}
-		ip6 saddr @{{.AddrSet6}} {{.Proto}} dport @{{.PortsSet}} accept
-{{- end}}
-{{- end}}
+		ip6 saddr @admin6 tcp dport @admin_ports accept
 	}
 
 	# Block-list symmetry on locally-generated traffic. Dropping a peer inbound
