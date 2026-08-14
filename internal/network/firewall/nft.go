@@ -80,17 +80,42 @@ func (r *execRunner) Check(ctx context.Context, path string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// A non-zero exit means nft read the document and refused it, and its
-		// stderr names the offending line — that is a malformed ruleset, not a
-		// broken host. Anything else (binary missing, not permitted to exec) is
-		// an environment failure and keeps the cause attached.
+		msg := strings.TrimSpace(stderr.String())
+		// nft exits non-zero for two unrelated reasons: a ruleset it parsed and
+		// refused, and an environment failure (no CAP_NET_ADMIN, a netlink error,
+		// a missing binary). Only the former reports a source position, so the
+		// `<path>:<line>:<col>` prefix — not the exit code — is what separates
+		// "the ruleset is wrong" from "the host is wrong". Treating every non-zero
+		// exit as malformed input would style a privilege error as bad input and
+		// point the operator at the ruleset instead of their permissions.
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return errorx.IllegalFormat.New("nft rejected the rendered ruleset: %s", strings.TrimSpace(stderr.String()))
+		if errors.As(err, &exitErr) && isRulesetDiagnostic(path, msg) {
+			return errorx.IllegalFormat.New("nft rejected the rendered ruleset: %s", msg)
 		}
-		return errorx.ExternalError.Wrap(err, "failed to run %s -c -f %s", r.bin, path)
+		return errorx.ExternalError.Wrap(err, "failed to check the rendered ruleset with %s -c -f: %s", r.bin, msg)
 	}
 	return nil
+}
+
+// isRulesetDiagnostic reports whether stderr carries an nft source position for
+// path — the `<path>:<line>:<col>: Error: …` form nft prints when it has read the
+// document and objected to its contents. Matching the position rather than the
+// message keeps this independent of nft's wording across versions, and requiring
+// the path to be the one we handed it stops a diagnostic about some other file
+// (an `include`, say) from being read as a verdict on ours.
+func isRulesetDiagnostic(path, stderr string) bool {
+	for line := range strings.SplitSeq(stderr, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), path+":")
+		if !ok {
+			continue
+		}
+		// nft follows the path with "<line>:<col>". A digit is enough to tell a
+		// position report from a message that merely mentions the file by name.
+		if rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *execRunner) Delete(ctx context.Context) error {

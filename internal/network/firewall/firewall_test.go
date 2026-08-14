@@ -701,3 +701,52 @@ func TestNetworkNftUnit_HasNoStartLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(content), "StartLimitIntervalSec=0")
 }
+
+// TestIsRulesetDiagnostic pins the classification `Check` uses to tell a ruleset
+// nft refused from a host that would not let it look. nft exits non-zero for
+// both, so only the source position distinguishes them — and getting it wrong
+// points the operator at their config when the real problem is permissions.
+func TestIsRulesetDiagnostic(t *testing.T) {
+	const path = "/etc/solo-provisioner/.network-weaver-host-firewall-123.nft.check"
+
+	for name, tc := range map[string]struct {
+		stderr string
+		want   bool
+	}{
+		// Verbatim nft 1.1.3 output for the overlapping-CIDR case in #1002.
+		"conflicting intervals": {
+			stderr: path + `:33:75-85: Error: conflicting intervals specified
+	set k8s-node { type ipv4_addr; flags interval; elements = { 10.0.0.0/24, 10.0.0.5/32 }; }
+	                                                            ~~~~~~~~~~~  ^^^^^^^^^^^`,
+			want: true,
+		},
+		"syntax error": {
+			stderr: path + ":7:12-19: Error: syntax error, unexpected string",
+			want:   true,
+		},
+		// The cases that must NOT be reported as a bad ruleset.
+		"not permitted": {
+			stderr: "Error: Could not process rule: Operation not permitted",
+			want:   false,
+		},
+		"netlink failure": {
+			stderr: "Error: Could not process rule: Out of memory",
+			want:   false,
+		},
+		"empty stderr": {stderr: "", want: false},
+		// A position for some other file is not a verdict on ours.
+		"diagnostic for another path": {
+			stderr: "/etc/solo-provisioner/other.nft:3:1-4: Error: syntax error",
+			want:   false,
+		},
+		// Naming the file without a position is a message, not a diagnostic.
+		"path mentioned without position": {
+			stderr: "Error: cannot open " + path + ": No such file or directory",
+			want:   false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, isRulesetDiagnostic(path, tc.stderr))
+		})
+	}
+}
