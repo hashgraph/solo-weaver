@@ -355,9 +355,25 @@ where no external configuration management supplies one.
 
 A rule's addresses are one mixed-family list; `splitCIDRs` routes each entry to `@<name>`
 (`ipv4_addr`) or `@<name>6` (`ipv6_addr`) and the rule is emitted only into the chains whose
-family has members. Port sets carry `flags interval` + `auto-merge`, which is what lets a range
-be a single element — and also means the live set can read back merged differently from what was
-written, so the persisted config, not the kernel, is the source of truth.
+family has members.
+
+Every set in this table — addresses as well as ports — carries `flags interval` + `auto-merge`.
+On a port set the interval flag is what lets a range be a single element. On an address set
+auto-merge is what makes overlapping prefixes legal: without it, adding `10.0.0.5/32` to a set
+already holding `10.0.0.0/24` makes nft reject the whole document with *conflicting intervals
+specified*, which a plain `firewall add --cidr` can reach. The cost is that the live set reads
+back merged differently from what was written, so the persisted config — not the kernel — is the
+source of truth. `firewall show` dumps the kernel and will print folded prefixes;
+`firewall show --output yaml` reads the config and shows what the operator authored.
+
+Because the kernel is not authoritative, a rejected ruleset must never reach disk either. Every
+mutation renders the document, dry-runs it with `nft -c -f`, and only then writes
+`network-weaver-host-firewall.yaml` and `.nft` and restarts the unit. The unit has no `ExecStop`,
+so a failed load leaves the live table intact and looks harmless — but the persisted artifact is
+what replays at boot, and an unloadable one means the host comes up with no weaver firewall at
+all. Relatedly the unit sets `StartLimitIntervalSec=0`: it is restarted on every mutation, so
+systemd's default start rate limit would otherwise turn one bad apply into an opaque
+`start-limit-hit` on every later command until someone ran `systemctl reset-failed`.
 
 Two things stay structural and no rule can remove them: the IPv6 ND/MLD accepts with their
 hop-limit 255 guard (IPv6 is non-functional without them), and the ICMP rate meter. An

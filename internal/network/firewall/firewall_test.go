@@ -4,12 +4,14 @@ package firewall
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,11 +27,26 @@ type fakeRunner struct {
 	exists  bool
 	listOut string
 	deleted bool
+	// checkErr, when set, makes Check reject every document, standing in for an
+	// nft that refuses the rendered ruleset.
+	checkErr error
+	// checked records the documents Check was handed, so a test can assert the
+	// dry run saw the ruleset that was about to be persisted.
+	checked []string
 }
 
 func (f *fakeRunner) List(_ context.Context) (string, error) { return f.listOut, nil }
 func (f *fakeRunner) Delete(_ context.Context) error         { f.deleted = true; f.exists = false; return nil }
 func (f *fakeRunner) Exists(_ context.Context) (bool, error) { return f.exists, nil }
+
+func (f *fakeRunner) Check(_ context.Context, path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	f.checked = append(f.checked, string(b))
+	return f.checkErr
+}
 
 func sampleTable() *Table {
 	tbl := NewTable()
@@ -129,7 +146,7 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	require.Contains(t, doc, "elements = { 4244, 6443, 7472, 10250 }")
 	// The operator block list is a distinct set from the mgmt allowlist and
 	// must be dropped before anything else, including established/related.
-	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; elements = { 203.0.113.0/24 }; }")
+	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.0/24 }; }")
 	require.Contains(t, doc, "ip saddr @blocked_addrs drop")
 	// ICMP is a static, safe ruleset: full ICMP from mgmt, and from everyone
 	// else the path-health subset (PMTUD + traceroute) plus rate-limited echo.
@@ -241,10 +258,10 @@ func TestRender_NoMgmtNoPod(t *testing.T) {
 
 	// Empty mgmt set renders without an elements clause; no pod CIDR means no
 	// in-cluster rule line. Both families' sets are always declared (dual-stack).
-	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; }")
-	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; }")
-	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; }")
-	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; }")
+	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; auto-merge; }")
+	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge; }")
+	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; auto-merge; }")
+	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge; }")
 	require.NotContains(t, doc, "tcp dport @in_cluster_ports accept")
 }
 
@@ -254,10 +271,10 @@ func TestRender_DualStack(t *testing.T) {
 
 	// Each family's members land in its own set; mixed --mgmt/--blocked lists
 	// are split by family, not smuggled into the wrong-typed set.
-	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; elements = { 10.0.0.0/8 }; }")
-	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:a11::/48 }; }")
-	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; elements = { 203.0.113.0/24 }; }")
-	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:bad::/48 }; }")
+	require.Contains(t, doc, "set mgmt_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/8 }; }")
+	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:a11::/48 }; }")
+	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.0/24 }; }")
+	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:bad::/48 }; }")
 
 	// Parallel v6 match rules.
 	require.Contains(t, doc, "ip6 saddr @blocked_addrs6 drop")
@@ -488,8 +505,8 @@ func TestManager_AddAcceptsIPv6(t *testing.T) {
 	require.NoError(t, m.Add(ctx, RuleMgmt, []string{"2001:db8:a11::/48"}, nil))
 	require.NoError(t, m.Add(ctx, RuleBlocked, []string{"2001:db8:bad::/48"}, nil))
 	doc := readNft(t, nftPath)
-	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:a11::/48 }; }")
-	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; elements = { 2001:db8:bad::/48 }; }")
+	require.Contains(t, doc, "set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:a11::/48 }; }")
+	require.Contains(t, doc, "set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:bad::/48 }; }")
 }
 
 func TestTable_Validate_AcceptsIPv6(t *testing.T) {
@@ -568,4 +585,168 @@ func TestRender_GoldenStable(t *testing.T) {
 	want, err := os.ReadFile(goldenPath)
 	require.NoError(t, err)
 	require.Equal(t, strings.TrimSpace(string(want)), strings.TrimSpace(doc))
+}
+
+// TestRender_OverlappingCIDRsShareAnAutoMergeSet pins the fix for #1002: the
+// address sets must carry auto-merge, or nft rejects the whole document with
+// "conflicting intervals specified" the moment one member covers another.
+func TestRender_OverlappingCIDRsShareAnAutoMergeSet(t *testing.T) {
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"192.168.50.0/24"}
+	require.NoError(t, tbl.UpsertAllow(Rule{
+		Name:  "k8s-node",
+		CIDRs: []string{"10.0.0.0/24", "10.0.0.5/32"},
+		Ports: []string{"6443"},
+	}))
+
+	doc, err := tbl.Render()
+	require.NoError(t, err)
+	require.Contains(t, doc, "set k8s-node { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/24, 10.0.0.5/32 }; }")
+
+	// Every address set, not just the allow rules — an operator can put
+	// overlapping prefixes in the reserved blocks too.
+	for _, decl := range []string{
+		"set mgmt_addrs { type ipv4_addr; flags interval; auto-merge;",
+		"set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge;",
+		"set blocked_addrs { type ipv4_addr; flags interval; auto-merge;",
+		"set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge;",
+		"set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge;",
+		"set in_cluster_addrs6 { type ipv6_addr; flags interval; auto-merge;",
+		"set k8s-node6 { type ipv6_addr; flags interval; auto-merge;",
+	} {
+		require.Contains(t, doc, decl)
+	}
+}
+
+// TestManager_AddCoveredCIDR walks the exact repro from #1002: a rule already
+// holding 10.0.0.0/24 takes 10.0.0.5/32. It must apply, and the config must keep
+// both entries — the narrower prefix is operator intent that outlives the
+// removal of the wider one, even though nft folds the two at load time.
+func TestManager_AddCoveredCIDR(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+
+	tbl := sampleTable()
+	require.NoError(t, tbl.UpsertAllow(Rule{Name: "k8s-node", CIDRs: []string{"10.0.0.0/24"}, Ports: []string{"6443"}}))
+	_, err := m.Create(ctx, tbl, false)
+	require.NoError(t, err)
+
+	require.NoError(t, m.Add(ctx, "k8s-node", []string{"10.0.0.5/32"}, nil))
+
+	doc := readNft(t, nftPath)
+	require.Contains(t, doc, "set k8s-node { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/24, 10.0.0.5/32 }; }")
+
+	got, err := m.Table(ctx)
+	require.NoError(t, err)
+	rule, ok := got.Rule("k8s-node")
+	require.True(t, ok)
+	require.Equal(t, []string{"10.0.0.0/24", "10.0.0.5/32"}, rule.CIDRs)
+}
+
+// TestManager_RejectedRulesetIsNeverPersisted is the other half of #1002: a
+// document nft refuses must not reach disk. The live table is untouched by a
+// failed apply (the unit has no ExecStop), so persisting first made the invalid
+// ruleset the boot artifact and the host came up with no firewall at all.
+func TestManager_RejectedRulesetIsNeverPersisted(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	configPath := filepath.Join(filepath.Dir(nftPath), "network-weaver-host-firewall.yaml")
+	ctx := context.Background()
+
+	_, err := m.Create(ctx, sampleTable(), false)
+	require.NoError(t, err)
+	require.Equal(t, 1, applyCount)
+
+	nftBefore := readNft(t, nftPath)
+	cfgBefore, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	r.checkErr = errors.New("conflicting intervals specified")
+	err = m.Add(ctx, RuleMgmt, []string{"198.51.100.4/32"}, nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "conflicting intervals specified")
+	require.ErrorContains(t, err, "nothing was written")
+
+	require.Equal(t, nftBefore, readNft(t, nftPath), "the nft artifact must survive a rejected apply unchanged")
+	cfgAfter, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Equal(t, cfgBefore, cfgAfter, "the config must survive a rejected apply unchanged")
+	require.Equal(t, 1, applyCount, "the service must not be restarted for a ruleset nft refused")
+}
+
+// TestManager_ChecksTheDocumentItPersists guards the dry run against drifting
+// out of lockstep with what actually lands on disk — a check of some other
+// rendering would be worse than no check, since it would read as a guarantee.
+func TestManager_ChecksTheDocumentItPersists(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+
+	_, err := m.Create(context.Background(), allowTable(), false)
+	require.NoError(t, err)
+
+	require.Len(t, r.checked, 1)
+	require.Equal(t, readNft(t, nftPath), r.checked[0])
+}
+
+// TestNetworkNftUnit_HasNoStartLimit pins the third leg of #1002. Every firewall
+// and policy mutation restarts this unit, so systemd's default start rate limit
+// turns a run of failed applies into an opaque start-limit-hit on every later
+// command until someone runs `systemctl reset-failed`.
+func TestNetworkNftUnit_HasNoStartLimit(t *testing.T) {
+	content, err := templates.Files.ReadFile(networkNftServiceTemplate)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "StartLimitIntervalSec=0")
+}
+
+// TestIsRulesetDiagnostic pins the classification `Check` uses to tell a ruleset
+// nft refused from a host that would not let it look. nft exits non-zero for
+// both, so only the source position distinguishes them — and getting it wrong
+// points the operator at their config when the real problem is permissions.
+func TestIsRulesetDiagnostic(t *testing.T) {
+	const path = "/etc/solo-provisioner/.network-weaver-host-firewall-123.nft.check"
+
+	for name, tc := range map[string]struct {
+		stderr string
+		want   bool
+	}{
+		// Verbatim nft 1.1.3 output for the overlapping-CIDR case in #1002.
+		"conflicting intervals": {
+			stderr: path + `:33:75-85: Error: conflicting intervals specified
+	set k8s-node { type ipv4_addr; flags interval; elements = { 10.0.0.0/24, 10.0.0.5/32 }; }
+	                                                            ~~~~~~~~~~~  ^^^^^^^^^^^`,
+			want: true,
+		},
+		"syntax error": {
+			stderr: path + ":7:12-19: Error: syntax error, unexpected string",
+			want:   true,
+		},
+		// The cases that must NOT be reported as a bad ruleset.
+		"not permitted": {
+			stderr: "Error: Could not process rule: Operation not permitted",
+			want:   false,
+		},
+		"netlink failure": {
+			stderr: "Error: Could not process rule: Out of memory",
+			want:   false,
+		},
+		"empty stderr": {stderr: "", want: false},
+		// A position for some other file is not a verdict on ours.
+		"diagnostic for another path": {
+			stderr: "/etc/solo-provisioner/other.nft:3:1-4: Error: syntax error",
+			want:   false,
+		},
+		// Naming the file without a position is a message, not a diagnostic.
+		"path mentioned without position": {
+			stderr: "Error: cannot open " + path + ": No such file or directory",
+			want:   false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, isRulesetDiagnostic(path, tc.stderr))
+		})
+	}
 }

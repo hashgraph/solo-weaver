@@ -269,16 +269,23 @@ func (m *Manager) mutateRule(ctx context.Context, name string, fn func(*Rule) er
 	})
 }
 
-// applyAndPersist atomically rewrites the declarative config and the nft
-// artifact, then restarts the systemd service via DBus so the kernel picks up
-// the new rules. The rendered file contains the idempotent scoped-replace
-// prefix, so it is safe for both the boot-time oneshot and live re-applies.
+// applyAndPersist dry-runs the rendered ruleset, then atomically rewrites the
+// declarative config and the nft artifact, then restarts the systemd service via
+// DBus so the kernel picks up the new rules. The rendered file contains the
+// idempotent scoped-replace prefix, so it is safe for both the boot-time oneshot
+// and live re-applies.
 //
-// The config is written first: it is what the next mutation loads, so a crash
-// between the two writes leaves the operator's intent recorded and the kernel
-// merely stale, which the next apply fixes. The reverse order would lose the
-// intent while leaving the ruleset live, and there would be nothing left to
-// re-derive it from.
+// The dry run comes first, and nothing is written unless it passes. The unit has
+// no ExecStop, so a ruleset nft refuses leaves the live table untouched and the
+// failure looks harmless — but persisting first would have made that document
+// the boot artifact, and the host would come up with no weaver firewall at all
+// (#1002). Validating up front means a rejected ruleset never reaches disk.
+//
+// Past the dry run, the config is written before the nft artifact: it is what
+// the next mutation loads, so a crash between the two writes leaves the
+// operator's intent recorded and the kernel merely stale, which the next apply
+// fixes. The reverse order would lose the intent while leaving the ruleset live,
+// and there would be nothing left to re-derive it from.
 func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	block, err := t.Render()
 	if err != nil {
@@ -289,6 +296,11 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	if err != nil {
 		return err
 	}
+
+	if err := m.check(ctx, block); err != nil {
+		return err
+	}
+
 	if err := atomicWriteFile(m.configPath, string(cfg), 0o600); err != nil {
 		return err
 	}
@@ -298,6 +310,37 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	}
 
 	return m.applyViaService(ctx)
+}
+
+// check dry-runs a rendered ruleset through nft without committing it. The
+// document is staged in the nft artifact's own directory rather than the system
+// temp dir, so the check runs on the same filesystem and permissions the real
+// load will see, and is removed either way.
+func (m *Manager) check(ctx context.Context, block string) error {
+	dir := filepath.Dir(m.nftPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to create directory %s", dir)
+	}
+
+	staged, err := os.CreateTemp(dir, ".network-weaver-host-firewall-*.nft.check")
+	if err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to create temp file in %s", dir)
+	}
+	name := staged.Name()
+	defer func() { _ = os.Remove(name) }()
+
+	if _, err := staged.WriteString(block); err != nil {
+		_ = staged.Close()
+		return errorx.ExternalError.Wrap(err, "failed to write temp file %s", name)
+	}
+	if err := staged.Close(); err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to close temp file %s", name)
+	}
+
+	if err := m.runner.Check(ctx, name); err != nil {
+		return errorx.Decorate(err, "the host firewall ruleset was not applied and nothing was written to %s or %s", m.configPath, m.nftPath)
+	}
+	return nil
 }
 
 // load returns the currently-configured table. The declarative config is the

@@ -4,6 +4,12 @@ Documentation=https://github.com/hashgraph/solo-weaver
 DefaultDependencies=no
 After=local-fs.target
 Before=solo-provisioner-daemon.service
+# Every `network firewall` / `network policy` mutation restarts this unit, so a
+# run of failed applies would otherwise trip systemd's default start rate limit
+# and leave every later command failing with an opaque "start-limit-hit" that
+# outlives the problem — until someone runs `systemctl reset-failed`. There is
+# nothing to protect here: the unit is a oneshot that loads a file and exits.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

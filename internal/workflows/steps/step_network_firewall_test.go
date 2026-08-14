@@ -26,6 +26,10 @@ func (f *fakeFwRunner) List(context.Context) (string, error) { return "", nil }
 func (f *fakeFwRunner) Delete(context.Context) error         { f.deleted = true; f.exists = false; return nil }
 func (f *fakeFwRunner) Exists(context.Context) (bool, error) { return f.exists, nil }
 
+// Check accepts every document: the step test covers step wiring, not nft's
+// verdict on the rendered ruleset (that lives in internal/network/firewall).
+func (f *fakeFwRunner) Check(context.Context, string) error { return nil }
+
 // withStubbedFirewall points newFirewallManager at a manager wired to the given
 // fake runner, temp paths, and a no-op service apply, restoring it on cleanup.
 // It returns the on-disk nft path so tests can assert the artifact was written.

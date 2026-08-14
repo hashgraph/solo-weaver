@@ -19,8 +19,8 @@ func TestRender_AllowRules(t *testing.T) {
 	// Each rule gets its own per-family address sets and one port set. An allow
 	// rule's address set is its bare name; only the reserved blocks carry the
 	// `_addrs` suffix they shipped with.
-	require.Contains(t, doc, "set k8s-node { type ipv4_addr; flags interval; elements = { 10.0.0.0/24 }; }")
-	require.Contains(t, doc, "set k8s-node6 { type ipv6_addr; flags interval; }")
+	require.Contains(t, doc, "set k8s-node { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/24 }; }")
+	require.Contains(t, doc, "set k8s-node6 { type ipv6_addr; flags interval; auto-merge; }")
 
 	// Port ranges are single elements of an interval set, ordered by lower bound
 	// rather than lexically (10250 after 6443).
@@ -59,7 +59,7 @@ func TestRender_AllowRuleFamilyScoping(t *testing.T) {
 
 	// The sets themselves are always declared for both families, so adding a v6
 	// address to an existing rule needs no structural change.
-	require.Contains(t, doc, "set k8s-node6 { type ipv6_addr; flags interval; }")
+	require.Contains(t, doc, "set k8s-node6 { type ipv6_addr; flags interval; auto-merge; }")
 }
 
 // TestRender_ICMPEchoPrecedesRateMeter is the ordering pin the meter inversion

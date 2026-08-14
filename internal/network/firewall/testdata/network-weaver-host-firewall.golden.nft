@@ -2,18 +2,27 @@ add table inet weaver-host-firewall
 delete table inet weaver-host-firewall
 add table inet weaver-host-firewall
 table inet weaver-host-firewall {
-	set mgmt_addrs { type ipv4_addr; flags interval; elements = { 10.0.0.0/8, 192.168.0.0/16 }; }
-	set mgmt_addrs6 { type ipv6_addr; flags interval; }
-	# `flags interval` + `auto-merge` is what lets a port set hold a range
-	# (2379-2380) as one element; a plain inet_service set rejects the range
-	# syntax outright. auto-merge also collapses adjacent entries, so the live
-	# set can read back differently from what was written — which is why the
-	# persisted YAML config, not the kernel, is this table's source of truth.
+	# Every set below is `flags interval` + `auto-merge`, addresses included.
+	#
+	# On an address set, `interval` is what admits a prefix at all, and
+	# `auto-merge` is what folds an overlapping prefix into the one that covers
+	# it. Without it, adding 10.0.0.5/32 to a set already holding 10.0.0.0/24
+	# makes nft reject the entire document with "conflicting intervals
+	# specified" — which is reachable from a plain `firewall add --cidr`.
+	#
+	# On a port set, `interval` is what lets one element hold a range
+	# (2379-2380); a plain inet_service set rejects the range syntax outright.
+	#
+	# auto-merge collapses overlapping and adjacent entries, so the live set can
+	# read back differently from what was written — which is why the persisted
+	# YAML config, not the kernel, is this table's source of truth.
+	set mgmt_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/8, 192.168.0.0/16 }; }
+	set mgmt_addrs6 { type ipv6_addr; flags interval; auto-merge; }
 	set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 22 }; }
-	set blocked_addrs { type ipv4_addr; flags interval; elements = { 203.0.113.0/24 }; }
-	set blocked_addrs6 { type ipv6_addr; flags interval; }
-	set in_cluster_addrs { type ipv4_addr; flags interval; elements = { 10.4.0.0/24 }; }
-	set in_cluster_addrs6 { type ipv6_addr; flags interval; }
+	set blocked_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.0/24 }; }
+	set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge; }
+	set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.4.0.0/24 }; }
+	set in_cluster_addrs6 { type ipv6_addr; flags interval; auto-merge; }
 	set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 10250 }; }
 
 	# Operator block list, dropped as early as the packet can be seen. Priority

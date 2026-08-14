@@ -28,6 +28,10 @@ func (c *captureRunner) List(_ context.Context) (string, error) { return "", nil
 func (c *captureRunner) Delete(_ context.Context) error         { c.exists = false; return nil }
 func (c *captureRunner) Exists(_ context.Context) (bool, error) { return c.exists, nil }
 
+// Check accepts every document: these tests exercise the CLI's flag handling,
+// not nft's verdict on the rendered ruleset (that lives in internal/network/firewall).
+func (c *captureRunner) Check(_ context.Context, _ string) error { return nil }
+
 func TestFirewallCmd_Structure(t *testing.T) {
 	cmd := GetCmd()
 	require.Equal(t, "firewall", cmd.Use)
@@ -162,7 +166,7 @@ func TestBackwardCompatibleInvocations(t *testing.T) {
 	require.Contains(t, doc, "set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 2222 }; }",
 		"--ssh-port must still work, as a one-element port list")
 	require.Contains(t, doc, "elements = { 6443, 10250 }")
-	require.Contains(t, doc, "set in_cluster_addrs { type ipv4_addr; flags interval; elements = { 10.4.0.0/24 }; }")
+	require.Contains(t, doc, "set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.4.0.0/24 }; }")
 
 	require.NoError(t, run(t, "add", "--mgmt-cidr", "192.168.1.0/24"))
 	require.Contains(t, readFile(t, nftPath), "192.168.1.0/24")
@@ -395,9 +399,13 @@ func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
 	origMgr, origDetect := newManager, detectPodCIDR
 	newManager = func() *fw.Manager {
 		return fw.NewManagerWithConfig(fw.Config{
-			Runner:   r,
-			NftPath:  nftPath,
-			LockPath: filepath.Join(dir, ".applying"),
+			Runner:  r,
+			NftPath: nftPath,
+			// Without this the config falls back to the production
+			// /etc/solo-provisioner path, so the test writes to the real host
+			// and only passes as root.
+			ConfigPath: filepath.Join(dir, "network-weaver-host-firewall.yaml"),
+			LockPath:   filepath.Join(dir, ".applying"),
 			ApplyViaService: func(context.Context) error {
 				r.exists = true
 				return nil
