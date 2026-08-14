@@ -185,6 +185,7 @@ the systemd units under `/usr/lib/systemd/system/`.
 ```
 /etc/solo-provisioner/
   network-weaver-host-firewall.nft          # inet weaver-host-firewall table (full ruleset)
+  network-weaver-host-firewall.yaml         # its declarative config; source of truth for the host-firewall verbs
   network-weaver-workload-policy.nft        # inet weaver-workload-policy table (chain + set decls)
   policies/                                 # one JSON per policy; source of truth for workload-policy rules
   network/shape/
@@ -337,12 +338,36 @@ all. The `input` copy is redundant with `prerouting` for anything arriving on a 
 kept so the block list's ordering relative to the conntrack fast-path stays a property of the
 `input` chain itself rather than a consequence of a chain on another hook.
 
-On `input`, the only broad escapes are the mgmt allowlist on the SSH port, `in_cluster_ports`
-from the pod CIDR, the ICMP path-health subset, and `ct state established,related`. Everything
-else delivered to that host is dropped on new connections. On a single-purpose block-node host
-that is the intent, but it is a node-wide decision, not a block-node-scoped one — a second CNI,
-a docker bridge, a VPN, DHCPv6, or cross-node kubelet/etcd/NodePort traffic all need an
-explicit rule or they are dropped.
+On `input`, the only broad escapes are the mgmt allowlist on `mgmt_ports`, `in_cluster_ports`
+from the pod CIDR, whatever named allow rules the operator declared, the ICMP path-health
+subset, and `ct state established,related`. Everything else delivered to that host is dropped on
+new connections. On a single-purpose block-node host that is the intent, but it is a node-wide
+decision, not a block-node-scoped one — a second CNI, a docker bridge, a VPN, DHCPv6, or
+cross-node kubelet/etcd/NodePort traffic all need an explicit rule or they are dropped.
+
+Those explicit rules are what the **named allow rules** are for. Each is a source list x port
+list x protocol accept, rendered per family as
+`<family> saddr @<name> <proto> dport @<name>_ports accept` into `input_ipv4` / `input_ipv6`.
+They cover the axes the three reserved blocks cannot: UDP (Cilium's VXLAN 8472), port ranges
+(`2379-2380`, `10256-10259`), more than one management group, and per-source unmetered ICMP
+echo. They exist because weaver has to be able to express a *complete* host ruleset on hardware
+where no external configuration management supplies one.
+
+A rule's addresses are one mixed-family list; `splitCIDRs` routes each entry to `@<name>`
+(`ipv4_addr`) or `@<name>6` (`ipv6_addr`) and the rule is emitted only into the chains whose
+family has members. Port sets carry `flags interval` + `auto-merge`, which is what lets a range
+be a single element — and also means the live set can read back merged differently from what was
+written, so the persisted config, not the kernel, is the source of truth.
+
+Two things stay structural and no rule can remove them: the IPv6 ND/MLD accepts with their
+hop-limit 255 guard (IPv6 is non-functional without them), and the ICMP rate meter. An
+`icmp_echo` rule renders *above* the meter, because the meter drops over-budget echo outright —
+an accept placed after it would never be reached under a flood, which is exactly when an
+operator needs their own ping to work.
+
+Block-node service ports deliberately have no home here. That traffic is forwarded rather than
+delivered locally, so an `input` rule for it would never match; peer access to block-node ports
+is the workload policy plane's concern.
 
 On `forward`, weaver constrains nothing. A packet matching no classification rule is accepted
 carrying no `meta priority` and lands in the HTB default class. Workload isolation on that hook
@@ -397,7 +422,9 @@ asked first**, then traffic shaping:
 
 - `--firewall-enabled` — install the `inet weaver-host-firewall` plane.
   Configured by `--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`,
-  `--in-cluster-ports`.
+  `--in-cluster-ports` — i.e. the three reserved blocks only. Named allow rules
+  are not part of install: they are declared afterwards with
+  `network firewall create --from-file`, and a later `reconfigure` preserves them.
 - `--traffic-shaping-enabled` — the single switch that wires up **all three**
   shaping pieces: the workload policy plane (`inet weaver-workload-policy`), the
   tc HTB hierarchies, and the traffic-shaper daemon. Only when this is accepted
@@ -419,8 +446,17 @@ provisioned node.
 
 - **`network firewall`** (`create`/`add`/`remove`/`set`/`show`/`delete`) — the
   host firewall. `create` takes `--mgmt-cidrs`, `--blocked-cidrs`,
-  `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`; `add`/`remove` take the
-  singular forms; `set` atomically replaces a full list.
+  `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`, or `--from-file` for the
+  whole table; `add`/`remove`/`set`/`delete` take `--name` to address one rule —
+  a reserved block (`mgmt`, `blocked`, `in_cluster`) or a named allow rule — with
+  the per-block flags retained as shorthands. Structure (which rules exist, and
+  their protocol) is file-only; membership is CLI-mutable, because adding a rule
+  is a reviewed change while unblocking an operator is sometimes urgent.
+  `show --output yaml` emits the same schema `--from-file` accepts. A file is
+  the whole table and inherits nothing from the host, so all three reserved
+  blocks must be stated in it (as must `cidrs` inside `mgmt` and `blocked`) —
+  otherwise a file that forgot `mgmt` would render an empty management
+  allowlist under the default-drop policy.
 - **`network policy`** (`create`/`add`/`remove`/`set`/`show`/`delete`) — the
   workload policy plane. `create` takes `--name` (the nft set name), `--stamp`
   (the HTB class to classify into, which also fixes direction) or `--deny`, plus
@@ -437,8 +473,14 @@ provisioned node.
 During `block node install` / `reconfigure` the workflow lays these down:
 
 - **Host firewall** — the firewall-create step renders
-  `network-weaver-host-firewall.nft`, then `EnsureNetworkNftUnit` installs and
-  enables `solo-provisioner-network-nft.service` and restarts it.
+  `network-weaver-host-firewall.yaml` and then `network-weaver-host-firewall.nft`
+  (config first: a crash between the two leaves the operator's intent recorded
+  and the kernel merely stale, which the next apply fixes), then
+  `EnsureNetworkNftUnit` installs and enables
+  `solo-provisioner-network-nft.service` and restarts it. The step owns only the
+  reserved blocks, which come from `config.yaml` / the install flags; it carries
+  any named allow rules across unchanged, so a `reconfigure` force re-render does
+  not drop rules `config.yaml` has no field for.
 - **Workload policy** — `NftWeaverPersist`
   (`internal/workflows/steps/step_network_nft_weaver.go`) re-renders
   `network-weaver-workload-policy.nft` from the policy registry, ensures the
