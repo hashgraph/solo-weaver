@@ -7,10 +7,11 @@
 // allowance) plus any number of named allow rules.
 //
 // The verbs split along a deliberate line. Structure — which rules exist, and
-// what protocol each matches — is declared in a config file, because adding a
-// rule is a reviewed change. Membership — the addresses and ports inside a rule
-// — is mutable straight from the CLI, because unblocking an operator or opening
-// a port is sometimes urgent.
+// what protocol each matches — is declared by its own verb (create for the whole
+// table, create-allow-rule for one named rule), so bringing a rule into
+// existence is always explicit. Membership — the addresses and ports inside a
+// rule — is moved by add/remove/set, which refuse an unknown --name so a typo
+// edits nothing rather than declaring something new.
 package firewall
 
 import (
@@ -43,6 +44,8 @@ var (
 	flagFromFile  string
 	flagOutput    string
 	flagAll       bool
+	flagProto     string
+	flagICMPEcho  bool
 
 	// Per-block flags that predate --name, retained so every invocation that
 	// worked before still works and the interactive install flow is unchanged.
@@ -62,13 +65,13 @@ var firewallCmd = &cobra.Command{
 	Long: "Manage the node-agnostic host firewall: the `inet weaver-host-firewall` nftables table that protects the " +
 		"bare-metal host. It carries three reserved blocks — `mgmt` (management allowlist), `blocked` (operator " +
 		"block list) and `in_cluster` (host-service ports reachable from the pod CIDR) — plus any number of named " +
-		"allow rules declared in a config file. This table is separate from the `inet weaver-workload-policy` " +
+		"allow rules declared with `create-allow-rule`. This table is separate from the `inet weaver-workload-policy` " +
 		"workload plane and applies to every node type.",
 	RunE: common.DefaultRunE,
 }
 
 func init() {
-	firewallCmd.AddCommand(createCmd, addCmd, removeCmd, setCmd, showCmd, deleteCmd)
+	firewallCmd.AddCommand(createCmd, createAllowRuleCmd, addCmd, removeCmd, setCmd, showCmd, deleteCmd)
 }
 
 // GetCmd returns the root of the `network firewall` command group.

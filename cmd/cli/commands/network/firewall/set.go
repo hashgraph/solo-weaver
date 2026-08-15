@@ -18,7 +18,9 @@ var setCmd = &cobra.Command{
 		"per-block flags. Every replacement in a single invocation lands as one nft transaction, so a `set` that " +
 		"touches the management allowlist is never half-applied.\n\n" +
 		"A flag left off leaves that list unchanged; a flag given an empty value clears it. Clearing a reserved " +
-		"block's addresses is how you disable it without deleting it.",
+		"block's addresses is how you disable it without deleting it.\n\n" +
+		"--proto and --icmp-echo change what an allow rule matches rather than who is in it; the reserved blocks " +
+		"reject both, since they render a fixed shape.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		updates, err := resolveSetUpdates(cmd)
 		if err != nil {
@@ -34,7 +36,8 @@ var setCmd = &cobra.Command{
 // the only form that can reach a named allow rule.
 func resolveSetUpdates(cmd *cobra.Command) ([]fw.Update, error) {
 	f := cmd.Flags()
-	general := f.Changed("name") || f.Changed("cidrs") || f.Changed("cidrs-file") || f.Changed("ports")
+	general := f.Changed("name") || f.Changed("cidrs") || f.Changed("cidrs-file") || f.Changed("ports") ||
+		f.Changed("proto") || f.Changed("icmp-echo")
 
 	var legacy []fw.Update
 	if f.Changed("mgmt-cidrs") {
@@ -66,10 +69,25 @@ func resolveSetUpdates(cmd *cobra.Command) ([]fw.Update, error) {
 	if f.Changed("ports") {
 		ports = orEmpty(flagPorts)
 	}
-	if cidrs == nil && ports == nil {
-		return nil, errorx.IllegalArgument.New("at least one of --cidrs, --cidrs-file or --ports is required")
+
+	// Pointers rather than values: "" is a real proto setting (meaning "back to
+	// the tcp default") and false is a real --icmp-echo setting, so only the
+	// flag having been given can distinguish them from "leave this alone".
+	var proto *fw.Proto
+	if f.Changed("proto") {
+		p := fw.Proto(flagProto)
+		proto = &p
 	}
-	return []fw.Update{{Name: flagName, CIDRs: cidrs, Ports: ports}}, nil
+	var icmpEcho *bool
+	if f.Changed("icmp-echo") {
+		icmpEcho = &flagICMPEcho
+	}
+
+	if cidrs == nil && ports == nil && proto == nil && icmpEcho == nil {
+		return nil, errorx.IllegalArgument.New(
+			"at least one of --cidrs, --cidrs-file, --ports, --proto or --icmp-echo is required")
+	}
+	return []fw.Update{{Name: flagName, CIDRs: cidrs, Ports: ports, Proto: proto, ICMPEcho: icmpEcho}}, nil
 }
 
 // resolveCIDRs returns the replacement address list from --cidrs or --cidrs-file
@@ -130,6 +148,8 @@ func init() {
 	setCmd.Flags().StringSliceVar(&flagCIDRs, "cidrs", nil, "Full CIDR list for --name (comma-separated; replaces the existing list)")
 	setCmd.Flags().StringVar(&flagCIDRsFile, "cidrs-file", "", "Alternative to --cidrs: a file of CIDRs (one per line or comma-separated)")
 	setCmd.Flags().StringSliceVar(&flagPorts, "ports", nil, "Full port list for --name; single ports and inclusive ranges (2379-2380) (comma-separated; replaces the existing list)")
+	setCmd.Flags().StringVar(&flagProto, "proto", "", "L4 protocol the rule's ports match: tcp or udp (allow rules only; empty restores the tcp default)")
+	setCmd.Flags().BoolVar(&flagICMPEcho, "icmp-echo", false, "Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only)")
 
 	setCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Full management allowlist (comma-separated; replaces the existing list)")
 	setCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Full operator block list (comma-separated; replaces the existing list)")

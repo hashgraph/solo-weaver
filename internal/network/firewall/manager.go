@@ -104,6 +104,54 @@ func (m *Manager) Apply(ctx context.Context, t *Table) error {
 	return m.withLock(func() error { return m.applyAndPersist(ctx, t) })
 }
 
+// CreateRule declares a named allow rule, so a rule can be brought into
+// existence without a config file. It is create-if-missing like Create: a name
+// that already exists is left alone and reported as unchanged unless force is
+// set, in which case the rule is replaced outright — the declaration states the
+// whole rule, so every field not supplied on the redeclare returns to its
+// default, membership and matching alike.
+//
+// The rule may be declared with no members; the element verbs populate it
+// afterwards. It renders nothing until it has both sources and a destination, so
+// running the declare and the populate as separate commands never opens access
+// early.
+//
+// Deliberately not built on mutate: mutate always re-applies, and the
+// already-exists path has nothing to apply — re-rendering an identical document
+// would restart the nft unit for no reason.
+func (m *Manager) CreateRule(ctx context.Context, r Rule, force bool) (bool, error) {
+	// Ahead of the exists check below, because the reserved blocks always exist:
+	// left to that branch, `create-allow-rule --name mgmt` would report "already
+	// exists" and succeed, when what the operator needs to be told is that mgmt
+	// is not an allow rule at all.
+	if IsReserved(r.Name) {
+		return false, errorx.IllegalArgument.New(
+			"%q is a reserved name and cannot be used for an allow rule; configure it under its own %q block instead", r.Name, r.Name)
+	}
+
+	var changed bool
+	err := m.withLock(func() error {
+		t, err := m.load()
+		if err != nil {
+			return err
+		}
+		if _, exists := t.Rule(r.Name); exists && !force {
+			logx.As().Warn().Str("rule", r.Name).Msg(
+				"allow rule already exists — the supplied flags were not applied; pass --force to replace it, which resets the whole rule (addresses, ports, proto and icmp_echo)")
+			return nil
+		}
+		// UpsertAllow rejects the reserved names and runs Rule.Validate, so a
+		// CLI-declared rule is held to exactly the same rules as a file-declared
+		// one. Table.Validate then catches set-name collisions before render.
+		if err := t.UpsertAllow(r); err != nil {
+			return err
+		}
+		changed = true
+		return m.applyAndPersist(ctx, t)
+	})
+	return changed, err
+}
+
 // Add adds CIDRs and/or port specs to the named rule and re-renders. Adding is
 // idempotent: an entry already present is left alone.
 func (m *Manager) Add(ctx context.Context, name string, cidrs, ports []string) error {
@@ -126,11 +174,15 @@ func (m *Manager) Remove(ctx context.Context, name string, cidrs, ports []string
 }
 
 // Update is one rule's replacement membership for SetMany. A nil slice leaves
-// that dimension unchanged; an empty (non-nil) slice clears it.
+// that dimension unchanged; an empty (non-nil) slice clears it. Proto and
+// ICMPEcho follow the same convention with pointers, since their zero values
+// ("" and false) are both meaningful settings rather than "not supplied".
 type Update struct {
-	Name  string
-	CIDRs []string
-	Ports []string
+	Name     string
+	CIDRs    []string
+	Ports    []string
+	Proto    *Proto
+	ICMPEcho *bool
 }
 
 // Set atomically replaces the named rule's address list and/or port list.
@@ -148,8 +200,8 @@ func (m *Manager) SetMany(ctx context.Context, updates []Update) error {
 			r, ok := t.Rule(u.Name)
 			if !ok {
 				return errorx.IllegalArgument.New(
-					"no rule named %q; known rules are %s. New allow rules are declared in the config file (`network firewall create --from-file`)",
-					u.Name, strings.Join(t.Names(), ", "))
+					"no rule named %q; known rules are %s. Declare a new allow rule with `network firewall create-allow-rule --name %s`",
+					u.Name, strings.Join(t.Names(), ", "), u.Name)
 			}
 			if u.CIDRs != nil {
 				if err := r.SetCIDRs(u.CIDRs); err != nil {
@@ -160,6 +212,12 @@ func (m *Manager) SetMany(ctx context.Context, updates []Update) error {
 				if err := r.SetPorts(u.Ports); err != nil {
 					return err
 				}
+			}
+			if u.Proto != nil {
+				r.Proto = *u.Proto
+			}
+			if u.ICMPEcho != nil {
+				r.ICMPEcho = *u.ICMPEcho
 			}
 		}
 		return nil
@@ -257,15 +315,15 @@ func (m *Manager) mutate(ctx context.Context, fn func(*Table) error) error {
 
 // mutateRule resolves name to a rule and applies fn to it. An unknown name is
 // rejected with the valid names listed, rather than silently creating a rule:
-// structure (which rules exist, and their protocol) is config-file territory,
-// while the CLI verbs move membership in and out of rules that already exist.
+// declaring a rule is its own verb, so a mistyped --name edits nothing instead
+// of quietly creating a second rule alongside the one that was meant.
 func (m *Manager) mutateRule(ctx context.Context, name string, fn func(*Rule) error) error {
 	return m.mutate(ctx, func(t *Table) error {
 		r, ok := t.Rule(name)
 		if !ok {
 			return errorx.IllegalArgument.New(
-				"no rule named %q; known rules are %s. New allow rules are declared in the config file (`network firewall create --from-file`)",
-				name, strings.Join(t.Names(), ", "))
+				"no rule named %q; known rules are %s. Declare a new allow rule with `network firewall create-allow-rule --name %s`",
+				name, strings.Join(t.Names(), ", "), name)
 		}
 		return fn(r)
 	})
@@ -292,6 +350,15 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	block, err := t.Render()
 	if err != nil {
 		return err
+	}
+
+	// Declaring a rule before populating it is supported, so this is not an
+	// error — but a rule that grants nothing is indistinguishable from a
+	// finished one in `show`, and a half-run declare sequence is the likeliest
+	// way to end up here.
+	if names := t.IncompleteAllowRules(); len(names) > 0 {
+		logx.As().Warn().Strs("rules", names).Msg(
+			"allow rule(s) render nothing yet: each needs at least one CIDR and either a port or icmp_echo — populate with `network firewall add --name <rule> --cidr <cidr> --port <port>`")
 	}
 
 	cfg, err := FileConfigFromTable(t).Marshal()
@@ -370,7 +437,7 @@ func (m *Manager) load() (*Table, error) {
 		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.nftPath)
 	}
 	logx.As().Info().Str("path", m.nftPath).Msg(
-		"no host firewall config file; recovering the reserved blocks from the rendered ruleset (any named allow rules must be re-applied with --from-file)")
+		"no host firewall config file; recovering the reserved blocks from the rendered ruleset — named allow rules are not recoverable and must be re-declared with `network firewall create-allow-rule` and then re-populated with `network firewall add`")
 	return Parse(string(nft))
 }
 

@@ -29,7 +29,8 @@ var createCmd = &cobra.Command{
 	Long: "Render and apply the full `inet weaver-host-firewall` table, either from flags or from a declarative " +
 		"config file (--from-file). create-if-missing: if the table already exists, no changes are made unless " +
 		"--force is passed, which re-renders from the current flags or file.\n\n" +
-		"--from-file is the only way to declare named allow rules. It is fully declarative: the file states the whole " +
+		"--from-file states the whole table at once; `create-allow-rule` declares a single named allow rule without " +
+		"a file. --from-file is fully declarative: the file states the whole " +
 		"table, nothing is inherited from the host's current firewall, and an allow rule absent from the file is " +
 		"removed. The three reserved blocks (mgmt, blocked, in_cluster) are therefore required, as is `cidrs` inside " +
 		"mgmt and blocked — a block left out would fall back to a weaver default the file never stated, which for " +
@@ -151,7 +152,7 @@ func init() {
 	createCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", fw.DefaultInClusterPorts, "Host-service ports reachable from the pod CIDR")
 	createCmd.Flags().IntVar(&flagSSHPort, "ssh-port", fw.DefaultSSHPort, "SSH/management TCP port accepted from the allowlist")
 	createCmd.Flags().StringSliceVar(&flagPodCIDR, "pod-cidr", nil, "Pod CIDR(s) allowed to reach the in-cluster host-service ports; may be IPv4 and/or IPv6 (comma-separated or repeated). Default: auto-detected from the local node's .spec.podCIDR; the rule is omitted if no cluster is reachable")
-	createCmd.Flags().StringVar(&flagFromFile, "from-file", "", "Declarative YAML config to render the whole table from (the only way to declare named allow rules); mutually exclusive with the individual flags")
+	createCmd.Flags().StringVar(&flagFromFile, "from-file", "", "Declarative YAML config to render the whole table from; mutually exclusive with the individual flags")
 
 	// A file states the whole table, so mixing it with a flag that states part of
 	// one would leave the precedence between them to guesswork.

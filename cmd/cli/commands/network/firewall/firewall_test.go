@@ -36,7 +36,7 @@ func TestFirewallCmd_Structure(t *testing.T) {
 	cmd := GetCmd()
 	require.Equal(t, "firewall", cmd.Use)
 
-	want := map[string]bool{"create": false, "add": false, "remove": false, "set": false, "show": false, "delete": false}
+	want := map[string]bool{"create": false, "create-allow-rule": false, "add": false, "remove": false, "set": false, "show": false, "delete": false}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Use]; ok {
 			want[sub.Use] = true
@@ -69,7 +69,8 @@ func TestVerbs_NameAddressedFlags(t *testing.T) {
 	}{
 		{addCmd, "add", []string{"name", "cidr", "port"}},
 		{removeCmd, "remove", []string{"name", "cidr", "port"}},
-		{setCmd, "set", []string{"name", "cidrs", "cidrs-file", "ports"}},
+		{setCmd, "set", []string{"name", "cidrs", "cidrs-file", "ports", "proto", "icmp-echo"}},
+		{createAllowRuleCmd, "create-allow-rule", []string{"name", "proto", "icmp-echo"}},
 		{showCmd, "show", []string{"name", "output"}},
 		{deleteCmd, "delete", []string{"name", "all"}},
 	} {
@@ -154,6 +155,7 @@ func resetFlagState(t *testing.T) {
 	flagMgmtCIDRs, flagBlockedCIDRs, flagInClusterPorts = nil, nil, nil
 	flagMgmtCIDR, flagBlockedCIDR = "", ""
 	flagInClusterPort, flagSSHPort = 0, 0
+	flagProto, flagICMPEcho = "", false
 }
 
 // TestBackwardCompatibleInvocations is the regression gate the generalisation
@@ -202,6 +204,115 @@ func TestBackwardCompatibleInvocations(t *testing.T) {
 	// confirmation prompt does not fire.
 	require.NoError(t, run(t, "delete"))
 	require.NoFileExists(t, nftPath)
+}
+
+// TestCreateAllowRuleCmd is the end-to-end shape #1009 exists to deliver: a
+// named allow rule declared, populated and deleted with no config file anywhere.
+func TestCreateAllowRuleCmd(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	// Declared, but rendering nothing yet — the operator has opened no access by
+	// running only the first half of the sequence.
+	require.NoError(t, run(t, "create-allow-rule", "--name", "rudder_server", "--proto", "udp", "--icmp-echo"))
+	doc := readFile(t, nftPath)
+	require.NotContains(t, doc, "@rudder_server udp dport")
+
+	// One add carries every CIDR and port, so the rule goes live in a single
+	// atomic apply rather than one per element.
+	require.NoError(t, run(t, "add", "--name", "rudder_server",
+		"--cidr", "200.201.203.205/32,10.1.0.0/16", "--port", "5309,8443,9000-9100"))
+	doc = readFile(t, nftPath)
+	require.Contains(t, doc, "ip saddr @rudder_server udp dport @rudder_server_ports accept",
+		"--proto udp must reach the rendered rule")
+	require.Contains(t, doc, "ip saddr @rudder_server icmp type echo-request accept",
+		"--icmp-echo must reach the rendered rule")
+	require.Contains(t, doc, "elements = { 10.1.0.0/16, 200.201.203.205/32 }")
+	require.Contains(t, doc, "elements = { 5309, 8443, 9000-9100 }",
+		"a port range must survive as one element, and the list must be sorted")
+
+	// Deletion needs no new verb.
+	require.NoError(t, run(t, "delete", "--name", "rudder_server"))
+	require.NotContains(t, readFile(t, nftPath), "@rudder_server")
+}
+
+func TestCreateAllowRuleCmd_Rejections(t *testing.T) {
+	stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	require.ErrorContains(t, run(t, "create-allow-rule"), "--name is required")
+
+	// A reserved block is not an allow rule. It also already exists, so this must
+	// not be mistaken for the create-if-missing no-op path.
+	for _, name := range fw.ReservedNames {
+		require.ErrorContains(t, run(t, "create-allow-rule", "--name", name), "reserved name", name)
+	}
+
+	require.Error(t, run(t, "create-allow-rule", "--name", "bad name"))
+	require.Error(t, run(t, "create-allow-rule", "--name", "x", "--proto", "sctp"))
+	// Would silently claim the mgmt block's nft set.
+	require.ErrorContains(t, run(t, "create-allow-rule", "--name", "mgmt_addrs"), "derive the nft set name")
+}
+
+// TestCreateAllowRuleCmd_ForceRedeclares pins create-if-missing, matching the
+// table-level `create`.
+func TestCreateAllowRuleCmd_ForceRedeclares(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+	require.NoError(t, run(t, "create-allow-rule", "--name", "svc"))
+	require.NoError(t, run(t, "add", "--name", "svc", "--cidr", "203.0.113.5/32", "--port", "9000"))
+	require.Contains(t, readFile(t, nftPath), "ip saddr @svc tcp dport @svc_ports accept")
+
+	// Without --force the existing rule and its membership survive.
+	require.NoError(t, run(t, "create-allow-rule", "--name", "svc", "--proto", "udp"))
+	require.Contains(t, readFile(t, nftPath), "ip saddr @svc tcp dport @svc_ports accept")
+
+	// With --force the declaration replaces it, membership included.
+	require.NoError(t, run(t, "create-allow-rule", "--name", "svc", "--proto", "udp", "--force"))
+	require.NotContains(t, readFile(t, nftPath), "@svc tcp dport")
+	require.NotContains(t, readFile(t, nftPath), "@svc udp dport")
+}
+
+// TestSetCmd_ProtoAndICMPEcho covers the other half of "every Rule field is
+// reachable from the CLI": the two fields must be editable after declaration,
+// not only settable at declaration time.
+func TestSetCmd_ProtoAndICMPEcho(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+	require.NoError(t, run(t, "create-allow-rule", "--name", "svc"))
+	require.NoError(t, run(t, "add", "--name", "svc", "--cidr", "203.0.113.5/32", "--port", "9000"))
+
+	require.NoError(t, run(t, "set", "--name", "svc", "--proto", "udp", "--icmp-echo"))
+	doc := readFile(t, nftPath)
+	require.Contains(t, doc, "ip saddr @svc udp dport @svc_ports accept")
+	require.Contains(t, doc, "ip saddr @svc icmp type echo-request accept")
+
+	// Revoking echo is expressible.
+	require.NoError(t, run(t, "set", "--name", "svc", "--icmp-echo=false"))
+	require.NotContains(t, readFile(t, nftPath), "@svc icmp type")
+
+	// The reserved blocks render a fixed shape and reject both — including the
+	// proto value that happens to match what they already render.
+	require.Error(t, run(t, "set", "--name", "mgmt", "--proto", "udp"))
+	require.Error(t, run(t, "set", "--name", "mgmt", "--proto", "tcp"))
+	require.Error(t, run(t, "set", "--name", "in_cluster", "--proto", "tcp"))
+	require.Error(t, run(t, "set", "--name", "in_cluster", "--icmp-echo"))
+
+	// --name with none of the value flags is still rejected.
+	require.ErrorContains(t, run(t, "set", "--name", "svc"), "at least one of")
+}
+
+// TestUnknownRuleNameNeverDeclares is the AC that keeps a typo from creating a
+// second rule alongside the intended one.
+func TestUnknownRuleNameNeverDeclares(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+	require.NoError(t, run(t, "create-allow-rule", "--name", "rudder_server"))
+
+	require.ErrorContains(t, run(t, "add", "--name", "rudder_sever", "--cidr", "10.0.0.1/32"), "no rule named")
+	require.ErrorContains(t, run(t, "remove", "--name", "rudder_sever", "--cidr", "10.0.0.1/32"), "no rule named")
+	require.ErrorContains(t, run(t, "set", "--name", "rudder_sever", "--cidrs", "10.0.0.1/32"), "no rule named")
+	require.NotContains(t, readFile(t, nftPath), "rudder_sever")
 }
 
 func TestCreateCmd_FromFile(t *testing.T) {
