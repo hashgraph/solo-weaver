@@ -3,6 +3,7 @@
 package firewall
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	fw "github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +27,10 @@ type captureRunner struct {
 func (c *captureRunner) List(_ context.Context) (string, error) { return "", nil }
 func (c *captureRunner) Delete(_ context.Context) error         { c.exists = false; return nil }
 func (c *captureRunner) Exists(_ context.Context) (bool, error) { return c.exists, nil }
+
+// Check accepts every document: these tests exercise the CLI's flag handling,
+// not nft's verdict on the rendered ruleset (that lives in internal/network/firewall).
+func (c *captureRunner) Check(_ context.Context, _ string) error { return nil }
 
 func TestFirewallCmd_Structure(t *testing.T) {
 	cmd := GetCmd()
@@ -42,14 +48,340 @@ func TestFirewallCmd_Structure(t *testing.T) {
 }
 
 func TestCreateCmd_Flags(t *testing.T) {
-	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "ssh-port", "pod-cidr"} {
+	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "ssh-port", "pod-cidr", "from-file"} {
 		require.NotNil(t, createCmd.Flags().Lookup(name), "create is missing --%s", name)
 	}
 	// Defaults must match the firewall package defaults.
 	require.Equal(t, "22", createCmd.Flags().Lookup("ssh-port").DefValue)
-	// ICMP is a static ruleset, not flag-driven: there must be no icmp toggles.
+	// ICMP is a static ruleset apart from the per-rule icmp_echo grant, which is
+	// a config-file field: there must be no icmp toggles here.
 	require.Nil(t, createCmd.Flags().Lookup("icmp-mgmt"), "icmp-mgmt flag should be removed")
 	require.Nil(t, createCmd.Flags().Lookup("icmp-public"), "icmp-public flag should be removed")
+}
+
+// TestVerbs_NameAddressedFlags pins the name-addressed surface added alongside
+// the per-block flags.
+func TestVerbs_NameAddressedFlags(t *testing.T) {
+	for _, tc := range []struct {
+		cmd   *cobra.Command
+		verb  string
+		flags []string
+	}{
+		{addCmd, "add", []string{"name", "cidr", "port"}},
+		{removeCmd, "remove", []string{"name", "cidr", "port"}},
+		{setCmd, "set", []string{"name", "cidrs", "cidrs-file", "ports"}},
+		{showCmd, "show", []string{"name", "output"}},
+		{deleteCmd, "delete", []string{"name", "all"}},
+	} {
+		for _, f := range tc.flags {
+			require.NotNil(t, tc.cmd.Flags().Lookup(f), "%s is missing --%s", tc.verb, f)
+		}
+	}
+	require.Equal(t, "nft", showCmd.Flags().Lookup("output").DefValue)
+}
+
+// stubManager points the CLI at a Manager backed by temp paths and a fake runner,
+// returning the artifact paths so a test can assert on what a verb rendered.
+func stubManager(t *testing.T) (nftPath, configPath string) {
+	t.Helper()
+	r := &captureRunner{}
+	dir := t.TempDir()
+	nftPath = filepath.Join(dir, "network-weaver-host-firewall.nft")
+	configPath = filepath.Join(dir, "network-weaver-host-firewall.yaml")
+
+	origMgr, origDetect := newManager, detectPodCIDR
+	newManager = func() *fw.Manager {
+		return fw.NewManagerWithConfig(fw.Config{
+			Runner:     r,
+			NftPath:    nftPath,
+			ConfigPath: configPath,
+			LockPath:   filepath.Join(dir, ".applying"),
+			ApplyViaService: func(context.Context) error {
+				r.exists = true
+				return nil
+			},
+		})
+	}
+	detectPodCIDR = func(context.Context) (string, error) { return "", errors.New("no cluster") }
+	t.Cleanup(func() { newManager, detectPodCIDR = origMgr, origDetect })
+	return nftPath, configPath
+}
+
+// run executes one `firewall …` invocation through a fresh root command, the way
+// the real CLI would.
+func run(t *testing.T, args ...string) error {
+	t.Helper()
+	_, err := runOut(t, args...)
+	return err
+}
+
+// runOut is run() with stdout captured, for the verbs that print.
+func runOut(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	resetFlagState(t)
+
+	var out bytes.Buffer
+	root := &cobra.Command{Use: "test"}
+	root.PersistentFlags().Bool("force", false, "force")
+	root.AddCommand(GetCmd())
+	root.SetArgs(append([]string{"firewall"}, args...))
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	return out.String(), err
+}
+
+// resetFlagState clears the flag state left behind by a previous invocation.
+// GetCmd returns package-level cobra commands, so pflag's per-flag Changed
+// survives from one Execute to the next within a test binary — which would make
+// mutual-exclusion checks fire on a flag an earlier test set, and would let a
+// value leak into a later verb. A real CLI process runs one command and never
+// sees this.
+func resetFlagState(t *testing.T) {
+	t.Helper()
+	for _, sub := range GetCmd().Commands() {
+		sub.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	}
+	// The shared binding variables are read directly (not via Changed) in a
+	// couple of places, so zero them too.
+	flagName, flagCIDRsFile, flagFromFile, flagOutput, flagAll = "", "", "", outputNft, false
+	flagCIDRs, flagPorts, flagPodCIDR = nil, nil, nil
+	flagMgmtCIDRs, flagBlockedCIDRs, flagInClusterPorts = nil, nil, nil
+	flagMgmtCIDR, flagBlockedCIDR = "", ""
+	flagInClusterPort, flagSSHPort = 0, 0
+}
+
+// TestBackwardCompatibleInvocations is the regression gate the generalisation
+// rests on: every `network firewall` invocation that worked before --name existed
+// must still behave identically. The per-block flags are shorthands now, but
+// nothing about them changed for a caller.
+func TestBackwardCompatibleInvocations(t *testing.T) {
+	nftPath, _ := stubManager(t)
+
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--blocked-cidrs", "203.0.113.0/24",
+		"--ssh-port", "2222", "--in-cluster-ports", "6443,10250", "--pod-cidr", "10.4.0.0/24"))
+	doc := readFile(t, nftPath)
+	require.Contains(t, doc, "elements = { 10.0.0.0/8 }")
+	require.Contains(t, doc, "elements = { 203.0.113.0/24 }")
+	require.Contains(t, doc, "set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 2222 }; }",
+		"--ssh-port must still work, as a one-element port list")
+	require.Contains(t, doc, "elements = { 6443, 10250 }")
+	require.Contains(t, doc, "set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.4.0.0/24 }; }")
+
+	require.NoError(t, run(t, "add", "--mgmt-cidr", "192.168.1.0/24"))
+	require.Contains(t, readFile(t, nftPath), "192.168.1.0/24")
+
+	require.NoError(t, run(t, "add", "--blocked-cidr", "198.51.100.0/24"))
+	require.Contains(t, readFile(t, nftPath), "198.51.100.0/24")
+
+	require.NoError(t, run(t, "add", "--in-cluster-port", "9100"))
+	require.Contains(t, readFile(t, nftPath), "9100")
+
+	require.NoError(t, run(t, "remove", "--mgmt-cidr", "192.168.1.0/24"))
+	require.NotContains(t, readFile(t, nftPath), "192.168.1.0/24")
+
+	require.NoError(t, run(t, "remove", "--in-cluster-port", "9100"))
+	require.NotContains(t, readFile(t, nftPath), "9100")
+
+	// The multi-block form of `set`: three reserved blocks replaced in one call,
+	// which must stay a single apply.
+	require.NoError(t, run(t, "set", "--mgmt-cidrs", "172.16.0.0/12",
+		"--blocked-cidrs", "203.0.113.9/32", "--in-cluster-ports", "6443"))
+	doc = readFile(t, nftPath)
+	require.Contains(t, doc, "172.16.0.0/12")
+	require.Contains(t, doc, "203.0.113.9/32")
+	require.Contains(t, doc, "set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 6443 }; }")
+	require.NotContains(t, doc, "10250")
+
+	// Bare `delete` still tears the whole table down. Non-interactive, so the new
+	// confirmation prompt does not fire.
+	require.NoError(t, run(t, "delete"))
+	require.NoFileExists(t, nftPath)
+}
+
+func TestCreateCmd_FromFile(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`version: 1
+mgmt:
+  cidrs: ["192.168.68.0/24"]
+  ports: ["22", "1024"]
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: ["10.4.0.0/14"]
+  ports: ["4244", "6443"]
+allow:
+  - name: k8s-node
+    cidrs: ["10.0.0.0/24"]
+    ports: ["6443", "2379-2380"]
+    proto: tcp
+  - name: cilium-vxlan
+    cidrs: ["10.0.0.0/24"]
+    ports: ["8472"]
+    proto: udp
+  - name: admin
+    cidrs: ["203.0.113.5/32"]
+    ports: ["22"]
+    icmp_echo: true
+`), 0o600))
+
+	require.NoError(t, run(t, "create", "--from-file", path))
+	doc := readFile(t, nftPath)
+	require.Contains(t, doc, "set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 22, 1024 }; }")
+	require.Contains(t, doc, "ip saddr @k8s-node tcp dport @k8s-node_ports accept")
+	require.Contains(t, doc, "ip saddr @cilium-vxlan udp dport @cilium-vxlan_ports accept")
+	require.Contains(t, doc, "ip saddr @admin icmp type echo-request accept")
+	require.Contains(t, doc, "elements = { 2379-2380, 6443 }")
+
+	// --from-file and the individual flags are mutually exclusive: a file states
+	// the whole table, so the precedence between the two would be guesswork.
+	require.Error(t, run(t, "create", "--from-file", path, "--mgmt-cidrs", "10.0.0.0/8"))
+}
+
+// TestCreateCmd_FromFileRequiresReservedBlocks is the operator-facing half of the
+// required-block rule: a file that omits mgmt must fail before anything is
+// rendered, rather than applying a default-drop table with an empty management
+// allowlist and reporting success.
+func TestCreateCmd_FromFileRequiresReservedBlocks(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	dir := t.TempDir()
+
+	partial := filepath.Join(dir, "partial.yaml")
+	require.NoError(t, os.WriteFile(partial, []byte(`version: 1
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: []
+allow:
+  - name: k8s-node
+    cidrs: ["10.0.0.0/24"]
+    ports: ["6443"]
+`), 0o600))
+
+	err := run(t, "create", "--from-file", partial)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mgmt")
+	require.NoFileExists(t, nftPath, "a rejected config must not render a ruleset")
+}
+
+func TestShowCmd_YAMLRoundTrips(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`version: 1
+mgmt:
+  cidrs: ["192.168.68.0/24"]
+  ports: ["22"]
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: []
+allow:
+  - name: k8s-node
+    cidrs: ["10.0.0.0/24"]
+    ports: ["6443", "2379-2380"]
+`), 0o600))
+	require.NoError(t, run(t, "create", "--from-file", path))
+	firstDoc := readFile(t, nftPath)
+
+	shown, err := runOut(t, "show", "--output", "yaml")
+	require.NoError(t, err)
+	require.Contains(t, shown, "version: 1")
+	require.Contains(t, shown, "name: k8s-node")
+
+	// Feeding the shown config back in changes nothing — the acceptance criterion
+	// that makes `show --output yaml` safe to keep in version control.
+	back := filepath.Join(dir, "shown.yaml")
+	require.NoError(t, os.WriteFile(back, []byte(shown), 0o600))
+	require.NoError(t, run(t, "create", "--from-file", back, "--force"))
+	require.Equal(t, firstDoc, readFile(t, nftPath))
+
+	// An explicitly empty in_cluster block survives the round-trip as empty
+	// rather than reverting to the auto-detected pod CIDR.
+	require.NotContains(t, readFile(t, nftPath), "tcp dport @in_cluster_ports accept")
+
+	// --name narrows to one rule.
+	one, err := runOut(t, "show", "--name", "k8s-node")
+	require.NoError(t, err)
+	require.Contains(t, one, "name: k8s-node")
+	require.NotContains(t, one, "mgmt")
+
+	_, err = runOut(t, "show", "--name", "nope")
+	require.Error(t, err)
+
+	_, err = runOut(t, "show", "--output", "json")
+	require.Error(t, err, "--output must reject a format it does not render")
+}
+
+func TestDeleteCmd_ByName(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`version: 1
+mgmt:
+  cidrs: ["192.168.68.0/24"]
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: []
+allow:
+  - name: k8s-node
+    cidrs: ["10.0.0.0/24"]
+    ports: ["6443"]
+`), 0o600))
+	require.NoError(t, run(t, "create", "--from-file", path))
+	require.Contains(t, readFile(t, nftPath), "@k8s-node")
+
+	require.NoError(t, run(t, "delete", "--name", "k8s-node"))
+	require.NotContains(t, readFile(t, nftPath), "@k8s-node")
+	require.FileExists(t, nftPath, "deleting one rule must not tear the table down")
+
+	// The reserved blocks are structural and cannot be deleted individually.
+	require.Error(t, run(t, "delete", "--name", "mgmt"))
+	require.Error(t, run(t, "delete", "--name", "k8s-node", "--all"))
+}
+
+func TestElementVerbs_RequireATarget(t *testing.T) {
+	stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	// --name is required once no per-block shorthand names the rule.
+	require.Error(t, run(t, "add", "--cidr", "10.1.0.0/16"))
+	require.Error(t, run(t, "remove", "--cidr", "10.1.0.0/16"))
+	require.Error(t, run(t, "set", "--cidrs", "10.1.0.0/16"))
+	// --name with no values to apply is a no-op worth rejecting.
+	require.Error(t, run(t, "add", "--name", "mgmt"))
+	require.Error(t, run(t, "set", "--name", "mgmt"))
+	// Mixing the two forms leaves it ambiguous which rule --cidr belongs to.
+	require.Error(t, run(t, "add", "--mgmt-cidr", "10.1.0.0/16", "--name", "blocked"))
+	require.Error(t, run(t, "set", "--mgmt-cidrs", "10.1.0.0/16", "--name", "blocked", "--cidrs", "10.2.0.0/16"))
+	// --cidrs and --cidrs-file are alternatives, not a merge.
+	require.Error(t, run(t, "set", "--name", "mgmt", "--cidrs", "10.1.0.0/16", "--cidrs-file", "/nonexistent"))
+}
+
+func TestSetCmd_CIDRsFile(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cidrs.txt")
+	// The flat list format `network policy --cidrs-file` already uses: newlines
+	// and/or commas, with `#` comments.
+	require.NoError(t, os.WriteFile(path, []byte("# management\n192.168.68.0/24\n10.9.0.0/16, 172.16.0.0/12\n"), 0o600))
+
+	require.NoError(t, run(t, "set", "--name", "mgmt", "--cidrs-file", path))
+	doc := readFile(t, nftPath)
+	require.Contains(t, doc, "elements = { 10.9.0.0/16, 172.16.0.0/12, 192.168.68.0/24 }")
+	require.NotContains(t, doc, "10.0.0.0/8")
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(data)
 }
 
 func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
@@ -58,6 +390,8 @@ func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
 	// (nil default), which clobbers create's default in the shared variable —
 	// so create must source the default from NewTable(), gated on Changed().
 	// This executes the real command so the shared-var registration is exercised.
+	resetFlagState(t)
+
 	r := &captureRunner{}
 	dir := t.TempDir()
 	nftPath := filepath.Join(dir, "network-weaver-host-firewall.nft")
@@ -65,9 +399,13 @@ func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
 	origMgr, origDetect := newManager, detectPodCIDR
 	newManager = func() *fw.Manager {
 		return fw.NewManagerWithConfig(fw.Config{
-			Runner:   r,
-			NftPath:  nftPath,
-			LockPath: filepath.Join(dir, ".applying"),
+			Runner:  r,
+			NftPath: nftPath,
+			// Without this the config falls back to the production
+			// /etc/solo-provisioner path, so the test writes to the real host
+			// and only passes as root.
+			ConfigPath: filepath.Join(dir, "network-weaver-host-firewall.yaml"),
+			LockPath:   filepath.Join(dir, ".applying"),
 			ApplyViaService: func(context.Context) error {
 				r.exists = true
 				return nil

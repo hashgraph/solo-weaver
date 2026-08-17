@@ -222,13 +222,23 @@ func (m *TrafficShaperMonitor) handlePodDelete(ctx context.Context, pod *corev1.
 	// Drop the discovered statusz endpoint only if this is the pod that set it, so
 	// a stale delete for some other pod cannot blank a still-valid endpoint. The
 	// poll loop then idles until another ready BN pod is observed.
-	if m.discoveredStatuszPod == pod.UID {
+	endpointCleared := m.discoveredStatuszPod == pod.UID
+	if endpointCleared {
 		m.discoveredStatuszURL = ""
 		m.discoveredStatuszPod = ""
 	}
 	veth, ok := m.attached[pod.UID]
 	delete(m.attached, pod.UID)
 	m.mu.Unlock()
+
+	// Wake the poll loop so it logs the endpoint loss promptly instead of up to a
+	// full interval later. The woken reconcile is a no-op while the URL is empty.
+	// Signalled after the unlock, and before the early return below so a pod with
+	// no recorded veth still reports the loss.
+	if endpointCleared {
+		m.signalURLChanged()
+	}
+
 	if !ok {
 		return
 	}
@@ -282,6 +292,9 @@ func (m *TrafficShaperMonitor) recordDiscoveredStatusz(pod *corev1.Pod) {
 			Str("pod", pod.Namespace+"/"+pod.Name).
 			Str("statusz_url", url).
 			Msg("discovered BN statusz endpoint from pod")
+		// Wake the poll loop so membership converges now instead of at the next
+		// tick. Sent after the unlock above — never while holding m.mu.
+		m.signalURLChanged()
 	}
 }
 
