@@ -4,6 +4,12 @@ package daemon
 
 import "github.com/automa-saga/daemonkit"
 
+// Component names as registered at startup and reported by GET /status.
+const (
+	ComponentNameConsensusNode = "consensus-node"
+	ComponentNameBlockNode     = "block-node"
+)
+
 // HealthResponse is returned by GET /health.
 type HealthResponse struct {
 	Status string `json:"status"`

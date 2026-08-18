@@ -31,18 +31,19 @@ const daemonServiceName = "solo-provisioner-daemon"
 // would otherwise have no ingress prioritization (the veth HTB is never
 // installed) and nothing reconciling the daemon-owned nft sets from statusz.
 //
-// When the daemon is already active there is nothing to do; otherwise it is
-// installed and provisioned (RBAC + daemon-bn.kubeconfig + systemd unit)
-// scoped to this block node's namespace, unconditionally — no prompt, no flag.
-// source controls where the daemon binary itself comes from (see
+// This hook only handles the daemon-not-installed case: it installs and
+// provisions the daemon (RBAC + daemon-bn.kubeconfig + systemd unit) scoped to
+// this block node's namespace — no prompt, no flag. A daemon that is already
+// running needs nothing here: the calling workflow just wrote daemon.yaml and
+// restarted it (#1018). source picks where the daemon binary comes from (see
 // resolveDaemonBinarySource).
 func ensureBlockNodeDaemon(cmd *cobra.Command, namespace string, source workflowsteps.DaemonBinarySource) error {
 	ctx := cmd.Context()
 
-	// A running daemon needs no further action (the check is a no-op on hosts
-	// where the daemon is already up). A systemd/DBus error is non-fatal — treat
-	// the daemon as not running — but log it so an operator can tell a genuine
-	// "not installed" from a failed state query.
+	// A running daemon was already restarted by the workflow, so there is
+	// nothing to do here. A systemd/DBus error is non-fatal — treat the daemon
+	// as not running — but log it so an operator can tell a genuine "not
+	// installed" from a failed state query.
 	running, err := pkgos.IsServiceRunning(ctx, daemonServiceName)
 	if err != nil {
 		logx.As().Warn().Err(err).Msg(
