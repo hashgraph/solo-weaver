@@ -154,6 +154,20 @@ func (t *Table) UpsertAllow(r Rule) error {
 	return nil
 }
 
+// IncompleteAllowRules returns the names of allow rules that are declared but do
+// not yet render anything, in table order. Declaring a rule before populating it
+// is supported (`network firewall create-allow-rule`), so this is a warning the
+// manager surfaces on apply rather than a validation failure.
+func (t *Table) IncompleteAllowRules() []string {
+	var out []string
+	for i := range t.Allow {
+		if t.Allow[i].incomplete() {
+			out = append(out, t.Allow[i].Name)
+		}
+	}
+	return out
+}
+
 // DeleteRule removes an allow rule. The reserved blocks cannot be deleted —
 // they are structural, and deleting mgmt in particular would render a
 // default-drop input chain with no way in. Emptying a block's address list is

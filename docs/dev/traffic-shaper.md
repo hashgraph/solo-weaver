@@ -440,7 +440,8 @@ asked first**, then traffic shaping:
   Configured by `--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`,
   `--in-cluster-ports` — i.e. the three reserved blocks only. Named allow rules
   are not part of install: they are declared afterwards with
-  `network firewall create --from-file`, and a later `reconfigure` preserves them.
+  `network firewall create-allow-rule` (or `create --from-file` for the whole
+  table), and a later `reconfigure` preserves them.
 - `--traffic-shaping-enabled` — the single switch that wires up **all three**
   shaping pieces: the workload policy plane (`inet weaver-workload-policy`), the
   tc HTB hierarchies, and the traffic-shaper daemon. Only when this is accepted
@@ -460,14 +461,18 @@ The three `network` sub-scopes drive each plane directly; every mutation live-
 applies and then persists (see below), so they are safe to run by hand on a
 provisioned node.
 
-- **`network firewall`** (`create`/`add`/`remove`/`set`/`show`/`delete`) — the
-  host firewall. `create` takes `--mgmt-cidrs`, `--blocked-cidrs`,
-  `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`, or `--from-file` for the
-  whole table; `add`/`remove`/`set`/`delete` take `--name` to address one rule —
+- **`network firewall`** (`create`/`create-allow-rule`/`add`/`remove`/`set`/
+  `show`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
+  `--blocked-cidrs`, `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`, or
+  `--from-file` for the whole table; `create-allow-rule` declares one named allow
+  rule (`--name`, `--proto`, `--icmp-echo`);
+  `add`/`remove`/`set`/`delete` take `--name` to address one rule —
   a reserved block (`mgmt`, `blocked`, `in_cluster`) or a named allow rule — with
   the per-block flags retained as shorthands. Structure (which rules exist, and
-  their protocol) is file-only; membership is CLI-mutable, because adding a rule
-  is a reviewed change while unblocking an operator is sometimes urgent.
+  their protocol) is declared by its own verb, so bringing a rule into existence
+  is always explicit; membership is moved by `add`/`remove`/`set`, which refuse
+  an unknown `--name` so a typo edits nothing. A declared rule may be empty and
+  renders nothing until it has a CIDR and either a port or `icmp_echo`.
   `show --output yaml` emits the same schema `--from-file` accepts. A file is
   the whole table and inherits nothing from the host, so all three reserved
   blocks must be stated in it (as must `cidrs` inside `mgmt` and `blocked`) —

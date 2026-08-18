@@ -141,11 +141,21 @@ func TestTable_ValidateRejects(t *testing.T) {
 		"unknown proto": func(tbl *Table) error {
 			return tbl.UpsertAllow(Rule{Name: "x", CIDRs: []string{"10.0.0.0/8"}, Ports: []string{"22"}, Proto: "sctp"})
 		},
-		"allow rule with no cidrs": func(tbl *Table) error {
-			return tbl.UpsertAllow(Rule{Name: "x", Ports: []string{"22"}})
+		"mgmt with tcp (matching value is still refused)": func(tbl *Table) error {
+			tbl.Mgmt.Proto = ProtoTCP
+			return tbl.Validate()
 		},
-		"allow rule with no ports and no echo": func(tbl *Table) error {
-			return tbl.UpsertAllow(Rule{Name: "x", CIDRs: []string{"10.0.0.0/8"}})
+		"in_cluster with tcp (matching value is still refused)": func(tbl *Table) error {
+			tbl.InCluster.Proto = ProtoTCP
+			return tbl.Validate()
+		},
+		"in_cluster with icmp_echo": func(tbl *Table) error {
+			tbl.InCluster.ICMPEcho = true
+			return tbl.Validate()
+		},
+		"in_cluster with udp": func(tbl *Table) error {
+			tbl.InCluster.Proto = ProtoUDP
+			return tbl.Validate()
 		},
 		"name with nft metacharacters": func(tbl *Table) error {
 			return tbl.UpsertAllow(Rule{Name: "a b", CIDRs: []string{"10.0.0.0/8"}, Ports: []string{"22"}})
@@ -156,6 +166,206 @@ func TestTable_ValidateRejects(t *testing.T) {
 			require.Error(t, mutate(sampleTable()))
 		})
 	}
+}
+
+// TestTable_IncompleteAllowRulesAreLegalAndRenderNothing covers the state that
+// makes `create-allow-rule` possible: a rule declared before it is populated.
+// Every intermediate state of a declare-then-populate sequence has to validate,
+// in whatever order the operator runs the element verbs, and none of them may
+// grant anything until the rule is complete.
+func TestTable_IncompleteAllowRulesAreLegalAndRenderNothing(t *testing.T) {
+	cases := map[string]Rule{
+		"declared with nothing":  {Name: "pending"},
+		"cidrs but no ports":     {Name: "pending", CIDRs: []string{"203.0.113.5/32"}},
+		"ports but no cidrs":     {Name: "pending", Ports: []string{"5309"}},
+		"icmp_echo but no cidrs": {Name: "pending", ICMPEcho: true},
+	}
+	for name, r := range cases {
+		t.Run(name, func(t *testing.T) {
+			tbl := sampleTable()
+			require.NoError(t, tbl.UpsertAllow(r))
+			require.Equal(t, []string{"pending"}, tbl.IncompleteAllowRules())
+
+			doc, err := tbl.Render()
+			require.NoError(t, err)
+			// No transport rule and no echo accept in either family.
+			require.NotContains(t, doc, "@pending tcp dport")
+			require.NotContains(t, doc, "@pending udp dport")
+			require.NotContains(t, doc, "@pending icmp type")
+			require.NotContains(t, doc, "@pending6 icmp")
+		})
+	}
+
+	// Once complete it stops being reported and starts rendering.
+	tbl := sampleTable()
+	require.NoError(t, tbl.UpsertAllow(Rule{Name: "pending", CIDRs: []string{"203.0.113.5/32"}, Ports: []string{"5309"}}))
+	require.Empty(t, tbl.IncompleteAllowRules())
+	doc, err := tbl.Render()
+	require.NoError(t, err)
+	require.Contains(t, doc, "ip saddr @pending tcp dport @pending_ports accept")
+}
+
+// TestRender_CLIDeclaredMatchesFileDeclared is the acceptance criterion for
+// #1009: a rule built up through the CLI verbs must render byte-identically to
+// the same rule loaded from the persisted config. The two paths share
+// UpsertAllow and Rule.Validate precisely so this holds — in particular the port
+// sort, which is what would otherwise make the render depend on the order the
+// operator happened to add ports in.
+func TestRender_CLIDeclaredMatchesFileDeclared(t *testing.T) {
+	// Both sides start from the same reserved blocks, so the comparison isolates
+	// the allow rule rather than the surrounding table.
+	baseCfg, err := ParseConfig([]byte(allReservedYAML))
+	require.NoError(t, err)
+
+	// The CLI path: declare, then populate in an awkward order — ports before
+	// addresses, and each list unsorted and mixed-family.
+	viaCLI, err := baseCfg.Table()
+	require.NoError(t, err)
+	require.NoError(t, viaCLI.UpsertAllow(Rule{Name: "rudder-server", Proto: ProtoUDP, ICMPEcho: true}))
+	r, ok := viaCLI.Rule("rudder-server")
+	require.True(t, ok)
+	require.NoError(t, r.AddPorts([]string{"8443", "5309"}))
+	require.NoError(t, r.AddCIDRs([]string{"2001:db8:5e5::/64", "200.201.203.205/32"}))
+
+	// The file path: the same rule stated declaratively.
+	cfg, err := ParseConfig([]byte(allReservedYAML +
+		"allow:\n" +
+		"  - name: rudder-server\n" +
+		"    cidrs: [\"200.201.203.205/32\", \"2001:db8:5e5::/64\"]\n" +
+		"    ports: [\"5309\", \"8443\"]\n" +
+		"    proto: udp\n" +
+		"    icmp_echo: true\n"))
+	require.NoError(t, err)
+	viaFile, err := cfg.Table()
+	require.NoError(t, err)
+
+	fromCLI, err := viaCLI.Render()
+	require.NoError(t, err)
+	fromFile, err := viaFile.Render()
+	require.NoError(t, err)
+	require.Equal(t, fromFile, fromCLI)
+
+	// Guard against the assertion passing because neither rendered anything.
+	require.Contains(t, fromCLI, "ip saddr @rudder-server udp dport @rudder-server_ports accept")
+	require.Contains(t, fromCLI, "ip6 saddr @rudder-server6 udp dport @rudder-server_ports accept")
+	require.Contains(t, fromCLI, "ip saddr @rudder-server icmp type echo-request accept")
+}
+
+// TestManager_CreateRule covers the declare verb's contract: create-if-missing,
+// --force replaces, and the reserved names stay refused.
+func TestManager_CreateRule(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+	require.NoError(t, m.Apply(ctx, sampleTable()))
+
+	// Declared empty, then populated by the element verbs.
+	changed, err := m.CreateRule(ctx, Rule{Name: "rudder", Proto: ProtoUDP}, false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NoError(t, m.Add(ctx, "rudder", []string{"200.201.203.205/32"}, []string{"5309", "8443"}))
+	require.Contains(t, readNft(t, nftPath), "ip saddr @rudder udp dport @rudder_ports accept")
+
+	// Re-declaring without --force leaves the populated rule alone, and applies
+	// nothing at all rather than re-rendering an identical document.
+	before := applyCount
+	changed, err = m.CreateRule(ctx, Rule{Name: "rudder"}, false)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, before, applyCount, "an already-declared rule must not restart the nft unit")
+	tbl, err := m.Table(ctx)
+	require.NoError(t, err)
+	got, ok := tbl.Rule("rudder")
+	require.True(t, ok)
+	require.Equal(t, []string{"200.201.203.205/32"}, got.CIDRs)
+	require.Equal(t, ProtoUDP, got.Proto)
+
+	// --force redeclares, which clears membership.
+	changed, err = m.CreateRule(ctx, Rule{Name: "rudder"}, true)
+	require.NoError(t, err)
+	require.True(t, changed)
+	tbl, err = m.Table(ctx)
+	require.NoError(t, err)
+	got, ok = tbl.Rule("rudder")
+	require.True(t, ok)
+	require.Empty(t, got.CIDRs)
+	require.Empty(t, got.Ports)
+	// --force replaces the whole rule, so proto and icmp_echo reset as well —
+	// the redeclare above supplied neither.
+	require.Equal(t, Proto(""), got.Proto)
+	require.False(t, got.ICMPEcho)
+	require.NotContains(t, readNft(t, nftPath), "@rudder udp dport")
+
+	// Reserved names and set-name collisions are refused, by UpsertAllow and
+	// Table.Validate respectively.
+	_, err = m.CreateRule(ctx, Rule{Name: RuleMgmt}, false)
+	require.ErrorContains(t, err, "reserved name")
+	_, err = m.CreateRule(ctx, Rule{Name: "mgmt_addrs"}, false)
+	require.ErrorContains(t, err, "derive the nft set name")
+}
+
+// TestManager_SetProtoAndICMPEcho covers editing the two fields that have no
+// membership: they must be changeable after declaration, and refused on the
+// reserved blocks, which render a fixed shape.
+func TestManager_SetProtoAndICMPEcho(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+	require.NoError(t, m.Apply(ctx, sampleTable()))
+	_, err := m.CreateRule(ctx, Rule{Name: "svc"}, false)
+	require.NoError(t, err)
+	require.NoError(t, m.Add(ctx, "svc", []string{"203.0.113.5/32"}, []string{"9000"}))
+	require.Contains(t, readNft(t, nftPath), "ip saddr @svc tcp dport @svc_ports accept")
+
+	udp, echo := ProtoUDP, true
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", Proto: &udp, ICMPEcho: &echo}}))
+	doc := readNft(t, nftPath)
+	require.Contains(t, doc, "ip saddr @svc udp dport @svc_ports accept")
+	require.Contains(t, doc, "ip saddr @svc icmp type echo-request accept")
+
+	// A nil pointer leaves the field alone: setting only ports must not reset proto.
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", Ports: []string{"9001"}}}))
+	require.Contains(t, readNft(t, nftPath), "ip saddr @svc udp dport @svc_ports accept")
+
+	// Revoking echo is expressible, which a bare bool could not distinguish
+	// from "not supplied".
+	off := false
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", ICMPEcho: &off}}))
+	require.NotContains(t, readNft(t, nftPath), "@svc icmp type")
+
+	// Reserved blocks render a fixed shape, so both fields are refused — including
+	// proto=tcp, which would otherwise report a change the renderer ignores.
+	for _, name := range ReservedNames {
+		on := true
+		for _, proto := range []Proto{ProtoUDP, ProtoTCP} {
+			require.Error(t, m.SetMany(ctx, []Update{{Name: name, Proto: &proto}}), "%s proto=%s", name, proto)
+		}
+		require.Error(t, m.SetMany(ctx, []Update{{Name: name, ICMPEcho: &on}}), name)
+	}
+}
+
+// TestManager_UnknownRuleNameStillFails pins the invariant that keeps a typo
+// from silently creating a second rule: the element verbs never declare.
+func TestManager_UnknownRuleNameStillFails(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, _ := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+	require.NoError(t, m.Apply(ctx, sampleTable()))
+
+	require.ErrorContains(t, m.Add(ctx, "typo", []string{"10.0.0.0/8"}, nil), "no rule named")
+	require.ErrorContains(t, m.Remove(ctx, "typo", []string{"10.0.0.0/8"}, nil), "no rule named")
+	require.ErrorContains(t, m.Set(ctx, "typo", []string{"10.0.0.0/8"}, nil), "no rule named")
+
+	// The message points at the verb that would have created it.
+	require.ErrorContains(t, m.Add(ctx, "typo", []string{"10.0.0.0/8"}, nil), "create-allow-rule")
+
+	tbl, err := m.Table(ctx)
+	require.NoError(t, err)
+	_, ok := tbl.Rule("typo")
+	require.False(t, ok)
 }
 
 // TestTable_RejectsSetNameCollision covers the trap in deriving set names by

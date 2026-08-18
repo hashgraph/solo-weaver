@@ -92,6 +92,19 @@ func v6SetName(name string) string { return addrSetName(name) + "6" }
 // portsSetName returns the nft set name holding a rule's destination ports.
 func portsSetName(name string) string { return name + "_ports" }
 
+// incomplete reports whether an allow rule is declared but not yet populated
+// enough to emit anything. It mirrors the template's own gating: a rule needs at
+// least one source address, and either a destination port or an echo accept,
+// before any line is rendered for it. Only meaningful for allow rules — the
+// reserved blocks render fixed positions and an empty one is a deliberate
+// "disabled", not an unfinished declaration.
+func (r *Rule) incomplete() bool {
+	if IsReserved(r.Name) {
+		return false
+	}
+	return len(r.CIDRs) == 0 || (len(r.Ports) == 0 && !r.ICMPEcho)
+}
+
 // proto returns the rule's effective protocol, applying the tcp default.
 func (r *Rule) proto() Proto {
 	if r.Proto == "" {
@@ -146,28 +159,36 @@ func (r *Rule) Validate() error {
 		// mgmt renders a fixed ICMP type list that is strictly broader than an
 		// echo-request accept, so icmp_echo could only mislead. Its transport
 		// accept is TCP by construction (this is administrative access).
-		if r.Proto != "" && r.Proto != ProtoTCP {
-			return errorx.IllegalArgument.New("%q does not take proto: management access is TCP", RuleMgmt)
+		//
+		// Even proto=tcp is refused rather than accepted as a no-op: the value
+		// would change nothing, cannot be expressed in the config schema (Block
+		// carries no proto), and accepting it tells an operator their `set
+		// --proto` landed when the renderer ignored it.
+		if r.Proto != "" {
+			return errorx.IllegalArgument.New("%q does not take proto: management access is TCP by construction", RuleMgmt)
 		}
 		if r.ICMPEcho {
 			return errorx.IllegalArgument.New("%q does not take icmp_echo: management sources already receive the full ICMP type list", RuleMgmt)
 		}
 	case RuleInCluster:
-		// Nothing further: a reserved block may be empty, which is how an
-		// operator disables it without deleting it.
+		// A reserved block may be empty, which is how an operator disables it
+		// without deleting it. It does carry a fixed shape though: the template
+		// renders all three reserved blocks as TCP and gives them no echo accept,
+		// so accepting either field here would silently ignore what was asked.
+		if r.Proto != "" {
+			return errorx.IllegalArgument.New("%q does not take proto: the in-cluster host-service ports are TCP by construction", RuleInCluster)
+		}
+		if r.ICMPEcho {
+			return errorx.IllegalArgument.New("%q does not take icmp_echo: pod-to-host ICMP is not part of the host-service allowance", RuleInCluster)
+		}
 	default:
-		// An allow rule with no sources or no destinations renders a rule that
-		// matches nothing. Silently keeping it would leave the operator with a
-		// config that reads as if access were granted, so require the rule to
-		// say something. Deleting is the way to remove one.
-		if len(r.CIDRs) == 0 {
-			return errorx.IllegalArgument.New(
-				"allow rule %q has no cidrs; delete the rule rather than emptying it", r.Name)
-		}
-		if len(r.Ports) == 0 && !r.ICMPEcho {
-			return errorx.IllegalArgument.New(
-				"allow rule %q has no ports; set ports, or set icmp_echo to grant echo alone", r.Name)
-		}
+		// An allow rule is allowed to be incomplete. `create-allow-rule` declares
+		// a rule before it has any members, and the element verbs populate it in
+		// whatever order the operator runs them, so every intermediate state has
+		// to be representable. An incomplete rule renders no nft rule at all —
+		// the template gates each emission on the address and port sets being
+		// non-empty — so it grants nothing rather than granting too much.
+		// applyAndPersist warns about them; see Table.IncompleteAllowRules.
 	}
 
 	// Order the port list numerically here rather than in each mutator, so a rule

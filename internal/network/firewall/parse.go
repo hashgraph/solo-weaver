@@ -20,8 +20,10 @@ import (
 // leaves the operator with no way to add their address back. Named allow rules
 // are deliberately NOT recovered here: reverse-engineering arbitrary named rules
 // out of nft syntax would be fragile in exactly the situation where being wrong
-// costs the most. Recovering management access is the goal; the allow rules can
-// be re-applied from the config file that describes them.
+// costs the most. Recovering management access is the goal; the allow rules are
+// not recovered at all — neither their existence nor their membership — so they
+// must be re-declared with `network firewall create-allow-rule` and then
+// re-populated with `network firewall add`.
 //
 // Both the current and the pre-allow-rules renderings are accepted, since an
 // upgraded host still has the old artifact on disk until its first mutation.

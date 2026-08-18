@@ -692,7 +692,36 @@ ICMP is a fixed, safe ruleset: full ICMP from the management allowlist, and from
 
 #### Declare Named Allow Rules
 
-`--from-file` is the only way to declare a named allow rule, and it renders the whole table:
+`create-allow-rule` declares one named allow rule; `add` then supplies its addresses and ports. No file is involved, and both lists take comma-separated values, so one `add` finishes the rule in a single atomic apply:
+
+```bash
+# Declare the rule, then populate it
+sudo solo-provisioner network firewall create-allow-rule --name rudder_server --proto tcp --icmp-echo
+sudo solo-provisioner network firewall add --name rudder_server \
+  --cidr 200.201.203.205/32,10.1.0.0/16 --port 5309,8443,9000-9100
+
+# Deletion needs no separate verb
+sudo solo-provisioner network firewall delete --name rudder_server
+```
+
+**Flags**:
+
+| Flag           | Description                                                                          | Default |
+|----------------|--------------------------------------------------------------------------------------|---------|
+| `--name`       | Name of the allow rule to declare (may not be a reserved block: `mgmt`, `blocked`, `in_cluster`) | (required) |
+| `--proto`      | L4 protocol the rule's ports match: `tcp` or `udp`                                   | `tcp`   |
+| `--icmp-echo`  | Grant this rule's sources unmetered ICMP echo-request, above the rate meter          | `false` |
+| `--force`      | Replace an existing rule, **resetting the whole rule** — addresses, ports, `proto` and `icmp_echo` all return to their defaults unless supplied again (global flag) | `false` |
+
+A rule is declared before it has any members, and **renders nothing** until it has at least one CIDR and either a port or `--icmp-echo` — so running the declare and the populate as separate commands never opens access early. An incomplete rule is reported as a warning on every apply.
+
+Declaring is deliberately a separate verb from `add`: an unknown `--name` on `add`/`remove`/`set` keeps failing, so a typo edits nothing rather than quietly creating a second rule alongside the intended one. Re-declaring an existing name without `--force` warns and changes nothing, mirroring `network firewall create`. With `--force` the declaration **replaces** the rule outright, so `create-allow-rule --name x --force` on its own resets `proto` and `icmp_echo` as well as emptying the address and port lists — use `set` to change one field of a populated rule.
+
+`--proto` and `--icmp-echo` are also settable on `set` (see below), so a rule's protocol can be corrected without deleting and re-declaring it. The reserved blocks reject both — they render a fixed shape.
+
+##### Declaring the whole table from a file
+
+`create --from-file` states the whole table at once, as an alternative to the sequence above:
 
 ```yaml
 version: 1
@@ -757,7 +786,7 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 
 `in_cluster.cidrs` is the one address list weaver can legitimately derive on its own, which is why it stays optional; its absence costs a rule rather than access to the host.
 
-The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. Re-run `create --from-file` to repair one.
+The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. Re-run `create --from-file`, or delete the file and re-run the `create` + `create-allow-rule` sequence, to repair one.
 
 #### Modify a Rule's Addresses / Ports
 
@@ -770,6 +799,16 @@ sudo solo-provisioner network firewall add    --name k8s-node --cidr 10.0.0.5/32
 sudo solo-provisioner network firewall remove --name k8s-node --port 9345
 sudo solo-provisioner network firewall set    --name mgmt     --cidrs 10.0.0.0/8,192.168.0.0/16
 sudo solo-provisioner network firewall set    --name mgmt     --cidrs-file /etc/mgmt-cidrs.txt
+
+# Both lists are comma-separated or repeated, and one invocation is one atomic
+# apply — so a rule can be populated in full without a command per element
+sudo solo-provisioner network firewall add --name k8s-node \
+  --cidr 10.0.0.5/32,10.0.0.6/32 --port 6443,2379-2380,10250
+
+# --proto and --icmp-echo change what an allow rule matches, rather than who is in it
+sudo solo-provisioner network firewall set --name cilium-vxlan --proto udp
+sudo solo-provisioner network firewall set --name admin --icmp-echo
+sudo solo-provisioner network firewall set --name admin --icmp-echo=false
 ```
 
 **Flags**:
@@ -782,6 +821,10 @@ sudo solo-provisioner network firewall set    --name mgmt     --cidrs-file /etc/
 | `set`                 | `--cidrs`      | Full CIDR list (replaces the existing list; an empty value clears it) |
 | `set`                 | `--cidrs-file` | Alternative to `--cidrs`: a flat file of CIDRs, one per line or comma-separated, `#` comments allowed |
 | `set`                 | `--ports`      | Full port list (replaces the existing list)                          |
+| `set`                 | `--proto`      | L4 protocol the rule's ports match: `tcp` or `udp` (allow rules only; empty restores the `tcp` default) |
+| `set`                 | `--icmp-echo`  | Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only) |
+
+> `add`/`remove` operate on membership only. To change an allow rule's `--proto` or `--icmp-echo` after it is declared, use `set` — `create-allow-rule --force` would reset the rest of the rule. The reserved blocks reject both flags outright, **including `--proto tcp`**: they render a fixed shape (TCP, with `mgmt` carrying its own broader ICMP type list), so accepting the value that happens to match would report a change the renderer ignores.
 
 The pre-existing per-block flags are retained as shorthands that name their reserved block implicitly, so every earlier invocation still works unchanged:
 
