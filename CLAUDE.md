@@ -224,6 +224,8 @@ Uses `github.com/automa-saga/logx` (zerolog-based). Trace IDs are initialized in
 ### Developer Documentation
 
 Detailed framework docs live in `docs/dev/`:
+- `error-handling.md` — `errorx` + `errx` contract: reason codes, hints, typed errors
+- `security-model.md` — Trust boundaries and sandbox binary risks
 - `migration-framework.md` — Migration system design and usage
 - `functionality-test-suite.md` — Testing approach and patterns
 - `acceptance-tests.md` — Acceptance/UAT test patterns
@@ -245,5 +247,8 @@ Detailed framework docs live in `docs/dev/`:
 - Deployment profiles: `local`, `perfnet`, `testnet`, `previewnet`, `mainnet`
 - PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/)
 - License headers (SPDX) are required on all source files — enforced by `task license:check`
-- **Every `automa.StepFailureReport` must attach resolution hints on the error passed to `automa.WithError(...)`** via `WithProperty(models.ErrPropertyResolution, []string{...})` (preferred; `doctor.ErrPropertyResolution` is an alias and a single string is also supported). The resolution list must include operator-actionable steps to resolve the failure (e.g. commands to run, paths to check). This is surfaced in the TUI and in error output to the operator; a failure report without resolution hints is incomplete — treat it the same as a missing error message.
+- **New or changed `automa.StepFailureReport`s attach a reason code and operator-actionable hints** via `errx.Decorate(err, reasons.X, "step", ...)` on the error passed to `automa.WithError(...)`. Hints are commands to run or paths to check; a report without them is as incomplete as one without a message — except internal bugs, which get `reasons.Internal` and no hints - see `docs/dev/error-handling.md`
+- **Decorate only where an error crosses a package boundary** — an exported `error` return, a `StepFailureReport`, or a `RunE` return. Errors staying inside a package keep a plain `errorx.<Type>.Wrap`; decorating every layer duplicates hints and overwrites the reason, since the outermost wins.
+- **Don't declare new typed errors or `errorx.NewNamespace`.** Use a built-in `errorx.<Type>` and let the reason code classify. If a caller must branch on one exact error, declare it as `errorx.<Builtin>.NewSubtype("…")` — a fresh namespace silently changes the operator-visible error code.
+- **Render errors on human surfaces through `doctor.OperatorMessage`, not `err.Error()`** — the latter carries the printable `{reason: X}`, which belongs in logs only.
 - Prefer pure-Go over shelling out to external binaries. Read cluster state through the Kubernetes API (`internal/kube` client, injected as `kube.ClientProviderFromContext` — pass `kube.ClientFromContext` at the call site) rather than execing tool binaries (`cilium`, `kubectl`, …) and parsing their stdout — running binaries from the sandbox bin dir is a malicious-binary risk (see `docs/dev/security-model.md`). Follow the `step_cluster_*` pattern: take a provider, resolve the client once in `Execute`, and read via a named helper

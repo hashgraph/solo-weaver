@@ -14,9 +14,11 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -125,91 +127,71 @@ func CheckWeaverUserStep() automa.Builder {
 			weaverGroup, groupErr := user.LookupGroup(weaverGroupName)
 			groupExists := groupErr == nil
 
-			// Collect validation errors for user and group before returning
-			var errors []error
-			var instructions string
+			uidWrong := userExists && weaverUser.Uid != weaverUserId
+			gidWrong := groupExists && weaverGroup.Gid != weaverGroupId
 
-			// Track mismatches in meta
-			if userExists && weaverUser.Uid != weaverUserId {
+			// The message carries the observed vs expected IDs; the hints carry
+			// only the commands that fix them.
+			var mismatches []string
+
+			if uidWrong {
 				meta["user_exists"] = "true"
 				meta["user_id_mismatch"] = "true"
 				meta["expected_user_id"] = weaverUserId
 				meta["actual_user_id"] = weaverUser.Uid
-				errors = append(errors, errorx.IllegalState.New("provisioner user exists with incorrect UID: expected %s, got %s", weaverUserId, weaverUser.Uid))
-				instructions += fmt.Sprintf("User '%s' exists but has incorrect UID.\n", weaverUsername)
-				instructions += fmt.Sprintf("Expected: %s, Found: %s\n\n", weaverUserId, weaverUser.Uid)
+				mismatches = append(mismatches, fmt.Sprintf(
+					"user %q has UID %s, expected %s", weaverUsername, weaverUser.Uid, weaverUserId))
 			}
 
-			if groupExists && weaverGroup.Gid != weaverGroupId {
+			if gidWrong {
 				meta["group_exists"] = "true"
 				meta["group_id_mismatch"] = "true"
 				meta["expected_group_id"] = weaverGroupId
 				meta["actual_group_id"] = weaverGroup.Gid
-				errors = append(errors, errorx.IllegalState.New("provisioner group exists with incorrect GID: expected %s, got %s", weaverGroupId, weaverGroup.Gid))
-				instructions += fmt.Sprintf("Group '%s' exists but has incorrect GID.\n", weaverGroupName)
-				instructions += fmt.Sprintf("Expected: %s, Found: %s\n\n", weaverGroupId, weaverGroup.Gid)
+				mismatches = append(mismatches, fmt.Sprintf(
+					"group %q has GID %s, expected %s", weaverGroupName, weaverGroup.Gid, weaverGroupId))
 			}
 
-			// If there are any errors, provide combined instructions
-			if len(errors) > 0 {
-				instructions += "Please update the user and/or group IDs as follows:\n\n"
-				// Suggest groupmod if group exists but has wrong GID
-				if groupExists && weaverGroup.Gid != weaverGroupId {
-					instructions += fmt.Sprintf("  sudo groupmod -g %s %s\n", weaverGroupId, weaverGroupName)
+			if len(mismatches) > 0 {
+				var hints []string
+				// groupmod first: the usermod -g below needs the target GID to exist.
+				if gidWrong {
+					hints = append(hints, fmt.Sprintf("sudo groupmod -g %s %s", weaverGroupId, weaverGroupName))
 				}
-				// Suggest usermod if user exists but has wrong UID
-				if userExists && weaverUser.Uid != weaverUserId {
-					instructions += fmt.Sprintf("  sudo usermod -u %s -g %s %s\n", weaverUserId, weaverGroupId, weaverUsername)
+				if uidWrong {
+					hints = append(hints, fmt.Sprintf("sudo usermod -u %s -g %s %s", weaverUserId, weaverGroupId, weaverUsername))
 				}
-				instructions += "\nNote: After changing user/group IDs, you may need to update file ownerships accordingly.\n"
-				meta["instructions"] = instructions
-
-				// Combine errors into one error message
-				var errMsg string
-				for i, err := range errors {
-					if i > 0 {
-						errMsg += "; "
-					}
-					errMsg += err.Error()
-				}
+				hints = append(hints, "Update file ownerships under the provisioner directories to match the new IDs.")
 
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.New("%s", errMsg)),
+					automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("provisioner service account has incorrect IDs: %s",
+							strings.Join(mismatches, "; ")),
+						reasons.PreconditionNotMet, hints...)),
 					automa.WithMetadata(meta))
 			}
 
-			// If either user or group doesn't exist, provide creation instructions
+			// The service account is provisioned by the installer, so a missing
+			// user or group is a "not installed" state, not something to fix by hand.
 			if !userExists || !groupExists {
 				meta["user_exists"] = fmt.Sprintf("%t", userExists)
 				meta["group_exists"] = fmt.Sprintf("%t", groupExists)
 
-				if !userExists && !groupExists {
-					instructions = fmt.Sprintf("The weaver service account ('%s'/'%s') has not been provisioned on this host.\n", weaverUsername, weaverGroupName)
-					instructions += "Run the installer to set it up:\n\n"
-					instructions += "  sudo solo-provisioner install"
-				} else if !userExists {
-					instructions = fmt.Sprintf("The weaver user '%s' does not exist.\n", weaverUsername)
-					instructions += "The service account is provisioned by the installer — run:\n\n"
-					instructions += "  sudo solo-provisioner install"
-				} else {
-					instructions = fmt.Sprintf("The weaver group '%s' does not exist.\n", weaverGroupName)
-					instructions += "The service account is provisioned by the installer — run:\n\n"
-					instructions += "  sudo solo-provisioner install"
-				}
-
-				meta["instructions"] = instructions
-
 				var errMsg string
-				if !userExists && !groupExists {
-					errMsg = fmt.Sprintf("provisioner user '%s' and group '%s' do not exist", weaverUsername, weaverGroupName)
-				} else if !userExists {
-					errMsg = fmt.Sprintf("provisioner user '%s' does not exist", weaverUsername)
-				} else {
-					errMsg = fmt.Sprintf("provisioner group '%s' does not exist", weaverGroupName)
+				switch {
+				case !userExists && !groupExists:
+					errMsg = fmt.Sprintf("provisioner user %q and group %q do not exist", weaverUsername, weaverGroupName)
+				case !userExists:
+					errMsg = fmt.Sprintf("provisioner user %q does not exist", weaverUsername)
+				default:
+					errMsg = fmt.Sprintf("provisioner group %q does not exist", weaverGroupName)
 				}
 
 				return automa.FailureReport(stp,
-					automa.WithError(errorx.IllegalState.New("%s", errMsg)),
+					automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("%s", errMsg),
+						reasons.NotInstalled,
+						"sudo solo-provisioner install")),
 					automa.WithMetadata(meta))
 			}
 

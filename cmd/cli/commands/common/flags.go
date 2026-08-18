@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 // FlagDefinition defines a command-line flag typed by T.
@@ -149,7 +151,8 @@ func (fp FlagDefinition[T]) ValueOwnPersistent(cmd *cobra.Command, args []string
 // SetVarP sets up the persistent flag and exits on error.
 func (fp FlagDefinition[T]) SetVarP(cmd *cobra.Command, p *T, required bool) {
 	if err := fp.varP(cmd, p, required); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to set flag %s", fp.Name), reasons.Internal))
 	}
 }
 
@@ -159,14 +162,16 @@ func (fp FlagDefinition[T]) SetVarP(cmd *cobra.Command, p *T, required bool) {
 func (fp FlagDefinition[T]) SetVarPHidden(cmd *cobra.Command, p *T, required bool) {
 	fp.SetVarP(cmd, p, required)
 	if err := cmd.PersistentFlags().MarkHidden(fp.Name); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to mark flag %s as hidden", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to mark flag %s as hidden", fp.Name), reasons.Internal))
 	}
 }
 
 // SetVar sets up the non-persistent flag and exits on error.
 func (fp FlagDefinition[T]) SetVar(cmd *cobra.Command, p *T, required bool) {
 	if err := fp.varNP(cmd, p, required); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to set flag %s", fp.Name), reasons.Internal))
 	}
 }
 
@@ -353,20 +358,23 @@ func (fp CommaSplitStringsFlagDefinition) ValueOwnPersistent(cmd *cobra.Command,
 
 func (fp CommaSplitStringsFlagDefinition) SetVarP(cmd *cobra.Command, p *[]string, required bool) {
 	if err := fp.varP(cmd, p, required); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to set flag %s", fp.Name), reasons.Internal))
 	}
 }
 
 func (fp CommaSplitStringsFlagDefinition) SetVarPHidden(cmd *cobra.Command, p *[]string, required bool) {
 	fp.SetVarP(cmd, p, required)
 	if err := cmd.PersistentFlags().MarkHidden(fp.Name); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to mark flag %s as hidden", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to mark flag %s as hidden", fp.Name), reasons.Internal))
 	}
 }
 
 func (fp CommaSplitStringsFlagDefinition) SetVar(cmd *cobra.Command, p *[]string, required bool) {
 	if err := fp.varNP(cmd, p, required); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to set flag %s", fp.Name), reasons.Internal))
 	}
 }
 
@@ -482,20 +490,23 @@ func (fp RepeatableStringFlagDefinition) ValueOwnPersistent(cmd *cobra.Command, 
 
 func (fp RepeatableStringFlagDefinition) SetVarP(cmd *cobra.Command, p *[]string, required bool) {
 	if err := fp.varP(cmd, p, required); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to set flag %s", fp.Name), reasons.Internal))
 	}
 }
 
 func (fp RepeatableStringFlagDefinition) SetVarPHidden(cmd *cobra.Command, p *[]string, required bool) {
 	fp.SetVarP(cmd, p, required)
 	if err := cmd.PersistentFlags().MarkHidden(fp.Name); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to mark flag %s as hidden", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to mark flag %s as hidden", fp.Name), reasons.Internal))
 	}
 }
 
 func (fp RepeatableStringFlagDefinition) SetVar(cmd *cobra.Command, p *[]string, required bool) {
 	if err := fp.varNP(cmd, p, required); err != nil {
-		doctor.CheckErr(context.Background(), err, "failed to set flag %s", fp.Name)
+		doctor.CheckErr(context.Background(), errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to set flag %s", fp.Name), reasons.Internal))
 	}
 }
 

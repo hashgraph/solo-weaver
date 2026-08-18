@@ -14,7 +14,7 @@ import (
 
 // TestDeepestFailureError_NilReport verifies the nil guard.
 func TestDeepestFailureError_NilReport(t *testing.T) {
-	require.NoError(t, deepestFailureError(nil))
+	require.NoError(t, doctor.DeepestFailureError(nil))
 }
 
 // TestDeepestFailureError_NoFailures returns nil when every step succeeded.
@@ -23,7 +23,7 @@ func TestDeepestFailureError_NoFailures(t *testing.T) {
 		automa.StepSuccessReport("child-a"),
 		automa.StepSuccessReport("child-b"),
 	))
-	require.NoError(t, deepestFailureError(r))
+	require.NoError(t, doctor.DeepestFailureError(r))
 }
 
 // TestDeepestFailureError_TopLevelFailure returns the immediate step's error
@@ -36,7 +36,7 @@ func TestDeepestFailureError_TopLevelFailure(t *testing.T) {
 		automa.StepFailureReport("child-a", automa.WithError(leafErr)),
 	))
 
-	got := deepestFailureError(r)
+	got := doctor.DeepestFailureError(r)
 	require.ErrorIs(t, got, leafErr)
 
 	// Resolution metadata is preserved on the returned error.
@@ -69,7 +69,7 @@ func TestDeepestFailureError_NestedFailure(t *testing.T) {
 		automa.WithStepReports(subWorkflow),
 	)
 
-	got := deepestFailureError(root)
+	got := doctor.DeepestFailureError(root)
 	require.ErrorIs(t, got, leafErr,
 		"expected leaf error, not the workflow-level wrapper")
 
@@ -87,9 +87,23 @@ func TestDeepestFailureError_FailedStepWithNilError(t *testing.T) {
 		automa.StepFailureReport("silent-step"),
 	))
 
-	got := deepestFailureError(r)
+	got := doctor.DeepestFailureError(r)
 	require.Error(t, got)
 	require.Contains(t, got.Error(), `"silent-step"`)
+}
+
+// TestDeepestFailureError_ErrorWithoutFailedStatus covers the shape automa's own
+// IsFailed treats as a failure: an attached error with a non-failed status. The
+// panel reads its hints from whatever this returns, so it must not be skipped.
+func TestDeepestFailureError_ErrorWithoutFailedStatus(t *testing.T) {
+	leafErr := errorx.ExternalError.New("step boom").
+		WithProperty(doctor.ErrPropertyResolution, []string{"fix the step"})
+
+	got := doctor.DeepestFailureError(&automa.Report{
+		Error:       errorx.IllegalState.New("workflow failed"),
+		StepReports: []*automa.Report{{Status: automa.StatusSuccess, Error: leafErr}},
+	})
+	require.ErrorIs(t, got, leafErr)
 }
 
 // TestDeepestFailureError_PicksFirstFailureNotSecond verifies that when
@@ -105,7 +119,7 @@ func TestDeepestFailureError_PicksFirstFailureNotSecond(t *testing.T) {
 		automa.StepFailureReport("child-c", automa.WithError(second)),
 	))
 
-	got := deepestFailureError(r)
+	got := doctor.DeepestFailureError(r)
 	require.ErrorIs(t, got, first)
 }
 
@@ -135,7 +149,7 @@ func TestDeepestFailureError_SkipsSkippedAndSuccessSiblings(t *testing.T) {
 		automa.StepFailureReport("bad-step", automa.WithError(leafErr)),
 	))
 
-	got := deepestFailureError(r)
+	got := doctor.DeepestFailureError(r)
 	require.ErrorIs(t, got, leafErr)
 }
 

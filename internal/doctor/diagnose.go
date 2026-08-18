@@ -4,6 +4,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
@@ -40,6 +42,9 @@ type ErrorDiagnosis struct {
 	ProfilingSnapshots map[string]string `yaml:"ProfilingSnapshots" json:"profilingSnapshots"`
 	Resolution         []string          `yaml:"steps" json:"steps"`
 	WhyFloor           string            `yaml:"whyFloor" json:"whyFloor"`
+
+	// Reason is the errx reason code, "" when the call site is not decorated.
+	Reason string `yaml:"reason" json:"reason"`
 }
 
 func toErrorCode(err error) int {
@@ -60,30 +65,64 @@ func toErrorMessage(err error) (string, string) {
 		return err.Error(), ""
 	}
 
-	cause := ""
-	if e.Cause() != nil {
-		cause = fmt.Sprintf("%s", e.Cause())
+	return e.Message(), OperatorMessage(e.Cause())
+}
+
+// OperatorMessage renders err for a human surface (the TUI failure line, the
+// panel's Cause line): err.Error() minus errx's reason code, which those surfaces
+// already show separately. Log lines keep it inline — see docs/dev/error-handling.md.
+func OperatorMessage(err error) string {
+	if err == nil {
+		return ""
 	}
 
-	return e.Message(), cause
+	// err.Error() renders the whole cause chain, so every reason along it leaks —
+	// not just the outermost one errx.ReasonOf reports.
+	msg := err.Error()
+	for _, reason := range reasonsInChain(err) {
+		msg = stripPrintableProperty(msg, "reason", reason)
+	}
+
+	return msg
+}
+
+// reasonsInChain returns each distinct reason value attached along err's chain,
+// outermost first. Shares walkChain's blind spot: a reason on an underlying
+// error still renders, exactly as errx.ReasonOf cannot see one.
+func reasonsInChain(err error) []string {
+	var out []string
+	seen := map[string]bool{}
+
+	walkChain(err, func(e error) bool {
+		if v, ok := errorx.ExtractProperty(e, errx.PropertyReason); ok {
+			if s, ok := v.(string); ok && !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+		return true
+	})
+
+	return out
+}
+
+// stripPrintableProperty removes one "<label>: <value>" pair from the "{...}" group
+// errorx renders printable properties into, dropping a group left empty.
+func stripPrintableProperty(msg, label, value string) string {
+	pair := label + ": " + value
+
+	msg = strings.ReplaceAll(msg, pair+", ", "")
+	msg = strings.ReplaceAll(msg, ", "+pair, "")
+	msg = strings.ReplaceAll(msg, " {"+pair+"}", "")
+	msg = strings.ReplaceAll(msg, "{"+pair+"}", "")
+
+	return strings.TrimSpace(msg)
 }
 
 func findResolution(err error) []string {
-	// Walk the full cause chain first: a resolution hint attached to an inner
-	// error must not be lost when outer layers (e.g. illegal_state wrappers in
-	// root.go) do not carry the property themselves.
-	for e := err; e != nil; {
-		if resolution, ok := errorx.ExtractProperty(e, ErrPropertyResolution); ok {
-			if resSteps, ok := resolution.([]string); ok {
-				return resSteps
-			}
-			return []string{fmt.Sprintf("%s", resolution)}
-		}
-		ex := errorx.Cast(e)
-		if ex == nil {
-			break
-		}
-		e = ex.Cause()
+	// Covers errx.WithHints and direct property attachments alike.
+	if hints, ok := resolutionHints(err); ok {
+		return hints
 	}
 
 	switch {
@@ -106,16 +145,55 @@ func findResolution(err error) []string {
 	}
 }
 
-func findWhyFloor(err error) string {
+// walkChain calls fn for each error in err's chain, outermost first, until fn
+// returns false. Mirrors errx.extract (unexported): walks the errorx causes and
+// errors.Unwrap, so it cannot see less than errx.Hints / errx.ReasonOf do.
+func walkChain(err error, fn func(error) bool) {
 	for e := err; e != nil; {
-		if why, ok := errorx.ExtractProperty(e, models.ErrPropertyWhyFloor); ok {
-			return fmt.Sprintf("%s", why)
+		if !fn(e) {
+			return
 		}
-		ex := errorx.Cast(e)
-		if ex == nil {
-			break
+		if ex := errorx.Cast(e); ex != nil {
+			e = ex.Cause()
+			continue
 		}
-		e = ex.Cause()
+		e = errors.Unwrap(e)
+	}
+}
+
+// extractProperty returns key's value from anywhere in err's chain, outermost first.
+func extractProperty(err error, key errorx.Property) (any, bool) {
+	var value any
+	var found bool
+
+	walkChain(err, func(e error) bool {
+		value, found = errorx.ExtractProperty(e, key)
+		return !found
+	})
+
+	return value, found
+}
+
+// resolutionHints returns the hints attached anywhere in err's chain, outermost
+// first. New code attaches []string; the bare-string branch carries the legacy
+// sites still awaiting their package's migration — see docs/dev/error-handling.md.
+func resolutionHints(err error) ([]string, bool) {
+	resolution, ok := extractProperty(err, ErrPropertyResolution)
+	if !ok {
+		return nil, false
+	}
+	if steps, ok := resolution.([]string); ok {
+		return steps, len(steps) > 0
+	}
+	if s, ok := resolution.(string); ok {
+		return []string{s}, s != ""
+	}
+	return []string{fmt.Sprintf("%s", resolution)}, true
+}
+
+func findWhyFloor(err error) string {
+	if why, ok := extractProperty(err, models.ErrPropertyWhyFloor); ok {
+		return fmt.Sprintf("%s", why)
 	}
 	return ""
 }
@@ -254,6 +332,9 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 
 	msg, cause := toErrorMessage(ex)
 	vinfo := version.Get()
+
+	reason, _ := errx.ReasonOf(ex)
+
 	return &ErrorDiagnosis{
 		Error:      ex,
 		ErrorType:  errorx.GetTypeName(ex),
@@ -268,6 +349,7 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 		Logfile:    config.Get().Log.Filename,
 		Resolution: findResolution(ex),
 		WhyFloor:   findWhyFloor(ex),
+		Reason:     reason.String(),
 	}
 }
 
@@ -276,25 +358,37 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 // error panel is shown and details are written only to the log file.
 var VerboseLevel int
 
-// CheckErr prints diagnosis and exit with error code 1
-// Optional instructions can be provided to give additional context to the user
-func CheckErr(ctx context.Context, err error, instructions ...string) {
-	// Always log the full stacktrace to the log file (not to console)
-	logx.As().Error().Msgf("%+v", err)
+// CheckErr prints diagnosis and exit with error code 1.
+//
+// Remediation steps come from the error itself — attach them with
+// errx.Decorate / errx.WithHints at the boundary that returns err. There is
+// deliberately no way to pass them alongside: a second channel renders the same
+// hints differently depending on which one happened to be populated.
+func CheckErr(ctx context.Context, err error) {
+	// Full stacktrace to the log file only, with the reason and hints as
+	// structured fields so the log alone carries the remediation steps.
+	ev := logx.As().Error()
+	if reason, ok := errx.ReasonOf(err); ok {
+		ev = ev.Str("reason", reason.String())
+	}
+	if hints, ok := resolutionHints(err); ok {
+		ev = ev.Strs("hints", hints)
+	}
+	ev.Msgf("%+v", err)
 
 	resp := Diagnose(ctx, err)
 
 	if VerboseLevel >= 1 {
-		checkErrVerbose(resp, instructions...)
+		checkErrVerbose(resp)
 	} else {
-		checkErrCompact(resp, instructions...)
+		checkErrCompact(resp)
 	}
 
 	os.Exit(1)
 }
 
 // checkErrCompact prints a concise, human-friendly error panel to stderr.
-func checkErrCompact(resp *ErrorDiagnosis, instructions ...string) {
+func checkErrCompact(resp *ErrorDiagnosis) {
 	fmt.Fprintf(os.Stderr, "\n  %s%s✗ Error:%s %s\n", Bold, Red, Reset, resp.Message)
 	if resp.Cause != "" {
 		fmt.Fprintf(os.Stderr, "  %s  Cause:%s %s\n", White, Reset, resp.Cause)
@@ -304,16 +398,7 @@ func checkErrCompact(resp *ErrorDiagnosis, instructions ...string) {
 	}
 
 	// Print resolution
-	if len(instructions) > 0 && instructions[0] != "" {
-		fmt.Fprintf(os.Stderr, "\n  %s%sResolution:%s\n", Bold, Yellow, Reset)
-		for _, line := range strings.Split(instructions[0], "\n") {
-			if line == "" {
-				fmt.Fprintln(os.Stderr)
-			} else {
-				fmt.Fprintf(os.Stderr, "    %s\n", line)
-			}
-		}
-	} else if len(resp.Resolution) > 0 {
+	if len(resp.Resolution) > 0 {
 		fmt.Fprintf(os.Stderr, "\n  %s%sResolution:%s\n", Bold, Yellow, Reset)
 		for i, r := range resp.Resolution {
 			fmt.Fprintf(os.Stderr, "    %d. %s\n", i+1, r)
@@ -332,7 +417,7 @@ func checkErrCompact(resp *ErrorDiagnosis, instructions ...string) {
 }
 
 // checkErrVerbose prints the full legacy error output with stacktrace and profiling.
-func checkErrVerbose(resp *ErrorDiagnosis, instructions ...string) {
+func checkErrVerbose(resp *ErrorDiagnosis) {
 	fmt.Printf("\n%s%s************************************** Error Stacktrace ******************************************%s\n", Bold, Gray, Reset)
 	fmt.Printf("\n%+v\n", resp.Error) // Print full error with stack trace
 
@@ -343,6 +428,10 @@ func checkErrVerbose(resp *ErrorDiagnosis, instructions ...string) {
 	}
 	fmt.Printf("\t%sError Type:%s %s\n", Bold+White, Reset, resp.ErrorType)
 	fmt.Printf("\t%sError Code:%s %d\n", Bold+White, Reset, resp.Code)
+	if resp.Reason != "" {
+		// Bare, to grep against the log's reason= field.
+		fmt.Printf("\t%sReason:%s %s\n", Bold+White, Reset, resp.Reason)
+	}
 	fmt.Printf("\t%sCommit:%s %s\n", Gray, Reset, resp.Commit)
 	fmt.Printf("\t%sPid:%s %d\n", Gray, Reset, resp.Pid)
 	fmt.Printf("\t%sTraceId:%s %s\n", Gray, Reset, resp.TraceId)
@@ -360,23 +449,8 @@ func checkErrVerbose(resp *ErrorDiagnosis, instructions ...string) {
 
 	fmt.Printf("\n%s%s****************************************** Resolution *********************************************%s\n", Bold, Yellow, Reset)
 
-	// Print custom instructions first if provided
-	if len(instructions) > 0 && instructions[0] != "" {
-		for _, line := range strings.Split(instructions[0], "\n") {
-			if line == "" {
-				fmt.Println()
-			} else {
-				fmt.Printf("\t%s\n", Bold+White+line+Reset)
-			}
-		}
-		if len(resp.Resolution) > 0 {
-			fmt.Println()
-		}
-	} else {
-		// Print default resolution steps
-		for _, r := range resp.Resolution {
-			fmt.Printf("\t%s\n", White+r+Reset)
-		}
+	for i, r := range resp.Resolution {
+		fmt.Printf("\t%s\n", White+fmt.Sprintf("%d. %s", i+1, r)+Reset)
 	}
 }
 
@@ -387,48 +461,41 @@ func CheckReportErr(ctx context.Context, report *automa.Report) {
 	}
 
 	if report.Error != nil {
-		// pick the first error when scanning step reports
-		rootErr := report.Error
-		var errStepReport *automa.Report
-		for _, stepReport := range report.StepReports {
-			if stepReport != nil && stepReport.Error != nil {
-				rootErr = stepReport.Error
-				errStepReport = stepReport
-				break
-			}
+		// Diagnose the leaf error, not automa's "completed with N failures"
+		// wrapper: the hints and reason are attached where the step failed.
+		rootErr := DeepestFailureError(report)
+		if rootErr == nil {
+			rootErr = report.Error
 		}
 
-		// Check for instructions in any nested reports before showing error
-		instructions := GetInstructionsFromReport(errStepReport)
-
-		CheckErr(ctx, rootErr, instructions)
+		CheckErr(ctx, rootErr)
 	}
 }
 
-// GetInstructionsFromReport recursively searches for instructions in report metadata.
-// Returns the first non-empty instructions found in the report tree, or an empty string if none exist.
-func GetInstructionsFromReport(report *automa.Report) string {
-	if report == nil {
-		return ""
+// DeepestFailureError descends through nested StepReports to return the
+// leaf-level failed step's Error, so that errx hints and reasons attached on a
+// deeply nested step (e.g. the preflight superuser check, the weaver
+// installation check) are not masked by automa's workflow-level
+// "completed with N failures" wrapper. Returns nil when no step failed.
+//
+// Failure is automa's own IsFailed predicate — a failed status *or* an attached
+// error — so a step that reports an error without setting the status still gets
+// its hints rendered.
+func DeepestFailureError(r *automa.Report) error {
+	if r == nil {
+		return nil
 	}
-
-	// Check if this report has instructions
-	if instructions, ok := report.Metadata["instructions"]; ok {
-		return instructions
-	}
-
-	if resolution, ok := errorx.ExtractProperty(report.Error, ErrPropertyResolution); ok {
-		return fmt.Sprintf("%s", resolution)
-	}
-
-	// Recursively check nested step reports
-	for _, stepReport := range report.StepReports {
-		if instructions := GetInstructionsFromReport(stepReport); instructions != "" {
-			return instructions
-		} else if resolution, ok := errorx.ExtractProperty(stepReport.Error, ErrPropertyResolution); ok {
-			return fmt.Sprintf("%s", resolution)
+	for _, sr := range r.StepReports {
+		if sr == nil || !sr.IsFailed() {
+			continue
 		}
+		if deeper := DeepestFailureError(sr); deeper != nil {
+			return deeper
+		}
+		if sr.Error != nil {
+			return sr.Error
+		}
+		return errorx.IllegalState.New("step %q failed", sr.Id)
 	}
-
-	return ""
+	return nil
 }
