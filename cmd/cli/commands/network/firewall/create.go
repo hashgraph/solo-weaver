@@ -51,6 +51,13 @@ var createCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		// Record the enable decision even when the create was a no-op (the table
+		// already existed and --force was not passed): "this host wants a host
+		// firewall" is true either way, and it is the decision — not the ruleset —
+		// that a later `block node reconfigure` seeds its enable/disable choice from.
+		recordHostFirewallDecision(false)
+
 		if changed {
 			logx.As().Info().Msg("inet weaver-host-firewall firewall is in the desired state")
 		}

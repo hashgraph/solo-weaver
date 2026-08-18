@@ -193,9 +193,11 @@ func (m *Manager) Table(_ context.Context) (*Table, error) {
 
 // IsActive reports whether the inet weaver-host-firewall table is currently present in the
 // kernel. It is a read-only probe (no lock, no mutation) used by callers that
-// need the firewall's current on-host state — e.g. seeding the reconfigure
-// enable/disable prompt from ground truth rather than from config.yaml, whose
-// zero value cannot distinguish "enabled" from "never configured".
+// need the firewall's current on-host state, rather than a recorded decision
+// whose absence cannot be distinguished from "disabled":
+// common.ResolveFirewallSeed seeds the reconfigure enable/disable choice from it
+// so an active firewall is never torn down by default, and NetworkFirewallCreate
+// uses it to scope its rollback to a table that step actually introduced.
 func (m *Manager) IsActive(ctx context.Context) (bool, error) {
 	return m.runner.Exists(ctx)
 }

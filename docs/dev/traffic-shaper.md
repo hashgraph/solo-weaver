@@ -473,6 +473,14 @@ provisioned node.
   blocks must be stated in it (as must `cidrs` inside `mgmt` and `blocked`) —
   otherwise a file that forgot `mgmt` would render an empty management
   allowlist under the default-drop policy.
+  `create` and `delete --all` also record the enable/disable decision into
+  `machineState.firewall.disabled`, the same field the block-node workflow
+  writes, so the standalone verbs and `block node reconfigure` share one source
+  of truth (issue #1003). Only the decision is mirrored: the ruleset itself stays
+  in `/etc/solo-provisioner/network-weaver-host-firewall.yaml`, which
+  `ResolveHostFirewallConfig` reads as a precedence tier *above* machine state —
+  otherwise a reconfigure's force re-render would revert an urgent
+  `add --name mgmt --cidr …` back to the allowlist captured at install time.
 - **`network policy`** (`create`/`add`/`remove`/`set`/`show`/`delete`) — the
   workload policy plane. `create` takes `--name` (the nft set name), `--stamp`
   (the HTB class to classify into, which also fixes direction) or `--deny`, plus
