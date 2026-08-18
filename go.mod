@@ -6,10 +6,10 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/ProtonMail/go-crypto v1.4.1
-	github.com/automa-saga/automa v0.11.0
+	github.com/automa-saga/automa v0.11.1
 	github.com/automa-saga/daemonkit v0.1.0
 	github.com/automa-saga/logx v0.5.0
-	github.com/automa-saga/version v1.0.0
+	github.com/automa-saga/version v1.0.1
 	github.com/bluet/syspkg v0.1.7
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -155,7 +155,7 @@ require (
 	k8s.io/kubectl v0.36.2 // indirect
 	k8s.io/streaming v0.36.3 // indirect
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
-	oras.land/oras-go/v2 v2.6.1 // indirect
+	oras.land/oras-go/v2 v2.6.2 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/kustomize/api v0.21.1 // indirect

@@ -4,7 +4,9 @@
 # Provision a freshly cloned "peers" UTM VM's guest OS for the network harness:
 #   1. de-conflict its DHCP identity and stop the dhcpcd<->macvlan ARP churn,
 #   2. wait for a stable bridged LAN IP,
-#   3. install the SSH key and verify it with a real login.
+#   3. install the SSH key and verify it with a real login,
+#   4. grant passwordless sudo and verify it with `sudo -n` over that login,
+#   5. pin the ARP sysctls the macvlan children need.
 #
 # Prints the resolved peers LAN IP as the LAST line of STDOUT; all progress goes
 # to STDERR, so the caller can capture the IP with `$(... )`.
@@ -101,6 +103,34 @@ for _ in $(seq 1 15); do
 done
 if [ -z "$SSH_OK" ]; then log "❌ SSH key never took effect on the peers VM (login still failing)"; exit 1; fi
 log "✓ SSH key working on $PEERS_IP"
+
+# 4. Grant passwordless sudo, then VERIFY with `sudo -n` over a real SSH login.
+#    The caller sets up the macvlan children over non-interactive SSH, where a
+#    sudo password prompt cannot be answered: every `sudo` fails, and because
+#    those failures are non-fatal the harness goes on to report peer IPs that
+#    were never created. The golden image carries no such drop-in — vm.yaml
+#    installs one only on the BN VM, which is why that VM works and this one
+#    does not.
+log "Configuring passwordless sudo..."
+SUDO_OK=""
+for _ in $(seq 1 5); do
+  gexec "echo '$USER_ ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$USER_ && chmod 440 /etc/sudoers.d/$USER_" || true
+  if ssh -i "$PRIV" $SSH_OPTS -o BatchMode=yes -o ConnectTimeout=5 "$USER_@$PEERS_IP" "sudo -n true" 2>/dev/null; then
+    SUDO_OK=1; break
+  fi
+  sleep 2
+done
+if [ -z "$SUDO_OK" ]; then log "❌ passwordless sudo never took effect on the peers VM"; exit 1; fi
+log "✓ passwordless sudo working on $PEERS_IP"
+
+# 5. Stop ARP flux before any macvlan child exists. All six addresses share one
+#    /24, and with the default arp_ignore=0 every interface answers ARP for every
+#    local address — the upstream switch can then bind the parent's management IP
+#    to a child's MAC and the peers VM drops off mid-run. arp_announce=2 keeps the
+#    parent from sourcing ARP with a child's address. Written to /etc/sysctl.d so
+#    it survives the VM restarts this harness does between runs.
+log "Hardening ARP for the multi-homed peers VM..."
+gexec "printf 'net.ipv4.conf.all.arp_ignore=1\nnet.ipv4.conf.all.arp_announce=2\n' > /etc/sysctl.d/99-solo-weaver-peers.conf && sysctl -p /etc/sysctl.d/99-solo-weaver-peers.conf >/dev/null" || true
 
 # Emit the resolved IP as the last stdout line for the caller to capture.
 echo "$PEERS_IP"

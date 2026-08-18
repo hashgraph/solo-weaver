@@ -222,7 +222,7 @@ sudo solo-provisioner block node install \
 | `--load-balancer-enabled` | Inject MetalLB address-pool annotation into the block node service; set to `false` for environments without MetalLB (default: `true`). See [Block-node service exposure](./block-node-service-exposure.md) for how this interacts with `service.type` and the chart's split topology. |
 | `--firewall-enabled`      | Apply the node-level host firewall (`inet weaver-host-firewall` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
 | `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs (IPv4 and/or IPv6 — each entry is routed to the matching `ipv4_addr`/`ipv6_addr` set). Empty skips the host firewall. |
-| `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs (IPv4 and/or IPv6), dropped before any other rule including established connections. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
+| `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs (IPv4 and/or IPv6), dropped inbound, outbound, and forwarded — including established connections, and including pod-bound traffic. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
 | `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
 | `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet). May be IPv4 and/or IPv6 (repeat or comma-separate for dual-stack). |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
@@ -449,7 +449,7 @@ sudo solo-provisioner block node reconfigure \
 | `--no-restart`      | Skip rollout-restart of the block node pod after reconfiguring                                        | `false` |
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
 | `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
-| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state, so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
+| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state — a live table always seeds enabled, however it was created — so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
 | `--traffic-shaping-enabled` | Enable or disable the BN traffic-shaping bundle (network-policy plane + tc HTB shaping + daemon traffic-shaper monitor) on an existing install. Seeded from the persisted install decision, so a no-flag reconfigure keeps it; pass `=true` to create it (with `--egress-interface`/`--link-rate`/`--shape`/`--daemon-bin` as on `install`), `=false` to tear it down. | persisted state |
 | `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN. Merged per-field into `daemon.yaml` (`components.block_node.statusz.base_url`); omitting the flag preserves whatever is already on disk. Only when no `base_url` exists on disk does the daemon fall back to discovering the endpoint from the watched BN pod. | preserved on disk |
 | `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`). Merged per-field into `daemon.yaml` (`components.block_node.statusz.poll_interval`); omitting the flag preserves whatever is already on disk. Only when no `poll_interval` exists on disk does the daemon fall back to its `5s` default. | preserved on disk |
@@ -464,7 +464,9 @@ sudo solo-provisioner block node reconfigure \
 > `install`, so an operator can turn either feature on or off on an
 > already-deployed block node without a full `install --force` reinstall. Both
 > gates are seeded from the block node's **current** state — the host firewall from
-> whether the `inet weaver-host-firewall` table exists, traffic shaping from the persisted install
+> the last enable/disable decision *and* from whether the `inet weaver-host-firewall` table is
+> live (a table that exists always seeds enabled, including one created by hand with
+> `network firewall create`), traffic shaping from the persisted install
 > decision — so a routine reconfigure that doesn't pass the flag (or accepts the
 > interactive default) never changes enablement. Teardown only happens on an
 > explicit toggle: answering **No** (or passing `=false`) for a currently-enabled
@@ -645,11 +647,18 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 
 ### Network Commands
 
-Manage node-level network state behind the traffic shaper. The `firewall` scope manages the node-agnostic `inet weaver-host-firewall` nftables table — the host's own SSH/management allowlist, ICMP policy, and in-cluster host-service ports. It is separate from the `inet weaver-workload-policy` workload plane and applies to every node type (block, consensus, mirror, relay).
+Manage node-level network state behind the traffic shaper. The `firewall` scope manages the node-agnostic `inet weaver-host-firewall` nftables table — the host's own management allowlist, ICMP policy, in-cluster host-service ports, and any number of named allow rules. It is separate from the `inet weaver-workload-policy` workload plane and applies to every node type (block, consensus, mirror, relay).
+
+The table holds two kinds of record:
+
+- **Three reserved blocks** — `mgmt` (management allowlist), `blocked` (operator block list, dropped on `prerouting`, `input` and `output`), and `in_cluster` (host-service ports reachable from the pod CIDR). They are first-class because weaver derives or defaults their content and omitting one is dangerous.
+- **Named allow rules** — an operator-authored source list x port list x protocol accept, for anything else the host must admit (Kubernetes control-plane ports, Cilium VXLAN, an admin jump host).
+
+Structure — which rules exist, and what protocol each matches — is declared in a config file. Membership — the addresses and ports inside a rule — is mutable straight from the CLI. That split is deliberate: adding a rule is a reviewed change, while unblocking an operator is sometimes urgent.
 
 #### Create the Host Firewall
 
-create-if-missing: if the `inet weaver-host-firewall` table already exists, the command makes no changes unless `--force` is passed (which re-renders from the flags). Every mutation applies to the live kernel in one atomic `nft -f` transaction and atomically rewrites `/etc/solo-provisioner/network-weaver-host-firewall.nft`.
+create-if-missing: if the `inet weaver-host-firewall` table already exists, the command makes no changes unless `--force` is passed (which re-renders from the flags or file). Every mutation applies to the live kernel in one atomic `nft -f` transaction and atomically rewrites both `/etc/solo-provisioner/network-weaver-host-firewall.nft` and the config it was rendered from, `/etc/solo-provisioner/network-weaver-host-firewall.yaml`.
 
 ```bash
 # Create with a management allowlist and the default in-cluster ports
@@ -667,40 +676,170 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 
 | Flag                 | Description                                                       | Default            |
 |----------------------|-------------------------------------------------------------------|--------------------|
-| `--mgmt-cidrs`       | Management/SSH allowlist CIDRs (comma-separated or repeated) — **omitting this flag leaves the SSH allow rule with an empty source set under the default-drop policy, which will lock you out of new SSH connections** | (none) |
+| `--mgmt-cidrs`       | Management/SSH allowlist CIDRs (comma-separated or repeated) — **omitting this flag leaves the management allow rule with an empty source set under the default-drop policy, which will lock you out of new SSH connections** | (none) |
+| `--blocked-cidrs`    | Operator block list CIDRs, dropped before any other rule           | (none)             |
 | `--in-cluster-ports` | Host-service ports reachable from the pod CIDR                     | `4244,6443,7472,10250` |
-| `--ssh-port`         | SSH/management TCP port accepted from the allowlist                | `22`               |
+| `--ssh-port`         | Management TCP port accepted from the allowlist (shorthand for a one-element `mgmt.ports`) | `22` |
 | `--pod-cidr`         | Pod CIDR allowed to reach the in-cluster host-service ports        | auto-detected      |
+| `--from-file`        | Declarative YAML config to render the whole table from (mutually exclusive with the flags above) | (none) |
 | `--force`            | Re-render the table even if it already exists (global flag)        | `false`            |
 
 When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API (the node is matched by hostname, or the sole node on a single-node host). Detection is best-effort: `network firewall create` is node-agnostic and may run before a cluster exists, so if no cluster is reachable the command logs a warning and **omits the in-cluster-ports rule** — pass `--pod-cidr` explicitly to render it anyway.
 
-ICMP is a fixed, safe ruleset (not configurable): full ICMP from the management allowlist, and from every other source the path-health subset — `destination-unreachable` (Path MTU Discovery) and `time-exceeded` (traceroute) always accepted, with `echo-request` (ping) rate-limited to 10/second. There are deliberately no ICMP flags: dropping ICMP errors would silently break PMTUD for legitimate clients.
+ICMP is a fixed, safe ruleset: full ICMP from the management allowlist, and from every other source the path-health subset — `destination-unreachable` (Path MTU Discovery) and `time-exceeded` (traceroute) always accepted, with `echo-request` (ping) rate-limited to 10/second. There are deliberately no ICMP flags: dropping ICMP errors would silently break PMTUD for legitimate clients. The one configurable part is `icmp_echo` on an allow rule, which grants that rule's sources unmetered `echo-request`.
 
-> There is no `--service-ports`: BN ports live only in `network policy --ports` (the host firewall is bypassed by the eBPF datapath).
+> There is no `--service-ports`: BN ports live only in `network policy --ports`. That traffic is forwarded rather than delivered locally, so an `input` rule for it would never match.
 
-#### Modify the Allowlist / Ports
+#### Declare Named Allow Rules
 
-`add`/`remove` operate on a single element; `set` atomically replaces the full list.
+`create-allow-rule` declares one named allow rule; `add` then supplies its addresses and ports. No file is involved, and both lists take comma-separated values, so one `add` finishes the rule in a single atomic apply:
 
 ```bash
-sudo solo-provisioner network firewall add    --mgmt-cidr 10.1.0.0/16
-sudo solo-provisioner network firewall remove --mgmt-cidr 10.0.0.0/8
-sudo solo-provisioner network firewall set    --mgmt-cidrs 10.0.0.0/8,192.168.0.0/16
+# Declare the rule, then populate it
+sudo solo-provisioner network firewall create-allow-rule --name rudder_server --proto tcp --icmp-echo
+sudo solo-provisioner network firewall add --name rudder_server \
+  --cidr 200.201.203.205/32,10.1.0.0/16 --port 5309,8443,9000-9100
 
-sudo solo-provisioner network firewall add    --in-cluster-port 9100
-sudo solo-provisioner network firewall remove --in-cluster-port 10250
-sudo solo-provisioner network firewall set    --in-cluster-ports 6443,4244
+# Deletion needs no separate verb
+sudo solo-provisioner network firewall delete --name rudder_server
 ```
 
 **Flags**:
 
-| Verb           | Flag                 | Description                                                          |
-|----------------|----------------------|----------------------------------------------------------------------|
-| `add`/`remove` | `--mgmt-cidr`        | A single management CIDR (mutually exclusive with `--in-cluster-port`) |
-| `add`/`remove` | `--in-cluster-port`  | A single in-cluster host-service port                                |
-| `set`          | `--mgmt-cidrs`       | Full management allowlist (replaces the existing list)               |
-| `set`          | `--in-cluster-ports` | Full in-cluster host-service port list (replaces the existing list)  |
+| Flag           | Description                                                                          | Default |
+|----------------|--------------------------------------------------------------------------------------|---------|
+| `--name`       | Name of the allow rule to declare (may not be a reserved block: `mgmt`, `blocked`, `in_cluster`) | (required) |
+| `--proto`      | L4 protocol the rule's ports match: `tcp` or `udp`                                   | `tcp`   |
+| `--icmp-echo`  | Grant this rule's sources unmetered ICMP echo-request, above the rate meter          | `false` |
+| `--force`      | Replace an existing rule, **resetting the whole rule** — addresses, ports, `proto` and `icmp_echo` all return to their defaults unless supplied again (global flag) | `false` |
+
+A rule is declared before it has any members, and **renders nothing** until it has at least one CIDR and either a port or `--icmp-echo` — so running the declare and the populate as separate commands never opens access early. An incomplete rule is reported as a warning on every apply.
+
+Declaring is deliberately a separate verb from `add`: an unknown `--name` on `add`/`remove`/`set` keeps failing, so a typo edits nothing rather than quietly creating a second rule alongside the intended one. Re-declaring an existing name without `--force` warns and changes nothing, mirroring `network firewall create`. With `--force` the declaration **replaces** the rule outright, so `create-allow-rule --name x --force` on its own resets `proto` and `icmp_echo` as well as emptying the address and port lists — use `set` to change one field of a populated rule.
+
+`--proto` and `--icmp-echo` are also settable on `set` (see below), so a rule's protocol can be corrected without deleting and re-declaring it. The reserved blocks reject both — they render a fixed shape.
+
+##### Declaring the whole table from a file
+
+`create --from-file` states the whole table at once, as an alternative to the sequence above:
+
+```yaml
+version: 1
+
+mgmt:                                          # required
+  cidrs: ["192.168.68.0/24"]                   # required
+  ports: ["22"]                                # omitted -> 22
+
+blocked:                                       # required
+  cidrs: []                                    # required; [] means block nobody
+
+in_cluster:                                    # required
+  cidrs: ["10.4.0.0/14"]                       # omitted -> auto-detected; [] -> no rule
+  ports: ["4244", "6443", "7472", "10250"]     # omitted -> the defaults above
+
+allow:
+  - name: k8s-node
+    cidrs: ["10.0.0.0/24"]
+    ports: ["6443", "2379-2380", "10250", "10256-10259"]
+    proto: tcp
+
+  - name: cilium-vxlan
+    cidrs: ["10.0.0.0/24"]
+    ports: ["8472"]
+    proto: udp
+
+  - name: admin
+    cidrs: ["203.0.113.5/32", "2001:db8:5e5::/64"]
+    ports: ["22"]
+    icmp_echo: true
+```
+
+```bash
+sudo solo-provisioner network firewall create --from-file rules.yaml --force
+```
+
+| Field       | Required | Notes                                                                        |
+|-------------|----------|------------------------------------------------------------------------------|
+| `name`      | yes      | Also the nft set name. `mgmt`, `blocked` and `in_cluster` are reserved.       |
+| `cidrs`     | yes      | IPv4 and/or IPv6 in one list; each entry is routed to `@<name>` or `@<name>6` by family |
+| `ports`     | yes\*    | Single ports and inclusive ranges (`2379-2380`). \*Optional when `icmp_echo` is set, for an echo-only rule |
+| `proto`     | no       | `tcp` (default) or `udp`. nft has no combined match, so a service on both is two rules |
+| `icmp_echo` | no       | Grants unmetered `echo-request`, rendered above the rate meter                |
+
+**The file is the whole table.** Nothing is inherited from the host's current firewall — only `add`/`remove`/`set` merge with what is already there. Two consequences:
+
+- **`allow:` is declarative** — a rule absent from the file is **deleted**.
+- **All three reserved blocks are required**, as is `cidrs` inside `mgmt` and `blocked`. An omitted block would fall back to a weaver default the file never stated, and for `mgmt` that default is an empty allowlist under the default-drop policy — a lockout nobody wrote down. To render no rule for a block, state it with an empty list (`in_cluster: {cidrs: []}`); the block still cannot be removed.
+
+| Key                | Required | Omitted means                                                     |
+|--------------------|----------|-------------------------------------------------------------------|
+| `version`          | no       | the current schema version (`1`)                                   |
+| `mgmt`             | **yes**  | — (rejected)                                                       |
+| `blocked`          | **yes**  | — (rejected)                                                       |
+| `in_cluster`       | **yes**  | — (rejected)                                                       |
+| `mgmt.cidrs`       | **yes**  | — (rejected: no safe default exists)                               |
+| `mgmt.ports`       | no       | `22`                                                               |
+| `blocked.cidrs`    | **yes**  | — (rejected; write `[]` to block nobody)                           |
+| `in_cluster.cidrs` | no       | auto-detect this node's pod CIDR (`[]` renders no in-cluster rule) |
+| `in_cluster.ports` | no       | `4244,6443,7472,10250`                                             |
+| `allow`            | no       | no named allow rules — **and any that exist are deleted**          |
+
+`in_cluster.cidrs` is the one address list weaver can legitimately derive on its own, which is why it stays optional; its absence costs a rule rather than access to the host.
+
+The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. Re-run `create --from-file`, or delete the file and re-run the `create` + `create-allow-rule` sequence, to repair one.
+
+#### Modify a Rule's Addresses / Ports
+
+`add`/`remove` merge with what is already there; `set` atomically replaces the full list. `--name` selects the rule — a reserved block or an allow rule:
+
+```bash
+sudo solo-provisioner network firewall add    --name mgmt     --cidr 10.1.0.0/16
+sudo solo-provisioner network firewall add    --name blocked  --cidr 203.0.113.9/32
+sudo solo-provisioner network firewall add    --name k8s-node --cidr 10.0.0.5/32 --port 9345
+sudo solo-provisioner network firewall remove --name k8s-node --port 9345
+sudo solo-provisioner network firewall set    --name mgmt     --cidrs 10.0.0.0/8,192.168.0.0/16
+sudo solo-provisioner network firewall set    --name mgmt     --cidrs-file /etc/mgmt-cidrs.txt
+
+# Both lists are comma-separated or repeated, and one invocation is one atomic
+# apply — so a rule can be populated in full without a command per element
+sudo solo-provisioner network firewall add --name k8s-node \
+  --cidr 10.0.0.5/32,10.0.0.6/32 --port 6443,2379-2380,10250
+
+# --proto and --icmp-echo change what an allow rule matches, rather than who is in it
+sudo solo-provisioner network firewall set --name cilium-vxlan --proto udp
+sudo solo-provisioner network firewall set --name admin --icmp-echo
+sudo solo-provisioner network firewall set --name admin --icmp-echo=false
+```
+
+**Flags**:
+
+| Verb                  | Flag           | Description                                                          |
+|-----------------------|----------------|----------------------------------------------------------------------|
+| `add`/`remove`/`set`  | `--name`       | Rule to modify: `mgmt`, `blocked`, `in_cluster`, or an allow rule name |
+| `add`/`remove`        | `--cidr`       | CIDR(s) to add/remove (comma-separated or repeated)                  |
+| `add`/`remove`        | `--port`       | Port(s) to add/remove; single ports or ranges                        |
+| `set`                 | `--cidrs`      | Full CIDR list (replaces the existing list; an empty value clears it) |
+| `set`                 | `--cidrs-file` | Alternative to `--cidrs`: a flat file of CIDRs, one per line or comma-separated, `#` comments allowed |
+| `set`                 | `--ports`      | Full port list (replaces the existing list)                          |
+| `set`                 | `--proto`      | L4 protocol the rule's ports match: `tcp` or `udp` (allow rules only; empty restores the `tcp` default) |
+| `set`                 | `--icmp-echo`  | Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only) |
+
+> `add`/`remove` operate on membership only. To change an allow rule's `--proto` or `--icmp-echo` after it is declared, use `set` — `create-allow-rule --force` would reset the rest of the rule. The reserved blocks reject both flags outright, **including `--proto tcp`**: they render a fixed shape (TCP, with `mgmt` carrying its own broader ICMP type list), so accepting the value that happens to match would report a change the renderer ignores.
+
+The pre-existing per-block flags are retained as shorthands that name their reserved block implicitly, so every earlier invocation still works unchanged:
+
+```bash
+sudo solo-provisioner network firewall add    --mgmt-cidr 10.1.0.0/16      # = --name mgmt --cidr
+sudo solo-provisioner network firewall remove --blocked-cidr 203.0.113.9/32
+sudo solo-provisioner network firewall add    --in-cluster-port 9100
+sudo solo-provisioner network firewall set    --mgmt-cidrs 10.0.0.0/8 --in-cluster-ports 6443,4244
+```
+
+> Ports are removed by exact spec: removing `2379` from a rule holding `2379-2380` does nothing. An nft range is a single set element, so replace the range with `set --ports` rather than relying on an implicit split.
+
+> Adding a CIDR already covered by one in the rule — `10.0.0.5/32` into a rule holding `10.0.0.0/24` — is accepted. The config keeps both entries, so removing the wider prefix later leaves the narrower one in force, but the kernel folds them into one interval. `show` dumps the kernel and will print the folded form; `show --output yaml` reads the config and prints what you authored.
+>
+> A ruleset the kernel would refuse is rejected before anything is written: the CLI errors, and `/etc/solo-provisioner/network-weaver-host-firewall.{yaml,nft}` are left exactly as they were, so the ruleset that replays at boot is always one that loads.
 
 #### Show / Delete the Host Firewall
 
@@ -708,11 +847,39 @@ sudo solo-provisioner network firewall set    --in-cluster-ports 6443,4244
 # Show the live inet weaver-host-firewall table
 sudo solo-provisioner network firewall show
 
-# Remove the table and /etc/solo-provisioner/network-weaver-host-firewall.nft
-sudo solo-provisioner network firewall delete
+# Show the declarative config the ruleset was rendered from
+sudo solo-provisioner network firewall show --output yaml
+
+# Inspect one rule
+sudo solo-provisioner network firewall show --name k8s-node
+
+# Delete one named allow rule
+sudo solo-provisioner network firewall delete --name k8s-node
+
+# Remove the whole table and its on-disk artifacts
+sudo solo-provisioner network firewall delete --all
 ```
 
-> `delete` removes the table and `/etc/solo-provisioner/network-weaver-host-firewall.nft` but does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
+`show --output yaml` prints exactly the schema `create --from-file` accepts, so it round-trips:
+
+```bash
+sudo solo-provisioner network firewall show --output yaml > rules.yaml
+sudo solo-provisioner network firewall create --from-file rules.yaml --force   # a no-op
+```
+
+> `delete --all` (the default when `--name` is omitted, which is what this verb has always done) removes the table and both `/etc/solo-provisioner/network-weaver-host-firewall.{nft,yaml}`, leaving the host with no weaver-managed firewall — including no management allowlist. It asks for confirmation in an interactive session; pass `--force` to skip the prompt. It does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
+>
+> The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set --name mgmt --cidrs ""`).
+
+> **`create` and `delete --all` record the enable decision.** Both write it into the host's runtime
+> state (`machineState.firewall.disabled`), so `block node reconfigure` agrees with what you did
+> here: a firewall you created by hand survives a later reconfigure instead of being torn down, and
+> one you deleted here is not re-created by it. A live table always wins over the recorded decision,
+> so removing an active host firewall through `block node reconfigure` needs an explicit
+> `--firewall-enabled=false`. The membership verbs (`add`, `remove`, `set`) change no decision —
+> `reconfigure` reads their result straight out of
+> `/etc/solo-provisioner/network-weaver-host-firewall.yaml`, so an urgent
+> `add --name mgmt --cidr …` is not reverted by the next reconfigure.
 
 #### Create a Traffic Policy
 
@@ -841,7 +1008,7 @@ Remove a policy's rules, set, and registry file, and re-render the `inet weaver-
 sudo solo-provisioner network policy delete --name bn-restricted
 ```
 
-`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver-workload-policy.nft`. If this is the last policy, an empty chain (`policy drop`, no rules) is applied; the boot oneshot stays enabled.
+`delete` re-renders the full chain without the removed policy, snapshots and restores remaining policies' live membership (so the destructive `delete table; add table` does not wipe their sets), removes the registry file, and atomically overwrites `network-weaver-workload-policy.nft`. If this is the last policy, the table is torn down entirely (live and on disk); the boot oneshot stays enabled.
 
 | Flag     | Description     | Required |
 |----------|-----------------|----------|
@@ -1028,17 +1195,14 @@ Manage the External Secrets Operator (ESO), which syncs secrets from external st
 
 #### Install External Secrets Operator
 
-Install the `external-secrets/external-secrets` Helm chart into the cluster. The command is idempotent: if ESO is already installed in the target namespace, installation is skipped with a clear message.
+Install the `external-secrets/external-secrets` Helm chart into the cluster. The command is idempotent: if ESO is already installed in the target namespace, installation is skipped with a clear message. The chart version is pinned by the infrastructure catalog.
 
 ```bash
-# Install with defaults (namespace: external-secrets, catalog default version)
+# Install with defaults (namespace: external-secrets)
 sudo solo-provisioner eso operator install
 
 # Install into a custom namespace
 sudo solo-provisioner eso operator install --namespace my-eso
-
-# Pin a specific catalog-declared chart version
-sudo solo-provisioner eso operator install --chart-version 0.20.2
 ```
 
 **Additional Flags**:
@@ -1046,7 +1210,6 @@ sudo solo-provisioner eso operator install --chart-version 0.20.2
 | Flag              | Default            | Description                                                                                                          |
 |-------------------|--------------------|----------------------------------------------------------------------------------------------------------------------|
 | `--namespace`     | `external-secrets` | Kubernetes namespace for the External Secrets Operator                                                               |
-| `--chart-version` | _(catalog default)_ | External Secrets Operator chart version to install (must be declared in the infrastructure catalog; defaults to the catalog default) |
 
 #### Uninstall External Secrets Operator
 
@@ -1700,7 +1863,7 @@ sudo solo-provisioner teleport cluster install --values=<file>
 sudo solo-provisioner teleport cluster uninstall
 
 # EXTERNAL SECRETS OPERATOR (ESO)
-sudo solo-provisioner eso operator install    [--namespace=<ns>] [--chart-version=<version>]
+sudo solo-provisioner eso operator install    [--namespace=<ns>]
 sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
 sudo solo-provisioner eso secret create       --store=<name> --name=<secret> --namespace=<ns> --set KEY=store/path[#field] [--refresh-interval=<interval>]
 

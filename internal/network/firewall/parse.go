@@ -4,83 +4,104 @@ package firewall
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/joomcode/errorx"
 )
 
-// Parse reconstructs a Table from the on-disk network-weaver-host-firewall.nft artifact. It
-// understands only the exact format this package renders (see the embedded
-// template) — it is not a general nft parser. A render→parse→render round-trip
-// is the identity, which is pinned by TestRoundTrip. Element verbs (add/remove/
-// set) use this to load prior state so they don't need the full flag set re-spec.
+// Parse recovers the three reserved blocks of a Table from a rendered
+// network-weaver-host-firewall.nft artifact. It understands only the exact
+// formats this package renders — it is not a general nft parser.
+//
+// It is the fallback path, not the normal one: the persisted YAML config is the
+// source of truth for the mutating verbs (see Manager.load). Parse exists so a
+// host provisioned before named allow rules existed — or one whose config file
+// was lost — still yields its management allowlist rather than an error that
+// leaves the operator with no way to add their address back. Named allow rules
+// are deliberately NOT recovered here: reverse-engineering arbitrary named rules
+// out of nft syntax would be fragile in exactly the situation where being wrong
+// costs the most. Recovering management access is the goal; the allow rules are
+// not recovered at all — neither their existence nor their membership — so they
+// must be re-declared with `network firewall create-allow-rule` and then
+// re-populated with `network firewall add`.
+//
+// Both the current and the pre-allow-rules renderings are accepted, since an
+// upgraded host still has the old artifact on disk until its first mutation.
 func Parse(content string) (*Table, error) {
-	t := &Table{SSHPort: DefaultSSHPort}
-
 	if !strings.Contains(content, "table "+TableName+" {") {
 		return nil, errorx.IllegalFormat.New("not a recognised inet weaver-host-firewall ruleset")
 	}
 
-	// Merge each family's set back into the single mixed list the Table holds.
-	// Render re-splits by family, so a render→parse→render round-trip is the
-	// identity regardless of the mixed-list order (pinned by TestRoundTrip).
-	if cidrs, ok := parseElements(content, reMgmtSet); ok {
-		t.MgmtCIDRs = append(t.MgmtCIDRs, splitElements(cidrs)...)
+	t := NewTable()
+
+	// Merge each family's set back into the single mixed list the rule holds.
+	// Render re-splits by family, so the round-trip is the identity regardless of
+	// the mixed-list order (pinned by TestRoundTrip).
+	t.Mgmt.CIDRs = parseSetElements(content, reMgmtSet, reMgmtSet6)
+	t.Blocked.CIDRs = parseSetElements(content, reBlockedSet, reBlockedSet6)
+	t.InCluster.CIDRs = parseSetElements(content, reInClusterSet, reInClusterSet6)
+
+	// A port set declared but carrying no elements means "no ports", which is
+	// distinct from a document that predates the set entirely. So the presence of
+	// the declaration decides whether to read the element list, and the element
+	// list — empty or not — is then authoritative.
+	if reMgmtPortDecl.MatchString(content) {
+		t.Mgmt.Ports = parseSetElements(content, reMgmtPortSet)
+	} else if m := reLegacySSHPort.FindStringSubmatch(content); m != nil {
+		// Pre-allow-rules artifact: the management port was a rule literal rather
+		// than a set.
+		t.Mgmt.Ports = []string{m[1]}
 	}
-	if cidrs, ok := parseElements(content, reMgmtSet6); ok {
-		t.MgmtCIDRs = append(t.MgmtCIDRs, splitElements(cidrs)...)
-	}
-	if cidrs, ok := parseElements(content, reBlockedSet); ok {
-		t.BlockedCIDRs = append(t.BlockedCIDRs, splitElements(cidrs)...)
-	}
-	if cidrs, ok := parseElements(content, reBlockedSet6); ok {
-		t.BlockedCIDRs = append(t.BlockedCIDRs, splitElements(cidrs)...)
-	}
-	if ports, ok := parseElements(content, rePortSet); ok {
-		for _, p := range splitElements(ports) {
-			n, err := strconv.Atoi(p)
-			if err != nil {
-				return nil, errorx.IllegalFormat.Wrap(err, "invalid in-cluster port %q in %s", p, HostNftPath)
-			}
-			t.InClusterPorts = append(t.InClusterPorts, n)
-		}
+	if reInClusterPortDecl.MatchString(content) {
+		t.InCluster.Ports = parseSetElements(content, reInClusterPortSet)
 	}
 
-	if m := reSSHPort.FindStringSubmatch(content); m != nil {
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			return nil, errorx.IllegalFormat.Wrap(err, "invalid ssh port %q in %s", m[1], HostNftPath)
+	// Pre-allow-rules artifact: the pod CIDRs were rule literals rather than a
+	// set. Only consulted when the set-based form found nothing, so a current
+	// document is never second-guessed.
+	if len(t.InCluster.CIDRs) == 0 {
+		for _, re := range []*regexp.Regexp{reLegacyPodCIDR, reLegacyPodCIDR6} {
+			if m := re.FindStringSubmatch(content); m != nil {
+				t.InCluster.CIDRs = append(t.InCluster.CIDRs, m[1])
+			}
 		}
-		t.SSHPort = n
-	}
-	if m := rePodCIDR.FindStringSubmatch(content); m != nil {
-		t.PodCIDR = m[1]
-	}
-	if m := rePodCIDR6.FindStringSubmatch(content); m != nil {
-		t.PodCIDR6 = m[1]
 	}
 
 	return t, nil
 }
 
 var (
-	reMgmtSet     = regexp.MustCompile(`set mgmt_addrs \{[^}]*elements = \{ ([^}]*) \}`)
-	reMgmtSet6    = regexp.MustCompile(`set mgmt_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
-	reBlockedSet  = regexp.MustCompile(`set blocked_addrs \{[^}]*elements = \{ ([^}]*) \}`)
-	reBlockedSet6 = regexp.MustCompile(`set blocked_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
-	rePortSet     = regexp.MustCompile(`set in_cluster_ports \{[^}]*elements = \{ ([^}]*) \}`)
-	reSSHPort     = regexp.MustCompile(`ip saddr @mgmt_addrs tcp dport (\d+) accept`)
-	rePodCIDR     = regexp.MustCompile(`ip saddr (\S+) tcp dport @in_cluster_ports accept`)
-	rePodCIDR6    = regexp.MustCompile(`ip6 saddr (\S+) tcp dport @in_cluster_ports accept`)
+	reMgmtSet           = regexp.MustCompile(`set mgmt_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	reMgmtSet6          = regexp.MustCompile(`set mgmt_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
+	reMgmtPortSet       = regexp.MustCompile(`set mgmt_ports \{[^}]*elements = \{ ([^}]*) \}`)
+	reMgmtPortDecl      = regexp.MustCompile(`set mgmt_ports \{`)
+	reInClusterPortDecl = regexp.MustCompile(`set in_cluster_ports \{`)
+	reBlockedSet        = regexp.MustCompile(`set blocked_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	reBlockedSet6       = regexp.MustCompile(`set blocked_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
+	reInClusterSet      = regexp.MustCompile(`set in_cluster_addrs \{[^}]*elements = \{ ([^}]*) \}`)
+	reInClusterSet6     = regexp.MustCompile(`set in_cluster_addrs6 \{[^}]*elements = \{ ([^}]*) \}`)
+	reInClusterPortSet  = regexp.MustCompile(`set in_cluster_ports \{[^}]*elements = \{ ([^}]*) \}`)
+
+	// The legacy patterns match the pre-allow-rules rendering, where the
+	// management port and the pod CIDRs were rule literals. The address patterns
+	// exclude a leading `@` so they cannot match the current set-based rule.
+	reLegacySSHPort  = regexp.MustCompile(`ip saddr @mgmt_addrs tcp dport (\d+) accept`)
+	reLegacyPodCIDR  = regexp.MustCompile(`ip saddr ([^@\s]\S*) tcp dport @in_cluster_ports accept`)
+	reLegacyPodCIDR6 = regexp.MustCompile(`ip6 saddr ([^@\s]\S*) tcp dport @in_cluster_ports accept`)
 )
 
-func parseElements(content string, re *regexp.Regexp) (string, bool) {
-	m := re.FindStringSubmatch(content)
-	if m == nil {
-		return "", false
+// parseSetElements returns the merged element lists of the named sets, skipping
+// any that are absent or declared without an `elements` clause.
+func parseSetElements(content string, res ...*regexp.Regexp) []string {
+	var out []string
+	for _, re := range res {
+		m := re.FindStringSubmatch(content)
+		if m == nil {
+			continue
+		}
+		out = append(out, splitElements(m[1])...)
 	}
-	return strings.TrimSpace(m[1]), true
+	return out
 }
 
 func splitElements(s string) []string {

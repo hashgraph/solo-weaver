@@ -3,6 +3,7 @@
 package common
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -118,7 +119,8 @@ func hostFirewallFeature() gatedFeature {
 // host-service ports) and applies it to the global config so the
 // NetworkFirewallCreate step (wired into the block-node install/reconfigure/
 // upgrade workflows) can render the inet weaver-host-firewall table. Precedence per value:
-// CLI flag > interactive prompt > config file > built-in default. When the
+// CLI flag > interactive prompt > config file > live host firewall > persisted
+// state (MachineState.Firewall) > built-in default. When the
 // session is interactive, any value not supplied on the CLI is presented as a
 // pre-filled prompt the operator can confirm with Enter. An empty management
 // allowlist is allowed — the step then skips firewall creation rather than
@@ -132,11 +134,10 @@ func hostFirewallFeature() gatedFeature {
 // seedEnabled is the default the enable/disable choice falls back to when neither
 // the flag nor an interactive prompt decides it. `install` passes false (opt-in —
 // a fresh install without the flag installs no firewall), while `reconfigure`
-// passes the block node's persisted firewall decision (MachineState.Firewall), so
-// a no-flag / default-accept reconfigure keeps the last-chosen state rather than
-// silently tearing an established firewall down. It is intentionally NOT derived
-// from cfg.Disabled: config.yaml's zero value cannot distinguish "enabled" from
-// "never configured".
+// passes ResolveFirewallSeed's answer, so a no-flag / default-accept reconfigure
+// keeps the last-chosen state rather than silently tearing an established
+// firewall down. It is intentionally NOT derived from cfg.Disabled: config.yaml's
+// zero value cannot distinguish "enabled" from "never configured".
 //
 // It requires RegisterHostFirewallFlags to have been called on cmd.
 func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.ChosenValues, seedEnabled bool) error {
@@ -169,10 +170,17 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	// Fall back to the last-persisted firewall allowlist for any field the operator
 	// did not supply via --config, so a reconfigure that re-enables the firewall
 	// without re-passing --mgmt-cidrs restores the last-known-good allowlist instead
-	// of skipping with the SSH-lockout guard (issue #932). State sits below the
-	// config file and above the built-in default; a CLI flag, checked inside the
-	// effective* helpers below, still wins over all of them. On a fresh host with no
-	// persisted firewall this is a no-op.
+	// of skipping with the SSH-lockout guard (issue #932). A CLI flag, checked inside
+	// the effective* helpers below, still wins over both tiers. On a fresh host with
+	// neither a live firewall nor persisted state this is a no-op.
+	//
+	// The live firewall is consulted first because it is always at least as fresh as
+	// machine state: every path that writes machine state also re-renders the
+	// firewall, but the standalone `network firewall` verbs write only the firewall.
+	// Without this tier a reconfigure's force re-render would revert an urgent
+	// `network firewall add --name mgmt --cidr …` back to the allowlist recorded at
+	// install time (issue #1003).
+	cfg = mergeLiveHostFirewall(cmd.Context(), cfg)
 	cfg = mergeHostFirewallFromState(cfg)
 
 	// Seed each prompt target with the effective value: the CLI flag when the
@@ -286,11 +294,158 @@ func joinInts(in []int) string {
 	return strings.Join(parts, ",")
 }
 
+// newHostFirewallManager is the seam over the production firewall manager so
+// unit tests can substitute one wired to a fake nft runner and temp paths (the
+// production manager probes the live kernel, which is Linux-only).
+var newHostFirewallManager = func() *firewall.Manager { return firewall.NewManager() }
+
+// ResolveFirewallSeed answers "did this host want a host firewall?" for
+// reconfigure's enable/disable seed — the value used when neither
+// --firewall-enabled nor an interactive prompt decides it.
+//
+// persisted is the block node's recorded decision (MachineState.Firewall), nil
+// when nothing was ever recorded. Nil is NOT "disabled": until issue #1003 the
+// standalone `network firewall` verbs wrote no state at all, so a firewall
+// created with `network firewall create` looked identical to a host that never
+// had one — and a no-flag reconfigure resolved that to disabled and deleted it.
+//
+// So a live inet weaver-host-firewall table always seeds enabled, whatever state
+// records. Removing an active host firewall is then only reachable through an
+// explicit --firewall-enabled=false or an interactive decline, never as the
+// default outcome of an unrelated reconfigure. The converse is left alone: when
+// no table is live the recorded decision stands, so a reconfigure still
+// re-asserts a firewall that state says should be there.
+func ResolveFirewallSeed(ctx context.Context, persisted *models.HostConfig) bool {
+	recorded := persisted != nil && !persisted.Disabled
+	if recorded {
+		return true
+	}
+
+	active, err := newHostFirewallManager().IsActive(ctx)
+	if err != nil {
+		// Not fatal: an unreadable probe just means we fall back to what state
+		// recorded, which is the pre-#1003 behaviour.
+		logx.As().Debug().Err(err).Msg("could not probe the live host firewall; seeding from persisted state only")
+		return recorded
+	}
+	if active {
+		logx.As().Info().Msg(
+			"a host firewall (inet weaver-host-firewall) is active but the block node has no record of enabling it; " +
+				"keeping it enabled — pass --firewall-enabled=false to remove it deliberately")
+		return true
+	}
+	return recorded
+}
+
+// mergeLiveHostFirewall fills any host-firewall content field left empty by the
+// config file with the corresponding value from the firewall's own persisted
+// table (/etc/solo-provisioner/network-weaver-host-firewall.yaml). It is the
+// "live firewall" tier of the flag > config > live > state > default precedence.
+// Returns cfg unchanged when no firewall is configured on this host.
+//
+// Only the three reserved blocks map onto models.HostConfig; named allow rules
+// have no field there and are instead carried across inside NetworkFirewallCreate,
+// which re-reads them from the same table.
+func mergeLiveHostFirewall(ctx context.Context, cfg models.HostConfig) models.HostConfig {
+	t, err := newHostFirewallManager().Table(ctx)
+	if err != nil {
+		logx.As().Debug().Err(err).Msg("no live host firewall to seed from; falling back to persisted state")
+		return cfg
+	}
+	live := hostConfigFromTable(t)
+	return applyPersistedFirewallContent(cfg, &live)
+}
+
+// hostConfigFromTable projects a firewall Table's reserved blocks onto the
+// flag-shaped models.HostConfig.
+//
+// The projection is narrower than the table in three places, and each warns
+// rather than dropping silently: a Rule's CIDR list may mix address families
+// while HostConfig is IPv4-only (HostConfig.Validate rejects an IPv6 CIDR
+// outright, which would turn a reconfigure into a hard error); HostConfig.PodCIDR
+// is a single string where InCluster.CIDRs is a list; and the port fields are
+// []int where a Rule holds port specs, which may be inclusive ranges
+// ("2379-2380"). A value that cannot be carried is left out, so the tier below
+// (persisted state, then the built-in default) supplies that field.
+func hostConfigFromTable(t *firewall.Table) models.HostConfig {
+	cfg := models.HostConfig{
+		ManagementCIDRs: ipv4Only(t.Mgmt.CIDRs, ruleDescMgmt),
+		BlockedCIDRs:    ipv4Only(t.Blocked.CIDRs, ruleDescBlocked),
+		InClusterPorts:  plainPorts(t.InCluster.Ports, ruleDescInCluster),
+	}
+	if sshPorts := plainPorts(t.Mgmt.Ports, ruleDescMgmt); len(sshPorts) > 0 {
+		cfg.SSHPort = sshPorts[0]
+	}
+	if pod := ipv4Only(t.InCluster.CIDRs, ruleDescInCluster); len(pod) > 0 {
+		cfg.PodCIDR = pod[0]
+		if len(pod) > 1 {
+			logx.As().Warn().Strs("cidrs", pod).Msg(
+				"the live host firewall's in-cluster block holds several pod CIDRs but --pod-cidr carries only one; " +
+					"only the first is seeded — pass --pod-cidr, or re-apply the full set with " +
+					"`network firewall set --name in_cluster --cidrs`, if the rest still apply")
+		}
+	}
+	return cfg
+}
+
+// Rule descriptions naming the offending block in the projection warnings.
+const (
+	ruleDescMgmt      = "management"
+	ruleDescBlocked   = "block-list"
+	ruleDescInCluster = "in-cluster"
+)
+
+// ipv4Only keeps the CIDRs models.HostConfig can hold and warns about the rest.
+// The flag-shaped config validates every CIDR as IPv4, so carrying an IPv6
+// member across would fail HostConfig.Validate and abort the whole reconfigure —
+// the one outcome worse than not seeding the value at all.
+func ipv4Only(cidrs []string, desc string) []string {
+	var out, skipped []string
+	for _, c := range cidrs {
+		if err := sanity.ValidateIPv4CIDR(strings.TrimSpace(c)); err != nil {
+			skipped = append(skipped, c)
+			continue
+		}
+		out = append(out, c)
+	}
+	if len(skipped) > 0 {
+		logx.As().Warn().Strs("cidrs", skipped).Msg(
+			"the live host firewall's " + desc + " block holds non-IPv4 addresses, which the flag-shaped config " +
+				"cannot express; they are not seeded and a re-render would drop them — re-apply them afterwards " +
+				"with `network firewall set --name <rule> --cidrs ...`")
+	}
+	return out
+}
+
+// plainPorts keeps the port specs expressible as a single int and warns about
+// any it had to leave behind, so an inclusive range authored through
+// `network firewall set --ports` is never silently lost when the flag-shaped
+// config is re-rendered.
+func plainPorts(specs []string, desc string) []int {
+	var out []int
+	var skipped []string
+	for _, spec := range specs {
+		p, err := strconv.Atoi(strings.TrimSpace(spec))
+		if err != nil {
+			skipped = append(skipped, spec)
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(skipped) > 0 {
+		logx.As().Warn().Strs("ports", skipped).Msg(
+			"the live host firewall's " + desc + " block holds port ranges, which the flag-shaped config cannot " +
+				"express; they are not seeded and a re-render would drop them — re-apply them afterwards with " +
+				"`network firewall set --ports`")
+	}
+	return out
+}
+
 // mergeHostFirewallFromState fills any host-firewall content field left empty by
 // the config file with the last value persisted in state (machineState.firewall).
-// It is the "state" tier of the flag > config > state > default precedence for the
-// firewall allowlist: the returned config seeds the effective* helpers, where a
-// CLI flag still takes priority. Only the allowlist content is merged — the
+// It is the "state" tier of the flag > config > live firewall > state > default
+// precedence for the firewall allowlist: the returned config seeds the effective*
+// helpers, where a CLI flag still takes priority. Only the allowlist content is merged — the
 // enable/disable decision is resolved separately (flag / prompt / persisted
 // state), so the persisted Firewall.Disabled is intentionally ignored here. Returns cfg
 // unchanged when no firewall was ever persisted or the state read fails.

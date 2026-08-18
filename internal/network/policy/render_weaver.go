@@ -25,12 +25,14 @@ func RenderWeaverNft(registryDir, weaverNftPath string, podCIDRs ...string) erro
 		return err
 	}
 	if len(policies) == 0 {
-		// An empty registry means no policies to enforce. A rendered empty chain
-		// would be `policy drop` with no accept rule for new connections —
-		// blackholing all forwarded traffic (pod startup, image pulls, inter-pod
-		// DNS). Remove any stale persisted file so the boot oneshot's `test -e`
-		// guard skips it and never replays a harmful or out-of-date inet weaver-workload-policy
-		// table. "Empty registry" thus means "no file", not "an empty table".
+		// An empty registry means there is nothing to classify. Remove any stale
+		// persisted file so the boot oneshot's `test -e` guard skips it and never
+		// replays an out-of-date inet weaver-workload-policy table. "Empty
+		// registry" thus means "no file", not "an empty table".
+		//
+		// The chain is `policy accept`, so an empty table would be inert rather
+		// than harmful — this is hygiene (never replay stale classification), not
+		// the blackhole guard it was when the chain still defaulted to drop.
 		if err := os.Remove(weaverNftPath); err != nil && !os.IsNotExist(err) {
 			return errorx.ExternalError.Wrap(err, "failed to remove stale %s for an empty policy registry", weaverNftPath)
 		}

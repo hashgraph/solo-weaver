@@ -78,6 +78,7 @@ func newPollMonitor(d *pollFakeDelegator, statuszURL string, interval time.Durat
 		delegator:    d,
 		statuszURL:   statuszURL,
 		pollInterval: interval,
+		urlChanged:   make(chan struct{}, 1),
 	}
 }
 
@@ -140,6 +141,90 @@ func TestRunStatuszPoll_ReconcilesOnceDiscovered(t *testing.T) {
 	d.mu.Lock()
 	require.Equal(t, "http://10.1.2.3:40983", d.lastURL, "reconciled against the discovered URL")
 	d.mu.Unlock()
+}
+
+// TestSignalURLChanged_RetainsSignalForLateReceiver pins the buffering guarantee
+// that closes #1000. The pod watcher and the poll loop start concurrently, so
+// discovery routinely signals before the loop reaches its select. With capacity 1
+// the signal waits in the buffer; an unbuffered channel would drop it for want of
+// a receiver and the loop would sleep a full poll interval with a ready pod.
+func TestSignalURLChanged_RetainsSignalForLateReceiver(t *testing.T) {
+	m := &TrafficShaperMonitor{urlChanged: make(chan struct{}, 1)}
+
+	m.signalURLChanged() // no receiver is waiting yet
+
+	select {
+	case <-m.urlChanged:
+	default:
+		t.Fatal("signal dropped with no receiver waiting — the poll loop would sleep a full interval (#1000)")
+	}
+}
+
+// TestSignalURLChanged_CoalescesAndNeverBlocks verifies repeated signals with no
+// reader neither block nor queue: extra wake-ups are redundant because the loop
+// re-reads the current URL when it wakes. Also covers the zero-value monitor,
+// where the channel is nil (unit-test scaffolding constructs monitors directly).
+func TestSignalURLChanged_CoalescesAndNeverBlocks(t *testing.T) {
+	m := &TrafficShaperMonitor{urlChanged: make(chan struct{}, 1)}
+	for range 100 {
+		m.signalURLChanged() // must not block once the buffer is full
+	}
+	require.Len(t, m.urlChanged, 1, "signals coalesce into a single pending wake-up")
+
+	require.NotPanics(t, (&TrafficShaperMonitor{}).signalURLChanged,
+		"a monitor with no channel wired must be safe to signal")
+}
+
+// TestRunStatuszPoll_DiscoverySignalWakesLoopBeforeNextTick is the regression test
+// for #1000. The poll interval is an hour, so the ticker cannot account for any
+// reconcile: the only way the loop can converge is by waking on the discovery
+// signal. Before the fix this test would hang until the deadline.
+func TestRunStatuszPoll_DiscoverySignalWakesLoopBeforeNextTick(t *testing.T) {
+	d := &pollFakeDelegator{digests: []string{"D1"}}
+	m := newPollMonitor(d, "", time.Hour) // no base_url override; tick is unreachable
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- m.runStatuszPoll(ctx) }()
+
+	// The entry reconcile runs with no endpoint and must stay quiet.
+	time.Sleep(20 * time.Millisecond)
+	require.Zero(t, d.checkCalls.Load(), "no exec while the endpoint is undiscovered")
+
+	// The pod watcher records an endpoint and signals, as recordDiscoveredStatusz does.
+	m.mu.Lock()
+	m.discoveredStatuszURL = "http://10.1.2.3:40983"
+	m.mu.Unlock()
+	m.signalURLChanged()
+
+	waitForCount(t, d.applyCalls.Load, 1)
+	cancel()
+	require.NoError(t, <-done)
+
+	d.mu.Lock()
+	require.Equal(t, "http://10.1.2.3:40983", d.lastURL, "reconciled against the newly discovered URL")
+	d.mu.Unlock()
+}
+
+// TestRunStatuszPoll_EndpointLossSignalIsHarmless verifies a teardown signal (the
+// owning pod went away, so the URL is now empty) wakes the loop without exec'ing
+// anything — it only lets the endpoint-lost transition be logged promptly.
+func TestRunStatuszPoll_EndpointLossSignalIsHarmless(t *testing.T) {
+	d := &pollFakeDelegator{digests: []string{"D1"}}
+	m := newPollMonitor(d, "", time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- m.runStatuszPoll(ctx) }()
+
+	m.signalURLChanged() // endpoint still empty, as after a pod delete
+	time.Sleep(20 * time.Millisecond)
+	require.Zero(t, d.checkCalls.Load(), "a wake-up with no endpoint must not exec")
+
+	cancel()
+	require.NoError(t, <-done)
 }
 
 // TestRunStatuszPoll_InertWhenUnset verifies that with no statusz base_url the

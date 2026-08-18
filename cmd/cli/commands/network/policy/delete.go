@@ -13,7 +13,7 @@ var deleteCmd = &cobra.Command{
 	Long: "Remove a named policy from the `inet weaver-workload-policy` table: re-renders the chain without it, " +
 		"applies the result to the live kernel, restores remaining policies' live membership, " +
 		"removes the registry file, and atomically rewrites network-weaver-workload-policy.nft. " +
-		"If this is the last policy, an empty chain (policy drop, no rules) is applied and the " +
+		"If this is the last policy, the table is torn down entirely (live and on disk) and the " +
 		"boot oneshot is left enabled.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := newManager().Delete(cmd.Context(), flagName); err != nil {

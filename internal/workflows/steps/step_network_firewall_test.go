@@ -26,6 +26,10 @@ func (f *fakeFwRunner) List(context.Context) (string, error) { return "", nil }
 func (f *fakeFwRunner) Delete(context.Context) error         { f.deleted = true; f.exists = false; return nil }
 func (f *fakeFwRunner) Exists(context.Context) (bool, error) { return f.exists, nil }
 
+// Check accepts every document: the step test covers step wiring, not nft's
+// verdict on the rendered ruleset (that lives in internal/network/firewall).
+func (f *fakeFwRunner) Check(context.Context, string) error { return nil }
+
 // withStubbedFirewall points newFirewallManager at a manager wired to the given
 // fake runner, temp paths, and a no-op service apply, restoring it on cleanup.
 // It returns the on-disk nft path so tests can assert the artifact was written.
@@ -38,6 +42,7 @@ func withStubbedFirewall(t *testing.T, r *fakeFwRunner) string {
 		return firewall.NewManagerWithConfig(firewall.Config{
 			Runner:          r,
 			NftPath:         nftPath,
+			ConfigPath:      filepath.Join(dir, "network-weaver-host-firewall.yaml"),
 			LockPath:        filepath.Join(dir, "lock"),
 			ApplyViaService: func(context.Context) error { return nil },
 		})
@@ -192,4 +197,43 @@ func TestNetworkFirewallCreate_ReconcileReRendersExistingTable(t *testing.T) {
 	rollback := step.Rollback(context.Background())
 	require.Equal(t, automa.StatusSkipped, rollback.Status)
 	require.False(t, r.deleted, "rollback must not delete a table this step only re-rendered")
+}
+
+// TestNetworkFirewallCreate_PreservesNamedAllowRules pins that a reconfigure does
+// not silently drop the operator's named allow rules. config.yaml has no field
+// for them — they are declared with `network firewall create --from-file` — so a
+// force re-render built purely from hostCfg would wipe every k8s, Cilium and
+// admin rule on the host while reporting success.
+func TestNetworkFirewallCreate_PreservesNamedAllowRules(t *testing.T) {
+	r := &fakeFwRunner{}
+	nftPath := withStubbedFirewall(t, r)
+
+	// Seed a table that carries an allow rule, as `create --from-file` would.
+	seeded := firewall.NewTable()
+	seeded.Mgmt.CIDRs = []string{"10.0.0.0/8"}
+	require.NoError(t, seeded.UpsertAllow(firewall.Rule{
+		Name:  "k8s-node",
+		CIDRs: []string{"10.0.0.0/24"},
+		Ports: []string{"6443", "2379-2380"},
+	}))
+	require.NoError(t, newFirewallManager().Apply(context.Background(), seeded))
+	r.exists = true
+
+	setHostConfig(t, models.HostConfig{
+		ManagementCIDRs: []string{"192.168.68.0/24"},
+		SSHPort:         22,
+		PodCIDR:         models.DefaultClusterPodCIDR,
+		InClusterPorts:  []int{6443},
+	})
+
+	step, err := NetworkFirewallCreate(true).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	require.NoError(t, report.Error)
+
+	rendered, err := os.ReadFile(nftPath)
+	require.NoError(t, err)
+	require.Contains(t, string(rendered), "192.168.68.0/24", "the reconfigured mgmt allowlist must be applied")
+	require.Contains(t, string(rendered), "@k8s-node", "the named allow rule must survive a reconfigure")
+	require.Contains(t, string(rendered), "2379-2380")
 }
