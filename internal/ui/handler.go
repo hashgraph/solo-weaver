@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/automa"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 )
 
@@ -71,10 +72,7 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 
 		PhaseFailure: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
 			name := fmt.Sprintf(msg, args...)
-			errMsg := ""
-			if report.Error != nil {
-				errMsg = report.Error.Error()
-			}
+			errMsg := doctor.OperatorMessage(report.Error)
 			if VerboseLevel >= 1 {
 				program.Println(fmt.Sprintf("  %s %s", failedIcon, phaseNameStyle.Render(name)))
 			}
@@ -100,10 +98,7 @@ func NewTUIHandler(program *tea.Program) *notify.Handler {
 
 		StepFailure: func(ctx context.Context, stp automa.Step, report *automa.Report, msg string, args ...interface{}) {
 			name := fmt.Sprintf(msg, args...)
-			errMsg := ""
-			if report.Error != nil {
-				errMsg = report.Error.Error()
-			}
+			errMsg := doctor.OperatorMessage(report.Error)
 			printProgressHeader()
 			if VerboseLevel >= 1 {
 				indent := stepIndent()

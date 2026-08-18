@@ -11,13 +11,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
-)
-
-var (
-	// ErrInvalidName is returned by Sanitize* helpers when the input contains
-	// no valid characters and would otherwise sanitize to an empty string.
-	ErrInvalidName = errorx.IllegalArgument.New("invalid name")
 )
 
 // Security validation patterns for paths
@@ -136,13 +132,13 @@ func SanitizeModuleName(s string) (string, error) {
 // Use this when you need to ensure the input is already clean and reject invalid input.
 func ValidateIdentifier(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("identifier cannot be empty")
+		return invalidArgf(hintIdentifier, "identifier cannot be empty")
 	}
 
 	// Check if all characters are valid
 	for i := 0; i < len(s); i++ {
 		if !isValidIdentifierChar(s[i]) {
-			return errorx.IllegalArgument.New("identifier contains invalid characters: %s", s)
+			return invalidArgf(hintIdentifier, "identifier contains invalid characters: %s", s)
 		}
 	}
 
@@ -156,11 +152,11 @@ func ValidateIdentifier(s string) error {
 // Use this for values that may be FQDNs, such as cluster names derived from hostnames.
 func ValidateDNSName(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("DNS name cannot be empty")
+		return invalidArgf(hintDNSName, "DNS name cannot be empty")
 	}
 
 	if !hostPattern.MatchString(s) {
-		return errorx.IllegalArgument.New("DNS name contains invalid characters: %s", s)
+		return invalidArgf(hintDNSName, "DNS name contains invalid characters: %s", s)
 	}
 
 	return nil
@@ -174,20 +170,20 @@ func ValidateDNSName(s string) error {
 //  3. Have a reasonable maximum length (4096 characters) to prevent buffer overflow attacks
 func ValidateHexToken(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("token cannot be empty")
+		return invalidArgf(hintHexToken, "token cannot be empty")
 	}
 
 	// Check length - enforce a reasonable upper bound to prevent buffer overflow attacks
 	// No minimum length since token formats may vary
 	if len(s) > 4096 {
-		return errorx.IllegalArgument.New("token exceeds maximum length of 4096 characters, got %d", len(s))
+		return invalidArgf(hintHexToken, "token exceeds maximum length of 4096 characters, got %d", len(s))
 	}
 
 	// Check if all characters are valid hex digits
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return errorx.IllegalArgument.New("token contains non-hexadecimal characters: %s", s)
+			return invalidArgf(hintHexToken, "token contains non-hexadecimal characters: %s", s)
 		}
 	}
 
@@ -206,27 +202,27 @@ func ValidateHexToken(s string) error {
 //   - URLs (use ValidateURL for those)
 func ValidateHostPort(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("host:port cannot be empty")
+		return invalidArgf(hintHostPort, "host:port cannot be empty")
 	}
 
 	// Check for path traversal
 	if strings.Contains(s, "..") || strings.Contains(s, "/") {
-		return errorx.IllegalArgument.New("host:port cannot contain path components: %s", s)
+		return invalidArgf(hintHostPort, "host:port cannot contain path components: %s", s)
 	}
 
 	// Check for shell metacharacters
 	if shellMetachars.MatchString(s) {
-		return errorx.IllegalArgument.New("host:port contains invalid characters: %s", s)
+		return invalidArgf(hintHostPort, "host:port contains invalid characters: %s", s)
 	}
 
 	hostPort := strings.Split(s, ":")
 	if len(hostPort) > 2 || len(hostPort) < 1 {
-		return errorx.IllegalArgument.New("invalid host:port format: %s", s)
+		return invalidArgf(hintHostPort, "invalid host:port format: %s", s)
 	}
 
 	// Validate host - must match hostname/IP pattern (alphanumeric, dots, hyphens)
 	if !hostPattern.MatchString(hostPort[0]) {
-		return errorx.IllegalArgument.New("invalid host format: %s", hostPort[0])
+		return invalidArgf(hintHostPort, "invalid host format: %s", hostPort[0])
 	}
 
 	// Validate port if present
@@ -234,10 +230,10 @@ func ValidateHostPort(s string) error {
 		portStr := hostPort[1]
 		port, err := strconv.Atoi(portStr)
 		if err != nil {
-			return errorx.IllegalArgument.New("invalid port number: %s", portStr)
+			return invalidArgf(hintPort, "invalid port number: %s", portStr)
 		}
 		if port < 1 || port > 65535 {
-			return errorx.IllegalArgument.New("port must be between 1 and 65535, got %d", port)
+			return invalidArgf(hintPort, "port must be between 1 and 65535, got %d", port)
 		}
 	}
 
@@ -261,23 +257,23 @@ func ValidateHostPort(s string) error {
 // Returns nil when the input is safe; the caller can then use s as-is.
 func ValidateUsername(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("username cannot be empty")
+		return invalidArgf(hintUsername, "username cannot be empty")
 	}
 
 	// Check for path traversal attempts
 	if strings.Contains(s, "..") {
-		return errorx.IllegalArgument.New("username contains path traversal sequences: %s", s)
+		return invalidArgf(hintUsername, "username contains path traversal sequences: %s", s)
 	}
 
 	// Check for shell metacharacters
 	if shellMetachars.MatchString(s) {
-		return errorx.IllegalArgument.New("username contains shell metacharacters: %s", s)
+		return invalidArgf(hintUsername, "username contains shell metacharacters: %s", s)
 	}
 
 	// Every byte must be a valid username character
 	for i := 0; i < len(s); i++ {
 		if !isValidUsernameChar(s[i]) {
-			return errorx.IllegalArgument.New("username contains invalid characters: %s", s)
+			return invalidArgf(hintUsername, "username contains invalid characters: %s", s)
 		}
 	}
 
@@ -294,23 +290,23 @@ func ValidateUsername(s string) error {
 // strings (e.g. "upgrade-v0.76.0-20060102T150405Z").
 func ValidateOperationID(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("operationId cannot be empty")
+		return invalidArgf(hintOperationID, "operationId cannot be empty")
 	}
 
 	// Check for path traversal attempts before the per-char loop.
 	if strings.Contains(s, "..") {
-		return errorx.IllegalArgument.New("operationId contains path traversal sequences: %s", s)
+		return invalidArgf(hintOperationID, "operationId contains path traversal sequences: %s", s)
 	}
 
 	// Check for shell metacharacters (narrower, more specific message).
 	if shellMetachars.MatchString(s) {
-		return errorx.IllegalArgument.New("operationId contains shell metacharacters: %s", s)
+		return invalidArgf(hintOperationID, "operationId contains shell metacharacters: %s", s)
 	}
 
 	// Every byte must be a valid operationId character.
 	for i := 0; i < len(s); i++ {
 		if !isValidOperationIDChar(s[i]) {
-			return errorx.IllegalArgument.New("operationId contains invalid characters: %s", s)
+			return invalidArgf(hintOperationID, "operationId contains invalid characters: %s", s)
 		}
 	}
 
@@ -329,7 +325,7 @@ func ValidateOperationID(s string) error {
 // Returns the sanitized (cleaned) absolute path, or an error if the input is invalid or unsafe.
 func SanitizePath(path string) (string, error) {
 	if path == "" {
-		return "", errorx.IllegalArgument.New("path cannot be empty")
+		return "", invalidArgf(hintPath, "path cannot be empty")
 	}
 
 	// Check for path traversal patterns BEFORE cleaning
@@ -338,7 +334,7 @@ func SanitizePath(path string) (string, error) {
 	// Check for ".." as a path segment
 	for _, segment := range strings.Split(path, "/") {
 		if segment == ".." {
-			return "", errorx.IllegalArgument.New("path cannot contain '..' segments: %s", path)
+			return "", invalidArgf(hintPath, "path cannot contain '..' segments: %s", path)
 		}
 	}
 
@@ -348,18 +344,18 @@ func SanitizePath(path string) (string, error) {
 		var err error
 		absPath, err = filepath.Abs(path)
 		if err != nil {
-			return "", errorx.IllegalArgument.Wrap(err, "failed to resolve file path: %s", path)
+			return "", invalidArgWrapf(hintPath, err, "failed to resolve file path: %s", path)
 		}
 	}
 
 	// Check for shell metacharacters in the original path
 	if shellMetachars.MatchString(absPath) {
-		return "", errorx.IllegalArgument.New("path contains shell metacharacters: %s", path)
+		return "", invalidArgf(hintPath, "path contains shell metacharacters: %s", path)
 	}
 
 	// Check for valid characters in the original path
 	if !validPathChars.MatchString(absPath) {
-		return "", errorx.IllegalArgument.New("path contains invalid characters: %s", path)
+		return "", invalidArgf(hintPath, "path contains invalid characters: %s", path)
 	}
 
 	return filepath.Clean(absPath), nil
@@ -385,46 +381,46 @@ type ValidateURLOptions struct {
 // Returns an error if the URL is invalid or unsafe.
 func ValidateURL(rawURL string, opts *ValidateURLOptions) error {
 	if rawURL == "" {
-		return errorx.IllegalArgument.New("URL cannot be empty")
+		return invalidArgf(hintURL, "URL cannot be empty")
 	}
 
 	// Check for ASCII-only characters to prevent homograph attacks
 	if !isASCII(rawURL) {
-		return errorx.IllegalArgument.New("URL must contain only ASCII characters")
+		return invalidArgf(hintURL, "URL must contain only ASCII characters")
 	}
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
-		return errorx.IllegalArgument.New("invalid URL: %s", err.Error())
+		return invalidArgf(hintURL, "invalid URL: %s", err.Error())
 	}
 
 	// Check scheme
 	allowHTTP := opts != nil && opts.AllowHTTP
 	if allowHTTP {
 		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-			return errorx.IllegalArgument.New("URL scheme must be http or https, got: %s", parsedURL.Scheme)
+			return invalidArgf(hintURLPlainOK, "URL scheme must be http or https, got: %s", parsedURL.Scheme)
 		}
 	} else {
 		if parsedURL.Scheme != "https" {
-			return errorx.IllegalArgument.New("URL scheme must be https for security, got: %s", parsedURL.Scheme)
+			return invalidArgf(hintURLHTTPS, "URL scheme must be https for security, got: %s", parsedURL.Scheme)
 		}
 	}
 
 	// Ensure host is not empty
 	if parsedURL.Host == "" {
-		return errorx.IllegalArgument.New("URL must have a valid host")
+		return invalidArgf(hintURL, "URL must have a valid host")
 	}
 
 	// Extract hostname without port
 	hostname := parsedURL.Hostname()
 	if hostname == "" {
-		return errorx.IllegalArgument.New("URL must have a valid hostname")
+		return invalidArgf(hintURL, "URL must have a valid hostname")
 	}
 
 	// Validate against allowed domains if provided
 	if opts != nil && len(opts.AllowedDomains) > 0 {
 		if !isAllowedDomain(hostname, opts.AllowedDomains) {
-			return errorx.IllegalArgument.New("URL host %s is not in the allowed domain list", hostname)
+			return invalidArgf(hintURL, "URL host %s is not in the allowed domain list", hostname)
 		}
 	}
 
@@ -489,11 +485,11 @@ func isAllowedDomain(hostname string, allowedDomains []string) bool {
 // Returns the sanitized path or an error if the path is outside the base directory.
 func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	if basePath == "" {
-		return "", errorx.IllegalArgument.New("base path cannot be empty")
+		return "", invalidArgf(hintPath, "base path cannot be empty")
 	}
 
 	if targetPath == "" {
-		return "", errorx.IllegalArgument.New("target path cannot be empty")
+		return "", invalidArgf(hintPath, "target path cannot be empty")
 	}
 
 	// Sanitize the target path
@@ -513,7 +509,7 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 
 	// Check if the clean target starts with the clean base
 	if !strings.HasPrefix(cleanTarget+string(filepath.Separator), cleanBase) {
-		return "", errorx.IllegalArgument.New("path '%s' is outside the allowed base directory '%s'", cleanTarget, basePath)
+		return "", invalidArgf(hintPath, "path '%s' is outside the allowed base directory '%s'", cleanTarget, basePath)
 	}
 
 	return cleanTarget, nil
@@ -534,7 +530,7 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 // Returns the sanitized absolute path or an error if validation fails.
 func ValidateInputFile(filePath string) (string, error) {
 	if filePath == "" {
-		return "", errorx.IllegalArgument.New("file path cannot be empty")
+		return "", invalidArgf(hintInputFile, "file path cannot be empty")
 	}
 
 	// Sanitize the path to prevent path traversal and shell injection attacks
@@ -547,16 +543,27 @@ func ValidateInputFile(filePath string) (string, error) {
 	fileInfo, err := os.Stat(sanitizedPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", errorx.IllegalArgument.New("file does not exist: %s", sanitizedPath)
+			return "", errx.Decorate(
+				errorx.IllegalArgument.New("file does not exist: %s", sanitizedPath),
+				reasons.FileMissing, hintInputFile)
 		}
-		return "", errorx.InternalError.Wrap(err, "failed to stat file: %s", sanitizedPath)
+		// An unreadable path is the operator's to fix; only an unexplained stat
+		// failure is Internal.
+		if os.IsPermission(err) {
+			return "", errx.Decorate(
+				errorx.ExternalError.Wrap(err, "cannot access file: %s", sanitizedPath),
+				reasons.PermissionDenied, hintFileDenied)
+		}
+		return "", errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to stat file: %s", sanitizedPath),
+			reasons.Internal)
 	}
 
 	// Ensure it's a regular file (not a directory, device, socket, etc.).
 	// Symlinks are followed; symlinks to regular files are allowed.
 	// This prevents attacks using special files like /dev/zero or named pipes.
 	if !fileInfo.Mode().IsRegular() {
-		return "", errorx.IllegalArgument.New("path is not a regular file: %s", sanitizedPath)
+		return "", invalidArgf(hintInputFile, "path is not a regular file: %s", sanitizedPath)
 	}
 
 	return sanitizedPath, nil
@@ -568,14 +575,14 @@ func ValidateInputFile(filePath string) (string, error) {
 // From the bottom of the page at https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
 func ValidateVersion(version string) error {
 	if version == "" {
-		return errorx.IllegalArgument.New("version cannot be empty")
+		return invalidArgf(hintVersion, "version cannot be empty")
 	}
 
 	// Semantic version pattern: digits, dots, hyphens, and alphanumeric for pre-release/build metadata
 	// Examples: 1.0.0, 1.0.0-alpha, 1.0.0-beta.1, 1.0.0+build.123
 	validVersionPattern := regexp.MustCompile(`^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 	if !validVersionPattern.MatchString(version) {
-		return errorx.IllegalArgument.New("version contains invalid characters: %s", version)
+		return invalidArgf(hintVersion, "version contains invalid characters: %s", version)
 	}
 
 	return nil
@@ -589,14 +596,14 @@ func ValidateVersion(version string) error {
 //   - Simple chart names: my-chart, repo/chart-name
 func ValidateChartReference(chart string) error {
 	if chart == "" {
-		return errorx.IllegalArgument.New("chart reference cannot be empty")
+		return invalidArgf(hintChartRef, "chart reference cannot be empty")
 	}
 
 	// Check for dangerous shell metacharacters that could enable command injection
 	// Note: We allow some characters like : / @ for valid OCI and URL references
 	dangerousChars := regexp.MustCompile(`[;&|$\x60<>(){}[\]*?~\s]`)
 	if dangerousChars.MatchString(chart) {
-		return errorx.IllegalArgument.New("chart reference contains invalid characters: %s", chart)
+		return invalidArgf(hintChartRef, "chart reference contains invalid characters: %s", chart)
 	}
 
 	// If it's an OCI reference, validate the OCI URL format
@@ -609,7 +616,7 @@ func ValidateChartReference(chart string) error {
 		// Parse as URL to ensure it's well-formed
 		_, err := url.Parse(chart)
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid chart URL: %s", chart)
+			return invalidArgWrapf(hintChartRef, err, "invalid chart URL: %s", chart)
 		}
 		return nil
 	}
@@ -618,7 +625,7 @@ func ValidateChartReference(chart string) error {
 	// Allow alphanumeric, hyphens, underscores, dots, and forward slashes
 	validChartPattern := regexp.MustCompile(`^[a-zA-Z0-9.\-_/]+$`)
 	if !validChartPattern.MatchString(chart) {
-		return errorx.IllegalArgument.New("chart name contains invalid characters: %s", chart)
+		return invalidArgf(hintChartRef, "chart name contains invalid characters: %s", chart)
 	}
 
 	return nil
@@ -629,7 +636,7 @@ func validateOCIReference(ociRef string) error {
 	// Remove the oci:// prefix for validation
 	ref := strings.TrimPrefix(ociRef, "oci://")
 	if ref == "" {
-		return errorx.IllegalArgument.New("OCI reference missing registry path")
+		return invalidArgf(hintChartRef, "OCI reference missing registry path")
 	}
 
 	// OCI reference format: registry.example.com[:port]/path/to/chart[:tag][@digest]
@@ -639,19 +646,19 @@ func validateOCIReference(ociRef string) error {
 	// Basic structure check: should have at least a registry and path
 	parts := strings.Split(ref, "/")
 	if len(parts) < 2 {
-		return errorx.IllegalArgument.New("OCI reference must include registry and path: %s", ociRef)
+		return invalidArgf(hintChartRef, "OCI reference must include registry and path: %s", ociRef)
 	}
 
 	// Validate the registry part (first component)
 	registry := parts[0]
 	if registry == "" {
-		return errorx.IllegalArgument.New("OCI reference missing registry: %s", ociRef)
+		return invalidArgf(hintChartRef, "OCI reference missing registry: %s", ociRef)
 	}
 
 	// Registry should be alphanumeric with dots, hyphens, and optional :port
 	validRegistryPattern := regexp.MustCompile(`^[a-zA-Z0-9.\-]+(:[0-9]+)?$`)
 	if !validRegistryPattern.MatchString(registry) {
-		return errorx.IllegalArgument.New("invalid OCI registry format: %s", registry)
+		return invalidArgf(hintChartRef, "invalid OCI registry format: %s", registry)
 	}
 
 	return nil
@@ -664,7 +671,7 @@ func validateOCIReference(ociRef string) error {
 // The numeric value must be greater than zero.
 func ValidateStorageSize(size string) error {
 	if size == "" {
-		return errorx.IllegalArgument.New("storage size cannot be empty")
+		return invalidArgf(hintStorageSize, "storage size cannot be empty")
 	}
 
 	// Kubernetes storage size pattern: number followed by unit (Gi, Mi, or Ti)
@@ -672,7 +679,7 @@ func ValidateStorageSize(size string) error {
 	validStorageSizePattern := regexp.MustCompile(`^([0-9]+)(Gi|Mi|Ti)$`)
 	matches := validStorageSizePattern.FindStringSubmatch(size)
 	if matches == nil {
-		return errorx.IllegalArgument.New("storage size must be in format '<number>(Gi|Mi|Ti)', got: %s", size)
+		return invalidArgf(hintStorageSize, "storage size must be in format '<number>(Gi|Mi|Ti)', got: %s", size)
 	}
 
 	// Extract the numeric part (first capture group)
@@ -689,7 +696,7 @@ func ValidateStorageSize(size string) error {
 	}
 
 	if allZeros {
-		return errorx.IllegalArgument.New("storage size must be greater than zero, got: %s", size)
+		return invalidArgf(hintStorageSize, "storage size must be greater than zero, got: %s", size)
 	}
 
 	return nil
@@ -714,17 +721,17 @@ func Contains[T comparable](item T, slice []T) bool {
 // explicit about the mask.
 func ValidateCIDR(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("CIDR cannot be empty")
+		return invalidArgf(hintCIDR, "CIDR cannot be empty")
 	}
 
 	// Defensive: net.ParseCIDR already rejects these, but fail with a specific
 	// message so the operator sees "invalid characters" rather than a parser dump.
 	if shellMetachars.MatchString(s) {
-		return errorx.IllegalArgument.New("CIDR contains invalid characters: %s", s)
+		return invalidArgf(hintCIDR, "CIDR contains invalid characters: %s", s)
 	}
 
 	if _, _, err := net.ParseCIDR(s); err != nil {
-		return errorx.IllegalArgument.New("invalid CIDR: %s", s)
+		return invalidArgf(hintCIDR, "invalid CIDR: %s", s)
 	}
 
 	return nil
@@ -743,7 +750,7 @@ func ValidateIPv4CIDR(s string) error {
 	}
 	ip, _, _ := net.ParseCIDR(s)
 	if ip.To4() == nil {
-		return errorx.IllegalArgument.New(
+		return invalidArgf(hintIPv4CIDR,
 			"invalid CIDR %q: IPv6 CIDRs are not yet supported; the inet weaver-host-firewall table uses ipv4_addr sets", s)
 	}
 	return nil
@@ -771,16 +778,16 @@ func CIDRIsIPv6(s string) (bool, error) {
 // before they are rendered into the `inet weaver-host-firewall` nftables ruleset.
 func ValidatePort(s string) error {
 	if s == "" {
-		return errorx.IllegalArgument.New("port cannot be empty")
+		return invalidArgf(hintPort, "port cannot be empty")
 	}
 
 	port, err := strconv.Atoi(s)
 	if err != nil {
-		return errorx.IllegalArgument.New("invalid port number: %s", s)
+		return invalidArgf(hintPort, "invalid port number: %s", s)
 	}
 
 	if port < 1 || port > 65535 {
-		return errorx.IllegalArgument.New("port must be between 1 and 65535, got %d", port)
+		return invalidArgf(hintPort, "port must be between 1 and 65535, got %d", port)
 	}
 
 	return nil
