@@ -15,13 +15,13 @@ const testHealthPort = "40983"
 
 // TestCanonicalBNPolicies_Names pins the fixed BN static-plane policy set so a
 // change to the design list is a deliberate, reviewed edit. bn-status-in/out are
-// folded into the public port union (server-status is public to everyone), so
-// they are no longer in the canonical set.
+// folded into the public port union (server-status is public to everyone), and
+// bn-mgmt-in/out are replaced by the bn-health drop, so none of the four are in
+// the canonical set.
 func TestCanonicalBNPolicies_Names(t *testing.T) {
 	want := []string{
 		"bn-publisher", "bn-subscriber-in", "bn-partner-out", "bn-public-out",
-		"bn-mgmt-in", "bn-mgmt-out",
-		"bn-restricted", "bn-backfill",
+		"bn-health", "bn-restricted", "bn-backfill",
 	}
 	if len(canonicalBNPolicies) != len(want) {
 		t.Fatalf("policy count: got %d, want %d", len(canonicalBNPolicies), len(want))
@@ -38,13 +38,11 @@ func TestCanonicalBNPolicies_Names(t *testing.T) {
 // stamp policies share the same (direction, ports) group — the overlap the
 // policy manager would reject at create time.
 func TestCanonicalBNPolicies_Valid(t *testing.T) {
-	mgmt := []string{"10.0.0.0/8"}
-
 	seen := map[string]string{} // group key → policy name, for specific stamps
 	for _, c := range canonicalBNPolicies {
 		p := c.toPolicy(testHealthPort)
-		cidrs := initialCIDRs(c, mgmt)
-		if err := p.Validate(cidrs); err != nil {
+		// No membership is seeded at install: every set starts empty.
+		if err := p.Validate(nil); err != nil {
 			t.Fatalf("policy %q failed validation: %v", c.name, err)
 		}
 
@@ -73,30 +71,62 @@ func TestCanonicalBNPolicies_Valid(t *testing.T) {
 	}
 }
 
-// TestInitialCIDRs checks curated-set membership routing: mgmt sets get the
-// management allowlist, everything else (including bn-restricted) starts empty
-// (populated by the daemon poll loop).
-func TestInitialCIDRs(t *testing.T) {
-	mgmt := []string{"10.0.0.0/8"}
-	byName := map[string]canonicalPolicy{}
+// TestCanonicalBNPolicies_HealthIsADropFromEveryone pins the shape of the
+// bn-health entry: a deny, matched on the resolved health port alone, with no
+// membership set to narrow it. Its consumers (kubelet, the provisioner) generate
+// their traffic on the node, so they never reach the forward hook this table
+// registers on and need no allowlist.
+func TestCanonicalBNPolicies_HealthIsADropFromEveryone(t *testing.T) {
+	var health canonicalPolicy
+	var found bool
 	for _, c := range canonicalBNPolicies {
-		byName[c.name] = c
+		if c.name == "bn-health" {
+			health, found = c, true
+		}
+	}
+	// Without this, a removed or renamed bn-health leaves the zero value, and the
+	// assertions below fail as "wrong action" rather than "policy is gone".
+	if !found {
+		t.Fatal("bn-health is not in canonicalBNPolicies")
 	}
 
-	if got := initialCIDRs(byName["bn-mgmt-in"], mgmt); len(got) != 1 || got[0] != "10.0.0.0/8" {
-		t.Errorf("bn-mgmt-in cidrs: got %v, want mgmt list", got)
+	p := health.toPolicy(testHealthPort)
+	if p.Action != policy.ActionDeny {
+		t.Errorf("bn-health action: got %q, want deny", p.Action)
 	}
-	if got := initialCIDRs(byName["bn-restricted"], mgmt); got != nil {
-		t.Errorf("bn-restricted cidrs: got %v, want nil (daemon-reconciled, not operator-curated)", got)
+	if !p.FromEntityWorld {
+		t.Error("bn-health must render no membership set: the port is dropped from every source")
 	}
-	if got := initialCIDRs(byName["bn-publisher"], mgmt); got != nil {
-		t.Errorf("bn-publisher cidrs: got %v, want nil (daemon-reconciled)", got)
+	if len(p.Ports) != 1 || p.Ports[0] != testHealthPort {
+		t.Errorf("bn-health ports: got %v, want the resolved health port %q", p.Ports, testHealthPort)
+	}
+}
+
+// TestObsoleteBNPolicies_CoversRemovedMgmtSets pins that a host installed by an
+// earlier release has its bn-mgmt-* registry entries and live sets removed rather
+// than left orphaned.
+func TestObsoleteBNPolicies_CoversRemovedMgmtSets(t *testing.T) {
+	for _, name := range []string{"bn-mgmt-in", "bn-mgmt-out"} {
+		found := false
+		for _, o := range obsoleteBNPolicies {
+			if o == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is not in obsoleteBNPolicies; an upgrade would leave it behind", name)
+		}
+		for _, c := range canonicalBNPolicies {
+			if c.name == name {
+				t.Errorf("%s is both canonical and obsolete", name)
+			}
+		}
 	}
 }
 
 // TestCanonicalBNPolicies_ManagedPortsAndHealth pins which sets have
-// daemon-reconciled listener ports (no static literals) versus the bn-mgmt sets,
-// whose ports are seeded from the resolved health port.
+// daemon-reconciled listener ports (no static literals) versus bn-health, whose
+// port is seeded from the resolved health port.
 func TestCanonicalBNPolicies_ManagedPortsAndHealth(t *testing.T) {
 	byName := map[string]canonicalPolicy{}
 	for _, c := range canonicalBNPolicies {
@@ -113,13 +143,11 @@ func TestCanonicalBNPolicies_ManagedPortsAndHealth(t *testing.T) {
 		}
 	}
 
-	for _, n := range []string{"bn-mgmt-in", "bn-mgmt-out"} {
-		p := byName[n].toPolicy(testHealthPort)
-		if p.ManagedPorts {
-			t.Errorf("%s: bn-mgmt ports come from Helm, not statusz", n)
-		}
-		if len(p.Ports) != 1 || p.Ports[0] != testHealthPort {
-			t.Errorf("%s: want resolved health port %q, got %v", n, testHealthPort, p.Ports)
-		}
+	p := byName["bn-health"].toPolicy(testHealthPort)
+	if p.ManagedPorts {
+		t.Error("bn-health: the health port comes from Helm, not statusz")
+	}
+	if len(p.Ports) != 1 || p.Ports[0] != testHealthPort {
+		t.Errorf("bn-health: want resolved health port %q, got %v", testHealthPort, p.Ports)
 	}
 }

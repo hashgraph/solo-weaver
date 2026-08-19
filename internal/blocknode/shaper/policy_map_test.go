@@ -240,7 +240,7 @@ func TestCategoryBindings_PolicyNamesAreCanonical(t *testing.T) {
 	canonicalBNPolicyNames := map[string]bool{
 		"bn-publisher": true, "bn-subscriber-in": true, "bn-partner-out": true,
 		"bn-public-out": true, "bn-status-in": true, "bn-status-out": true,
-		"bn-mgmt-in": true, "bn-mgmt-out": true, "bn-restricted": true, "bn-backfill": true,
+		"bn-health": true, "bn-restricted": true, "bn-backfill": true,
 	}
 	for key, b := range categoryBindings {
 		if !canonicalBNPolicyNames[b.policyName] {

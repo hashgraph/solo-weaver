@@ -10,7 +10,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -57,21 +56,12 @@ type canonicalPolicy struct {
 	// first poll tick (the same empty-and-fill contract the CIDR membership sets
 	// have), so no port literal is baked into the inet weaver-workload-policy chain.
 	managedPorts bool
-	// healthPort marks the bn-mgmt sets, whose ports come from the resolved
-	// block-node health port (chart blockNode.ports.health) rather than a literal
-	// or from statusz. The health port is the one a-priori facility port: it
-	// bootstraps statusz discovery (you fetch statusz on it), so it cannot itself
-	// be read back from statusz.
+	// healthPort marks a policy whose ports come from the resolved block-node
+	// health port (chart blockNode.ports.health) rather than a literal or from
+	// statusz. The health port is the one a-priori facility port: it bootstraps
+	// statusz discovery (you fetch statusz on it), so it cannot itself be read
+	// back from statusz.
 	healthPort bool
-	// curated marks an operator-curated set (bn-mgmt-*) that receives its
-	// initial membership from operator input at create time rather than from
-	// the daemon's statusz poll loop. bn-restricted is NOT curated: it reflects
-	// a "restricted" category the block node itself reports via statusz, fully
-	// reconciled by the daemon every poll tick — an operator-supplied seed
-	// would just be overwritten on the first tick. A permanent, purely
-	// operator-managed block list lives instead on the host firewall
-	// (`network firewall --blocked-cidrs`, a different table entirely).
-	curated bool
 }
 
 // canonicalBNPolicies is the fixed set of policies `block node install` creates,
@@ -86,16 +76,21 @@ type canonicalPolicy struct {
 // daemon (managedPorts). Server-status is public to everyone, so it rides the
 // public port union on bn-subscriber-in (ingress) and bn-public-out (egress)
 // rather than a dedicated set — the old bn-status-in/bn-status-out policies are
-// folded away (see obsoleteBNPolicies). Only the bn-mgmt health port is pinned
-// here, from the chart's blockNode.ports.health (healthPort), because it
-// bootstraps statusz discovery and cannot come from statusz itself.
+// folded away (see obsoleteBNPolicies). Only the bn-health port is pinned here,
+// from the chart's blockNode.ports.health (healthPort), because it bootstraps
+// statusz discovery and cannot come from statusz itself.
+//
+// bn-health drops the health/statusz port from every source. Its only legitimate
+// consumers are the node's kubelet and the provisioner, and both generate their
+// traffic on the node itself — so those packets take output/postrouting and
+// never reach the forward hook this table registers on. Anything that does reach
+// it is off-node by construction and has no business on that port.
 var canonicalBNPolicies = []canonicalPolicy{
 	{name: "bn-publisher", managedPorts: true, stamp: "publisher"},
 	{name: "bn-subscriber-in", managedPorts: true, stamp: "reserve-ingress", fromWorld: true},
 	{name: "bn-partner-out", managedPorts: true, stamp: "partner"},
 	{name: "bn-public-out", managedPorts: true, stamp: "public", fromWorld: true},
-	{name: "bn-mgmt-in", healthPort: true, stamp: "reserve-ingress", curated: true},
-	{name: "bn-mgmt-out", healthPort: true, stamp: "reserve-egress", curated: true},
+	{name: "bn-health", healthPort: true, deny: true, fromWorld: true},
 	{name: "bn-restricted", deny: true},
 	{name: "bn-backfill", stamp: "reserve-egress", replyStamp: "backfill-response"},
 }
@@ -106,7 +101,10 @@ var canonicalBNPolicies = []canonicalPolicy{
 // step deletes them explicitly rather than leaving orphaned sets behind.
 // bn-status-in / bn-status-out were folded into the public port union on
 // bn-subscriber-in / bn-public-out (server-status is public to everyone).
-var obsoleteBNPolicies = []string{"bn-status-in", "bn-status-out"}
+// bn-mgmt-in / bn-mgmt-out modelled the health port as reachable from an
+// operator-supplied management allowlist; bn-health replaces them by dropping it
+// from every off-node source instead.
+var obsoleteBNPolicies = []string{"bn-status-in", "bn-status-out", "bn-mgmt-in", "bn-mgmt-out"}
 
 // toPolicy builds the policy.Policy for a canonical entry, resolving a
 // healthPort entry's ports to the given block-node health port. Action/Direction
@@ -143,14 +141,12 @@ func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
 // Every create is idempotent: a re-run leaves existing policies and their
 // operator-mutated set membership untouched. When force is set, each policy's
 // static rules are re-rendered from these definitions (membership is preserved
-// by the manager). The one operator-curated set, bn-mgmt-in/out, receives its
-// initial membership here from the host management allowlist (--mgmt-cidrs).
-// bn-restricted starts empty and is left entirely to the daemon's statusz poll
-// loop — see canonicalPolicy.curated.
+// by the manager). No membership is seeded here: every set starts empty and is
+// filled by the daemon's statusz poll loop.
 // healthPort is the resolved block-node health/statusz port (from
-// blocknode.ResolveHealthPort against the operator's effective values), used to
-// seed the bn-mgmt sets so the port solo-weaver allows tracks the port the BN
-// actually listens on rather than a value baked into solo-weaver.
+// blocknode.ResolveHealthPort against the operator's effective values), used for
+// bn-health so the port solo-weaver drops tracks the port the BN actually
+// listens on rather than a value baked into solo-weaver.
 func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(NetworkPolicyCreateStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -164,8 +160,6 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Network policies created")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			mgmtCIDRs := config.Get().Host.ManagementCIDRs
-
 			// The pod CIDR scopes every --stamp classification rule to the local
 			// node's pods. It is auto-detected from the node's .spec.podCIDR at
 			// install time (matching `network policy create`), not taken from the
@@ -203,11 +197,10 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 							})))
 				}
 
-				cidrs := initialCIDRs(c, mgmtCIDRs)
 				// Install-time wiring auto-detects a single (v4) pod CIDR; dual-stack
 				// v6 classification is opt-in via the `network policy create --pod-cidr`
 				// CLI (Manager.Create accepts a mixed v4/v6 list).
-				changed, err := mgr.Create(ctx, c.toPolicy(healthPort), cidrs, []string{podCIDR}, force)
+				changed, err := mgr.Create(ctx, c.toPolicy(healthPort), nil, []string{podCIDR}, force)
 				if err != nil {
 					stp.State().Local().Set(policyCreatedNamesKey, created)
 					return automa.FailureReport(stp, automa.WithError(
@@ -250,7 +243,7 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 							})))
 				}
 				logx.As().Info().Str("policy", name).
-					Msg("removed obsolete network policy (folded into the public port union)")
+					Msg("removed obsolete network policy")
 			}
 
 			stp.State().Local().Set(policyCreatedNamesKey, created)
@@ -283,15 +276,4 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 			}
 			return automa.SuccessReport(stp)
 		})
-}
-
-// initialCIDRs returns the initial set membership supplied at create time for a
-// canonical policy: the host management allowlist for the bn-mgmt-* sets, and
-// nil for every daemon-reconciled set (whose membership arrives from the
-// statusz poll loop instead), including bn-restricted.
-func initialCIDRs(c canonicalPolicy, mgmtCIDRs []string) []string {
-	if !c.curated {
-		return nil
-	}
-	return mgmtCIDRs
 }

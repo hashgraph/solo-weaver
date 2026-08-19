@@ -29,12 +29,12 @@ func TestRender_ManagedPortsSetDeclaredEmptyWithDportClause(t *testing.T) {
 
 func TestRender_StaticPortsSetKeepsInlineElements(t *testing.T) {
 	static := &Policy{
-		Name: "bn-mgmt-in", Action: ActionStamp, Stamp: "reserve-ingress",
-		Direction: DirectionIngress, Ports: []string{"40983"},
+		Name: "bn-subscriber-in", Action: ActionStamp, Stamp: "reserve-ingress",
+		Direction: DirectionIngress, Ports: []string{"40980"},
 	}
 	doc, err := Render([]*Policy{static}, "10.4.0.0/24")
 	require.NoError(t, err)
 
-	require.Contains(t, doc, "set bn-mgmt-in_ports { type inet_service; elements = { 40983 }; }")
-	require.Contains(t, doc, "tcp dport @bn-mgmt-in_ports")
+	require.Contains(t, doc, "set bn-subscriber-in_ports { type inet_service; elements = { 40980 }; }")
+	require.Contains(t, doc, "tcp dport @bn-subscriber-in_ports")
 }

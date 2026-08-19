@@ -15,11 +15,11 @@ import (
 // (oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server). It is the one
 // block-node facility port solo-weaver pins a-priori rather than reading back
 // from statusz: it bootstraps discovery (you fetch statusz *on* it, so it can't
-// itself come from the statusz payload) and it gates the bn-mgmt policy set. The
-// same value is templated into the rendered chart values (blockNode.ports.health)
-// as an explicit default, so absent any operator override the port solo-weaver
-// allows and the port the BN listens on can never diverge, and the traffic-shaper
-// daemon builds its statusz base URL on it.
+// itself come from the statusz payload) and it is the port the bn-health policy
+// drops. The same value is templated into the rendered chart values
+// (blockNode.ports.health) as an explicit default, so absent any operator
+// override the port solo-weaver drops and the port the BN listens on can never
+// diverge, and the traffic-shaper daemon builds its statusz base URL on it.
 //
 // The publisher / subscriber / block-access / server-status listener ports are
 // deliberately NOT pinned here: the daemon reconciles them into the inet weaver-workload-policy
@@ -27,18 +27,18 @@ import (
 const DefaultBlockNodeHealthPort = "40983"
 
 // ResolveHealthPort returns the block-node health/statusz port solo-weaver should
-// allow (bn-mgmt) and, later, dial for statusz. It reads `blockNode.ports.health`
-// from the operator's effective --values file when one is supplied, so the
-// allowed port follows whatever the operator configured the BN to listen on
-// rather than a value baked into solo-weaver; it falls back to
+// drop off-node (bn-health) and, later, dial for statusz. It reads
+// `blockNode.ports.health` from the operator's effective --values file when one
+// is supplied, so the dropped port follows whatever the operator configured the
+// BN to listen on rather than a value baked into solo-weaver; it falls back to
 // DefaultBlockNodeHealthPort (which solo-weaver also templates into its base
 // values as the explicit default) when the file omits it or none is supplied.
 //
 // Only `blockNode.ports.health` is consulted — not `blockNode.config.SERVER_PORT`,
 // which is the main gRPC/service port (a different port from the /healthz +
-// statusz endpoint); using it as a fallback would point bn-mgmt at the wrong port
-// whenever an operator overrode SERVER_PORT but left the health port at its chart
-// default.
+// statusz endpoint); using it as a fallback would point bn-health at the wrong
+// port whenever an operator overrode SERVER_PORT but left the health port at its
+// chart default.
 func ResolveHealthPort(valuesFile string) (string, error) {
 	if valuesFile == "" {
 		return DefaultBlockNodeHealthPort, nil

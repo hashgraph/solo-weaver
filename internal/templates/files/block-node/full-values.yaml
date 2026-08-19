@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 blockNode:
-  # Pin the health/statusz port so the port solo-weaver allows (bn-mgmt) and dials
+  # Pin the health/statusz port so the port solo-weaver drops off-node (bn-health) and dials
   # for statusz always matches the port the block node listens on. Rendered from
   # DefaultBlockNodeHealthPort so this stays a single source of truth. The other
   # facility ports (publisher/subscriber/block-access/server-status) are read back

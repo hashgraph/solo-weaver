@@ -291,16 +291,20 @@ sudo solo-provisioner block node install \
 > **Network policies**: when traffic shaping is enabled (see the traffic shaping
 > gate above), `block node install` lays down the `inet weaver-workload-policy`
 > classification plane by creating the fixed set of BN policies (`bn-publisher`,
-> `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-status-in/out`,
-> `bn-mgmt-in/out`, `bn-restricted`, `bn-backfill`) idempotently, then persists the
-> rendered `network-weaver-workload-policy.nft` for reboot replay. The one operator-curated set,
-> `bn-mgmt-in/out`, is seeded here from the host management allowlist
-> (`--mgmt-cidrs`). Every other set's membership — including `bn-restricted` —
-> is reconciled at runtime by the traffic-shaper daemon from the block node's
-> statusz; `bn-restricted` in particular reflects a "restricted" category the
-> block node itself reports, so it always starts empty and has no install-time
-> flag. A permanent, purely operator-managed block list lives instead on the
-> host firewall (`--blocked-cidrs`, a different table).
+> `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-health`,
+> `bn-restricted`, `bn-backfill`) idempotently, then persists the rendered
+> `network-weaver-workload-policy.nft` for reboot replay. `bn-health` is the one
+> non-classification entry: it drops the block node's health/statusz port
+> (`blockNode.ports.health`) on the forward path from every source. Its only
+> consumers are the node's kubelet and the provisioner, both of which reach the
+> pod without ever traversing that hook, so nothing has to be allowlisted and the
+> port is unreachable from off-node. No set is seeded with membership at install:
+> every set's membership — including `bn-restricted` — is reconciled at runtime
+> by the traffic-shaper daemon from the block node's statusz; `bn-restricted` in
+> particular reflects a "restricted" category the block node itself reports, so it
+> always starts empty and has no install-time flag. A permanent, purely
+> operator-managed block list lives instead on the host firewall
+> (`--blocked-cidrs`, a different table).
 > Re-running the install never clobbers operator-applied set membership or per-class
 > shape values; `--force` re-renders the static rules from these definitions.
 
@@ -887,7 +891,7 @@ The `policy` scope is a generic, category-agnostic primitive that manages the `i
 
 `create` is create-if-missing, mirroring `network firewall create`: a policy that already exists is left untouched unless `--force` is passed, in which case its config and membership are **replaced** (not merged) from the given flags/`--cidrs`. Without `--force`, an existing policy warns and makes no changes — even if the flags/`--cidrs` given this time differ from before.
 
-Specify **exactly one** action: `--stamp <class>` (classify into an HTB priority class) or `--deny` (drop the CIDRs both directions). There is no `--direction` flag — every class has exactly one direction (see the class list below), so `--stamp <class>` determines it.
+Specify **exactly one** action: `--stamp <class>` (classify into an HTB priority class) or `--deny` (drop). A `--deny` always matches its `@<name>` CIDR set unless `--from-entity world` replaces that with a match on any source; `--ports` adds a listener-port clause on top of either — it does not on its own remove the set match, so `--deny --ports` without `--from-entity world` still needs membership to match anything. A membership `--deny` drops both directions; a port-scoped `--deny` is confined to the pod CIDR and drops the **request leg only**, qualified with `ct direction original` — a listener port sits inside the ephemeral range, so an unqualified drop would also catch the reply leg of an unrelated connection that drew that port as its source port. Combining it with `--from-entity world` locks the port down from every source. There is no `--direction` flag — every class has exactly one direction (see the class list below), so `--stamp <class>` determines it.
 
 ```bash
 # Publisher: highest-priority ingress class on the publisher listener port
@@ -910,6 +914,10 @@ sudo solo-provisioner network policy create --name bn-backfill \
 # Quarantine: drop all traffic to/from a set of CIDRs, both directions
 sudo solo-provisioner network policy create --name bn-restricted \
   --deny --cidrs 10.99.0.0/16
+
+# Port lockdown: drop inbound connections to a workload listener port, from every source
+sudo solo-provisioner network policy create --name bn-health \
+  --deny --ports 40983 --from-entity world
 ```
 
 **Flags**:
@@ -918,7 +926,7 @@ sudo solo-provisioner network policy create --name bn-restricted \
 |-----------------|------------------------------------------------------------------------------------------------------|---------------|
 | `--name`        | Policy name; also the nft set name `@<name>` (**required**)                                          | (none)        |
 | `--stamp`       | HTB class to classify matching packets into; also fixes the policy's direction (mutually exclusive with `--deny`) | (none) |
-| `--deny`        | Drop the `--cidrs` in both directions (mutually exclusive with `--stamp`)                            | `false`       |
+| `--deny`        | Drop the `--cidrs` (both directions), the `--ports` (request leg), or their intersection (mutually exclusive with `--stamp`) | `false` |
 | `--reply-stamp` | Reply class for an asymmetric conntrack reply (requires `--stamp` to resolve to an egress class; `--reply-stamp` must resolve to the mirror ingress class) | (none) |
 | `--from-entity` | `world` — match any source/dest with no IP-set clause (mutually exclusive with `--cidrs`)            | (none)        |
 | `--ports`       | Workload listener ports for the match key (comma-separated or repeated)                              | (none)        |
@@ -929,7 +937,7 @@ sudo solo-provisioner network policy create --name bn-restricted \
 
 `--stamp` references a QoS class name — `publisher`, `reserve-ingress` (ingress); `partner`, `public`, `reserve-egress` (egress); `backfill-response` (ingress, `--reply-stamp` only) — referencing an unknown class is an error. Rule position in the chain is determined by action type and match specificity (deny → reply-restore → specific stamp → fallthrough stamp), never by creation order.
 
-When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver-workload-policy.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
+When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for policies that reference `POD_CIDR`: every `--stamp` policy, and a `--deny` that carries `--ports`. A membership-only `--deny` just drops on set membership, so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver-workload-policy.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
 
 
 > Set **membership** (the CIDRs) is never persisted to `network-weaver-workload-policy.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).

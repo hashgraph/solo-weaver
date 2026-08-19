@@ -24,7 +24,7 @@ func TestResolveHealthPort_NoFileReturnsDefault(t *testing.T) {
 }
 
 func TestResolveHealthPort_ReadsOperatorOverride(t *testing.T) {
-	// The operator's effective values win, so bn-mgmt follows the BN's real port.
+	// The operator's effective values win, so bn-health follows the BN's real port.
 	f := writeValues(t, "blockNode:\n  ports:\n    health: 41000\n")
 	p, err := ResolveHealthPort(f)
 	require.NoError(t, err)

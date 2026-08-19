@@ -134,7 +134,7 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		IncludePlugins:          includePlugins,
 		IncludeApplicationState: includeApplicationState,
 		// Pin the BN's health/statusz port from the single Go source of truth so
-		// the port solo-weaver allows (bn-mgmt) and dials for statusz always
+		// the port solo-weaver drops off-node (bn-health) and dials for statusz always
 		// matches the port the BN listens on, even if the upstream chart default
 		// changes underneath us.
 		HealthPort: DefaultBlockNodeHealthPort,

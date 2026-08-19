@@ -25,7 +25,7 @@ type NetworkPlaneOptions struct {
 	// workload policy plane + tc HTB shaping + daemon monitor as one bundle.
 	TrafficShapingEnabled bool
 	// HealthPort is the resolved block-node health/statusz port, threaded into
-	// NetworkPolicyCreate so the bn-mgmt set tracks the port the BN listens on.
+	// NetworkPolicyCreate so the bn-health drop tracks the port the BN listens on.
 	HealthPort string
 	// Namespace is the block-node namespace, used by the daemon-config step when
 	// WithDaemonReload is set.

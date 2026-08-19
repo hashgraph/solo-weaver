@@ -42,6 +42,7 @@ anywhere in the host firewall's rules or templates.
 | External → node address, service port | Translated, then forwarded. Classified when the port is in a managed `<name>_ports` set, otherwise forwarded unclassified | Workload policy `forward` |
 | In-cluster → pod address directly, any port | Not constrained here — forwarded under `policy accept` | Cilium |
 | Either endpoint in `@bn-restricted` | Dropped, both directions and both families | Workload policy `forward` |
+| Anything → pod address, block-node health port | Request leg dropped, in each family that has a pod CIDR | Workload policy `forward` (`bn-health`) |
 
 The first row misleads, because the mechanism is not the one the rule layout suggests. A packet
 addressed to a port with no service behind it gets **no load-balancer translation** — only
@@ -170,6 +171,27 @@ result, and writes only the changed nft sets atomically under one lock via
 `policy.Manager.ApplySets`. (This is distinct from the daemon's own
 `GET /status` over `daemon.sock`, which reports daemon health, not block-node
 state.)
+
+That port is also what `bn-health` drops. Only the node's kubelet and the
+provisioner itself consume it, and both dial the pod from the node, so their
+packets take `output`/`postrouting` and never reach the `forward` hook this table
+registers on. Everything that does reach it is off-node by construction, which is
+why the rule needs no source allowlist — and why there is no set to keep
+populated across a replay. The drop is keyed on a static port list, which is
+rendered inline into `network-weaver-workload-policy.nft` and therefore survives
+every replay of the shared nft oneshot; set *membership*, by contrast, is never
+persisted there.
+
+The rule drops the request leg only, and carries `ct direction original`. Both
+details matter: a listener port sits inside the default ephemeral range
+(`net.ipv4.ip_local_port_range`, 32768-60999), so an unrelated pod can draw
+40983 as the source port of an outbound connection. Without the direction
+qualifier, that connection's reply — `daddr <podCIDR> tcp dport 40983` — matches
+the drop and the connection dies silently, since SYN retransmits reuse the port.
+An egress mirror on `tcp sport` would kill the outbound leg the same way, and no
+qualifier can rescue it, so there is none: dropping the request leg is sufficient
+because this chain has no conntrack accept fast-path, so an already-open
+connection loses its forward leg too.
 
 The two privileged worker subcommands the daemon execs — both superuser-gated and
 skipping the global preflight checks — are `block node tc-attach --veth <veth>
@@ -329,7 +351,7 @@ The two tables sit on opposite sides of that line, and the distinction matters:
 | `prerouting` (priority `raw`, −300) | host firewall | `accept` | Drops the operator block list ahead of conntrack. Covers the forward path too, so a blocked CIDR is blocked for pod-bound traffic as well. |
 | `input` (priority `filter`, 0) | host firewall | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
 | `output` (priority `filter`, 0) | host firewall | `accept` | Block-list symmetry only — drops traffic *to* a blocked CIDR. Deliberately not an egress allowlist. |
-| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the explicit `bn-restricted` quarantine rules. |
+| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the deny tier — the `bn-restricted` quarantine and the `bn-health` port lockdown. |
 
 The block list is spelled on three hooks because one is not enough. Dropping a peer inbound
 does not stop the host from dialing it, and once the host initiates, the replies come back in

@@ -24,10 +24,11 @@ import (
 //
 // The hooked `forward` chain holds no rules of its own beyond a `meta nfproto`
 // dispatch into forward_ipv4 / forward_ipv6, so a packet never evaluates rules
-// belonging to the other address family. Its policy is `accept`: this table
-// classifies traffic for the HTB hierarchy, it does not enforce workload
-// isolation (Cilium does). Traffic no rule matches therefore falls through
-// carrying no `meta priority` and lands in the HTB default class.
+// belonging to the other address family. Its policy is `accept`: classification
+// for the HTB hierarchy is what this table exists for, so traffic no rule
+// matches falls through carrying no `meta priority` and lands in the HTB default
+// class. The deny tier is the exception — those rules drop, and they are the
+// only enforcement here (workload isolation at large is Cilium's).
 //
 // Rule position *within a family chain* is determined by action type and match
 // specificity, never by creation order:
@@ -120,9 +121,9 @@ func baseChainLines() []string {
 		"\t# rule and vice versa.",
 		"\t#",
 		"\t# Policy is `accept` because this table classifies traffic for the HTB",
-		"\t# hierarchy rather than enforcing workload isolation, which is Cilium's",
-		"\t# job. A packet no rule matches falls through carrying no `meta priority`",
-		"\t# and therefore lands in the HTB default class.",
+		"\t# hierarchy: a packet no rule matches falls through carrying no",
+		"\t# `meta priority` and lands in the HTB default class. The deny tier in the",
+		"\t# chains below is the exception — those rules drop.",
 		"\tchain " + chainBase + " {",
 		"\t\ttype filter hook forward priority 0; policy accept;",
 		"\t\tmeta nfproto vmap { ipv4 : jump " + chainV4 + ", ipv6 : jump " + chainV6 + " }",
@@ -148,13 +149,19 @@ func familyV6(podCIDR string) family {
 	return family{proto: "ip6", podCIDR: podCIDR, setName: V6SetName}
 }
 
-// needsPodCIDR reports whether any policy in the set is a --stamp policy.
-// POD_CIDR is only ever read by renderStampRule; a deny-only chain never
-// references it, so it shouldn't be required to render one.
+// needsPodCIDR reports whether any policy in the set renders a pod-scoped rule:
+// every --stamp policy, plus a --deny policy that carries --ports (see
+// renderDenyRules). A registry of membership-only deny policies never references
+// POD_CIDR, so it shouldn't be required to render one.
 func needsPodCIDR(policies []*Policy) bool {
 	for _, p := range policies {
-		if p.Action == ActionStamp {
+		switch p.Action {
+		case ActionStamp:
 			return true
+		case ActionDeny:
+			if p.hasPortsSet() {
+				return true
+			}
 		}
 	}
 	return false
@@ -245,21 +252,20 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 func renderFamilyChain(policies []*Policy, f family) ([]string, error) {
 	var lines []string
 
-	// Tier 1: quarantine drops, both directions.
+	// Tier 1: drops, both directions.
 	var deny []string
 	for _, p := range policies {
 		if p.Action == ActionDeny {
-			deny = append(deny,
-				fmt.Sprintf("\t\t%s saddr @%s drop", f.proto, f.setName(p.Name)),
-				fmt.Sprintf("\t\t%s daddr @%s drop", f.proto, f.setName(p.Name)))
+			deny = append(deny, renderDenyRules(p, f)...)
 		}
 	}
 	if len(deny) > 0 {
 		lines = appendSection(lines,
-			"\t\t# Quarantine (deny), both directions. Runs ahead of the classification",
-			"\t\t# accepts below so a quarantined peer's traffic is dropped rather than",
-			"\t\t# stamped. There is no conntrack fast-path in this chain, so packets on",
-			"\t\t# already-open connections are evaluated against these drops too.")
+			"\t\t# Deny. Runs ahead of the classification accepts below so a denied",
+			"\t\t# packet is dropped rather than stamped. There is no conntrack accept",
+			"\t\t# fast-path in this chain, so packets on already-open connections are",
+			"\t\t# evaluated against these drops too. A membership deny drops both",
+			"\t\t# directions; a port-scoped deny drops the request leg only.")
 		lines = append(lines, deny...)
 	}
 
@@ -382,6 +388,59 @@ func orderByGroupThenCreatedAt(policies []*Policy) []*Policy {
 		out = append(out, g.members...)
 	}
 	return out
+}
+
+// renderDenyRules renders one address family's drop rules for a deny policy.
+//
+// Without --ports it is the plain membership drop, both directions: the set is
+// the whole match, so there is nothing to scope to the pod CIDR.
+//
+// A deny that carries --ports drops the *request* leg of a connection to a
+// workload listener port, scoped to the pod CIDR like the stamp tiers — and
+// returns nil for a family with no pod CIDR, for the same reason they do. It
+// keeps its membership clause when it has one; with --from-entity world it drops
+// that port from every source, which is what makes a workload port unreachable
+// from off-node without enumerating the peers that may reach it.
+//
+// `ct direction original` is load-bearing. The port set holds listener ports,
+// and those sit inside the default ephemeral range
+// (net.ipv4.ip_local_port_range, 32768-60999). Without it, the reply leg of an
+// unrelated connection that happened to draw a listener port as its ephemeral
+// source port matches `daddr <podCIDR> tcp dport <listener>` and is dropped —
+// silently killing that connection, since SYN retransmits reuse the port. That
+// packet's conntrack direction is `reply`, so the qualifier excludes it while
+// still matching a genuine inbound connection to the listener. Conntrack is
+// always available here: the hook at priority -200 runs before this chain, and
+// the reply-restore tier below already reads `ct direction`.
+//
+// There is deliberately no egress mirror. Dropping the request leg is enough —
+// no request means no reply, and for a connection opened before the rule existed
+// this chain has no conntrack accept fast-path, so its forward leg is dropped
+// too. An egress rule matching `saddr <podCIDR> tcp sport <listener>` would
+// reintroduce the same ephemeral collision on the outbound leg, where no
+// direction qualifier can exclude it.
+//
+// Clause order is an evaluation-cost choice, not a semantic one: the pod CIDR
+// prefix compare rejects most forwarded packets before the port set lookup and
+// the conntrack read.
+func renderDenyRules(p *Policy, f family) []string {
+	if !p.hasPortsSet() {
+		return []string{
+			fmt.Sprintf("\t\t%s saddr @%s drop", f.proto, f.setName(p.Name)),
+			fmt.Sprintf("\t\t%s daddr @%s drop", f.proto, f.setName(p.Name)),
+		}
+	}
+	if f.podCIDR == "" {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\t\t%s daddr %s", f.proto, f.podCIDR)
+	if p.hasCIDRSet() {
+		fmt.Fprintf(&b, " %s saddr @%s", f.proto, f.setName(p.Name))
+	}
+	fmt.Fprintf(&b, " tcp dport @%s ct direction original drop", PortsSetName(p.Name))
+	return []string{b.String()}
 }
 
 // renderReplyRestoreRule renders the ingress restore rule for a --reply-stamp
