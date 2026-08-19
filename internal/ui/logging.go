@@ -138,6 +138,49 @@ func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
 		Logger()
 }
 
+// newStderrConsoleLogger creates a zerolog.Logger that writes the
+// human-readable ConsoleWriter to **stderr** (not stdout) and also to the
+// rolling log file.
+//
+// stdout is the data stream and stderr the diagnostic stream — the convention
+// errx already follows for its Cause/Resolution block. Logging to stdout instead
+// means that redirecting a command's output to capture it, which is precisely
+// when the bytes have to be clean, is also when the log preamble joins them:
+// `show --output yaml > rules.yaml` produced a file `create --from-file` could
+// not parse (#1029).
+//
+// Console output is moved rather than suppressed. The branch that uses this
+// exists so piped, non-interactive runs of long workflows still show progress;
+// dropping the lines would blind them.
+func newStderrConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
+	fileWriter := &lumberjack.Logger{
+		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
+		MaxSize:    cfg.MaxSize,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxAge,
+		Compress:   cfg.Compress,
+	}
+
+	console := zerolog.ConsoleWriter{Out: os.Stderr}
+
+	pid := os.Getpid()
+	mw := zerolog.MultiLevelWriter(console, fileWriter)
+	return zerolog.New(mw).With().
+		Timestamp().
+		Int("pid", pid).
+		Str("version", version.Get().Version).
+		Logger()
+}
+
+// SetStderrConsoleLogging replaces the global logx logger with one whose
+// human-readable console output goes to stderr, leaving stdout for the command's
+// own output. Used in unformatted (non-TTY) mode. Like its siblings it works
+// around logx.Initialize() unconditionally installing a ConsoleWriter bound to
+// os.Stdout.
+func SetStderrConsoleLogging(cfg logx.LoggingConfig) {
+	logx.SetLogger(newStderrConsoleLogger(cfg))
+}
+
 // SetJSONConsoleLogging replaces the global logx logger with one that emits
 // NDJSON to stdout (and the log file). Used in --output json mode so downstream
 // automation can parse each log event. Like its sibling SuppressConsoleLogging,
