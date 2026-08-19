@@ -94,6 +94,14 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 	if err := p.Validate(cidrs); err != nil {
 		return false, err
 	}
+	// Reject an overlapping --cidrs list before taking the lock or touching the
+	// kernel. These entries reach the live sets through the restore loop below
+	// (AddElements), which nft would refuse; catching it here keeps the registry
+	// and the kernel untouched. Checked once for both families -- containment
+	// across families is impossible, so a mixed list needs no split.
+	if err := rejectContainment(p.Name, cidrs, nil); err != nil {
+		return false, err
+	}
 	// No blanket podCIDR requirement here: Render (below) only requires it
 	// when the merged policy set actually contains a --stamp policy -- a
 	// --deny-only chain never references POD_CIDR. When the caller doesn't
@@ -333,12 +341,40 @@ func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
 		if err := m.requireTableExists(ctx, name); err != nil {
 			return err
 		}
+		// An incremental add has to be checked against what is already in the
+		// sets, not just against itself: nft refuses the add when a live member
+		// covers the new entry (or vice versa). Read both families' live
+		// membership and reject before mutating either set, so a rejected add
+		// never lands half of its entries.
+		live, err := m.liveMembership(ctx, p)
+		if err != nil {
+			return err
+		}
+		if err := rejectContainment(name, cidrs, live); err != nil {
+			return err
+		}
 		v4, v6 := setElementsByFamily(p, cidrs)
 		if err := m.runner.AddElements(ctx, name, v4); err != nil {
 			return err
 		}
 		return m.runner.AddElements(ctx, V6SetName(name), v6)
 	})
+}
+
+// liveMembership returns the policy's current membership across both its IPv4
+// and IPv6 sets, as the kernel spells it. Used by Add to check a candidate list
+// against what is already stored; the two families are returned as one slice
+// because containment can never span families.
+func (m *Manager) liveMembership(ctx context.Context, p *Policy) ([]string, error) {
+	var live []string
+	for _, setName := range cidrSetNames(p) {
+		elements, err := m.runner.ListElements(ctx, setName)
+		if err != nil {
+			return nil, errorx.Decorate(err, "failed to read live membership for set %q", setName)
+		}
+		live = append(live, elements...)
+	}
+	return live, nil
 }
 
 // Remove deletes cidrs from the live set for a named policy. Like Add, only
@@ -359,6 +395,20 @@ func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error
 			return err
 		}
 		v4, v6 := setElementsByFamily(p, cidrs)
+		// Check every entry against live membership before deleting any of it.
+		// `nft delete element` fails with a bare "element does not exist" for
+		// anything absent, and the transaction is atomic -- so one wrong entry in
+		// a batch removes NONE of the others while reporting a message that names
+		// neither the offending entry nor the policy. The covered case
+		// (removing a /32 that a member /24 subsumes) is the most misleading of
+		// all, since the policy does permit that address.
+		live, err := m.liveMembership(ctx, p)
+		if err != nil {
+			return err
+		}
+		if err := rejectMissingMembers(name, append(append([]string{}, v4...), v6...), live); err != nil {
+			return err
+		}
 		if err := m.runner.DeleteElements(ctx, name, v4); err != nil {
 			return err
 		}
@@ -371,9 +421,29 @@ func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error
 // clears the set. Like Add/Remove, only the live kernel set is changed.
 func (m *Manager) Set(ctx context.Context, name string, cidrs []string) error {
 	return m.withLock(func() error {
-		return m.applySet(ctx, name, cidrs)
+		return m.applySet(ctx, name, cidrs, authoredMembership)
 	})
 }
+
+// membershipSource says who authored the membership being written, which decides
+// what happens when it carries a containment conflict nft would refuse (see
+// cidrset.go). The two callers have opposite sources of truth, so they need
+// opposite handling -- this is the one knob that distinguishes them.
+type membershipSource int
+
+const (
+	// authoredMembership is membership an operator typed (`network policy
+	// create`/`add`/`set`). A conflict is REJECTED: the operator's granularity
+	// is the only record of intent, so silently folding it would leave a later
+	// `network policy remove --cidr <covered>` unanswerable.
+	authoredMembership membershipSource = iota
+	// derivedMembership is membership recomputed from upstream by the
+	// traffic-shaper daemon (ApplyMembership / ApplySets). A conflict is PRUNED:
+	// the set is fully replaced every tick and no element is ever individually
+	// deleted, so there is no authored granularity to preserve, and rejecting
+	// would wedge the reconcile and leave a restrict-policy set empty.
+	derivedMembership
+)
 
 // applySet replaces the live set for one named policy with cidrs via a single
 // `flush set + add element` transaction (runner.SetElements). It performs NO
@@ -381,13 +451,34 @@ func (m *Manager) Set(ctx context.Context, name string, cidrs []string) error {
 // CLI `set` verb, withLockNB for the daemon's ApplyMembership batch), so both
 // paths funnel through the identical kernel transaction and can never
 // interleave with a concurrent operator apply.
-func (m *Manager) applySet(ctx context.Context, name string, cidrs []string) error {
+func (m *Manager) applySet(ctx context.Context, name string, cidrs []string, src membershipSource) error {
 	p, err := m.requirePolicyWithCIDRSet(name)
 	if err != nil {
 		return err
 	}
 	if err := p.validateCIDRs(cidrs); err != nil {
 		return err
+	}
+	// A full replace only has to agree with itself -- whatever was live is about
+	// to be flushed -- so the containment check is against cidrs alone. Which way
+	// a conflict is handled depends on who authored the list; see
+	// membershipSource.
+	switch src {
+	case authoredMembership:
+		if err := rejectContainment(name, cidrs, nil); err != nil {
+			return err
+		}
+	case derivedMembership:
+		if kept := PruneContainedCIDRs(cidrs); len(kept) != len(cidrs) {
+			// Steady state for a persistently redundant upstream, so this is
+			// Debug rather than Warn: it would otherwise repeat every poll tick.
+			logx.As().Debug().
+				Str("policy", name).
+				Int("supplied", len(cidrs)).
+				Int("applied", len(kept)).
+				Msg("dropped CIDRs already covered by another member of the same policy set")
+			cidrs = kept
+		}
 	}
 	if err := m.requireTableExists(ctx, name); err != nil {
 		return err
@@ -442,7 +533,7 @@ func (m *Manager) ApplyMembership(ctx context.Context, desired map[string][]stri
 
 	acquired, err := m.withLockNB(func() error {
 		for _, name := range names {
-			if err := m.applySet(ctx, name, desired[name]); err != nil {
+			if err := m.applySet(ctx, name, desired[name], derivedMembership); err != nil {
 				return err
 			}
 		}
@@ -484,7 +575,7 @@ func (m *Manager) ApplySets(ctx context.Context, membership, ports map[string][]
 
 	acquired, err := m.withLockNB(func() error {
 		for _, name := range memNames {
-			if err := m.applySet(ctx, name, membership[name]); err != nil {
+			if err := m.applySet(ctx, name, membership[name], derivedMembership); err != nil {
 				return err
 			}
 		}

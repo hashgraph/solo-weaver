@@ -53,21 +53,66 @@ func (f *fakeRunner) AddElements(_ context.Context, set string, elements []strin
 		// "No such file or directory", not a silent success.
 		return errors.New("nft add element " + set + " failed: No such file or directory")
 	}
+	if err := rejectConflictingIntervals(set, append(append([]string(nil), f.elements[set]...), elements...)); err != nil {
+		return err
+	}
 	f.elements[set] = append(f.elements[set], elements...)
+	return nil
+}
+
+// rejectMissingElements mirrors `nft delete element` refusing to delete an
+// element the set does not hold. Comparison is on canonical form so a member
+// stored as the bare "10.0.0.7" is still deletable as "10.0.0.7/32", which is
+// what the real kernel does.
+func rejectMissingElements(set string, current, toDelete []string) error {
+	have := make(map[string]struct{}, len(current))
+	for _, e := range current {
+		have[parseElement(e).canon] = struct{}{}
+	}
+	for _, e := range toDelete {
+		if _, ok := have[parseElement(e).canon]; !ok {
+			return errors.New("nft delete element " + set + " failed: Error: element does not exist")
+		}
+	}
+	return nil
+}
+
+// rejectConflictingIntervals mirrors what the real kernel does to a `flags
+// interval` set (which is how renderSetDecls declares every policy address set)
+// when two elements overlap: nft refuses the whole transaction with
+// "conflicting intervals specified". Verified against nftables v1.0.6 --
+// containment is rejected, while adjacent prefixes and exact duplicates are
+// accepted. Without this the fake would happily store membership the kernel
+// would refuse, and a code path that skipped the Go-side containment check
+// (cidrset.go) would pass its tests and only fail on a real host.
+func rejectConflictingIntervals(set string, elements []string) error {
+	if outer, inner, found := containmentPair(elements); found {
+		return errors.New("nft add element " + set + " failed: Error: conflicting intervals specified: " + outer + " and " + inner)
+	}
 	return nil
 }
 func (f *fakeRunner) DeleteElements(_ context.Context, set string, elements []string) error {
 	if !f.exists {
 		return errors.New("nft delete element " + set + " failed: No such file or directory")
 	}
+	// Mirrors the real `nft delete element`: an element that is not in the set
+	// fails the WHOLE transaction and removes nothing (verified against nftables
+	// v1.0.6). Without this the fake silently no-ops on an absent element, which
+	// hid the fact that Manager.Remove leaked a bare "element does not exist" for
+	// a covered CIDR, an unrelated non-member, and any batch containing one.
+	if err := rejectMissingElements(set, f.elements[set], elements); err != nil {
+		return err
+	}
+	// Matched on canonical form, like the kernel: an element the operator typed
+	// as "10.0.0.7/32" deletes a member nft stored as the bare "10.0.0.7".
 	toDelete := make(map[string]bool, len(elements))
 	for _, e := range elements {
-		toDelete[e] = true
+		toDelete[parseElement(e).canon] = true
 	}
 	current := f.elements[set]
 	filtered := current[:0]
 	for _, e := range current {
-		if !toDelete[e] {
+		if !toDelete[parseElement(e).canon] {
 			filtered = append(filtered, e)
 		}
 	}
@@ -81,6 +126,9 @@ func (f *fakeRunner) DeleteElements(_ context.Context, set string, elements []st
 func (f *fakeRunner) SetElements(_ context.Context, set string, elements []string) error {
 	if !f.exists {
 		return errors.New("nft flush set " + set + " failed: No such file or directory")
+	}
+	if err := rejectConflictingIntervals(set, elements); err != nil {
+		return err
 	}
 	f.setElemOrder = append(f.setElemOrder, set)
 	if len(elements) == 0 {
