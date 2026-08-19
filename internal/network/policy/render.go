@@ -224,6 +224,25 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 					fmt.Sprintf("\tset %s { type ipv4_addr . inet_service; }", p.Name),
 					fmt.Sprintf("\tset %s { type ipv6_addr . inet_service; }", V6SetName(p.Name)))
 			} else {
+				// `flags interval` so the set can hold CIDRs, but deliberately
+				// NO `auto-merge` -- unlike the host-firewall template
+				// (network-weaver-host-firewall.nft.tmpl), which has both.
+				//
+				// auto-merge is safe there because that table re-renders from an
+				// authoritative persisted YAML config on every mutation, so a
+				// folded kernel read-back costs nothing (#1002/#1004). Here it is
+				// not: policy set membership is never persisted and is mutated
+				// incrementally, so the kernel is the only copy. Folding
+				// 10.0.0.5/32 into 10.0.0.0/24 would leave `delete element` with
+				// no exact element to remove, and would make Manager.Create's
+				// ListElements snapshot/restore silently overwrite authored
+				// membership with the merged form.
+				//
+				// Overlapping membership is handled in Go instead (cidrset.go):
+				// operator-authored lists are rejected naming both prefixes,
+				// daemon-derived lists have covered entries pruned. Turning
+				// auto-merge on here needs a persisted authoritative membership
+				// record first -- see #1006 and #990.
 				lines = append(lines,
 					fmt.Sprintf("\tset %s { type ipv4_addr; flags interval; }", p.Name),
 					fmt.Sprintf("\tset %s { type ipv6_addr; flags interval; }", V6SetName(p.Name)))

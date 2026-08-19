@@ -249,7 +249,16 @@ func canonicalDesiredMembership(ce categoryEndpoints) (map[string][]string, erro
 // conversion.
 func desiredElements(b categoryBinding, endpoints []string) ([]string, error) {
 	if !b.compound {
-		return endpoints, nil
+		// Drop endpoints already covered by another supplied prefix. This has to
+		// happen HERE, on the desired side, and not only on the apply side:
+		// policy.Manager.applySet prunes the same way before writing, so a
+		// desired list that kept a covered entry could never match live, the
+		// diff would report it as an add forever, and the set would be re-applied
+		// every tick (the same perpetual-add trap the v6 merge above avoids).
+		// Pruning both sides identically keeps the digest in
+		// canonicalDesiredMembership honest too: it only changes when the
+		// membership that actually lands in the kernel changes.
+		return policy.PruneContainedCIDRs(endpoints), nil
 	}
 	out := make([]string, 0, len(endpoints))
 	for _, e := range endpoints {
