@@ -44,10 +44,12 @@ const (
 )
 
 // Policy is the static definition of one named category, mirroring the registry
-// JSON schema. CIDR membership is deliberately NOT a field: it lives in the
-// live nft set and is owned by the daemon poll loop, never persisted to the
-// registry or the .nft file. The initial `--cidrs` membership supplied at
-// create time is applied to the live kernel separately (see Manager.Create).
+// JSON schema. CIDR membership is deliberately NOT a field: it is owned by the
+// daemon poll loop, not by the operator-authored policy definition, so it never
+// enters the registry. It is persisted — but as set elements in the rendered
+// .nft, written from live kernel state (see Manager.persistMembership), not as
+// registry config. The initial `--cidrs` membership supplied at create time is
+// applied to the live kernel separately (see Manager.Create).
 type Policy struct {
 	Name            string    `json:"name"`
 	Action          Action    `json:"action"`

@@ -95,3 +95,28 @@ func TestDaemonServiceGrantsRuntimeDir(t *testing.T) {
 		t.Errorf("daemon service unit must set RuntimeDirectory=solo-provisioner so exec'd tc/nft workers can write their flock under /run/solo-provisioner\n--- unit ---\n%s", unit)
 	}
 }
+
+// TestDaemonServiceReadWritePathsIsExtensible locks the seam the network config
+// grant rides on. ProtectSystem=strict makes the whole filesystem read-only
+// inside the unit's mount namespace — which the sudo'd children inherit — so
+// every writable path has to be listed. The block-node grant on
+// /etc/solo-provisioner (needed so the traffic shaper can persist nft set
+// membership into the boot artifact) is injected per-component via
+// ExtraReadWritePaths rather than hardcoded here, so a consensus-only daemon
+// never receives it. The template must therefore keep expanding that range.
+func TestDaemonServiceReadWritePathsIsExtensible(t *testing.T) {
+	// Read the raw template, not directiveLines: the assertion below is on the
+	// Go-template action itself, which a rendered/normalised view would lose.
+	raw, err := Read("files/weaver/solo-provisioner-daemon.service")
+	if err != nil {
+		t.Fatalf("read daemon service template: %v", err)
+	}
+	unit := string(raw)
+
+	if !strings.Contains(unit, "ProtectSystem=strict") {
+		t.Fatalf("expected ProtectSystem=strict (the reason every writable path must be granted)\n--- unit ---\n%s", unit)
+	}
+	if !strings.Contains(unit, "ReadWritePaths=/opt/solo{{range .ExtraReadWritePaths}} {{.}}{{end}}") {
+		t.Errorf("daemon service unit must expand ExtraReadWritePaths into ReadWritePaths, or per-component grants (block-node's /etc/solo-provisioner, consensus's /opt/hgcapp) are silently dropped\n--- unit ---\n%s", unit)
+	}
+}

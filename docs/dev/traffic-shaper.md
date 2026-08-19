@@ -162,9 +162,11 @@ The monitor runs two independently-supervised responsibilities (each retried wit
    runs an unprivileged `--check` digest probe, and only when the digest changed
    (or the URL changed, or the hourly force-resync elapses) execs `block node
    reconcile-shaper` via sudo to apply. The periodic forced apply self-heals
-   out-of-band nft edits. On daemon startup (including after a host reboot) the
-   loop reconciles once immediately before the first tick, so nft set membership
-   is rehydrated as soon as the daemon starts and statusz is reachable.
+   out-of-band nft edits. On daemon startup the loop reconciles once immediately
+   before the first tick, so membership converges as soon as statusz is
+   reachable. After a reboot the sets are not empty while it waits: the oneshot
+   has already replayed the last applied membership from the `.nft` file, and
+   this first poll replaces it.
 
 **statusz** is the block node's own health API — `statusz/inbound` and
 `statusz/outbound` JSON endpoints served on the pod's health port (default
@@ -181,10 +183,9 @@ provisioner itself consume it, and both dial the pod from the node, so their
 packets take `output`/`postrouting` and never reach the `forward` hook this table
 registers on. Everything that does reach it is off-node by construction, which is
 why the rule needs no source allowlist — and why there is no set to keep
-populated across a replay. The drop is keyed on a static port list, which is
-rendered inline into `network-weaver-workload-policy.nft` and therefore survives
-every replay of the shared nft oneshot; set *membership*, by contrast, is never
-persisted there.
+populated across a replay. The drop is keyed on a static port list, which comes
+from the policy registry rather than from statusz, and so is rendered into
+`network-weaver-workload-policy.nft` from the registry entry on every re-render.
 
 The rule drops the request leg only, and carries `ct direction original`. Both
 details matter: a listener port sits inside the default ephemeral range
@@ -265,9 +266,9 @@ Both `ExecStart` lines load a table if its `.nft` file exists — each is guarde
 a `test -e`, so the unit is a no-op for whichever table has not been provisioned.
 The same unit is restarted on every live mutation (a `network firewall` /
 `network policy` command, or the install/reconfigure workflow) so the on-disk
-file and the kernel stay in sync. Note this replays the table structure only —
-the policy plane's set *membership* is not in the file (see boot persistence
-below).
+file and the kernel stay in sync. This replays the table structure *and* the
+policy plane's set membership, which is rendered inline into the file (see boot
+persistence below).
 
 ### solo-provisioner-bandwidth-shaper.service (tc HTB loader)
 
@@ -306,19 +307,43 @@ fill in the parts that are deliberately **not** persisted (see below).
 | Artifact | Persisted at boot? | Rebuilt by |
 |---|---|---|
 | nft tables, chains, rules (both tables) | Yes — replayed from the `.nft` files via `nft -f` | — |
-| nft **set elements** (the CIDR membership of `bn-*` sets) | **No** | daemon statusz poll loop — entry reconcile fires immediately on daemon start, and the pod watcher wakes the loop the moment it discovers the endpoint, so convergence is bounded by BN startup time on both the `base_url` and pod-discovery paths |
+| nft **set elements** (the CIDR membership of `bn-*` sets, and the managed `<name>_ports` sets) | Yes — rendered inline as `elements = { … }` in `network-weaver-workload-policy.nft` | daemon statusz poll loop, which replaces the persisted state on its first successful poll |
 | `$EGRESS` HTB hierarchy | Yes — the `solo-provisioner-bandwidth-shaper.sh` script | — |
 | `$VETH` (per-pod) HTB hierarchy | **No** | daemon pod-lifecycle watcher, on the next pod-create event |
 
-Two things are intentionally left out of boot persistence:
+Set membership is written to the `.nft` file as part of each set's declaration,
+so the oneshot replays it in the same `nft -f` transaction that creates the
+table. Because that unit is ordered `Before=solo-provisioner-daemon.service`, the
+sets are populated before the daemon starts — a peer the block node has
+quarantined is dropped from the first forwarded packet after a reboot, not from
+the first successful statusz poll.
 
-- **Set membership** (which CIDRs belong to each `bn-*` category) is never written
-  to the `.nft` file — statusz is the source of truth and the daemon reconciles
-  it. On a fresh boot the policy plane's chain is present but its sets are empty
-  until the daemon's first poll rehydrates them.
+statusz remains the source of truth. The persisted elements are a warm start, not
+an authority: every owned set is fully replaced on the first successful poll, and
+`bucketizeEndpoints` seeds each owned binding present-with-an-empty-slice, so a
+category the block node no longer reports collapses to an empty set rather than
+leaving stale peers behind. A node that has been off for a long time therefore
+replays a stale list until that first poll — which for `bn-restricted` errs
+toward over-blocking, the safe direction for a quarantine.
+
+The writer is `policy.Manager.persistMembership`, which re-renders the document
+from the registry plus the *live* contents of every daemon-owned set. It runs
+inside the same lock acquisition as the kernel write, on every membership
+mutation — the daemon's `ApplySets` as well as the hand-run `network policy
+add` / `remove` / `set`. An unchanged render is skipped via a SHA-256 compare, so
+a steady-state roster does not rewrite `/etc` on every forced resync.
+
+One thing is still intentionally left out of boot persistence:
+
 - **The `$VETH` HTB** would be meaningless to persist because the veth interface
   does not survive reboot (Cilium recreates it on pod start). The daemon
   reinstalls it from `network/shape/classes/` on each pod-create event.
+
+Two paths deliberately render without membership, leaving the sets empty until
+the next poll: `RenderWeaverNft` (the provisioning step, which has no nft runner
+and so no view of live state), and `Manager.Create`'s self-heal branch for a
+table that has been destroyed out of band, where there is nothing live to
+snapshot.
 
 ## Coexistence with the host's existing network stack
 

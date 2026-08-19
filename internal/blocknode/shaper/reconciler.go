@@ -153,10 +153,12 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	sort.Strings(changed)
 
 	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed)}
-	if len(changedMem) == 0 && len(changedPorts) == 0 {
-		return res, nil
-	}
 
+	// ApplySets is called even with no deltas. Besides writing the kernel it also
+	// re-persists the on-disk artifact, and a converged node produces no deltas
+	// indefinitely — returning early here would leave such a node's artifact
+	// permanently stale while every tick reported success.
+	//
 	// One lock acquisition for both dimensions: the tick is atomic.
 	applied, err := r.applier.ApplySets(ctx, changedMem, changedPorts)
 	if err != nil {

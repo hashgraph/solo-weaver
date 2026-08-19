@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -393,6 +395,20 @@ func installDaemonServiceFiles(sandboxPath, symlinkPath string, extraPaths []str
 
 	if err := os.MkdirAll(filepath.Dir(sandboxPath), 0o755); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to create sandbox systemd directory %s", filepath.Dir(sandboxPath))
+	}
+
+	// A granted path that does not exist fails namespace setup with
+	// status=226/NAMESPACE, so honour the ExtraReadWritePaths contract for the
+	// one path this package owns: the network config dir is created lazily by
+	// the first artifact write, which on a fresh host has not happened yet when
+	// the daemon is installed. The other granted paths (e.g. /opt/hgcapp) carry
+	// their own ownership requirements and are created by their own provisioning
+	// steps, so they are deliberately not created here.
+	netConfigDir := filepath.Dir(policy.WeaverNftPath)
+	if slices.Contains(extraPaths, netConfigDir) {
+		if err := os.MkdirAll(netConfigDir, 0o755); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to create network config directory %s", netConfigDir)
+		}
 	}
 
 	if err := os.WriteFile(sandboxPath, []byte(rendered), 0o644); err != nil {

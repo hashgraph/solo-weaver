@@ -79,10 +79,13 @@ func TestAdd_AppendsToPriorMembership(t *testing.T) {
 	r := newFakeRunner()
 	m, _, _ := newTestManager(t, r)
 	seedPolicy(t, m, "bn-publisher", "publisher", []string{"40840"}, []string{"10.1.0.1/32"}, "10.4.0.0/24")
-	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
+	// Seeded membership now arrives via the rendered document's inline
+	// `elements = { … }`, which spells a /32 as the bare address just as
+	// `nft list set` does; an incremental Add is stored as supplied.
+	require.Equal(t, []string{"10.1.0.1"}, r.elements["bn-publisher"])
 
 	require.NoError(t, m.Add(context.Background(), "bn-publisher", []string{"10.1.0.2/32"}))
-	require.Equal(t, []string{"10.1.0.1/32", "10.1.0.2/32"}, r.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.1", "10.1.0.2/32"}, r.elements["bn-publisher"])
 }
 
 func TestAdd_PolicyNotFound(t *testing.T) {
@@ -134,7 +137,7 @@ func TestRemove_RemovesFromLiveSet(t *testing.T) {
 		[]string{"10.1.0.1/32", "10.1.0.2/32"}, "10.4.0.0/24")
 
 	require.NoError(t, m.Remove(context.Background(), "bn-publisher", []string{"10.1.0.1/32"}))
-	require.Equal(t, []string{"10.1.0.2/32"}, r.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.2"}, r.elements["bn-publisher"])
 }
 
 func TestRemove_PolicyNotFound(t *testing.T) {
@@ -214,7 +217,7 @@ func TestShow_StampPolicy(t *testing.T) {
 	require.Contains(t, out, "direction: ingress")
 	require.Contains(t, out, "ports:   40840")
 	require.Contains(t, out, "live set @bn-publisher:")
-	require.Contains(t, out, "10.1.0.1/32")
+	require.Contains(t, out, "10.1.0.1")
 }
 
 func TestShow_Layout_DirectionLeadsAndLiveSetNested(t *testing.T) {
@@ -234,7 +237,7 @@ func TestShow_Layout_DirectionLeadsAndLiveSetNested(t *testing.T) {
 	// spaces (same level as action/class/created) and its members four spaces —
 	// not flush-left as a separate top-level section.
 	require.Contains(t, out, "  live set @bn-publisher:\n")
-	require.Contains(t, out, "    10.1.0.1/32\n")
+	require.Contains(t, out, "    10.1.0.1\n")
 	require.NotContains(t, out, "\nlive set @", "live set must not be a flush-left top-level section")
 }
 
@@ -313,7 +316,7 @@ func TestDelete_PreservesSiblingMembership(t *testing.T) {
 		[]string{"10.1.0.1/32"}, "10.4.0.0/24")
 
 	require.Equal(t, []string{"10.99.0.0/16"}, r.elements["bn-restricted"])
-	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.1"}, r.elements["bn-publisher"])
 
 	// Delete bn-publisher: the chain re-render wipes all sets, then restores
 	// bn-restricted's snapshot.

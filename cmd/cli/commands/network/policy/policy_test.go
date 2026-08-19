@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	pol "github.com/hashgraph/solo-weaver/internal/network/policy"
@@ -25,21 +27,43 @@ type fakeRunner struct {
 
 func newFakeRunner() *fakeRunner { return &fakeRunner{elements: map[string][]string{}} }
 
+// reSetElements matches a rendered set declaration carrying inline elements.
+var reSetElements = regexp.MustCompile(`(?m)^\tset (\S+) \{ type .*?elements = \{ ([^}]*) \}; \}$`)
+
 func (f *fakeRunner) Apply(_ context.Context, doc string) error {
 	f.applied = doc
-	f.elements = map[string][]string{} // mirrors real nft: delete+recreate wipes membership
+	// Mirrors real nft: delete+recreate wipes every set, then the document's
+	// own `elements = { … }` clauses repopulate them in the same transaction.
+	f.elements = map[string][]string{}
+	for _, m := range reSetElements.FindAllStringSubmatch(doc, -1) {
+		for _, e := range strings.Split(m[2], ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				f.elements[m[1]] = append(f.elements[m[1]], e)
+			}
+		}
+	}
 	return nil
 }
 func (f *fakeRunner) AddElements(_ context.Context, set string, elems []string) error {
 	if f.applied == "" {
 		return errors.New("nft add element " + set + " failed: No such file or directory")
 	}
-	f.elements[set] = append(f.elements[set], elems...)
+	// Deliberately no duplicate rejection here. On a `flags interval` set — how
+	// every policy address set is declared — nft accepts an exact duplicate and
+	// refuses only a containment conflict (verified against nftables v1.0.6; see
+	// rejectConflictingIntervals in internal/network/policy). The Go-side
+	// containment checks live in that package and are exercised by its own tests.
+	//
+	// Stored canonically, matching what `nft list set` prints back.
+	f.elements[set] = pol.CanonicalizeElements(append(append([]string(nil), f.elements[set]...), elems...))
 	return nil
 }
 func (f *fakeRunner) DeleteElements(_ context.Context, set string, elems []string) error {
+	// nft compares parsed values, not spellings: `10.1.0.1/32` and `10.1.0.1`
+	// are the same single-address interval, and the set lists the collapsed
+	// form, so match in canonical space.
 	toDelete := make(map[string]bool, len(elems))
-	for _, e := range elems {
+	for _, e := range pol.CanonicalizeElements(elems) {
 		toDelete[e] = true
 	}
 	cur := f.elements[set]
@@ -53,7 +77,7 @@ func (f *fakeRunner) DeleteElements(_ context.Context, set string, elems []strin
 	return nil
 }
 func (f *fakeRunner) SetElements(_ context.Context, set string, elems []string) error {
-	f.elements[set] = append([]string(nil), elems...)
+	f.elements[set] = pol.CanonicalizeElements(elems)
 	return nil
 }
 func (f *fakeRunner) ListElements(_ context.Context, set string) ([]string, error) {
@@ -168,8 +192,9 @@ func TestCreateCmd_StampIngress(t *testing.T) {
 	doc, err := runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840", "--cidrs", "10.1.0.1/32")
 	require.NoError(t, err)
 	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept")
-	// Membership is never persisted.
-	require.NotContains(t, doc, "10.1.0.1/32")
+	// Membership is persisted as set elements so it survives a reboot, in the
+	// collapsed form nft prints for a /32.
+	require.Contains(t, doc, "set bn-publisher { type ipv4_addr; flags interval; elements = { 10.1.0.1 }; }")
 }
 
 func TestCreateCmd_Deny(t *testing.T) {
@@ -237,9 +262,8 @@ func TestCreateCmd_CIDRsFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(f, []byte("# quarantine\n10.99.0.0/16, 10.98.0.0/16\n"), 0o644))
 	doc, err := runCreate(t, "--name", "bn-restricted", "--deny", "--cidrs-file", f)
 	require.NoError(t, err)
-	// Set schema present; membership not persisted.
-	require.Contains(t, doc, "set bn-restricted { type ipv4_addr; flags interval; }")
-	require.NotContains(t, doc, "10.99.0.0/16")
+	// Both CIDRs from the file land in the set schema, ordered canonically.
+	require.Contains(t, doc, "set bn-restricted { type ipv4_addr; flags interval; elements = { 10.98.0.0/16, 10.99.0.0/16 }; }")
 }
 
 // runVerb executes a `policy <verb>` command against this env's manager stub.
@@ -308,7 +332,7 @@ func TestAddCmd_AddsCIDRs(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, env.runVerb(t, "add", "--name", "bn-publisher", "--cidr", "10.1.0.1/32"))
-	require.Equal(t, []string{"10.1.0.1/32"}, env.runner.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.1"}, env.runner.elements["bn-publisher"])
 }
 
 func TestAddCmd_PolicyNotFound(t *testing.T) {
@@ -341,7 +365,7 @@ func TestRemoveCmd_RemovesCIDR(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, env.runVerb(t, "remove", "--name", "bn-publisher", "--cidr", "10.1.0.1/32"))
-	require.Equal(t, []string{"10.1.0.2/32"}, env.runner.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.2"}, env.runner.elements["bn-publisher"])
 }
 
 // --- set verb ---

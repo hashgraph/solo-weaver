@@ -80,3 +80,56 @@ func TestBuildComponentSpecs_ConsensusAndBlockNode(t *testing.T) {
 	shorts := []string{specs[0].ShortName, specs[1].ShortName}
 	assert.ElementsMatch(t, []string{"cn", "bn"}, shorts)
 }
+
+func TestDaemonExtraReadWritePaths_BlockNodeGrantsNetworkConfigDir(t *testing.T) {
+	cfg := daemon.DaemonConfig{Components: daemon.DaemonComponents{
+		BlockNode: &daemon.BlockNodeComponentConfig{
+			Enabled: true, Orbit: "hedera-block-node",
+			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
+		},
+	}}
+
+	// ProtectSystem=strict makes the daemon's namespace read-only everywhere not
+	// listed, and its sudo'd children inherit it. Without this grant the traffic
+	// shaper's persist step fails with "read-only file system" on a host whose /
+	// is mounted rw, and boot persistence silently never happens.
+	assert.Contains(t, daemonExtraReadWritePaths(cfg), "/etc/solo-provisioner")
+}
+
+func TestDaemonExtraReadWritePaths_ConsensusOnlyDoesNotGrantNetworkConfigDir(t *testing.T) {
+	cfg := daemon.DaemonConfig{Components: daemon.DaemonComponents{
+		ConsensusNode: &daemon.ConsensusNodeComponentConfig{Enabled: true},
+	}}
+
+	paths := daemonExtraReadWritePaths(cfg)
+	assert.Contains(t, paths, "/opt/hgcapp")
+	// The grant covers the operator-owned host firewall artifact and the policy
+	// registry too, so it is scoped to nodes that actually run the traffic
+	// shaper rather than handed to every daemon.
+	assert.NotContains(t, paths, "/etc/solo-provisioner")
+}
+
+func TestDaemonExtraReadWritePaths_DisabledBlockNodeDoesNotGrant(t *testing.T) {
+	cfg := daemon.DaemonConfig{Components: daemon.DaemonComponents{
+		BlockNode: &daemon.BlockNodeComponentConfig{
+			Enabled:  false,
+			Monitors: daemon.BlockNodeMonitors{TrafficShaper: true},
+		},
+	}}
+
+	assert.NotContains(t, daemonExtraReadWritePaths(cfg), "/etc/solo-provisioner")
+}
+
+func TestDaemonExtraReadWritePaths_BlockNodeWithoutTrafficShaperDoesNotGrant(t *testing.T) {
+	cfg := daemon.DaemonConfig{Components: daemon.DaemonComponents{
+		BlockNode: &daemon.BlockNodeComponentConfig{
+			Enabled:  true,
+			Monitors: daemon.BlockNodeMonitors{TrafficShaper: false},
+		},
+	}}
+
+	// The monitor that writes the artifact is itself gated on TrafficShaper
+	// (blocknode.NewComponent), so without it nothing on the daemon side can
+	// ever write there — the grant must stay exactly as narrow as the writer.
+	assert.NotContains(t, daemonExtraReadWritePaths(cfg), "/etc/solo-provisioner")
+}

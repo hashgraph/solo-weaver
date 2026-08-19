@@ -328,7 +328,7 @@ func TestReconciler_Apply_AppliesOnlyChangedPolicies(t *testing.T) {
 	assert.NotEmpty(t, res.Digest)
 }
 
-func TestReconciler_Apply_NoChangesTakesNoApply(t *testing.T) {
+func TestReconciler_Apply_NoChangesStillCallsApplierWithEmptyBatches(t *testing.T) {
 	f := &fakeFetcher{} // empty snapshot → all owned sets desired-empty
 	lister := newFakeLister()
 	applier := &fakeApplier{applied: true}
@@ -336,7 +336,18 @@ func TestReconciler_Apply_NoChangesTakesNoApply(t *testing.T) {
 
 	res, err := r.Apply(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 0, applier.calls, "no deltas in either dimension → applier must not be called")
+
+	// The applier is still invoked, with both batches empty: writing the kernel
+	// is only half its job, and the other half — re-persisting the on-disk
+	// artifact — has to run on a converged node too. A converged node produces no
+	// deltas indefinitely, so skipping the call here would leave its artifact
+	// permanently stale while every tick reported success.
+	require.Equal(t, 1, applier.calls, "a no-delta tick must still reach the applier so persistence runs")
+	require.Empty(t, applier.got, "no membership change → empty membership batch")
+	require.Empty(t, applier.gotPorts, "no port change → empty ports batch")
+
+	// Nothing was written, so nothing is reported applied and every owned set
+	// stays in the unchanged list.
 	assert.Empty(t, res.Applied)
 	assert.Equal(t, ownedSetNames(), res.Unchanged)
 }
