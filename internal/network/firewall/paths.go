@@ -37,6 +37,26 @@ const (
 	// could leave a host reachable by nobody.
 	HostConfigPath = "/etc/solo-provisioner/network-weaver-host-firewall.yaml"
 
+	// HostConfigPrevSuffix is appended to HostConfigPath to name the retained
+	// previous generation of the config. Derived by suffix rather than declared
+	// as an independent path so the two can never be pointed at different
+	// directories.
+	HostConfigPrevSuffix = ".prev"
+
+	// HostConfigPrevPath is the generation of the config immediately before the
+	// one currently applied, retained on every apply so a lost or truncated
+	// state file has a recovery path that keeps named allow rules.
+	//
+	// Deliberately one generation deep: this is a recovery artifact, not a
+	// version history. History belongs in the operator's own repository, holding
+	// the output of `network firewall show --output yaml`.
+	//
+	// It is written only when the config it replaces parses, so the invariant is
+	// "absent, or a loadable config exactly one generation back" — a retained
+	// copy that is itself corrupt would be worthless for recovery, and worse than
+	// worthless if an operator trusted it.
+	HostConfigPrevPath = HostConfigPath + HostConfigPrevSuffix
+
 	// WeaverNftPath is the inet weaver-workload-policy artifact, owned by `block node install`
 	// (TS_2 #743). This package never writes it; it only checks for its presence
 	// to decide whether the shared oneshot may be disabled (teardown is #791).

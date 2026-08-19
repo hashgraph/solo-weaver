@@ -654,7 +654,7 @@ The table holds two kinds of record:
 - **Three reserved blocks** — `mgmt` (management allowlist), `blocked` (operator block list, dropped on `prerouting`, `input` and `output`), and `in_cluster` (host-service ports reachable from the pod CIDR). They are first-class because weaver derives or defaults their content and omitting one is dangerous.
 - **Named allow rules** — an operator-authored source list x port list x protocol accept, for anything else the host must admit (Kubernetes control-plane ports, Cilium VXLAN, an admin jump host).
 
-Structure — which rules exist, and what protocol each matches — is declared in a config file. Membership — the addresses and ports inside a rule — is mutable straight from the CLI. That split is deliberate: adding a rule is a reviewed change, while unblocking an operator is sometimes urgent.
+Structure — which rules exist, and what protocol each matches — is declared with `create-allow-rule`, or stated for the whole table at once in a config file passed to `create --from-file`. Membership — the addresses and ports inside a rule — is mutable straight from the CLI either way.
 
 #### Create the Host Firewall
 
@@ -786,7 +786,7 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 
 `in_cluster.cidrs` is the one address list weaver can legitimately derive on its own, which is why it stays optional; its absence costs a rule rather than access to the host.
 
-The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. Re-run `create --from-file`, or delete the file and re-run the `create` + `create-allow-rule` sequence, to repair one.
+The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. To repair one, recover the retained previous generation (see [Re-apply / Recover the Host Firewall](#re-apply--recover-the-host-firewall)); failing that, re-run `create --from-file`, or delete the file and re-run the `create` + `create-allow-rule` sequence.
 
 #### Modify a Rule's Addresses / Ports
 
@@ -867,6 +867,28 @@ sudo solo-provisioner network firewall show --output yaml > rules.yaml
 sudo solo-provisioner network firewall create --from-file rules.yaml --force   # a no-op
 ```
 
+`--output commands` is the per-rule counterpart, for carrying **one** allow rule to other hosts. It requires `--name` and works on named allow rules only (the reserved blocks are configured by `create`/`set`, not declared):
+
+```bash
+sudo solo-provisioner network firewall show --name rudder_server --output commands
+```
+
+```
+solo-provisioner network firewall create-allow-rule --name rudder_server --proto tcp --icmp-echo
+solo-provisioner network firewall add --name rudder_server --cidr 200.201.203.205/32 --port 5309,8443
+```
+
+Unlike `show --name <rule> --output yaml` — which is an inspection view, not a config — this sequence is **safe to replay against a host that already has a firewall**. `create-allow-rule` and `add` are additive, so they bring the one rule into existence and leave every other rule untouched. Save it and run it on the target host:
+
+```bash
+# on the source host
+sudo solo-provisioner network firewall show --name rudder_server --output commands > rudder.sh
+# on the target host
+sudo sh rudder.sh
+```
+
+The emitted lines carry no `sudo` of their own, so the file is a script you run once with privilege rather than a list of individually-escalating commands. Addresses come out in stored order (kept sorted), which is what the host actually has, not the order they were typed in.
+
 > `delete --all` (the default when `--name` is omitted, which is what this verb has always done) removes the table and both `/etc/solo-provisioner/network-weaver-host-firewall.{nft,yaml}`, leaving the host with no weaver-managed firewall — including no management allowlist. It asks for confirmation in an interactive session; pass `--force` to skip the prompt. It does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
 >
 > The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set --name mgmt --cidrs ""`).
@@ -880,6 +902,46 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force   #
 > `reconfigure` reads their result straight out of
 > `/etc/solo-provisioner/network-weaver-host-firewall.yaml`, so an urgent
 > `add --name mgmt --cidr …` is not reverted by the next reconfigure.
+
+#### Re-apply / Recover the Host Firewall
+
+`reapply` re-renders and re-applies the persisted config without changing it. It takes no arguments — it states no intent, so there is nothing to supply:
+
+```bash
+sudo solo-provisioner network firewall reapply
+```
+
+Use it to re-assert the table after something else on the host disturbed it, or after recovering the config. Two properties worth knowing:
+
+- It **records no enable/disable decision**, unlike `create` and `delete --all`. A later `block node reconfigure` behaves exactly as if the `reapply` had not run.
+- It replaces only the `inet weaver-host-firewall` table. The rendered ruleset scopes its flush to that table, so any third-party nftables table on the host is left alone.
+
+If no config is persisted, `reapply` fails rather than applying a default table — a default-drop policy with an empty management allowlist would lock the host out. Run `create` first.
+
+There is deliberately no way to point `reapply` at a file. To apply a file, that is `create --from-file <path> --force`.
+
+**Recovering a corrupt config.** Every apply retains the generation it replaces:
+
+| Path | Contents |
+|------|----------|
+| `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | the config currently applied |
+| `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | the generation immediately before it |
+
+So a truncated or hand-mangled config is a two-step repair that **keeps the named allow rules**:
+
+```bash
+sudo cp /etc/solo-provisioner/network-weaver-host-firewall.yaml.prev \
+        /etc/solo-provisioner/network-weaver-host-firewall.yaml
+sudo solo-provisioner network firewall reapply
+```
+
+Three things this retention deliberately is and is not:
+
+- **One generation deep.** It is a recovery artifact, not a version history — keep history in your own repository, holding the output of `show --output yaml`.
+- **Always loadable.** The retained copy is only written when the config it replaces parses, so it is never itself corrupt. This also means recovering from it does not consume it: the bad config is not promoted over the good one.
+- **Not the last line of defence.** Without it, a lost config falls through to re-parsing the rendered `.nft`, which recovers the three reserved blocks but **loses every named allow rule**. That fallback still exists; the retained copy is what keeps you from needing it.
+
+`delete --all` removes the retained copy along with the config and the `.nft` artifact.
 
 #### Create a Traffic Policy
 
