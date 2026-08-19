@@ -71,7 +71,7 @@ var firewallCmd = &cobra.Command{
 }
 
 func init() {
-	firewallCmd.AddCommand(createCmd, createAllowRuleCmd, addCmd, removeCmd, setCmd, showCmd, deleteCmd)
+	firewallCmd.AddCommand(createCmd, createAllowRuleCmd, addCmd, removeCmd, setCmd, showCmd, reapplyCmd, deleteCmd)
 }
 
 // GetCmd returns the root of the `network firewall` command group.

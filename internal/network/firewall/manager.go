@@ -18,9 +18,14 @@ import (
 // the on-disk artifact, and then restarts the systemd service via DBus so the
 // kernel is updated in one consistent operation — no separate nft apply exec.
 type Manager struct {
-	runner          Runner
-	nftPath         string
-	configPath      string
+	runner     Runner
+	nftPath    string
+	configPath string
+	// prevConfigPath holds the generation of configPath immediately before the
+	// current one. Derived from configPath rather than injected, so a Manager
+	// wired to temp paths in a test retains alongside its own config without
+	// having to know the convention.
+	prevConfigPath  string
 	lockPath        string
 	applyViaService func(ctx context.Context) error
 }
@@ -61,6 +66,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 	if m.configPath == "" {
 		m.configPath = HostConfigPath
 	}
+	m.prevConfigPath = m.configPath + HostConfigPrevSuffix
 	if m.lockPath == "" {
 		m.lockPath = LockPath
 	}
@@ -289,13 +295,35 @@ func (m *Manager) Delete(ctx context.Context) error {
 				return err
 			}
 		}
-		for _, p := range []string{m.nftPath, m.configPath} {
+		// The retained generation goes with them: left behind, a later `create` on
+		// this host would inherit a "previous" config belonging to a table that no
+		// longer exists.
+		for _, p := range []string{m.nftPath, m.configPath, m.prevConfigPath} {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				return errorx.ExternalError.Wrap(err, "failed to remove %s", p)
 			}
 		}
 		return nil
 	})
+}
+
+// Reapply re-renders and re-applies the persisted config without changing it.
+// It is what re-asserts the weaver-managed table on demand: the operator states
+// no intent, so there is nothing to supply and nothing to override.
+//
+// Implemented as a no-op mutation because that is exactly the semantics wanted —
+// load the persisted table, dry-run it, rewrite the artifacts, restart the unit.
+// The rendered document carries the scoped-replace prefix, so this flushes and
+// reloads `inet weaver-host-firewall` alone and leaves any third-party table on
+// the host untouched.
+//
+// No separate "nothing is persisted" guard: load() already fails with a pointer
+// to `create` when neither the config nor the nft artifact exists, and never
+// falls back to a default table — applying a default-drop policy with an empty
+// management allowlist would be a lock-out. Validation is likewise load()'s,
+// which parses through ParseConfig and so runs Table.Validate.
+func (m *Manager) Reapply(ctx context.Context) error {
+	return m.mutate(ctx, func(*Table) error { return nil })
 }
 
 // mutate loads the current table from disk, applies fn, then re-applies and
@@ -370,6 +398,8 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 		return err
 	}
 
+	m.retainPreviousConfig()
+
 	if err := atomicWriteFile(m.configPath, string(cfg), 0o600); err != nil {
 		return err
 	}
@@ -379,6 +409,57 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	}
 
 	return m.applyViaService(ctx)
+}
+
+// retainPreviousConfig copies the config about to be replaced to
+// prevConfigPath, so a state file that is later lost or truncated can be
+// recovered without falling through to the nft reparse — the tier that recovers
+// the reserved blocks but loses every named allow rule.
+//
+// Three deliberate properties:
+//
+// It copies the bytes on disk, not the table being applied. The point is the
+// literal previous generation; the in-memory table may itself have come from the
+// lossy reparse, in which case retaining it would record a table the operator
+// never authored.
+//
+// It retains only a config that parses. The invariant is "absent, or a loadable
+// config exactly one generation back", which is what makes the retained copy
+// worth trusting in a recovery. It also means recovering *from* prevConfigPath
+// does not consume it: the corrupt config that prompted the recovery is not
+// promoted over the good one.
+//
+// It never fails the apply. The ruleset has already passed the dry run at this
+// point, so refusing to apply a valid firewall because a bookkeeping write
+// failed would be the worse outcome. A stale copy is worse than none, though —
+// it would silently restore an older generation than the operator expects — so a
+// failed write removes any copy left behind rather than leaving it in place.
+func (m *Manager) retainPreviousConfig() {
+	data, err := os.ReadFile(m.configPath)
+	if err != nil {
+		// No config yet (first apply, or a host recovered from the nft artifact):
+		// there is no previous generation, and inventing one would be a lie.
+		if !os.IsNotExist(err) {
+			logx.As().Debug().Err(err).Str("path", m.configPath).Msg(
+				"could not read the current host firewall config; no previous generation retained")
+		}
+		return
+	}
+
+	if _, err := ParseConfig(data); err != nil {
+		logx.As().Debug().Err(err).Str("path", m.configPath).Msg(
+			"the current host firewall config does not parse; keeping the existing retained copy rather than replacing it with an unusable one")
+		return
+	}
+
+	if err := atomicWriteFile(m.prevConfigPath, string(data), 0o600); err != nil {
+		logx.As().Warn().Err(err).Str("path", m.prevConfigPath).Msg(
+			"could not retain the previous host firewall config; removing any stale copy so it cannot be mistaken for the generation just replaced")
+		if rmErr := os.Remove(m.prevConfigPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logx.As().Warn().Err(rmErr).Str("path", m.prevConfigPath).Msg(
+				"could not remove the stale retained config; do not recover from it without checking its contents first")
+		}
+	}
 }
 
 // check dry-runs a rendered ruleset through nft without committing it. The

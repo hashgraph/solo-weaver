@@ -140,7 +140,11 @@ privilege only by exec-ing narrow `block node` worker subcommands through sudo.
 For the block node its **only** monitor is the `TrafficShaperMonitor`
 (`internal/daemon/blocknode/`), gated on the traffic-shaper being enabled. The
 host firewall is **not** part of this — it is static, applied at install time and
-mutated only by `network firewall` commands.
+mutated only by `network firewall` commands. `network firewall reapply` re-asserts
+it from the persisted config on demand, taking no arguments and recording no
+enable/disable decision; every apply also retains the generation it replaces at
+`network-weaver-host-firewall.yaml.prev`, which is the recovery path that keeps
+named allow rules when the config is lost (the `.nft` reparse fallback does not).
 
 The monitor runs two independently-supervised responsibilities (each retried with
 5 s to 5 min exponential backoff, so one fault never kills the daemon):
@@ -484,7 +488,7 @@ applies and then persists (see below), so they are safe to run by hand on a
 provisioned node.
 
 - **`network firewall`** (`create`/`create-allow-rule`/`add`/`remove`/`set`/
-  `show`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
+  `show`/`reapply`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
   `--blocked-cidrs`, `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`, or
   `--from-file` for the whole table; `create-allow-rule` declares one named allow
   rule (`--name`, `--proto`, `--icmp-echo`);

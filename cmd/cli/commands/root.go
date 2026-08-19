@@ -258,11 +258,16 @@ func initConfig(ctx context.Context) {
 		}
 		ui.SetJSONConsoleLogging(logConfig)
 	case ui.IsUnformatted():
-		// Raw mode: let zerolog write directly to the console (no suppression).
+		// Raw mode: let zerolog write directly to the console, on **stderr**.
+		// This branch is selected when stdout is not a character device, i.e.
+		// exactly when the caller is capturing stdout — so console logs must not
+		// land there or they corrupt the captured data (#1029). They are moved,
+		// not suppressed: a piped non-interactive run still needs progress output.
 		err = logx.Initialize(logConfig)
 		if err != nil {
 			doctor.CheckErr(ctx, err)
 		}
+		ui.SetStderrConsoleLogging(logConfig)
 	default:
 		// Suppress console logging — the TUI owns stdout, not zerolog.
 		// Raw log lines go only to the log file.
