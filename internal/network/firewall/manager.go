@@ -308,7 +308,7 @@ func (m *Manager) Delete(ctx context.Context) error {
 }
 
 // Reapply re-renders and re-applies the persisted config without changing it.
-// It is what re-asserts the rudder-managed table on demand: the operator states
+// It is what re-asserts the weaver-managed table on demand: the operator states
 // no intent, so there is nothing to supply and nothing to override.
 //
 // Implemented as a no-op mutation because that is exactly the semantics wanted —
