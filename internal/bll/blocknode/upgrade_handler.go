@@ -92,7 +92,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 	ins := inputs.Custom
 
 	// Resolve the health/statusz port from the operator's effective --values so the
-	// re-asserted bn-mgmt policy set tracks the port the BN actually listens on
+	// re-asserted bn-health policy tracks the port the BN actually listens on
 	// rather than a value baked into solo-weaver; falls back to the chart default
 	// when the operator supplies no override. Mirrors the install path.
 	healthPort, err := bnpkg.ResolveHealthPort(ins.ValuesFile)

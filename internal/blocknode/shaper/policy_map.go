@@ -69,8 +69,9 @@ type categoryBinding struct {
 // categoryBindings is the internal, non-configurable (direction, category) →
 // policy mapping. Both the BN's category vocabulary and the provisioner's policy
 // names are fixed in code, so this is a static table rather than config. Keys
-// not listed here — the public category, or the operator-curated mgmt sets — are
-// never touched by the monitor.
+// not listed here — the public category — are never touched by the monitor, and
+// neither is any policy without a binding (bn-health, whose match key is a
+// static port list rather than membership).
 //
 // bn-backfill is fed by OUTBOUND partner endpoints (the peer block nodes this BN
 // backfills from), keyed on the compound destination address AND port. Inbound

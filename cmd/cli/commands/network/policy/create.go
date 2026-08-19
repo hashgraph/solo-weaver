@@ -30,7 +30,11 @@ var createCmd = &cobra.Command{
 	Short: "Create a policy: render its rule(s) into the `inet weaver-workload-policy` chain",
 	Long: "Render one named category's classification/ACL rule(s) into the `inet weaver-workload-policy` forward chain and " +
 		"ensure its nft set exists. Specify exactly one action: --stamp <class> (classify into an HTB priority " +
-		"class), or --deny (drop the CIDRs both directions). There is no --direction flag: --stamp's class fixes " +
+		"class), or --deny (drop). A --deny always matches its @<name> CIDR set unless --from-entity world " +
+		"replaces that with a match on any source; --ports adds a listener-port clause on top of either. So " +
+		"--deny --cidrs drops both directions on the set, --deny --cidrs --ports narrows that to one port, and " +
+		"--deny --ports --from-entity world locks a port down from every source. A --deny carrying --ports is " +
+		"confined to the pod CIDR and drops the request leg only. There is no --direction flag: --stamp's class fixes " +
 		"the direction. --reply-stamp adds an asymmetric conntrack reply rule to an egress-direction --stamp " +
 		"policy; the reply class must be the mirror (ingress) direction. create-if-missing: an existing policy " +
 		"is left untouched unless --force is passed, which replaces its config and membership from the given " +
@@ -47,13 +51,14 @@ var createCmd = &cobra.Command{
 		}
 
 		podCIDRs := flagPodCIDR
-		if len(podCIDRs) == 0 && p.Action != pol.ActionDeny {
-			// A --deny rule never references POD_CIDR (see Render), so skip
-			// resolving it entirely for --deny -- no point requiring a
-			// reachable cluster (or --pod-cidr) for a quarantine-only policy.
-			// If a sibling --stamp policy in the registry still needs it,
-			// Manager.Create's Render call below surfaces that clearly.
-			//
+		// A membership-only --deny rule never references POD_CIDR (see
+		// renderDenyRules), so it is not resolved at all for one -- no point
+		// requiring a reachable cluster (or --pod-cidr) for a quarantine-only
+		// policy. If a sibling --stamp policy in the registry still needs it,
+		// Manager.Create's Render call below surfaces that clearly. A --deny that
+		// carries --ports is pod-scoped like a --stamp rule and does need it.
+		podScoped := p.Action != pol.ActionDeny || len(p.Ports) > 0
+		if len(podCIDRs) == 0 && podScoped {
 			// An explicit --pod-cidr works offline (and may carry both an IPv4 and
 			// an IPv6 pod CIDR for dual-stack classification); only auto-detection
 			// needs a reachable cluster. Unlike `network firewall create`
@@ -156,7 +161,7 @@ func readCIDRsFile(path string) ([]string, error) {
 func init() {
 	createCmd.Flags().StringVar(&flagName, "name", "", "Policy name; also the nft set name `@<name>` (required)")
 	createCmd.Flags().StringVar(&flagStamp, "stamp", "", "HTB class to classify matching packets into; also fixes the policy's direction (mutually exclusive with --deny)")
-	createCmd.Flags().BoolVar(&flagDeny, "deny", false, "Drop the --cidrs both directions (mutually exclusive with --stamp)")
+	createCmd.Flags().BoolVar(&flagDeny, "deny", false, "Drop the --cidrs (both directions), the --ports (request leg), or their intersection (mutually exclusive with --stamp)")
 	createCmd.Flags().StringVar(&flagReplyStamp, "reply-stamp", "", "Reply class for an asymmetric conntrack reply (requires --stamp to resolve to an egress class; --reply-stamp must resolve to the mirror ingress class)")
 	createCmd.Flags().StringVar(&flagFromEntity, "from-entity", "", "Match any source/dest with no IP-set clause (only value: world; mutually exclusive with --cidrs)")
 	createCmd.Flags().StringSliceVar(&flagPorts, "ports", nil, "Workload listener ports for the match key (comma-separated or repeated)")

@@ -4,6 +4,7 @@ add table inet weaver-workload-policy
 table inet weaver-workload-policy {
 	set bn-backfill { type ipv4_addr . inet_service; }
 	set bn-backfill6 { type ipv6_addr . inet_service; }
+	set bn-health_ports { type inet_service; elements = { 40983 }; }
 	set bn-partner-out { type ipv4_addr; flags interval; }
 	set bn-partner-out6 { type ipv6_addr; flags interval; }
 	set bn-partner-out_ports { type inet_service; elements = { 40980, 40981 }; }
@@ -20,19 +21,21 @@ table inet weaver-workload-policy {
 	# rule and vice versa.
 	#
 	# Policy is `accept` because this table classifies traffic for the HTB
-	# hierarchy rather than enforcing workload isolation, which is Cilium's
-	# job. A packet no rule matches falls through carrying no `meta priority`
-	# and therefore lands in the HTB default class.
+	# hierarchy: a packet no rule matches falls through carrying no
+	# `meta priority` and lands in the HTB default class. The deny tier in the
+	# chains below is the exception — those rules drop.
 	chain forward {
 		type filter hook forward priority 0; policy accept;
 		meta nfproto vmap { ipv4 : jump forward_ipv4, ipv6 : jump forward_ipv6 }
 	}
 
 	chain forward_ipv4 {
-		# Quarantine (deny), both directions. Runs ahead of the classification
-		# accepts below so a quarantined peer's traffic is dropped rather than
-		# stamped. There is no conntrack fast-path in this chain, so packets on
-		# already-open connections are evaluated against these drops too.
+		# Deny. Runs ahead of the classification accepts below so a denied
+		# packet is dropped rather than stamped. There is no conntrack accept
+		# fast-path in this chain, so packets on already-open connections are
+		# evaluated against these drops too. A membership deny drops both
+		# directions; a port-scoped deny drops the request leg only.
+		ip daddr 10.4.0.0/24 tcp dport @bn-health_ports ct direction original drop
 		ip saddr @bn-restricted drop
 		ip daddr @bn-restricted drop
 
@@ -54,10 +57,11 @@ table inet weaver-workload-policy {
 	}
 
 	chain forward_ipv6 {
-		# Quarantine (deny), both directions. Runs ahead of the classification
-		# accepts below so a quarantined peer's traffic is dropped rather than
-		# stamped. There is no conntrack fast-path in this chain, so packets on
-		# already-open connections are evaluated against these drops too.
+		# Deny. Runs ahead of the classification accepts below so a denied
+		# packet is dropped rather than stamped. There is no conntrack accept
+		# fast-path in this chain, so packets on already-open connections are
+		# evaluated against these drops too. A membership deny drops both
+		# directions; a port-scoped deny drops the request leg only.
 		ip6 saddr @bn-restricted6 drop
 		ip6 daddr @bn-restricted6 drop
 	}

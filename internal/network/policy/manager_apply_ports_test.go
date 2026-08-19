@@ -52,9 +52,9 @@ func TestApplyPorts_RejectsNonManagedPolicy(t *testing.T) {
 	r := newFakeRunner()
 	m, _, _ := newTestManager(t, r)
 	// A static-ports policy is not daemon-managed; ApplyPorts must refuse it.
-	seedPolicy(t, m, "bn-mgmt", "reserve-ingress", []string{"40983"}, nil, "10.4.0.0/24")
+	seedPolicy(t, m, "bn-subscriber-in", "reserve-ingress", []string{"40983"}, nil, "10.4.0.0/24")
 
-	_, err := m.ApplyPorts(context.Background(), map[string][]string{"bn-mgmt": {"40983"}})
+	_, err := m.ApplyPorts(context.Background(), map[string][]string{"bn-subscriber-in": {"40983"}})
 	require.ErrorContains(t, err, "no daemon-managed ports set")
 }
 

@@ -131,6 +131,7 @@ func sampleBNPolicies() []*Policy {
 		{Name: "bn-backfill", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response", Direction: DirectionEgress, CreatedAt: at},
 		{Name: "bn-partner-out", Action: ActionStamp, Stamp: "partner", Direction: DirectionEgress, Ports: []string{"40980", "40981"}, CreatedAt: at},
 		{Name: "bn-public-out", Action: ActionStamp, Stamp: "public", Direction: DirectionEgress, FromEntityWorld: true, Ports: []string{"40980", "40981"}, CreatedAt: at},
+		{Name: "bn-health", Action: ActionDeny, FromEntityWorld: true, Ports: []string{"40983"}, CreatedAt: at},
 		{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Direction: DirectionIngress, Ports: []string{"40840"}, CreatedAt: at},
 		{Name: "bn-restricted", Action: ActionDeny, CreatedAt: at},
 		{Name: "bn-subscriber-in", Action: ActionStamp, Stamp: "reserve-ingress", Direction: DirectionIngress, FromEntityWorld: true, Ports: []string{"40980", "40981"}, CreatedAt: at},
@@ -431,19 +432,19 @@ func TestCreate_ForceReplacesConfigAndMembership(t *testing.T) {
 	m, nftPath, regDir := newTestManager(t, r)
 
 	_, err := m.Create(context.Background(),
-		&Policy{Name: "bn-mgmt-in", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40983"}, CreatedAt: fixedTime()},
+		&Policy{Name: "bn-subscriber-in", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40983"}, CreatedAt: fixedTime()},
 		[]string{"10.0.0.0/8"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
 	// --force with a changed port set and a different --cidrs: re-renders,
 	// replaces (not merges) membership, and keeps the original created_at.
 	changed, err := m.Create(context.Background(),
-		&Policy{Name: "bn-mgmt-in", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40983", "40984"}},
+		&Policy{Name: "bn-subscriber-in", Action: ActionStamp, Stamp: "reserve-ingress", Ports: []string{"40983", "40984"}},
 		[]string{"192.168.0.0/16"}, []string{"10.4.0.0/24"}, true)
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	got, err := readEntry(regDir, "bn-mgmt-in")
+	got, err := readEntry(regDir, "bn-subscriber-in")
 	require.NoError(t, err)
 	require.Equal(t, fixedTime(), got.CreatedAt)
 	require.Equal(t, []string{"40983", "40984"}, got.Ports)
@@ -451,7 +452,7 @@ func TestCreate_ForceReplacesConfigAndMembership(t *testing.T) {
 	doc, err := os.ReadFile(nftPath)
 	require.NoError(t, err)
 	require.Contains(t, string(doc), "40984")
-	require.Equal(t, []string{"192.168.0.0/16"}, r.elements["bn-mgmt-in"],
+	require.Equal(t, []string{"192.168.0.0/16"}, r.elements["bn-subscriber-in"],
 		"--force replaces membership with exactly what's passed, not a merge with what was live before")
 }
 
