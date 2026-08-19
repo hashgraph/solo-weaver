@@ -32,7 +32,7 @@ blockNode:
     SERVER_PORT: "40840"
 
 plugins:
-  names: "facility-messaging,health,server-status,block-access-service,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill"
+  names: "facility-messaging,health,server-status,block-access-service,stream-publisher,stream-subscriber,block-verification,blocks-file-historic,blocks-file-recent,backfill"
 
 service:
   type: LoadBalancer

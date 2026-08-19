@@ -120,14 +120,111 @@ func TestPluginListForPreset_Tier1RFH_LegacyBN(t *testing.T) {
 
 // TestPluginListForPreset_BN0371_ExactLists pins the 0.37.1 preset strings to the
 // verbatim upstream values-overrides/plugin-profile-{lfh,rfh}.yaml so the injected
-// plugins.names is byte-identical to the chart default. "" resolves to the latest
-// (0.37.1) entry.
+// plugins.names is byte-identical to the chart default. 0.39.0 is the last version
+// in this bracket — 0.39.1 renames verification.
 func TestPluginListForPreset_BN0371_ExactLists(t *testing.T) {
 	const wantLFH = "backfill,block-access-service,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber,verification"
 	const wantRFH = "backfill,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,verification"
-	for _, ver := range []string{"", "0.37.1", "0.38.0", "1.0.0"} {
+	for _, ver := range []string{"0.37.1", "0.38.0", "0.39.0"} {
 		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
 		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
+	}
+}
+
+// ── BN 0.39.1 verification → block-verification boundary ─────────────────────
+
+// TestPluginListForPreset_BN0391_ExactLists pins the 0.39.1 preset strings to the
+// verbatim upstream plugin-profile-{lfh,rfh}.yaml. "" resolves to the latest
+// (0.39.1) entry, so this also covers the default-install path, which uses the
+// pinned BLOCK_NODE_VERSION in pkg/deps.
+func TestPluginListForPreset_BN0391_ExactLists(t *testing.T) {
+	const wantLFH = "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber"
+	const wantRFH = "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status"
+	for _, ver := range []string{"", "0.39.1", "0.40.0", "0.41.0", "1.0.0"} {
+		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
+		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
+	}
+}
+
+// TestPluginListForPreset_BN0391Boundary checks the rename in both directions, so a
+// future registry edit cannot quietly reintroduce the retired name at 0.39.1+ or
+// drop it from the versions that still expect it.
+func TestPluginListForPreset_BN0391Boundary(t *testing.T) {
+	for _, ver := range []string{"", "0.39.1", "0.40.0", "0.41.0"} {
+		for _, preset := range []string{PresetTier1LFH, PresetTier1RFH} {
+			list := PluginListForPreset(preset, ver)
+			assert.Contains(t, list, "block-verification", "preset=%q version=%q", preset, ver)
+			assertNoPluginNamed(t, list, "verification", preset, ver)
+		}
+	}
+	for _, ver := range []string{"0.37.1", "0.38.1", "0.39.0"} {
+		for _, preset := range []string{PresetTier1LFH, PresetTier1RFH} {
+			list := PluginListForPreset(preset, ver)
+			assert.NotContains(t, list, "block-verification", "preset=%q version=%q", preset, ver)
+			assert.Contains(t, list, "verification", "preset=%q version=%q", preset, ver)
+		}
+	}
+}
+
+// TestPluginsForVersion_BN0391Boundary verifies the TUI custom multi-select offers
+// block-verification only at 0.39.1+, and never offers both names at once.
+func TestPluginsForVersion_BN0391Boundary(t *testing.T) {
+	for _, ver := range []string{"", "0.39.1", "0.40.0", "0.41.0"} {
+		plugins := PluginsForVersion(ver)
+		assert.Contains(t, plugins, "block-verification", "version=%q", ver)
+		assert.NotContains(t, plugins, "verification", "version=%q", ver)
+	}
+	for _, ver := range []string{"0.37.1", "0.38.1", "0.39.0"} {
+		plugins := PluginsForVersion(ver)
+		assert.Contains(t, plugins, "verification", "version=%q", ver)
+		assert.NotContains(t, plugins, "block-verification", "version=%q", ver)
+	}
+}
+
+// retiredPlugins maps a plugin name the block-node team retired to the first
+// MinVersion at which it must no longer be offered. Add a row whenever a plugin is
+// deprecated upstream; TestPluginHistory_NoRetiredPluginsAtOrAboveBound then holds
+// every current and future registry entry to it.
+var retiredPlugins = map[string]string{
+	"s3-archive":   "0.35.0",
+	"verification": "0.39.1",
+}
+
+// TestPluginHistory_NoRetiredPluginsAtOrAboveBound is the invariant that catches a
+// missed rename: no entry at or above a plugin's retirement bound may offer that
+// plugin, in either a preset or the TUI list. Without it, a new BN release that
+// retires a plugin can be merged with the old name still live in the newest entry.
+func TestPluginHistory_NoRetiredPluginsAtOrAboveBound(t *testing.T) {
+	for name, bound := range retiredPlugins {
+		boundVer, err := semver.NewSemver(bound)
+		require.NoError(t, err, "retirement bound %q for %q must be valid semver", bound, name)
+		for i, cfg := range blockNodePluginHistory {
+			if cfg.MinVersion == "" {
+				continue
+			}
+			entryVer, err := semver.NewSemver(cfg.MinVersion)
+			require.NoError(t, err, "entry %d MinVersion %q must be valid semver", i, cfg.MinVersion)
+			if entryVer.LessThan(boundVer) {
+				continue
+			}
+			for preset, list := range cfg.Presets {
+				assertNoPluginNamed(t, list, name, preset, cfg.MinVersion)
+			}
+			assert.NotContains(t, cfg.AllPlugins, name,
+				"entry %d (MinVersion=%q) must not offer retired plugin %q (retired at %s)", i, cfg.MinVersion, name, bound)
+		}
+	}
+}
+
+// assertNoPluginNamed asserts that a comma-separated plugins.names list has no entry
+// exactly equal to name. A substring check is not enough: "verification" is a
+// substring of "block-verification", so assert.NotContains on the joined string
+// would fail against the very list that fixes the rename.
+func assertNoPluginNamed(t *testing.T, list, name, preset, version string) {
+	t.Helper()
+	for _, entry := range strings.Split(list, ",") {
+		assert.NotEqual(t, name, strings.TrimSpace(entry),
+			"preset=%q version=%q must not contain plugin %q (list: %s)", preset, version, name, list)
 	}
 }
 
@@ -216,6 +313,34 @@ func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
 			wantContains:    []string{"roster-bootstrap-rsa", "roster-bootstrap-tss", "blocks-file-historic", "blocks-file-recent"},
 			wantAbsent:      []string{"s3-archive", "cloud-storage-archive", "cloud-storage-expanded"},
 		},
+		{
+			name:            "RFH upgrade to 0.39.1 renames verification",
+			installedPreset: PresetTier1RFH,
+			targetVersion:   "0.39.1",
+			wantContains:    []string{"block-verification", "cloud-storage-archive", "cloud-storage-expanded"},
+			wantAbsent:      []string{"verification", "s3-archive"},
+		},
+		{
+			name:            "LFH upgrade to 0.39.1 renames verification",
+			installedPreset: PresetTier1LFH,
+			targetVersion:   "0.39.1",
+			wantContains:    []string{"block-verification", "blocks-file-historic", "blocks-file-recent"},
+			wantAbsent:      []string{"verification", "cloud-storage-archive"},
+		},
+		{
+			name:            "LFH target 0.39.0 stays pre-0.39.1 (legacy verification name)",
+			installedPreset: PresetTier1LFH,
+			targetVersion:   "0.39.0",
+			wantContains:    []string{"verification", "roster-bootstrap-rsa"},
+			wantAbsent:      []string{"block-verification"},
+		},
+		{
+			name:            "RFH upgrade from pre-0.35 straight to 0.41.0 crosses both renames",
+			installedPreset: PresetTier1RFH,
+			targetVersion:   "0.41.0",
+			wantContains:    []string{"block-verification", "cloud-storage-archive", "cloud-storage-expanded", "roster-bootstrap-rsa"},
+			wantAbsent:      []string{"verification", "s3-archive"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,7 +350,7 @@ func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
 				assert.Contains(t, list, want)
 			}
 			for _, absent := range tc.wantAbsent {
-				assert.NotContains(t, list, absent)
+				assertNoPluginNamed(t, list, absent, tc.installedPreset, tc.targetVersion)
 			}
 		})
 	}

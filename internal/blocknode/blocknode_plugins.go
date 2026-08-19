@@ -129,6 +129,37 @@ var blockNodePluginHistory = []blockNodePluginConfig{
 			"verification",
 		},
 	},
+	{
+		// BN 0.39.1: verification renamed to block-verification. The old plugin is
+		// unpublished from 0.39.1 and deleted from the block-node repo in 0.41.0, so
+		// charts at or above this bound must not be offered the old name — the image
+		// no longer registers it. Boundary is 0.39.1 (the version the block-node team
+		// states the replacement is available from) rather than 0.41.0 (removal): the
+		// 0.39.x and 0.40.x images already register only block-verification.
+		// Otherwise identical to the 0.37.1 entry. Strings copied verbatim from the
+		// chart's values-overrides/plugin-profile-{lfh,rfh,all}.yaml.
+		MinVersion: "0.39.1",
+		Presets: map[string]string{
+			PresetTier1LFH: "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber",
+			PresetTier1RFH: "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status",
+		},
+		AllPlugins: []string{
+			"backfill",
+			"block-access-service",
+			"block-verification",
+			"blocks-file-historic",
+			"blocks-file-recent",
+			"cloud-storage-archive",
+			"cloud-storage-expanded",
+			"facility-messaging",
+			"health",
+			"roster-bootstrap-rsa",
+			"roster-bootstrap-tss",
+			"server-status",
+			"stream-publisher",
+			"stream-subscriber",
+		},
+	},
 }
 
 // AllBlockNodePlugins is the ordered list of available plugins for the current
