@@ -59,7 +59,13 @@ func RenderWeaverNft(registryDir, weaverNftPath string, podCIDRs ...string) erro
 		}
 	}
 
-	doc, err := Render(policies, podCIDRs...)
+	// Rendered with no membership: this is the provisioning path, which has no
+	// nft runner and so no view of what is live. The sets come up empty and the
+	// daemon's next successful poll replaces every one of them wholesale, which
+	// also rewrites this artifact with the membership carried through. A reboot
+	// in the gap between a re-provision and that poll therefore starts with
+	// empty sets — the pre-existing behaviour, not a regression.
+	doc, err := Render(policies, nil, podCIDRs...)
 	if err != nil {
 		return errorx.Decorate(err, "failed to render %s", weaverNftPath)
 	}

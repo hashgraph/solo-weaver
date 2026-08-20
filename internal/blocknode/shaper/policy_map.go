@@ -69,8 +69,9 @@ type categoryBinding struct {
 // categoryBindings is the internal, non-configurable (direction, category) →
 // policy mapping. Both the BN's category vocabulary and the provisioner's policy
 // names are fixed in code, so this is a static table rather than config. Keys
-// not listed here — the public category, or the operator-curated mgmt sets — are
-// never touched by the monitor.
+// not listed here — the public category — are never touched by the monitor, and
+// neither is any policy without a binding (bn-health, whose match key is a
+// static port list rather than membership).
 //
 // bn-backfill is fed by OUTBOUND partner endpoints (the peer block nodes this BN
 // backfills from), keyed on the compound destination address AND port. Inbound
@@ -248,7 +249,16 @@ func canonicalDesiredMembership(ce categoryEndpoints) (map[string][]string, erro
 // conversion.
 func desiredElements(b categoryBinding, endpoints []string) ([]string, error) {
 	if !b.compound {
-		return endpoints, nil
+		// Drop endpoints already covered by another supplied prefix. This has to
+		// happen HERE, on the desired side, and not only on the apply side:
+		// policy.Manager.applySet prunes the same way before writing, so a
+		// desired list that kept a covered entry could never match live, the
+		// diff would report it as an add forever, and the set would be re-applied
+		// every tick (the same perpetual-add trap the v6 merge above avoids).
+		// Pruning both sides identically keeps the digest in
+		// canonicalDesiredMembership honest too: it only changes when the
+		// membership that actually lands in the kernel changes.
+		return policy.PruneContainedCIDRs(endpoints), nil
 	}
 	out := make([]string, 0, len(endpoints))
 	for _, e := range endpoints {

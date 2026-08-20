@@ -49,6 +49,66 @@ func TestNewJSONConsoleLogger_EmitsJSON(t *testing.T) {
 	assert.Equal(t, "info", m["level"])
 }
 
+// TestNewStderrConsoleLogger_WritesToStderrNotStdout is the regression guard for
+// #1029: in unformatted (non-TTY) mode the caller is capturing stdout, so console
+// log lines must go to stderr or they corrupt the captured data.
+func TestNewStderrConsoleLogger_WritesToStderrNotStdout(t *testing.T) {
+	origLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
+
+	cfg := logx.LoggingConfig{Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
+
+	// Both streams are swapped, so a line landing on the wrong one is visible
+	// rather than merely absent. The ConsoleWriter binds its Out at construction,
+	// hence building the logger between the swap and the restore.
+	origOut, origErr := os.Stdout, os.Stderr
+	rOut, wOut, err := os.Pipe()
+	require.NoError(t, err)
+	rErr, wErr, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout, os.Stderr = wOut, wErr
+	logger := newStderrConsoleLogger(cfg)
+	os.Stdout, os.Stderr = origOut, origErr
+
+	logger.Info().Str("step_id", "validate-cpu").Msg("hello")
+	_ = wOut.Close()
+	_ = wErr.Close()
+
+	var outBuf, errBuf bytes.Buffer
+	_, _ = outBuf.ReadFrom(rOut)
+	_, _ = errBuf.ReadFrom(rErr)
+
+	assert.Contains(t, errBuf.String(), "hello", "console log line must be on stderr")
+	assert.Empty(t, outBuf.String(), "stdout must stay clean for the command's own output")
+}
+
+// TestNewStderrConsoleLogger_AlsoWritesTheLogFile pins the second half of the
+// contract: moving the console stream must not stop the rolling file from
+// receiving the same events.
+func TestNewStderrConsoleLogger_AlsoWritesTheLogFile(t *testing.T) {
+	origLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
+
+	dir := t.TempDir()
+	cfg := logx.LoggingConfig{Directory: dir, Filename: "test.log", MaxSize: 1}
+
+	origErr := os.Stderr
+	_, wErr, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = wErr
+	logger := newStderrConsoleLogger(cfg)
+	os.Stderr = origErr
+
+	logger.Info().Msg("to-the-file")
+	_ = wErr.Close()
+
+	data, err := os.ReadFile(dir + "/test.log")
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "to-the-file")
+}
+
 func TestSanitizeDetail_TruncatesLongMessages(t *testing.T) {
 	long := strings.Repeat("a", 250)
 	result := sanitizeDetail(long)

@@ -70,9 +70,13 @@ func TestValidate(t *testing.T) {
 			wantErr: "--direction does not apply to --deny",
 		},
 		{
-			name:    "deny with ports rejected",
-			policy:  &Policy{Name: "x", Action: ActionDeny, Ports: []string{"40840"}},
-			wantErr: "--ports does not apply to --deny",
+			name:   "valid deny narrowed by cidrs and ports",
+			policy: &Policy{Name: "x", Action: ActionDeny, Ports: []string{"40840"}},
+			cidrs:  []string{"10.99.0.0/16"},
+		},
+		{
+			name:   "valid deny narrowed by ports alone",
+			policy: &Policy{Name: "bn-health", Action: ActionDeny, FromEntityWorld: true, Ports: []string{"40983"}},
 		},
 		{
 			name:    "from-entity world with cidrs rejected",
@@ -81,9 +85,11 @@ func TestValidate(t *testing.T) {
 			wantErr: "mutually exclusive with --cidrs",
 		},
 		{
-			name:    "from-entity world on deny rejected",
+			// Neither an IP set nor a port set left to match on: the rule would
+			// render as a bare `drop` and take the node's forwarding down.
+			name:    "from-entity world on deny with no ports rejected",
 			policy:  &Policy{Name: "x", Action: ActionDeny, FromEntityWorld: true},
-			wantErr: "--from-entity world does not apply to --deny",
+			wantErr: "--deny with --from-entity world requires --ports",
 		},
 		{
 			name:    "invalid port",

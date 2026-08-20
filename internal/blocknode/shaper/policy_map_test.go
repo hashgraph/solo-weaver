@@ -240,7 +240,7 @@ func TestCategoryBindings_PolicyNamesAreCanonical(t *testing.T) {
 	canonicalBNPolicyNames := map[string]bool{
 		"bn-publisher": true, "bn-subscriber-in": true, "bn-partner-out": true,
 		"bn-public-out": true, "bn-status-in": true, "bn-status-out": true,
-		"bn-mgmt-in": true, "bn-mgmt-out": true, "bn-restricted": true, "bn-backfill": true,
+		"bn-health": true, "bn-restricted": true, "bn-backfill": true,
 	}
 	for key, b := range categoryBindings {
 		if !canonicalBNPolicyNames[b.policyName] {
@@ -248,4 +248,67 @@ func TestCategoryBindings_PolicyNamesAreCanonical(t *testing.T) {
 				"BN policy names created by NetworkPolicyCreate", key, b.policyName)
 		}
 	}
+}
+
+// TestComputePolicyDeltas_PrunesCoveredEndpointsAndSettles is the regression
+// test for #1006's daemon half. An upstream statusz snapshot that reports both a
+// prefix and a host inside it must (a) not produce membership nft would refuse
+// with "conflicting intervals specified", and (b) settle: once the pruned
+// membership is live, the next tick must compute an EMPTY delta. Without pruning
+// the desired side as well as the apply side, the covered host would be reported
+// as an add forever and the set re-applied every poll.
+func TestComputePolicyDeltas_PrunesCoveredEndpointsAndSettles(t *testing.T) {
+	ctx := context.Background()
+	ce := categoryEndpoints{
+		// 10.3.0.5/32 is inside 10.3.0.0/24; 10.4.0.0/24 is unrelated.
+		{Inbound, CategoryRestricted}: {"10.3.0.0/24", "10.3.0.5/32", "10.4.0.0/24"},
+	}
+
+	// Tick 1: empty live set, so the delta is the pruned desired membership.
+	l := newFakeLister()
+	deltas, err := computePolicyDeltas(ctx, l, ce)
+	require.NoError(t, err)
+	require.Equal(t, []PolicyDelta{
+		{Policy: "bn-restricted", SetDelta: setDelta([]string{"10.3.0.0/24", "10.4.0.0/24"}, nil)},
+	}, deltas, "the covered /32 must not reach the apply path")
+
+	// Tick 2: that membership is now live. The delta must be empty -- no churn.
+	l2 := newFakeLister()
+	l2.elements["bn-restricted"] = []string{"10.3.0.0/24", "10.4.0.0/24"}
+	deltas, err = computePolicyDeltas(ctx, l2, ce)
+	require.NoError(t, err)
+	require.Empty(t, deltas, "identical upstream membership re-applied every tick")
+}
+
+// TestCanonicalDesiredMembership_DigestIgnoresCoveredEndpoints proves the
+// force-resync digest is computed from the membership that actually lands in the
+// kernel: an upstream that starts reporting a redundant covered host must not
+// look like a membership change.
+func TestCanonicalDesiredMembership_DigestIgnoresCoveredEndpoints(t *testing.T) {
+	without, err := canonicalDesiredMembership(categoryEndpoints{
+		{Inbound, CategoryRestricted}: {"10.3.0.0/24"},
+	})
+	require.NoError(t, err)
+
+	with, err := canonicalDesiredMembership(categoryEndpoints{
+		{Inbound, CategoryRestricted}: {"10.3.0.0/24", "10.3.0.5/32"},
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, without, with, "a covered endpoint changed the digest")
+}
+
+// TestComputePolicyDeltas_CompoundEndpointsAreNotPruned pins AC#4 at the daemon
+// boundary: bn-backfill's compound ip:port set has no interval semantics, so two
+// endpoints whose address halves look nested must both survive.
+func TestComputePolicyDeltas_CompoundEndpointsAreNotPruned(t *testing.T) {
+	l := newFakeLister()
+	deltas, err := computePolicyDeltas(context.Background(), l, categoryEndpoints{
+		{Outbound, CategoryPartner}: {"10.30.0.0:43473", "10.30.5.7:43473"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []PolicyDelta{
+		{Policy: "bn-backfill", SetDelta: setDelta(
+			[]string{"10.30.0.0 . 43473", "10.30.5.7 . 43473"}, nil)},
+	}, deltas)
 }

@@ -12,7 +12,7 @@
 # only the deltas; initContainers, persistence wiring and the rest come from the base.
 #
 # health is deliberately NOT set here. The base template pins it from
-# DefaultBlockNodeHealthPort so the port weaver opens for bn-mgmt is the same port it
+# DefaultBlockNodeHealthPort so the port weaver drops for bn-health is the same port it
 # dials for statusz; overriding it here would win the merge and break statusz
 # discovery, which is what bootstraps every other port in this file.
 #
@@ -32,7 +32,7 @@ blockNode:
     SERVER_PORT: "40840"
 
 plugins:
-  names: "facility-messaging,health,server-status,block-access-service,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill"
+  names: "facility-messaging,health,server-status,block-access-service,stream-publisher,stream-subscriber,block-verification,blocks-file-historic,blocks-file-recent,backfill"
 
 service:
   type: LoadBalancer

@@ -25,7 +25,7 @@ type NetworkPlaneOptions struct {
 	// workload policy plane + tc HTB shaping + daemon monitor as one bundle.
 	TrafficShapingEnabled bool
 	// HealthPort is the resolved block-node health/statusz port, threaded into
-	// NetworkPolicyCreate so the bn-mgmt set tracks the port the BN listens on.
+	// NetworkPolicyCreate so the bn-health drop tracks the port the BN listens on.
 	HealthPort string
 	// Namespace is the block-node namespace, used by the daemon-config step when
 	// WithDaemonReload is set.
@@ -49,9 +49,9 @@ type NetworkPlaneOptions struct {
 	// WithDaemonReload appends the daemon-config write + service restart inline
 	// after the shaping steps so a live daemon reloads the changed daemon.yaml
 	// (it reads the file only at startup — no hot-reload). reconfigure/upgrade set
-	// this; install leaves it false and instead writes the daemon config as a
-	// separate later phase (BlockNodeDaemonConfigWorkflow) and starts the service
-	// post-workflow, once the deployment the daemon watches exists.
+	// this; install leaves it false and does the same write + restart later, in
+	// BlockNodeDaemonConfigWorkflow, once the deployment the daemon watches
+	// exists.
 	WithDaemonReload bool
 }
 
@@ -159,9 +159,9 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 // to persist and no tc config to shape traffic with.
 func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool, healthPort string) *automa.WorkflowBuilder {
 	// Install shares the network-plane bundle with reconfigure/upgrade via
-	// NetworkPlaneSteps but never tears down (AllowTeardown=false) and defers the
-	// daemon monitor to the separate BlockNodeDaemonConfigWorkflow phase, which
-	// runs after the deployment it watches is in place (WithDaemonReload=false).
+	// NetworkPlaneSteps but never tears down (AllowTeardown=false) and defers
+	// the daemon config write + restart to BlockNodeDaemonConfigWorkflow, after
+	// the deployment it watches is in place (WithDaemonReload=false).
 	stepList := NetworkPlaneSteps(NetworkPlaneOptions{
 		Force:                 force,
 		TrafficShapingEnabled: trafficShapingEnabled,
@@ -188,10 +188,18 @@ func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[s
 		})
 }
 
-// BlockNodeDaemonConfigWorkflow enables the block-node traffic-shaper monitor in
-// daemon.yaml. It wraps the single config step in a "Traffic-shaper Monitor" phase
-// so it renders under its own header rather than dangling after the "Block Node
-// Deployment" phase. It runs last, after the deployment it watches is in place.
+// BlockNodeDaemonConfigWorkflow enables the block-node traffic-shaper monitor
+// in daemon.yaml and restarts the daemon so it actually loads it. It renders as
+// the "Traffic-shaper Monitor" phase and runs last, once the deployment it
+// watches is in place.
+//
+// The restart is what fixes #1018: the daemon reads daemon.yaml only at
+// startup, and uninstall leaves the shared unit running — so without it, a
+// reinstall would leave the daemon on its stale config and the monitor would
+// never start. On a fresh host both extra steps skip (no daemon yet) and
+// ensureBlockNodeDaemon installs it post-workflow, as before. The final probe
+// fails the phase if the restarted daemon could not build the block-node
+// component (e.g. its kubeconfig no longer reaches the cluster).
 //
 // statusz carries the operator-supplied overrides (--statusz-base-url /
 // --statusz-poll-interval), merged per-field into daemon.yaml by the step; an
@@ -201,6 +209,8 @@ func BlockNodeDaemonConfigWorkflow(namespace string, statusz daemon.StatuszConfi
 		WithId("block-node-daemon-config").
 		Steps(
 			steps.WriteBlockNodeDaemonConfigStep(models.Paths(), namespace, statusz, true),
+			steps.RestartDaemonServiceStep(),
+			steps.CheckDaemonComponentPrerequisitesStep(models.Paths().DaemonSockPath, daemon.ComponentNameBlockNode),
 		).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Traffic-shaper Monitor")

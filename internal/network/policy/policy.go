@@ -21,13 +21,14 @@ const (
 	// ActionStamp classifies matching packets into an HTB priority class
 	// (`meta priority set <value> accept`).
 	ActionStamp Action = "stamp"
-	// ActionDeny drops matching packets in both directions, before the
-	// established/related fast-path.
+	// ActionDeny drops matching packets, before the established/related
+	// fast-path. A membership deny drops both directions; adding --ports narrows
+	// it to a listener port and drops the request leg only (see renderDenyRules).
 	ActionDeny Action = "deny"
 )
 
 // Direction selects which half of the forward chain a stamp rule renders into.
-// It is empty for deny policies (which always apply to both directions). For
+// It is empty for deny policies (whose direction follows from the match). For
 // stamp policies it is not a caller-supplied value: Validate derives it from
 // the --stamp class (every class in the mark map has exactly one direction),
 // so it can never contradict the class it names.
@@ -43,10 +44,12 @@ const (
 )
 
 // Policy is the static definition of one named category, mirroring the registry
-// JSON schema. CIDR membership is deliberately NOT a field: it lives in the
-// live nft set and is owned by the daemon poll loop, never persisted to the
-// registry or the .nft file. The initial `--cidrs` membership supplied at
-// create time is applied to the live kernel separately (see Manager.Create).
+// JSON schema. CIDR membership is deliberately NOT a field: it is owned by the
+// daemon poll loop, not by the operator-authored policy definition, so it never
+// enters the registry. It is persisted — but as set elements in the rendered
+// .nft, written from live kernel state (see Manager.persistMembership), not as
+// registry config. The initial `--cidrs` membership supplied at create time is
+// applied to the live kernel separately (see Manager.Create).
 type Policy struct {
 	Name            string    `json:"name"`
 	Action          Action    `json:"action"`
@@ -81,13 +84,8 @@ func (p *Policy) Validate(cidrs []string) error {
 		return errorx.IllegalArgument.New("policy must specify exactly one of --stamp or --deny")
 	}
 
-	if p.FromEntityWorld {
-		if p.Action != ActionStamp {
-			return errorx.IllegalArgument.New("--from-entity world is only valid with --stamp")
-		}
-		if len(cidrs) > 0 {
-			return errorx.IllegalArgument.New("--from-entity world is mutually exclusive with --cidrs")
-		}
+	if p.FromEntityWorld && len(cidrs) > 0 {
+		return errorx.IllegalArgument.New("--from-entity world is mutually exclusive with --cidrs")
 	}
 
 	for _, port := range p.Ports {
@@ -146,16 +144,16 @@ func (p *Policy) validateDeny() error {
 		return errorx.IllegalArgument.New("--deny is mutually exclusive with --stamp and --reply-stamp")
 	}
 	if p.Direction != "" {
-		return errorx.IllegalArgument.New("--direction does not apply to --deny (it drops both directions)")
-	}
-	if len(p.Ports) > 0 {
-		return errorx.IllegalArgument.New("--ports does not apply to --deny")
+		return errorx.IllegalArgument.New("--direction does not apply to --deny (the direction follows from the match)")
 	}
 	if p.ManagedPorts {
 		return errorx.IllegalArgument.New("managed ports do not apply to --deny")
 	}
-	if p.FromEntityWorld {
-		return errorx.IllegalArgument.New("--from-entity world does not apply to --deny")
+	// A deny needs at least one narrowing clause. With neither an IP set
+	// (--from-entity world suppresses it) nor a port set, the rule renders as a
+	// bare `drop` and takes down every forwarded packet on the node.
+	if p.FromEntityWorld && len(p.Ports) == 0 {
+		return errorx.IllegalArgument.New("--deny with --from-entity world requires --ports")
 	}
 	return nil
 }

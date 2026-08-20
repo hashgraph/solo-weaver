@@ -23,9 +23,12 @@ type Runner interface {
 	// rendered document carries the idempotent `add table / delete table / add
 	// table` prefix, so a re-apply atomically replaces the inet weaver-workload-policy table.
 	Apply(ctx context.Context, doc string) error
-	// AddElements adds initial membership to a policy's set
-	// (`nft add element inet weaver-workload-policy <set> { … }`). Applied to the live kernel
-	// only — set membership is never persisted.
+	// AddElements adds membership to a policy's set
+	// (`nft add element inet weaver-workload-policy <set> { … }`). It writes the
+	// live kernel only; the caller persists by re-rendering the artifact
+	// afterwards. It must never be used to re-seed a set the rendered document
+	// already declared with elements: redundant on the interval sets, and an
+	// outright failure on the plain compound/listener-port ones.
 	AddElements(ctx context.Context, set string, elements []string) error
 	// DeleteElements removes specific elements from a policy's set
 	// (`nft delete element inet weaver-workload-policy <set> { … }`). Applied to the live

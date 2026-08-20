@@ -291,16 +291,20 @@ sudo solo-provisioner block node install \
 > **Network policies**: when traffic shaping is enabled (see the traffic shaping
 > gate above), `block node install` lays down the `inet weaver-workload-policy`
 > classification plane by creating the fixed set of BN policies (`bn-publisher`,
-> `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-status-in/out`,
-> `bn-mgmt-in/out`, `bn-restricted`, `bn-backfill`) idempotently, then persists the
-> rendered `network-weaver-workload-policy.nft` for reboot replay. The one operator-curated set,
-> `bn-mgmt-in/out`, is seeded here from the host management allowlist
-> (`--mgmt-cidrs`). Every other set's membership — including `bn-restricted` —
-> is reconciled at runtime by the traffic-shaper daemon from the block node's
-> statusz; `bn-restricted` in particular reflects a "restricted" category the
-> block node itself reports, so it always starts empty and has no install-time
-> flag. A permanent, purely operator-managed block list lives instead on the
-> host firewall (`--blocked-cidrs`, a different table).
+> `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-health`,
+> `bn-restricted`, `bn-backfill`) idempotently, then persists the rendered
+> `network-weaver-workload-policy.nft` for reboot replay. `bn-health` is the one
+> non-classification entry: it drops the block node's health/statusz port
+> (`blockNode.ports.health`) on the forward path from every source. Its only
+> consumers are the node's kubelet and the provisioner, both of which reach the
+> pod without ever traversing that hook, so nothing has to be allowlisted and the
+> port is unreachable from off-node. No set is seeded with membership at install:
+> every set's membership — including `bn-restricted` — is reconciled at runtime
+> by the traffic-shaper daemon from the block node's statusz; `bn-restricted` in
+> particular reflects a "restricted" category the block node itself reports, so it
+> always starts empty and has no install-time flag. A permanent, purely
+> operator-managed block list lives instead on the host firewall
+> (`--blocked-cidrs`, a different table).
 > Re-running the install never clobbers operator-applied set membership or per-class
 > shape values; `--force` re-renders the static rules from these definitions.
 
@@ -654,7 +658,7 @@ The table holds two kinds of record:
 - **Three reserved blocks** — `mgmt` (management allowlist), `blocked` (operator block list, dropped on `prerouting`, `input` and `output`), and `in_cluster` (host-service ports reachable from the pod CIDR). They are first-class because weaver derives or defaults their content and omitting one is dangerous.
 - **Named allow rules** — an operator-authored source list x port list x protocol accept, for anything else the host must admit (Kubernetes control-plane ports, Cilium VXLAN, an admin jump host).
 
-Structure — which rules exist, and what protocol each matches — is declared in a config file. Membership — the addresses and ports inside a rule — is mutable straight from the CLI. That split is deliberate: adding a rule is a reviewed change, while unblocking an operator is sometimes urgent.
+Structure — which rules exist, and what protocol each matches — is declared with `create-allow-rule`, or stated for the whole table at once in a config file passed to `create --from-file`. Membership — the addresses and ports inside a rule — is mutable straight from the CLI either way.
 
 #### Create the Host Firewall
 
@@ -786,7 +790,7 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 
 `in_cluster.cidrs` is the one address list weaver can legitimately derive on its own, which is why it stays optional; its absence costs a rule rather than access to the host.
 
-The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. Re-run `create --from-file`, or delete the file and re-run the `create` + `create-allow-rule` sequence, to repair one.
+The same rule applies to the persisted config at `/etc/solo-provisioner/network-weaver-host-firewall.yaml`: a truncated or hand-edited file is refused rather than loaded with a defaulted management allowlist. To repair one, recover the retained previous generation (see [Re-apply / Recover the Host Firewall](#re-apply--recover-the-host-firewall)); failing that, re-run `create --from-file`, or delete the file and re-run the `create` + `create-allow-rule` sequence.
 
 #### Modify a Rule's Addresses / Ports
 
@@ -867,6 +871,28 @@ sudo solo-provisioner network firewall show --output yaml > rules.yaml
 sudo solo-provisioner network firewall create --from-file rules.yaml --force   # a no-op
 ```
 
+`--output commands` is the per-rule counterpart, for carrying **one** allow rule to other hosts. It requires `--name` and works on named allow rules only (the reserved blocks are configured by `create`/`set`, not declared):
+
+```bash
+sudo solo-provisioner network firewall show --name rudder_server --output commands
+```
+
+```
+solo-provisioner network firewall create-allow-rule --name rudder_server --proto tcp --icmp-echo
+solo-provisioner network firewall add --name rudder_server --cidr 200.201.203.205/32 --port 5309,8443
+```
+
+Unlike `show --name <rule> --output yaml` — which is an inspection view, not a config — this sequence is **safe to replay against a host that already has a firewall**. `create-allow-rule` and `add` are additive, so they bring the one rule into existence and leave every other rule untouched. Save it and run it on the target host:
+
+```bash
+# on the source host
+sudo solo-provisioner network firewall show --name rudder_server --output commands > rudder.sh
+# on the target host
+sudo sh rudder.sh
+```
+
+The emitted lines carry no `sudo` of their own, so the file is a script you run once with privilege rather than a list of individually-escalating commands. Addresses come out in stored order (kept sorted), which is what the host actually has, not the order they were typed in.
+
 > `delete --all` (the default when `--name` is omitted, which is what this verb has always done) removes the table and both `/etc/solo-provisioner/network-weaver-host-firewall.{nft,yaml}`, leaving the host with no weaver-managed firewall — including no management allowlist. It asks for confirmation in an interactive session; pass `--force` to skip the prompt. It does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
 >
 > The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set --name mgmt --cidrs ""`).
@@ -881,13 +907,53 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force   #
 > `/etc/solo-provisioner/network-weaver-host-firewall.yaml`, so an urgent
 > `add --name mgmt --cidr …` is not reverted by the next reconfigure.
 
+#### Re-apply / Recover the Host Firewall
+
+`reapply` re-renders and re-applies the persisted config without changing it. It takes no arguments — it states no intent, so there is nothing to supply:
+
+```bash
+sudo solo-provisioner network firewall reapply
+```
+
+Use it to re-assert the table after something else on the host disturbed it, or after recovering the config. Two properties worth knowing:
+
+- It **records no enable/disable decision**, unlike `create` and `delete --all`. A later `block node reconfigure` behaves exactly as if the `reapply` had not run.
+- It replaces only the `inet weaver-host-firewall` table. The rendered ruleset scopes its flush to that table, so any third-party nftables table on the host is left alone.
+
+If no config is persisted, `reapply` fails rather than applying a default table — a default-drop policy with an empty management allowlist would lock the host out. Run `create` first.
+
+There is deliberately no way to point `reapply` at a file. To apply a file, that is `create --from-file <path> --force`.
+
+**Recovering a corrupt config.** Every apply retains the generation it replaces:
+
+| Path | Contents |
+|------|----------|
+| `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | the config currently applied |
+| `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | the generation immediately before it |
+
+So a truncated or hand-mangled config is a two-step repair that **keeps the named allow rules**:
+
+```bash
+sudo cp /etc/solo-provisioner/network-weaver-host-firewall.yaml.prev \
+        /etc/solo-provisioner/network-weaver-host-firewall.yaml
+sudo solo-provisioner network firewall reapply
+```
+
+Three things this retention deliberately is and is not:
+
+- **One generation deep.** It is a recovery artifact, not a version history — keep history in your own repository, holding the output of `show --output yaml`.
+- **Always loadable.** The retained copy is only written when the config it replaces parses, so it is never itself corrupt. This also means recovering from it does not consume it: the bad config is not promoted over the good one.
+- **Not the last line of defence.** Without it, a lost config falls through to re-parsing the rendered `.nft`, which recovers the three reserved blocks but **loses every named allow rule**. That fallback still exists; the retained copy is what keeps you from needing it.
+
+`delete --all` removes the retained copy along with the config and the `.nft` artifact.
+
 #### Create a Traffic Policy
 
 The `policy` scope is a generic, category-agnostic primitive that manages the `inet weaver-workload-policy` workload traffic plane: named per-category rules that classify traffic into an HTB priority class, or quarantine a set of CIDRs. It is not tied to any specific node type — the CLI takes CIDRs and class names directly (statusz-agnostic); the examples below use the block-node categories because `block node install` is the only caller today. Each `create` renders the rule(s) into the `inet weaver-workload-policy` forward chain, ensures the policy's nft set `@<name>` exists, writes a per-policy registry file under `/etc/solo-provisioner/policies/`, applies the full chain to the live kernel with `nft -f`, and atomically rewrites `/etc/solo-provisioner/network-weaver-workload-policy.nft`.
 
 `create` is create-if-missing, mirroring `network firewall create`: a policy that already exists is left untouched unless `--force` is passed, in which case its config and membership are **replaced** (not merged) from the given flags/`--cidrs`. Without `--force`, an existing policy warns and makes no changes — even if the flags/`--cidrs` given this time differ from before.
 
-Specify **exactly one** action: `--stamp <class>` (classify into an HTB priority class) or `--deny` (drop the CIDRs both directions). There is no `--direction` flag — every class has exactly one direction (see the class list below), so `--stamp <class>` determines it.
+Specify **exactly one** action: `--stamp <class>` (classify into an HTB priority class) or `--deny` (drop). A `--deny` always matches its `@<name>` CIDR set unless `--from-entity world` replaces that with a match on any source; `--ports` adds a listener-port clause on top of either — it does not on its own remove the set match, so `--deny --ports` without `--from-entity world` still needs membership to match anything. A membership `--deny` drops both directions; a port-scoped `--deny` is confined to the pod CIDR and drops the **request leg only**, qualified with `ct direction original` — a listener port sits inside the ephemeral range, so an unqualified drop would also catch the reply leg of an unrelated connection that drew that port as its source port. Combining it with `--from-entity world` locks the port down from every source. There is no `--direction` flag — every class has exactly one direction (see the class list below), so `--stamp <class>` determines it.
 
 ```bash
 # Publisher: highest-priority ingress class on the publisher listener port
@@ -910,6 +976,10 @@ sudo solo-provisioner network policy create --name bn-backfill \
 # Quarantine: drop all traffic to/from a set of CIDRs, both directions
 sudo solo-provisioner network policy create --name bn-restricted \
   --deny --cidrs 10.99.0.0/16
+
+# Port lockdown: drop inbound connections to a workload listener port, from every source
+sudo solo-provisioner network policy create --name bn-health \
+  --deny --ports 40983 --from-entity world
 ```
 
 **Flags**:
@@ -918,7 +988,7 @@ sudo solo-provisioner network policy create --name bn-restricted \
 |-----------------|------------------------------------------------------------------------------------------------------|---------------|
 | `--name`        | Policy name; also the nft set name `@<name>` (**required**)                                          | (none)        |
 | `--stamp`       | HTB class to classify matching packets into; also fixes the policy's direction (mutually exclusive with `--deny`) | (none) |
-| `--deny`        | Drop the `--cidrs` in both directions (mutually exclusive with `--stamp`)                            | `false`       |
+| `--deny`        | Drop the `--cidrs` (both directions), the `--ports` (request leg), or their intersection (mutually exclusive with `--stamp`) | `false` |
 | `--reply-stamp` | Reply class for an asymmetric conntrack reply (requires `--stamp` to resolve to an egress class; `--reply-stamp` must resolve to the mirror ingress class) | (none) |
 | `--from-entity` | `world` — match any source/dest with no IP-set clause (mutually exclusive with `--cidrs`)            | (none)        |
 | `--ports`       | Workload listener ports for the match key (comma-separated or repeated)                              | (none)        |
@@ -929,7 +999,7 @@ sudo solo-provisioner network policy create --name bn-restricted \
 
 `--stamp` references a QoS class name — `publisher`, `reserve-ingress` (ingress); `partner`, `public`, `reserve-egress` (egress); `backfill-response` (ingress, `--reply-stamp` only) — referencing an unknown class is an error. Rule position in the chain is determined by action type and match specificity (deny → reply-restore → specific stamp → fallthrough stamp), never by creation order.
 
-When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for `--stamp` policies; `--deny` never references `POD_CIDR` (it just drops on set membership), so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver-workload-policy.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
+When `--pod-cidr` is omitted it is **auto-detected** from the local node's `.spec.podCIDR` via the Kubernetes API — but only for policies that reference `POD_CIDR`: every `--stamp` policy, and a `--deny` that carries `--ports`. A membership-only `--deny` just drops on set membership, so detection is skipped entirely for it. Unlike `network firewall create`, a `--stamp` policy's detection failure with no `--pod-cidr` is a hard error, not a warning-and-continue. If a `--deny` create's merged chain still includes a `--stamp` sibling that needs `POD_CIDR`, the value is recovered from the existing `/etc/solo-provisioner/network-weaver-workload-policy.nft` instead of being required again — it's a deployment-wide constant, not a per-call argument.
 
 
 > Set **membership** (the CIDRs) is never persisted to `network-weaver-workload-policy.nft` — statusz is the source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only takes effect on a brand-new policy or a `--force` re-create (which replaces membership with exactly what's passed, not a merge with what was live before).

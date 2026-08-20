@@ -4,6 +4,7 @@ package policy
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -28,10 +29,13 @@ import (
 // existing policy is left untouched (warn, no-op) unless --force is passed,
 // which replaces its config and membership from the given flags/--cidrs.
 //
-// The rendered chain always begins with `delete table; add table` (membership
-// is never part of it), so every Apply() destroys and recreates every policy's
-// live set, not just the one being created. Create snapshots every policy's
-// membership first and restores it afterward -- see snapshotMembership below.
+// The rendered chain always begins with `delete table; add table`, so every
+// Apply() destroys and recreates every policy's live set, not just the one being
+// created. Create snapshots every policy's membership first and renders it back
+// into the document, so the table comes up already populated rather than being
+// refilled by a second pass -- see snapshotMembership and persistMembership
+// below. That inline membership is also what makes the sets boot-persistent:
+// the shared oneshot replays this same document ahead of the daemon.
 type Manager struct {
 	runner        Runner
 	weaverNftPath string
@@ -88,10 +92,21 @@ func NewManagerWithConfig(cfg Config) *Manager {
 // create-if-missing: a policy that doesn't exist is always created. A policy
 // that already exists is left untouched (returns false) unless force is
 // true, in which case its config and membership are replaced (not merged)
-// from p and cidrs. cidrs is set membership, applied to the live kernel
-// only — never persisted.
+// from p and cidrs. cidrs is set membership: it never enters the registry, but
+// it is rendered into the .nft as set elements along with every sibling's live
+// membership, so the re-applied table and the boot artifact agree.
 func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDRs []string, force bool) (bool, error) {
 	if err := p.Validate(cidrs); err != nil {
+		return false, err
+	}
+	// Reject an overlapping --cidrs list before taking the lock or touching the
+	// kernel. These entries reach the live sets as inline `elements = { … }` in
+	// the document rendered below, and an interval set refuses conflicting
+	// intervals however they arrive -- so the whole `nft -f` would fail, taking
+	// the table with it. Catching it here keeps the registry and the kernel
+	// untouched. Checked once for both families -- containment across families
+	// is impossible, so a mixed list needs no split.
+	if err := rejectContainment(p.Name, cidrs, nil); err != nil {
 		return false, err
 	}
 	// No blanket podCIDR requirement here: Render (below) only requires it
@@ -162,8 +177,9 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 			// (manual `nft delete table`, or a reboot). Self-heal
 			// by re-rendering, but without --force we must not apply the
 			// caller's new flags/cidrs -- only restore what was already
-			// registered. Membership itself can't be recovered this way: it
-			// was never persisted, so it comes back empty until --force
+			// registered. Membership comes back empty here: the live sets are
+			// gone, so there is nothing to snapshot, and the artifact is
+			// rewritten from that empty snapshot. It repopulates when --force
 			// re-seeds it or the daemon's poll loop catches up.
 			if len(cidrs) > 0 {
 				logx.As().Warn().Str("policy", p.Name).Msg(
@@ -184,49 +200,47 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 		}
 
 		// Snapshot every policy's live membership BEFORE Apply(): the
-		// rendered document always does `delete table; add table` (set
-		// membership is never part of that document), so applying it
-		// destroys and recreates every set in the table, not just target's.
-		// Anything not explicitly restored afterward is gone -- permanently,
-		// for operator-curated policies the daemon doesn't reconcile.
+		// rendered document always does `delete table; add table`, so applying
+		// it destroys and recreates every set in the table, not just target's.
+		// Anything missing from the document's own elements is gone --
+		// permanently, for operator-curated policies the daemon doesn't
+		// reconcile -- so every sibling's snapshot must be carried into it.
 		snapshot, err := m.snapshotMembership(ctx, policies)
 		if err != nil {
 			return err
 		}
 
+		// The post-apply membership, which is both what gets restored to the
+		// kernel below and what the document is rendered with, so the artifact
+		// and the live table agree the moment this returns. Every sibling keeps
+		// its snapshot; target's is replaced with exactly newCIDRs (split by
+		// family), not merged with what was live before -- force means "this is
+		// the new desired state".
+		merged := upsert(policies, target)
+		desired := make(map[string][]string, len(snapshot)+2)
+		for setName, elems := range snapshot {
+			desired[setName] = elems
+		}
+		if target.hasCIDRSet() {
+			targetV4, targetV6 := setElementsByFamily(target, newCIDRs)
+			desired[target.Name] = targetV4
+			desired[V6SetName(target.Name)] = targetV6
+		}
+
 		// Render the prospective full chain BEFORE touching disk so a render or
 		// kernel-apply failure leaves the registry untouched.
-		merged := upsert(policies, target)
-		doc, err := Render(merged, podCIDRs...)
+		doc, err := Render(merged, desired, podCIDRs...)
 		if err != nil {
 			return err
 		}
+		// The document declares every set with its elements inline, so the
+		// `delete table; add table` comes back up already populated -- there is
+		// no separate restore pass, and therefore no window in which the table
+		// is live with empty sets. Re-adding afterwards would be redundant at
+		// best: on the compound and listener-port sets (plain, not `flags
+		// interval`) nft rejects an element already present outright.
 		if err := m.runner.Apply(ctx, doc); err != nil {
 			return err
-		}
-		// The table is now live in the kernel, emptied of all membership.
-		// Restore every sibling's snapshot as-is, per family; target's
-		// membership is replaced with exactly newCIDRs (split by family into its
-		// v4/v6 sets), not merged with what was live before (force means "this
-		// is the new desired state"). Any failure from here leaves the kernel
-		// ahead of disk; decorate so the caller reads it as "re-run to
-		// reconcile" (create is idempotent) rather than "nothing happened".
-		targetV4, targetV6 := setElementsByFamily(target, newCIDRs)
-		for _, lp := range merged {
-			if !lp.hasCIDRSet() {
-				continue
-			}
-			v4Set, v6Set := lp.Name, V6SetName(lp.Name)
-			v4Elems, v6Elems := snapshot[v4Set], snapshot[v6Set]
-			if lp.Name == target.Name {
-				v4Elems, v6Elems = targetV4, targetV6
-			}
-			if err := m.restoreSet(ctx, v4Set, v4Elems); err != nil {
-				return err
-			}
-			if err := m.restoreSet(ctx, v6Set, v6Elems); err != nil {
-				return err
-			}
 		}
 		if err := writeEntry(m.registryDir, target); err != nil {
 			return errorx.Decorate(err, "inet weaver-workload-policy chain applied to the kernel but persisting the policy registry failed; re-run to reconcile")
@@ -243,16 +257,16 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 	return changed, err
 }
 
-// snapshotMembership captures the live membership of every policy that
-// carries a CIDR set, before the caller runs a destructive Apply() that would
-// otherwise wipe it. Both the IPv4 (@<name>) and IPv6 (@<name>6) sets are
-// snapshotted, keyed by set name. A ListElements failure aborts immediately
-// (returned to the caller) rather than silently proceeding with a partial
-// snapshot into a destructive apply.
+// snapshotMembership captures the live contents of every daemon-owned set,
+// keyed by set name. It serves two callers: a destructive Apply() that would
+// otherwise wipe them, and persistMembership, which renders them back into the
+// artifact. A ListElements failure aborts immediately (returned to the caller)
+// rather than silently proceeding with a partial snapshot into a destructive
+// apply — or, worse, persisting a partial snapshot as if it were the full state.
 func (m *Manager) snapshotMembership(ctx context.Context, policies []*Policy) (map[string][]string, error) {
 	snapshot := make(map[string][]string, len(policies))
 	for _, lp := range policies {
-		for _, setName := range cidrSetNames(lp) {
+		for _, setName := range daemonSetNames(lp) {
 			elements, err := m.runner.ListElements(ctx, setName)
 			if err != nil {
 				return nil, errorx.Decorate(err, "failed to snapshot live membership for set %q before re-render", setName)
@@ -275,16 +289,107 @@ func cidrSetNames(p *Policy) []string {
 	return []string{p.Name, V6SetName(p.Name)}
 }
 
-// restoreSet re-adds a set's snapshotted membership after a destructive
-// re-render emptied it. An empty slice is a no-op (the freshly recreated set is
-// already empty). A failure is decorated as "re-run to reconcile" since the
-// kernel is now ahead of disk.
-func (m *Manager) restoreSet(ctx context.Context, setName string, elements []string) error {
-	if len(elements) == 0 {
+// daemonSetNames returns every nft set name a policy renders whose contents are
+// runtime state rather than registry config: the CIDR membership sets, plus the
+// `<name>_ports` set when it is daemon-managed. A static `--ports` set is
+// excluded — its elements come from the registry entry, so a re-render
+// reproduces them and there is nothing to snapshot or persist.
+func daemonSetNames(p *Policy) []string {
+	names := cidrSetNames(p)
+	if p.ManagedPorts && len(p.Ports) == 0 {
+		names = append(names, PortsSetName(p.Name))
+	}
+	return names
+}
+
+// persistMembership re-renders network-weaver-workload-policy.nft from the
+// registry and the live contents of every daemon-owned set, so the artifact the
+// boot oneshot replays carries the membership that is currently in the kernel.
+// This is what makes the sets survive a reboot: the oneshot runs ahead of the
+// daemon, so a quarantined peer is dropped from the first forwarded packet
+// rather than from the first successful statusz poll.
+//
+// It performs NO locking — every caller is already inside withLock/withLockNB,
+// which is also what stops it from racing an operator re-render.
+//
+// Rendering from live kernel state rather than from the caller's desired map is
+// deliberate: it keeps the one write path correct for the element-op verbs
+// (add/remove) that mutate a set without knowing its full contents, and it means
+// the artifact can never claim membership the kernel does not actually have.
+//
+// **It never fails its caller.** By the time it runs, the kernel write it
+// follows has already succeeded — the reconcile did its job, and boot-durability
+// is a step on top of that. Propagating a failure here would fail the whole
+// reconcile, which for the daemon means superviseResponsibility faults the
+// statusz poll loop and retries forever: a read-only /etc or a full disk would
+// turn a correct kernel state into a permanent fault loop, re-applying nft on
+// every backoff. So a failure is logged at WARN with a greppable reason and
+// swallowed. The membership is right in the kernel; only its survival across a
+// reboot is degraded, and that is what the log line says.
+func (m *Manager) persistMembership(ctx context.Context) error {
+	if err := m.renderAndWriteArtifact(ctx); err != nil {
+		logx.As().Warn().Err(err).
+			Str("reason", "PolicyMembershipNotPersisted").
+			Str("path", m.weaverNftPath).
+			Msg("live nft sets updated but the artifact could not be rewritten — membership is correct in the kernel but will not survive a reboot until a later apply succeeds")
+	}
+	return nil
+}
+
+// renderAndWriteArtifact is persistMembership's fallible half, split out so the
+// error can be logged in one place and so tests can assert on it directly.
+func (m *Manager) renderAndWriteArtifact(ctx context.Context) error {
+	policies, err := loadAll(m.registryDir)
+	if err != nil {
+		return err
+	}
+	if len(policies) == 0 {
+		// No registry means no table and no artifact (see Delete's last-policy
+		// teardown); there is nothing to persist into.
 		return nil
 	}
-	if err := m.runner.AddElements(ctx, setName, elements); err != nil {
-		return errorx.Decorate(err, "inet weaver-workload-policy chain applied to the kernel but restoring %q membership failed; re-run to reconcile", setName)
+
+	membership, err := m.snapshotMembership(ctx, policies)
+	if err != nil {
+		return err
+	}
+
+	// A stamp policy needs the pod CIDR to render, and this layer is never handed
+	// one — it has to be recovered. Read the artifact once and reuse it for the
+	// unchanged-content check below.
+	existing, readErr := os.ReadFile(m.weaverNftPath)
+	var podCIDRs []string
+	if readErr == nil {
+		podCIDRs = ExtractPodCIDRs(string(existing))
+	}
+	// Fall back to the live table when the artifact is missing or unreadable.
+	// Without this, an operator who deletes the .nft out from under a live table
+	// makes every subsequent reconcile fail on "pod CIDR is required" — after the
+	// kernel write has already landed, so the daemon retries forever and never
+	// converges. `nft list table` prints the same `ip daddr <cidr>` form Render
+	// emits, so the same extractor reads it.
+	if len(podCIDRs) == 0 {
+		if live, listErr := m.runner.List(ctx); listErr == nil {
+			podCIDRs = ExtractPodCIDRs(live)
+		}
+	}
+
+	doc, err := Render(policies, membership, podCIDRs...)
+	if err != nil {
+		// Name the missing artifact when that is what stopped the recovery —
+		// otherwise the wrapped error reads as a pod-CIDR problem and sends the
+		// operator looking in the wrong place.
+		if readErr != nil {
+			return errorx.Decorate(err, "re-rendering %s failed (it could not be read: %v, and the live table yielded no pod CIDR)",
+				m.weaverNftPath, readErr)
+		}
+		return errorx.Decorate(err, "re-rendering %s failed", m.weaverNftPath)
+	}
+	if readErr == nil && sha256.Sum256([]byte(doc)) == sha256.Sum256(existing) {
+		return nil
+	}
+	if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
+		return errorx.Decorate(err, "persisting %s failed", m.weaverNftPath)
 	}
 	return nil
 }
@@ -313,9 +418,10 @@ func upsert(policies []*Policy, p *Policy) []*Policy {
 	return out
 }
 
-// Add appends cidrs to the live set for a named policy. The set is mutated
-// directly with `nft add element` — no chain re-render occurs, so
-// network-weaver-workload-policy.nft is not updated (membership is never persisted).
+// Add appends cidrs to the live set for a named policy. The chain itself is not
+// re-rendered — the set is mutated directly with `nft add element` — but
+// network-weaver-workload-policy.nft is rewritten afterwards so the addition
+// survives a reboot rather than silently reverting on the next boot.
 // Returns an error if the policy does not exist, has no CIDR set
 // (--from-entity world), or the live kernel table is not present.
 func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
@@ -333,16 +439,48 @@ func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
 		if err := m.requireTableExists(ctx, name); err != nil {
 			return err
 		}
+		// An incremental add has to be checked against what is already in the
+		// sets, not just against itself: nft refuses the add when a live member
+		// covers the new entry (or vice versa). Read both families' live
+		// membership and reject before mutating either set, so a rejected add
+		// never lands half of its entries.
+		live, err := m.liveMembership(ctx, p)
+		if err != nil {
+			return err
+		}
+		if err := rejectContainment(name, cidrs, live); err != nil {
+			return err
+		}
 		v4, v6 := setElementsByFamily(p, cidrs)
 		if err := m.runner.AddElements(ctx, name, v4); err != nil {
 			return err
 		}
-		return m.runner.AddElements(ctx, V6SetName(name), v6)
+		if err := m.runner.AddElements(ctx, V6SetName(name), v6); err != nil {
+			return err
+		}
+		return m.persistMembership(ctx)
 	})
 }
 
-// Remove deletes cidrs from the live set for a named policy. Like Add, only
-// the live kernel set is changed — no chain re-render and no .nft update.
+// liveMembership returns the policy's current membership across both its IPv4
+// and IPv6 sets, as the kernel spells it. Used by Add to check a candidate list
+// against what is already stored; the two families are returned as one slice
+// because containment can never span families.
+func (m *Manager) liveMembership(ctx context.Context, p *Policy) ([]string, error) {
+	var live []string
+	for _, setName := range cidrSetNames(p) {
+		elements, err := m.runner.ListElements(ctx, setName)
+		if err != nil {
+			return nil, errorx.Decorate(err, "failed to read live membership for set %q", setName)
+		}
+		live = append(live, elements...)
+	}
+	return live, nil
+}
+
+// Remove deletes cidrs from the live set for a named policy. Like Add, the
+// chain is not re-rendered, but the .nft is rewritten so the removal is not
+// undone by the next boot replay.
 func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error {
 	if len(cidrs) == 0 {
 		return errorx.IllegalArgument.New("at least one --cidr is required")
@@ -359,21 +497,62 @@ func (m *Manager) Remove(ctx context.Context, name string, cidrs []string) error
 			return err
 		}
 		v4, v6 := setElementsByFamily(p, cidrs)
+		// Check every entry against live membership before deleting any of it.
+		// `nft delete element` fails with a bare "element does not exist" for
+		// anything absent, and the transaction is atomic -- so one wrong entry in
+		// a batch removes NONE of the others while reporting a message that names
+		// neither the offending entry nor the policy. The covered case
+		// (removing a /32 that a member /24 subsumes) is the most misleading of
+		// all, since the policy does permit that address.
+		live, err := m.liveMembership(ctx, p)
+		if err != nil {
+			return err
+		}
+		if err := rejectMissingMembers(name, append(append([]string{}, v4...), v6...), live); err != nil {
+			return err
+		}
 		if err := m.runner.DeleteElements(ctx, name, v4); err != nil {
 			return err
 		}
-		return m.runner.DeleteElements(ctx, V6SetName(name), v6)
+		if err := m.runner.DeleteElements(ctx, V6SetName(name), v6); err != nil {
+			return err
+		}
+		return m.persistMembership(ctx)
 	})
 }
 
 // Set atomically replaces the live set for a named policy with cidrs in a
 // single `flush set + add element` kernel transaction. An empty cidrs slice
-// clears the set. Like Add/Remove, only the live kernel set is changed.
+// clears the set. Like Add/Remove, the chain is not re-rendered, but the .nft is
+// rewritten so the replacement survives a reboot.
 func (m *Manager) Set(ctx context.Context, name string, cidrs []string) error {
 	return m.withLock(func() error {
-		return m.applySet(ctx, name, cidrs)
+		if err := m.applySet(ctx, name, cidrs, authoredMembership); err != nil {
+			return err
+		}
+		return m.persistMembership(ctx)
 	})
 }
+
+// membershipSource says who authored the membership being written, which decides
+// what happens when it carries a containment conflict nft would refuse (see
+// cidrset.go). The two callers have opposite sources of truth, so they need
+// opposite handling -- this is the one knob that distinguishes them.
+type membershipSource int
+
+const (
+	// authoredMembership is membership an operator typed (`network policy
+	// create`/`add`/`set`). A conflict is REJECTED: the operator's granularity
+	// is the only record of intent, so silently folding it would leave a later
+	// `network policy remove --cidr <covered>` unanswerable.
+	authoredMembership membershipSource = iota
+	// derivedMembership is membership recomputed from upstream by the
+	// traffic-shaper daemon (ApplyMembership / ApplySets). A conflict is PRUNED:
+	// the set is fully replaced every tick and no element is ever individually
+	// deleted, so there is no authored granularity to preserve, and rejecting
+	// would wedge the reconcile and leave a restrict-policy set empty.
+	derivedMembership
+)
 
 // applySet replaces the live set for one named policy with cidrs via a single
 // `flush set + add element` transaction (runner.SetElements). It performs NO
@@ -381,13 +560,34 @@ func (m *Manager) Set(ctx context.Context, name string, cidrs []string) error {
 // CLI `set` verb, withLockNB for the daemon's ApplyMembership batch), so both
 // paths funnel through the identical kernel transaction and can never
 // interleave with a concurrent operator apply.
-func (m *Manager) applySet(ctx context.Context, name string, cidrs []string) error {
+func (m *Manager) applySet(ctx context.Context, name string, cidrs []string, src membershipSource) error {
 	p, err := m.requirePolicyWithCIDRSet(name)
 	if err != nil {
 		return err
 	}
 	if err := p.validateCIDRs(cidrs); err != nil {
 		return err
+	}
+	// A full replace only has to agree with itself -- whatever was live is about
+	// to be flushed -- so the containment check is against cidrs alone. Which way
+	// a conflict is handled depends on who authored the list; see
+	// membershipSource.
+	switch src {
+	case authoredMembership:
+		if err := rejectContainment(name, cidrs, nil); err != nil {
+			return err
+		}
+	case derivedMembership:
+		if kept := PruneContainedCIDRs(cidrs); len(kept) != len(cidrs) {
+			// Steady state for a persistently redundant upstream, so this is
+			// Debug rather than Warn: it would otherwise repeat every poll tick.
+			logx.As().Debug().
+				Str("policy", name).
+				Int("supplied", len(cidrs)).
+				Int("applied", len(kept)).
+				Msg("dropped CIDRs already covered by another member of the same policy set")
+			cidrs = kept
+		}
 	}
 	if err := m.requireTableExists(ctx, name); err != nil {
 		return err
@@ -442,11 +642,11 @@ func (m *Manager) ApplyMembership(ctx context.Context, desired map[string][]stri
 
 	acquired, err := m.withLockNB(func() error {
 		for _, name := range names {
-			if err := m.applySet(ctx, name, desired[name]); err != nil {
+			if err := m.applySet(ctx, name, desired[name], derivedMembership); err != nil {
 				return err
 			}
 		}
-		return nil
+		return m.persistMembership(ctx)
 	})
 	if err != nil {
 		return false, err
@@ -475,16 +675,18 @@ func (m *Manager) ApplyMembership(ctx context.Context, desired map[string][]stri
 //
 // It acquires the lock itself, so it must NOT be called while the caller already
 // holds withLock/withLockNB.
+// Empty maps are NOT a no-op: the lock is still taken and the artifact still
+// re-persisted. A converged node produces no deltas tick after tick, so an early
+// return here would mean the artifact is only ever written when membership
+// changes — leaving a node that was already converged when this build landed
+// with a permanently stale artifact, and no way to notice.
 func (m *Manager) ApplySets(ctx context.Context, membership, ports map[string][]string) (applied bool, err error) {
-	if len(membership) == 0 && len(ports) == 0 {
-		return true, nil
-	}
 	memNames := sortedMapKeys(membership)
 	portNames := sortedMapKeys(ports)
 
 	acquired, err := m.withLockNB(func() error {
 		for _, name := range memNames {
-			if err := m.applySet(ctx, name, membership[name]); err != nil {
+			if err := m.applySet(ctx, name, membership[name], derivedMembership); err != nil {
 				return err
 			}
 		}
@@ -493,7 +695,10 @@ func (m *Manager) ApplySets(ctx context.Context, membership, ports map[string][]
 				return err
 			}
 		}
-		return nil
+		// Inside the same acquisition as the kernel writes: the artifact is
+		// rendered from live state, so persisting under a different lock hold
+		// could capture a set an operator changed in between.
+		return m.persistMembership(ctx)
 	})
 	if err != nil {
 		return false, err
@@ -543,7 +748,7 @@ func (m *Manager) ApplyPorts(ctx context.Context, desired map[string][]string) (
 				return err
 			}
 		}
-		return nil
+		return m.persistMembership(ctx)
 	})
 	if err != nil {
 		return false, err
@@ -766,21 +971,15 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			return err
 		}
 
-		doc, err := Render(remaining, podCIDRs...)
+		// Rendering with the snapshot means the re-applied table comes back up
+		// already populated, so the remaining policies' sets are never live and
+		// empty, and no separate restore pass is needed.
+		doc, err := Render(remaining, snapshot, podCIDRs...)
 		if err != nil {
 			return err
 		}
 		if err := m.runner.Apply(ctx, doc); err != nil {
 			return err
-		}
-
-		// Restore remaining policies' membership, both families.
-		for _, lp := range remaining {
-			for _, setName := range cidrSetNames(lp) {
-				if err := m.restoreSet(ctx, setName, snapshot[setName]); err != nil {
-					return err
-				}
-			}
 		}
 
 		// Write the .nft file before removing the registry so that a failed

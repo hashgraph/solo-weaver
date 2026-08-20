@@ -86,12 +86,12 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			MigrateEventsDir: paths.DaemonConsensusMigrateEventsDir,
 		})
 		if err != nil {
-			logComponentBuildSkipped("consensus-node", cn.Kubeconfig, err)
+			logComponentBuildSkipped(ComponentNameConsensusNode, cn.Kubeconfig, err)
 		} else if len(result.Monitors) > 0 {
 			comp := component{
-				name:     "consensus-node",
+				name:     ComponentNameConsensusNode,
 				monitors: result.Monitors,
-				probe:    daemonkit.BuildComponentProbe("consensus-node", result.Monitors),
+				probe:    daemonkit.BuildComponentProbe(ComponentNameConsensusNode, result.Monitors),
 				tracker:  daemonkit.NewStatusTracker(),
 			}
 			components = append(components, comp)
@@ -127,10 +127,10 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 			StatuszPollInterval:  statuszPollInterval,
 		})
 		if err != nil {
-			logComponentBuildSkipped("block-node", bn.Kubeconfig, err)
+			logComponentBuildSkipped(ComponentNameBlockNode, bn.Kubeconfig, err)
 		} else if len(result.Monitors) > 0 {
 			comp := component{
-				name:     "block-node",
+				name:     ComponentNameBlockNode,
 				monitors: result.Monitors,
 				probe:    nil,
 				tracker:  daemonkit.NewStatusTracker(),

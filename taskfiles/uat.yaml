@@ -561,7 +561,7 @@ tasks:
         echo '✅ solo-operator Lifecycle: PASSED'
 
   uat:plugin-preset-upgrade:
-    desc: "Verify plugin preset names auto-update on upgrade across the 0.35 version boundary"
+    desc: "Verify plugin preset names auto-update on upgrade across the 0.35 and 0.39.1 version boundaries"
     interactive: true
     cmds:
       - task: uat:setup
@@ -572,12 +572,15 @@ tasks:
       - |
         set -e
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "  UAT Test: Plugin Preset Upgrade (pre-0.35 → 0.35+)"
+        echo "  UAT Test: Plugin Preset Upgrade (pre-0.35 → 0.35+ → 0.39.1+)"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-        # Chart version for the post-0.35 upgrade target.
-        # Update if the current 0.35+ release changes.
+        # Upgrade targets, one per rename boundary in the plugin registry:
+        #   0.35.0  s3-archive   → cloud-storage-archive + cloud-storage-expanded
+        #   0.39.1  verification → block-verification
+        # Update if the current release for either bracket changes.
         POST_35_VERSION=0.35.1
+        POST_391_VERSION=0.40.0
         CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
         NS=block-node
 
@@ -585,14 +588,33 @@ tasks:
           helm get values block-node -n "$NS" 2>/dev/null | grep 'names:' | sed 's/.*names:[[:space:]]*//' | tr -d '"'
         }
 
+        # Exact-entry match on the comma-separated list. A plain grep would report
+        # "verification" as present in a list that only has "block-verification".
+        has_plugin() {
+          printf '%s' "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -Fqx -- "$2"
+        }
+
+        assert_plugin() {
+          if ! has_plugin "$1" "$2"; then
+            echo "FAIL: expected $2 in plugins.names, got: $1"
+            exit 1
+          fi
+        }
+
+        refute_plugin() {
+          if has_plugin "$1" "$2"; then
+            echo "FAIL: $2 should not be present in plugins.names, got: $1"
+            exit 1
+          fi
+        }
+
 
         echo -e '\n▶ Verify pre-0.35 Helm values contain s3-archive'
         PLUGINS=$(get_plugins)
         echo "   plugins.names: $PLUGINS"
-        echo "$PLUGINS" | grep -q 's3-archive' \
-          || { echo "FAIL: expected s3-archive in plugins.names, got: $PLUGINS"; exit 1; }
-        echo "$PLUGINS" | grep -qv 'cloud-storage-archive' \
-          || { echo "FAIL: cloud-storage-archive should not be present pre-0.35, got: $PLUGINS"; exit 1; }
+        assert_plugin "$PLUGINS" 's3-archive'
+        refute_plugin "$PLUGINS" 'cloud-storage-archive'
+        refute_plugin "$PLUGINS" 'cloud-storage-expanded'
         echo "   ✓ s3-archive present, cloud-storage-* absent"
 
 
@@ -606,10 +628,33 @@ tasks:
         echo -e '\n▶ Verify post-0.35 Helm values contain cloud-storage-* and not s3-archive'
         PLUGINS=$(get_plugins)
         echo "   plugins.names: $PLUGINS"
-        echo "$PLUGINS" | grep -q 'cloud-storage-archive' \
-          || { echo "FAIL: expected cloud-storage-archive in plugins.names, got: $PLUGINS"; exit 1; }
-        echo "$PLUGINS" | grep -qv 's3-archive' \
-          || { echo "FAIL: s3-archive should not be present post-0.35, got: $PLUGINS"; exit 1; }
+        assert_plugin "$PLUGINS" 'cloud-storage-archive'
+        refute_plugin "$PLUGINS" 's3-archive'
+        echo "   ✓ cloud-storage-archive present, s3-archive absent"
+
+        echo -e '\n▶ Verify 0.35.x still carries the pre-0.39.1 verification name'
+        assert_plugin "$PLUGINS" 'verification'
+        refute_plugin "$PLUGINS" 'block-verification'
+        echo "   ✓ verification present, block-verification absent"
+
+
+        echo -e "\n▶ Upgrade to BN ${POST_391_VERSION} with tier1-rfh preset"
+        sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
+          --chart-version "$POST_391_VERSION" \
+          --plugin-preset tier1-rfh \
+          --non-interactive \
+          -c "$CONFIG"
+
+        echo -e '\n▶ Verify post-0.39.1 Helm values contain block-verification and not verification'
+        PLUGINS=$(get_plugins)
+        echo "   plugins.names: $PLUGINS"
+        assert_plugin "$PLUGINS" 'block-verification'
+        refute_plugin "$PLUGINS" 'verification'
+        echo "   ✓ block-verification present, verification absent"
+
+        echo -e '\n▶ Verify the 0.35 rename still holds at the newer chart'
+        assert_plugin "$PLUGINS" 'cloud-storage-archive'
+        refute_plugin "$PLUGINS" 's3-archive'
         echo "   ✓ cloud-storage-archive present, s3-archive absent"
 
         echo ''

@@ -16,18 +16,30 @@ import (
 // Render produces the full `inet weaver-workload-policy` nft document for the given set of
 // registry policies, in tier order. The same output feeds both the kernel apply
 // (`nft -f`) and the on-disk artifact, so the live table and the persisted file
-// can never diverge. Set *membership* is deliberately not rendered here — only
-// set schemas and any static `--ports` elements — because membership is owned
-// by the daemon poll loop and never persisted. A managed-ports set
-// (`<name>_ports` for a ManagedPorts policy) is likewise declared empty here and
-// filled from statusz at runtime, exactly like the CIDR membership set.
+// can never diverge.
+//
+// membership carries the daemon-owned set contents, keyed by nft set name — so
+// `bn-publisher`, its v6 companion `bn-publisher6`, and its listener-port set
+// `bn-publisher_ports` are three separate keys. A set with no entry (or an empty
+// one) renders as a bare schema, which is what an operator re-render produces
+// before the daemon has ever polled. Rendering membership is what makes the sets
+// boot-persistent: the shared nft oneshot replays this document and is ordered
+// ahead of the daemon, so a quarantine peer is dropped from the first packet
+// after a reboot rather than from the first successful statusz poll.
+//
+// Membership is supplied by the caller from live kernel state, never re-parsed
+// out of the previous document. A caller that has no view of the kernel
+// (RenderWeaverNft) renders bare schemas; the daemon's next successful poll
+// replaces every daemon-owned set wholesale, so the artifact converges without
+// a recovery path here.
 //
 // The hooked `forward` chain holds no rules of its own beyond a `meta nfproto`
 // dispatch into forward_ipv4 / forward_ipv6, so a packet never evaluates rules
-// belonging to the other address family. Its policy is `accept`: this table
-// classifies traffic for the HTB hierarchy, it does not enforce workload
-// isolation (Cilium does). Traffic no rule matches therefore falls through
-// carrying no `meta priority` and lands in the HTB default class.
+// belonging to the other address family. Its policy is `accept`: classification
+// for the HTB hierarchy is what this table exists for, so traffic no rule
+// matches falls through carrying no `meta priority` and lands in the HTB default
+// class. The deny tier is the exception — those rules drop, and they are the
+// only enforcement here (workload isolation at large is Cilium's).
 //
 // Rule position *within a family chain* is determined by action type and match
 // specificity, never by creation order:
@@ -36,7 +48,7 @@ import (
 //  2. asymmetric reply-stamp restore
 //  3. stamp classification — specific (has an IP-set match)
 //  4. stamp classification — fallthrough (--from-entity world)
-func Render(policies []*Policy, podCIDRs ...string) (string, error) {
+func Render(policies []*Policy, membership map[string][]string, podCIDRs ...string) (string, error) {
 	podV4, podV6 := partitionPodCIDRs(podCIDRs)
 	if podV4 == "" && podV6 == "" && needsPodCIDR(policies) {
 		return "", errorx.IllegalArgument.New("pod CIDR is required to render a --stamp policy in the inet weaver-workload-policy chain")
@@ -50,7 +62,7 @@ func Render(policies []*Policy, podCIDRs ...string) (string, error) {
 	// deterministic render.
 	policies = sortedByName(policies)
 
-	setLines, err := renderSetDecls(policies)
+	setLines, err := renderSetDecls(policies, membership)
 	if err != nil {
 		return "", err
 	}
@@ -120,9 +132,9 @@ func baseChainLines() []string {
 		"\t# rule and vice versa.",
 		"\t#",
 		"\t# Policy is `accept` because this table classifies traffic for the HTB",
-		"\t# hierarchy rather than enforcing workload isolation, which is Cilium's",
-		"\t# job. A packet no rule matches falls through carrying no `meta priority`",
-		"\t# and therefore lands in the HTB default class.",
+		"\t# hierarchy: a packet no rule matches falls through carrying no",
+		"\t# `meta priority` and lands in the HTB default class. The deny tier in the",
+		"\t# chains below is the exception — those rules drop.",
 		"\tchain " + chainBase + " {",
 		"\t\ttype filter hook forward priority 0; policy accept;",
 		"\t\tmeta nfproto vmap { ipv4 : jump " + chainV4 + ", ipv6 : jump " + chainV6 + " }",
@@ -148,13 +160,19 @@ func familyV6(podCIDR string) family {
 	return family{proto: "ip6", podCIDR: podCIDR, setName: V6SetName}
 }
 
-// needsPodCIDR reports whether any policy in the set is a --stamp policy.
-// POD_CIDR is only ever read by renderStampRule; a deny-only chain never
-// references it, so it shouldn't be required to render one.
+// needsPodCIDR reports whether any policy in the set renders a pod-scoped rule:
+// every --stamp policy, plus a --deny policy that carries --ports (see
+// renderDenyRules). A registry of membership-only deny policies never references
+// POD_CIDR, so it shouldn't be required to render one.
 func needsPodCIDR(policies []*Policy) bool {
 	for _, p := range policies {
-		if p.Action == ActionStamp {
+		switch p.Action {
+		case ActionStamp:
 			return true
+		case ActionDeny:
+			if p.hasPortsSet() {
+				return true
+			}
 		}
 	}
 	return false
@@ -203,39 +221,84 @@ func sortedByName(policies []*Policy) []*Policy {
 }
 
 // renderSetDecls emits the schema for each policy's sets, name-sorted for a
-// deterministic render. Membership set elements are omitted; only a static
-// `--ports` set carries inline elements — a managed-ports set is declared empty
-// and filled by the daemon.
-func renderSetDecls(policies []*Policy) ([]string, error) {
+// deterministic render, seeding each daemon-owned set with the membership
+// supplied for it. A static `--ports` set keeps rendering its operator-declared
+// elements from the registry, not from membership — those are part of the policy
+// definition, not runtime state.
+func renderSetDecls(policies []*Policy, membership map[string][]string) ([]string, error) {
 	var lines []string
 	for _, p := range policies {
 		if p.hasCIDRSet() {
+			v4, v6 := p.Name, V6SetName(p.Name)
 			if p.isCompoundSet() {
 				// Compound ip:port key for --reply-stamp destinations, one set
 				// per family (the v6 set carries the "6"-suffixed name).
 				lines = append(lines,
-					fmt.Sprintf("\tset %s { type ipv4_addr . inet_service; }", p.Name),
-					fmt.Sprintf("\tset %s { type ipv6_addr . inet_service; }", V6SetName(p.Name)))
+					setDecl(v4, "ipv4_addr . inet_service", membership[v4]),
+					setDecl(v6, "ipv6_addr . inet_service", membership[v6]))
 			} else {
+				// `flags interval` so the set can hold CIDRs, but deliberately
+				// NO `auto-merge` -- unlike the host-firewall template
+				// (network-weaver-host-firewall.nft.tmpl), which has both.
+				//
+				// auto-merge is safe there because that table re-renders from an
+				// authoritative persisted YAML config on every mutation, so a
+				// folded kernel read-back costs nothing (#1002/#1004). It is not
+				// safe here, and persisting membership into this document does
+				// NOT make it so: what is written back is a snapshot of the live
+				// sets, so anything the kernel folded is folded in the artifact
+				// too. The kernel stays the authority for membership; the
+				// document is a replay of it.
+				//
+				// Two things would break if it were switched on (neither is a
+				// live problem — this is why the flag stays off). `delete
+				// element` would lose the exact element to remove, so an operator
+				// could no longer withdraw a /32 that got absorbed into a /24.
+				// And the daemon diffs desired-from-statusz against live every
+				// tick: statusz reports individual peers, which are routinely
+				// consecutive, so folding 10.0.0.1 and 10.0.0.2 into one range
+				// would yield a live set that can never equal the desired list --
+				// a delta on every tick.
+				//
+				// Note the containment handling below does NOT make auto-merge
+				// viable: it prunes/rejects a prefix COVERED by another, while
+				// auto-merge additionally folds merely ADJACENT prefixes, which
+				// nothing here produces or expects. Enabling it would first need
+				// the desired side folded by the same algorithm before diffing.
+				//
+				// Overlapping membership is handled in Go instead (cidrset.go):
+				// operator-authored lists are rejected naming both prefixes,
+				// daemon-derived lists have covered entries pruned.
 				lines = append(lines,
-					fmt.Sprintf("\tset %s { type ipv4_addr; flags interval; }", p.Name),
-					fmt.Sprintf("\tset %s { type ipv6_addr; flags interval; }", V6SetName(p.Name)))
+					setDecl(v4, "ipv4_addr; flags interval", membership[v4]),
+					setDecl(v6, "ipv6_addr; flags interval", membership[v6]))
 			}
 		}
 		if len(p.Ports) > 0 {
 			lines = append(lines, fmt.Sprintf("\tset %s { type inet_service; elements = { %s }; }",
 				PortsSetName(p.Name), portElements(p.Ports)))
 		} else if p.ManagedPorts {
-			// Daemon-managed listener ports: the set is declared but empty,
-			// exactly like the CIDR membership set above. The traffic-shaper
-			// poll loop fills it from the BN's statusz local.port each tick;
-			// nothing is seeded (or persisted) here. Until the first poll the
-			// set is empty, so the `tcp dport @<name>_ports` clause matches
-			// nothing — the same bootstrap behavior the membership sets have.
-			lines = append(lines, fmt.Sprintf("\tset %s { type inet_service; }", PortsSetName(p.Name)))
+			// Daemon-managed listener ports, filled from the BN's statusz
+			// local.port. Seeded here from the last applied state for the same
+			// reason the CIDR sets are: until the first poll lands, an empty set
+			// makes the `tcp dport @<name>_ports` clause match nothing.
+			lines = append(lines, setDecl(PortsSetName(p.Name), "inet_service", membership[PortsSetName(p.Name)]))
 		}
 	}
 	return lines, nil
+}
+
+// setDecl renders one set declaration, appending an `elements = { … }` clause
+// when the set has members. Elements are canonicalized so the render is a pure
+// function of set contents — RenderWeaverNft's SHA-256 skip and the daemon's
+// change detection both depend on an unchanged membership producing an
+// unchanged document.
+func setDecl(name, typeSpec string, elements []string) string {
+	canon := CanonicalizeElements(elements)
+	if len(canon) == 0 {
+		return fmt.Sprintf("\tset %s { type %s; }", name, typeSpec)
+	}
+	return fmt.Sprintf("\tset %s { type %s; elements = { %s }; }", name, typeSpec, strings.Join(canon, ", "))
 }
 
 // renderFamilyChain builds one address family's chain body (indented two tabs),
@@ -245,21 +308,20 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 func renderFamilyChain(policies []*Policy, f family) ([]string, error) {
 	var lines []string
 
-	// Tier 1: quarantine drops, both directions.
+	// Tier 1: drops, both directions.
 	var deny []string
 	for _, p := range policies {
 		if p.Action == ActionDeny {
-			deny = append(deny,
-				fmt.Sprintf("\t\t%s saddr @%s drop", f.proto, f.setName(p.Name)),
-				fmt.Sprintf("\t\t%s daddr @%s drop", f.proto, f.setName(p.Name)))
+			deny = append(deny, renderDenyRules(p, f)...)
 		}
 	}
 	if len(deny) > 0 {
 		lines = appendSection(lines,
-			"\t\t# Quarantine (deny), both directions. Runs ahead of the classification",
-			"\t\t# accepts below so a quarantined peer's traffic is dropped rather than",
-			"\t\t# stamped. There is no conntrack fast-path in this chain, so packets on",
-			"\t\t# already-open connections are evaluated against these drops too.")
+			"\t\t# Deny. Runs ahead of the classification accepts below so a denied",
+			"\t\t# packet is dropped rather than stamped. There is no conntrack accept",
+			"\t\t# fast-path in this chain, so packets on already-open connections are",
+			"\t\t# evaluated against these drops too. A membership deny drops both",
+			"\t\t# directions; a port-scoped deny drops the request leg only.")
 		lines = append(lines, deny...)
 	}
 
@@ -382,6 +444,59 @@ func orderByGroupThenCreatedAt(policies []*Policy) []*Policy {
 		out = append(out, g.members...)
 	}
 	return out
+}
+
+// renderDenyRules renders one address family's drop rules for a deny policy.
+//
+// Without --ports it is the plain membership drop, both directions: the set is
+// the whole match, so there is nothing to scope to the pod CIDR.
+//
+// A deny that carries --ports drops the *request* leg of a connection to a
+// workload listener port, scoped to the pod CIDR like the stamp tiers — and
+// returns nil for a family with no pod CIDR, for the same reason they do. It
+// keeps its membership clause when it has one; with --from-entity world it drops
+// that port from every source, which is what makes a workload port unreachable
+// from off-node without enumerating the peers that may reach it.
+//
+// `ct direction original` is load-bearing. The port set holds listener ports,
+// and those sit inside the default ephemeral range
+// (net.ipv4.ip_local_port_range, 32768-60999). Without it, the reply leg of an
+// unrelated connection that happened to draw a listener port as its ephemeral
+// source port matches `daddr <podCIDR> tcp dport <listener>` and is dropped —
+// silently killing that connection, since SYN retransmits reuse the port. That
+// packet's conntrack direction is `reply`, so the qualifier excludes it while
+// still matching a genuine inbound connection to the listener. Conntrack is
+// always available here: the hook at priority -200 runs before this chain, and
+// the reply-restore tier below already reads `ct direction`.
+//
+// There is deliberately no egress mirror. Dropping the request leg is enough —
+// no request means no reply, and for a connection opened before the rule existed
+// this chain has no conntrack accept fast-path, so its forward leg is dropped
+// too. An egress rule matching `saddr <podCIDR> tcp sport <listener>` would
+// reintroduce the same ephemeral collision on the outbound leg, where no
+// direction qualifier can exclude it.
+//
+// Clause order is an evaluation-cost choice, not a semantic one: the pod CIDR
+// prefix compare rejects most forwarded packets before the port set lookup and
+// the conntrack read.
+func renderDenyRules(p *Policy, f family) []string {
+	if !p.hasPortsSet() {
+		return []string{
+			fmt.Sprintf("\t\t%s saddr @%s drop", f.proto, f.setName(p.Name)),
+			fmt.Sprintf("\t\t%s daddr @%s drop", f.proto, f.setName(p.Name)),
+		}
+	}
+	if f.podCIDR == "" {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\t\t%s daddr %s", f.proto, f.podCIDR)
+	if p.hasCIDRSet() {
+		fmt.Fprintf(&b, " %s saddr @%s", f.proto, f.setName(p.Name))
+	}
+	fmt.Fprintf(&b, " tcp dport @%s ct direction original drop", PortsSetName(p.Name))
+	return []string{b.String()}
 }
 
 // renderReplyRestoreRule renders the ingress restore rule for a --reply-stamp

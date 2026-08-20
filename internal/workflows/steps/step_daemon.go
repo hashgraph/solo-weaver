@@ -12,17 +12,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	pkgos "github.com/hashgraph/solo-weaver/pkg/os"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 )
@@ -391,6 +395,20 @@ func installDaemonServiceFiles(sandboxPath, symlinkPath string, extraPaths []str
 
 	if err := os.MkdirAll(filepath.Dir(sandboxPath), 0o755); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to create sandbox systemd directory %s", filepath.Dir(sandboxPath))
+	}
+
+	// A granted path that does not exist fails namespace setup with
+	// status=226/NAMESPACE, so honour the ExtraReadWritePaths contract for the
+	// one path this package owns: the network config dir is created lazily by
+	// the first artifact write, which on a fresh host has not happened yet when
+	// the daemon is installed. The other granted paths (e.g. /opt/hgcapp) carry
+	// their own ownership requirements and are created by their own provisioning
+	// steps, so they are deliberately not created here.
+	netConfigDir := filepath.Dir(policy.WeaverNftPath)
+	if slices.Contains(extraPaths, netConfigDir) {
+		if err := os.MkdirAll(netConfigDir, 0o755); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to create network config directory %s", netConfigDir)
+		}
 	}
 
 	if err := os.WriteFile(sandboxPath, []byte(rendered), 0o644); err != nil {
@@ -906,22 +924,78 @@ func FetchDaemonStatus(sockPath string) *daemon.StatusResponse {
 	return &status
 }
 
+// CheckDaemonComponentPrerequisitesStepId is the step ID for
+// CheckDaemonComponentPrerequisitesStep.
+const CheckDaemonComponentPrerequisitesStepId = "check-daemon-component-prerequisites"
+
 // CheckDaemonComponentPrerequisitesStep wraps CheckDaemonComponentPrerequisites
-// as a workflow step so that install (and any future workflow) can surface probe
-// failures in the TUI without post-workflow logic in the command RunE.
-// The step succeeds immediately when no probe errors are present.
-func CheckDaemonComponentPrerequisitesStep(sockPath string) *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId("check-daemon-component-prerequisites").
+// as a workflow step so probe failures surface in the TUI. It skips when the
+// daemon socket is unreachable (fresh install — the daemon comes later) and
+// succeeds when nothing is wrong.
+//
+// expectComponents optionally names components that must appear in /status.
+// The daemon silently drops any component it cannot build at startup (e.g. a
+// stale kubeconfig), which neither the probe-error nor degraded-monitor checks
+// would notice — naming the component here turns that into a visible failure.
+func CheckDaemonComponentPrerequisitesStep(sockPath string, expectComponents ...string) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId(CheckDaemonComponentPrerequisitesStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if warning := CheckDaemonComponentPrerequisites(sockPath); warning != "" {
+			status := fetchDaemonStatusAfterRestart(ctx, sockPath, len(expectComponents) > 0)
+			if status == nil {
+				return automa.SkippedReport(stp,
+					automa.WithDetail("daemon status endpoint unavailable; nothing to check"))
+			}
+			if warning := componentPrerequisiteWarnings(status); warning != "" {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.IllegalState.New(
 						"daemon installed but component prerequisites are not satisfied — "+
 							"fix the issues listed above and re-run: solo-provisioner daemon service check").
 						WithProperty(models.ErrPropertyResolution, []string{warning})))
 			}
+			var missing []string
+			for _, name := range expectComponents {
+				if _, ok := status.Components[name]; !ok {
+					missing = append(missing, name)
+				}
+			}
+			if len(missing) > 0 {
+				return automa.StepFailureReport(stp.Id(),
+					automa.WithError(errx.Decorate(
+						errorx.IllegalState.New(
+							"daemon is running without expected component(s): %s — it could not build them at startup",
+							strings.Join(missing, ", ")),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Check why the daemon skipped the component: sudo journalctl -u %s -n 50 --no-pager", daemonServiceName),
+						"Verify the component's scoped kubeconfig in /opt/solo/weaver/config/daemon.yaml still reaches the cluster",
+						fmt.Sprintf("Then restart and re-check: sudo systemctl restart %s && solo-provisioner daemon service check", daemonServiceName))))
+			}
 			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{"status": "all prerequisites satisfied"}))
 		})
+}
+
+// fetchDaemonStatusAfterRestart fetches /status, retrying for a few seconds
+// when the service is running but its socket is not serving yet — the brief
+// window right after RestartDaemonServiceStep. With retry false a single fetch
+// decides.
+func fetchDaemonStatusAfterRestart(ctx context.Context, sockPath string, retry bool) *daemon.StatusResponse {
+	status := FetchDaemonStatus(sockPath)
+	if status != nil || !retry {
+		return status
+	}
+	if running, _ := pkgos.IsServiceRunning(ctx, daemonServiceName); !running {
+		return nil
+	}
+	for i := 0; i < 5; i++ {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(time.Second):
+		}
+		if status = FetchDaemonStatus(sockPath); status != nil {
+			return status
+		}
+	}
+	return nil
 }
 
 // CheckDaemonComponentPrerequisites queries GET /status on the daemon socket at
@@ -941,7 +1015,12 @@ func CheckDaemonComponentPrerequisites(sockPath string) string {
 	if status == nil {
 		return ""
 	}
+	return componentPrerequisiteWarnings(status)
+}
 
+// componentPrerequisiteWarnings renders the warning text for a fetched /status
+// response — see CheckDaemonComponentPrerequisites for what gets reported.
+func componentPrerequisiteWarnings(status *daemon.StatusResponse) string {
 	var sb strings.Builder
 	hasIssues := false
 

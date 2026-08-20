@@ -42,6 +42,7 @@ anywhere in the host firewall's rules or templates.
 | External → node address, service port | Translated, then forwarded. Classified when the port is in a managed `<name>_ports` set, otherwise forwarded unclassified | Workload policy `forward` |
 | In-cluster → pod address directly, any port | Not constrained here — forwarded under `policy accept` | Cilium |
 | Either endpoint in `@bn-restricted` | Dropped, both directions and both families | Workload policy `forward` |
+| Anything → pod address, block-node health port | Request leg dropped, in each family that has a pod CIDR | Workload policy `forward` (`bn-health`) |
 
 The first row misleads, because the mechanism is not the one the rule layout suggests. A packet
 addressed to a port with no service behind it gets **no load-balancer translation** — only
@@ -139,7 +140,11 @@ privilege only by exec-ing narrow `block node` worker subcommands through sudo.
 For the block node its **only** monitor is the `TrafficShaperMonitor`
 (`internal/daemon/blocknode/`), gated on the traffic-shaper being enabled. The
 host firewall is **not** part of this — it is static, applied at install time and
-mutated only by `network firewall` commands.
+mutated only by `network firewall` commands. `network firewall reapply` re-asserts
+it from the persisted config on demand, taking no arguments and recording no
+enable/disable decision; every apply also retains the generation it replaces at
+`network-weaver-host-firewall.yaml.prev`, which is the recovery path that keeps
+named allow rules when the config is lost (the `.nft` reparse fallback does not).
 
 The monitor runs two independently-supervised responsibilities (each retried with
 5 s to 5 min exponential backoff, so one fault never kills the daemon):
@@ -157,9 +162,11 @@ The monitor runs two independently-supervised responsibilities (each retried wit
    runs an unprivileged `--check` digest probe, and only when the digest changed
    (or the URL changed, or the hourly force-resync elapses) execs `block node
    reconcile-shaper` via sudo to apply. The periodic forced apply self-heals
-   out-of-band nft edits. On daemon startup (including after a host reboot) the
-   loop reconciles once immediately before the first tick, so nft set membership
-   is rehydrated as soon as the daemon starts and statusz is reachable.
+   out-of-band nft edits. On daemon startup the loop reconciles once immediately
+   before the first tick, so membership converges as soon as statusz is
+   reachable. After a reboot the sets are not empty while it waits: the oneshot
+   has already replayed the last applied membership from the `.nft` file, and
+   this first poll replaces it.
 
 **statusz** is the block node's own health API — `statusz/inbound` and
 `statusz/outbound` JSON endpoints served on the pod's health port (default
@@ -170,6 +177,26 @@ result, and writes only the changed nft sets atomically under one lock via
 `policy.Manager.ApplySets`. (This is distinct from the daemon's own
 `GET /status` over `daemon.sock`, which reports daemon health, not block-node
 state.)
+
+That port is also what `bn-health` drops. Only the node's kubelet and the
+provisioner itself consume it, and both dial the pod from the node, so their
+packets take `output`/`postrouting` and never reach the `forward` hook this table
+registers on. Everything that does reach it is off-node by construction, which is
+why the rule needs no source allowlist — and why there is no set to keep
+populated across a replay. The drop is keyed on a static port list, which comes
+from the policy registry rather than from statusz, and so is rendered into
+`network-weaver-workload-policy.nft` from the registry entry on every re-render.
+
+The rule drops the request leg only, and carries `ct direction original`. Both
+details matter: a listener port sits inside the default ephemeral range
+(`net.ipv4.ip_local_port_range`, 32768-60999), so an unrelated pod can draw
+40983 as the source port of an outbound connection. Without the direction
+qualifier, that connection's reply — `daddr <podCIDR> tcp dport 40983` — matches
+the drop and the connection dies silently, since SYN retransmits reuse the port.
+An egress mirror on `tcp sport` would kill the outbound leg the same way, and no
+qualifier can rescue it, so there is none: dropping the request leg is sufficient
+because this chain has no conntrack accept fast-path, so an already-open
+connection loses its forward leg too.
 
 The two privileged worker subcommands the daemon execs — both superuser-gated and
 skipping the global preflight checks — are `block node tc-attach --veth <veth>
@@ -239,9 +266,9 @@ Both `ExecStart` lines load a table if its `.nft` file exists — each is guarde
 a `test -e`, so the unit is a no-op for whichever table has not been provisioned.
 The same unit is restarted on every live mutation (a `network firewall` /
 `network policy` command, or the install/reconfigure workflow) so the on-disk
-file and the kernel stay in sync. Note this replays the table structure only —
-the policy plane's set *membership* is not in the file (see boot persistence
-below).
+file and the kernel stay in sync. This replays the table structure *and* the
+policy plane's set membership, which is rendered inline into the file (see boot
+persistence below).
 
 ### solo-provisioner-bandwidth-shaper.service (tc HTB loader)
 
@@ -280,19 +307,43 @@ fill in the parts that are deliberately **not** persisted (see below).
 | Artifact | Persisted at boot? | Rebuilt by |
 |---|---|---|
 | nft tables, chains, rules (both tables) | Yes — replayed from the `.nft` files via `nft -f` | — |
-| nft **set elements** (the CIDR membership of `bn-*` sets) | **No** | daemon statusz poll loop — entry reconcile fires immediately on daemon start, and the pod watcher wakes the loop the moment it discovers the endpoint, so convergence is bounded by BN startup time on both the `base_url` and pod-discovery paths |
+| nft **set elements** (the CIDR membership of `bn-*` sets, and the managed `<name>_ports` sets) | Yes — rendered inline as `elements = { … }` in `network-weaver-workload-policy.nft` | daemon statusz poll loop, which replaces the persisted state on its first successful poll |
 | `$EGRESS` HTB hierarchy | Yes — the `solo-provisioner-bandwidth-shaper.sh` script | — |
 | `$VETH` (per-pod) HTB hierarchy | **No** | daemon pod-lifecycle watcher, on the next pod-create event |
 
-Two things are intentionally left out of boot persistence:
+Set membership is written to the `.nft` file as part of each set's declaration,
+so the oneshot replays it in the same `nft -f` transaction that creates the
+table. Because that unit is ordered `Before=solo-provisioner-daemon.service`, the
+sets are populated before the daemon starts — a peer the block node has
+quarantined is dropped from the first forwarded packet after a reboot, not from
+the first successful statusz poll.
 
-- **Set membership** (which CIDRs belong to each `bn-*` category) is never written
-  to the `.nft` file — statusz is the source of truth and the daemon reconciles
-  it. On a fresh boot the policy plane's chain is present but its sets are empty
-  until the daemon's first poll rehydrates them.
+statusz remains the source of truth. The persisted elements are a warm start, not
+an authority: every owned set is fully replaced on the first successful poll, and
+`bucketizeEndpoints` seeds each owned binding present-with-an-empty-slice, so a
+category the block node no longer reports collapses to an empty set rather than
+leaving stale peers behind. A node that has been off for a long time therefore
+replays a stale list until that first poll — which for `bn-restricted` errs
+toward over-blocking, the safe direction for a quarantine.
+
+The writer is `policy.Manager.persistMembership`, which re-renders the document
+from the registry plus the *live* contents of every daemon-owned set. It runs
+inside the same lock acquisition as the kernel write, on every membership
+mutation — the daemon's `ApplySets` as well as the hand-run `network policy
+add` / `remove` / `set`. An unchanged render is skipped via a SHA-256 compare, so
+a steady-state roster does not rewrite `/etc` on every forced resync.
+
+One thing is still intentionally left out of boot persistence:
+
 - **The `$VETH` HTB** would be meaningless to persist because the veth interface
   does not survive reboot (Cilium recreates it on pod start). The daemon
   reinstalls it from `network/shape/classes/` on each pod-create event.
+
+Two paths deliberately render without membership, leaving the sets empty until
+the next poll: `RenderWeaverNft` (the provisioning step, which has no nft runner
+and so no view of live state), and `Manager.Create`'s self-heal branch for a
+table that has been destroyed out of band, where there is nothing live to
+snapshot.
 
 ## Coexistence with the host's existing network stack
 
@@ -329,7 +380,7 @@ The two tables sit on opposite sides of that line, and the distinction matters:
 | `prerouting` (priority `raw`, −300) | host firewall | `accept` | Drops the operator block list ahead of conntrack. Covers the forward path too, so a blocked CIDR is blocked for pod-bound traffic as well. |
 | `input` (priority `filter`, 0) | host firewall | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
 | `output` (priority `filter`, 0) | host firewall | `accept` | Block-list symmetry only — drops traffic *to* a blocked CIDR. Deliberately not an egress allowlist. |
-| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the explicit `bn-restricted` quarantine rules. |
+| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the deny tier — the `bn-restricted` quarantine and the `bn-health` port lockdown. |
 
 The block list is spelled on three hooks because one is not enough. Dropping a peer inbound
 does not stop the host from dialing it, and once the host initiates, the replies come back in
@@ -462,7 +513,7 @@ applies and then persists (see below), so they are safe to run by hand on a
 provisioned node.
 
 - **`network firewall`** (`create`/`create-allow-rule`/`add`/`remove`/`set`/
-  `show`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
+  `show`/`reapply`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
   `--blocked-cidrs`, `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`, or
   `--from-file` for the whole table; `create-allow-rule` declares one named allow
   rule (`--name`, `--proto`, `--icmp-echo`);
