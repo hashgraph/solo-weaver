@@ -65,12 +65,12 @@ func TestExtractPodCIDRs(t *testing.T) {
 func TestExtractPodCIDRs_FromGoldenFile(t *testing.T) {
 	// The real render output must round-trip: whatever Render/renderStampRule
 	// wrote for the sample BN install set must be recoverable byte-for-byte.
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
+	doc, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24")
 	require.NoError(t, err)
 	require.Equal(t, []string{"10.4.0.0/24"}, ExtractPodCIDRs(doc))
 
 	// Dual-stack: both families round-trip out of the rendered chain.
-	dual, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
+	dual, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 	require.Equal(t, []string{"10.4.0.0/24", "2001:db8:c0de::/64"}, ExtractPodCIDRs(dual))
 }

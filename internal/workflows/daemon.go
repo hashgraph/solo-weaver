@@ -3,8 +3,11 @@
 package workflows
 
 import (
+	"path/filepath"
+
 	"github.com/automa-saga/automa"
 	daemon "github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -80,6 +83,23 @@ func daemonExtraReadWritePaths(cfg daemon.DaemonConfig) []string {
 	var paths []string
 	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
 		paths = append(paths, "/opt/hgcapp")
+	}
+	if bn := cfg.Components.BlockNode; bn != nil && bn.Enabled && bn.Monitors.TrafficShaper {
+		// The traffic-shaper monitor's sudo'd children rewrite
+		// network-weaver-workload-policy.nft to persist statusz-derived set
+		// membership, so it survives a reboot. Those children inherit this
+		// unit's ProtectSystem=strict namespace, which is read-only everywhere
+		// not listed here — the write fails with "read-only file system" even on
+		// a host whose / is mounted rw.
+		//
+		// systemd has no per-file granularity, so this also grants write access
+		// to the operator-owned host firewall artifact and the policy registry
+		// in the same directory. That widening is deliberate, so the condition is
+		// kept exactly as narrow as the writer's: the monitor that performs the
+		// write is itself gated on Monitors.TrafficShaper (see
+		// blocknode.NewComponent), so granting on Enabled alone would widen the
+		// sandbox on nodes where nothing can ever write there.
+		paths = append(paths, filepath.Dir(policy.WeaverNftPath))
 	}
 	return paths
 }

@@ -16,7 +16,7 @@ func healthDeny() *Policy {
 }
 
 func TestRender_PortScopedDenyIsPodScopedInBothFamilies(t *testing.T) {
-	doc, err := Render([]*Policy{healthDeny()}, "10.4.0.0/24", "2001:db8:c0de::/64")
+	doc, err := Render([]*Policy{healthDeny()}, nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
 	require.Contains(t, doc, "set bn-health_ports { type inet_service; elements = { 40983 }; }",
@@ -34,7 +34,7 @@ func TestRender_PortScopedDenyIsPodScopedInBothFamilies(t *testing.T) {
 // direction qualifier would drop its reply — both silently, since SYN
 // retransmits reuse the port. Neither spelling may appear.
 func TestRender_PortScopedDenyCannotMatchAnEphemeralSourcePort(t *testing.T) {
-	doc, err := Render([]*Policy{healthDeny()}, "10.4.0.0/24", "2001:db8:c0de::/64")
+	doc, err := Render([]*Policy{healthDeny()}, nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
 	require.NotContains(t, doc, "tcp sport @bn-health_ports",
@@ -53,7 +53,7 @@ func TestRender_PortScopedDenyCannotMatchAnEphemeralSourcePort(t *testing.T) {
 }
 
 func TestRender_PortScopedDenySkipsFamilyWithoutPodCIDR(t *testing.T) {
-	doc, err := Render([]*Policy{healthDeny()}, "10.4.0.0/24")
+	doc, err := Render([]*Policy{healthDeny()}, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	require.Contains(t, doc, "\t\tip daddr 10.4.0.0/24 tcp dport @bn-health_ports ct direction original drop")
@@ -66,18 +66,18 @@ func TestRender_PortScopedDenySkipsFamilyWithoutPodCIDR(t *testing.T) {
 // error rather than a silently empty chain — the membership-only deny below is
 // the case that legitimately renders without one.
 func TestRender_PortScopedDenyRequiresAPodCIDR(t *testing.T) {
-	_, err := Render([]*Policy{healthDeny()})
+	_, err := Render([]*Policy{healthDeny()}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "pod CIDR is required")
 
-	_, err = Render([]*Policy{{Name: "bn-restricted", Action: ActionDeny}})
+	_, err = Render([]*Policy{{Name: "bn-restricted", Action: ActionDeny}}, nil)
 	require.NoError(t, err, "a membership-only deny never references POD_CIDR")
 }
 
 // A membership-only deny is unchanged by the port-scoped form: still both
 // directions, still not pod-scoped, still no conntrack qualifier.
 func TestRender_MembershipOnlyDenyIsUnchanged(t *testing.T) {
-	doc, err := Render([]*Policy{{Name: "bn-restricted", Action: ActionDeny}}, "10.4.0.0/24")
+	doc, err := Render([]*Policy{{Name: "bn-restricted", Action: ActionDeny}}, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	require.Contains(t, doc, "\t\tip saddr @bn-restricted drop")
@@ -89,7 +89,7 @@ func TestRender_MembershipOnlyDenyIsUnchanged(t *testing.T) {
 
 func TestRender_PortScopedDenyKeepsItsMembershipClause(t *testing.T) {
 	narrowed := &Policy{Name: "bn-quarantine-http", Action: ActionDeny, Ports: []string{"8080"}}
-	doc, err := Render([]*Policy{narrowed}, "10.4.0.0/24")
+	doc, err := Render([]*Policy{narrowed}, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	require.Contains(t, doc,
@@ -104,7 +104,7 @@ func TestRender_PortScopedDenyPrecedesClassification(t *testing.T) {
 		Name: "bn-subscriber-in", Action: ActionStamp, Stamp: "reserve-ingress",
 		Direction: DirectionIngress, FromEntityWorld: true, Ports: []string{"40980"},
 	}
-	doc, err := Render([]*Policy{stamp, healthDeny()}, "10.4.0.0/24")
+	doc, err := Render([]*Policy{stamp, healthDeny()}, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	body := chainBody(t, doc, chainV4)

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -21,10 +22,12 @@ import (
 var update = flag.Bool("update", false, "regenerate golden testdata files")
 
 // fakeRunner is an in-memory Runner for tests: it records the applied document
-// and the elements added per set without touching the kernel. Apply clears
-// elements to mirror the real `nft -f` delete+recreate of the whole table --
-// without that, tests wouldn't exercise the membership loss Manager.Create's
-// snapshot/restore is meant to prevent.
+// and the elements added per set without touching the kernel. Apply mirrors the
+// real `nft -f` delete+recreate of the whole table -- every set is emptied, then
+// re-seeded from the `elements = { … }` clauses the document declares. Both
+// halves matter: dropping the seeding would hide the membership persistence
+// this package now relies on, and dropping the clearing would hide the loss it
+// protects against.
 type fakeRunner struct {
 	applied      string
 	applyCount   int
@@ -44,9 +47,32 @@ func (f *fakeRunner) Apply(_ context.Context, doc string) error {
 	f.applied = doc
 	f.applyCount++
 	f.exists = true
-	f.elements = map[string][]string{}
+	f.elements = parseDocElements(doc)
 	return nil
 }
+
+// reDocSetElements matches one set declaration carrying inline elements in a
+// rendered document, capturing the set name and the raw element list.
+var reDocSetElements = regexp.MustCompile(`(?m)^\tset (\S+) \{ type .*?elements = \{ ([^}]*) \}; \}$`)
+
+// parseDocElements recovers the per-set membership a rendered document seeds,
+// so the fake table comes up populated exactly as `nft -f` would leave it.
+func parseDocElements(doc string) map[string][]string {
+	out := map[string][]string{}
+	for _, m := range reDocSetElements.FindAllStringSubmatch(doc, -1) {
+		var elements []string
+		for _, e := range strings.Split(m[2], ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				elements = append(elements, e)
+			}
+		}
+		if len(elements) > 0 {
+			out[m[1]] = elements
+		}
+	}
+	return out
+}
+
 func (f *fakeRunner) AddElements(_ context.Context, set string, elements []string) error {
 	if !f.exists {
 		// Mirrors the real `nft add element` against a missing table:
@@ -187,7 +213,7 @@ func sampleBNPolicies() []*Policy {
 }
 
 func TestRender_GoldenMatchesBNInstallSet(t *testing.T) {
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
+	doc, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	goldenPath := "testdata/network-weaver-workload-policy.golden.nft"
@@ -203,7 +229,7 @@ func TestRender_GoldenMatchesBNInstallSet(t *testing.T) {
 // with both an IPv4 and an IPv6 pod CIDR. It asserts the v6 sets and `ip6` rules
 // appear alongside their v4 counterparts.
 func TestRender_DualStackGolden(t *testing.T) {
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
+	doc, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
 	goldenPath := "testdata/network-weaver-workload-policy-dualstack.golden.nft"
@@ -251,7 +277,7 @@ func TestRender_SingleStackEmitsAnEmptyChainForTheAbsentFamily(t *testing.T) {
 	stampOnly := []*Policy{
 		{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Direction: DirectionIngress, Ports: []string{"40840"}, CreatedAt: fixedTime()},
 	}
-	doc, err := Render(stampOnly, "10.4.0.0/24")
+	doc, err := Render(stampOnly, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	require.Contains(t, doc, "jump "+chainV6, "the dispatch always jumps to both families")
@@ -270,13 +296,13 @@ func TestRender_AbsentFamilyOmitsTheReplyRestore(t *testing.T) {
 		{Name: "bn-restricted", Action: ActionDeny, CreatedAt: fixedTime()},
 	}
 
-	single, err := Render(replyStamp, "10.4.0.0/24")
+	single, err := Render(replyStamp, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 	require.Contains(t, chainBody(t, single, chainV4), "ct direction reply")
 	require.NotContains(t, chainBody(t, single, chainV6), "ct direction reply",
 		"a family with no pod CIDR carries the deny tier only")
 
-	dual, err := Render(replyStamp, "10.4.0.0/24", "2001:db8:c0de::/64")
+	dual, err := Render(replyStamp, nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 	require.Contains(t, chainBody(t, dual, chainV6), "ct direction reply",
 		"both families keep the restore once both have a pod CIDR")
@@ -290,9 +316,9 @@ func TestRender_DeterministicRegardlessOfInputOrder(t *testing.T) {
 	}
 	require.NotEqual(t, sorted, reversed, "test fixture must not already be a palindrome")
 
-	want, err := Render(sorted, "10.4.0.0/24")
+	want, err := Render(sorted, nil, "10.4.0.0/24")
 	require.NoError(t, err)
-	got, err := Render(reversed, "10.4.0.0/24")
+	got, err := Render(reversed, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 	require.Equal(t, want, got, "Render must sort internally, not rely on the caller's order")
 }
@@ -302,7 +328,7 @@ func TestRender_DeterministicRegardlessOfInputOrder(t *testing.T) {
 // positions across chains that never evaluate the same packet, which would make
 // the assertion meaningless.
 func TestRender_TierOrderInvariants(t *testing.T) {
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
+	doc, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
@@ -337,7 +363,7 @@ func TestRender_TierOrderInvariants(t *testing.T) {
 // only dispatches, per-family chains that carry no rule from the other family,
 // and no conntrack-state rule or terminal drop anywhere.
 func TestRender_FamilySplit(t *testing.T) {
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24", "2001:db8:c0de::/64")
+	doc, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24", "2001:db8:c0de::/64")
 	require.NoError(t, err)
 
 	base := chainBody(t, doc, chainBase)
@@ -384,7 +410,7 @@ func TestRender_FamilySplit(t *testing.T) {
 }
 
 func TestRender_WorkedExamples(t *testing.T) {
-	doc, err := Render(sampleBNPolicies(), "10.4.0.0/24")
+	doc, err := Render(sampleBNPolicies(), nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	// publisher stamp.
@@ -412,7 +438,7 @@ func TestRender_CreatedAtTiebreakWithinDirPortsGroup(t *testing.T) {
 		{Name: "aaa-newer", Action: ActionStamp, Stamp: "public", Direction: DirectionEgress, FromEntityWorld: true, Ports: []string{"9000"}, CreatedAt: newer},
 		{Name: "zzz-older", Action: ActionStamp, Stamp: "reserve-egress", Direction: DirectionEgress, FromEntityWorld: true, Ports: []string{"9000"}, CreatedAt: older},
 	}
-	doc, err := Render(policies, "10.4.0.0/24")
+	doc, err := Render(policies, nil, "10.4.0.0/24")
 	require.NoError(t, err)
 
 	zzzIdx := strings.Index(doc, "@zzz-older_ports")
@@ -423,13 +449,13 @@ func TestRender_CreatedAtTiebreakWithinDirPortsGroup(t *testing.T) {
 }
 
 func TestRender_RequiresPodCIDR(t *testing.T) {
-	_, err := Render(sampleBNPolicies(), "")
+	_, err := Render(sampleBNPolicies(), nil, "")
 	require.Error(t, err)
 }
 
 func TestRender_DenyOnlyDoesNotRequirePodCIDR(t *testing.T) {
 	deny := []*Policy{{Name: "bn-restricted", Action: ActionDeny, CreatedAt: fixedTime()}}
-	doc, err := Render(deny, "")
+	doc, err := Render(deny, nil, "")
 	require.NoError(t, err, "a deny-only chain never references POD_CIDR")
 	require.Contains(t, doc, "ip saddr @bn-restricted drop")
 }
@@ -446,12 +472,14 @@ func TestCreate_PersistsAndSeedsMembership(t *testing.T) {
 	// Registry file written; .nft persisted; initial membership applied live.
 	require.FileExists(t, filepath.Join(regDir, "bn-publisher.json"))
 	require.FileExists(t, nftPath)
-	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.1"}, r.elements["bn-publisher"])
 
-	// Persisted .nft must NOT contain the membership element.
+	// The persisted .nft carries the membership inline, which is what makes it
+	// survive a reboot: the boot oneshot replays this document and the set comes
+	// up populated. Asserted in the collapsed form nft itself prints for a /32.
 	onDisk, err := os.ReadFile(nftPath)
 	require.NoError(t, err)
-	require.NotContains(t, string(onDisk), "10.1.0.1/32")
+	require.Contains(t, string(onDisk), "set bn-publisher { type ipv4_addr; flags interval; elements = { 10.1.0.1 }; }")
 }
 
 func TestCreate_ExistingWithoutForceIsNoOp(t *testing.T) {
@@ -472,7 +500,7 @@ func TestCreate_ExistingWithoutForceIsNoOp(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, changed, "an existing policy without --force must not change")
 	require.Equal(t, 1, r.applyCount, "no --force on an existing policy must never re-render")
-	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"], "membership must be untouched")
+	require.Equal(t, []string{"10.1.0.1"}, r.elements["bn-publisher"], "membership must be untouched")
 }
 
 func TestCreate_ForceReplacesConfigAndMembership(t *testing.T) {
@@ -528,7 +556,7 @@ func TestCreate_PreservesSiblingMembershipAcrossRerender(t *testing.T) {
 		&Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}},
 		[]string{"10.1.0.1/32"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
-	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"])
+	require.Equal(t, []string{"10.1.0.1"}, r.elements["bn-publisher"])
 
 	// Creating a second, different (brand-new) policy forces a full
 	// re-render, which applies `delete table; add table` --
@@ -539,7 +567,7 @@ func TestCreate_PreservesSiblingMembershipAcrossRerender(t *testing.T) {
 		[]string{"10.20.0.0/16"}, []string{"10.4.0.0/24"}, false)
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"10.1.0.1/32"}, r.elements["bn-publisher"],
+	require.Equal(t, []string{"10.1.0.1"}, r.elements["bn-publisher"],
 		"a sibling create must not wipe bn-publisher's live membership")
 	require.Equal(t, []string{"10.20.0.0/16"}, r.elements["bn-partner-out"])
 }

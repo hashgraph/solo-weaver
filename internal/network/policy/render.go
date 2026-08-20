@@ -16,11 +16,22 @@ import (
 // Render produces the full `inet weaver-workload-policy` nft document for the given set of
 // registry policies, in tier order. The same output feeds both the kernel apply
 // (`nft -f`) and the on-disk artifact, so the live table and the persisted file
-// can never diverge. Set *membership* is deliberately not rendered here — only
-// set schemas and any static `--ports` elements — because membership is owned
-// by the daemon poll loop and never persisted. A managed-ports set
-// (`<name>_ports` for a ManagedPorts policy) is likewise declared empty here and
-// filled from statusz at runtime, exactly like the CIDR membership set.
+// can never diverge.
+//
+// membership carries the daemon-owned set contents, keyed by nft set name — so
+// `bn-publisher`, its v6 companion `bn-publisher6`, and its listener-port set
+// `bn-publisher_ports` are three separate keys. A set with no entry (or an empty
+// one) renders as a bare schema, which is what an operator re-render produces
+// before the daemon has ever polled. Rendering membership is what makes the sets
+// boot-persistent: the shared nft oneshot replays this document and is ordered
+// ahead of the daemon, so a quarantine peer is dropped from the first packet
+// after a reboot rather than from the first successful statusz poll.
+//
+// Membership is supplied by the caller from live kernel state, never re-parsed
+// out of the previous document. A caller that has no view of the kernel
+// (RenderWeaverNft) renders bare schemas; the daemon's next successful poll
+// replaces every daemon-owned set wholesale, so the artifact converges without
+// a recovery path here.
 //
 // The hooked `forward` chain holds no rules of its own beyond a `meta nfproto`
 // dispatch into forward_ipv4 / forward_ipv6, so a packet never evaluates rules
@@ -37,7 +48,7 @@ import (
 //  2. asymmetric reply-stamp restore
 //  3. stamp classification — specific (has an IP-set match)
 //  4. stamp classification — fallthrough (--from-entity world)
-func Render(policies []*Policy, podCIDRs ...string) (string, error) {
+func Render(policies []*Policy, membership map[string][]string, podCIDRs ...string) (string, error) {
 	podV4, podV6 := partitionPodCIDRs(podCIDRs)
 	if podV4 == "" && podV6 == "" && needsPodCIDR(policies) {
 		return "", errorx.IllegalArgument.New("pod CIDR is required to render a --stamp policy in the inet weaver-workload-policy chain")
@@ -51,7 +62,7 @@ func Render(policies []*Policy, podCIDRs ...string) (string, error) {
 	// deterministic render.
 	policies = sortedByName(policies)
 
-	setLines, err := renderSetDecls(policies)
+	setLines, err := renderSetDecls(policies, membership)
 	if err != nil {
 		return "", err
 	}
@@ -210,19 +221,21 @@ func sortedByName(policies []*Policy) []*Policy {
 }
 
 // renderSetDecls emits the schema for each policy's sets, name-sorted for a
-// deterministic render. Membership set elements are omitted; only a static
-// `--ports` set carries inline elements — a managed-ports set is declared empty
-// and filled by the daemon.
-func renderSetDecls(policies []*Policy) ([]string, error) {
+// deterministic render, seeding each daemon-owned set with the membership
+// supplied for it. A static `--ports` set keeps rendering its operator-declared
+// elements from the registry, not from membership — those are part of the policy
+// definition, not runtime state.
+func renderSetDecls(policies []*Policy, membership map[string][]string) ([]string, error) {
 	var lines []string
 	for _, p := range policies {
 		if p.hasCIDRSet() {
+			v4, v6 := p.Name, V6SetName(p.Name)
 			if p.isCompoundSet() {
 				// Compound ip:port key for --reply-stamp destinations, one set
 				// per family (the v6 set carries the "6"-suffixed name).
 				lines = append(lines,
-					fmt.Sprintf("\tset %s { type ipv4_addr . inet_service; }", p.Name),
-					fmt.Sprintf("\tset %s { type ipv6_addr . inet_service; }", V6SetName(p.Name)))
+					setDecl(v4, "ipv4_addr . inet_service", membership[v4]),
+					setDecl(v6, "ipv6_addr . inet_service", membership[v6]))
 			} else {
 				// `flags interval` so the set can hold CIDRs, but deliberately
 				// NO `auto-merge` -- unlike the host-firewall template
@@ -230,38 +243,62 @@ func renderSetDecls(policies []*Policy) ([]string, error) {
 				//
 				// auto-merge is safe there because that table re-renders from an
 				// authoritative persisted YAML config on every mutation, so a
-				// folded kernel read-back costs nothing (#1002/#1004). Here it is
-				// not: policy set membership is never persisted and is mutated
-				// incrementally, so the kernel is the only copy. Folding
-				// 10.0.0.5/32 into 10.0.0.0/24 would leave `delete element` with
-				// no exact element to remove, and would make Manager.Create's
-				// ListElements snapshot/restore silently overwrite authored
-				// membership with the merged form.
+				// folded kernel read-back costs nothing (#1002/#1004). It is not
+				// safe here, and persisting membership into this document does
+				// NOT make it so: what is written back is a snapshot of the live
+				// sets, so anything the kernel folded is folded in the artifact
+				// too. The kernel stays the authority for membership; the
+				// document is a replay of it.
+				//
+				// Two things would break if it were switched on (neither is a
+				// live problem — this is why the flag stays off). `delete
+				// element` would lose the exact element to remove, so an operator
+				// could no longer withdraw a /32 that got absorbed into a /24.
+				// And the daemon diffs desired-from-statusz against live every
+				// tick: statusz reports individual peers, which are routinely
+				// consecutive, so folding 10.0.0.1 and 10.0.0.2 into one range
+				// would yield a live set that can never equal the desired list --
+				// a delta on every tick.
+				//
+				// Note the containment handling below does NOT make auto-merge
+				// viable: it prunes/rejects a prefix COVERED by another, while
+				// auto-merge additionally folds merely ADJACENT prefixes, which
+				// nothing here produces or expects. Enabling it would first need
+				// the desired side folded by the same algorithm before diffing.
 				//
 				// Overlapping membership is handled in Go instead (cidrset.go):
 				// operator-authored lists are rejected naming both prefixes,
-				// daemon-derived lists have covered entries pruned. Turning
-				// auto-merge on here needs a persisted authoritative membership
-				// record first -- see #1006 and #990.
+				// daemon-derived lists have covered entries pruned.
 				lines = append(lines,
-					fmt.Sprintf("\tset %s { type ipv4_addr; flags interval; }", p.Name),
-					fmt.Sprintf("\tset %s { type ipv6_addr; flags interval; }", V6SetName(p.Name)))
+					setDecl(v4, "ipv4_addr; flags interval", membership[v4]),
+					setDecl(v6, "ipv6_addr; flags interval", membership[v6]))
 			}
 		}
 		if len(p.Ports) > 0 {
 			lines = append(lines, fmt.Sprintf("\tset %s { type inet_service; elements = { %s }; }",
 				PortsSetName(p.Name), portElements(p.Ports)))
 		} else if p.ManagedPorts {
-			// Daemon-managed listener ports: the set is declared but empty,
-			// exactly like the CIDR membership set above. The traffic-shaper
-			// poll loop fills it from the BN's statusz local.port each tick;
-			// nothing is seeded (or persisted) here. Until the first poll the
-			// set is empty, so the `tcp dport @<name>_ports` clause matches
-			// nothing — the same bootstrap behavior the membership sets have.
-			lines = append(lines, fmt.Sprintf("\tset %s { type inet_service; }", PortsSetName(p.Name)))
+			// Daemon-managed listener ports, filled from the BN's statusz
+			// local.port. Seeded here from the last applied state for the same
+			// reason the CIDR sets are: until the first poll lands, an empty set
+			// makes the `tcp dport @<name>_ports` clause match nothing.
+			lines = append(lines, setDecl(PortsSetName(p.Name), "inet_service", membership[PortsSetName(p.Name)]))
 		}
 	}
 	return lines, nil
+}
+
+// setDecl renders one set declaration, appending an `elements = { … }` clause
+// when the set has members. Elements are canonicalized so the render is a pure
+// function of set contents — RenderWeaverNft's SHA-256 skip and the daemon's
+// change detection both depend on an unchanged membership producing an
+// unchanged document.
+func setDecl(name, typeSpec string, elements []string) string {
+	canon := CanonicalizeElements(elements)
+	if len(canon) == 0 {
+		return fmt.Sprintf("\tset %s { type %s; }", name, typeSpec)
+	}
+	return fmt.Sprintf("\tset %s { type %s; elements = { %s }; }", name, typeSpec, strings.Join(canon, ", "))
 }
 
 // renderFamilyChain builds one address family's chain body (indented two tabs),

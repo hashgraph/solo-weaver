@@ -27,7 +27,9 @@ const (
 	// RegistryDir holds one JSON file per policy. The registry is the source of
 	// truth for the static policy definition and drives the tier-order chain
 	// re-render on every create/delete. CIDR membership is NOT stored here — it
-	// lives in the live nft sets and is owned by the daemon poll loop.
+	// is owned by the daemon poll loop, which reconciles it into the live nft
+	// sets and persists it as set elements in WeaverNftPath so it survives a
+	// reboot.
 	RegistryDir = "/etc/solo-provisioner/policies"
 
 	// NetworkNftService is the shared oneshot unit that loads the network nft
