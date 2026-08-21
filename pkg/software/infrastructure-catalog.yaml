@@ -407,8 +407,8 @@ cluster:
   chart: 'oci://ghcr.io/hashgraph/charts/solo-operator'
   namespace: 'solo-operator'
   release: 'solo-operator'
-  default: "0.3.1"
+  default: "0.5.0"
   versions:
-    0.3.1:
+    0.5.0:
       algorithm: 'sha256'
-      checksum: 'b77cb63d456e472d5ae8e1759e85fd6e4fbdeae12398b20f9df97d54f036a73a'
+      checksum: '585cc2ef14b8ae47164e58c1e4f789aabd276e8d1b23e55b75add744a88309bc'
