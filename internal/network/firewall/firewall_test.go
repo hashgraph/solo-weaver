@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -417,20 +418,23 @@ func TestManager_AddRemoveSet(t *testing.T) {
 	require.NoError(t, m.Add(ctx, RuleMgmt, []string{"10.5.0.0/16"}, nil))
 	require.Contains(t, readNft(t, nftPath), "10.5.0.0/16")
 
-	require.NoError(t, m.Remove(ctx, RuleMgmt, []string{"10.5.0.0/16"}, nil))
+	// This round-trip empties the management allowlist, which the lock-out guard
+	// refuses without force (#1034); the guard has its own coverage in
+	// TestMgmtLockout_*.
+	require.NoError(t, m.Remove(ctx, RuleMgmt, []string{"10.5.0.0/16"}, nil, true))
 	require.NotContains(t, readNft(t, nftPath), "10.5.0.0/16")
 
 	require.NoError(t, m.Add(ctx, RuleBlocked, []string{"203.0.113.0/24"}, nil))
 	require.Contains(t, readNft(t, nftPath), "203.0.113.0/24")
 
-	require.NoError(t, m.Remove(ctx, RuleBlocked, []string{"203.0.113.0/24"}, nil))
+	require.NoError(t, m.Remove(ctx, RuleBlocked, []string{"203.0.113.0/24"}, nil, false))
 	require.NotContains(t, readNft(t, nftPath), "203.0.113.0/24")
 
 	require.NoError(t, m.SetMany(ctx, []Update{
 		{Name: RuleMgmt, CIDRs: []string{"172.16.0.0/12"}},
 		{Name: RuleBlocked, CIDRs: []string{"198.51.100.0/24"}},
 		{Name: RuleInCluster, Ports: []string{"9100"}},
-	}))
+	}, false))
 	doc := readNft(t, nftPath)
 	require.Contains(t, doc, "172.16.0.0/12")
 	require.Contains(t, doc, "198.51.100.0/24")
@@ -455,7 +459,7 @@ func TestManager_AddRemoveByNameReachesAllowRules(t *testing.T) {
 	require.Contains(t, doc, "10.9.0.0/24")
 	require.Contains(t, doc, "9345")
 
-	require.NoError(t, m.Remove(ctx, "k8s-node", []string{"10.9.0.0/24"}, []string{"9345"}))
+	require.NoError(t, m.Remove(ctx, "k8s-node", []string{"10.9.0.0/24"}, []string{"9345"}, false))
 	doc = readNft(t, nftPath)
 	require.NotContains(t, doc, "10.9.0.0/24")
 	require.NotContains(t, doc, "9345")
@@ -749,4 +753,148 @@ func TestIsRulesetDiagnostic(t *testing.T) {
 			require.Equal(t, tc.want, isRulesetDiagnostic(path, tc.stderr))
 		})
 	}
+}
+
+// ── management-allowlist lock-out guard (#1034) ──────────────────────────────
+
+// mgmtElements returns the live mgmt address list from the persisted table, so
+// the assertions below read the same source of truth the next mutation would.
+func mgmtElements(t *testing.T, m *Manager) []string {
+	t.Helper()
+	tbl, err := m.Table(context.Background())
+	require.NoError(t, err)
+	return tbl.Mgmt.CIDRs
+}
+
+// seedMgmt applies sampleTable and returns the manager plus the apply counter,
+// so a test can assert that a refusal performed no further apply.
+func seedMgmt(t *testing.T) (*Manager, *int) {
+	t.Helper()
+	r := &fakeRunner{}
+	applies := 0
+	m, _ := newTestManager(t, r, &applies)
+	require.NoError(t, m.Apply(context.Background(), sampleTable()))
+	require.Equal(t, 1, applies, "seed apply")
+	return m, &applies
+}
+
+func TestMgmtLockout_SetToEmptyIsRefused(t *testing.T) {
+	ctx := context.Background()
+	m, applies := seedMgmt(t)
+
+	err := m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, false)
+
+	require.Error(t, err)
+	require.True(t, errorx.IsOfType(err, errorx.IllegalArgument),
+		"must be IllegalArgument so the operator-visible code is 10400")
+	require.ErrorContains(t, err, "refusing to empty the management address list")
+	// The guard runs before applyAndPersist, so nothing was rendered or written.
+	require.Equal(t, 1, *applies, "a refusal must not apply")
+	require.Equal(t, []string{"10.0.0.0/8", "192.168.0.0/16"}, mgmtElements(t, m))
+}
+
+func TestMgmtLockout_RemoveOfLastCIDRIsRefused(t *testing.T) {
+	ctx := context.Background()
+	m, applies := seedMgmt(t)
+
+	// Drop one of the two — allowed, one address remains.
+	require.NoError(t, m.Remove(ctx, RuleMgmt, []string{"10.0.0.0/8"}, nil, false))
+	require.Equal(t, 2, *applies)
+	require.Equal(t, []string{"192.168.0.0/16"}, mgmtElements(t, m))
+
+	// Dropping the last one empties the rule and must be refused.
+	err := m.Remove(ctx, RuleMgmt, []string{"192.168.0.0/16"}, nil, false)
+	require.ErrorContains(t, err, "refusing to empty the management")
+	require.Equal(t, 2, *applies, "a refusal must not apply")
+	require.Equal(t, []string{"192.168.0.0/16"}, mgmtElements(t, m))
+}
+
+func TestMgmtLockout_ForceAllowsEmptying(t *testing.T) {
+	ctx := context.Background()
+	m, applies := seedMgmt(t)
+
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, true))
+
+	require.Equal(t, 2, *applies, "the forced empty must apply")
+	require.Empty(t, mgmtElements(t, m))
+}
+
+// An allowlist that is already empty must stay editable — otherwise an operator
+// who has to repair one would be locked out of their own firewall config.
+func TestMgmtLockout_AlreadyEmptyStaysMutable(t *testing.T) {
+	ctx := context.Background()
+	m, applies := seedMgmt(t)
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, true))
+	before := *applies
+
+	// Another empty-to-empty set, and an unrelated edit, both proceed unguarded.
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, false))
+	require.NoError(t, m.Add(ctx, RuleInCluster, nil, []string{"9100"}))
+	require.Equal(t, before+2, *applies)
+
+	// And it can be repaired without force.
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{"10.0.0.0/8"}}}, false))
+	require.Equal(t, []string{"10.0.0.0/8"}, mgmtElements(t, m))
+}
+
+// The guard is scoped to mgmt: emptying another reserved block is a supported
+// way to disable it and must not be caught.
+func TestMgmtLockout_OtherRulesUnaffected(t *testing.T) {
+	ctx := context.Background()
+	m, _ := seedMgmt(t)
+
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleBlocked, CIDRs: []string{}}}, false))
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleInCluster, CIDRs: []string{}}}, false))
+
+	tbl, err := m.Table(ctx)
+	require.NoError(t, err)
+	require.Empty(t, tbl.Blocked.CIDRs)
+	require.Empty(t, tbl.InCluster.CIDRs)
+	require.NotEmpty(t, tbl.Mgmt.CIDRs, "mgmt untouched")
+}
+
+// Reapply is a no-op mutation, so prior == new and the transition guard can
+// never fire — including on a table whose allowlist is already empty.
+func TestMgmtLockout_ReapplyOfEmptyAllowlistSucceeds(t *testing.T) {
+	ctx := context.Background()
+	m, _ := seedMgmt(t)
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, true))
+
+	require.NoError(t, m.Reapply(ctx))
+}
+
+// The management allow rule renders unconditionally as
+// `saddr @mgmt_addrs tcp dport @mgmt_ports accept`, so an empty port list locks
+// the host out exactly as an empty address list does. Both halves are guarded.
+func TestMgmtLockout_EmptyingPortsIsRefused(t *testing.T) {
+	ctx := context.Background()
+	m, applies := seedMgmt(t)
+
+	err := m.SetMany(ctx, []Update{{Name: RuleMgmt, Ports: []string{}}}, false)
+
+	require.ErrorContains(t, err, "refusing to empty the management port list",
+		"emptying mgmt ports must be guarded like emptying its addresses")
+	require.Equal(t, 1, *applies, "a refusal must not apply")
+
+	tbl, tblErr := m.Table(ctx)
+	require.NoError(t, tblErr)
+	require.NotEmpty(t, tbl.Mgmt.Ports)
+}
+
+func TestMgmtLockout_RemovingLastPortIsRefused(t *testing.T) {
+	ctx := context.Background()
+	m, _ := seedMgmt(t)
+
+	tbl, err := m.Table(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"22"}, tbl.Mgmt.Ports, "sampleTable seeds the default SSH port")
+
+	require.ErrorContains(t, m.Remove(ctx, RuleMgmt, nil, []string{"22"}, false),
+		"refusing to empty the management port list")
+
+	// And --force still gets through.
+	require.NoError(t, m.Remove(ctx, RuleMgmt, nil, []string{"22"}, true))
+	tbl, err = m.Table(ctx)
+	require.NoError(t, err)
+	require.Empty(t, tbl.Mgmt.Ports)
 }

@@ -100,9 +100,10 @@ func (m *Manager) Create(ctx context.Context, t *Table, force bool) (bool, error
 }
 
 // Apply replaces the whole table from a declarative config and re-renders,
-// regardless of whether one already exists. It is what `create --from-file`
-// runs: unlike Create it is not create-if-missing, because a config file the
-// operator just edited is an instruction, not a default.
+// regardless of whether one already exists: unlike Create it is not
+// create-if-missing. It has no production caller today (`create --from-file`
+// goes through Create) and is retained as the exported "replace outright"
+// entry point, exercised by the package tests.
 func (m *Manager) Apply(ctx context.Context, t *Table) error {
 	if err := t.Validate(); err != nil {
 		return err
@@ -159,9 +160,10 @@ func (m *Manager) CreateRule(ctx context.Context, r Rule, force bool) (bool, err
 }
 
 // Add adds CIDRs and/or port specs to the named rule and re-renders. Adding is
-// idempotent: an entry already present is left alone.
+// idempotent: an entry already present is left alone. Growing a rule cannot
+// empty the management allowlist, so unlike Remove/Set it takes no force.
 func (m *Manager) Add(ctx context.Context, name string, cidrs, ports []string) error {
-	return m.mutateRule(ctx, name, func(r *Rule) error {
+	return m.mutateRule(ctx, name, false, func(r *Rule) error {
 		if err := r.AddCIDRs(cidrs); err != nil {
 			return err
 		}
@@ -170,9 +172,11 @@ func (m *Manager) Add(ctx context.Context, name string, cidrs, ports []string) e
 }
 
 // Remove drops CIDRs and/or port specs from the named rule and re-renders.
-// Removing an absent entry is a no-op.
-func (m *Manager) Remove(ctx context.Context, name string, cidrs, ports []string) error {
-	return m.mutateRule(ctx, name, func(r *Rule) error {
+// Removing an absent entry is a no-op. force authorises removing the last
+// address (or the last port) from the management allowlist; without it that one
+// case is refused — see mutate.
+func (m *Manager) Remove(ctx context.Context, name string, cidrs, ports []string, force bool) error {
+	return m.mutateRule(ctx, name, force, func(r *Rule) error {
 		r.RemoveCIDRs(cidrs)
 		r.RemovePorts(ports)
 		return nil
@@ -192,16 +196,18 @@ type Update struct {
 }
 
 // Set atomically replaces the named rule's address list and/or port list.
-func (m *Manager) Set(ctx context.Context, name string, cidrs, ports []string) error {
-	return m.SetMany(ctx, []Update{{Name: name, CIDRs: cidrs, Ports: ports}})
+// force authorises replacing the management allowlist (or its port list) with
+// an empty one; without it that case is refused — see mutate.
+func (m *Manager) Set(ctx context.Context, name string, cidrs, ports []string, force bool) error {
+	return m.SetMany(ctx, []Update{{Name: name, CIDRs: cidrs, Ports: ports}}, force)
 }
 
 // SetMany applies several rules' replacement membership in a single re-render,
 // so a `set` naming more than one block lands as one nft transaction rather than
 // several — a half-applied management allowlist is exactly the state worth
 // avoiding here.
-func (m *Manager) SetMany(ctx context.Context, updates []Update) error {
-	return m.mutate(ctx, func(t *Table) error {
+func (m *Manager) SetMany(ctx context.Context, updates []Update, force bool) error {
+	return m.mutate(ctx, force, func(t *Table) error {
 		for _, u := range updates {
 			r, ok := t.Rule(u.Name)
 			if !ok {
@@ -233,7 +239,9 @@ func (m *Manager) SetMany(ctx context.Context, updates []Update) error {
 // DeleteRule removes one named allow rule and re-renders. The reserved blocks
 // cannot be deleted; see Table.DeleteRule.
 func (m *Manager) DeleteRule(ctx context.Context, name string) error {
-	return m.mutate(ctx, func(t *Table) error { return t.DeleteRule(name) })
+	// Table.DeleteRule refuses the reserved names, so this can never empty the
+	// management allowlist and never needs force.
+	return m.mutate(ctx, false, func(t *Table) error { return t.DeleteRule(name) })
 }
 
 // Config returns the declarative config of the currently-configured table, for
@@ -323,30 +331,77 @@ func (m *Manager) Delete(ctx context.Context) error {
 // management allowlist would be a lock-out. Validation is likewise load()'s,
 // which parses through ParseConfig and so runs Table.Validate.
 func (m *Manager) Reapply(ctx context.Context) error {
-	return m.mutate(ctx, func(*Table) error { return nil })
+	// A no-op mutation: the lock-out guard compares before against after and so
+	// can never fire here, even on a table whose allowlist is already empty.
+	return m.mutate(ctx, false, func(*Table) error { return nil })
 }
 
 // mutate loads the current table from disk, applies fn, then re-applies and
 // re-persists the full table under the shared lock.
-func (m *Manager) mutate(ctx context.Context, fn func(*Table) error) error {
+//
+// It also carries the management lock-out guard (#1034): a mutation that takes
+// the mgmt rule's address list or port list from populated to empty is refused
+// unless force is set. The check lives here because this is the only layer that
+// sees both the prior and the resulting table — fn mutates t in place — and
+// because mutate is reached by exactly the verbs that can empty a populated
+// allowlist. Create/Apply/CreateRule do not pass through here and keep their
+// warn-only behaviour (see applyAndPersist).
+func (m *Manager) mutate(ctx context.Context, force bool, fn func(*Table) error) error {
 	return m.withLock(func() error {
 		t, err := m.load()
 		if err != nil {
 			return err
 		}
+		// Captured before fn runs: fn mutates t in place.
+		cidrsBefore, portsBefore := len(t.Mgmt.CIDRs), len(t.Mgmt.Ports)
 		if err := fn(t); err != nil {
+			return err
+		}
+		if err := checkMgmtLockout(t, cidrsBefore, portsBefore, force); err != nil {
 			return err
 		}
 		return m.applyAndPersist(ctx, t)
 	})
 }
 
+// checkMgmtLockout refuses a mutation that empties the management rule's address
+// list or port list. The rule renders unconditionally as
+// `saddr @mgmt_addrs tcp dport @mgmt_ports accept`, so either half empty makes
+// it match no packet and, under the input chain's default-drop policy, the host
+// drops every new SSH connection — while the operator's current session survives
+// on the established-connection accept and hides the damage (#1034).
+//
+// Only the populated-to-empty transition is guarded, not the state: a rule that
+// is already unreachable stays mutable, so an operator repairing one is never
+// blocked from editing the rest of the table. A refusal returns before
+// applyAndPersist, so nothing is rendered, dry-run or written.
+func checkMgmtLockout(t *Table, cidrsBefore, portsBefore int, force bool) error {
+	if force {
+		return nil
+	}
+	if len(t.Mgmt.CIDRs) == 0 && cidrsBefore > 0 {
+		return errorx.IllegalArgument.New(
+			"refusing to empty the management address list: an empty @mgmt_addrs matches no source under the " +
+				"default-drop input chain, so this host would drop every new SSH connection — your current session " +
+				"survives on the established-connection accept and will not show the loss. Nothing was changed. " +
+				"Supply a replacement with `set --name mgmt --cidrs <cidr,...>`, or pass --force to empty it anyway")
+	}
+	if len(t.Mgmt.Ports) == 0 && portsBefore > 0 {
+		return errorx.IllegalArgument.New(
+			"refusing to empty the management port list: the management accept renders `dport @mgmt_ports` " +
+				"unconditionally, so an empty port set locks this host out of new SSH connections exactly like an " +
+				"empty address list. Nothing was changed. Supply a replacement with `set --name mgmt --ports " +
+				"<port,...>`, or pass --force to empty it anyway")
+	}
+	return nil
+}
+
 // mutateRule resolves name to a rule and applies fn to it. An unknown name is
 // rejected with the valid names listed, rather than silently creating a rule:
 // declaring a rule is its own verb, so a mistyped --name edits nothing instead
 // of quietly creating a second rule alongside the one that was meant.
-func (m *Manager) mutateRule(ctx context.Context, name string, fn func(*Rule) error) error {
-	return m.mutate(ctx, func(t *Table) error {
+func (m *Manager) mutateRule(ctx context.Context, name string, force bool, fn func(*Rule) error) error {
+	return m.mutate(ctx, force, func(t *Table) error {
 		r, ok := t.Rule(name)
 		if !ok {
 			return errorx.IllegalArgument.New(
@@ -387,6 +442,16 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	if names := t.IncompleteAllowRules(); len(names) > 0 {
 		logx.As().Warn().Strs("rules", names).Msg(
 			"allow rule(s) render nothing yet: each needs at least one CIDR and either a port or icmp_echo — populate with `network firewall add --name <rule> --cidr <cidr> --port <port>`")
+	}
+
+	// The management accept renders even with empty sets, so applying a table
+	// with either half empty drops every new SSH connection to this host.
+	if len(t.Mgmt.CIDRs) == 0 || len(t.Mgmt.Ports) == 0 {
+		logx.As().Warn().Msg(
+			"the management allow rule matches nothing: its address or port list is empty and the input chain is " +
+				"policy drop, so new SSH connections to this host are dropped — your current session survives on " +
+				"the established-connection accept and will not show this. Restore it with `network firewall set " +
+				"--name mgmt --cidrs <cidr,...>` (or --ports)")
 	}
 
 	cfg, err := FileConfigFromTable(t).Marshal()
