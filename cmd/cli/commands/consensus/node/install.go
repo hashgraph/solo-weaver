@@ -40,7 +40,7 @@ var installCmd = &cobra.Command{
 
 		wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").
 			Steps(
-				steps.InstallSoloOperator(),
+				steps.InstallSoloOperator(flagUpgradeOperator),
 				steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 				steps.PrecheckOperatorRunning(),
 				steps.PrecheckOperatorVersion(),

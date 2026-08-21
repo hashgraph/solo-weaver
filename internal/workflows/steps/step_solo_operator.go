@@ -9,13 +9,15 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/joomcode/errorx"
 )
 
 const (
 	InstallSoloOperatorStepId = "install-solo-operator"
 )
 
-func InstallSoloOperator() automa.Builder {
+func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
+	upgrade := len(allowUpgrade) > 0 && allowUpgrade[0]
 	spec := chartSpec("solo-operator")
 	return automa.NewStepBuilder().WithId(InstallSoloOperatorStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -32,9 +34,30 @@ func InstallSoloOperator() automa.Builder {
 			}
 
 			if isInstalled {
-				meta[AlreadyInstalled] = "true"
-				l.Info().Msg("Solo Operator is already installed, skipping installation")
-				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+				rel, err := hm.GetRelease(spec.Release, spec.Namespace)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+
+				installedVersion := rel.Chart.Metadata.Version
+				if installedVersion == spec.Version {
+					meta[AlreadyInstalled] = "true"
+					l.Info().Str("version", installedVersion).
+						Msg("Solo Operator is already installed at the expected version, skipping")
+					return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+				}
+
+				if !upgrade {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						errorx.IllegalState.New(
+							"solo-operator version mismatch: installed %s, expected %s — re-run with --upgrade-operator to upgrade",
+							installedVersion, spec.Version)))
+				}
+
+				l.Info().
+					Str("installed", installedVersion).
+					Str("expected", spec.Version).
+					Msg("Solo Operator version mismatch, upgrading")
 			}
 
 			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
