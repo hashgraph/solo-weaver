@@ -249,8 +249,10 @@ Shared by the firewall and policy packages. Rendered from
 ```ini
 [Unit]
 DefaultDependencies=no
-After=local-fs.target
-Before=solo-provisioner-daemon.service
+Wants=network-pre.target
+After=local-fs.target nftables.service ufw.service firewalld.service
+Before=network-pre.target solo-provisioner-daemon.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
@@ -269,6 +271,60 @@ The same unit is restarted on every live mutation (a `network firewall` /
 file and the kernel stay in sync. This replays the table structure *and* the
 policy plane's set membership, which is rendered inline into the file (see boot
 persistence below).
+
+The `After=` list is what keeps the tables alive across a reboot: stock
+`/etc/nftables.conf` opens with `flush ruleset`, so loading *before* an enabled
+`nftables.service` (or `ufw`/`firewalld`) would let that manager erase the weaver
+tables on every boot. `After=` is inert unless systemd is actually starting that
+unit, so hosts with no firewall manager are unaffected.
+
+**How a unit change reaches an existing host.** The unit file is written only by
+a mutation (`network firewall` / `network policy`, or the install/reconfigure
+workflow). An already-provisioned host that is upgraded runs no such mutation —
+it only receives a new binary — so a change to the embedded unit would never
+arrive. `NetworkNftUnitMigration`
+(`internal/workflows/migration_network_nft_unit.go`, registered under
+`migration.ScopeStartup`) closes that gap: before every command that runs the
+global pre-run checks, and explicitly on the `solo-provisioner install` upgrade
+path, it compares the installed unit against the embedded copy and rewrites it
+when they differ.
+
+The comparison is not content-only. A unit that matches the embedded copy
+byte-for-byte but is **disabled** is still the #982 failure — systemd never
+starts it, so the tables do not come back after a reboot — and a byte diff
+cannot see that. `NetworkNftUnitNeedsConverge`
+(`internal/network/firewall/unit_drift.go`) therefore also queries enablement,
+and `EnsureNetworkNftUnit` re-enables on its unchanged-content fast path. Both
+halves are required: the migration only runs `Execute` when the probe reports
+drift, so an enable that lives only in `Execute` would never be reached on the
+host that needs it. The enablement query runs only once the unit is known to be
+present and current, so a host with no unit never opens a DBus connection to
+decide. The probe lives in a file with no build tag; the query itself is behind
+the `service_linux.go` / `service_other.go` split, because `pkg/os` does not
+build on darwin. `version` and the shaper worker verbs the daemon delegates
+(`block node tc-attach`, `reconcile-shaper`) opt out of the pre-run
+(`SkipGlobalChecks`) and never reach it. The daemon's other delegated verb,
+`network policy set`, does *not* opt out: it runs the pre-run as root under
+`sudo -n`, so it reaches the migration inside the daemon unit's mount namespace,
+where `ProtectSystem=strict` leaves `/usr/lib` read-only. The write fails there
+and is warned about rather than returned (see below), so the poll loop keeps
+working and the unit converges on the next privileged invocation outside that
+namespace — in practice the `solo-provisioner install` upgrade run itself. It is
+gated on that drift rather than on a CLI version boundary, so every future unit
+change is delivered by the same migration with no new boundary to remember. It
+never restarts the unit — a restart would replay the workload-policy artifact
+and revert a healthy policy table's live sets to that artifact's membership
+snapshot; the new ordering takes effect at the next boot.
+
+Because that gate is host state, it never closes on its own, which makes two
+guard rails load-bearing. The migration **skips entirely for a non-root caller**
+(the write lands under `/usr/lib`, so an unprivileged invocation could only
+fail), and a **write failure is warned about, not returned**. Without either, a
+host whose `/usr/lib` write cannot succeed would fail the pre-run of *every*
+command run on it, indefinitely — a version-gated migration cannot get into that
+state because its boundary closes. The loud failure still exists, on the mutation
+path: `EnsureNetworkNftUnit`, called by `network firewall` / `network policy`,
+returns its error.
 
 ### solo-provisioner-bandwidth-shaper.service (tc HTB loader)
 

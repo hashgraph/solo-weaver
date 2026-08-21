@@ -391,6 +391,7 @@ func NewNodeSafetyCheckWorkflow(spec hardware.DeploymentSpec, skipHardwareChecks
 		CheckPrivilegesStep(),
 		CheckWeaverUserStep(),
 		CheckHostProfileStep(spec),
+		CheckFirewallManagersStep(),
 	}
 
 	if skipHardwareChecks {

@@ -151,6 +151,7 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumHostLegacyRoutingMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCrioSocketDropInMigration())
+	migration.Register(migration.ScopeStartup, workflows.NewNetworkNftUnitMigration())
 
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
