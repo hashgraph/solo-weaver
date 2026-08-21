@@ -1,6 +1,6 @@
 module github.com/hashgraph/solo-weaver
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -19,6 +19,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
+	github.com/hashgraph/solo-operator v0.5.0
 	github.com/joomcode/errorx v1.2.0
 	github.com/lorenzosaino/go-sysctl v0.3.1
 	github.com/muesli/termenv v0.16.0
@@ -98,7 +99,7 @@ require (
 	github.com/jaypipes/pcidb v1.1.1 // indirect
 	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/lann/builder v0.0.0-20180802200727-47ae307949d0 // indirect
 	github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
@@ -158,6 +159,7 @@ require (
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
+	sigs.k8s.io/controller-runtime v0.24.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/kustomize/api v0.21.1 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.21.1 // indirect
