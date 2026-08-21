@@ -128,9 +128,15 @@ func deployedShapingBlockNodeState() state.BlockNodeState {
 }
 
 // TestResolveEffectiveInputs_TrafficShapingFallbackFromState verifies that when
-// the operator supplies no egress NIC / rate / overrides (the upgrade case, which
-// has no such flags), the persisted BlockNodeState.Shaping is used so the tc steps
-// re-assert the original shaping instead of auto-detecting (issue #932, AC3).
+// the operator supplies no egress NIC / rate (the upgrade case, which has no such
+// flags), the persisted BlockNodeState.Shaping is used so the tc steps re-assert
+// the original egress device and trunk rate instead of auto-detecting
+// (issue #932, AC3).
+//
+// ShapeOverrides is deliberately NOT backfilled: re-asserting an install-time
+// --shape would overwrite a later `network shape set` on the same class, which is
+// the clobber #1037 fixes. Per-class values live in the shape registry, which the
+// tc steps now preserve across a re-provision at an unchanged trunk rate.
 func TestResolveEffectiveInputs_TrafficShapingFallbackFromState(t *testing.T) {
 	prio := 0
 	persisted := deployedShapingBlockNodeState()
@@ -156,8 +162,8 @@ func TestResolveEffectiveInputs_TrafficShapingFallbackFromState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "eth0", eff.Custom.EgressInterface, "egress NIC must fall back to persisted Shaping")
 	assert.Equal(t, "1gbit", eff.Custom.LinkRate, "link rate must fall back to persisted Shaping")
-	require.Contains(t, eff.Custom.ShapeOverrides, "publisher")
-	assert.Equal(t, "800mbit", eff.Custom.ShapeOverrides["publisher"].Rate)
+	assert.Empty(t, eff.Custom.ShapeOverrides,
+		"persisted --shape must NOT be re-asserted; it would clobber later `network shape set` tuning (#1037)")
 }
 
 // TestResolveEffectiveInputs_ExplicitTrafficShapingWins verifies that an explicit
@@ -174,6 +180,9 @@ func TestResolveEffectiveInputs_ExplicitTrafficShapingWins(t *testing.T) {
 	inputs := baseTcInputs()
 	inputs.Custom.EgressInterface = "ens5"
 	inputs.Custom.LinkRate = "10gbit"
+	inputs.Custom.ShapeOverrides = map[string]models.ShapeOverride{
+		"partner": {Rate: "300mbit"},
+	}
 
 	eff, err := resolveBlocknodeEffectiveInputs(
 		runtime,
@@ -184,4 +193,7 @@ func TestResolveEffectiveInputs_ExplicitTrafficShapingWins(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ens5", eff.Custom.EgressInterface, "explicit egress NIC must win over persisted Shaping")
 	assert.Equal(t, "10gbit", eff.Custom.LinkRate, "explicit link rate must win over persisted Shaping")
+	require.Contains(t, eff.Custom.ShapeOverrides, "partner",
+		"--shape supplied on this run must reach the tc steps")
+	assert.Equal(t, "300mbit", eff.Custom.ShapeOverrides["partner"].Rate)
 }

@@ -18,17 +18,20 @@ const TcEgressPersistStepId = "bandwidth-shaper-persist"
 
 // TcEgressPersist provisions the egress tc HTB hierarchy for reboot persistence.
 // It writes the egress device root and three default classes
-// (partner/public/reserve-egress) into the shape registry — either at the
-// operator-supplied trunkRate/overrides, or, when neither was supplied and no
-// egress registry entry exists yet (a fresh install), at auto-detected
-// defaults. This mirrors TcIngressRecord's unconditional provisioning so
-// `network shape show` always reports all six classes after install, not just
-// the three from TcIngressRecord.
+// (partner/public/reserve-egress) into the shape registry at proportions derived
+// from trunkRate with any per-class overrides merged in, then renders and
+// applies the boot script. An empty trunkRate resolves to "auto" — the link
+// speed detected at install time — so the recorded rates are always concrete.
+// This mirrors TcIngressRecord's unconditional provisioning so `network shape
+// show` always reports all six classes after install, not just the three from
+// TcIngressRecord.
 //
-// When trunkRate/overrides are empty and an egress registry entry already
-// exists (a reconfigure/upgrade re-run that didn't pass --link-rate/--shape),
-// it re-renders the boot script from that existing config instead, so it
-// never clobbers operator-applied `network shape set` adjustments.
+// Re-running this step (reconfigure/upgrade) does not clobber operator-applied
+// `network shape set` adjustments: when the resolved trunk rate is the same
+// bandwidth already recorded on the device, the shape layer keeps each class's
+// recorded rate/ceil/prio and merges only this run's overrides on top (see
+// shape.mergeExistingConfig). A trunk rate that actually changed rebalances
+// the classes proportionally — the intentional --link-rate path.
 //
 // When nicName is empty the NIC is auto-detected from the default route via
 // DetectEgressInterface. Pass --egress-interface to override on multi-NIC
@@ -69,39 +72,20 @@ func TcEgressPersist(nicName string, trunkRate string, overrides map[string]shap
 				"Find the NIC used by the default route: ip route get 8.8.8.8 | grep dev",
 			}
 
-			hasExisting, err := shape.NewManager().HasEgressConfig()
-			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(
-					errorx.Decorate(err, "failed to check existing egress shape config").
-						WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
-			}
-
-			// Provision explicit class config when the operator gave a trunk rate,
-			// gave per-class --shape overrides (which need concrete classes to
-			// merge into), or there is no egress registry entry yet (a fresh
-			// install — matches TcIngressRecord's unconditional provisioning, so
-			// the registry always ends up populated with all six classes).
 			// Resolve an empty rate to "auto" so the proportional defaults are
-			// computed against the detected link speed at install time.
-			if trunkRate != "" || len(overrides) > 0 || !hasExisting {
-				rate := trunkRate
-				if rate == "" {
-					rate = "auto"
-				}
-				if err := shape.ProvisionDefaultEgressShape(ctx, nic, rate, overrides); err != nil {
-					return automa.FailureReport(stp, automa.WithError(
-						errorx.Decorate(err, "failed to provision default egress shape").
-							WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
-				}
-				return automa.SuccessReport(stp)
+			// computed against the detected link speed at install time. On a
+			// re-run the shape layer folds the recorded class values back in, so
+			// this single call covers both the fresh install and the
+			// reconfigure/upgrade re-run without needing to guess which one it is
+			// from the emptiness of trunkRate — a signal reconfigure/upgrade
+			// cannot provide, since both resolve the rate back from state (#1037).
+			rate := trunkRate
+			if rate == "" {
+				rate = "auto"
 			}
-
-			// No trunk rate or overrides supplied, and a registry entry already
-			// exists (reconfigure/upgrade without --link-rate/--shape): re-render
-			// from that existing shape config, then apply.
-			if err := shape.RenderAndApplyDefaultEgress(ctx, nic); err != nil {
+			if err := shape.ProvisionDefaultEgressShape(ctx, nic, rate, overrides); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
-					errorx.Decorate(err, "failed to apply bandwidth-shaper script").
+					errorx.Decorate(err, "failed to provision default egress shape").
 						WithProperty(models.ErrPropertyResolution, tcEgressResolution)))
 			}
 			return automa.SuccessReport(stp)

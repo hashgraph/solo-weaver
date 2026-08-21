@@ -212,14 +212,20 @@ func resolveBlocknodeEffectiveInputs(
 
 	// Traffic-shaping content (egress NIC, link rate, per-class overrides) has no
 	// resolver tier — it is passed through from user input. Fall back to the
-	// persisted BlockNodeState.Shaping when the operator did not supply a value, so
-	// `upgrade` (which never prompts for these) and a bare `reconfigure` re-assert
-	// the operator's original shaping instead of auto-detecting. Explicit user input
-	// always wins. On a fresh install CurrentState carries no Shaping, so this is a
-	// no-op there.
+	// persisted BlockNodeState.Shaping for the NIC and the link rate when the
+	// operator did not supply them, so `upgrade` (which never prompts for these)
+	// and a bare `reconfigure` re-assert the operator's original egress device and
+	// trunk rate instead of auto-detecting. Explicit user input always wins. On a
+	// fresh install CurrentState carries no Shaping, so this is a no-op there.
+	//
+	// ShapeOverrides is deliberately NOT backfilled: it records what --shape asked
+	// for at install time, and the shape registry already holds the result. Re-
+	// asserting it here would re-apply a stale install-time value on top of a later
+	// `network shape set` on the same class — the clobber this fallback was meant
+	// to help avoid (#1037). Per-class values now come from the registry, which the
+	// tc steps preserve across a re-provision at an unchanged trunk rate.
 	egressInterface := inputs.Custom.EgressInterface
 	linkRate := inputs.Custom.LinkRate
-	shapeOverrides := inputs.Custom.ShapeOverrides
 	if current, err := runtime.CurrentState(); err == nil && current.Shaping != nil {
 		if egressInterface == "" {
 			egressInterface = current.Shaping.EgressInterface
@@ -227,13 +233,9 @@ func resolveBlocknodeEffectiveInputs(
 		if linkRate == "" {
 			linkRate = current.Shaping.LinkRate
 		}
-		if len(shapeOverrides) == 0 {
-			shapeOverrides = current.Shaping.ShapeOverrides
-		}
 		logx.As().Debug().
 			Str("egressInterface", egressInterface).
 			Str("linkRate", linkRate).
-			Int("shapeOverrides", len(shapeOverrides)).
 			Msg("Applied persisted traffic-shaping content as fallback for unset inputs")
 	}
 
@@ -262,7 +264,7 @@ func resolveBlocknodeEffectiveInputs(
 			PluginList:            inputs.Custom.PluginList,
 			EgressInterface:       egressInterface,
 			LinkRate:              linkRate,
-			ShapeOverrides:        shapeOverrides,
+			ShapeOverrides:        inputs.Custom.ShapeOverrides,
 			TrafficShapingEnabled: inputs.Custom.TrafficShapingEnabled,
 			Timeout:               inputs.Custom.Timeout,
 			StatuszBaseURL:        inputs.Custom.StatuszBaseURL,

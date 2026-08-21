@@ -4,8 +4,10 @@ package shape
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 )
 
@@ -85,6 +87,98 @@ func buildDefaultConfig(p defaultProfile, trunkRate string) (*DeviceConfig, []*C
 		})
 	}
 	return dev, classes, nil
+}
+
+// mergeExistingConfig folds the registry's current records (existingDev,
+// existingClasses — both nil on a fresh install) into the freshly computed
+// dev/classes, in place, so a re-provision never discards operator state:
+//
+//   - CreatedAt is carried over for every record that already exists — a
+//     re-provision updates the registry, it does not recreate it.
+//   - When the requested trunk rate is the same bandwidth as the one already
+//     recorded on the device, each class keeps its recorded rate/ceil/prio
+//     instead of being reset to the profile proportions. This is what makes
+//     `network shape set` tuning survive a bare `block node reconfigure` /
+//     `upgrade`: both resolve the trunk rate back from persisted state, so the
+//     rate always arrives non-empty and cannot itself signal "the operator
+//     asked for new shaping on this run" (#1037).
+//   - A class absent from the registry (e.g. one added in a later version)
+//     keeps its computed default, so a re-provision still materialises it.
+//
+// A trunk rate that is a *different* bandwidth rebalances every class
+// proportionally — the intentional `--link-rate` path. Per-class `--shape`
+// overrides are merged on top of whatever base this leaves behind, so they win
+// either way (see applyClassOverrides).
+func mergeExistingConfig(dev *DeviceConfig, classes []*ClassConfig, existingDev *DeviceConfig, existingClasses []*ClassConfig) {
+	if existingDev == nil {
+		return
+	}
+	if !existingDev.CreatedAt.IsZero() {
+		dev.CreatedAt = existingDev.CreatedAt
+	}
+	keepClassRates := sameBandwidth(existingDev.Rate, dev.Rate)
+	if keepClassRates {
+		// Same bandwidth, possibly spelled differently (1gbit vs 1000mbit):
+		// keep the recorded spelling so the rendered boot script stays
+		// byte-identical and writeEgressScript can skip the write.
+		dev.Rate = existingDev.Rate
+	}
+
+	byName := make(map[string]*ClassConfig, len(existingClasses))
+	for _, c := range existingClasses {
+		byName[c.Name] = c
+	}
+	for _, c := range classes {
+		prev, ok := byName[c.Name]
+		if !ok {
+			continue
+		}
+		if !prev.CreatedAt.IsZero() {
+			c.CreatedAt = prev.CreatedAt
+		}
+		if keepClassRates {
+			c.Rate = prev.Rate
+			c.Ceil = prev.Ceil
+			c.Prio = prev.Prio
+		}
+	}
+
+	logx.As().Debug().
+		Str("dir", dev.Dir).
+		Str("trunkRate", dev.Rate).
+		Bool("preservedClassRates", keepClassRates).
+		Msg("folded existing shape registry records into re-provisioned defaults")
+}
+
+// loadExistingConfig reads the registry's device + class records for dir,
+// returning (nil, nil, nil) when nothing has been provisioned yet. Split out of
+// mergeExistingConfig so the merge itself stays disk-free and unit-testable.
+func loadExistingConfig(dir string) (*DeviceConfig, []*ClassConfig, error) {
+	dev, err := readDevice(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if dev == nil {
+		return nil, nil, nil
+	}
+	classes, err := loadClassesForDir(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dev, classes, nil
+}
+
+// sameBandwidth reports whether two tc-style rate strings denote the same
+// bandwidth, so "1gbit" and "1000mbit" compare equal. Values that do not parse
+// (e.g. a legacy shell expression in a hand-edited device file) are compared
+// verbatim.
+func sameBandwidth(a, b string) bool {
+	aBps, aErr := parseBandwidthBps(a)
+	bBps, bErr := parseBandwidthBps(b)
+	if aErr != nil || bErr != nil {
+		return strings.TrimSpace(a) == strings.TrimSpace(b)
+	}
+	return aBps == bBps
 }
 
 // defaultEgressConfig returns the egress device root and three default egress

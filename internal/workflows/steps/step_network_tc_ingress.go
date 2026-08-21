@@ -28,6 +28,11 @@ const TcIngressRecordStepId = "tc-ingress-record"
 // speed at install time — so the recorded class rates are always concrete, since
 // the per-pod replay has no sysfs fallback. nicName pins auto-resolution to the
 // operator-chosen NIC on multi-NIC hosts.
+//
+// Like TcEgressPersist, a re-run against an unchanged trunk rate keeps whatever
+// the registry already records for each class, so `network shape set` tuning of
+// an ingress class survives reconfigure/upgrade (see
+// shape.mergeExistingConfig).
 func TcIngressRecord(nicName string, linkRate string, overrides map[string]shape.ClassOverride) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcIngressRecordStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

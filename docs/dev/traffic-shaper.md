@@ -568,7 +568,24 @@ During `block node install` / `reconfigure` the workflow lays these down:
 - **Bandwidth shaper** — `TcEgressPersist`
   (`internal/workflows/steps/step_network_tc_egress.go`) renders
   `solo-provisioner-bandwidth-shaper.sh` and `EnsureTcEgressUnit` installs and
-  enables `solo-provisioner-bandwidth-shaper.service`.
+  enables `solo-provisioner-bandwidth-shaper.service`. `TcIngressRecord` does the
+  same for the `$VETH` classes, config only — no script.
+
+Both tc steps re-provision the shape registry on every run, so the rule that
+keeps a `reconfigure`/`upgrade` from undoing day-2 tuning lives one layer down,
+in `shape.mergeExistingConfig`: **the registry is the source of truth for
+per-class values, and only a changed trunk rate rebalances them.** When the
+resolved `--link-rate` is the same bandwidth already recorded on the device
+(compared in bits per second, so `1gbit` and `1000mbit` are the same trunk), each
+class keeps its recorded `rate`/`ceil`/`prio` and its `created_at`; a genuinely
+different trunk rate recomputes every class at the profile proportions. Per-class
+`--shape` overrides supplied on the run are merged on top either way, so they
+still win. This matters because both `reconfigure` and `upgrade` resolve the link
+rate back from `blockNodeState.shaping`, so the rate is never empty on a
+converged host and cannot signal "the operator asked for new shaping on this
+run" (issue #1037). For the same reason the persisted `shapeOverrides` are *not*
+re-asserted as effective inputs: that would replay an install-time `--shape` over
+a later `network shape set` on the same class.
 
 Running any equivalent `network firewall` / `network policy` / `network shape`
 command by hand takes the same live-apply-then-persist path, guarded by a shared
