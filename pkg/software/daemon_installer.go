@@ -3,10 +3,8 @@
 package software
 
 import (
-	"os"
 	"path"
 
-	"github.com/hashgraph/solo-weaver/pkg/codesign"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
@@ -35,20 +33,19 @@ func NewDaemonInstaller(opts ...InstallerOption) (Software, error) {
 	return di, nil
 }
 
-// Download obtains the daemon binary. For a signed-release catalog entry it
-// resolves the versioned release URL, downloads the binary and its detached
-// signature, and verifies the signature against the embedded release key
-// (pkg/codesign) before the binary is eligible to install. Otherwise it falls
-// back to the checksum-based base installer download.
+// Download obtains the daemon binary. For a self-released catalog entry it
+// resolves the versioned release URL and downloads the binary, accepting it only
+// if its digest matches the one resolveExpectedDigest establishes. Otherwise it
+// falls back to the checksum-based base installer download.
 func (d *daemonInstaller) Download() error {
-	if d.software.SignedRelease == nil {
+	if d.software.SelfRelease == nil {
 		return d.baseInstaller.Download()
 	}
-	return d.downloadSignedRelease()
+	return d.downloadSelfRelease()
 }
 
-func (d *daemonInstaller) downloadSignedRelease() error {
-	spec := d.software.SignedRelease
+func (d *daemonInstaller) downloadSelfRelease() error {
+	spec := d.software.SelfRelease
 	platform := d.software.getPlatform()
 	data := TemplateData{VERSION: d.versionToBeInstalled, OS: platform.os, ARCH: platform.arch}
 
@@ -56,57 +53,54 @@ func (d *daemonInstaller) downloadSignedRelease() error {
 	if err != nil {
 		return NewTemplateError(err, d.software.Name)
 	}
-	sigURL := binURL + spec.SigURLSuffix()
 
 	downloadsDir := models.Paths().DownloadsDir
 	if err := d.fileManager.CreateDirectory(downloadsDir, true); err != nil {
 		return NewDownloadError(err, downloadsDir, 0)
 	}
 
+	// Resolve the expected digest before fetching the binary. Install() does not
+	// re-verify, so a binary must never reach the downloads dir while there is
+	// still no digest to hold it to.
+	expected, err := d.resolveExpectedDigest(spec, binURL, downloadsDir)
+	if err != nil {
+		return err
+	}
+
+	// DownloadAndVerify removes the file on a mismatch, so a rejected artifact is
+	// never left behind for a later run to install unchecked.
 	binPath := path.Join(downloadsDir, path.Base(binURL))
-	sigPath := binPath + spec.SigURLSuffix()
-
-	if err := d.downloader.Download(binURL, binPath); err != nil {
-		return err
-	}
-
-	// Once the binary is on disk, any subsequent failure (signature download or
-	// verification) must remove both files: Install() does not re-verify, so an
-	// unverified binary left behind could be picked up by a later run.
-	if err := d.downloader.Download(sigURL, sigPath); err != nil {
-		d.removeSignedReleaseDownload(binPath, sigPath)
-		return err
-	}
-	if err := verifyReleaseSignature(binPath, sigPath); err != nil {
-		d.removeSignedReleaseDownload(binPath, sigPath)
-		return err
-	}
-	return nil
+	return d.downloader.DownloadAndVerify(binURL, binPath, expected, daemonChecksumAlgorithm)
 }
 
-// removeSignedReleaseDownload discards a partially-complete or unverified
-// signed-release download so it can never be installed.
-func (d *daemonInstaller) removeSignedReleaseDownload(binPath, sigPath string) {
-	_ = d.fileManager.RemoveAll(binPath)
-	_ = d.fileManager.RemoveAll(sigPath)
-}
-
-// verifyReleaseSignature checks the downloaded binary against its detached
-// signature using the embedded release key.
-func verifyReleaseSignature(binPath, sigPath string) error {
-	bin, err := os.Open(binPath)
-	if err != nil {
-		return errorx.ExternalError.Wrap(err, "failed to open downloaded daemon binary %s", binPath)
+// resolveExpectedDigest returns the digest the downloaded daemon binary must match.
+//
+// For the co-released version — the default, since --daemon-version defaults to
+// this binary's own version — that is the digest stamped in at link time: an
+// anchor produced by the same pipeline run, needing no network fetch and no
+// signing key. Any other version can only have been named by an explicit
+// --daemon-version, and is held to its own published checksum asset fetched over
+// TLS, the same trust install.sh uses to place the CLI on the host to begin with.
+func (d *daemonInstaller) resolveExpectedDigest(spec *SelfReleaseSpec, binURL, downloadsDir string) (string, error) {
+	if digest, ok := pinnedDigestFor(d.versionToBeInstalled); ok {
+		return digest, nil
 	}
-	defer func() { _ = bin.Close() }()
 
-	sig, err := os.Open(sigPath)
-	if err != nil {
-		return errorx.ExternalError.Wrap(err, "failed to open daemon signature %s", sigPath)
+	checksumURL := binURL + spec.ChecksumSuffix()
+	checksumPath := path.Join(downloadsDir, path.Base(checksumURL))
+	if err := d.downloader.Download(checksumURL, checksumPath); err != nil {
+		return "", err
 	}
-	defer func() { _ = sig.Close() }()
+	// The asset is consumed here and nothing downstream reads it, so it is not
+	// left in the downloads dir to be mistaken for a verified input.
+	defer func() { _ = d.fileManager.RemoveAll(checksumPath) }()
 
-	return codesign.Verify(bin, sig)
+	content, err := d.fileManager.ReadFile(checksumPath, maxChecksumAssetBytes)
+	if err != nil {
+		return "", errorx.ExternalError.Wrap(err,
+			"failed to read the downloaded checksum asset %s", checksumPath)
+	}
+	return parseChecksumAsset(content, path.Base(checksumURL))
 }
 
 // Install copies the downloaded daemon binary to paths.BinDir instead of
@@ -118,8 +112,8 @@ func (d *daemonInstaller) Install() error {
 		return NewInstallationError(err, "", binDir)
 	}
 
-	if d.software.SignedRelease != nil {
-		return d.installSignedRelease(binDir)
+	if d.software.SelfRelease != nil {
+		return d.installSelfRelease(binDir)
 	}
 
 	versionInfo, exists := d.software.Versions[Version(d.versionToBeInstalled)]
@@ -158,11 +152,11 @@ func (d *daemonInstaller) Install() error {
 	return d.recordInstalled()
 }
 
-// installSignedRelease copies the verified, downloaded daemon binary to binDir
+// installSelfRelease copies the verified, downloaded daemon binary to binDir
 // under the configured binary name (the name the service unit's ExecStart
 // expects), regardless of the versioned download filename.
-func (d *daemonInstaller) installSignedRelease(binDir string) error {
-	spec := d.software.SignedRelease
+func (d *daemonInstaller) installSelfRelease(binDir string) error {
+	spec := d.software.SelfRelease
 	platform := d.software.getPlatform()
 	data := TemplateData{VERSION: d.versionToBeInstalled, OS: platform.os, ARCH: platform.arch}
 

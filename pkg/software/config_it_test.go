@@ -25,16 +25,16 @@ func Test_Config_LoadInfrastructureCatalogYAML(t *testing.T) {
 			// Verify basic fields
 			require.NotEmpty(t, artifact.Name, "Artifact name should not be empty")
 
-			// Signed-release artifacts (e.g. solo-provisioner-daemon) resolve for
-			// any version and are verified by GPG signature, so they declare a
-			// signedRelease spec instead of an enumerated versions map.
-			if artifact.SignedRelease != nil {
-				require.NotEmpty(t, artifact.SignedRelease.URL,
-					"Signed-release artifact %s must declare a url", artifact.Name)
-				require.NotEmpty(t, artifact.SignedRelease.BinaryName,
-					"Signed-release artifact %s must declare a binaryName", artifact.Name)
+			// Self-released artifacts (e.g. solo-provisioner-daemon) resolve for
+			// any version through a URL template, so they declare a selfRelease
+			// spec instead of an enumerated versions map.
+			if artifact.SelfRelease != nil {
+				require.NotEmpty(t, artifact.SelfRelease.URL,
+					"Self-released artifact %s must declare a url", artifact.Name)
+				require.NotEmpty(t, artifact.SelfRelease.BinaryName,
+					"Self-released artifact %s must declare a binaryName", artifact.Name)
 				require.Empty(t, artifact.Versions,
-					"Signed-release artifact %s must not enumerate versions", artifact.Name)
+					"Self-released artifact %s must not enumerate versions", artifact.Name)
 				return
 			}
 
@@ -145,22 +145,22 @@ func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
 }
 
 // Test_Config_DaemonCatalogEntry_Integration verifies that the
-// solo-provisioner-daemon binary resolves from the catalog as a signed-release
+// solo-provisioner-daemon binary resolves from the catalog as a self-released
 // artifact and that NewDaemonInstaller builds against it. The daemon is released
-// from this repo alongside the CLI, so its authenticity is established by verifying
-// the release's detached GPG signature against the embedded release key
-// (pkg/codesign) rather than a pinned per-version checksum; the entry therefore
-// carries a signedRelease spec and no enumerated versions map.
+// from this repo alongside the CLI, so no per-version checksum map can be
+// enumerated for it: it is verified against the co-released digest stamped into
+// the CLI at link time, or the release's published checksum asset for any other
+// version. The entry therefore carries a selfRelease spec and no versions map.
 func Test_Config_DaemonCatalogEntry_Integration(t *testing.T) {
 	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
 	artifact, err := config.GetHostArtifact(DaemonBinaryName)
 	require.NoError(t, err, "solo-provisioner-daemon must have a catalog entry")
-	require.NotNil(t, artifact.SignedRelease,
-		"daemon entry must be a signed-release artifact (verified by GPG signature, not checksum)")
-	require.NotEmpty(t, artifact.SignedRelease.URL, "daemon signedRelease.url must be set")
-	require.Equal(t, DaemonBinaryName, artifact.SignedRelease.BinaryName)
+	require.NotNil(t, artifact.SelfRelease,
+		"daemon entry must be a self-released artifact (no enumerated per-version checksums)")
+	require.NotEmpty(t, artifact.SelfRelease.URL, "daemon selfRelease.url must be set")
+	require.Equal(t, DaemonBinaryName, artifact.SelfRelease.BinaryName)
 
 	_, err = NewDaemonInstaller()
 	require.NoError(t, err,
@@ -183,9 +183,9 @@ func Test_Config_GetDefaultVersion_Integration(t *testing.T) {
 			require.NoError(t, err, "Should be able to get default version for %s", artifact.Name)
 			require.NotEmpty(t, defaultVersion, "Default version should not be empty for %s", artifact.Name)
 
-			// Signed-release artifacts resolve for any version and enumerate no
+			// Self-released artifacts resolve for any version and enumerate no
 			// versions map, so the default is not expected to be a member of it.
-			if artifact.SignedRelease != nil {
+			if artifact.SelfRelease != nil {
 				return
 			}
 
