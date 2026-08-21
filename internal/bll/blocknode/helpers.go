@@ -122,17 +122,30 @@ func patchMachineFirewallFromConfig(st *state.State) {
 
 // patchBlockNodeShaping records the resolved traffic-shaping content bundle into
 // BlockNodeState.Shaping so upgrade/reconfigure can re-assert the operator's
-// original egress NIC, link rate, and per-class overrides.
+// original egress NIC and link rate, and so the last --shape request stays on
+// record.
+//
+// ShapeOverrides is no longer re-asserted as an effective input (#1037), so a
+// bare reconfigure arrives here with an empty map. Carry the previously recorded
+// request over in that case instead of erasing it: the reality refresh already
+// goes out of its way to preserve this record across a state rebuild (see
+// reality.blocknode_checker, "cannot be recovered from the Helm release or the
+// live cluster"), and a routine reconfigure should not be the thing that drops
+// it. Current per-class values live in the shape registry either way.
 func patchBlockNodeShaping(st *state.State, ins models.BlockNodeInputs) {
+	overrides := ins.ShapeOverrides
+	if len(overrides) == 0 && st.BlockNodeState.Shaping != nil {
+		overrides = st.BlockNodeState.Shaping.ShapeOverrides
+	}
 	st.BlockNodeState.Shaping = &state.ShapingState{
 		EgressInterface: ins.EgressInterface,
 		LinkRate:        ins.LinkRate,
-		ShapeOverrides:  ins.ShapeOverrides,
+		ShapeOverrides:  overrides,
 	}
 	logx.As().Debug().
 		Str("egressInterface", ins.EgressInterface).
 		Str("linkRate", ins.LinkRate).
-		Int("shapeOverrides", len(ins.ShapeOverrides)).
+		Int("shapeOverrides", len(overrides)).
 		Msg("Persisted block node traffic-shaping content into runtime state")
 }
 
@@ -223,7 +236,9 @@ func resolveBlocknodeEffectiveInputs(
 	// asserting it here would re-apply a stale install-time value on top of a later
 	// `network shape set` on the same class — the clobber this fallback was meant
 	// to help avoid (#1037). Per-class values now come from the registry, which the
-	// tc steps preserve across a re-provision at an unchanged trunk rate.
+	// tc steps preserve across a re-provision at an unchanged trunk rate. The state
+	// record itself is still kept lossless — see patchBlockNodeShaping, which
+	// carries the previous request over when this run supplied none.
 	egressInterface := inputs.Custom.EgressInterface
 	linkRate := inputs.Custom.LinkRate
 	if current, err := runtime.CurrentState(); err == nil && current.Shaping != nil {

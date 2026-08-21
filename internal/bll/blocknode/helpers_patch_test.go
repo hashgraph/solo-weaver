@@ -108,3 +108,72 @@ func TestPatch_EnableWithEmptyAllowlistPreservesContent(t *testing.T) {
 	assert.False(t, fw.Disabled)
 	assert.Equal(t, []string{"10.0.0.0/8"}, fw.ManagementCIDRs, "allowlist must survive an empty-allowlist enable")
 }
+
+// TestPatch_BareReconfigureKeepsRecordedShapeOverrides covers the state-record
+// half of #1037: ShapeOverrides is no longer re-asserted as an effective input, so
+// a bare reconfigure patches with an empty map. The previously recorded request
+// must survive that — nothing else can recover it (the reality refresh preserves
+// this record for the same reason).
+func TestPatch_BareReconfigureKeepsRecordedShapeOverrides(t *testing.T) {
+	withHostConfig(t, models.HostConfig{Disabled: true})
+
+	prio := 0
+	st := deployedState()
+	st.BlockNodeState.Shaping = &state.ShapingState{
+		EgressInterface: "eth0",
+		LinkRate:        "1gbit",
+		ShapeOverrides: map[string]models.ShapeOverride{
+			"partner": {Rate: "400mbit", Ceil: "700mbit", Prio: &prio},
+		},
+	}
+
+	patch := patchBlockNodeStateWithTrafficShaping()
+	inputs := models.UserInputs[models.BlockNodeInputs]{
+		Custom: models.BlockNodeInputs{
+			TrafficShapingEnabled: true,
+			EgressInterface:       "eth0",
+			LinkRate:              "1gbit",
+			// No --shape on this run.
+		},
+	}
+	require.NoError(t, patch(st, inputs))
+
+	require.NotNil(t, st.BlockNodeState.Shaping)
+	require.Contains(t, st.BlockNodeState.Shaping.ShapeOverrides, "partner",
+		"a bare reconfigure must not erase the recorded --shape request")
+	assert.Equal(t, "400mbit", st.BlockNodeState.Shaping.ShapeOverrides["partner"].Rate)
+}
+
+// TestPatch_ExplicitShapeOverridesReplaceRecord is the counterpart: a run that did
+// supply --shape replaces the record rather than merging into it, so the state
+// always reflects the most recent request.
+func TestPatch_ExplicitShapeOverridesReplaceRecord(t *testing.T) {
+	withHostConfig(t, models.HostConfig{Disabled: true})
+
+	st := deployedState()
+	st.BlockNodeState.Shaping = &state.ShapingState{
+		EgressInterface: "eth0",
+		LinkRate:        "1gbit",
+		ShapeOverrides: map[string]models.ShapeOverride{
+			"partner": {Rate: "400mbit"},
+		},
+	}
+
+	patch := patchBlockNodeStateWithTrafficShaping()
+	inputs := models.UserInputs[models.BlockNodeInputs]{
+		Custom: models.BlockNodeInputs{
+			TrafficShapingEnabled: true,
+			EgressInterface:       "eth0",
+			LinkRate:              "1gbit",
+			ShapeOverrides: map[string]models.ShapeOverride{
+				"public": {Rate: "200mbit"},
+			},
+		},
+	}
+	require.NoError(t, patch(st, inputs))
+
+	require.NotNil(t, st.BlockNodeState.Shaping)
+	assert.NotContains(t, st.BlockNodeState.Shaping.ShapeOverrides, "partner",
+		"an explicit --shape run records only what it asked for")
+	assert.Equal(t, "200mbit", st.BlockNodeState.Shaping.ShapeOverrides["public"].Rate)
+}
