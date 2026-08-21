@@ -153,8 +153,10 @@ tasks:
       - "vendor"
     cmds:
       - task: "clean"
+      # Produces the daemon binaries too: build:cli depends on the matching
+      # build:daemon, because the CLI is stamped with that daemon's digest.
+      # Calling build:daemon:all here as well would just rebuild them.
       - task: "build:cli:all"
-      - task: "build:daemon:all"
     sources:
       - "**/*.go"
     generates:
@@ -184,6 +186,9 @@ tasks:
     cmds:
       - task: "sign:cli:all"
       - task: "sign:daemon:all"
+      # Last word on the release: every CLI about to be published must carry the
+      # digest of the daemon published with it, or its auto-download cannot work.
+      - task: "verify:cli:all"
   
   generate:
     # Declared `run: once` so multiple callers in the same invocation (e.g.

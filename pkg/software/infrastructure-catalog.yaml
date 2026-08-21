@@ -302,18 +302,19 @@ host:
           checksum: 'd3a4773d2402b72a257ab187b8a2771d45747876320679fe8eaf267ed1a40c41'
 
 # solo-provisioner-daemon is built and released from this repo, alongside the CLI,
-# under the same release tag (vX.Y.Z). Unlike the third-party tools above, its
-# per-version SHA cannot be pinned here: this catalog is embedded into the very
-# binary being released, so a build cannot know the checksum of its own (or a
-# later) daemon artifact. Authenticity is instead established by verifying the
-# release's detached GPG signature against the release signing key embedded in the
-# CLI (pkg/codesign). That lets any released version be downloaded and verified, so
-# no versions map is enumerated. `--daemon-version` (default: the running CLI's own
-# version) selects the tag; because CLI and daemon ship together at the same
-# version, the default always resolves to a real artifact.
+# under the same release tag (vX.Y.Z). Unlike the third-party tools above, no
+# per-version SHA map can be pinned here: this catalog is embedded into the very
+# binary being released, so a build cannot know the checksum of a daemon artifact
+# published after it. It does know the checksum of the daemon it was released
+# alongside, which `task build:cli` stamps into the CLI at link time — that digest
+# is what the default `--daemon-version` (the running CLI's own version) is checked
+# against. Any other version an operator names explicitly is checked against the
+# release's own published `.sha256` asset instead. Either way no versions map is
+# enumerated, and the default always resolves to a real artifact because the CLI
+# and daemon ship together at the same version.
 - name: solo-provisioner-daemon
   default: "0.0.0"
-  signedRelease:
+  selfRelease:
     url: 'https://github.com/hashgraph/solo-weaver/releases/download/v{{.VERSION}}/solo-provisioner-daemon-{{.OS}}-{{.ARCH}}'
     binaryName: 'solo-provisioner-daemon'
 

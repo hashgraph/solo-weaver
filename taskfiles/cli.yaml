@@ -31,12 +31,31 @@ tasks:
 
   build:cli:
     desc: "Build the CLI binary for the specified operating system and architecture (dev mode)"
+    # The CLI is stamped with the digest of the daemon it is released alongside, so
+    # the matching daemon binary has to exist first. Declared as a dep rather than
+    # relying on caller ordering so a standalone `task build:cli` is stamped too --
+    # an unstamped CLI falls back to fetching the release's .sha256 asset.
+    deps:
+      - task: "build:daemon"
+        vars:
+          GOOS: "{{coalesce .GOOS OS}}"
+          GOARCH: "{{coalesce .GOARCH ARCH}}"
     env:
       GOOS: "{{coalesce .GOOS OS}}"
       GOARCH: "{{coalesce .GOARCH ARCH}}"
+    vars:
+      CLI_BIN: "bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}"
+      DAEMON_BIN: "bin/solo-provisioner-daemon-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}"
     cmds:
-      - cmd: go build -ldflags='{{.LDFLAGS}}' -trimpath -o bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}} ./cmd/cli
-      - cmd: chmod +x bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}
+      # daemon-digest.sh fails rather than emit an unvalidated digest: `set -e`
+      # then aborts the build instead of stamping a pin that cannot verify.
+      - cmd: |
+          set -e
+          DAEMON_DIGEST="$(scripts/daemon-digest.sh '{{.DAEMON_BIN}}')"
+          go build \
+            -ldflags="{{.LDFLAGS}} -X github.com/hashgraph/solo-weaver/pkg/software.pinnedDaemonDigest=${DAEMON_DIGEST}" \
+            -trimpath -o '{{.CLI_BIN}}' ./cmd/cli
+      - cmd: chmod +x {{.CLI_BIN}}
 
   hash:cli:all:
     desc: "Hash the CLI binaries for all configured operating systems and architectures"
@@ -114,6 +133,55 @@ tasks:
           GOARCH: "{{.GOARCH}}"
       - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.sha256
       - cmd: gpg --batch --yes --armor --output bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}.asc --detach-sign bin/solo-provisioner-{{.GOOS}}-{{.GOARCH}}
+
+  verify:cli:all:
+    desc: "Verify every CLI binary carries the digest of the daemon binary released with it"
+    cmds:
+      - task: verify:cli:all:os
+
+  verify:cli:all:os:
+    internal: true
+    desc: "Verify the CLI binaries for all configured operating systems"
+    cmds:
+      - for:
+          var: OS
+        task: verify:cli:all:arch
+        vars:
+          GOOS: "{{.ITEM}}"
+
+  verify:cli:all:arch:
+    internal: true
+    desc: "Verify the CLI binaries for all configured architectures"
+    cmds:
+      - for:
+          var: ARCH
+        task: verify:cli
+        vars:
+          GOOS: "{{.GOOS}}"
+          GOARCH: "{{.ITEM}}"
+
+  verify:cli:
+    desc: "Verify the CLI binary carries the digest of the daemon binary released with it"
+    # An operator's auto-download checks the daemon against this digest, so a CLI
+    # paired with a daemon it was not linked against ships an install path that
+    # cannot succeed. The hash and sign families rebuild binaries after the CLI is
+    # stamped, so this has to run last and read whatever is actually in bin/.
+    vars:
+      CLI_BIN: "bin/solo-provisioner-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}"
+      DAEMON_BIN: "bin/solo-provisioner-daemon-{{coalesce .GOOS OS}}-{{coalesce .GOARCH ARCH}}"
+    cmds:
+      # The digest has to come from daemon-digest.sh, which never emits an empty
+      # string: `grep -F ""` matches any file, so a blank needle would turn this
+      # guard into an unconditional pass.
+      - cmd: |
+          set -e
+          DAEMON_DIGEST="$(scripts/daemon-digest.sh '{{.DAEMON_BIN}}')"
+          if ! grep -qaF "${DAEMON_DIGEST}" '{{.CLI_BIN}}'; then
+            echo "error: {{.CLI_BIN}} does not carry the digest of {{.DAEMON_BIN}} (${DAEMON_DIGEST})" >&2
+            echo "       re-run task build so the CLI is linked against the daemon it ships with" >&2
+            exit 1
+          fi
+          echo "ok   {{.CLI_BIN}} carries the digest of {{.DAEMON_BIN}}"
 
   run:cli:
     desc: "Build the CLI for the host OS/ARCH and run it. Args after -- are passed through via .CLI_ARGS."
