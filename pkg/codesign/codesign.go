@@ -140,7 +140,7 @@ func verifyWith(trusted map[uint64]*packet.PublicKey, content io.Reader, armored
 	pk, ok := trusted[*sig.IssuerKeyId]
 	if !ok {
 		return errorx.RejectedOperation.New(
-			"release signature was made by key %X, which is not an embedded trust anchor", *sig.IssuerKeyId)
+			"release signature was made by key %016X, which is not an embedded trust anchor", *sig.IssuerKeyId)
 	}
 
 	// Reject a signature whose hash is unavailable (would otherwise panic in

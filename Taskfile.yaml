@@ -184,6 +184,14 @@ tasks:
     cmds:
       - task: "sign:cli:all"
       - task: "sign:daemon:all"
+      # Fail the release if the key that just signed these artifacts is not an
+      # embedded trust anchor — assets no deployed CLI can verify must not ship.
+      - task: "verify:signatures"
+
+  verify:signatures:
+    desc: "Verify every bin/*.asc against the trust anchors embedded in pkg/codesign. Override the directory with BIN_DIR=..."
+    cmds:
+      - "go run ./scripts/verify-signatures {{.BIN_DIR}}"
   
   generate:
     # Declared `run: once` so multiple callers in the same invocation (e.g.

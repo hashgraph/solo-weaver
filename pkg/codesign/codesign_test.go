@@ -14,18 +14,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test_EmbeddedKey_VerifiesRealReleaseSignature proves the key compiled into the
-// binary is the one that actually signs releases: it verifies a real detached
-// signature captured from a published release (testdata/release-asset.sha256*).
+// Test_EmbeddedKey_VerifiesRealReleaseSignature proves the keys compiled into the
+// binary are the ones that actually sign releases: it verifies real detached
+// signatures captured from published releases, one per signing key the project
+// has used. Every key in the embedded set needs a fixture here — dropping a key
+// (or, as in #1036, forgetting to add one after a rotation) then fails offline
+// instead of surfacing only when an operator hits the auto-download path.
 func Test_EmbeddedKey_VerifiesRealReleaseSignature(t *testing.T) {
-	content, err := os.Open("testdata/release-asset.sha256")
-	require.NoError(t, err)
-	defer content.Close()
-	sig, err := os.Open("testdata/release-asset.sha256.asc")
-	require.NoError(t, err)
-	defer sig.Close()
+	tests := []struct {
+		name     string
+		asset    string
+		sig      string
+		signedBy string
+	}{
+		{
+			name:     "pre-v0.28.0 key DB125DC2EB561F1C",
+			asset:    "testdata/release-asset.sha256",
+			sig:      "testdata/release-asset.sha256.asc",
+			signedBy: "DB125DC2EB561F1C",
+		},
+		{
+			name:     "v0.28.0 onwards key F9423513CFB6304E",
+			asset:    "testdata/release-asset-v0.28.1.sha256",
+			sig:      "testdata/release-asset-v0.28.1.sha256.asc",
+			signedBy: "F9423513CFB6304E",
+		},
+	}
 
-	require.NoError(t, Verify(content, sig), "embedded release key must verify a real release signature")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := os.Open(tc.asset)
+			require.NoError(t, err)
+			defer content.Close()
+			sig, err := os.Open(tc.sig)
+			require.NoError(t, err)
+			defer sig.Close()
+
+			require.NoError(t, Verify(content, sig),
+				"embedded keyring must verify a real release signature made by %s", tc.signedBy)
+		})
+	}
 }
 
 func Test_EmbeddedKey_RejectsTamperedContent(t *testing.T) {
@@ -48,9 +76,15 @@ func Test_LoadTrustedKeys_LoadsEmbeddedUIDlessKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, trusted)
 
-	const primaryKeyID = 0xDB125DC2EB561F1C
-	_, ok := trusted[primaryKeyID]
-	require.True(t, ok, "embedded primary key id DB125DC2EB561F1C must be present")
+	// Both release signing keys stay embedded: the current one verifies new
+	// releases, the previous one still verifies a pinned older version.
+	for name, keyID := range map[string]uint64{
+		"DB125DC2EB561F1C": 0xDB125DC2EB561F1C,
+		"F9423513CFB6304E": 0xF9423513CFB6304E,
+	} {
+		_, ok := trusted[keyID]
+		require.True(t, ok, "embedded primary key id %s must be present", name)
+	}
 }
 
 func Test_VerifyWith_GeneratedKey(t *testing.T) {
