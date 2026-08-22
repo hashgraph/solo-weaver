@@ -21,6 +21,9 @@ var (
 	flagLog4j2File      string
 	flagSettingsFile    string
 	flagAppPropsFile    string
+	flagGrpcTlsSecret   string
+	flagSigningSecret   string
+	flagHapiAppSecret   string
 	flagUpgradeOperator bool
 
 	nodeCmd = &cobra.Command{
@@ -45,6 +48,9 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagLog4j2File, "log4j2-config-file", "", "Path to custom log4j2.xml (default: built-in)")
 	nodeCmd.PersistentFlags().StringVar(&flagSettingsFile, "settings-file", "", "Path to custom settings.txt (default: built-in)")
 	nodeCmd.PersistentFlags().StringVar(&flagAppPropsFile, "application-properties-file", "", "Path to custom application.properties (default: built-in)")
+	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
+	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
+	nodeCmd.PersistentFlags().StringVar(&flagHapiAppSecret, "hapi-app-secret", "", "Name of K8s Secret containing hedera.crt and hedera.key for HAPI")
 	nodeCmd.PersistentFlags().BoolVar(&flagUpgradeOperator, "upgrade-operator", false, "Upgrade solo-operator if installed version differs from the expected version")
 	nodeCmd.AddCommand(installCmd)
 }
