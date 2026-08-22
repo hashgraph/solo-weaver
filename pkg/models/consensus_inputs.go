@@ -43,4 +43,13 @@ type ConsensusNodeInputs struct {
 
 	// ApplicationPropertiesFile overrides the default application.properties content from a file
 	ApplicationPropertiesFile string `json:"applicationPropertiesFile,omitempty"`
+
+	// GrpcTlsSecret is the name of the K8s Secret containing gRPC TLS key/cert
+	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
+
+	// SigningSecret is the name of the K8s Secret containing gossip signing key/cert
+	SigningSecret string `json:"signingSecret,omitempty"`
+
+	// HapiAppSecret is the name of the K8s Secret containing hedera.crt and hedera.key
+	HapiAppSecret string `json:"hapiAppSecret,omitempty"`
 }

@@ -3,6 +3,8 @@
 package node
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
@@ -16,6 +18,17 @@ var installCmd = &cobra.Command{
 	Short: "Install a Hedera consensus node",
 	Long:  "Deploy a consensus node by creating the required solo-operator CRs (Orbit, config CRs, ConsensusCapsule)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		scope := fmt.Sprintf("node%d", flagNodeId)
+		if flagGrpcTlsSecret == "" {
+			flagGrpcTlsSecret = scope + "-grpc-tls-keys"
+		}
+		if flagSigningSecret == "" {
+			flagSigningSecret = scope + "-gossip-keys"
+		}
+		if flagHapiAppSecret == "" {
+			flagHapiAppSecret = scope + "-hapi-app-keys"
+		}
+
 		inputs := models.ConsensusNodeInputs{
 			Namespace:                 flagNamespace,
 			OrbitName:                 flagOrbitName,
@@ -30,6 +43,9 @@ var installCmd = &cobra.Command{
 			Log4j2ConfigFile:          flagLog4j2File,
 			SettingsFile:              flagSettingsFile,
 			ApplicationPropertiesFile: flagAppPropsFile,
+			GrpcTlsSecret:            flagGrpcTlsSecret,
+			SigningSecret:             flagSigningSecret,
+			HapiAppSecret:            flagHapiAppSecret,
 		}
 
 		logx.As().Info().
@@ -44,6 +60,7 @@ var installCmd = &cobra.Command{
 				steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 				steps.PrecheckOperatorRunning(),
 				steps.PrecheckOperatorVersion(),
+				steps.PrecheckConsensusSecrets(inputs),
 				steps.EnsureOrbit(inputs),
 				steps.EnsureConfigCRs(inputs),
 				steps.CreateConsensusCapsule(inputs),

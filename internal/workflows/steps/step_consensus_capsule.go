@@ -238,10 +238,11 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs) automa.Builder {
 					Namespace: inputs.Namespace,
 				},
 				Spec: operatorv1alpha1.ConsensusCapsuleSpec{
-					Orbit:     inputs.OrbitName,
-					NodeId:    inputs.NodeId,
-					AccountId: inputs.AccountId,
-					Weight:    inputs.Weight,
+					Orbit:                   inputs.OrbitName,
+					NodeId:                  inputs.NodeId,
+					AccountId:               inputs.AccountId,
+					Weight:                  inputs.Weight,
+					HapiAppSecretsName:      inputs.HapiAppSecret,
 					Log4j2ConfigRef:         fmt.Sprintf("%s-log4j2", scope),
 					SettingsConfigRef:       fmt.Sprintf("%s-settings", scope),
 					ApplicationPropertiesRef: fmt.Sprintf("%s-appprops", scope),
@@ -256,6 +257,33 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs) automa.Builder {
 						},
 					},
 				},
+			}
+
+			if inputs.GrpcTlsSecret != "" || inputs.SigningSecret != "" {
+				sr := &operatorv1alpha1.ConsensusSecretResources{}
+				if inputs.GrpcTlsSecret != "" {
+					sr.GrpcTlsPrivateKey = operatorv1alpha1.KeyReference{
+						SecretName: inputs.GrpcTlsSecret,
+						KeyName:    fmt.Sprintf("hedera-%s.key", scope),
+					}
+					sr.GrpcTlsPublicCertificate = operatorv1alpha1.KeyReference{
+						SecretName: inputs.GrpcTlsSecret,
+						KeyName:    fmt.Sprintf("hedera-%s.crt", scope),
+					}
+				}
+				if inputs.SigningSecret != "" {
+					sr.SigningPrivateKey = operatorv1alpha1.KeyReference{
+						SecretName: inputs.SigningSecret,
+						KeyName:    "private.pem",
+					}
+					sr.SigningPublicCertificate = operatorv1alpha1.KeyReference{
+						SecretName: inputs.SigningSecret,
+						KeyName:    "public.pem",
+					}
+				}
+				capsule.Spec.Secrets = &operatorv1alpha1.ConsensusSecrets{
+					SecretResources: sr,
+				}
 			}
 
 			if err := kc.ApplyTyped(ctx, capsule); err != nil {
