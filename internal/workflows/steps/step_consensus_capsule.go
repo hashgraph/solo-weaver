@@ -6,16 +6,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
-	"github.com/joomcode/errorx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
-	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 const (
@@ -97,8 +99,34 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs) automa.Builder {
 		})
 }
 
-// EnsureConfigCRs creates the Log4j2Config, NodeSettings, and ApplicationProperties
-// CRs required by a ConsensusCapsule.
+// resolveContent returns config file content using 3-tier precedence:
+// individual flag > deployment package file > embedded default.
+func resolveContent(flagFile, pkgPath, embeddedPath string) (string, error) {
+	if flagFile != "" {
+		b, err := os.ReadFile(flagFile)
+		if err != nil {
+			return "", errorx.IllegalArgument.Wrap(err, "failed to read %s", flagFile)
+		}
+		return string(b), nil
+	}
+	if pkgPath != "" {
+		if b, err := os.ReadFile(pkgPath); err == nil {
+			return string(b), nil
+		}
+	}
+	return readDefault(embeddedPath)
+}
+
+// pkgFile returns a deployment-package-relative path if the dir is set, empty otherwise.
+func pkgFile(pkgDir string, relPath string) string {
+	if pkgDir == "" {
+		return ""
+	}
+	return filepath.Join(pkgDir, relPath)
+}
+
+// EnsureConfigCRs creates all 11 config CRs required by a ConsensusCapsule.
+// Resolution precedence: individual flag > deployment package file > embedded default.
 func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureConfigCRsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -108,104 +136,141 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 			}
 
 			scope := fmt.Sprintf("node%d", inputs.NodeId)
+			pkg := inputs.DeploymentPackageDir
 
-			log4j2Content, _ := readDefault("consensus/log4j2.xml")
-			if inputs.Log4j2ConfigFile != "" {
-				b, err := os.ReadFile(inputs.Log4j2ConfigFile)
+			type configEntry struct {
+				flagFile     string
+				pkgRelPath   string
+				embeddedPath string
+				crName       string
+				kind         string
+				builder      func(scope, content, orbit, ns, name string) runtime.Object
+			}
+
+			entries := []configEntry{
+				{inputs.Log4j2ConfigFile, "log4j2.xml", "consensus/log4j2.xml",
+					fmt.Sprintf("%s-log4j2", scope), "Log4j2Config",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.Log4j2Config{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "Log4j2Config"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.Log4j2ConfigSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.SettingsFile, "settings.txt", "consensus/settings.txt",
+					fmt.Sprintf("%s-settings", scope), "NodeSettings",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.NodeSettings{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "NodeSettings"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.NodeSettingsSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.ApplicationPropertiesFile, "data/config/application.properties", "consensus/application.properties",
+					fmt.Sprintf("%s-appprops", scope), "ApplicationProperties",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.ApplicationProperties{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApplicationProperties"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.ApplicationPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.AppOverrideFile, "data/config/application-override.properties", "consensus/application-override.properties",
+					fmt.Sprintf("%s-appoverride", scope), "ApplicationOverrideProperties",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.ApplicationOverrideProperties{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApplicationOverrideProperties"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.ApplicationOverridePropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.ApiPermissionFile, "data/config/api-permission.properties", "consensus/api-permission.properties",
+					fmt.Sprintf("%s-apiperm", scope), "ApiPermissionProperties",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.ApiPermissionProperties{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApiPermissionProperties"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.ApiPermissionPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.BootstrapFile, "data/config/bootstrap.properties", "consensus/bootstrap.properties",
+					fmt.Sprintf("%s-bootstrap", scope), "BootstrapProperties",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.BootstrapProperties{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "BootstrapProperties"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.BootstrapPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.NodePropertiesFile, "data/config/node.properties", "consensus/node.properties",
+					fmt.Sprintf("%s-nodeprops", scope), "NodePropertiesConfig",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.NodePropertiesConfig{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "NodePropertiesConfig"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.NodePropertiesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.FeeSchedulesFile, "data/config/feeSchedules.json", "consensus/feeSchedules.json",
+					fmt.Sprintf("%s-feeschedules", scope), "FeeSchedules",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.FeeSchedules{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "FeeSchedules"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.FeeSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.SimpleFeesSchedulesFile, "data/config/simpleFeesSchedules.json", "consensus/simpleFeesSchedules.json",
+					fmt.Sprintf("%s-simplefeesschedules", scope), "SimpleFeesSchedules",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.SimpleFeesSchedules{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "SimpleFeesSchedules"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.SimpleFeesSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.ThrottlesFile, "data/config/throttles.json", "consensus/throttles.json",
+					fmt.Sprintf("%s-throttles", scope), "ThrottlesConfig",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.ThrottlesConfig{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ThrottlesConfig"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.ThrottlesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+				{inputs.BlockNodesConfigFile,
+					fmt.Sprintf("block-nodes/config/block-nodes-%d.json", inputs.NodeId),
+					"consensus/block-nodes.json",
+					fmt.Sprintf("%s-blocknodes", scope), "BlockNodesConfig",
+					func(scope, content, orbit, ns, name string) runtime.Object {
+						return &operatorv1alpha1.BlockNodesConfig{
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "BlockNodesConfig"},
+							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+							Spec:       operatorv1alpha1.BlockNodesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
+						}
+					}},
+			}
+
+			for _, e := range entries {
+				content, err := resolveContent(e.flagFile, pkgFile(pkg, e.pkgRelPath), e.embeddedPath)
 				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalArgument.Wrap(err, "failed to read log4j2 config file")))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
-				log4j2Content = string(b)
-			}
 
-			settingsContent, _ := readDefault("consensus/settings.txt")
-			if inputs.SettingsFile != "" {
-				b, err := os.ReadFile(inputs.SettingsFile)
-				if err != nil {
+				obj := e.builder(scope, content, inputs.OrbitName, inputs.Namespace, e.crName)
+				logx.As().Info().Str("name", e.crName).Str("kind", e.kind).Msg("Applying config CR")
+
+				if err := kc.ApplyTyped(ctx, obj); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalArgument.Wrap(err, "failed to read settings file")))
+						errorx.IllegalState.Wrap(err, "failed to apply %s %s", e.kind, e.crName)))
 				}
-				settingsContent = string(b)
 			}
 
-			appPropsContent, _ := readDefault("consensus/application.properties")
-			if inputs.ApplicationPropertiesFile != "" {
-				b, err := os.ReadFile(inputs.ApplicationPropertiesFile)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalArgument.Wrap(err, "failed to read application properties file")))
-				}
-				appPropsContent = string(b)
-			}
-
-			log4j2 := &operatorv1alpha1.Log4j2Config{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
-					Kind:       "Log4j2Config",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-log4j2", scope),
-					Namespace: inputs.Namespace,
-				},
-				Spec: operatorv1alpha1.Log4j2ConfigSpec{
-					Scope:   scope,
-					Content: log4j2Content,
-					Orbit:   inputs.OrbitName,
-				},
-			}
-
-			nodeSettings := &operatorv1alpha1.NodeSettings{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
-					Kind:       "NodeSettings",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-settings", scope),
-					Namespace: inputs.Namespace,
-				},
-				Spec: operatorv1alpha1.NodeSettingsSpec{
-					Scope:   scope,
-					Content: settingsContent,
-					Orbit:   inputs.OrbitName,
-				},
-			}
-
-			appProps := &operatorv1alpha1.ApplicationProperties{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
-					Kind:       "ApplicationProperties",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-appprops", scope),
-					Namespace: inputs.Namespace,
-				},
-				Spec: operatorv1alpha1.ApplicationPropertiesSpec{
-					Scope:   scope,
-					Content: appPropsContent,
-					Orbit:   inputs.OrbitName,
-				},
-			}
-
-			for _, obj := range []interface{ GetName() string }{log4j2, nodeSettings, appProps} {
-				logx.As().Info().Str("name", obj.GetName()).Msg("Applying config CR")
-			}
-
-			if err := kc.ApplyTyped(ctx, log4j2); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			if err := kc.ApplyTyped(ctx, nodeSettings); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			if err := kc.ApplyTyped(ctx, appProps); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			logx.As().Info().Str("scope", scope).Msg("Config CRs created successfully")
+			logx.As().Info().Str("scope", scope).Int("count", len(entries)).Msg("All config CRs created")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating config CRs (Log4j2, NodeSettings, ApplicationProperties)")
+			notify.As().StepStart(ctx, stp, "Creating all 11 config CRs")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -243,9 +308,17 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs) automa.Builder {
 					AccountId:               inputs.AccountId,
 					Weight:                  inputs.Weight,
 					HapiAppSecretsName:      inputs.HapiAppSecret,
-					Log4j2ConfigRef:         fmt.Sprintf("%s-log4j2", scope),
-					SettingsConfigRef:       fmt.Sprintf("%s-settings", scope),
-					ApplicationPropertiesRef: fmt.Sprintf("%s-appprops", scope),
+					Log4j2ConfigRef:                  fmt.Sprintf("%s-log4j2", scope),
+					SettingsConfigRef:                fmt.Sprintf("%s-settings", scope),
+					ApplicationPropertiesRef:         fmt.Sprintf("%s-appprops", scope),
+					ApplicationOverridePropertiesRef: fmt.Sprintf("%s-appoverride", scope),
+					ApiPermissionPropertiesRef:       fmt.Sprintf("%s-apiperm", scope),
+					BootstrapPropertiesRef:           fmt.Sprintf("%s-bootstrap", scope),
+					NodePropertiesRef:                fmt.Sprintf("%s-nodeprops", scope),
+					FeeSchedulesRef:                  fmt.Sprintf("%s-feeschedules", scope),
+					SimpleFeesSchedulesRef:           fmt.Sprintf("%s-simplefeesschedules", scope),
+					ThrottlesConfigRef:               fmt.Sprintf("%s-throttles", scope),
+					BlockNodesConfigRef:              fmt.Sprintf("%s-blocknodes", scope),
 					PodProperties: operatorv1alpha1.ConsensusPodProperties{
 						Containers: operatorv1alpha1.ConsensusContainers{
 							ConsensusNode: operatorv1alpha1.ConsensusNodeContainer{
