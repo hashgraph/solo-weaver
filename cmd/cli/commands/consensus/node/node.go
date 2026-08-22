@@ -20,8 +20,17 @@ var (
 	flagWithProxy    string
 	flagLog4j2File      string
 	flagSettingsFile    string
-	flagAppPropsFile    string
-	flagGrpcTlsSecret   string
+	flagAppPropsFile         string
+	flagDeploymentPkgDir     string
+	flagApiPermissionFile    string
+	flagAppOverrideFile      string
+	flagBootstrapFile        string
+	flagNodePropertiesFile   string
+	flagFeeSchedulesFile     string
+	flagSimpleFeesSchedFile  string
+	flagThrottlesFile        string
+	flagBlockNodesConfigFile string
+	flagGrpcTlsSecret        string
 	flagSigningSecret   string
 	flagHapiAppSecret   string
 	flagUpgradeOperator bool
@@ -48,6 +57,15 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagLog4j2File, "log4j2-config-file", "", "Path to custom log4j2.xml (default: built-in)")
 	nodeCmd.PersistentFlags().StringVar(&flagSettingsFile, "settings-file", "", "Path to custom settings.txt (default: built-in)")
 	nodeCmd.PersistentFlags().StringVar(&flagAppPropsFile, "application-properties-file", "", "Path to custom application.properties (default: built-in)")
+	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted deployment package (HIP-1494 build zip)")
+	nodeCmd.PersistentFlags().StringVar(&flagApiPermissionFile, "api-permission-file", "", "Path to custom api-permission.properties")
+	nodeCmd.PersistentFlags().StringVar(&flagAppOverrideFile, "app-override-file", "", "Path to custom application-override.properties")
+	nodeCmd.PersistentFlags().StringVar(&flagBootstrapFile, "bootstrap-file", "", "Path to custom bootstrap.properties")
+	nodeCmd.PersistentFlags().StringVar(&flagNodePropertiesFile, "node-properties-file", "", "Path to custom node.properties")
+	nodeCmd.PersistentFlags().StringVar(&flagFeeSchedulesFile, "fee-schedules-file", "", "Path to custom feeSchedules.json")
+	nodeCmd.PersistentFlags().StringVar(&flagSimpleFeesSchedFile, "simple-fees-schedules-file", "", "Path to custom simpleFeesSchedules.json")
+	nodeCmd.PersistentFlags().StringVar(&flagThrottlesFile, "throttles-file", "", "Path to custom throttles.json")
+	nodeCmd.PersistentFlags().StringVar(&flagBlockNodesConfigFile, "block-nodes-config-file", "", "Path to custom block-nodes.json")
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
 	nodeCmd.PersistentFlags().StringVar(&flagHapiAppSecret, "hapi-app-secret", "", "Name of K8s Secret containing hedera.crt and hedera.key for HAPI")
