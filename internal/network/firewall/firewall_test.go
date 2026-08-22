@@ -702,6 +702,20 @@ func TestNetworkNftUnit_HasNoStartLimit(t *testing.T) {
 	require.Contains(t, string(content), "StartLimitIntervalSec=0")
 }
 
+// TestNetworkNftUnit_OrderingDirectives pins the #982 boot order: after the
+// firewall managers that flush the ruleset, and before any interface comes up.
+func TestNetworkNftUnit_OrderingDirectives(t *testing.T) {
+	content, err := templates.Files.ReadFile(networkNftServiceTemplate)
+	require.NoError(t, err)
+	unit := string(content)
+
+	require.Contains(t, unit, "Wants=network-pre.target")
+	require.Contains(t, unit, "After=local-fs.target nftables.service ufw.service firewalld.service")
+	require.Contains(t, unit, "Before=network-pre.target solo-provisioner-daemon.service")
+	require.NotContains(t, unit, "Before=nftables.service",
+		"the loader must never order before a flushing firewall manager")
+}
+
 // TestIsRulesetDiagnostic pins the classification `Check` uses to tell a ruleset
 // nft refused from a host that would not let it look. nft exits non-zero for
 // both, so only the source position distinguishes them — and getting it wrong
