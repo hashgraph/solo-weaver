@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/automa-saga/automa v0.11.1
+	github.com/automa-saga/automa v1.0.0
 	github.com/automa-saga/daemonkit v0.1.0
 	github.com/automa-saga/errx v1.0.0
 	github.com/automa-saga/logx v0.5.0
