@@ -522,7 +522,13 @@ provisioned node.
   the per-block flags retained as shorthands. Structure (which rules exist, and
   their protocol) is declared by its own verb, so bringing a rule into existence
   is always explicit; membership is moved by `add`/`remove`/`set`, which refuse
-  an unknown `--name` so a typo edits nothing. A declared rule may be empty and
+  an unknown `--name` so a typo edits nothing. `set` and `remove` additionally
+  refuse to take the `mgmt` rule from populated to empty — either its address
+  list or its port list, since the rule renders unconditionally as
+  `saddr @mgmt_addrs tcp dport @mgmt_ports accept` and either half empty drops
+  every new SSH connection under the default-drop input chain — unless
+  authorised with the root `--force` flag (#1034); a rule that is already
+  unreachable stays editable. A declared rule may be empty and
   renders nothing until it has a CIDR and either a port or `icmp_echo`.
   `show --output yaml` emits the same schema `--from-file` accepts. A file is
   the whole table and inherits nothing from the host, so all three reserved

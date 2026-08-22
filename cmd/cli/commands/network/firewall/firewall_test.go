@@ -143,10 +143,21 @@ func runOut(t *testing.T, args ...string) (string, error) {
 // mutual-exclusion checks fire on a flag an earlier test set, and would let a
 // value leak into a later verb. A real CLI process runs one command and never
 // sees this.
+//
+// Inherited persistent flags leak their *value* too, not just Changed: --force
+// is read by value (GetBool) rather than by Changed, so without an explicit
+// reset a test that passes --force would silently authorise the lock-out for
+// every later test in the binary.
 func resetFlagState(t *testing.T) {
 	t.Helper()
 	for _, sub := range GetCmd().Commands() {
 		sub.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+		// Reset only this one boolean by value. A blanket reset to f.DefValue
+		// would corrupt the slice flags, whose DefValue is the literal "[]" and
+		// whose Set("[]") yields []string{"[]"} rather than an empty list.
+		if f := sub.Flags().Lookup("force"); f != nil {
+			require.NoError(t, f.Value.Set("false"))
+		}
 	}
 	// The shared binding variables are read directly (not via Changed) in a
 	// couple of places, so zero them too.
@@ -557,4 +568,104 @@ func TestAddRemoveCmd_Flags(t *testing.T) {
 		require.NotNil(t, cmd.Flags().Lookup("blocked-cidr"), "%s missing --blocked-cidr", c)
 		require.NotNil(t, cmd.Flags().Lookup("in-cluster-port"), "%s missing --in-cluster-port", c)
 	}
+}
+
+// ── management-allowlist lock-out guard (#1034) ──────────────────────────────
+//
+// The guard has one behaviour everywhere: emptying a populated mgmt list fails
+// with an actionable error, and the root --force authorises it.
+
+func TestSetCmd_EmptyingMgmtIsRefused(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+	require.Contains(t, readFile(t, nftPath), "10.0.0.0/8")
+
+	err := run(t, "set", "--name", "mgmt", "--cidrs", "")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to empty the management address list")
+	// Nothing was written: the allowlist the host would replay at boot is intact.
+	require.Contains(t, readFile(t, nftPath), "10.0.0.0/8")
+}
+
+func TestSetCmd_EmptyingMgmtWithForceSucceeds(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	require.NoError(t, run(t, "set", "--name", "mgmt", "--cidrs", "", "--force"))
+
+	require.NotContains(t, readFile(t, nftPath), "10.0.0.0/8")
+}
+
+func TestRemoveCmd_LastMgmtCIDRIsRefused(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8,192.168.0.0/16"))
+
+	// Removing one of two is fine — the allowlist is still populated.
+	require.NoError(t, run(t, "remove", "--name", "mgmt", "--cidr", "10.0.0.0/8"))
+	require.NotContains(t, readFile(t, nftPath), "10.0.0.0/8")
+
+	// Removing the last one would empty it.
+	err := run(t, "remove", "--name", "mgmt", "--cidr", "192.168.0.0/16")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to empty the management")
+	require.Contains(t, readFile(t, nftPath), "192.168.0.0/16")
+
+	// And --force gets through.
+	require.NoError(t, run(t, "remove", "--name", "mgmt", "--cidr", "192.168.0.0/16", "--force"))
+	require.NotContains(t, readFile(t, nftPath), "192.168.0.0/16")
+}
+
+// The shorthand spelling resolves to the mgmt rule and is guarded identically.
+func TestRemoveCmd_LastMgmtCIDRViaShorthandIsRefused(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	err := run(t, "remove", "--mgmt-cidr", "10.0.0.0/8")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to empty the management")
+	require.Contains(t, readFile(t, nftPath), "10.0.0.0/8")
+}
+
+// An empty --cidrs-file is an explicit "clear the list", so it is the same
+// hazard by a different route.
+func TestSetCmd_EmptyCIDRsFileForMgmtIsRefused(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8"))
+
+	path := filepath.Join(t.TempDir(), "empty.txt")
+	require.NoError(t, os.WriteFile(path, []byte("# nothing here\n"), 0o600))
+
+	err := run(t, "set", "--name", "mgmt", "--cidrs-file", path)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to empty the management")
+	require.Contains(t, readFile(t, nftPath), "10.0.0.0/8")
+}
+
+// Clearing another reserved block is a supported way to disable it and must not
+// be caught by the mgmt-scoped guard.
+func TestSetCmd_EmptyingOtherBlocksStillWorks(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--blocked-cidrs", "203.0.113.0/24"))
+
+	require.NoError(t, run(t, "set", "--name", "blocked", "--cidrs", ""))
+
+	doc := readFile(t, nftPath)
+	require.NotContains(t, doc, "203.0.113.0/24")
+	require.Contains(t, doc, "10.0.0.0/8", "mgmt untouched")
+}
+
+// An empty mgmt port list disables the SSH accept exactly as an empty address
+// list does, because the rule renders unconditionally.
+func TestSetCmd_EmptyingMgmtPortsIsRefused(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--ssh-port", "22"))
+
+	err := run(t, "set", "--name", "mgmt", "--ports", "")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to empty the management port list")
+	require.Contains(t, readFile(t, nftPath), "elements = { 22 }")
 }

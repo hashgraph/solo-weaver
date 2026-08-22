@@ -822,11 +822,16 @@ sudo solo-provisioner network firewall set --name admin --icmp-echo=false
 | `add`/`remove`/`set`  | `--name`       | Rule to modify: `mgmt`, `blocked`, `in_cluster`, or an allow rule name |
 | `add`/`remove`        | `--cidr`       | CIDR(s) to add/remove (comma-separated or repeated)                  |
 | `add`/`remove`        | `--port`       | Port(s) to add/remove; single ports or ranges                        |
-| `set`                 | `--cidrs`      | Full CIDR list (replaces the existing list; an empty value clears it) |
+| `set`                 | `--cidrs`      | Full CIDR list (replaces the existing list; an empty value clears it — except for `mgmt`, see below) |
 | `set`                 | `--cidrs-file` | Alternative to `--cidrs`: a flat file of CIDRs, one per line or comma-separated, `#` comments allowed |
 | `set`                 | `--ports`      | Full port list (replaces the existing list)                          |
 | `set`                 | `--proto`      | L4 protocol the rule's ports match: `tcp` or `udp` (allow rules only; empty restores the `tcp` default) |
 | `set`                 | `--icmp-echo`  | Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only) |
+
+> **Emptying the `mgmt` rule is guarded.** Clearing its addresses or ports — `set` with an empty value, or a
+> `remove` of the last entry — would drop every **new** SSH connection under the default-drop policy, so the
+> command fails unless `--force` (`-y`) is passed. Only `mgmt` is guarded: clearing `blocked` or `in_cluster`
+> is the supported way to disable them.
 
 > `add`/`remove` operate on membership only. To change an allow rule's `--proto` or `--icmp-echo` after it is declared, use `set` — `create-allow-rule --force` would reset the rest of the rule. The reserved blocks reject both flags outright, **including `--proto tcp`**: they render a fixed shape (TCP, with `mgmt` carrying its own broader ICMP type list), so accepting the value that happens to match would report a change the renderer ignores.
 
@@ -895,7 +900,7 @@ The emitted lines carry no `sudo` of their own, so the file is a script you run 
 
 > `delete --all` (the default when `--name` is omitted, which is what this verb has always done) removes the table and both `/etc/solo-provisioner/network-weaver-host-firewall.{nft,yaml}`, leaving the host with no weaver-managed firewall — including no management allowlist. It asks for confirmation in an interactive session; pass `--force` to skip the prompt. It does not disable the shared `solo-provisioner-network-nft.service` (shared with `inet weaver-workload-policy`); disable it manually if you need it off.
 >
-> The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set --name mgmt --cidrs ""`).
+> The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set --name mgmt --cidrs "" --force`).
 
 > **`create` and `delete --all` record the enable decision.** Both write it into the host's runtime
 > state (`machineState.firewall.disabled`), so `block node reconfigure` agrees with what you did
