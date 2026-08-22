@@ -122,17 +122,30 @@ func patchMachineFirewallFromConfig(st *state.State) {
 
 // patchBlockNodeShaping records the resolved traffic-shaping content bundle into
 // BlockNodeState.Shaping so upgrade/reconfigure can re-assert the operator's
-// original egress NIC, link rate, and per-class overrides.
+// original egress NIC and link rate, and so the last --shape request stays on
+// record.
+//
+// ShapeOverrides is no longer re-asserted as an effective input (#1037), so a
+// bare reconfigure arrives here with an empty map. Carry the previously recorded
+// request over in that case instead of erasing it: the reality refresh already
+// goes out of its way to preserve this record across a state rebuild (see
+// reality.blocknode_checker, "cannot be recovered from the Helm release or the
+// live cluster"), and a routine reconfigure should not be the thing that drops
+// it. Current per-class values live in the shape registry either way.
 func patchBlockNodeShaping(st *state.State, ins models.BlockNodeInputs) {
+	overrides := ins.ShapeOverrides
+	if len(overrides) == 0 && st.BlockNodeState.Shaping != nil {
+		overrides = st.BlockNodeState.Shaping.ShapeOverrides
+	}
 	st.BlockNodeState.Shaping = &state.ShapingState{
 		EgressInterface: ins.EgressInterface,
 		LinkRate:        ins.LinkRate,
-		ShapeOverrides:  ins.ShapeOverrides,
+		ShapeOverrides:  overrides,
 	}
 	logx.As().Debug().
 		Str("egressInterface", ins.EgressInterface).
 		Str("linkRate", ins.LinkRate).
-		Int("shapeOverrides", len(ins.ShapeOverrides)).
+		Int("shapeOverrides", len(overrides)).
 		Msg("Persisted block node traffic-shaping content into runtime state")
 }
 
@@ -212,14 +225,22 @@ func resolveBlocknodeEffectiveInputs(
 
 	// Traffic-shaping content (egress NIC, link rate, per-class overrides) has no
 	// resolver tier — it is passed through from user input. Fall back to the
-	// persisted BlockNodeState.Shaping when the operator did not supply a value, so
-	// `upgrade` (which never prompts for these) and a bare `reconfigure` re-assert
-	// the operator's original shaping instead of auto-detecting. Explicit user input
-	// always wins. On a fresh install CurrentState carries no Shaping, so this is a
-	// no-op there.
+	// persisted BlockNodeState.Shaping for the NIC and the link rate when the
+	// operator did not supply them, so `upgrade` (which never prompts for these)
+	// and a bare `reconfigure` re-assert the operator's original egress device and
+	// trunk rate instead of auto-detecting. Explicit user input always wins. On a
+	// fresh install CurrentState carries no Shaping, so this is a no-op there.
+	//
+	// ShapeOverrides is deliberately NOT backfilled: it records what --shape asked
+	// for at install time, and the shape registry already holds the result. Re-
+	// asserting it here would re-apply a stale install-time value on top of a later
+	// `network shape set` on the same class — the clobber this fallback was meant
+	// to help avoid (#1037). Per-class values now come from the registry, which the
+	// tc steps preserve across a re-provision at an unchanged trunk rate. The state
+	// record itself is still kept lossless — see patchBlockNodeShaping, which
+	// carries the previous request over when this run supplied none.
 	egressInterface := inputs.Custom.EgressInterface
 	linkRate := inputs.Custom.LinkRate
-	shapeOverrides := inputs.Custom.ShapeOverrides
 	if current, err := runtime.CurrentState(); err == nil && current.Shaping != nil {
 		if egressInterface == "" {
 			egressInterface = current.Shaping.EgressInterface
@@ -227,13 +248,9 @@ func resolveBlocknodeEffectiveInputs(
 		if linkRate == "" {
 			linkRate = current.Shaping.LinkRate
 		}
-		if len(shapeOverrides) == 0 {
-			shapeOverrides = current.Shaping.ShapeOverrides
-		}
 		logx.As().Debug().
 			Str("egressInterface", egressInterface).
 			Str("linkRate", linkRate).
-			Int("shapeOverrides", len(shapeOverrides)).
 			Msg("Applied persisted traffic-shaping content as fallback for unset inputs")
 	}
 
@@ -262,7 +279,7 @@ func resolveBlocknodeEffectiveInputs(
 			PluginList:            inputs.Custom.PluginList,
 			EgressInterface:       egressInterface,
 			LinkRate:              linkRate,
-			ShapeOverrides:        shapeOverrides,
+			ShapeOverrides:        inputs.Custom.ShapeOverrides,
 			TrafficShapingEnabled: inputs.Custom.TrafficShapingEnabled,
 			Timeout:               inputs.Custom.Timeout,
 			StatuszBaseURL:        inputs.Custom.StatuszBaseURL,

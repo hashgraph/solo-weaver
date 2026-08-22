@@ -269,22 +269,6 @@ func (m *Manager) SetClass(ctx context.Context, name string, rate, ceil *string,
 	})
 }
 
-// HasEgressConfig reports whether the egress device already has a recorded
-// shape config (device + classes) in the registry — i.e. whether a prior
-// ProvisionDefaultEgress (via `block node install`/`network shape create`)
-// has already run. Used by the install-time TcEgressPersist step to decide
-// between provisioning fresh defaults (nothing recorded yet: matches
-// TcIngressRecord's unconditional behavior) and re-applying from what's
-// already there (an existing install: never clobber operator-adjusted
-// `network shape set` values just because --link-rate was omitted).
-func (m *Manager) HasEgressConfig() (bool, error) {
-	dev, err := readDevice(DirEgress)
-	if err != nil {
-		return false, err
-	}
-	return dev != nil, nil
-}
-
 // ShowClass returns a human-readable summary of the named class config.
 func (m *Manager) ShowClass(name string) (string, error) {
 	cls, err := readClass(name)
@@ -680,9 +664,13 @@ func (m *Manager) writeEgressScript(rendered string) error {
 }
 
 // provisionDefaults resolves trunkRate (possibly "auto"), materialises the
-// profile's device + class set with any --shape overrides merged in, validates
-// the merged set against the trunk budget, and writes device + all classes
-// under a single lock. afterWrite, when non-nil, runs inside the same lock
+// profile's device + class set, folds in whatever the registry already holds
+// (see mergeExistingConfig — recorded per-class rates survive an unchanged
+// trunk rate, so a re-provision never clobbers `network shape set` tuning),
+// merges any --shape overrides on top, validates the merged set against the
+// trunk budget, and writes device + all classes. The read-merge-write cycle
+// runs under a single lock so a concurrent `network shape set` cannot be read
+// and then overwritten. afterWrite, when non-nil, runs inside the same lock
 // after the writes (egress renders and applies the boot script; ingress writes
 // config only). Shared by ProvisionDefaultEgress and ProvisionDefaultIngress so
 // the two directions cannot drift.
@@ -692,11 +680,16 @@ func (m *Manager) provisionDefaults(prof defaultProfile, trunkRate string, overr
 	if err != nil {
 		return err
 	}
-	applyClassOverrides(classes, overrides)
-	if err := validateProvisionedClasses(classes, dev.Rate); err != nil {
-		return err
-	}
 	return m.withLock(func() error {
+		existingDev, existingClasses, err := loadExistingConfig(prof.dir)
+		if err != nil {
+			return err
+		}
+		mergeExistingConfig(dev, classes, existingDev, existingClasses)
+		applyClassOverrides(classes, overrides)
+		if err := validateProvisionedClasses(classes, dev.Rate); err != nil {
+			return err
+		}
 		if err := writeDevice(dev); err != nil {
 			return err
 		}
@@ -716,9 +709,11 @@ func (m *Manager) provisionDefaults(prof defaultProfile, trunkRate string, overr
 // HTB classes at proportions derived from trunkRate (partner 40%/70%, public
 // 30%/70%, reserve-egress 30%/100%), then renders and applies the boot script.
 // trunkRate may be "auto", which is resolved to the detected link speed at
-// create time (see resolveAutoRateString). Existing configs are always
-// replaced. Called by block node install so the shape registry is the single
-// source of truth from first install.
+// create time (see resolveAutoRateString). Called by block node install so the
+// shape registry is the single source of truth from first install, and re-run by
+// reconfigure/upgrade — a re-run against an unchanged trunk rate keeps the
+// recorded per-class values rather than resetting them to the proportions above
+// (see mergeExistingConfig).
 func (m *Manager) ProvisionDefaultEgress(ctx context.Context, nicName, trunkRate string, overrides map[string]ClassOverride) error {
 	return m.provisionDefaults(egressProfile, trunkRate, overrides, func() error {
 		return m.applyEgressScript(ctx, nicName, applyRestart)
@@ -758,14 +753,6 @@ func ProvisionDefaultIngressShape(ctx context.Context, nicName, trunkRate string
 		cfg.NICDetect = func() (string, error) { return nicName, nil }
 	}
 	return NewManagerWithConfig(cfg).ProvisionDefaultIngress(ctx, trunkRate, overrides)
-}
-
-// RenderAndApplyDefaultEgress renders the bandwidth-shaper script for nic from the
-// shape registry (or sysfs fallback when no config exists) and applies it.
-// Used when no trunk rate is supplied (e.g. block node reconfigure without
-// --link-rate).
-func RenderAndApplyDefaultEgress(ctx context.Context, nic string) error {
-	return NewManager().applyEgressScript(ctx, nic, applyRestart)
 }
 
 // withLock serialises a mutation behind a cross-command flock so concurrent
