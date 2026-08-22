@@ -44,6 +44,19 @@ type ConsensusNodeInputs struct {
 	// ApplicationPropertiesFile overrides the default application.properties content from a file
 	ApplicationPropertiesFile string `json:"applicationPropertiesFile,omitempty"`
 
+	// DeploymentPackageDir points to the extracted build zip (HIP-1494 structure)
+	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
+
+	// Config override flags (individual flag > deployment package > embedded default)
+	ApiPermissionFile      string `json:"apiPermissionFile,omitempty"`
+	AppOverrideFile        string `json:"appOverrideFile,omitempty"`
+	BootstrapFile          string `json:"bootstrapFile,omitempty"`
+	NodePropertiesFile     string `json:"nodePropertiesFile,omitempty"`
+	FeeSchedulesFile       string `json:"feeSchedulesFile,omitempty"`
+	SimpleFeesSchedulesFile string `json:"simpleFeesSchedulesFile,omitempty"`
+	ThrottlesFile          string `json:"throttlesFile,omitempty"`
+	BlockNodesConfigFile   string `json:"blockNodesConfigFile,omitempty"`
+
 	// GrpcTlsSecret is the name of the K8s Secret containing gRPC TLS key/cert
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
 
