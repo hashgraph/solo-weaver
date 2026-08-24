@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/automa-saga/automa v1.0.0
-	github.com/automa-saga/daemonkit v0.1.0
+	github.com/automa-saga/daemonkit v0.4.0
 	github.com/automa-saga/errx v1.0.0
 	github.com/automa-saga/logx v0.5.1
 	github.com/automa-saga/version v1.0.1

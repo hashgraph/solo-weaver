@@ -30,8 +30,8 @@ github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
 github.com/automa-saga/automa v1.0.0 h1:Rt7QKAehJZtX1SK6OHi3mVuWQoD5rLSSLfotflByZuU=
 github.com/automa-saga/automa v1.0.0/go.mod h1:IHVYjjri82jKo5VODY0di9W8zmjFtwmNEvoZonRU7PY=
-github.com/automa-saga/daemonkit v0.1.0 h1:/ph77RqJnBAsx79oROEmlgZ63/aFNg0Tiy5GsdckI4M=
-github.com/automa-saga/daemonkit v0.1.0/go.mod h1:SljBxNkAAfJMfnC2hurv+NRZzwC2LRf2QZJR/waHwQA=
+github.com/automa-saga/daemonkit v0.4.0 h1:htV7m1sIjmkvJEVW1UA+7mMXn4OQnEbvqRSHTNkDsRk=
+github.com/automa-saga/daemonkit v0.4.0/go.mod h1:qVU+rZyBQdx2IGEghC7K5z/wsVWtm+bCVwjSL4FJveU=
 github.com/automa-saga/errx v1.0.0 h1:2VDWBD2toBp3YmGF8P9+RTR1aaevkLMbB3qm2yzktBs=
 github.com/automa-saga/errx v1.0.0/go.mod h1:b2x9NigWF35P0Nnv6QtY5lmHGFmGY7/DallDeZCgscI=
 github.com/automa-saga/logx v0.5.1 h1:U8Sn0SIvqIFau2T4+Oe9gSVSZnYt16oDYAOD7vmuHEw=
