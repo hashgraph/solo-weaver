@@ -30,9 +30,9 @@ require (
 	golang.org/x/text v0.41.0
 	helm.sh/helm/v3 v3.21.4
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
-	k8s.io/api v0.36.3
-	k8s.io/apimachinery v0.36.3
-	k8s.io/client-go v0.36.3
+	k8s.io/api v0.36.4
+	k8s.io/apimachinery v0.36.4
+	k8s.io/client-go v0.36.4
 	pault.ag/go/modprobe v0.2.0
 )
 
@@ -154,7 +154,7 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
 	k8s.io/kubectl v0.36.2 // indirect
-	k8s.io/streaming v0.36.3 // indirect
+	k8s.io/streaming v0.36.4 // indirect
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
