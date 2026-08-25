@@ -101,7 +101,7 @@ func TestNetworkFirewallCreate_CreatesWhenMgmtCIDRsSet(t *testing.T) {
 	nftPath := withStubbedFirewall(t, r)
 	setHostConfig(t, models.HostConfig{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 		PodCIDR:         models.DefaultClusterPodCIDR,
 		InClusterPorts:  []int{6443, 10250},
 	})
@@ -134,7 +134,7 @@ func TestNetworkFirewallCreate_ExplicitEmptyPortsAndPodCIDROverrideDefaults(t *t
 	nftPath := withStubbedFirewall(t, r)
 	setHostConfig(t, models.HostConfig{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 		PodCIDR:         "",
 		InClusterPorts:  nil,
 	})
@@ -157,7 +157,7 @@ func TestNetworkFirewallCreate_RollbackSkipsWhenPreexisting(t *testing.T) {
 	// not delete a table this step did not create.
 	r := &fakeFwRunner{exists: true}
 	withStubbedFirewall(t, r)
-	setHostConfig(t, models.HostConfig{ManagementCIDRs: []string{"10.0.0.0/8"}, SSHPort: 22})
+	setHostConfig(t, models.HostConfig{ManagementCIDRs: []string{"10.0.0.0/8"}, MgmtPorts: []int{22}})
 
 	step, err := NetworkFirewallCreate(false).Build()
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestNetworkFirewallCreate_ReconcileReRendersExistingTable(t *testing.T) {
 	nftPath := withStubbedFirewall(t, r)
 	setHostConfig(t, models.HostConfig{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 		PodCIDR:         models.DefaultClusterPodCIDR,
 		InClusterPorts:  []int{6443},
 	})
@@ -221,7 +221,7 @@ func TestNetworkFirewallCreate_PreservesNamedAllowRules(t *testing.T) {
 
 	setHostConfig(t, models.HostConfig{
 		ManagementCIDRs: []string{"192.168.68.0/24"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 		PodCIDR:         models.DefaultClusterPodCIDR,
 		InClusterPorts:  []int{6443},
 	})

@@ -175,14 +175,14 @@ func TestOverrideHostConfig_ExplicitEmptyClearsPreviousValue(t *testing.T) {
 
 	globalConfig.Host = models.HostConfig{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 		PodCIDR:         "10.4.0.0/14",
 		InClusterPorts:  []int{6443, 10250},
 	}
 
 	OverrideHostConfig(models.HostConfig{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 		PodCIDR:         "",
 		InClusterPorts:  nil,
 	})

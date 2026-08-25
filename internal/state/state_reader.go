@@ -70,7 +70,7 @@ type PromptDefaultsDoc struct {
 				Disabled        bool     `yaml:"disabled"`
 				ManagementCIDRs []string `yaml:"managementCidrs"`
 				BlockedCIDRs    []string `yaml:"blockedCidrs"`
-				SSHPort         int      `yaml:"sshPort"`
+				MgmtPorts       []int    `yaml:"mgmtPorts"`
 				PodCIDR         string   `yaml:"podCidr"`
 				InClusterPorts  []int    `yaml:"inClusterPorts"`
 			} `yaml:"firewall"`
@@ -222,7 +222,7 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 			Disabled:        fw.Disabled,
 			ManagementCIDRs: fw.ManagementCIDRs,
 			BlockedCIDRs:    fw.BlockedCIDRs,
-			SSHPort:         fw.SSHPort,
+			MgmtPorts:       fw.MgmtPorts,
 			PodCIDR:         fw.PodCIDR,
 			InClusterPorts:  fw.InClusterPorts,
 		}

@@ -121,7 +121,7 @@ func TestDeleteCmd_PreservesRecordedContent(t *testing.T) {
 	// Seed the record the block-node workflow would have written.
 	fake.current.MachineState.Firewall = &state.HostFirewallState{
 		ManagementCIDRs: []string{"192.168.50.0/24"},
-		SSHPort:         2222,
+		MgmtPorts:       []int{2222},
 	}
 
 	require.NoError(t, run(t, "delete", "--all"))
@@ -130,7 +130,7 @@ func TestDeleteCmd_PreservesRecordedContent(t *testing.T) {
 	require.NotNil(t, fw)
 	require.True(t, fw.Disabled)
 	require.Equal(t, []string{"192.168.50.0/24"}, fw.ManagementCIDRs, "content must survive the decision write")
-	require.Equal(t, 2222, fw.SSHPort)
+	require.Equal(t, []int{2222}, fw.MgmtPorts)
 }
 
 // TestDeleteCmd_ByNameLeavesDecisionAlone verifies that removing one allow rule

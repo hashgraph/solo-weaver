@@ -48,11 +48,11 @@ func TestFirewallCmd_Structure(t *testing.T) {
 }
 
 func TestCreateCmd_Flags(t *testing.T) {
-	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "ssh-port", "pod-cidr", "from-file"} {
+	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "mgmt-ports", "pod-cidr", "from-file"} {
 		require.NotNil(t, createCmd.Flags().Lookup(name), "create is missing --%s", name)
 	}
 	// Defaults must match the firewall package defaults.
-	require.Equal(t, "22", createCmd.Flags().Lookup("ssh-port").DefValue)
+	require.Equal(t, "[22]", createCmd.Flags().Lookup("mgmt-ports").DefValue)
 	// ICMP is a static ruleset apart from the per-rule icmp_echo grant, which is
 	// a config-file field: there must be no icmp toggles here.
 	require.Nil(t, createCmd.Flags().Lookup("icmp-mgmt"), "icmp-mgmt flag should be removed")
@@ -154,7 +154,7 @@ func resetFlagState(t *testing.T) {
 	flagCIDRs, flagPorts, flagPodCIDR = nil, nil, nil
 	flagMgmtCIDRs, flagBlockedCIDRs, flagInClusterPorts = nil, nil, nil
 	flagMgmtCIDR, flagBlockedCIDR = "", ""
-	flagInClusterPort, flagSSHPort = 0, 0
+	flagInClusterPort, flagMgmtPorts = 0, nil
 	flagProto, flagICMPEcho = "", false
 }
 
@@ -166,12 +166,12 @@ func TestBackwardCompatibleInvocations(t *testing.T) {
 	nftPath, _ := stubManager(t)
 
 	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--blocked-cidrs", "203.0.113.0/24",
-		"--ssh-port", "2222", "--in-cluster-ports", "6443,10250", "--pod-cidr", "10.4.0.0/24"))
+		"--mgmt-ports", "2222", "--in-cluster-ports", "6443,10250", "--pod-cidr", "10.4.0.0/24"))
 	doc := readFile(t, nftPath)
 	require.Contains(t, doc, "elements = { 10.0.0.0/8 }")
 	require.Contains(t, doc, "elements = { 203.0.113.0/24 }")
 	require.Contains(t, doc, "set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 2222 }; }",
-		"--ssh-port must still work, as a one-element port list")
+		"--mgmt-ports must still work, as a one-element port list")
 	require.Contains(t, doc, "elements = { 6443, 10250 }")
 	require.Contains(t, doc, "set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.4.0.0/24 }; }")
 
@@ -204,6 +204,16 @@ func TestBackwardCompatibleInvocations(t *testing.T) {
 	// confirmation prompt does not fire.
 	require.NoError(t, run(t, "delete"))
 	require.NoFileExists(t, nftPath)
+}
+
+// TestCreateCmd_MgmtPortsAcceptsMultipleValues is the point of #1080: --mgmt-ports
+// takes more than one port in a single invocation, matching --mgmt-cidrs.
+func TestCreateCmd_MgmtPortsAcceptsMultipleValues(t *testing.T) {
+	nftPath, _ := stubManager(t)
+
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--mgmt-ports", "22,2222"))
+	doc := readFile(t, nftPath)
+	require.Contains(t, doc, "set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 22, 2222 }; }")
 }
 
 // TestCreateAllowRuleCmd is the end-to-end shape #1009 exists to deliver: a

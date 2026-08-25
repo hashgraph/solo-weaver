@@ -488,7 +488,7 @@ gated by two independent flags. In the interactive flow the **host firewall is
 asked first**, then traffic shaping:
 
 - `--firewall-enabled` — install the `inet weaver-host-firewall` plane.
-  Configured by `--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`,
+  Configured by `--mgmt-cidrs`, `--blocked-cidrs`, `--mgmt-ports`, `--pod-cidr`,
   `--in-cluster-ports` — i.e. the three reserved blocks only. Named allow rules
   are not part of install: they are declared afterwards with
   `network firewall create-allow-rule` (or `create --from-file` for the whole
@@ -514,7 +514,7 @@ provisioned node.
 
 - **`network firewall`** (`create`/`create-allow-rule`/`add`/`remove`/`set`/
   `show`/`reapply`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
-  `--blocked-cidrs`, `--in-cluster-ports`, `--ssh-port`, `--pod-cidr`, or
+  `--blocked-cidrs`, `--in-cluster-ports`, `--mgmt-ports`, `--pod-cidr`, or
   `--from-file` for the whole table; `create-allow-rule` declares one named allow
   rule (`--name`, `--proto`, `--icmp-echo`);
   `add`/`remove`/`set`/`delete` take `--name` to address one rule —

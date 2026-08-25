@@ -25,7 +25,7 @@ const (
 	FlagNameFirewallEnabled = "firewall-enabled"
 	FlagNameMgmtCIDRs       = "mgmt-cidrs"
 	FlagNameBlockedCIDRs    = "blocked-cidrs"
-	FlagNameSSHPort         = "ssh-port"
+	FlagNameMgmtPorts       = "mgmt-ports"
 	FlagNamePodCIDR         = "pod-cidr"
 	FlagNameInClusterPorts  = "in-cluster-ports"
 )
@@ -39,10 +39,12 @@ const (
 // to config / built-in defaults and are validated later inside
 // ResolveHostFirewallConfig as always.
 func ValidateHostFirewallFlags(cmd *cobra.Command) error {
-	if cmd.Flags().Changed(FlagNameSSHPort) {
-		port, _ := cmd.Flags().GetInt(FlagNameSSHPort)
-		if err := sanity.ValidatePort(strconv.Itoa(port)); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid --%s %d", FlagNameSSHPort, port)
+	if cmd.Flags().Changed(FlagNameMgmtPorts) {
+		ports, _ := cmd.Flags().GetIntSlice(FlagNameMgmtPorts)
+		for _, p := range ports {
+			if err := sanity.ValidatePort(strconv.Itoa(p)); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "invalid --%s %d", FlagNameMgmtPorts, p)
+			}
 		}
 	}
 	if cmd.Flags().Changed(FlagNameInClusterPorts) {
@@ -92,8 +94,8 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 		"Operator-curated block list CIDRs for the node host firewall, dropped before any other rule including "+
 			"established connections (comma-separated or repeated). Distinct from the BN workload plane's "+
 			"bn-restricted set, which the traffic-shaper daemon manages automatically.")
-	cmd.Flags().Int(FlagNameSSHPort, firewall.DefaultSSHPort,
-		"SSH/management TCP port allowed from --mgmt-cidrs by the node host firewall")
+	cmd.Flags().IntSlice(FlagNameMgmtPorts, []int{firewall.DefaultSSHPort},
+		"SSH/management TCP port(s) allowed from --mgmt-cidrs by the node host firewall (comma-separated or repeated)")
 	cmd.Flags().String(FlagNamePodCIDR, models.DefaultClusterPodCIDR,
 		"Pod CIDR allowed to reach the in-cluster host-service ports (defaults to the cluster pod subnet)")
 	cmd.Flags().IntSlice(FlagNameInClusterPorts, firewall.DefaultInClusterPorts,
@@ -110,7 +112,7 @@ func hostFirewallFeature() gatedFeature {
 		PromptTitle: "Enable host firewall?",
 		PromptDesc: "Apply the node-level inet weaver-host-firewall firewall (SSH/mgmt allowlist, ICMP policy, in-cluster ports). " +
 			"Opt-in, default No — choose Yes to have this tool manage the host firewall.",
-		ContentFlags: []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs, FlagNameSSHPort, FlagNamePodCIDR, FlagNameInClusterPorts},
+		ContentFlags: []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs, FlagNameMgmtPorts, FlagNamePodCIDR, FlagNameInClusterPorts},
 	}
 }
 
@@ -189,7 +191,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	// intact, so the same strings are parsed whether or not a prompt ran.
 	mgmtStr := effectiveCSV(cmd, FlagNameMgmtCIDRs, cfg.ManagementCIDRs)
 	blockedStr := effectiveCSV(cmd, FlagNameBlockedCIDRs, cfg.BlockedCIDRs)
-	sshStr := effectiveInt(cmd, FlagNameSSHPort, cfg.SSHPort, firewall.DefaultSSHPort)
+	mgmtPortsStr := effectiveIntCSV(cmd, FlagNameMgmtPorts, cfg.MgmtPorts, []int{firewall.DefaultSSHPort})
 	portsStr := effectiveIntCSV(cmd, FlagNameInClusterPorts, cfg.InClusterPorts, firewall.DefaultInClusterPorts)
 	podStr := effectiveStr(cmd, FlagNamePodCIDR, cfg.PodCIDR, models.DefaultClusterPodCIDR)
 
@@ -201,7 +203,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 		if err := prompt.RunInputPrompts(cmd, []prompt.InputPrompt{
 			prompt.MgmtCIDRsInputPrompt(mgmtStr, &mgmtStr),
 			prompt.BlockedCIDRsInputPrompt(blockedStr, &blockedStr),
-			prompt.SSHPortInputPrompt(sshStr, &sshStr),
+			prompt.MgmtPortsInputPrompt(mgmtPortsStr, &mgmtPortsStr),
 			prompt.PodCIDRInputPrompt(podStr, &podStr),
 			prompt.InClusterPortsInputPrompt(portsStr, &portsStr),
 		}, localCV); err != nil {
@@ -212,9 +214,9 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 		}
 	}
 
-	sshPort, err := strconv.Atoi(strings.TrimSpace(sshStr))
+	mgmtPorts, err := prompt.ParsePortList(mgmtPortsStr)
 	if err != nil {
-		return errorx.IllegalArgument.New("invalid --%s %q", FlagNameSSHPort, sshStr)
+		return errorx.IllegalArgument.Wrap(err, "invalid --%s", FlagNameMgmtPorts)
 	}
 	ports, err := prompt.ParsePortList(portsStr)
 	if err != nil {
@@ -224,7 +226,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	hostCfg := models.HostConfig{
 		ManagementCIDRs: normalizeCIDRs(strings.Split(mgmtStr, ",")),
 		BlockedCIDRs:    normalizeCIDRs(strings.Split(blockedStr, ",")),
-		SSHPort:         sshPort,
+		MgmtPorts:       mgmtPorts,
 		PodCIDR:         strings.TrimSpace(podStr),
 		InClusterPorts:  ports,
 		Disabled:        false,
@@ -257,19 +259,6 @@ func effectiveStr(cmd *cobra.Command, name, cfgVal, def string) string {
 		return cfgVal
 	}
 	return def
-}
-
-// effectiveInt returns the effective value for an int flag as a string: the flag
-// when set, else the config value when non-zero, else the built-in default.
-func effectiveInt(cmd *cobra.Command, name string, cfgVal, def int) string {
-	if cmd.Flags().Changed(name) {
-		v, _ := cmd.Flags().GetInt(name)
-		return strconv.Itoa(v)
-	}
-	if cfgVal != 0 {
-		return strconv.Itoa(cfgVal)
-	}
-	return strconv.Itoa(def)
 }
 
 // effectiveIntCSV returns the effective comma-joined value for an IntSlice flag:
@@ -373,8 +362,8 @@ func hostConfigFromTable(t *firewall.Table) models.HostConfig {
 		BlockedCIDRs:    ipv4Only(t.Blocked.CIDRs, ruleDescBlocked),
 		InClusterPorts:  plainPorts(t.InCluster.Ports, ruleDescInCluster),
 	}
-	if sshPorts := plainPorts(t.Mgmt.Ports, ruleDescMgmt); len(sshPorts) > 0 {
-		cfg.SSHPort = sshPorts[0]
+	if mgmtPorts := plainPorts(t.Mgmt.Ports, ruleDescMgmt); len(mgmtPorts) > 0 {
+		cfg.MgmtPorts = mgmtPorts
 	}
 	if pod := ipv4Only(t.InCluster.CIDRs, ruleDescInCluster); len(pod) > 0 {
 		cfg.PodCIDR = pod[0]
@@ -474,8 +463,8 @@ func applyPersistedFirewallContent(cfg models.HostConfig, fw *models.HostConfig)
 	if len(cfg.BlockedCIDRs) == 0 {
 		cfg.BlockedCIDRs = fw.BlockedCIDRs
 	}
-	if cfg.SSHPort == 0 {
-		cfg.SSHPort = fw.SSHPort
+	if len(cfg.MgmtPorts) == 0 {
+		cfg.MgmtPorts = fw.MgmtPorts
 	}
 	if cfg.PodCIDR == "" {
 		cfg.PodCIDR = fw.PodCIDR
@@ -519,7 +508,7 @@ func SeedHostFirewallFromState() error {
 	cfg := config.Get().Host
 	configHasContent := len(cfg.ManagementCIDRs) > 0 ||
 		len(cfg.BlockedCIDRs) > 0 ||
-		cfg.SSHPort > 0 ||
+		len(cfg.MgmtPorts) > 0 ||
 		cfg.PodCIDR != "" ||
 		len(cfg.InClusterPorts) > 0
 

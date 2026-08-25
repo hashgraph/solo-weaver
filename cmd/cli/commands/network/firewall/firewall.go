@@ -55,7 +55,7 @@ var (
 	flagBlockedCIDR    string
 	flagInClusterPorts []int
 	flagInClusterPort  int
-	flagSSHPort        int
+	flagMgmtPorts      []int
 	flagPodCIDR        []string
 )
 

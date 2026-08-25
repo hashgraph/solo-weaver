@@ -223,7 +223,7 @@ sudo solo-provisioner block node install \
 | `--firewall-enabled`      | Apply the node-level host firewall (`inet weaver-host-firewall` table: SSH/mgmt allowlist, ICMP policy, in-cluster ports). Opt-in (default: `false`); set to `true` to have this tool manage the host firewall |
 | `--mgmt-cidrs`            | Host firewall SSH/management allowlist CIDRs (IPv4 and/or IPv6 — each entry is routed to the matching `ipv4_addr`/`ipv6_addr` set). Empty skips the host firewall. |
 | `--blocked-cidrs`         | Host firewall operator-curated block list CIDRs (IPv4 and/or IPv6), dropped inbound, outbound, and forwarded — including established connections, and including pod-bound traffic. Distinct from the BN workload plane's `bn-restricted` set, which the traffic-shaper daemon manages automatically. |
-| `--ssh-port`              | Host firewall SSH/management TCP port (default `22`)                                                                                  |
+| `--mgmt-ports`            | Host firewall SSH/management TCP port(s), comma-separated or repeated (default `22`)                                                 |
 | `--pod-cidr`              | Host firewall pod CIDR for the in-cluster host-service ports rule (defaults to the cluster pod subnet). May be IPv4 and/or IPv6 (repeat or comma-separate for dual-stack). |
 | `--in-cluster-ports`      | Host firewall in-cluster host-service ports (defaults to `6443,4244,7472,10250`)                                                     |
 | `--traffic-shaping-enabled` | Create the BN workload network-policy plane (`inet weaver-workload-policy` classification) and tc HTB traffic shaping, and install the traffic-shaper daemon. Opt-in (default: `false`); set to `true` to get all three |
@@ -243,7 +243,7 @@ sudo solo-provisioner block node install \
 > firewall is owned by the block-node workflow, not by the generic `kube cluster
 > install` (which provisions clusters for other purposes too and should not
 > unconditionally apply node-specific rules). The `--mgmt-cidrs` / `--blocked-cidrs`
-> / `--ssh-port` / `--pod-cidr` / `--in-cluster-ports` flags (and interactive
+> / `--mgmt-ports` / `--pod-cidr` / `--in-cluster-ports` flags (and interactive
 > prompts) configure it once enabled. An empty management allowlist skips the
 > firewall to avoid locking the host out of SSH. `--blocked-cidrs` only takes
 > effect when `--firewall-enabled` is also true — both live on the same `inet
@@ -453,7 +453,7 @@ sudo solo-provisioner block node reconfigure \
 | `--no-restart`      | Skip rollout-restart of the block node pod after reconfiguring                                        | `false` |
 | `--with-reset`      | Wipe block node data directories; PVs and PVCs are preserved                                          | `false` |
 | `--purge-storage`   | Delete PersistentVolumes and PersistentVolumeClaims in addition to wiping data (implies --with-reset) | `false` |
-| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state — a live table always seeds enabled, however it was created — so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--ssh-port`, `--pod-cidr`, `--in-cluster-ports`). | current state |
+| `--firewall-enabled` | Enable or disable the node-level host firewall (`inet weaver-host-firewall` table) on an existing install. Seeded from the firewall's current on-host state — a live table always seeds enabled, however it was created — so a no-flag reconfigure keeps it as-is; pass `=false` to tear the table down, `=true` (with `--mgmt-cidrs`) to create it. Same sub-flags as `install` (`--mgmt-cidrs`, `--blocked-cidrs`, `--mgmt-ports`, `--pod-cidr`, `--in-cluster-ports`). | current state |
 | `--traffic-shaping-enabled` | Enable or disable the BN traffic-shaping bundle (network-policy plane + tc HTB shaping + daemon traffic-shaper monitor) on an existing install. Seeded from the persisted install decision, so a no-flag reconfigure keeps it; pass `=true` to create it (with `--egress-interface`/`--link-rate`/`--shape`/`--daemon-bin` as on `install`), `=false` to tear it down. | persisted state |
 | `--statusz-base-url`      | Override the daemon's block-node statusz endpoint with an explicit `http(s)` base URL (e.g. `http://127.0.0.1:8080`) for a port-forward or directly-reachable BN. Merged per-field into `daemon.yaml` (`components.block_node.statusz.base_url`); omitting the flag preserves whatever is already on disk. Only when no `base_url` exists on disk does the daemon fall back to discovering the endpoint from the watched BN pod. | preserved on disk |
 | `--statusz-poll-interval` | Cadence at which the daemon's block-node traffic-shaper monitor polls statusz, as a positive Go duration (e.g. `5s`, `30s`). Merged per-field into `daemon.yaml` (`components.block_node.statusz.poll_interval`); omitting the flag preserves whatever is already on disk. Only when no `poll_interval` exists on disk does the daemon fall back to its `5s` default. | preserved on disk |
@@ -668,7 +668,7 @@ create-if-missing: if the `inet weaver-host-firewall` table already exists, the 
 # Create with a management allowlist and the default in-cluster ports
 sudo solo-provisioner network firewall create \
   --mgmt-cidrs 10.0.0.0/8 \
-  --ssh-port 22 \
+  --mgmt-ports 22 \
   --pod-cidr 10.4.0.0/24 \
   --in-cluster-ports 6443,4244,10250
 
@@ -683,7 +683,7 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 | `--mgmt-cidrs`       | Management/SSH allowlist CIDRs (comma-separated or repeated) — **omitting this flag leaves the management allow rule with an empty source set under the default-drop policy, which will lock you out of new SSH connections** | (none) |
 | `--blocked-cidrs`    | Operator block list CIDRs, dropped before any other rule           | (none)             |
 | `--in-cluster-ports` | Host-service ports reachable from the pod CIDR                     | `4244,6443,7472,10250` |
-| `--ssh-port`         | Management TCP port accepted from the allowlist (shorthand for a one-element `mgmt.ports`) | `22` |
+| `--mgmt-ports`       | Management TCP port(s) accepted from the allowlist, comma-separated or repeated (`mgmt.ports`) | `22` |
 | `--pod-cidr`         | Pod CIDR allowed to reach the in-cluster host-service ports        | auto-detected      |
 | `--from-file`        | Declarative YAML config to render the whole table from (mutually exclusive with the flags above) | (none) |
 | `--force`            | Re-render the table even if it already exists (global flag)        | `false`            |
