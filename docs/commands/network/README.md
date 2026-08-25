@@ -6,6 +6,13 @@ with its own guide.
 Most operators never run these directly — [`block node install`](../block-node.md#networking-two-independent-switches)
 sets all three up. Use them to inspect, adjust, or repair what it created.
 
+> **Flags not listed on this page.** Every command here also accepts the
+> [global flags](../../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+>
+> These commands take **no `--profile`** — they act on the host's network state directly,
+> independent of any deployment profile.
+
 ## The three planes
 
 ```mermaid

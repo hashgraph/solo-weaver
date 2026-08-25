@@ -6,24 +6,8 @@ management.
 
 The binary is called `solo-provisioner`.
 
-Below is a quickstart guide to get you up and running with Solo Weaver. 
+Below is a quickstart guide to get you up and running with Solo Provisioner. 
 Everything else is linked at the [bottom](#where-to-go-next).
-
-## What you will end up with `block node install`
-
-```mermaid
-flowchart TB
-    H["Your Linux host"]
-    subgraph K["Kubernetes (single node)"]
-      direction LR
-      C["CRI-O + Cilium<br/>MetalLB + Helm"]
-      B["Block node pod"]
-    end
-    H --> K
-    C --- B
-```
-
-One command — `block node install` — builds all of it.
 
 ---
 

@@ -2,7 +2,7 @@
 A Go-based tool for provisioning Hedera network components in a streamlined and automated way.
 
 ## Getting Started
-Refer to the [Quickstart Guide](docs/quickstart.md) to get a block node running, then the
+Refer to the [Quickstart Guide](docs/quickstart.md) to get a hedera node component running, then the
 [Command Reference](docs/commands/README.md) for the full CLI surface.
 
 ## Support

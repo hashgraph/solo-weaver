@@ -8,6 +8,10 @@ Every `create`/`set`/`delete` re-renders
 `solo-provisioner-bandwidth-shaper.service`, so the live kernel and the boot script stay in
 sync.
 
+> **Flags not listed on this page.** Every command here also accepts the
+> [global flags](../../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+
 ## The six classes
 
 Class names are fixed. Each belongs to exactly one direction.

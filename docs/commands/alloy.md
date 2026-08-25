@@ -6,6 +6,14 @@ cluster without writing them into a values file.
 
 Both live here because you almost always set them up together.
 
+> **Flags not listed on this page.** Every command here also accepts the
+> [global flags](../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+>
+> **`--profile`** is available on `alloy cluster`. It is optional here — it sets the
+> `environment` label for the `ops` label profile. See
+> [Deployment profiles](../reference/deployment-profiles.md).
+
 ## How the pieces fit
 
 ```mermaid

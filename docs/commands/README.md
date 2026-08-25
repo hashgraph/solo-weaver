@@ -102,6 +102,13 @@ solo-provisioner --help
 
 ---
 
+> **Flags not listed below.** Every command in the sections that follow also accepts the
+> [global flags](../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+>
+> **`--profile`** does not apply to these stacks. `kube cluster install` accepts
+> it as a hidden flag but **ignores** it; the others never took one.
+
 ## Kubernetes cluster
 
 `kube cluster install` sets up a complete single-node Kubernetes environment.

@@ -7,6 +7,10 @@ The scope is generic and category-agnostic — the CLI takes CIDRs and class nam
 knows nothing about statusz. The examples below use the block-node policies because
 `block node install` is its only caller today.
 
+> **Flags not listed on this page.** Every command here also accepts the
+> [global flags](../../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+
 ## What `create` does
 
 Each `create`:

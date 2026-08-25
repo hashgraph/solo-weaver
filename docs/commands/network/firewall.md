@@ -3,6 +3,10 @@
 Manages the `inet weaver-host-firewall` table: the host's management allowlist, ICMP policy,
 in-cluster host-service ports, and any number of named allow rules.
 
+> **Flags not listed on this page.** Every command here also accepts the
+> [global flags](../../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+
 ## Two kinds of record
 
 **Three reserved blocks.** Weaver derives or defaults their content, and leaving one out is

@@ -3,7 +3,31 @@
 Everything under `solo-provisioner block node …`. These commands install and run a Hedera
 Block Node, including the Kubernetes cluster underneath it.
 
-All of them need `sudo` and `--profile`.
+All of them need `sudo`.
+
+> **Flags not listed on this page.** Every command here also accepts the
+> [global flags](../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
+> `--force`, `--verbose`, `--non-interactive`.
+>
+> **`--profile`** is a persistent flag on `block`, so every subcommand below takes it. It
+> selects the target network and with it the hardware floor and sizing defaults — see
+> [Deployment profiles](../reference/deployment-profiles.md).
+
+## What you will end up with `block node install`
+
+```mermaid
+flowchart TB
+    H["Your Linux host"]
+    subgraph K["Kubernetes (single node)"]
+      direction LR
+      C["CRI-O + Cilium<br/>MetalLB + Helm"]
+      B["Block node pod"]
+    end
+    H --> K
+    C --- B
+```
+
+One command — `block node install` — builds all of it.
 
 ## Lifecycle
 
@@ -193,8 +217,6 @@ allowlist, ICMP policy, operator block list, and in-cluster host-service ports.
 
 Worth knowing:
 
-- **Why the block node owns this, not `kube cluster install`.** Cluster install provisions
-  clusters for many purposes and should not apply node-specific rules unconditionally.
 - **An empty `--mgmt-cidrs` skips the firewall.** That is deliberate — a default-drop policy
   with an empty allowlist would lock you out of SSH.
 - **`--blocked-cidrs` needs `--firewall-enabled`.** Both live on the same table, rendered by
