@@ -106,6 +106,43 @@ deployment-wide constant, not a per-call argument.
 > a brand-new policy or a `--force` re-create (which replaces membership with exactly what you
 > pass — not a merge).
 
+## What an empty statusz response does
+
+Worth knowing before you read too much into an empty set: **this plane fails open, not
+closed.**
+
+The forward chain's policy is `accept`. A packet that no rule matches carries no
+`meta priority` and lands in the HTB default class — it is not dropped. Only the deny tier
+drops, and a deny rule whose set is empty matches nothing.
+
+So when statusz returns `200` with an empty list, the daemon clears the owned sets and:
+
+| Policy | Set cleared means |
+|---|---|
+| `bn-publisher`, `bn-partner-out` (`--stamp`) | The rule stops matching. Traffic falls through to the default class |
+| `bn-subscriber-in`, `bn-public-out` (managed `_ports`) | Same — the port clause matches nothing |
+| `bn-restricted` (`--deny`) | **Nothing is dropped.** The quarantine list is empty |
+
+Traffic keeps flowing. What you lose is prioritization: everything competes in one class
+instead of publisher traffic holding its reserved share.
+
+Three things do **not** change, which is why this can never lock a node out:
+
+- **`bn-health` is not reconciled.** Its match key is a static port list, not membership, so
+  the health/statusz port stays dropped from off-node either way.
+- **The host firewall is a different table.** `inet weaver-host-firewall` keeps enforcing the
+  management allowlist and block list regardless of what statusz says.
+- **The tc hierarchy stays installed.** The classes keep their rates; they just stop receiving
+  marked packets.
+
+> **This is easy to miss in testing.** The default class ceils at 100% of the trunk, so while
+> the other classes sit idle it borrows the whole link. A throughput test during an
+> empty-statusz window measures full line rate and looks healthy. The loss only shows up once
+> the other classes have traffic again and the default class is squeezed back to its
+> guarantee. Confirm classification with
+> [`network shape watch`](shape.md#watch--live-counters-read-only) rather than with a
+> throughput number.
+
 ## `add` / `remove` / `set` — change live membership
 
 **None of these re-render the `.nft`.** Only the live kernel set changes.

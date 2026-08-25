@@ -94,8 +94,26 @@ Check in this order:
    ```bash
    sudo solo-provisioner network policy show
    ```
-   Sets start empty. The daemon fills them from the block node's statusz, so an empty set
-   usually means statusz is unreachable — see `--statusz-base-url`.
+   Sets start empty and are filled by the daemon from the block node's statusz. An empty set
+   has two different causes, and they are not the same problem:
+
+   - **Statusz has not answered yet** — first boot, or a reboot before the first poll. nft set
+     membership is not boot-persistent, so it is rebuilt on the first successful poll.
+   - **Statusz answered `200` with nothing in it.** A successful poll that reports no endpoints
+     for a category **clears** that category's set.
+
+   A poll that *fails* (statusz unreachable, or an apply error) does **not** empty anything —
+   it leaves the last-good membership in place and retries on the next tick. So an empty set
+   in steady state points at an empty statusz response, not at a connectivity problem. Check
+   the endpoint the daemon is actually polling with `--statusz-base-url`, then read it
+   yourself:
+
+   ```bash
+   solo-provisioner block node reconcile-shaper --statusz-url=<url> --check
+   ```
+
+   `--check` needs no privilege and touches no nft state — it just prints what the daemon
+   would apply. See [What an empty statusz response does](commands/network/policy.md#what-an-empty-statusz-response-does).
 3. **Is traffic actually landing in a class?**
    ```bash
    sudo solo-provisioner network shape watch --device egress --iface enp0s1
