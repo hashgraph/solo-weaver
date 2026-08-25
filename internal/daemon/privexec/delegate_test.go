@@ -9,7 +9,9 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/automa-saga/daemonkit"
 	"github.com/stretchr/testify/require"
@@ -338,4 +340,40 @@ func runFailingCommand(t *testing.T) *exec.ExitError {
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	return exitErr
+}
+
+func TestExecMessage_BoundsChattyChildStderr(t *testing.T) {
+	// The cause leads stderr and must survive truncation.
+	exitErr := runFailingCommand(t)
+	cause := "Error: common.external_error: fetch statusz statusz/inbound: context deadline exceeded"
+	exitErr.Stderr = []byte(cause + "\nUsage:\n" + strings.Repeat("      --some-flag string   help text\n", 100))
+
+	msg := execMessage("sudo /opt/solo/weaver/bin/solo-provisioner",
+		[]string{"block", "node", "reconcile-shaper", "--statusz-url", "http://10.0.0.1:40983"}, exitErr)
+	require.Contains(t, msg, cause, "the leading cause must survive truncation")
+	require.Contains(t, msg, "stderr truncated")
+	require.Less(t, len(msg), 1024, "a chatty child must not produce multi-KB messages")
+}
+
+func TestTruncateStderr(t *testing.T) {
+	require.Equal(t, "short", truncateStderr("short", 512))
+
+	exact := strings.Repeat("a", 512)
+	require.Equal(t, exact, truncateStderr(exact, 512), "exact fit stays untouched")
+
+	out := truncateStderr(strings.Repeat("a", 513), 512)
+	require.True(t, strings.HasPrefix(out, exact))
+	require.Contains(t, out, "[stderr truncated at 512/513 bytes]")
+
+	// A multi-byte rune straddling the limit is dropped whole, never split.
+	out = truncateStderr(strings.Repeat("a", 511)+"é", 512)
+	require.True(t, utf8.ValidString(out))
+	require.True(t, strings.HasPrefix(out, strings.Repeat("a", 511)+" ..."))
+	require.Contains(t, out, "[stderr truncated at 511/513 bytes]")
+
+	// Binary (non-UTF-8) stderr has no rune boundary; it cuts at the limit
+	// instead of walking back and dropping the whole payload.
+	out = truncateStderr(strings.Repeat("\x80", 600), 512)
+	require.True(t, strings.HasPrefix(out, strings.Repeat("\x80", 512)))
+	require.Contains(t, out, "[stderr truncated at 512/600 bytes]")
 }
