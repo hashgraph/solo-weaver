@@ -837,6 +837,30 @@ func TestMgmtLockout_AlreadyEmptyStaysMutable(t *testing.T) {
 	require.Equal(t, []string{"10.0.0.0/8"}, mgmtElements(t, m))
 }
 
+// Once either half is empty the rule already matches nothing, so emptying the
+// other half takes no reachability away and needs no force.
+func TestMgmtLockout_PartiallyEmptyStaysMutable(t *testing.T) {
+	ctx := context.Background()
+
+	// Ports emptied first (with force), then the addresses clear without it.
+	m, applies := seedMgmt(t)
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, Ports: []string{}}}, true))
+	before := *applies
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, false))
+	require.Equal(t, before+1, *applies)
+	require.Empty(t, mgmtElements(t, m))
+
+	// And the symmetric order.
+	m, applies = seedMgmt(t)
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, CIDRs: []string{}}}, true))
+	before = *applies
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: RuleMgmt, Ports: []string{}}}, false))
+	require.Equal(t, before+1, *applies)
+	tbl, err := m.Table(ctx)
+	require.NoError(t, err)
+	require.Empty(t, tbl.Mgmt.Ports)
+}
+
 // The guard is scoped to mgmt: emptying another reserved block is a supported
 // way to disable it and must not be caught.
 func TestMgmtLockout_OtherRulesUnaffected(t *testing.T) {

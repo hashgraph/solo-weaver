@@ -20,8 +20,9 @@ var setCmd = &cobra.Command{
 		"touches the management allowlist is never half-applied.\n\n" +
 		"A flag left off leaves that list unchanged; a flag given an empty value clears it. Clearing a reserved " +
 		"block's addresses is how you disable it without deleting it.\n\n" +
-		"The one exception is mgmt: emptying its populated address or port list is refused, because the input chain " +
-		"is policy drop and this host would drop every new SSH connection. Pass --force to do it anyway.\n\n" +
+		"The one exception is mgmt: while the rule can still match traffic, emptying its address or port list is " +
+		"refused, because the input chain is policy drop and this host would drop every new SSH connection. Pass " +
+		"--force to do it anyway; a rule already made unreachable stays freely editable.\n\n" +
 		"--proto and --icmp-echo change what an allow rule matches rather than who is in it; the reserved blocks " +
 		"reject both, since they render a fixed shape.",
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -824,14 +824,14 @@ sudo solo-provisioner network firewall set --name admin --icmp-echo=false
 | `add`/`remove`        | `--port`       | Port(s) to add/remove; single ports or ranges                        |
 | `set`                 | `--cidrs`      | Full CIDR list (replaces the existing list; an empty value clears it — except for `mgmt`, see below) |
 | `set`                 | `--cidrs-file` | Alternative to `--cidrs`: a flat file of CIDRs, one per line or comma-separated, `#` comments allowed |
-| `set`                 | `--ports`      | Full port list (replaces the existing list)                          |
+| `set`                 | `--ports`      | Full port list (replaces the existing list — except for `mgmt`, see below) |
 | `set`                 | `--proto`      | L4 protocol the rule's ports match: `tcp` or `udp` (allow rules only; empty restores the `tcp` default) |
 | `set`                 | `--icmp-echo`  | Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only) |
 
 > **Emptying the `mgmt` rule is guarded.** Clearing its addresses or ports — `set` with an empty value, or a
 > `remove` of the last entry — would drop every **new** SSH connection under the default-drop policy, so the
-> command fails unless `--force` (`-y`) is passed. Only `mgmt` is guarded: clearing `blocked` or `in_cluster`
-> is the supported way to disable them.
+> command fails unless `--force` (`-y`) is passed. A rule already made unreachable stays freely editable.
+> Only `mgmt` is guarded: clearing `blocked` or `in_cluster` is the supported way to disable them.
 
 > `add`/`remove` operate on membership only. To change an allow rule's `--proto` or `--icmp-echo` after it is declared, use `set` — `create-allow-rule --force` would reset the rest of the rule. The reserved blocks reject both flags outright, **including `--proto tcp`**: they render a fixed shape (TCP, with `mgmt` carrying its own broader ICMP type list), so accepting the value that happens to match would report a change the renderer ignores.
 

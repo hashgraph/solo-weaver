@@ -397,6 +397,11 @@ func TestTable_DeleteRule(t *testing.T) {
 	for _, name := range ReservedNames {
 		require.ErrorContains(t, tbl.DeleteRule(name), "reserved block")
 	}
+
+	// mgmt's hint carries the --force its guarded clear needs; the unguarded
+	// blocks keep the plain command.
+	require.ErrorContains(t, tbl.DeleteRule(RuleMgmt), "--force")
+	require.NotContains(t, tbl.DeleteRule(RuleBlocked).Error(), "--force")
 }
 
 func TestPortSpec(t *testing.T) {

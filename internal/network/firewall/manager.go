@@ -9,7 +9,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -340,8 +342,8 @@ func (m *Manager) Reapply(ctx context.Context) error {
 // re-persists the full table under the shared lock.
 //
 // It also carries the management lock-out guard (#1034): a mutation that takes
-// the mgmt rule's address list or port list from populated to empty is refused
-// unless force is set. The check lives here because this is the only layer that
+// the mgmt rule from reachable to unreachable is refused unless force is set —
+// see checkMgmtLockout. The check lives here because this is the only layer that
 // sees both the prior and the resulting table — fn mutates t in place — and
 // because mutate is reached by exactly the verbs that can empty a populated
 // allowlist. Create/Apply/CreateRule do not pass through here and keep their
@@ -364,34 +366,40 @@ func (m *Manager) mutate(ctx context.Context, force bool, fn func(*Table) error)
 	})
 }
 
-// checkMgmtLockout refuses a mutation that empties the management rule's address
-// list or port list. The rule renders unconditionally as
+// checkMgmtLockout refuses a mutation that takes the management rule from
+// reachable to unreachable. The rule renders unconditionally as
 // `saddr @mgmt_addrs tcp dport @mgmt_ports accept`, so either half empty makes
 // it match no packet and, under the input chain's default-drop policy, the host
 // drops every new SSH connection — while the operator's current session survives
 // on the established-connection accept and hides the damage (#1034).
 //
-// Only the populated-to-empty transition is guarded, not the state: a rule that
-// is already unreachable stays mutable, so an operator repairing one is never
-// blocked from editing the rest of the table. A refusal returns before
-// applyAndPersist, so nothing is rendered, dry-run or written.
+// Only that transition is guarded, not the state: a rule that is already
+// unreachable — either half already empty — stays fully mutable, so an operator
+// repairing one is never blocked from editing the rest of the table. A refusal
+// returns before applyAndPersist, so nothing is rendered, dry-run or written.
 func checkMgmtLockout(t *Table, cidrsBefore, portsBefore int, force bool) error {
-	if force {
+	if force || cidrsBefore == 0 || portsBefore == 0 {
 		return nil
 	}
-	if len(t.Mgmt.CIDRs) == 0 && cidrsBefore > 0 {
-		return errorx.IllegalArgument.New(
-			"refusing to empty the management address list: an empty @mgmt_addrs matches no source under the " +
-				"default-drop input chain, so this host would drop every new SSH connection — your current session " +
-				"survives on the established-connection accept and will not show the loss. Nothing was changed. " +
-				"Supply a replacement with `set --name mgmt --cidrs <cidr,...>`, or pass --force to empty it anyway")
+	if len(t.Mgmt.CIDRs) == 0 {
+		return errx.Decorate(
+			errorx.IllegalArgument.New(
+				"refusing to empty the management address list: an empty @mgmt_addrs matches no source under the "+
+					"default-drop input chain, so this host would drop every new SSH connection — your current session "+
+					"survives on the established-connection accept and will not show the loss. Nothing was changed"),
+			reasons.InvalidArgument,
+			"Supply a replacement list: `solo-provisioner network firewall set --name mgmt --cidrs <cidr,...>`",
+			"Pass --force to empty it anyway")
 	}
-	if len(t.Mgmt.Ports) == 0 && portsBefore > 0 {
-		return errorx.IllegalArgument.New(
-			"refusing to empty the management port list: the management accept renders `dport @mgmt_ports` " +
-				"unconditionally, so an empty port set locks this host out of new SSH connections exactly like an " +
-				"empty address list. Nothing was changed. Supply a replacement with `set --name mgmt --ports " +
-				"<port,...>`, or pass --force to empty it anyway")
+	if len(t.Mgmt.Ports) == 0 {
+		return errx.Decorate(
+			errorx.IllegalArgument.New(
+				"refusing to empty the management port list: the management accept renders `dport @mgmt_ports` "+
+					"unconditionally, so an empty port set locks this host out of new SSH connections exactly like an "+
+					"empty address list. Nothing was changed"),
+			reasons.InvalidArgument,
+			"Supply a replacement list: `solo-provisioner network firewall set --name mgmt --ports <port,...>`",
+			"Pass --force to empty it anyway")
 	}
 	return nil
 }

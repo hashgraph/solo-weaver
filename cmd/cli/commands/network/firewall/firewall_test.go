@@ -151,13 +151,15 @@ func runOut(t *testing.T, args ...string) (string, error) {
 func resetFlagState(t *testing.T) {
 	t.Helper()
 	for _, sub := range GetCmd().Commands() {
-		sub.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
-		// Reset only this one boolean by value. A blanket reset to f.DefValue
-		// would corrupt the slice flags, whose DefValue is the literal "[]" and
-		// whose Set("[]") yields []string{"[]"} rather than an empty list.
-		if f := sub.Flags().Lookup("force"); f != nil {
-			require.NoError(t, f.Value.Set("false"))
-		}
+		sub.Flags().VisitAll(func(f *pflag.Flag) {
+			f.Changed = false
+			// Reset booleans by value too. Only booleans: a blanket reset to
+			// f.DefValue would corrupt the slice flags, whose DefValue is the
+			// literal "[]" and whose Set("[]") yields []string{"[]"}.
+			if f.Value.Type() == "bool" {
+				require.NoError(t, f.Value.Set(f.DefValue))
+			}
+		})
 	}
 	// The shared binding variables are read directly (not via Changed) in a
 	// couple of places, so zero them too.
