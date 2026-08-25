@@ -174,8 +174,14 @@ func (t *Table) IncompleteAllowRules() []string {
 // the supported way to disable it.
 func (t *Table) DeleteRule(name string) error {
 	if IsReserved(name) {
+		// Clearing mgmt is guarded (see Manager.mutate), so the suggested
+		// command must carry the --force that authorises it.
+		var force string
+		if name == RuleMgmt {
+			force = " --force"
+		}
 		return errorx.IllegalArgument.New(
-			"%q cannot be deleted: it is a reserved block. Clear its addresses instead (`network firewall set --name %s --cidrs \"\"`)", name, name)
+			"%q cannot be deleted: it is a reserved block. Clear its addresses instead (`network firewall set --name %s --cidrs \"\"%s`)", name, name, force)
 	}
 	for i := range t.Allow {
 		if t.Allow[i].Name == name {
