@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	fw "github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -19,14 +20,21 @@ var setCmd = &cobra.Command{
 		"touches the management allowlist is never half-applied.\n\n" +
 		"A flag left off leaves that list unchanged; a flag given an empty value clears it. Clearing a reserved " +
 		"block's addresses is how you disable it without deleting it.\n\n" +
+		"The one exception is mgmt: while the rule can still match traffic, emptying its address or port list is " +
+		"refused, because the input chain is policy drop and this host would drop every new SSH connection. Pass " +
+		"--force to do it anyway; a rule already made unreachable stays freely editable.\n\n" +
 		"--proto and --icmp-echo change what an allow rule matches rather than who is in it; the reserved blocks " +
 		"reject both, since they render a fixed shape.",
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		updates, err := resolveSetUpdates(cmd)
 		if err != nil {
 			return err
 		}
-		return newManager().SetMany(cmd.Context(), updates)
+		force, err := common.FlagForce().Value(cmd, args)
+		if err != nil {
+			return err
+		}
+		return newManager().SetMany(cmd.Context(), updates, force)
 	},
 }
 

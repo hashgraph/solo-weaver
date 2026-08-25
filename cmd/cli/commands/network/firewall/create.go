@@ -83,7 +83,6 @@ func buildTable(cmd *cobra.Command) (*fw.Table, error) {
 		if cfg.InClusterCIDRsUnset() {
 			applyDetectedPodCIDR(cmd, t)
 		}
-		warnOnEmptyMgmt(t)
 		return t, nil
 	}
 
@@ -122,7 +121,6 @@ func buildTable(cmd *cobra.Command) (*fw.Table, error) {
 		applyDetectedPodCIDR(cmd, t)
 	}
 
-	warnOnEmptyMgmt(t)
 	return t, nil
 }
 
@@ -135,14 +133,6 @@ func applyDetectedPodCIDR(cmd *cobra.Command, t *fw.Table) {
 	}
 	t.InCluster.CIDRs = []string{cidr}
 	logx.As().Info().Str("pod_cidr", cidr).Msg("auto-detected pod CIDR from the local node")
-}
-
-func warnOnEmptyMgmt(t *fw.Table) {
-	if len(t.Mgmt.CIDRs) == 0 {
-		logx.As().Warn().Msg(
-			"no management CIDRs set: the management allow rule will match no sources under the default-drop policy — " +
-				"you will be locked out of new SSH connections; pass --mgmt-cidrs to set the management allowlist")
-	}
 }
 
 func init() {
