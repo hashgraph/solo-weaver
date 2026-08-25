@@ -47,6 +47,13 @@ func TestIsPrivilegeExemptInvocation(t *testing.T) {
 	}
 }
 
+// A RunE failure must not print cobra's usage block or its own error line —
+// main.go renders errors once through doctor.CheckErr (#1035).
+func TestRootCommandSilencesUsageAndErrors(t *testing.T) {
+	require.True(t, rootCmd.SilenceUsage)
+	require.True(t, rootCmd.SilenceErrors)
+}
+
 func TestNoShortNameCollisionsInRealCommandTree(t *testing.T) {
 	require.False(t, common.DetectShortNameCollisions(rootCmd),
 		"short name collisions detected in command tree")

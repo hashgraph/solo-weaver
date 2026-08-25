@@ -42,6 +42,10 @@ var (
 		Use:   "solo-provisioner-daemon",
 		Short: "Long-running daemon for Solo Provisioner host-level work",
 		Long:  "Long-lived foreground process started by the solo-provisioner-daemon.service systemd unit.",
+		// main() renders errors via doctor.CheckErr; no cobra error print or
+		// usage dump.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
 				out, err := renderVersion(flagOutputFormat)

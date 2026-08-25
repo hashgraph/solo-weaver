@@ -52,6 +52,10 @@ var (
 		Use:   "solo-provisioner",
 		Short: "A user friendly tool to provision Hedera network components",
 		Long:  "Solo Provisioner - A user friendly tool to provision Hedera network components",
+		// main.go renders errors via doctor.CheckErr; no cobra error print or
+		// usage dump.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return common.RunPersistentPreRun(cmd, args)
 		},
