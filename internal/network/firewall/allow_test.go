@@ -320,19 +320,19 @@ func TestManager_SetProtoAndICMPEcho(t *testing.T) {
 	require.Contains(t, readNft(t, nftPath), "ip saddr @svc tcp dport @svc_ports accept")
 
 	udp, echo := ProtoUDP, true
-	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", Proto: &udp, ICMPEcho: &echo}}))
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", Proto: &udp, ICMPEcho: &echo}}, false))
 	doc := readNft(t, nftPath)
 	require.Contains(t, doc, "ip saddr @svc udp dport @svc_ports accept")
 	require.Contains(t, doc, "ip saddr @svc icmp type echo-request accept")
 
 	// A nil pointer leaves the field alone: setting only ports must not reset proto.
-	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", Ports: []string{"9001"}}}))
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", Ports: []string{"9001"}}}, false))
 	require.Contains(t, readNft(t, nftPath), "ip saddr @svc udp dport @svc_ports accept")
 
 	// Revoking echo is expressible, which a bare bool could not distinguish
 	// from "not supplied".
 	off := false
-	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", ICMPEcho: &off}}))
+	require.NoError(t, m.SetMany(ctx, []Update{{Name: "svc", ICMPEcho: &off}}, false))
 	require.NotContains(t, readNft(t, nftPath), "@svc icmp type")
 
 	// Reserved blocks render a fixed shape, so both fields are refused — including
@@ -340,9 +340,9 @@ func TestManager_SetProtoAndICMPEcho(t *testing.T) {
 	for _, name := range ReservedNames {
 		on := true
 		for _, proto := range []Proto{ProtoUDP, ProtoTCP} {
-			require.Error(t, m.SetMany(ctx, []Update{{Name: name, Proto: &proto}}), "%s proto=%s", name, proto)
+			require.Error(t, m.SetMany(ctx, []Update{{Name: name, Proto: &proto}}, false), "%s proto=%s", name, proto)
 		}
-		require.Error(t, m.SetMany(ctx, []Update{{Name: name, ICMPEcho: &on}}), name)
+		require.Error(t, m.SetMany(ctx, []Update{{Name: name, ICMPEcho: &on}}, false), name)
 	}
 }
 
@@ -356,8 +356,8 @@ func TestManager_UnknownRuleNameStillFails(t *testing.T) {
 	require.NoError(t, m.Apply(ctx, sampleTable()))
 
 	require.ErrorContains(t, m.Add(ctx, "typo", []string{"10.0.0.0/8"}, nil), "no rule named")
-	require.ErrorContains(t, m.Remove(ctx, "typo", []string{"10.0.0.0/8"}, nil), "no rule named")
-	require.ErrorContains(t, m.Set(ctx, "typo", []string{"10.0.0.0/8"}, nil), "no rule named")
+	require.ErrorContains(t, m.Remove(ctx, "typo", []string{"10.0.0.0/8"}, nil, false), "no rule named")
+	require.ErrorContains(t, m.Set(ctx, "typo", []string{"10.0.0.0/8"}, nil, false), "no rule named")
 
 	// The message points at the verb that would have created it.
 	require.ErrorContains(t, m.Add(ctx, "typo", []string{"10.0.0.0/8"}, nil), "create-allow-rule")
@@ -397,6 +397,11 @@ func TestTable_DeleteRule(t *testing.T) {
 	for _, name := range ReservedNames {
 		require.ErrorContains(t, tbl.DeleteRule(name), "reserved block")
 	}
+
+	// mgmt's hint carries the --force its guarded clear needs; the unguarded
+	// blocks keep the plain command.
+	require.ErrorContains(t, tbl.DeleteRule(RuleMgmt), "--force")
+	require.NotContains(t, tbl.DeleteRule(RuleBlocked).Error(), "--force")
 }
 
 func TestPortSpec(t *testing.T) {

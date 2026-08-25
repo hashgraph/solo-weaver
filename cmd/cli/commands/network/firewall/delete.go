@@ -16,7 +16,7 @@ var deleteCmd = &cobra.Command{
 	Long: "Delete a single named allow rule with --name, or tear the whole `inet weaver-host-firewall` table down " +
 		"with --all (the default when no flag is given, which is what this verb has always done).\n\n" +
 		"The reserved blocks cannot be deleted individually — clear their addresses instead (`network firewall set " +
-		"--name mgmt --cidrs \"\"`). --all removes the table and " +
+		"--name mgmt --cidrs \"\" --force`). --all removes the table and " +
 		"/etc/solo-provisioner/network-weaver-host-firewall.{nft,yaml}, leaving the host with no weaver-managed " +
 		"firewall at all, so it asks for confirmation in an interactive session. It does NOT disable the shared " +
 		"solo-provisioner-network-nft.service (shared with `inet weaver-workload-policy`); host-level teardown is " +
