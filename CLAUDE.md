@@ -43,7 +43,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    | Stack | File |
    |---|---|
    | `block node` | `docs/commands/block-node.md` |
-   | `network firewall` / `policy` / `shape` | `docs/commands/network.md` |
+   | `network firewall` | `docs/commands/network/firewall.md` |
+   | `network policy` | `docs/commands/network/policy.md` |
+   | `network shape` | `docs/commands/network/shape.md` |
    | `alloy` and `eso` | `docs/commands/alloy.md` |
    | `kube cluster`, `teleport`, `daemon service`, `consensus migration soak`, `version` | the matching section of `docs/commands/README.md` |
    | root persistent flags | `docs/reference/global-flags.md` |

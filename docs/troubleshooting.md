@@ -80,7 +80,7 @@ sudo cp /etc/solo-provisioner/network-weaver-host-firewall.yaml.prev \
 sudo solo-provisioner network firewall reapply
 ```
 
-Full detail: [Recovering a corrupt config](commands/network.md#recovering-a-corrupt-config).
+Full detail: [Recovering a corrupt config](commands/network/firewall.md#recovering-a-corrupt-config).
 
 ### Traffic shaping is on but nothing is being shaped
 

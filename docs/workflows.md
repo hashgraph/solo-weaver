@@ -118,4 +118,4 @@ sudo sh rudder.sh
 ```
 
 The emitted commands are additive, so they are safe to replay on a host that already has a
-firewall. See [`--output commands`](commands/network.md#--output-commands-copies-one-rule-to-another-host).
+firewall. See [`--output commands`](commands/network/firewall.md#--output-commands-copies-one-rule-to-another-host).

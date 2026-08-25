@@ -203,7 +203,7 @@ Worth knowing:
   before every other rule, and is yours for its whole lifetime. `bn-restricted` lives on the
   workload plane and is managed automatically by the daemon.
 
-Full command surface: [Network commands](network.md).
+Full command surface: [Network commands](network/) — [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md).
 
 ### Traffic shaping (`--traffic-shaping-enabled`)
 
@@ -249,7 +249,7 @@ Two details that surprise people:
 Re-running install never clobbers set membership you applied by hand or per-class shape
 values you tuned. `--force` re-renders the static rules.
 
-Class budgets and the `network shape` commands: [Network commands](network.md#network-shape--bandwidth-classes).
+Class budgets and the `network shape` commands: [`network shape`](network/shape.md).
 
 ### Daemon flags
 
@@ -513,7 +513,7 @@ Find a pod's veth with `ip link` or `tc qdisc show`.
 
 ## See also
 
-- [Network commands](network.md) — the firewall, policy and shape commands in full
+- [Network commands](network/) — the firewall, policy and shape commands in full
 - [Daemon service](README.md#daemon-service) — installing and checking the daemon
 - [Workflows](../workflows.md) — end-to-end deploy, upgrade and teardown recipes
 - [Traffic shaper internals](../dev/traffic-shaper.md) — design notes for developers

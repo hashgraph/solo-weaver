@@ -159,7 +159,7 @@ middle step is not optional.
 |---|---|
 | **[Command reference](commands/README.md)** | Every command, by stack. Includes the quick reference card |
 | [Block node](commands/block-node.md) | Install, upgrade, reconfigure, reset, uninstall |
-| [Network](commands/network.md) | Host firewall, workload policy, bandwidth shaping |
+| [Network](commands/network/) | Host firewall, workload policy, bandwidth shaping |
 | [Alloy & secrets](commands/alloy.md) | Metrics, logs, External Secrets Operator |
 | **[Workflows](workflows.md)** | End-to-end deploy, upgrade and teardown recipes |
 | **[Troubleshooting](troubleshooting.md)** | Common problems and how to get more detail |

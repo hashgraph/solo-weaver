@@ -5,7 +5,7 @@ Every `solo-provisioner` command, by stack.
 | Stack | Guide | What it does |
 |---|---|---|
 | `block node` | [block-node.md](block-node.md) | Install, upgrade, reset and remove a Hedera Block Node |
-| `network` | [network.md](network.md) | Host firewall, workload traffic policy, tc bandwidth classes |
+| `network` | [network/](network/) | Three scopes, one guide each: [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md) |
 | `alloy` / `eso` | [alloy.md](alloy.md) | Grafana Alloy metrics and logs; External Secrets Operator |
 | `kube cluster` | [below](#kubernetes-cluster) | The Kubernetes stack underneath everything |
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
