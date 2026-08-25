@@ -202,7 +202,8 @@ func initConfig(ctx context.Context) {
 		logConfig.Level = flagLogLevel
 	}
 
-	// Always enable file logging regardless of config so every run produces a log file
+	// Enable file logging regardless of config; the appendability probe below
+	// drops it when the log file is not writable.
 	logConfig.FileLogging = true
 	if logConfig.Directory == "" {
 		logConfig.Directory = models.Paths().LogsDir
@@ -238,6 +239,14 @@ func initConfig(ctx context.Context) {
 	} else if statErr == nil && gidErr == nil {
 		_ = os.Chown(logFilePath, 0, svcGID)
 		_ = os.Chmod(logFilePath, models.DefaultFilePerm)
+	}
+	// An unprivileged run cannot append to the root-owned log file; lumberjack's
+	// fallback would rotate it aside (#1035). Probe appendability and drop file
+	// logging instead.
+	if f, appendErr := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0); appendErr == nil {
+		_ = f.Close()
+	} else {
+		logConfig.FileLogging = false
 	}
 	if logConfig.MaxSize == 0 {
 		logConfig.MaxSize = 50 // 50 MB
