@@ -234,9 +234,9 @@ sudo solo-provisioner network firewall set --name admin --icmp-echo=false
 | `add`/`remove`/`set` | `--name` | Rule to modify: `mgmt`, `blocked`, `in_cluster`, or an allow rule |
 | `add`/`remove` | `--cidr` | CIDR(s) to add or remove. Comma-separated or repeated |
 | `add`/`remove` | `--port` | Port(s) to add or remove. Single ports or ranges |
-| `set` | `--cidrs` | Full replacement CIDR list. An empty value clears it |
+| `set` | `--cidrs` | Full replacement CIDR list. An empty value clears it — except on `mgmt`, [see below](#emptying-the-mgmt-rule-is-guarded) |
 | `set` | `--cidrs-file` | Same, from a flat file: one per line or comma-separated, `#` comments allowed |
-| `set` | `--ports` | Full replacement port list |
+| `set` | `--ports` | Full replacement port list — except on `mgmt`, [see below](#emptying-the-mgmt-rule-is-guarded) |
 | `set` | `--proto` | `tcp` or `udp`. Allow rules only; empty restores `tcp` |
 | `set` | `--icmp-echo` | Grant or revoke unmetered ICMP echo-request. Allow rules only |
 
@@ -250,6 +250,32 @@ sudo solo-provisioner network firewall remove --blocked-cidr 203.0.113.9/32
 sudo solo-provisioner network firewall add    --in-cluster-port 9100
 sudo solo-provisioner network firewall set    --mgmt-cidrs 10.0.0.0/8 --in-cluster-ports 6443,4244
 ```
+
+### Emptying the `mgmt` rule is guarded
+
+Clearing the management rule's addresses or ports leaves `@mgmt_addrs` matching no source under
+the default-drop input chain, so the host drops **every new SSH connection**. Your current
+session survives on the established-connection accept and shows no sign of it.
+
+So `set` and `remove` refuse the change unless you pass `--force` (`-y`):
+
+```bash
+# Refused — nothing is rendered, dry-run or written
+sudo solo-provisioner network firewall set --name mgmt --cidrs ""
+
+# Allowed
+sudo solo-provisioner network firewall set --name mgmt --cidrs "" --force
+```
+
+Three things this guard is careful about:
+
+- **It guards the transition, not the state.** It fires only when the rule was reachable before
+  and is not after. A rule that is *already* unreachable — either half empty — stays fully
+  editable, so repairing one is never blocked.
+- **Only `mgmt` is guarded.** Clearing `blocked` or `in_cluster` is the supported way to turn
+  them off.
+- **Only the mutation verbs.** `set` and `remove` go through the check; `create` and
+  `create-allow-rule` keep their older warn-only behaviour.
 
 ### Three behaviours to know
 
@@ -336,10 +362,11 @@ asks for confirmation in an interactive session; `--force` skips the prompt.
 It does not disable `solo-provisioner-network-nft.service`, which is shared with the workload
 policy plane. Disable that by hand if you need it off.
 
-Reserved blocks cannot be deleted individually. Clear their addresses instead:
+Reserved blocks cannot be deleted individually. Clear their addresses instead — `mgmt` needs
+`--force`, [see above](#emptying-the-mgmt-rule-is-guarded):
 
 ```bash
-sudo solo-provisioner network firewall set --name mgmt --cidrs ""
+sudo solo-provisioner network firewall set --name mgmt --cidrs "" --force
 ```
 
 ### `create` and `delete --all` record a decision
