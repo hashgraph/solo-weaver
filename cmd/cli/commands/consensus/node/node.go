@@ -9,7 +9,6 @@ import (
 
 var (
 	flagNamespace        string
-	flagOrbitName        string
 	flagNodeId           int64
 	flagAccountId        string
 	flagWeight           int
@@ -32,8 +31,7 @@ var (
 )
 
 func init() {
-	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "solo-orbit", "Kubernetes namespace for the consensus node")
-	nodeCmd.PersistentFlags().StringVar(&flagOrbitName, "orbit", "solo-orbit", "Name of the Orbit CR")
+	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "solo-orbit", "Kubernetes namespace (also used as the Orbit CR name)")
 	nodeCmd.PersistentFlags().Int64Var(&flagNodeId, "node-id", 0, "Consensus node ID (0-based)")
 	nodeCmd.PersistentFlags().StringVar(&flagAccountId, "account-id", "0.0.3", "Node account ID (e.g. 0.0.3)")
 	nodeCmd.PersistentFlags().IntVar(&flagWeight, "weight", 500, "Consensus weight for this node")

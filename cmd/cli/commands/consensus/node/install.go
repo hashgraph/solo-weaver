@@ -31,7 +31,7 @@ var installCmd = &cobra.Command{
 
 		inputs := models.ConsensusNodeInputs{
 			Namespace:            flagNamespace,
-			OrbitName:            flagOrbitName,
+			OrbitName:            flagNamespace,
 			NodeId:               flagNodeId,
 			AccountId:            flagAccountId,
 			Weight:               flagWeight,
