@@ -99,16 +99,9 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs) automa.Builder {
 		})
 }
 
-// resolveContent returns config file content using 3-tier precedence:
-// individual flag > deployment package file > embedded default.
-func resolveContent(flagFile, pkgPath, embeddedPath string) (string, error) {
-	if flagFile != "" {
-		b, err := os.ReadFile(flagFile)
-		if err != nil {
-			return "", errorx.IllegalArgument.Wrap(err, "failed to read %s", flagFile)
-		}
-		return string(b), nil
-	}
+// resolveContent returns config file content using 2-tier precedence:
+// deployment package file > embedded default.
+func resolveContent(pkgPath, embeddedPath string) (string, error) {
 	if pkgPath != "" {
 		if b, err := os.ReadFile(pkgPath); err == nil {
 			return string(b), nil
@@ -126,7 +119,7 @@ func pkgFile(pkgDir string, relPath string) string {
 }
 
 // EnsureConfigCRs creates all 11 config CRs required by a ConsensusCapsule.
-// Resolution precedence: individual flag > deployment package file > embedded default.
+// Resolution precedence: deployment package file > embedded default.
 func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureConfigCRsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -139,7 +132,6 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 			pkg := inputs.DeploymentPackageDir
 
 			type configEntry struct {
-				flagFile     string
 				pkgRelPath   string
 				embeddedPath string
 				crName       string
@@ -148,7 +140,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 			}
 
 			entries := []configEntry{
-				{inputs.Log4j2ConfigFile, "log4j2.xml", "consensus/log4j2.xml",
+				{"log4j2.xml", "consensus/log4j2.xml",
 					fmt.Sprintf("%s-log4j2", scope), "Log4j2Config",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.Log4j2Config{
@@ -157,7 +149,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.Log4j2ConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.SettingsFile, "settings.txt", "consensus/settings.txt",
+				{"settings.txt", "consensus/settings.txt",
 					fmt.Sprintf("%s-settings", scope), "NodeSettings",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.NodeSettings{
@@ -166,7 +158,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.NodeSettingsSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.ApplicationPropertiesFile, "data/config/application.properties", "consensus/application.properties",
+				{"data/config/application.properties", "consensus/application.properties",
 					fmt.Sprintf("%s-appprops", scope), "ApplicationProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApplicationProperties{
@@ -175,7 +167,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ApplicationPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.AppOverrideFile, "data/config/application-override.properties", "consensus/application-override.properties",
+				{"data/config/application-override.properties", "consensus/application-override.properties",
 					fmt.Sprintf("%s-appoverride", scope), "ApplicationOverrideProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApplicationOverrideProperties{
@@ -184,7 +176,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ApplicationOverridePropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.ApiPermissionFile, "data/config/api-permission.properties", "consensus/api-permission.properties",
+				{"data/config/api-permission.properties", "consensus/api-permission.properties",
 					fmt.Sprintf("%s-apiperm", scope), "ApiPermissionProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApiPermissionProperties{
@@ -193,7 +185,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ApiPermissionPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.BootstrapFile, "data/config/bootstrap.properties", "consensus/bootstrap.properties",
+				{"data/config/bootstrap.properties", "consensus/bootstrap.properties",
 					fmt.Sprintf("%s-bootstrap", scope), "BootstrapProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.BootstrapProperties{
@@ -202,7 +194,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.BootstrapPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.NodePropertiesFile, "data/config/node.properties", "consensus/node.properties",
+				{"data/config/node.properties", "consensus/node.properties",
 					fmt.Sprintf("%s-nodeprops", scope), "NodePropertiesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.NodePropertiesConfig{
@@ -211,7 +203,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.NodePropertiesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.FeeSchedulesFile, "data/config/feeSchedules.json", "consensus/feeSchedules.json",
+				{"data/config/feeSchedules.json", "consensus/feeSchedules.json",
 					fmt.Sprintf("%s-feeschedules", scope), "FeeSchedules",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.FeeSchedules{
@@ -220,7 +212,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.FeeSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.SimpleFeesSchedulesFile, "data/config/simpleFeesSchedules.json", "consensus/simpleFeesSchedules.json",
+				{"data/config/simpleFeesSchedules.json", "consensus/simpleFeesSchedules.json",
 					fmt.Sprintf("%s-simplefeesschedules", scope), "SimpleFeesSchedules",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.SimpleFeesSchedules{
@@ -229,7 +221,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.SimpleFeesSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.ThrottlesFile, "data/config/throttles.json", "consensus/throttles.json",
+				{"data/config/throttles.json", "consensus/throttles.json",
 					fmt.Sprintf("%s-throttles", scope), "ThrottlesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ThrottlesConfig{
@@ -238,8 +230,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ThrottlesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{inputs.BlockNodesConfigFile,
-					fmt.Sprintf("block-nodes/config/block-nodes-%d.json", inputs.NodeId),
+				{fmt.Sprintf("block-nodes/config/block-nodes-%d.json", inputs.NodeId),
 					"consensus/block-nodes.json",
 					fmt.Sprintf("%s-blocknodes", scope), "BlockNodesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
@@ -252,7 +243,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 			}
 
 			for _, e := range entries {
-				content, err := resolveContent(e.flagFile, pkgFile(pkg, e.pkgRelPath), e.embeddedPath)
+				content, err := resolveContent(pkgFile(pkg, e.pkgRelPath), e.embeddedPath)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
