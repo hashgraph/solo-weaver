@@ -14,7 +14,8 @@ SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:-${SCRIPT_DIR}/../.ssh/id_rsa_vm}"
 
 if [ -z "$VM_HOST" ]; then
   echo "VM_HOST not set, trying to get it from utmctl..."
-  VM_HOST=$(utmctl ip-address "$VM_NAME" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+  # Shared resolver — picks the guest address on a host subnet (see its header).
+  VM_HOST=$("${SCRIPT_DIR}/network/peers-ip.sh" "$VM_NAME")
 fi
 
 if [ -z "$VM_HOST" ]; then
