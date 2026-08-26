@@ -78,7 +78,7 @@ type HostConfig struct {
 	// the traffic-shaper daemon reconciles automatically from block-node
 	// statusz; this list is purely operator-managed and nothing else writes it.
 	BlockedCIDRs   []string `yaml:"blockedCidrs" json:"blockedCidrs"`
-	SSHPort        int      `yaml:"sshPort" json:"sshPort"`               // SSH/management TCP port accepted from the allowlist (0 = default 22)
+	MgmtPorts      []int    `yaml:"mgmtPorts" json:"mgmtPorts"`           // SSH/management TCP port(s) accepted from the allowlist (empty = default 22)
 	PodCIDR        string   `yaml:"podCidr" json:"podCidr"`               // Pod source range allowed to reach the in-cluster host-service ports (empty = rule omitted)
 	InClusterPorts []int    `yaml:"inClusterPorts" json:"inClusterPorts"` // Host-service ports reachable from the pod CIDR
 	Disabled       bool     `yaml:"disabled" json:"disabled"`             // Operator explicitly opted out via --firewall-enabled=false (negative polarity so the zero value means "enabled")
@@ -98,9 +98,9 @@ func (c *HostConfig) Validate() error {
 			return errorx.IllegalArgument.Wrap(err, "invalid host blockedCidr: %s", cidr)
 		}
 	}
-	if c.SSHPort != 0 {
-		if err := sanity.ValidatePort(strconv.Itoa(c.SSHPort)); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid host sshPort: %d", c.SSHPort)
+	for _, p := range c.MgmtPorts {
+		if err := sanity.ValidatePort(strconv.Itoa(p)); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid host mgmtPort: %d", p)
 		}
 	}
 	if c.PodCIDR != "" {

@@ -61,23 +61,23 @@ func TestApplyPersistedFirewallContent_ConfigWins(t *testing.T) {
 	persisted := &models.HostConfig{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
 		BlockedCIDRs:    []string{"192.0.2.0/24"},
-		SSHPort:         2222,
+		MgmtPorts:       []int{2222},
 		PodCIDR:         "10.4.0.0/14",
 		InClusterPorts:  []int{8080},
 		Disabled:        true, // decision must NOT be applied by this helper
 	}
 
 	cfg := models.HostConfig{
-		// Operator supplied a management allowlist and SSH port via --config;
+		// Operator supplied a management allowlist and mgmt ports via --config;
 		// everything else is left to fall back to state.
 		ManagementCIDRs: []string{"203.0.113.0/24"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 	}
 
 	got := applyPersistedFirewallContent(cfg, persisted)
 
 	assert.Equal(t, []string{"203.0.113.0/24"}, got.ManagementCIDRs, "config allowlist must win over state")
-	assert.Equal(t, 22, got.SSHPort, "config SSH port must win over state")
+	assert.Equal(t, []int{22}, got.MgmtPorts, "config mgmt ports must win over state")
 	assert.Equal(t, []string{"192.0.2.0/24"}, got.BlockedCIDRs, "empty blocked CIDRs must fall back to state")
 	assert.Equal(t, "10.4.0.0/14", got.PodCIDR, "empty pod CIDR must fall back to state")
 	assert.Equal(t, []int{8080}, got.InClusterPorts, "empty in-cluster ports must fall back to state")
@@ -141,17 +141,17 @@ func TestMergeLiveHostFirewall_ConfigWinsStateLoses(t *testing.T) {
 
 	assert.Equal(t, []string{"203.0.113.0/24"}, cfg.BlockedCIDRs, "config must win over the live firewall")
 	assert.Equal(t, []string{"10.9.0.0/16"}, cfg.ManagementCIDRs, "the live allowlist must fill an unset field")
-	assert.Equal(t, 2222, cfg.SSHPort)
+	assert.Equal(t, []int{2222}, cfg.MgmtPorts)
 	assert.Equal(t, "10.4.0.0/14", cfg.PodCIDR)
 	assert.Equal(t, []int{4244, 6443}, cfg.InClusterPorts)
 
 	// State is only consulted for what is still empty after the live tier.
 	cfg = applyPersistedFirewallContent(cfg, &models.HostConfig{
 		ManagementCIDRs: []string{"192.168.50.0/24"},
-		SSHPort:         22,
+		MgmtPorts:       []int{22},
 	})
 	assert.Equal(t, []string{"10.9.0.0/16"}, cfg.ManagementCIDRs, "the live firewall must win over persisted state")
-	assert.Equal(t, 2222, cfg.SSHPort)
+	assert.Equal(t, []int{2222}, cfg.MgmtPorts)
 }
 
 // TestMergeLiveHostFirewall_NoLiveFirewallIsNoOp verifies the common case on a
@@ -172,10 +172,12 @@ func TestMergeLiveHostFirewall_NoLiveFirewallIsNoOp(t *testing.T) {
 func TestHostConfigFromTable_SkipsWhatHostConfigCannotHold(t *testing.T) {
 	tbl := firewall.NewTable()
 	tbl.Mgmt.CIDRs = []string{"192.168.50.0/24", "2001:db8::/32"}
+	tbl.Mgmt.Ports = []string{"22", "2222"}
 	tbl.InCluster.Ports = []string{"4244", "2379-2380", "6443"}
 
 	got := hostConfigFromTable(tbl)
 	assert.Equal(t, []string{"192.168.50.0/24"}, got.ManagementCIDRs, "only IPv4 members are carried")
+	assert.Equal(t, []int{22, 2222}, got.MgmtPorts, "every plain-integer mgmt port is carried, not just the first")
 	assert.Equal(t, []int{4244, 6443}, got.InClusterPorts, "only plain-integer specs are carried")
 	assert.NoError(t, got.Validate(), "the projection must always be a valid HostConfig")
 }

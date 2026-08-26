@@ -205,7 +205,7 @@ func (r *Rule) Validate() error {
 func (r *Rule) flagNames() (cidrFlag, portFlag string) {
 	switch r.Name {
 	case RuleMgmt:
-		return "--mgmt-cidrs", "--ssh-port"
+		return "--mgmt-cidrs", "--mgmt-ports"
 	case RuleBlocked:
 		return "--blocked-cidrs", "--ports"
 	case RuleInCluster:

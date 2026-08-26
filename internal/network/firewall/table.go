@@ -81,7 +81,7 @@ func NewTable() *Table {
 
 // PortStrings converts an int port list to the string port specs a Rule holds.
 // It is the boundary conversion for callers whose own schema is still int-typed
-// — the --in-cluster-ports / --ssh-port flags and models.HostConfig — so the
+// — the --in-cluster-ports / --mgmt-ports flags and models.HostConfig — so the
 // int-vs-range mismatch is resolved in exactly one place.
 func PortStrings(ports []int) []string {
 	out := make([]string, len(ports))

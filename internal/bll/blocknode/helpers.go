@@ -108,7 +108,7 @@ func patchMachineFirewallFromConfig(st *state.State) {
 	if !hostCfg.Disabled && len(hostCfg.ManagementCIDRs) > 0 {
 		fw.ManagementCIDRs = hostCfg.ManagementCIDRs
 		fw.BlockedCIDRs = hostCfg.BlockedCIDRs
-		fw.SSHPort = hostCfg.SSHPort
+		fw.MgmtPorts = hostCfg.MgmtPorts
 		fw.PodCIDR = hostCfg.PodCIDR
 		fw.InClusterPorts = hostCfg.InClusterPorts
 	}

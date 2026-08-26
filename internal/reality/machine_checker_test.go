@@ -34,7 +34,7 @@ func TestMachineRefreshState_PreservesFirewall(t *testing.T) {
 	persisted.Firewall = &state.HostFirewallState{
 		ManagementCIDRs: []string{"10.0.0.0/8"},
 		BlockedCIDRs:    []string{"192.0.2.0/24"},
-		SSHPort:         2222,
+		MgmtPorts:       []int{2222},
 		PodCIDR:         "10.4.0.0/14",
 		InClusterPorts:  []int{8080},
 	}
@@ -59,7 +59,7 @@ func TestMachineRefreshState_PreservesFirewall(t *testing.T) {
 	if len(got.Firewall.ManagementCIDRs) != 1 || got.Firewall.ManagementCIDRs[0] != "10.0.0.0/8" {
 		t.Errorf("Firewall management CIDRs not preserved: %+v", got.Firewall.ManagementCIDRs)
 	}
-	if got.Firewall.SSHPort != 2222 {
-		t.Errorf("Firewall SSH port not preserved: got %d, want 2222", got.Firewall.SSHPort)
+	if len(got.Firewall.MgmtPorts) != 1 || got.Firewall.MgmtPorts[0] != 2222 {
+		t.Errorf("Firewall mgmt ports not preserved: got %+v, want [2222]", got.Firewall.MgmtPorts)
 	}
 }

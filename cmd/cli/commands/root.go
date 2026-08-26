@@ -133,6 +133,7 @@ func RegisterMigrations() {
 	// ── Startup migrations (run before every CLI invocation) ─────────────────
 	migration.Register(migration.ScopeStartup, state.NewUnifiedStateMigration())
 	migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
+	migration.Register(migration.ScopeStartup, state.NewMgmtPortsV1Migration())
 	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())

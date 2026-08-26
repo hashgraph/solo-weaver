@@ -4,7 +4,6 @@ package firewall
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
@@ -104,8 +103,8 @@ func buildTable(cmd *cobra.Command) (*fw.Table, error) {
 	if cmd.Flags().Changed("in-cluster-ports") {
 		t.InCluster.Ports = fw.PortStrings(flagInClusterPorts)
 	}
-	if cmd.Flags().Changed("ssh-port") {
-		t.Mgmt.Ports = []string{strconv.Itoa(flagSSHPort)}
+	if cmd.Flags().Changed("mgmt-ports") {
+		t.Mgmt.Ports = fw.PortStrings(flagMgmtPorts)
 	}
 
 	// --pod-cidr accepts a mixed v4/v6 list; the renderer routes each entry to
@@ -140,7 +139,7 @@ func init() {
 	createCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Management/SSH allowlist CIDRs (comma-separated or repeated)")
 	createCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Operator-curated block list CIDRs, dropped before any other rule (comma-separated or repeated)")
 	createCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", fw.DefaultInClusterPorts, "Host-service ports reachable from the pod CIDR")
-	createCmd.Flags().IntVar(&flagSSHPort, "ssh-port", fw.DefaultSSHPort, "SSH/management TCP port accepted from the allowlist")
+	createCmd.Flags().IntSliceVar(&flagMgmtPorts, "mgmt-ports", []int{fw.DefaultSSHPort}, "Management/SSH TCP port(s) accepted from the allowlist (comma-separated or repeated)")
 	createCmd.Flags().StringSliceVar(&flagPodCIDR, "pod-cidr", nil, "Pod CIDR(s) allowed to reach the in-cluster host-service ports; may be IPv4 and/or IPv6 (comma-separated or repeated). Default: auto-detected from the local node's .spec.podCIDR; the rule is omitted if no cluster is reachable")
 	createCmd.Flags().StringVar(&flagFromFile, "from-file", "", "Declarative YAML config to render the whole table from; mutually exclusive with the individual flags")
 
@@ -149,6 +148,6 @@ func init() {
 	createCmd.MarkFlagsMutuallyExclusive("from-file", "mgmt-cidrs")
 	createCmd.MarkFlagsMutuallyExclusive("from-file", "blocked-cidrs")
 	createCmd.MarkFlagsMutuallyExclusive("from-file", "in-cluster-ports")
-	createCmd.MarkFlagsMutuallyExclusive("from-file", "ssh-port")
+	createCmd.MarkFlagsMutuallyExclusive("from-file", "mgmt-ports")
 	createCmd.MarkFlagsMutuallyExclusive("from-file", "pod-cidr")
 }

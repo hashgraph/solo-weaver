@@ -165,7 +165,8 @@ state:
         - 172.16.0.0/12
       blockedCidrs:
         - 192.0.2.0/24
-      sshPort: 2222
+      mgmtPorts:
+        - 2222
       podCidr: 10.4.0.0/14
       inClusterPorts:
         - 8080
@@ -189,8 +190,8 @@ state:
 	if len(fw.BlockedCIDRs) != 1 || fw.BlockedCIDRs[0] != "192.0.2.0/24" {
 		t.Errorf("unexpected BlockedCIDRs: %+v", fw.BlockedCIDRs)
 	}
-	if fw.SSHPort != 2222 {
-		t.Errorf("expected SSHPort 2222, got %d", fw.SSHPort)
+	if len(fw.MgmtPorts) != 1 || fw.MgmtPorts[0] != 2222 {
+		t.Errorf("expected MgmtPorts [2222], got %+v", fw.MgmtPorts)
 	}
 	if fw.PodCIDR != "10.4.0.0/14" {
 		t.Errorf("expected PodCIDR '10.4.0.0/14', got %q", fw.PodCIDR)

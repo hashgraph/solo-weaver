@@ -86,14 +86,14 @@ func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 			// (ResolveHostFirewallConfig applies flag > prompt > config file >
 			// default precedence before this step ever runs), so every field is
 			// applied unconditionally — including a deliberately empty PodCIDR
-			// ("omit the rule") or InClusterPorts ("open no ports"). Only SSHPort
-			// keeps a zero-value guard, since 0 is never a valid port and would
-			// otherwise indicate a config the resolver never touched.
+			// ("omit the rule") or InClusterPorts ("open no ports"). Only MgmtPorts
+			// keeps an empty-slice guard, since an empty list would otherwise
+			// indicate a config the resolver never touched.
 			t := firewall.NewTable()
 			t.Mgmt.CIDRs = hostCfg.ManagementCIDRs
 			t.Blocked.CIDRs = hostCfg.BlockedCIDRs
-			if hostCfg.SSHPort != 0 {
-				t.Mgmt.Ports = firewall.PortStrings([]int{hostCfg.SSHPort})
+			if len(hostCfg.MgmtPorts) > 0 {
+				t.Mgmt.Ports = firewall.PortStrings(hostCfg.MgmtPorts)
 			}
 			t.InCluster.Ports = firewall.PortStrings(hostCfg.InClusterPorts)
 			t.InCluster.CIDRs = nil

@@ -64,15 +64,30 @@ func validatePodCIDR(s string) error {
 	return nil
 }
 
-// validateSSHPort validates the SSH/management port. It is required (the table's
-// SSH allow rule always renders a port) and must be a valid TCP port.
-func validateSSHPort(s string) error {
+// validateMgmtPorts validates a comma-separated list of SSH/management ports.
+// At least one port is required (the table's mgmt allow rule always renders a
+// port) and each entry must be a valid TCP port.
+func validateMgmtPorts(s string) error {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return errorx.IllegalArgument.New("SSH port cannot be empty")
+		return errorx.IllegalArgument.New("management port(s) cannot be empty")
 	}
-	if err := sanity.ValidatePort(s); err != nil {
-		return errorx.IllegalArgument.Wrap(err, "invalid SSH port %q", s)
+	found := false
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if err := sanity.ValidatePort(p); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid management port %q", p)
+		}
+		found = true
+	}
+	if !found {
+		// s is non-empty (checked above) but every comma-separated segment
+		// trimmed to "" — e.g. "," or " , " — which would otherwise parse to
+		// zero ports downstream despite passing this check.
+		return errorx.IllegalArgument.New("management port(s) cannot be empty")
 	}
 	return nil
 }
@@ -130,16 +145,17 @@ func BlockedCIDRsInputPrompt(eff string, target *string) InputPrompt {
 	}
 }
 
-// SSHPortInputPrompt returns the interactive prompt for the SSH/management port.
-func SSHPortInputPrompt(eff string, target *string) InputPrompt {
+// MgmtPortsInputPrompt returns the interactive prompt for the SSH/management
+// port(s).
+func MgmtPortsInputPrompt(eff string, target *string) InputPrompt {
 	return InputPrompt{
-		FlagName:       "ssh-port",
-		Title:          "SSH port (host firewall)",
-		Description:    "TCP port accepted from the management allowlist for SSH/management access.",
+		FlagName:       "mgmt-ports",
+		Title:          "Management ports (host firewall)",
+		Description:    "TCP port(s) accepted from the management allowlist for SSH/management access (comma-separated).",
 		Placeholder:    eff,
 		EffectiveValue: eff,
 		Target:         target,
-		Validate:       validateSSHPort,
+		Validate:       validateMgmtPorts,
 	}
 }
 

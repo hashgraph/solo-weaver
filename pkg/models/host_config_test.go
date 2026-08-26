@@ -22,7 +22,7 @@ func TestHostConfig_Validate(t *testing.T) {
 			name: "full valid config",
 			cfg: HostConfig{
 				ManagementCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"},
-				SSHPort:         22,
+				MgmtPorts:       []int{22, 2222},
 				PodCIDR:         "10.4.0.0/14",
 				InClusterPorts:  []int{6443, 4244, 7472, 10250},
 			},
@@ -38,8 +38,8 @@ func TestHostConfig_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "invalid ssh port (too high)",
-			cfg:     HostConfig{SSHPort: 70000},
+			name:    "invalid mgmt port (too high)",
+			cfg:     HostConfig{MgmtPorts: []int{70000}},
 			wantErr: true,
 		},
 		{
@@ -63,8 +63,8 @@ func TestHostConfig_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "ssh port 0 is allowed (means default)",
-			cfg:  HostConfig{SSHPort: 0},
+			name: "empty mgmt ports is allowed (means default)",
+			cfg:  HostConfig{MgmtPorts: nil},
 		},
 	}
 

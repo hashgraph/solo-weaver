@@ -24,7 +24,7 @@ func TestFirewallAndShaping_RoundTrip(t *testing.T) {
 					Disabled:        false,
 					ManagementCIDRs: []string{"10.0.0.0/8"},
 					BlockedCIDRs:    []string{"192.0.2.0/24"},
-					SSHPort:         2222,
+					MgmtPorts:       []int{2222},
 					PodCIDR:         "10.4.0.0/14",
 					InClusterPorts:  []int{8080, 9090},
 				},
@@ -47,7 +47,7 @@ func TestFirewallAndShaping_RoundTrip(t *testing.T) {
 	}
 
 	// Spot-check the on-disk key names (the operator/other tools read these).
-	for _, key := range []string{"managementCidrs", "sshPort", "podCidr", "egressInterface", "linkRate", "shapeOverrides"} {
+	for _, key := range []string{"managementCidrs", "mgmtPorts", "podCidr", "egressInterface", "linkRate", "shapeOverrides"} {
 		if !strings.Contains(string(out), key) {
 			t.Errorf("expected marshalled YAML to contain key %q\n%s", key, out)
 		}
@@ -62,7 +62,7 @@ func TestFirewallAndShaping_RoundTrip(t *testing.T) {
 	if fw == nil {
 		t.Fatal("Firewall lost in round-trip")
 	}
-	if fw.SSHPort != 2222 || fw.PodCIDR != "10.4.0.0/14" ||
+	if len(fw.MgmtPorts) != 1 || fw.MgmtPorts[0] != 2222 || fw.PodCIDR != "10.4.0.0/14" ||
 		len(fw.ManagementCIDRs) != 1 || len(fw.InClusterPorts) != 2 {
 		t.Errorf("Firewall not preserved in round-trip: %+v", fw)
 	}

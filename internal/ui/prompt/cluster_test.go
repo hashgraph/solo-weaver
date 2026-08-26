@@ -26,13 +26,17 @@ func TestValidatePodCIDR(t *testing.T) {
 	require.Error(t, validatePodCIDR("2001:db8::/32")) // IPv6 not supported by the inet weaver-host-firewall table
 }
 
-func TestValidateSSHPort(t *testing.T) {
-	require.NoError(t, validateSSHPort("22"))
-	require.NoError(t, validateSSHPort("2222"))
-	require.Error(t, validateSSHPort(""))      // required
-	require.Error(t, validateSSHPort("0"))     // out of range
-	require.Error(t, validateSSHPort("70000")) // out of range
-	require.Error(t, validateSSHPort("abc"))
+func TestValidateMgmtPorts(t *testing.T) {
+	require.NoError(t, validateMgmtPorts("22"))
+	require.NoError(t, validateMgmtPorts("22,2222"))
+	require.NoError(t, validateMgmtPorts("22, 2222")) // spaced
+	require.Error(t, validateMgmtPorts(""))           // required
+	require.Error(t, validateMgmtPorts("0"))          // out of range
+	require.Error(t, validateMgmtPorts("70000"))      // out of range
+	require.Error(t, validateMgmtPorts("abc"))
+	require.Error(t, validateMgmtPorts("22,abc"))
+	require.Error(t, validateMgmtPorts(","))   // comma-only is effectively empty
+	require.Error(t, validateMgmtPorts(" , ")) // spaced comma-only is effectively empty
 }
 
 func TestValidateInClusterPorts(t *testing.T) {

@@ -211,7 +211,7 @@ allowlist, ICMP policy, operator block list, and in-cluster host-service ports.
 | `--firewall-enabled` | Turn the host firewall on | `false` |
 | `--mgmt-cidrs` | SSH/management allowlist CIDRs. **Empty skips the firewall entirely** | none |
 | `--blocked-cidrs` | Operator block list. Dropped inbound, outbound and forwarded — including established connections | none |
-| `--ssh-port` | Management TCP port | `22` |
+| `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated | `22` |
 | `--pod-cidr` | Pod CIDR for the in-cluster host-service ports rule | auto-detected |
 | `--in-cluster-ports` | In-cluster host-service ports | `6443,4244,7472,10250` |
 

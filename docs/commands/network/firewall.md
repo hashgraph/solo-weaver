@@ -44,7 +44,7 @@ Create-if-missing: an existing table is left alone unless you pass `--force`.
 # Create with a management allowlist and the default in-cluster ports
 sudo solo-provisioner network firewall create \
   --mgmt-cidrs 10.0.0.0/8 \
-  --ssh-port 22 \
+  --mgmt-ports 22 \
   --pod-cidr 10.4.0.0/24 \
   --in-cluster-ports 6443,4244,10250
 
@@ -57,7 +57,7 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 | `--mgmt-cidrs` | Management/SSH allowlist CIDRs. Comma-separated or repeated | none |
 | `--blocked-cidrs` | Block list CIDRs, dropped before any other rule | none |
 | `--in-cluster-ports` | Host-service ports reachable from the pod CIDR | `6443,4244,7472,10250` |
-| `--ssh-port` | Management TCP port. Shorthand for a one-element `mgmt.ports` | `22` |
+| `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated (`mgmt.ports`) | `22` |
 | `--pod-cidr` | Pod CIDR allowed to reach the in-cluster ports | auto-detected |
 | `--from-file` | Render the whole table from a YAML config. Mutually exclusive with the flags above | none |
 | `--force` | Re-render even if the table exists (global flag, `-y`) | `false` |

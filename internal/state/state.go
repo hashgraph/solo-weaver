@@ -151,7 +151,7 @@ type HostFirewallState struct {
 	Disabled        bool     `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	ManagementCIDRs []string `yaml:"managementCidrs,omitempty" json:"managementCidrs,omitempty"`
 	BlockedCIDRs    []string `yaml:"blockedCidrs,omitempty" json:"blockedCidrs,omitempty"`
-	SSHPort         int      `yaml:"sshPort,omitempty" json:"sshPort,omitempty"`
+	MgmtPorts       []int    `yaml:"mgmtPorts,omitempty" json:"mgmtPorts,omitempty"`
 	PodCIDR         string   `yaml:"podCidr,omitempty" json:"podCidr,omitempty"`
 	InClusterPorts  []int    `yaml:"inClusterPorts,omitempty" json:"inClusterPorts,omitempty"`
 }
