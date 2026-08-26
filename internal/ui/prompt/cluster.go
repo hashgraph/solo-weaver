@@ -72,6 +72,7 @@ func validateMgmtPorts(s string) error {
 	if s == "" {
 		return errorx.IllegalArgument.New("management port(s) cannot be empty")
 	}
+	found := false
 	for _, p := range strings.Split(s, ",") {
 		p = strings.TrimSpace(p)
 		if p == "" {
@@ -80,6 +81,13 @@ func validateMgmtPorts(s string) error {
 		if err := sanity.ValidatePort(p); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid management port %q", p)
 		}
+		found = true
+	}
+	if !found {
+		// s is non-empty (checked above) but every comma-separated segment
+		// trimmed to "" — e.g. "," or " , " — which would otherwise parse to
+		// zero ports downstream despite passing this check.
+		return errorx.IllegalArgument.New("management port(s) cannot be empty")
 	}
 	return nil
 }

@@ -35,6 +35,8 @@ func TestValidateMgmtPorts(t *testing.T) {
 	require.Error(t, validateMgmtPorts("70000"))      // out of range
 	require.Error(t, validateMgmtPorts("abc"))
 	require.Error(t, validateMgmtPorts("22,abc"))
+	require.Error(t, validateMgmtPorts(","))   // comma-only is effectively empty
+	require.Error(t, validateMgmtPorts(" , ")) // spaced comma-only is effectively empty
 }
 
 func TestValidateInClusterPorts(t *testing.T) {

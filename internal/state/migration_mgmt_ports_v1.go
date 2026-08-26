@@ -74,7 +74,7 @@ func (m *MgmtPortsV1Migration) Applies(_ *migration.Context) (bool, error) {
 		return false, nil // fresh install — nothing to migrate
 	}
 	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to read state file to check migration applicability")
+		return false, errorx.ExternalError.Wrap(err, "failed to read state file to check migration applicability")
 	}
 	return hasLegacySSHPort(b), nil
 }
@@ -86,16 +86,16 @@ func (m *MgmtPortsV1Migration) Execute(_ context.Context, _ *migration.Context) 
 
 	b, err := os.ReadFile(stateFile)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to read state file for sshPort→mgmtPorts migration")
+		return errorx.ExternalError.Wrap(err, "failed to read state file for sshPort→mgmtPorts migration")
 	}
 
 	out, err := migrateSSHPortToMgmtPorts(b)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to transform state YAML from sshPort to mgmtPorts")
+		return errorx.IllegalFormat.Wrap(err, "failed to transform state YAML from sshPort to mgmtPorts")
 	}
 
 	if err := atomicWriteFile(stateFile, out); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to write migrated state file")
+		return errorx.ExternalError.Wrap(err, "failed to write migrated state file")
 	}
 	return nil
 }
@@ -108,16 +108,16 @@ func (m *MgmtPortsV1Migration) Rollback(_ context.Context, _ *migration.Context)
 
 	b, err := os.ReadFile(stateFile)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to read state file for mgmtPorts→sshPort rollback")
+		return errorx.ExternalError.Wrap(err, "failed to read state file for mgmtPorts→sshPort rollback")
 	}
 
 	out, err := migrateMgmtPortsToSSHPort(b)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to transform state YAML from mgmtPorts to sshPort")
+		return errorx.IllegalFormat.Wrap(err, "failed to transform state YAML from mgmtPorts to sshPort")
 	}
 
 	if err := atomicWriteFile(stateFile, out); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to write rolled-back state file")
+		return errorx.ExternalError.Wrap(err, "failed to write rolled-back state file")
 	}
 	return nil
 }
