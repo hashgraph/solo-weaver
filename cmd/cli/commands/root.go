@@ -92,6 +92,14 @@ func init() {
 	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
 	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks().Name)
 
+	// Bad invocations keep cobra's error + usage output despite the silence
+	// flags; the error prints first so captured stderr leads with the cause.
+	rootCmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		c.PrintErrln(c.ErrPrefix(), err.Error())
+		c.Println(c.UsageString())
+		return err
+	})
+
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false
 

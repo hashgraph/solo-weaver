@@ -3,6 +3,9 @@
 package commands
 
 import (
+	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
@@ -52,6 +55,25 @@ func TestIsPrivilegeExemptInvocation(t *testing.T) {
 func TestRootCommandSilencesUsageAndErrors(t *testing.T) {
 	require.True(t, rootCmd.SilenceUsage)
 	require.True(t, rootCmd.SilenceErrors)
+}
+
+// A flag-parse error keeps cobra's error + usage output, with the error line
+// first so a captured stderr leads with the cause.
+func TestRootCommandFlagErrorFuncKeepsErrorAndUsage(t *testing.T) {
+	probe := &cobra.Command{Use: "probe"}
+	var buf bytes.Buffer
+	probe.SetOut(&buf)
+	probe.SetErr(&buf)
+
+	parseErr := errors.New("unknown flag: --bogus")
+	got := rootCmd.FlagErrorFunc()(probe, parseErr)
+
+	require.ErrorIs(t, got, parseErr, "the error must flow on to doctor.CheckErr unchanged")
+	errIdx := strings.Index(buf.String(), "unknown flag: --bogus")
+	usageIdx := strings.Index(buf.String(), "Usage:")
+	require.GreaterOrEqual(t, errIdx, 0)
+	require.GreaterOrEqual(t, usageIdx, 0)
+	require.Less(t, errIdx, usageIdx, "the cause must lead the output")
 }
 
 func TestNoShortNameCollisionsInRealCommandTree(t *testing.T) {
