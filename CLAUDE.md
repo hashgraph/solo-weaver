@@ -38,7 +38,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    git rebase -i origin/<base>        # mark the target commit as 'edit', then amend
    ```
 5. **Before committing or pushing**, always show the full commit message and the list of files to be committed/pushed, and wait for explicit user approval before proceeding.
-6. **When you add, rename, remove, or change the semantics of a CLI flag or subcommand** (under `cmd/cli/commands/...`), also update `docs/quickstart.md` — the relevant command's example block, its **Additional Flags** table, and any nearby explanatory text. Flag descriptions there must match the description string in `cmd/cli/commands/common/flags_common.go` and the `--help` output. CLI surface changes that miss this step ship docs that drift out of date.
+6. **When you add, rename, remove, or change the semantics of a CLI flag or subcommand** (under `cmd/cli/commands/...`), also update the command's guide under `docs/commands/` — its example block, its flag table, and any nearby explanatory text. Pick the file by stack:
+
+   | Stack | File |
+   |---|---|
+   | `block node` | `docs/commands/block-node.md` |
+   | `network firewall` | `docs/commands/network/firewall.md` |
+   | `network policy` | `docs/commands/network/policy.md` |
+   | `network shape` | `docs/commands/network/shape.md` |
+   | `alloy` and `eso` | `docs/commands/alloy.md` |
+   | `kube cluster`, `teleport`, `daemon service`, `consensus migration soak`, `version` | the matching section of `docs/commands/README.md` |
+   | root persistent flags | `docs/reference/global-flags.md` |
+   | config file / env vars / proxy | `docs/reference/configuration.md` |
+
+   Also update the **quick reference card** in `docs/commands/README.md` when a subcommand is added or renamed. Only touch `docs/quickstart.md` if the change affects the zero-to-running-block-node path — it is a short onboarding doc, not a flag reference, and must stay under ~200 lines. Flag descriptions must match the description string in `cmd/cli/commands/common/flags_common.go` and the `--help` output. CLI surface changes that miss this step ship docs that drift out of date.
 7. **When you change an embedded template or any config consumed at install time** (e.g. `internal/templates/files/**`), trace the **existing-cluster upgrade path** before assuming the change is fresh-install-only. Startup migrations (`internal/workflows/migration_*.go`, registered in `cmd/cli/commands/root.go` `RegisterMigrations()`) run on every CLI invocation and, when crossing their version boundary, **re-render the entire template and re-apply it** (e.g. `software.ReconfigureCiliumConfig()` + `cilium upgrade --values`). That means a template edit you intended only for new installs can **leak into already-provisioned clusters** that cross such a boundary. Confirm whether that application is intended, and call out any unintended/early application in the PR's **Risks** section.
 
 ## Writing Markdown Files

@@ -2,7 +2,8 @@
 A Go-based tool for provisioning Hedera network components in a streamlined and automated way.
 
 ## Getting Started
-Refer to the [Quickstart Guide](docs/quickstart.md) for how to work with this project.
+Refer to the [Quickstart Guide](docs/quickstart.md) to get a hedera node component running, then the
+[Command Reference](docs/commands/README.md) for the full CLI surface.
 
 ## Support
 If you have a question on how to use the product, please see our [support guide](https://github.com/swirldslabs/.github/blob/main/SUPPORT.md).

@@ -40,8 +40,7 @@ This setup allows you to test **solo-weaver** in a Linux environment similar to 
 - **Debian** (default)
 - **Ubuntu 22.04**
 
-You can work with either OS type or both simultaneously. See [VM Targets Documentation](VM_TARGETS.md) for detailed
-usage.
+You can work with either OS type or both simultaneously. Run `task vm:targets` to list every available target.
 
 **Quick Start with OS Type:**
 
