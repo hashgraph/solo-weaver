@@ -8,18 +8,17 @@ import (
 )
 
 var (
-	flagNamespace    string
-	flagOrbitName    string
-	flagNodeId       int64
-	flagAccountId    string
-	flagWeight       int
-	flagLedgerId     string
-	flagChainId      string
-	flagImageRepo    string
-	flagImageTag     string
-	flagWithProxy    string
-	flagLog4j2File      string
-	flagSettingsFile    string
+	flagNamespace            string
+	flagOrbitName            string
+	flagNodeId               int64
+	flagAccountId            string
+	flagWeight               int
+	flagLedgerId             string
+	flagChainId              string
+	flagImageRepo            string
+	flagImageTag             string
+	flagLog4j2File           string
+	flagSettingsFile         string
 	flagAppPropsFile         string
 	flagDeploymentPkgDir     string
 	flagApiPermissionFile    string
@@ -31,9 +30,9 @@ var (
 	flagThrottlesFile        string
 	flagBlockNodesConfigFile string
 	flagGrpcTlsSecret        string
-	flagSigningSecret   string
-	flagHapiAppSecret   string
-	flagUpgradeOperator bool
+	flagSigningSecret        string
+	flagHapiAppSecret        string
+	flagUpgradeOperator      bool
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -53,7 +52,6 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagChainId, "chain-id", "298", "Decimal EVM chain ID (e.g. 295 for mainnet, 298 for local/dev)")
 	nodeCmd.PersistentFlags().StringVar(&flagImageRepo, "image-repo", "gcr.io/hedera-registry", "Consensus node container image repository")
 	nodeCmd.PersistentFlags().StringVar(&flagImageTag, "image-tag", "0.74.0", "Consensus node container image tag")
-	nodeCmd.PersistentFlags().StringVar(&flagWithProxy, "with-proxy", "", "Also create a proxy CR (haproxy or envoy)")
 	nodeCmd.PersistentFlags().StringVar(&flagLog4j2File, "log4j2-config-file", "", "Path to custom log4j2.xml (default: built-in)")
 	nodeCmd.PersistentFlags().StringVar(&flagSettingsFile, "settings-file", "", "Path to custom settings.txt (default: built-in)")
 	nodeCmd.PersistentFlags().StringVar(&flagAppPropsFile, "application-properties-file", "", "Path to custom application.properties (default: built-in)")

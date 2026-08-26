@@ -14,14 +14,14 @@ import (
 )
 
 const (
-	PrecheckOperatorCRDsStepId      = "precheck-operator-crds"
-	PrecheckOperatorRunningStepId   = "precheck-operator-running"
-	PrecheckOperatorVersionStepId   = "precheck-operator-version"
+	PrecheckOperatorCRDsStepId    = "precheck-operator-crds"
+	PrecheckOperatorRunningStepId = "precheck-operator-running"
+	PrecheckOperatorVersionStepId = "precheck-operator-version"
 
-	operatorDeploymentName      = "solo-operator-controller-manager"
-	operatorChartName           = "solo-operator"
-	operatorNamespace           = "solo-operator"
-	operatorReleaseName         = "solo-operator"
+	operatorDeploymentName = "solo-operator-controller-manager"
+	operatorChartName      = "solo-operator"
+	operatorNamespace      = "solo-operator"
+	operatorReleaseName    = "solo-operator"
 )
 
 // ConsensusNodeCRDs lists all solo-operator CRDs required for the consensus
@@ -114,10 +114,10 @@ func PrecheckOperatorRunning() automa.Builder {
 						operatorNamespace, operatorDeploymentName)))
 			}
 
-			availableStr, err := kc.GetResourceNestedString(ctx, "apps/v1", "Deployment",
+			available, found, err := kc.GetResourceNestedInt64(ctx, "apps/v1", "Deployment",
 				operatorNamespace, operatorDeploymentName,
 				"status", "availableReplicas")
-			if err != nil || availableStr == "" || availableStr == "0" {
+			if err != nil || !found || available < 1 {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(
 					errorx.IllegalState.New(
 						"solo-operator deployment %s/%s has no available replicas",
