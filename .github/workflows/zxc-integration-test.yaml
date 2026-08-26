@@ -168,6 +168,9 @@ jobs:
           check_port localhost 8081 'Go module proxy'
           check_port localhost 5050 'registry mirror'
 
+          # Configure access to private Go modules
+          go env -w GOPRIVATE=github.com/hashgraph/*
+
           # If tasks must run as root, preserve PATH/GOPATH explicitly
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task mocks

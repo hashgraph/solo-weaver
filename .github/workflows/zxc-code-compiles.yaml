@@ -50,6 +50,11 @@ jobs:
         with:
           go-version: ${{ inputs.go-version || '>=1.26.5' }}
 
+      - name: Configure private Go modules
+        run: |
+          go env -w GOPRIVATE=github.com/hashgraph/*
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Compile Code
         run: task build
 
