@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -74,16 +75,32 @@ files:
 	require.False(t, doc.Files[0].Optional)
 }
 
-func TestParseExternalFiles_RejectsUnknownTopLevelField(t *testing.T) {
-	_, err := ParseExternalFiles([]byte("schemaVersion: 1\nmysteryField: 1\n"))
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+// HIP-1494 §Backwards Compatibility: unknown fields must be silently ignored.
+func TestParseExternalFiles_IgnoresUnknownFields(t *testing.T) {
+	data := []byte(`
+schemaVersion: 1
+mysteryField: 1
+files:
+  - url: "s3://x/y"
+    algorithm: sha256
+    checksum: "z"
+    destination: "HAPIAPP_DIR/y"
+    unknownNested: true
+    phase:
+      download: prepare
+      install: freeze
+`)
+	doc, err := ParseExternalFiles(data)
+	require.NoError(t, err)
+	require.Len(t, doc.Files, 1)
+	require.Equal(t, "s3://x/y", doc.Files[0].URL)
 }
 
 func TestParseExternalFiles_RejectsHIPHashFieldShape(t *testing.T) {
 	// The HIP draft used a single hash: "sha256:..." field; the story body
 	// for #533 supersedes that with separate algorithm + checksum fields.
-	// A manifest using the old shape must surface as a parse error.
+	// With lenient parsing the unknown "hash" field is ignored, but the
+	// entry still fails validation because algorithm and checksum are empty.
 	data := []byte(`
 schemaVersion: 1
 files:
@@ -94,14 +111,14 @@ files:
 `)
 	_, err := ParseExternalFiles(data)
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.True(t, errorx.IsOfType(err, ValidationError), "expected ValidationError, got %v", err)
 }
 
 func TestParseExternalFiles_RejectsUnsupportedSchemaVersion(t *testing.T) {
 	_, err := ParseExternalFiles([]byte("schemaVersion: 2\n"))
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
-		"expected UnsupportedSchemaVersionError, got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrUnsupportedVersion),
+		"expected schema.ErrUnsupportedVersion, got %v", err)
 }
 
 func TestParseExternalFiles_ValidationFailures(t *testing.T) {
@@ -241,8 +258,8 @@ files: []
 `)
 	_, err := ParseExternalFiles(data)
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ValidationError),
-		"expected ValidationError (extra YAML document), got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrMalformed),
+		"expected schema.ErrMalformed (extra YAML document), got %v", err)
 	require.Contains(t, err.Error(), "exactly one YAML document")
 }
 

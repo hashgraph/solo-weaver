@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -57,31 +58,27 @@ func TestParseStateSources_EmptyStateSourcesTolerated(t *testing.T) {
 	require.Empty(t, doc.Sources)
 }
 
-func TestParseStateSources_RejectsUnknownTopLevelField(t *testing.T) {
+// HIP-1494 §Backwards Compatibility: unknown fields must be silently ignored.
+func TestParseStateSources_IgnoresUnknownFields(t *testing.T) {
 	_, err := ParseStateSources([]byte("schemaVersion: 1\nmysteryField: 1\n"))
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.NoError(t, err)
 }
 
-func TestParseStateSources_RejectsTopLevelVersionField(t *testing.T) {
-	// `version` is not `schemaVersion`. It is silently ignored at the
-	// schemaVersion stage (the validator inspects only schemaVersion), so
-	// this surfaces as MissingSchemaVersionError.
+func TestParseStateSources_ToleratesAbsentSchemaVersion(t *testing.T) {
+	// Absent schemaVersion is normalised to v1 by pkg/schema.
 	data := []byte(`
 version: 1
 stateSources: []
 `)
 	_, err := ParseStateSources(data)
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, MissingSchemaVersionError),
-		"expected MissingSchemaVersionError, got %v", err)
+	require.NoError(t, err)
 }
 
 func TestParseStateSources_RejectsUnsupportedSchemaVersion(t *testing.T) {
 	_, err := ParseStateSources([]byte("schemaVersion: 2\n"))
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
-		"expected UnsupportedSchemaVersionError, got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrUnsupportedVersion),
+		"expected schema.ErrUnsupportedVersion, got %v", err)
 }
 
 func TestParseStateSources_RejectsMultipleYAMLDocuments(t *testing.T) {
@@ -93,8 +90,8 @@ schemaVersion: 1
 `)
 	_, err := ParseStateSources(data)
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ValidationError),
-		"expected ValidationError (extra YAML document), got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrMalformed),
+		"expected schema.ErrMalformed (extra YAML document), got %v", err)
 	require.Contains(t, err.Error(), "exactly one YAML document")
 }
 

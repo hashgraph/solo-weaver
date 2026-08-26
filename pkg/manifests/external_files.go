@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 )
 
 // allowedDestinationPrefixes is the closed set of marker prefixes that may
@@ -89,25 +91,31 @@ const (
 	InstallPhaseFreeze InstallPhase = "freeze"
 )
 
+// MigrateToLatest is the v1 terminal migration — returns the struct as-is.
+func (ef *ExternalFiles) MigrateToLatest() *ExternalFiles { return ef }
+
+// externalFilesSchema is the versioned loader for external-files.yaml.
+var externalFilesSchema = schema.Versioned[*ExternalFiles]{
+	CurrentVersion: 1,
+	Lenient:        true,
+	Factories: map[int]func() schema.Migratable[*ExternalFiles]{
+		1: func() schema.Migratable[*ExternalFiles] { return &ExternalFiles{} },
+	},
+}
+
 // ParseExternalFiles parses raw YAML bytes of an external-files.yaml
-// manifest. It runs the cross-cutting schemaVersion check first, then
-// strict-decodes the single YAML document (unknown top-level fields fail;
-// multi-document inputs are rejected), then runs per-entry semantic
+// manifest. It uses lenient decoding (unknown fields silently ignored per
+// HIP-1494), enforces single-document YAML, and runs per-entry semantic
 // validation.
 func ParseExternalFiles(data []byte) (*ExternalFiles, error) {
-	if _, err := ValidateSchemaVersion(KindExternalFiles, data); err != nil {
+	doc, err := externalFilesSchema.Decode(data)
+	if err != nil {
 		return nil, err
 	}
-
-	var doc ExternalFiles
-	if err := decodeStrictSingleYAMLDoc(KindExternalFiles, data, &doc); err != nil {
-		return nil, err
-	}
-
 	if err := doc.validate(); err != nil {
 		return nil, err
 	}
-	return &doc, nil
+	return doc, nil
 }
 
 // validate enforces semantic invariants on every files[] entry. Two files

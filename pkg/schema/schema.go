@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package schema provides a generic versioned-YAML loader for any file that
-// embeds a schema version field. It handles version probing, unknown-field
-// rejection, and in-memory migration to the latest struct shape.
+// embeds a schema version field. It handles version probing, field decoding
+// (strict or lenient), single-document enforcement, and in-memory migration
+// to the latest struct shape.
 //
 // The pattern, extracted once so every versioned file behaves identically:
 //
@@ -12,10 +13,12 @@
 //  3. Reject any version greater than the running build supports (a file
 //     written by a newer binary) with a human-readable "newer binary" error
 //     rather than a surprising decode failure against the current shape.
-//  4. Strict-decode (KnownFields, single document) into the sealed per-version
-//     struct registered for that version.
+//  4. Decode (strict or lenient depending on Lenient flag) into the sealed
+//     per-version struct registered for that version. Multi-document inputs
+//     are always rejected.
 //  5. Walk the migration chain via Migratable.MigrateToLatest() to produce the
 //     current in-memory type T.
+//  6. Run the optional Validate hook on the migrated result.
 //
 // The genuinely domain-specific parts — the sealed vN structs and their
 // MigrateToLatest field transforms — stay in each consuming package. Only the
@@ -41,12 +44,16 @@ var (
 	// ErrNamespace groups all schema-loading errors.
 	ErrNamespace = errorx.NewNamespace("schema")
 
-	// ErrMalformed is returned when the document cannot be probed or strict-decoded.
+	// ErrMalformed is returned when the document cannot be probed or decoded.
 	ErrMalformed = ErrNamespace.NewType("malformed")
 
 	// ErrUnsupportedVersion is returned when the document declares a schemaVersion
 	// the running build does not support (typically a file written by a newer binary).
 	ErrUnsupportedVersion = ErrNamespace.NewType("unsupported_version")
+
+	// ErrValidation is returned when the decoded and migrated document fails
+	// the caller-supplied Validate hook.
+	ErrValidation = ErrNamespace.NewType("validation")
 )
 
 // Migratable is a sealed, versioned on-disk struct that knows how to migrate
@@ -58,9 +65,9 @@ type Migratable[T any] interface {
 	MigrateToLatest() T
 }
 
-// Versioned describes one owned-state-file schema: the YAML key that carries the
-// version, the highest version this build writes, and a factory per supported
-// version that returns a fresh pointer to strict-decode into.
+// Versioned describes one versioned-YAML schema: the YAML key that carries the
+// version, the highest version this build writes, a factory per supported
+// version, and optional decode/validation behaviour.
 type Versioned[T any] struct {
 	// VersionKey is the YAML field carrying the schema version. Empty means
 	// DefaultVersionKey ("schemaVersion"); external schemas may set any key.
@@ -72,9 +79,22 @@ type Versioned[T any] struct {
 	// Factories maps a supported version to a constructor returning a fresh
 	// sealed struct (as a Migratable[T]) to decode that version's document into.
 	Factories map[int]func() Migratable[T]
+
+	// Lenient controls unknown-field handling during decode. When false
+	// (the default), unknown fields cause an error — appropriate for owned
+	// state files written by us. When true, unknown fields are silently
+	// ignored — required by HIP-1494 for externally-authored deployment
+	// packages where additive changes must not break existing consumers.
+	Lenient bool
+
+	// Validate is an optional hook called after decode and migration. It
+	// receives the migrated T and may return an error to reject the document
+	// on semantic grounds (e.g. missing required fields, invalid enum values).
+	// The error is wrapped as ErrValidation. Nil means no validation.
+	Validate func(T) error
 }
 
-// Decode runs the full owned-state-file load pattern on raw YAML bytes and
+// Decode runs the full versioned-YAML load pattern on raw YAML bytes and
 // returns the migrated current type T. See the package doc for the steps.
 func (s Versioned[T]) Decode(data []byte) (T, error) {
 	var zero T
@@ -114,22 +134,31 @@ func (s Versioned[T]) Decode(data []byte) (T, error) {
 		return zero, ErrUnsupportedVersion.New("unsupported %s %d", key, version)
 	}
 
-	// Phase 2: strict-decode into the sealed per-version struct, then migrate.
+	// Phase 2: decode into the sealed per-version struct, then migrate.
 	obj := factory()
-	if err := decodeStrictSingleDoc(data, obj); err != nil {
+	if err := decodeSingleDoc(s.Lenient, data, obj); err != nil {
 		return zero, ErrMalformed.Wrap(err, "invalid v%d document", version)
 	}
-	return obj.MigrateToLatest(), nil
+	result := obj.MigrateToLatest()
+
+	// Phase 3: optional semantic validation.
+	if s.Validate != nil {
+		if err := s.Validate(result); err != nil {
+			return zero, ErrValidation.Wrap(err, "validation failed")
+		}
+	}
+
+	return result, nil
 }
 
-// decodeStrictSingleDoc decodes data into out with KnownFields(true) (unknown
-// fields are an error) and rejects inputs containing more than one YAML
-// document. Owned state files are written by us as exactly one document; a
-// trailing document or unknown field signals corruption or a format drift we
-// want to surface loudly rather than silently ignore.
-func decodeStrictSingleDoc(data []byte, out any) error {
+// decodeSingleDoc decodes data into out, enforcing single-document YAML. When
+// lenient is false, unknown fields cause an error (KnownFields(true)); when
+// true, unknown fields are silently ignored.
+func decodeSingleDoc(lenient bool, data []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
+	if !lenient {
+		dec.KnownFields(true)
+	}
 	if err := dec.Decode(out); err != nil {
 		return err
 	}

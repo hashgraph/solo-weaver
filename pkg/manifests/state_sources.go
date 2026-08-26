@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 )
 
 // allowedBucketSchemes is the closed set of cloud-storage URI schemes that
@@ -54,24 +56,30 @@ type StateSource struct {
 	Paths    map[string]string `yaml:"paths"`
 }
 
+// MigrateToLatest is the v1 terminal migration — returns the struct as-is.
+func (ss *StateSources) MigrateToLatest() *StateSources { return ss }
+
+// stateSourcesSchema is the versioned loader for state-sources.yaml.
+var stateSourcesSchema = schema.Versioned[*StateSources]{
+	CurrentVersion: 1,
+	Lenient:        true,
+	Factories: map[int]func() schema.Migratable[*StateSources]{
+		1: func() schema.Migratable[*StateSources] { return &StateSources{} },
+	},
+}
+
 // ParseStateSources parses raw YAML bytes of a state-sources.yaml manifest.
-// It runs the cross-cutting schemaVersion check first, then strict-decodes
-// the single YAML document (unknown top-level fields fail; multi-document
-// inputs are rejected), then runs per-source semantic validation.
+// It uses lenient decoding (unknown fields silently ignored per HIP-1494),
+// enforces single-document YAML, and runs per-source semantic validation.
 func ParseStateSources(data []byte) (*StateSources, error) {
-	if _, err := ValidateSchemaVersion(KindStateSources, data); err != nil {
+	doc, err := stateSourcesSchema.Decode(data)
+	if err != nil {
 		return nil, err
 	}
-
-	var doc StateSources
-	if err := decodeStrictSingleYAMLDoc(KindStateSources, data, &doc); err != nil {
-		return nil, err
-	}
-
 	if err := doc.validate(); err != nil {
 		return nil, err
 	}
-	return &doc, nil
+	return doc, nil
 }
 
 // validate enforces per-source invariants and the cross-source uniqueness
