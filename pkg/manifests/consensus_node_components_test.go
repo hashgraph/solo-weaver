@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -134,21 +135,21 @@ func TestParseConsensusNodeComponents_EmptyImagesTolerated(t *testing.T) {
 	require.Nil(t, doc.Images.ConsensusNode)
 }
 
-func TestParseConsensusNodeComponents_RejectsUnknownTopLevelField(t *testing.T) {
+// HIP-1494 §Backwards Compatibility: unknown fields must be silently ignored.
+func TestParseConsensusNodeComponents_IgnoresUnknownFields(t *testing.T) {
 	data := []byte(`
 schemaVersion: 1
 mysteryField: 42
 images: {}
 `)
 	_, err := ParseConsensusNodeComponents(data)
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.NoError(t, err)
 }
 
-func TestParseConsensusNodeComponents_RejectsUnknownComponentName(t *testing.T) {
+func TestParseConsensusNodeComponents_IgnoresUnknownComponentName(t *testing.T) {
 	// "cheetah" was the bundled-sidecar name in the HIP draft but the story
-	// for #531 split it into five named uploaders. Unknown component names
-	// must surface as a parse error rather than be silently dropped.
+	// for #531 split it into five named uploaders. With lenient parsing,
+	// unknown component names under images are silently ignored per HIP-1494.
 	data := []byte(`
 schemaVersion: 1
 images:
@@ -158,16 +159,15 @@ images:
     registries: [{image: "ghcr.io/x:0.43.0"}]
 `)
 	_, err := ParseConsensusNodeComponents(data)
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.NoError(t, err)
 }
 
 func TestParseConsensusNodeComponents_RejectsUnsupportedSchemaVersion(t *testing.T) {
 	// The schemaVersion gate fires before any consensus-node-specific decode.
 	_, err := ParseConsensusNodeComponents([]byte("schemaVersion: 2\nimages: {}\n"))
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
-		"expected UnsupportedSchemaVersionError, got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrUnsupportedVersion),
+		"expected schema.ErrUnsupportedVersion, got %v", err)
 }
 
 func TestParseConsensusNodeComponents_ValidationFailures(t *testing.T) {
@@ -330,7 +330,7 @@ images:
 func TestParseConsensusNodeComponents_MalformedYAML(t *testing.T) {
 	_, err := ParseConsensusNodeComponents([]byte("schemaVersion: 1\nimages: [not, a, map]\n"))
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrMalformed), "expected schema.ErrMalformed, got %v", err)
 }
 
 // Pins the contract that the parser refuses inputs containing more than one
@@ -356,7 +356,7 @@ images: {}
 `)
 	_, err := ParseConsensusNodeComponents(data)
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ValidationError),
-		"expected ValidationError (extra YAML document), got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrMalformed),
+		"expected schema.ErrMalformed (extra YAML document), got %v", err)
 	require.Contains(t, err.Error(), "exactly one YAML document")
 }

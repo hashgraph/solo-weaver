@@ -133,3 +133,86 @@ func TestDecode_CustomVersionKey(t *testing.T) {
 	assert.True(t, errorx.IsOfType(err, schema.ErrUnsupportedVersion))
 	assert.Contains(t, err.Error(), "schema_version")
 }
+
+func newLenientDemoSchema() schema.Versioned[demo] {
+	s := newDemoSchema()
+	s.Lenient = true
+	return s
+}
+
+func TestDecode_Lenient_IgnoresUnknownFields(t *testing.T) {
+	got, err := newLenientDemoSchema().Decode([]byte("schemaVersion: 1\nname: x\nbogus: true\nsize: 5\n"))
+	require.NoError(t, err)
+	assert.Equal(t, demo{Name: "x", Size: 5}, got)
+}
+
+func TestDecode_Lenient_StillRejectsMultiDocument(t *testing.T) {
+	_, err := newLenientDemoSchema().Decode([]byte("schemaVersion: 1\nname: x\n---\nname: y\n"))
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, schema.ErrMalformed))
+}
+
+func TestDecode_Lenient_StillRejectsNewerVersion(t *testing.T) {
+	_, err := newLenientDemoSchema().Decode([]byte("schemaVersion: 99\nname: x\n"))
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, schema.ErrUnsupportedVersion))
+}
+
+func TestDecode_Validate_PassesOnSuccess(t *testing.T) {
+	s := newDemoSchema()
+	s.Validate = func(d demo) error {
+		if d.Name == "" {
+			return errorx.IllegalState.New("name must not be empty")
+		}
+		return nil
+	}
+	got, err := s.Decode([]byte("schemaVersion: 1\nname: alpha\nsize: 1\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "alpha", got.Name)
+}
+
+func TestDecode_Validate_ReturnsErrValidation(t *testing.T) {
+	s := newDemoSchema()
+	s.Validate = func(d demo) error {
+		if d.Name == "" {
+			return errorx.IllegalState.New("name must not be empty")
+		}
+		return nil
+	}
+	_, err := s.Decode([]byte("schemaVersion: 1\nsize: 1\n"))
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, schema.ErrValidation),
+		"expected ErrValidation, got %T: %v", err, err)
+}
+
+// demoV2 is a hypothetical v2 shape used to exercise the migration chain.
+type demoV2 struct {
+	SchemaVersion int    `yaml:"schemaVersion"`
+	FullName      string `yaml:"fullName"`
+	Size          int    `yaml:"size"`
+}
+
+func (v *demoV2) MigrateToLatest() demo {
+	return demo{Name: v.FullName, Size: v.Size}
+}
+
+func TestDecode_V1ToV2Migration(t *testing.T) {
+	s := schema.Versioned[demo]{
+		CurrentVersion: 2,
+		Factories: map[int]func() schema.Migratable[demo]{
+			1: func() schema.Migratable[demo] { return &demoV1{} },
+			2: func() schema.Migratable[demo] { return &demoV2{} },
+		},
+		Lenient: true,
+	}
+
+	// v1 document still works — decoded via demoV1.MigrateToLatest
+	got, err := s.Decode([]byte("schemaVersion: 1\nname: old\nsize: 3\n"))
+	require.NoError(t, err)
+	assert.Equal(t, demo{Name: "old", Size: 3}, got)
+
+	// v2 document uses the new field name
+	got, err = s.Decode([]byte("schemaVersion: 2\nfullName: new\nsize: 5\n"))
+	require.NoError(t, err)
+	assert.Equal(t, demo{Name: "new", Size: 5}, got)
+}

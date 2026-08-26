@@ -4,6 +4,8 @@ package manifests
 
 import (
 	"fmt"
+
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 )
 
 // InfrastructureVersions is the parsed root of an infrastructure-versions.yaml
@@ -60,25 +62,31 @@ type ClusterChart struct {
 	Version string `yaml:"version"`
 }
 
+// MigrateToLatest is the v1 terminal migration — returns the struct as-is.
+func (iv *InfrastructureVersions) MigrateToLatest() *InfrastructureVersions { return iv }
+
+// infrastructureVersionsSchema is the versioned loader for infrastructure-versions.yaml.
+var infrastructureVersionsSchema = schema.Versioned[*InfrastructureVersions]{
+	CurrentVersion: 1,
+	Lenient:        true,
+	Factories: map[int]func() schema.Migratable[*InfrastructureVersions]{
+		1: func() schema.Migratable[*InfrastructureVersions] { return &InfrastructureVersions{} },
+	},
+}
+
 // ParseInfrastructureVersions parses raw YAML bytes of an
-// infrastructure-versions.yaml manifest. It runs the cross-cutting
-// schemaVersion check first, then strict-decodes the single YAML document
-// (unknown top-level fields fail; multi-document inputs are rejected), then
+// infrastructure-versions.yaml manifest. It uses lenient decoding (unknown
+// fields silently ignored per HIP-1494), enforces single-document YAML, and
 // runs semantic validation.
 func ParseInfrastructureVersions(data []byte) (*InfrastructureVersions, error) {
-	if _, err := ValidateSchemaVersion(KindInfrastructureVersions, data); err != nil {
+	doc, err := infrastructureVersionsSchema.Decode(data)
+	if err != nil {
 		return nil, err
 	}
-
-	var doc InfrastructureVersions
-	if err := decodeStrictSingleYAMLDoc(KindInfrastructureVersions, data, &doc); err != nil {
-		return nil, err
-	}
-
 	if err := doc.validate(); err != nil {
 		return nil, err
 	}
-	return &doc, nil
+	return doc, nil
 }
 
 func (iv *InfrastructureVersions) validate() error {

@@ -6,19 +6,18 @@
 // external-files.yaml, state-sources.yaml).
 //
 // Each per-manifest parser (ParseConsensusNodeComponents,
-// ParseInfrastructureVersions, ParseExternalFiles, ParseStateSources) runs
-// the cross-cutting schemaVersion check (ValidateSchemaVersion) first, then
-// strict-decodes the document against its typed root struct, then runs
-// semantic validation. Typed errorx error classifications (ParseError,
-// MissingSchemaVersionError, UnsupportedSchemaVersionError, UnknownKindError,
-// ValidationError) let callers branch on failure mode without string
-// matching.
+// ParseInfrastructureVersions, ParseExternalFiles, ParseStateSources) uses
+// pkg/schema.Versioned to probe the schemaVersion, decode with lenient
+// parsing (unknown fields silently ignored per HIP-1494), enforce single-
+// document YAML, and migrate across schema versions. Decode-level errors
+// (malformed YAML, unsupported version, multi-document) surface as
+// schema.ErrMalformed or schema.ErrUnsupportedVersion. After decode,
+// each parser runs semantic validation; those failures surface as
+// ValidationError.
 package manifests
 
 import (
 	"sort"
-
-	"gopkg.in/yaml.v3"
 )
 
 // SchemaVersion is the value of the schemaVersion field on a manifest. The
@@ -52,48 +51,10 @@ var supportedVersions = map[Kind]map[SchemaVersion]struct{}{
 }
 
 // Header captures the common schemaVersion field present on every manifest.
-// Concrete parsers embed it in their root struct so a single strict-decode
+// Concrete parsers embed it in their root struct so a single decode
 // pass yields both the version and the rest of the document.
 type Header struct {
 	SchemaVersion SchemaVersion `yaml:"schemaVersion"`
-}
-
-// ValidateSchemaVersion decodes only the schemaVersion field from data and
-// confirms the value is in the supported set for kind. It returns the parsed
-// Header. Callers run this before full unmarshalling so that a manifest
-// declaring an unsupported (e.g. future) schemaVersion is rejected with a
-// clear error instead of producing surprising decode failures against the
-// current shape.
-//
-// Unknown fields in data are tolerated at this stage — the function inspects
-// only schemaVersion. Per-kind parsers may apply stricter checks downstream.
-func ValidateSchemaVersion(kind Kind, data []byte) (Header, error) {
-	supported, ok := supportedVersions[kind]
-	if !ok {
-		return Header{}, NewUnknownKindError(kind)
-	}
-
-	// Probe with a pointer-typed schemaVersion so we can distinguish "field
-	// absent or explicit null" (nil) from "explicit value zero" (&0). yaml.v3
-	// would otherwise coerce both cases to SchemaVersion(0) and lose the
-	// distinction.
-	var probe struct {
-		SchemaVersion *SchemaVersion `yaml:"schemaVersion"`
-	}
-	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return Header{}, NewParseError(err, kind)
-	}
-
-	if probe.SchemaVersion == nil {
-		return Header{}, NewMissingSchemaVersionError(kind)
-	}
-
-	h := Header{SchemaVersion: *probe.SchemaVersion}
-	if _, ok := supported[h.SchemaVersion]; !ok {
-		return Header{}, NewUnsupportedSchemaVersionError(kind, h.SchemaVersion, sortedSupported(kind))
-	}
-
-	return h, nil
 }
 
 // SupportedVersions returns the sorted list of schemaVersion values this build

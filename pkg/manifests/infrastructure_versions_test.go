@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
@@ -95,32 +96,30 @@ provisioner:
 	require.Nil(t, doc.Provisioner.Daemon)
 }
 
-func TestParseInfrastructureVersions_RejectsUnknownTopLevelField(t *testing.T) {
+// HIP-1494 §Backwards Compatibility: unknown fields must be silently ignored.
+func TestParseInfrastructureVersions_IgnoresUnknownFields(t *testing.T) {
 	_, err := ParseInfrastructureVersions([]byte("schemaVersion: 1\nmysteryField: 42\n"))
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.NoError(t, err)
 }
 
-func TestParseInfrastructureVersions_RejectsHIPSingleProvisionerVersion(t *testing.T) {
+func TestParseInfrastructureVersions_ToleratesHIPSingleProvisionerVersion(t *testing.T) {
 	// The HIP draft used `provisioner.version`; the story body for #532
-	// supersedes it with the cli/daemon split. A manifest written against
-	// the old shape must surface as a parse error rather than be silently
-	// accepted with both cli and daemon nil.
+	// supersedes it with the cli/daemon split. With lenient parsing,
+	// the unknown `version` field under provisioner is silently ignored.
 	data := []byte(`
 schemaVersion: 1
 provisioner:
   version: "0.42.0"
 `)
 	_, err := ParseInfrastructureVersions(data)
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ParseError), "expected ParseError, got %v", err)
+	require.NoError(t, err)
 }
 
 func TestParseInfrastructureVersions_RejectsUnsupportedSchemaVersion(t *testing.T) {
 	_, err := ParseInfrastructureVersions([]byte("schemaVersion: 2\n"))
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, UnsupportedSchemaVersionError),
-		"expected UnsupportedSchemaVersionError, got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrUnsupportedVersion),
+		"expected schema.ErrUnsupportedVersion, got %v", err)
 }
 
 func TestParseInfrastructureVersions_ValidationFailures(t *testing.T) {
@@ -250,8 +249,8 @@ schemaVersion: 1
 `)
 	_, err := ParseInfrastructureVersions(data)
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, ValidationError),
-		"expected ValidationError (extra YAML document), got %v", err)
+	require.True(t, errorx.IsOfType(err, schema.ErrMalformed),
+		"expected schema.ErrMalformed (extra YAML document), got %v", err)
 	require.Contains(t, err.Error(), "exactly one YAML document")
 }
 

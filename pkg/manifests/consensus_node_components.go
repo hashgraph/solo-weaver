@@ -5,6 +5,8 @@ package manifests
 import (
 	"fmt"
 	"sort"
+
+	"github.com/hashgraph/solo-weaver/pkg/schema"
 )
 
 // ConsensusNodeComponents is the parsed root of a consensus-node-components.yaml
@@ -23,8 +25,8 @@ type ConsensusNodeComponents struct {
 
 // Images groups the consensus node and its five named sidecars. Each field is
 // a pointer so a parser can distinguish absent from explicitly-zero. Unknown
-// component names in the YAML are rejected by strict decoding; if the set of
-// supported sidecars grows, this struct grows with it.
+// component names are silently ignored (lenient parsing per HIP-1494); if the
+// set of supported sidecars grows, this struct grows with it.
 type Images struct {
 	ConsensusNode        *Image `yaml:"consensusNode,omitempty"`
 	RecordStreamUploader *Image `yaml:"recordStreamUploader,omitempty"`
@@ -74,27 +76,31 @@ type LayerHashes map[string][]string
 // error messages without surprising readers.
 var SupportedImagePlatforms = []string{"linux/amd64", "linux/arm64"}
 
+// MigrateToLatest is the v1 terminal migration — returns the struct as-is.
+func (c *ConsensusNodeComponents) MigrateToLatest() *ConsensusNodeComponents { return c }
+
+// consensusNodeComponentsSchema is the versioned loader for consensus-node-components.yaml.
+var consensusNodeComponentsSchema = schema.Versioned[*ConsensusNodeComponents]{
+	CurrentVersion: 1,
+	Lenient:        true,
+	Factories: map[int]func() schema.Migratable[*ConsensusNodeComponents]{
+		1: func() schema.Migratable[*ConsensusNodeComponents] { return &ConsensusNodeComponents{} },
+	},
+}
+
 // ParseConsensusNodeComponents parses raw YAML bytes of a
-// consensus-node-components.yaml manifest. It runs the cross-cutting
-// schemaVersion check first (so a future-versioned manifest is rejected before
-// any current-shape decode), then strict-decodes the (single) YAML document
-// into ConsensusNodeComponents (unknown top-level fields or unknown component
-// names under images: are errors; multi-document inputs are rejected), then
+// consensus-node-components.yaml manifest. It uses lenient decoding (unknown
+// fields silently ignored per HIP-1494), enforces single-document YAML, and
 // runs semantic validation on every present component entry.
 func ParseConsensusNodeComponents(data []byte) (*ConsensusNodeComponents, error) {
-	if _, err := ValidateSchemaVersion(KindConsensusNodeComponents, data); err != nil {
+	doc, err := consensusNodeComponentsSchema.Decode(data)
+	if err != nil {
 		return nil, err
 	}
-
-	var doc ConsensusNodeComponents
-	if err := decodeStrictSingleYAMLDoc(KindConsensusNodeComponents, data, &doc); err != nil {
-		return nil, err
-	}
-
 	if err := doc.validate(); err != nil {
 		return nil, err
 	}
-	return &doc, nil
+	return doc, nil
 }
 
 // validate enforces the semantic invariants of a parsed manifest. It runs on
