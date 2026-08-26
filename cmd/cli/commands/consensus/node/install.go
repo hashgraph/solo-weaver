@@ -39,7 +39,6 @@ var installCmd = &cobra.Command{
 			ChainId:                   flagChainId,
 			ConsensusImageRepo:        flagImageRepo,
 			ConsensusImageTag:         flagImageTag,
-			WithProxy:                 flagWithProxy,
 			Log4j2ConfigFile:          flagLog4j2File,
 			SettingsFile:              flagSettingsFile,
 			ApplicationPropertiesFile: flagAppPropsFile,
@@ -52,9 +51,9 @@ var installCmd = &cobra.Command{
 			SimpleFeesSchedulesFile:   flagSimpleFeesSchedFile,
 			ThrottlesFile:             flagThrottlesFile,
 			BlockNodesConfigFile:      flagBlockNodesConfigFile,
-			GrpcTlsSecret:            flagGrpcTlsSecret,
+			GrpcTlsSecret:             flagGrpcTlsSecret,
 			SigningSecret:             flagSigningSecret,
-			HapiAppSecret:            flagHapiAppSecret,
+			HapiAppSecret:             flagHapiAppSecret,
 		}
 
 		logx.As().Info().

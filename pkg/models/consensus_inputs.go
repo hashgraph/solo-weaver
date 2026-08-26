@@ -32,9 +32,6 @@ type ConsensusNodeInputs struct {
 	// ConsensusImageTag is the container image tag (e.g. "v0.58.0")
 	ConsensusImageTag string `json:"consensusImageTag"`
 
-	// WithProxy optionally creates a proxy CR alongside the node ("haproxy" or "envoy")
-	WithProxy string `json:"withProxy,omitempty"`
-
 	// Log4j2ConfigFile overrides the default log4j2.xml content from a file
 	Log4j2ConfigFile string `json:"log4j2ConfigFile,omitempty"`
 
@@ -48,14 +45,14 @@ type ConsensusNodeInputs struct {
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 
 	// Config override flags (individual flag > deployment package > embedded default)
-	ApiPermissionFile      string `json:"apiPermissionFile,omitempty"`
-	AppOverrideFile        string `json:"appOverrideFile,omitempty"`
-	BootstrapFile          string `json:"bootstrapFile,omitempty"`
-	NodePropertiesFile     string `json:"nodePropertiesFile,omitempty"`
-	FeeSchedulesFile       string `json:"feeSchedulesFile,omitempty"`
+	ApiPermissionFile       string `json:"apiPermissionFile,omitempty"`
+	AppOverrideFile         string `json:"appOverrideFile,omitempty"`
+	BootstrapFile           string `json:"bootstrapFile,omitempty"`
+	NodePropertiesFile      string `json:"nodePropertiesFile,omitempty"`
+	FeeSchedulesFile        string `json:"feeSchedulesFile,omitempty"`
 	SimpleFeesSchedulesFile string `json:"simpleFeesSchedulesFile,omitempty"`
-	ThrottlesFile          string `json:"throttlesFile,omitempty"`
-	BlockNodesConfigFile   string `json:"blockNodesConfigFile,omitempty"`
+	ThrottlesFile           string `json:"throttlesFile,omitempty"`
+	BlockNodesConfigFile    string `json:"blockNodesConfigFile,omitempty"`
 
 	// GrpcTlsSecret is the name of the K8s Secret containing gRPC TLS key/cert
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`

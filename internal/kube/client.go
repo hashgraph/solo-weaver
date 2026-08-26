@@ -575,6 +575,42 @@ func (c *Client) GetResourceNestedString(ctx context.Context, apiVersion, kind, 
 	return value, nil
 }
 
+// GetResourceNestedInt64 retrieves a nested int64 value from a Kubernetes resource.
+// For cluster-scoped resources, pass empty string for namespace.
+// Returns (0, false, nil) if the resource doesn't exist or the field is not found.
+func (c *Client) GetResourceNestedInt64(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (int64, bool, error) {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return 0, false, errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			namespace = "default"
+		}
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return 0, false, nil
+		}
+		return 0, false, errorx.InternalError.Wrap(err, "failed to get %s/%s", kind, name)
+	}
+
+	value, found, err := unstructured.NestedInt64(obj.Object, fields...)
+	if err != nil || !found {
+		return 0, false, nil
+	}
+
+	return value, true, nil
+}
+
 // GetSecretKeys returns the keys present in a Kubernetes Secret's data field.
 // Returns nil and no error if the secret does not exist.
 func (c *Client) GetSecretKeys(ctx context.Context, namespace, name string) ([]string, error) {
