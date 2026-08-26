@@ -140,6 +140,7 @@ jobs:
 
           # Configure access to private Go modules
           go env -w GOPRIVATE=github.com/hashgraph/*
+          git config --global url."https://${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
           # Build binary
           echo 'Building solo-provisioner binary...'
