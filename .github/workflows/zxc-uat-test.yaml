@@ -138,6 +138,9 @@ jobs:
             echo 'No proxy tunnel — building with direct internet access'
           fi
 
+          # Configure access to private Go modules
+          go env -w GOPRIVATE=github.com/hashgraph/*
+
           # Build binary
           echo 'Building solo-provisioner binary...'
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate
