@@ -53,7 +53,7 @@ jobs:
       - name: Configure private Go modules
         run: |
           go env -w GOPRIVATE=github.com/hashgraph/*
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Compile Code
         run: task build
