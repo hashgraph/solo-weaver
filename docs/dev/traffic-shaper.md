@@ -593,6 +593,14 @@ run" (issue #1037). For the same reason the persisted `shapeOverrides` are *not*
 re-asserted as effective inputs: that would replay an install-time `--shape` over
 a later `network shape set` on the same class.
 
+The device's `default_class` is operator-owned the same way: one set with
+`network shape create --device --default` survives every re-provision, in the
+registry and in the boot script's `htb default <minor>`. A recorded class the
+provision no longer writes falls back to the profile value with a warning —
+kept, it would name a class the script never creates and unmatched traffic
+would stop being shaped. The device `rate` is not preserved like this:
+`reconfigure`/`upgrade` re-assert it from `blockNodeState.shaping` as above.
+
 Running any equivalent `network firewall` / `network policy` / `network shape`
 command by hand takes the same live-apply-then-persist path, guarded by a shared
 flock under `/run/solo-provisioner/network/` so a hand-run command and the daemon
