@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package consensus
+package rsl
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,7 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// ResolveImageFromManifest reads manifests/consensus-node-components.yaml from
-// the deployment package and returns (repo, tag).
-func ResolveImageFromManifest(pkgDir string) (repo string, tag string, err error) {
+func resolveImageFromManifest(pkgDir string) (repo string, tag string, err error) {
 	path := filepath.Join(pkgDir, "manifests", "consensus-node-components.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -50,9 +49,7 @@ func ResolveImageFromManifest(pkgDir string) (repo string, tag string, err error
 	return repo, tag, nil
 }
 
-// ResolvePropertiesValue reads a Java .properties file and returns the value
-// for the given key, or empty string if not found.
-func ResolvePropertiesValue(path, key string) (string, error) {
+func resolvePropertiesValue(path, key string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -74,20 +71,34 @@ func ResolvePropertiesValue(path, key string) (string, error) {
 	return "", scanner.Err()
 }
 
-// ResolveLedgerAndChain extracts ledger.id and contracts.chainId from
-// data/config/application.properties in the deployment package.
-func ResolveLedgerAndChain(pkgDir string) (ledgerId string, chainId string, err error) {
+func resolveLedgerAndChain(pkgDir string) (ledgerId string, chainId string, err error) {
 	path := filepath.Join(pkgDir, "data", "config", "application.properties")
 
-	ledgerId, err = ResolvePropertiesValue(path, "ledger.id")
+	ledgerId, err = resolvePropertiesValue(path, "ledger.id")
 	if err != nil {
 		return "", "", errorx.ExternalError.Wrap(err, "reading application.properties")
 	}
 
-	chainId, err = ResolvePropertiesValue(path, "contracts.chainId")
+	chainId, err = resolvePropertiesValue(path, "contracts.chainId")
 	if err != nil {
 		return "", "", errorx.ExternalError.Wrap(err, "reading application.properties")
 	}
 
 	return ledgerId, chainId, nil
+}
+
+func readFileFromPackage(pkgDir, relPath string) (string, error) {
+	p := filepath.Join(pkgDir, relPath)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(b), nil
+}
+
+func blockNodesRelPath(nodeId int64) string {
+	return filepath.Join("block-nodes", "config", fmt.Sprintf("block-nodes-%d.json", nodeId))
 }

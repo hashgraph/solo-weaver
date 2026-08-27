@@ -19,6 +19,7 @@ import (
 type RuntimeResolver struct {
 	sm               state.Manager
 	BlockNodeRuntime Resolver[state.BlockNodeState, models.BlockNodeInputs]
+	ConsensusRuntime Resolver[map[string]state.ConsensusNodeState, models.ConsensusNodeInputs]
 	ClusterRuntime   Resolver[state.ClusterState, models.ClusterInputs]
 	MachineRuntime   Resolver[state.MachineState, models.MachineInputs]
 	TeleportRuntime  Resolver[state.TeleportState, models.TeleportNodeInputs]
@@ -43,6 +44,15 @@ func NewRuntimeResolver(
 		return nil, errorx.IllegalState.Wrap(err, "failed to initialise block-node runtime")
 	}
 
+	consensusNodes := currentState.ConsensusNodes
+	if consensusNodes == nil {
+		consensusNodes = make(map[string]state.ConsensusNodeState)
+	}
+	consensusRuntime, err := NewConsensusNodeRuntimeResolver(cfg, consensusNodes, realityChecker.Consensus, refreshInterval)
+	if err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to initialise consensus-node runtime")
+	}
+
 	machineRuntime, err := NewMachineRuntimeResolver(cfg, currentState.MachineState, realityChecker.Machine, refreshInterval)
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to initialise machine runtime")
@@ -57,6 +67,7 @@ func NewRuntimeResolver(
 		sm:               sm,
 		ClusterRuntime:   clusterRuntime,
 		BlockNodeRuntime: blockNodeRuntime,
+		ConsensusRuntime: consensusRuntime,
 		MachineRuntime:   machineRuntime,
 		TeleportRuntime:  teleportRuntime,
 	}, nil
@@ -87,6 +98,16 @@ func (r *RuntimeResolver) Refresh(ctx context.Context, force bool) (state.State,
 		}
 	} else {
 		logx.As().Debug().Msg("Block node runtime is not initialized; skipping refresh")
+	}
+
+	if r.ConsensusRuntime != nil {
+		ctx2c, cancel2c := context.WithTimeout(ctx, DefaultRefreshTimeout)
+		defer cancel2c()
+		if err := r.ConsensusRuntime.RefreshState(ctx2c, force); err != nil {
+			return state.State{}, errorx.IllegalState.New("failed to refresh consensus node state: %v", err)
+		}
+	} else {
+		logx.As().Debug().Msg("Consensus node runtime is not initialized; skipping refresh")
 	}
 
 	if r.MachineRuntime != nil {
@@ -129,6 +150,11 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 		return state.State{}, errorx.IllegalState.New("failed to read block node state: %v", err)
 	}
 
+	consensusNodes, err := r.ConsensusRuntime.CurrentState()
+	if err != nil {
+		return state.State{}, errorx.IllegalState.New("failed to read consensus node state: %v", err)
+	}
+
 	machineState, err := r.MachineRuntime.CurrentState()
 	if err != nil {
 		return state.State{}, errorx.IllegalState.New("failed to read machine state: %v", err)
@@ -141,6 +167,7 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 
 	currentState.ClusterState = clusterState
 	currentState.BlockNodeState = blockNodeState
+	currentState.ConsensusNodes = consensusNodes
 	currentState.MachineState = machineState
 	currentState.TeleportState = teleportState
 

@@ -24,6 +24,7 @@ type Checkers struct {
 	Cluster   Checker[state.ClusterState]
 	Machine   Checker[state.MachineState]
 	BlockNode Checker[state.BlockNodeState]
+	Consensus Checker[map[string]state.ConsensusNodeState]
 	Teleport  Checker[state.TeleportState]
 }
 
@@ -115,6 +116,13 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create block node checker")
 	}
 
+	consensus, err := NewConsensusChecker(cc.sm,
+		func() (ConsensusKubeClient, error) { return kube.NewClient() },
+		cc.clusterExists)
+	if err != nil {
+		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create consensus checker")
+	}
+
 	teleport, err := NewTeleportChecker(cc.sm, cc.newHelm, cc.clusterExists)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create teleport checker")
@@ -124,6 +132,7 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		Cluster:   cluster,
 		Machine:   machine,
 		BlockNode: blocknode,
+		Consensus: consensus,
 		Teleport:  teleport,
 	}, nil
 }
