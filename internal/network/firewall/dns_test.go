@@ -464,3 +464,63 @@ func TestFQDN_WarningsFollowListOrderNotCompletionOrder(t *testing.T) {
 			"unresolved names must be reported in the order they were written")
 	}
 }
+
+// TestFQDN_SurvivesUnrelatedMutations is the invariant the whole design rests on:
+// the YAML is a statement of the operator's intent, written from the in-memory
+// Table, and is never regenerated from the kernel. So a name put there once
+// survives every later mutation of anything else in the table — there is no
+// point at which it has to be "put back", because nothing takes it out.
+//
+// The one exception is Manager.load's fallback to Parse when the YAML is missing
+// entirely; that tier recovers from the rendered .nft, which holds only resolved
+// addresses. See Parse's doc comment.
+func TestFQDN_SurvivesUnrelatedMutations(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"10.0.0.0/8", "jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	ctx := context.Background()
+	steps := []struct {
+		what string
+		do   func() error
+	}{
+		{"add a mgmt port", func() error { return m.Add(ctx, RuleMgmt, nil, []string{"2222"}) }},
+		{"add a blocked CIDR", func() error { return m.Add(ctx, RuleBlocked, []string{"203.0.113.0/24"}, nil) }},
+		{"declare an allow rule", func() error {
+			_, err := m.CreateRule(ctx, Rule{Name: "monitoring", Proto: ProtoTCP}, false)
+			return err
+		}},
+		{"populate the allow rule", func() error {
+			return m.Add(ctx, "monitoring", []string{"198.51.100.0/24"}, []string{"9100"})
+		}},
+		{"reapply", func() error { return m.Reapply(ctx) }},
+		{"refresh dns", func() error { return m.RefreshDNS(ctx) }},
+	}
+
+	for _, step := range steps {
+		require.NoError(t, step.do(), step.what)
+
+		// The name is still the persisted intent...
+		cfg := readFile(t, m.configPath)
+		require.Contains(t, cfg, "jump.corp.example.com",
+			"the FQDN must survive: %s", step.what)
+		require.NotContains(t, cfg, "192.0.2.7",
+			"the persisted config must never acquire the resolved address: %s", step.what)
+
+		// ...and the kernel artifact still carries only literals.
+		nft := readNft(t, nftPath)
+		require.Contains(t, nft, "192.0.2.7/32", step.what)
+		require.NotContains(t, nft, "jump.corp.example.com", step.what)
+	}
+
+	// And a reload from disk still sees the name, not the address it resolved to.
+	reloaded, err := m.Table(ctx)
+	require.NoError(t, err)
+	require.Contains(t, reloaded.Mgmt.CIDRs, "jump.corp.example.com")
+	require.NotContains(t, reloaded.Mgmt.CIDRs, "192.0.2.7/32")
+}
