@@ -57,13 +57,14 @@ type State struct {
 // intentionally excluded from hashing because they are bookkeeping metadata,
 // not provisioning state.
 type StateRecord struct {
-	Version          string          `yaml:"version" json:"version"`
-	ProvisionerState ProvisionerInfo `yaml:"provisioner" json:"provisioner"`
-	MachineState     MachineState    `yaml:"machineState" json:"machineState"`
-	ClusterState     ClusterState    `yaml:"clusterState" json:"clusterState"`
-	BlockNodeState   BlockNodeState  `yaml:"blockNodeState" json:"blockNodeState"`
-	TeleportState    TeleportState   `yaml:"teleportState" json:"teleportState"`
-	LastAction       ActionHistory   `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
+	Version          string                        `yaml:"version" json:"version"`
+	ProvisionerState ProvisionerInfo               `yaml:"provisioner" json:"provisioner"`
+	MachineState     MachineState                  `yaml:"machineState" json:"machineState"`
+	ClusterState     ClusterState                  `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState   BlockNodeState                `yaml:"blockNodeState" json:"blockNodeState"`
+	ConsensusNodes   map[string]ConsensusNodeState `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
+	TeleportState    TeleportState                 `yaml:"teleportState" json:"teleportState"`
+	LastAction       ActionHistory                 `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
 }
 
 // Hashable returns a deep copy of the domain StateRecord with all reconciliation
@@ -82,6 +83,24 @@ func (s State) Hashable() StateRecord {
 	r.ClusterState.LastSync = htime.Time{}
 	r.BlockNodeState.LastSync = htime.Time{}
 	r.TeleportState.LastSync = htime.Time{}
+
+	// ConsensusNodes map — copy before mutation to avoid aliasing the original
+	if len(r.ConsensusNodes) > 0 {
+		cn := make(map[string]ConsensusNodeState, len(r.ConsensusNodes))
+		for k, v := range r.ConsensusNodes {
+			v.LastSync = htime.Time{}
+			if len(v.ConfigHashes) > 0 {
+				ch := make(map[string]ConfigHashEntry, len(v.ConfigHashes))
+				for ck, cv := range v.ConfigHashes {
+					cv.LastUpdate = htime.Time{}
+					ch[ck] = cv
+				}
+				v.ConfigHashes = ch
+			}
+			cn[k] = v
+		}
+		r.ConsensusNodes = cn
+	}
 
 	// Software map — copy before mutation to avoid aliasing the original
 	if len(r.MachineState.Software) > 0 {
@@ -207,6 +226,35 @@ type ShapingState struct {
 	EgressInterface string                          `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
 	LinkRate        string                          `yaml:"linkRate,omitempty" json:"linkRate,omitempty"`
 	ShapeOverrides  map[string]models.ShapeOverride `yaml:"shapeOverrides,omitempty" json:"shapeOverrides,omitempty"`
+}
+
+// ConfigHashEntry records the SHA-256 hash of a config CR's content along with
+// the source it was resolved from and the timestamp of the last update. This
+// helps diagnose why a hash changed (e.g. deployment package was updated vs
+// embedded default changed across versions).
+type ConfigHashEntry struct {
+	Hash       string     `yaml:"hash" json:"hash"`
+	Source     string     `yaml:"source" json:"source"`
+	LastUpdate htime.Time `yaml:"lastUpdate" json:"lastUpdate"`
+}
+
+// ConsensusNodeState represents the persisted state of a single consensus node.
+type ConsensusNodeState struct {
+	Namespace     string                     `yaml:"namespace" json:"namespace"`
+	OrbitName     string                     `yaml:"orbitName" json:"orbitName"`
+	NodeId        int64                      `yaml:"nodeId" json:"nodeId"`
+	AccountId     string                     `yaml:"accountId" json:"accountId"`
+	Weight        int                        `yaml:"weight" json:"weight"`
+	ImageRepo     string                     `yaml:"imageRepo" json:"imageRepo"`
+	ImageTag      string                     `yaml:"imageTag" json:"imageTag"`
+	LedgerId      string                     `yaml:"ledgerId" json:"ledgerId"`
+	ChainId       string                     `yaml:"chainId,omitempty" json:"chainId,omitempty"`
+	DeploymentPkg string                     `yaml:"deploymentPackageDir,omitempty" json:"deploymentPackageDir,omitempty"`
+	GrpcTlsSecret string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
+	SigningSecret string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
+	HapiAppSecret string                     `yaml:"hapiAppSecret,omitempty" json:"hapiAppSecret,omitempty"`
+	ConfigHashes  map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
+	LastSync      htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.

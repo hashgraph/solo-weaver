@@ -2,46 +2,96 @@
 
 package models
 
+import (
+	"fmt"
+
+	"github.com/joomcode/errorx"
+)
+
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
 // via the solo-operator's ConsensusCapsule CRD.
 type ConsensusNodeInputs struct {
-	// Namespace for the ConsensusCapsule CR
 	Namespace string `json:"namespace"`
-
-	// OrbitName is the name of the Orbit CR to associate with
 	OrbitName string `json:"orbitName"`
-
-	// NodeId is the consensus node ID (0-based)
-	NodeId int64 `json:"nodeId"`
-
-	// AccountId is the node's account ID (e.g. "0.0.3")
+	NodeId    int64  `json:"nodeId"`
 	AccountId string `json:"accountId"`
+	Weight    int    `json:"weight"`
 
-	// Weight is the consensus weight for this node
-	Weight int `json:"weight"`
-
-	// LedgerId is the hex ledger identity (e.g. "0x00" for mainnet)
 	LedgerId string `json:"ledgerId"`
+	ChainId  string `json:"chainId,omitempty"`
 
-	// ChainId is the decimal EVM chain ID (e.g. "295")
-	ChainId string `json:"chainId,omitempty"`
-
-	// ConsensusImageRepo is the container image repository (e.g. "ghcr.io/hiero-ledger/hiero-consensus-node")
 	ConsensusImageRepo string `json:"consensusImageRepo"`
+	ConsensusImageTag  string `json:"consensusImageTag"`
 
-	// ConsensusImageTag is the container image tag (e.g. "v0.58.0")
-	ConsensusImageTag string `json:"consensusImageTag"`
-
-	// DeploymentPackageDir points to the extracted HIP-1494 build zip.
-	// Config files at well-known paths within this directory override embedded defaults.
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 
-	// GrpcTlsSecret is the name of the K8s Secret containing gRPC TLS key/cert
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
-
-	// SigningSecret is the name of the K8s Secret containing gossip signing key/cert
 	SigningSecret string `json:"signingSecret,omitempty"`
-
-	// HapiAppSecret is the name of the K8s Secret containing hedera.crt and hedera.key
 	HapiAppSecret string `json:"hapiAppSecret,omitempty"`
+
+	UpgradeOperator bool `json:"upgradeOperator,omitempty"`
+
+	// Resolved config file contents (populated by BLL, not by CLI flags)
+	ConfigLog4j2                string `json:"-"`
+	ConfigSettings              string `json:"-"`
+	ConfigAppProperties         string `json:"-"`
+	ConfigAppOverrideProperties string `json:"-"`
+	ConfigApiPermission         string `json:"-"`
+	ConfigBootstrap             string `json:"-"`
+	ConfigNodeProperties        string `json:"-"`
+	ConfigFeeSchedules          string `json:"-"`
+	ConfigSimpleFeesSchedules   string `json:"-"`
+	ConfigThrottles             string `json:"-"`
+	ConfigBlockNodes            string `json:"-"`
+
+	// ConfigSources records, per config key (ConfigKey*), whether the resolved
+	// content came from the deployment package or the embedded default. Populated
+	// by the BLL during resolution; drives the apply policy for config CRs.
+	ConfigSources map[string]string `json:"-"`
+}
+
+// Config keys identify each consensus config file across resolution, hashing,
+// and CR application. They double as the ConfigSources / ConfigHashes map keys.
+const (
+	ConfigKeyLog4j2              = "log4j2"
+	ConfigKeySettings            = "settings"
+	ConfigKeyAppProperties       = "application-properties"
+	ConfigKeyAppOverride         = "application-override-properties"
+	ConfigKeyApiPermission       = "api-permission-properties"
+	ConfigKeyBootstrap           = "bootstrap-properties"
+	ConfigKeyNodeProperties      = "node-properties"
+	ConfigKeyFeeSchedules        = "fee-schedules"
+	ConfigKeySimpleFeesSchedules = "simple-fees-schedules"
+	ConfigKeyThrottles           = "throttles"
+	ConfigKeyBlockNodes          = "block-nodes"
+)
+
+// Config content sources, stored in ConfigSources and ConfigHashEntry.Source.
+const (
+	ConfigSourcePackage  = "deployment-package"
+	ConfigSourceEmbedded = "embedded"
+)
+
+// ConsensusNodeScope returns the canonical scope key for a consensus node (e.g. "node0").
+func ConsensusNodeScope(nodeId int64) string {
+	return fmt.Sprintf("node%d", nodeId)
+}
+
+// ConsensusCapsuleName returns the CR name for a ConsensusCapsule (e.g. "myorbit-consensus-0").
+func ConsensusCapsuleName(orbitName string, nodeId int64) string {
+	return fmt.Sprintf("%s-consensus-%d", orbitName, nodeId)
+}
+
+// Validate checks that required fields are present.
+func (c *ConsensusNodeInputs) Validate() error {
+	if c.Namespace == "" {
+		return errorx.IllegalArgument.New("--namespace is required")
+	}
+	if c.AccountId == "" {
+		return errorx.IllegalArgument.New("--account-id is required")
+	}
+	if c.Weight <= 0 {
+		return errorx.IllegalArgument.New("--weight must be positive")
+	}
+	return nil
 }

@@ -3,13 +3,10 @@
 package node
 
 import (
-	"fmt"
-
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
-	"github.com/hashgraph/solo-weaver/internal/bll/consensus"
-	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -20,7 +17,7 @@ var installCmd = &cobra.Command{
 	Short: "Install a Hedera consensus node",
 	Long:  "Deploy a consensus node by creating the required solo-operator CRs (Orbit, config CRs, ConsensusCapsule)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		scope := fmt.Sprintf("node%d", flagNodeId)
+		scope := models.ConsensusNodeScope(flagNodeId)
 		if flagGrpcTlsSecret == "" {
 			flagGrpcTlsSecret = scope + "-grpc-tls-keys"
 		}
@@ -31,86 +28,66 @@ var installCmd = &cobra.Command{
 			flagHapiAppSecret = scope + "-hapi-app-keys"
 		}
 
-		imageRepo := flagImageRepo
-		imageTag := flagImageTag
-		ledgerId := flagLedgerId
-		chainId := flagChainId
-
-		if flagDeploymentPkgDir != "" {
-			if !cmd.Flags().Changed("image-repo") || !cmd.Flags().Changed("image-tag") {
-				repo, tag, err := consensus.ResolveImageFromManifest(flagDeploymentPkgDir)
-				if err != nil {
-					return errorx.ExternalError.Wrap(err, "resolving image from deployment package")
-				}
-				if !cmd.Flags().Changed("image-repo") {
-					imageRepo = repo
-				}
-				if !cmd.Flags().Changed("image-tag") {
-					imageTag = tag
-				}
-			}
-
-			if !cmd.Flags().Changed("ledger-id") || !cmd.Flags().Changed("chain-id") {
-				lid, cid, err := consensus.ResolveLedgerAndChain(flagDeploymentPkgDir)
-				if err != nil {
-					return errorx.ExternalError.Wrap(err, "resolving ledger/chain from deployment package")
-				}
-				if !cmd.Flags().Changed("ledger-id") && lid != "" {
-					ledgerId = lid
-				}
-				if !cmd.Flags().Changed("chain-id") && cid != "" {
-					chainId = cid
-				}
-			}
+		sr, err := common.Setup()
+		if err != nil {
+			return err
 		}
 
-		if imageRepo == "" || imageTag == "" {
-			return errorx.IllegalArgument.New("--image-repo and --image-tag are required when --deployment-package-dir is not provided")
-		}
-		if ledgerId == "" {
-			return errorx.IllegalArgument.New("--ledger-id is required when --deployment-package-dir is not provided")
+		handler, err := cnbll.NewHandlerFactory(sr.Runtime)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to initialise consensus-node intent handler")
 		}
 
-		inputs := models.ConsensusNodeInputs{
-			Namespace:            flagNamespace,
-			OrbitName:            flagNamespace,
-			NodeId:               flagNodeId,
-			AccountId:            flagAccountId,
-			Weight:               flagWeight,
-			LedgerId:             ledgerId,
-			ChainId:              chainId,
-			ConsensusImageRepo:   imageRepo,
-			ConsensusImageTag:    imageTag,
-			DeploymentPackageDir: flagDeploymentPkgDir,
-			GrpcTlsSecret:        flagGrpcTlsSecret,
-			SigningSecret:        flagSigningSecret,
-			HapiAppSecret:        flagHapiAppSecret,
+		force, err := common.FlagForce().Value(cmd, args)
+		if err != nil {
+			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagForce().Name)
+		}
+
+		intent := models.Intent{
+			Action: models.ActionInstall,
+			Target: models.TargetConsensusNode,
+		}
+
+		inputs := models.UserInputs[models.ConsensusNodeInputs]{
+			Common: models.CommonInputs{
+				NodeType: models.NodeTypeConsensus,
+				Force:    force,
+			},
+			Custom: models.ConsensusNodeInputs{
+				Namespace:            flagNamespace,
+				NodeId:               flagNodeId,
+				AccountId:            flagAccountId,
+				Weight:               flagWeight,
+				LedgerId:             flagLedgerId,
+				ChainId:              flagChainId,
+				ConsensusImageRepo:   flagImageRepo,
+				ConsensusImageTag:    flagImageTag,
+				DeploymentPackageDir: flagDeploymentPkgDir,
+				GrpcTlsSecret:        flagGrpcTlsSecret,
+				SigningSecret:        flagSigningSecret,
+				HapiAppSecret:        flagHapiAppSecret,
+				UpgradeOperator:      flagUpgradeOperator,
+			},
 		}
 
 		logx.As().Info().
-			Int64("nodeId", inputs.NodeId).
-			Str("orbit", inputs.OrbitName).
-			Str("namespace", inputs.Namespace).
+			Int64("nodeId", inputs.Custom.NodeId).
+			Str("namespace", inputs.Custom.Namespace).
 			Msg("Installing consensus node")
 
-		wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").
-			Steps(
-				steps.InstallSoloOperator(flagUpgradeOperator),
-				steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
-				steps.PrecheckOperatorRunning(),
-				steps.PrecheckOperatorVersion(),
-				steps.PrecheckConsensusSecrets(inputs),
-				steps.EnsureOrbit(inputs),
-				steps.EnsureConfigCRs(inputs),
-				steps.CreateConsensusCapsule(inputs),
-			)
+		ac, err := handler.ForAction(intent.Action)
+		if err != nil {
+			return err
+		}
 
-		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+			return ac.HandleIntent(cmd.Context(), intent, inputs)
+		}); err != nil {
 			return err
 		}
 
 		logx.As().Info().
-			Int64("nodeId", inputs.NodeId).
+			Int64("nodeId", inputs.Custom.NodeId).
 			Msg("Successfully installed consensus node")
 
 		return nil

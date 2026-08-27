@@ -5,14 +5,11 @@ package steps
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
-	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -26,20 +23,31 @@ const (
 	CreateConsensusCapsuleStepId = "create-consensus-capsule"
 )
 
-func readDefault(path string) (string, error) {
-	b, err := templates.Files.ReadFile("files/" + path)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+// CapsuleKubeClient is the subset of *kube.Client used by the consensus capsule
+// steps. Depending on this narrow interface (rather than *kube.Client) lets the
+// steps be unit-tested with a fake, mirroring reality.ConsensusKubeClient.
+type CapsuleKubeClient interface {
+	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
+	ApplyTyped(ctx context.Context, obj runtime.Object) error
+}
+
+// CapsuleKubeProvider resolves a CapsuleKubeClient at step-execution time,
+// following the step_cluster_* provider convention. Tests inject a fake.
+type CapsuleKubeProvider func(ctx context.Context) (CapsuleKubeClient, error)
+
+// DefaultCapsuleKubeProvider returns a live kube client. It ignores ctx (the
+// client is not context-scoped) but keeps the provider signature uniform.
+func DefaultCapsuleKubeProvider(context.Context) (CapsuleKubeClient, error) {
+	return kube.NewClient()
 }
 
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
-func EnsureOrbit(inputs models.ConsensusNodeInputs) automa.Builder {
+func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureOrbitStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			kc, err := kube.NewClient()
+			kc, err := provider(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -99,49 +107,31 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs) automa.Builder {
 		})
 }
 
-// resolveContent returns config file content using 2-tier precedence:
-// deployment package file > embedded default.
-func resolveContent(pkgPath, embeddedPath string) (string, error) {
-	if pkgPath != "" {
-		if b, err := os.ReadFile(pkgPath); err == nil {
-			return string(b), nil
-		}
-	}
-	return readDefault(embeddedPath)
-}
-
-// pkgFile returns a deployment-package-relative path if the dir is set, empty otherwise.
-func pkgFile(pkgDir string, relPath string) string {
-	if pkgDir == "" {
-		return ""
-	}
-	return filepath.Join(pkgDir, relPath)
-}
-
-// EnsureConfigCRs creates all 11 config CRs required by a ConsensusCapsule.
-// Resolution precedence: deployment package file > embedded default.
-func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
+// EnsureConfigCRs reconciles all 11 config CRs required by a ConsensusCapsule.
+// Config contents and their per-file source (package vs embedded) are resolved
+// by the BLL layer. Apply policy: create when missing; update when the source is
+// the deployment package; preserve deployed content when an embedded default
+// would otherwise overwrite it, unless force resets it to defaults.
+func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureConfigCRsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			kc, err := kube.NewClient()
+			kc, err := provider(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			scope := fmt.Sprintf("node%d", inputs.NodeId)
-			pkg := inputs.DeploymentPackageDir
+			scope := models.ConsensusNodeScope(inputs.NodeId)
 
 			type configEntry struct {
-				pkgRelPath   string
-				embeddedPath string
-				crName       string
-				kind         string
-				builder      func(scope, content, orbit, ns, name string) runtime.Object
+				key     string
+				content string
+				crName  string
+				kind    string
+				builder func(scope, content, orbit, ns, name string) runtime.Object
 			}
 
 			entries := []configEntry{
-				{"log4j2.xml", "consensus/log4j2.xml",
-					fmt.Sprintf("%s-log4j2", scope), "Log4j2Config",
+				{models.ConfigKeyLog4j2, inputs.ConfigLog4j2, fmt.Sprintf("%s-log4j2", scope), "Log4j2Config",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.Log4j2Config{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "Log4j2Config"},
@@ -149,8 +139,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.Log4j2ConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"settings.txt", "consensus/settings.txt",
-					fmt.Sprintf("%s-settings", scope), "NodeSettings",
+				{models.ConfigKeySettings, inputs.ConfigSettings, fmt.Sprintf("%s-settings", scope), "NodeSettings",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.NodeSettings{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "NodeSettings"},
@@ -158,8 +147,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.NodeSettingsSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/application.properties", "consensus/application.properties",
-					fmt.Sprintf("%s-appprops", scope), "ApplicationProperties",
+				{models.ConfigKeyAppProperties, inputs.ConfigAppProperties, fmt.Sprintf("%s-appprops", scope), "ApplicationProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApplicationProperties{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApplicationProperties"},
@@ -167,8 +155,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ApplicationPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/application-override.properties", "consensus/application-override.properties",
-					fmt.Sprintf("%s-appoverride", scope), "ApplicationOverrideProperties",
+				{models.ConfigKeyAppOverride, inputs.ConfigAppOverrideProperties, fmt.Sprintf("%s-appoverride", scope), "ApplicationOverrideProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApplicationOverrideProperties{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApplicationOverrideProperties"},
@@ -176,8 +163,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ApplicationOverridePropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/api-permission.properties", "consensus/api-permission.properties",
-					fmt.Sprintf("%s-apiperm", scope), "ApiPermissionProperties",
+				{models.ConfigKeyApiPermission, inputs.ConfigApiPermission, fmt.Sprintf("%s-apiperm", scope), "ApiPermissionProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApiPermissionProperties{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApiPermissionProperties"},
@@ -185,8 +171,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ApiPermissionPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/bootstrap.properties", "consensus/bootstrap.properties",
-					fmt.Sprintf("%s-bootstrap", scope), "BootstrapProperties",
+				{models.ConfigKeyBootstrap, inputs.ConfigBootstrap, fmt.Sprintf("%s-bootstrap", scope), "BootstrapProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.BootstrapProperties{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "BootstrapProperties"},
@@ -194,8 +179,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.BootstrapPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/node.properties", "consensus/node.properties",
-					fmt.Sprintf("%s-nodeprops", scope), "NodePropertiesConfig",
+				{models.ConfigKeyNodeProperties, inputs.ConfigNodeProperties, fmt.Sprintf("%s-nodeprops", scope), "NodePropertiesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.NodePropertiesConfig{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "NodePropertiesConfig"},
@@ -203,8 +187,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.NodePropertiesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/feeSchedules.json", "consensus/feeSchedules.json",
-					fmt.Sprintf("%s-feeschedules", scope), "FeeSchedules",
+				{models.ConfigKeyFeeSchedules, inputs.ConfigFeeSchedules, fmt.Sprintf("%s-feeschedules", scope), "FeeSchedules",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.FeeSchedules{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "FeeSchedules"},
@@ -212,8 +195,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.FeeSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/simpleFeesSchedules.json", "consensus/simpleFeesSchedules.json",
-					fmt.Sprintf("%s-simplefeesschedules", scope), "SimpleFeesSchedules",
+				{models.ConfigKeySimpleFeesSchedules, inputs.ConfigSimpleFeesSchedules, fmt.Sprintf("%s-simplefeesschedules", scope), "SimpleFeesSchedules",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.SimpleFeesSchedules{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "SimpleFeesSchedules"},
@@ -221,8 +203,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.SimpleFeesSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{"data/config/throttles.json", "consensus/throttles.json",
-					fmt.Sprintf("%s-throttles", scope), "ThrottlesConfig",
+				{models.ConfigKeyThrottles, inputs.ConfigThrottles, fmt.Sprintf("%s-throttles", scope), "ThrottlesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ThrottlesConfig{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ThrottlesConfig"},
@@ -230,9 +211,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 							Spec:       operatorv1alpha1.ThrottlesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
 					}},
-				{fmt.Sprintf("block-nodes/config/block-nodes-%d.json", inputs.NodeId),
-					"consensus/block-nodes.json",
-					fmt.Sprintf("%s-blocknodes", scope), "BlockNodesConfig",
+				{models.ConfigKeyBlockNodes, inputs.ConfigBlockNodes, fmt.Sprintf("%s-blocknodes", scope), "BlockNodesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.BlockNodesConfig{
 							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "BlockNodesConfig"},
@@ -242,26 +221,79 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 					}},
 			}
 
-			for _, e := range entries {
-				content, err := resolveContent(pkgFile(pkg, e.pkgRelPath), e.embeddedPath)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
+			l := logx.As()
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 
-				obj := e.builder(scope, content, inputs.OrbitName, inputs.Namespace, e.crName)
-				logx.As().Info().Str("name", e.crName).Str("kind", e.kind).Msg("Applying config CR")
-
+			apply := func(e configEntry) error {
+				obj := e.builder(scope, e.content, inputs.OrbitName, inputs.Namespace, e.crName)
 				if err := kc.ApplyTyped(ctx, obj); err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.Wrap(err, "failed to apply %s %s", e.kind, e.crName)))
+					return errorx.IllegalState.Wrap(err, "failed to apply %s %s", e.kind, e.crName)
 				}
+				return nil
 			}
 
-			logx.As().Info().Str("scope", scope).Int("count", len(entries)).Msg("All config CRs created")
+			for _, e := range entries {
+				if e.content == "" {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						errorx.IllegalState.New("config content for %s is empty — check deployment package or embedded defaults", e.kind)))
+				}
+
+				exists, err := kc.ResourceExists(ctx, apiVersion, e.kind, inputs.Namespace, e.crName)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						errorx.IllegalState.Wrap(err, "failed to check %s %s", e.kind, e.crName)))
+				}
+
+				if !exists {
+					if err := apply(e); err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+					l.Info().Str("name", e.crName).Str("kind", e.kind).Msg("Created config CR")
+					continue
+				}
+
+				deployed, err := kc.GetResourceNestedString(ctx, apiVersion, e.kind, inputs.Namespace, e.crName, "spec", "content")
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						errorx.IllegalState.Wrap(err, "failed to read deployed %s %s", e.kind, e.crName)))
+				}
+
+				if deployed == e.content {
+					l.Debug().Str("name", e.crName).Str("kind", e.kind).Msg("Config CR unchanged; skipping")
+					continue
+				}
+
+				// The resolved content differs from what is deployed. An explicit
+				// package source is authoritative and applies. An implicit embedded
+				// default must not silently overwrite operator config — refuse unless
+				// forced (which resets to defaults on purpose).
+				if inputs.ConfigSources[e.key] == models.ConfigSourcePackage {
+					if err := apply(e); err != nil {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+					}
+					l.Info().Str("name", e.crName).Str("kind", e.kind).Msg("Updated config CR from deployment package")
+					continue
+				}
+
+				if !force {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(
+						errorx.IllegalArgument.New(
+							"refusing to overwrite deployed config %q with embedded defaults — "+
+								"re-run with --deployment-package-dir to keep it, or --force to reset to defaults",
+							e.crName)))
+				}
+
+				if err := apply(e); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+				l.Warn().Str("name", e.crName).Str("kind", e.kind).Msg("Reset config CR to embedded defaults (--force)")
+			}
+
+			logx.As().Info().Str("scope", scope).Int("count", len(entries)).Msg("All config CRs reconciled")
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Creating all 11 config CRs")
+			notify.As().StepStart(ctx, stp, "Reconciling all 11 config CRs")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
@@ -273,16 +305,16 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs) automa.Builder {
 }
 
 // CreateConsensusCapsule creates the ConsensusCapsule CR.
-func CreateConsensusCapsule(inputs models.ConsensusNodeInputs) automa.Builder {
+func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateConsensusCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			kc, err := kube.NewClient()
+			kc, err := provider(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			scope := fmt.Sprintf("node%d", inputs.NodeId)
-			capsuleName := fmt.Sprintf("%s-consensus-%d", inputs.OrbitName, inputs.NodeId)
+			scope := models.ConsensusNodeScope(inputs.NodeId)
+			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
 			capsule := &operatorv1alpha1.ConsensusCapsule{
 				TypeMeta: metav1.TypeMeta{
