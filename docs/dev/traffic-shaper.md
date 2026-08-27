@@ -534,6 +534,20 @@ a minute after boot and every five minutes after, and is installed only while th
 config holds at least one name. A fixed interval, not the record TTL: stdlib
 `net.Resolver` does not report one.
 
+Lookups go through the node's own `/etc/resolv.conf` — host netns, as root, not
+cluster DNS. They run concurrently under a single two-second budget for the whole
+pass, so a slow resolver costs one round trip rather than N; sequentially, a
+handful of names behind a slow server would exhaust the budget and report
+perfectly reachable names as unresolvable. `Resolver` implementations must
+therefore be safe for concurrent use. Results are folded back in list order, not
+completion order, so warnings and the operator-facing error name things in the
+order they were written.
+
+Note the two release binaries can differ here: `linux/amd64` is built natively
+and may use libc/NSS, while `linux/arm64` is cross-compiled with cgo disabled and
+uses Go's own resolver. Plain DNS and the systemd-resolved stub behave the same on
+both; a name resolvable only through an NSS module (LDAP, mDNS) does not.
+
 It is a timer rather than a loop in the daemon because this table is node-level
 and exists on hosts with no block node, while the shaping monitor idles until it
 discovers a BN pod — and because the daemon takes the shared apply lock

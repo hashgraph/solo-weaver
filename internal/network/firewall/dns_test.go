@@ -10,23 +10,53 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 // fakeResolver answers from a fixed table. A name absent from answers fails, so
 // a test can model "this one host is unreachable" without affecting the others.
+//
+// Guarded by a mutex because resolveFQDNs looks names up concurrently; without
+// it both the answers read and the call counter race under -race.
 type fakeResolver struct {
+	mu      sync.Mutex
 	answers map[string][]string
 	// calls counts lookups, so a test can assert the resolver was consulted (or
 	// not) rather than inferring it from the rendered output.
 	calls int
+	// delay, when set, is slept per lookup so a test can show that N names cost
+	// one round trip of wall time rather than N.
+	delay time.Duration
+}
+
+// setAnswers replaces the table between applies, under the same lock the
+// lookups take.
+func (f *fakeResolver) setAnswers(a map[string][]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answers = a
+}
+
+func (f *fakeResolver) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 func (f *fakeResolver) LookupIPv4(_ context.Context, host string) ([]netip.Addr, error) {
+	f.mu.Lock()
 	f.calls++
 	ips, ok := f.answers[host]
+	delay := f.delay
+	f.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	if !ok {
 		return nil, errors.New("no such host")
 	}
@@ -154,7 +184,7 @@ func TestFQDN_AllNamesUnresolvableIsRefusedEvenOnRefresh(t *testing.T) {
 	// The name stops resolving and its cache entry is lost, so nothing is left to
 	// render. An empty @mgmt_addrs under the default-drop input chain is a
 	// lock-out, so even the tolerant refresh path must refuse it.
-	res.answers = map[string][]string{}
+	res.setAnswers(map[string][]string{})
 	require.NoError(t, os.Remove(m.dnsCachePath))
 
 	err := m.RefreshDNS(context.Background())
@@ -177,7 +207,7 @@ func TestFQDN_PartialFailureKeepsEachNameSeparate(t *testing.T) {
 	// One name rotates, the other stops resolving entirely. This is the case a
 	// merged set cannot represent: without per-name attribution, keeping the
 	// failed name's address means pinning the rotated name's old one too.
-	res.answers = map[string][]string{"jump.corp.example.com": {"192.0.2.99"}}
+	res.setAnswers(map[string][]string{"jump.corp.example.com": {"192.0.2.99"}})
 	require.NoError(t, m.RefreshDNS(context.Background()))
 
 	nft := readNft(t, nftPath)
@@ -206,7 +236,7 @@ func TestFQDN_RefreshIsANoOpWhenAddressesAreUnchanged(t *testing.T) {
 	require.Equal(t, 1, applies, "an unchanged resolution must not reload the kernel")
 	require.Equal(t, nftBefore, readNft(t, nftPath))
 	require.NoFileExists(t, prevPath(m), "a skipped refresh must not burn the retained generation")
-	require.Greater(t, res.calls, 1, "the resolver must still be consulted")
+	require.Greater(t, res.callCount(), 1, "the resolver must still be consulted")
 }
 
 func TestFQDN_CacheSurvivesAndIsPruned(t *testing.T) {
@@ -288,7 +318,7 @@ func TestFQDN_LiteralOnlyTableGetsNoTimerAndNoResolver(t *testing.T) {
 
 	require.NoError(t, m.Apply(context.Background(), sampleTable()))
 
-	require.Equal(t, 0, res.calls, "a literal-only allowlist must not touch the resolver")
+	require.Equal(t, 0, res.callCount(), "a literal-only allowlist must not touch the resolver")
 	require.Equal(t, []bool{false}, *timerWants, "and must carry no refresh timer")
 	require.NoFileExists(t, m.dnsCachePath)
 }
@@ -376,4 +406,61 @@ func TestFQDN_FromFileRejectsNamesOutsideMgmt(t *testing.T) {
 	_, err = ParseConfig(withMgmt("10.0.0.0/8", "bad.corp.example.com"))
 	require.Error(t, err, "a name in the block list must be rejected on the file path too")
 	require.Contains(t, err.Error(), "bad.corp.example.com")
+}
+
+func TestFQDN_NamesAreResolvedConcurrently(t *testing.T) {
+	const perLookup = 150 * time.Millisecond
+
+	r := &fakeRunner{}
+	res := &fakeResolver{
+		delay: perLookup,
+		answers: map[string][]string{
+			"a.corp.example.com": {"192.0.2.1"},
+			"b.corp.example.com": {"192.0.2.2"},
+			"c.corp.example.com": {"192.0.2.3"},
+			"d.corp.example.com": {"192.0.2.4"},
+		},
+	}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{
+		"a.corp.example.com", "b.corp.example.com", "c.corp.example.com", "d.corp.example.com",
+	}
+
+	start := time.Now()
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	elapsed := time.Since(start)
+
+	// resolveTimeout budgets the whole pass, not each name. Sequentially these
+	// four would cost 600ms and a slower resolver would blow the budget, failing
+	// names that are perfectly reachable.
+	require.Less(t, elapsed, 3*perLookup,
+		"four names must cost roughly one round trip, not four")
+
+	nft := readNft(t, nftPath)
+	for _, want := range []string{"192.0.2.1/32", "192.0.2.2/32", "192.0.2.3/32", "192.0.2.4/32"} {
+		require.Contains(t, nft, want)
+	}
+}
+
+func TestFQDN_WarningsFollowListOrderNotCompletionOrder(t *testing.T) {
+	r := &fakeRunner{}
+	// None resolve, so all four land in `missing` — which is what the operator
+	// error quotes. Concurrent lookups finish in arbitrary order, so the fold-back
+	// has to re-impose the order the operator wrote.
+	res := &fakeResolver{answers: map[string][]string{}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"10.0.0.0/8", "z.corp.example.com", "a.corp.example.com", "m.corp.example.com"}
+
+	for i := 0; i < 20; i++ {
+		err := m.Apply(context.Background(), tbl)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "[z.corp.example.com a.corp.example.com m.corp.example.com]",
+			"unresolved names must be reported in the order they were written")
+	}
 }

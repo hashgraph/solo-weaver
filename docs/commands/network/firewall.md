@@ -441,6 +441,37 @@ disturbed — at which point the files on disk are already correct and only the 
 The interval is fixed rather than driven by the record's TTL. Five minutes sits inside the
 30–300s band these records normally use.
 
+### Where resolution happens
+
+Names are resolved **by this node**, through its own `/etc/resolv.conf`, by the CLI running
+as root in the host network namespace. No extra configuration: if `getent hosts <name>` works
+on the node, so does the allowlist entry.
+
+```bash
+getent hosts jump.corp.example.com    # if this resolves, the firewall entry will too
+```
+
+Two consequences worth knowing:
+
+- **This is not cluster DNS.** The lookup does not go through CoreDNS, so a
+  `*.svc.cluster.local` name will not resolve here. That is the right behaviour for a
+  management allowlist — the hosts in it are outside the cluster by definition.
+- **An `/etc/hosts` entry is honoured**, and pinning a name there is the recommended
+  mitigation for a high-value node, since it takes the answer out of a remote party's hands.
+
+All names are looked up at once rather than one after another, and the whole pass shares a
+two-second budget. A slow resolver therefore costs one round trip regardless of how many
+names are in the list.
+
+> **`arm64` caveat.** The `linux/amd64` build is compiled natively and can use the system
+> resolver (libc/NSS); the `linux/arm64` build is cross-compiled with cgo disabled and so
+> uses Go's own resolver, which reads `/etc/hosts` and `/etc/resolv.conf` directly. Ordinary
+> DNS and `systemd-resolved` behave identically on both — Debian and Ubuntu point
+> `resolv.conf` at the `127.0.0.53` stub, which speaks DNS. The difference only shows up for
+> a name resolvable *solely* through an NSS module, such as LDAP-backed hosts or mDNS
+> `.local`: those work on `amd64` and may not on `arm64`. Use an address or an `/etc/hosts`
+> entry for such a name.
+
 ### When resolution fails
 
 Per name, never all-or-nothing — one unreachable host does not freeze the others:

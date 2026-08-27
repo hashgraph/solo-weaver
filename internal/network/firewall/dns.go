@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/automa-saga/errx"
@@ -29,6 +30,10 @@ const resolveTimeout = 2 * time.Second
 // Resolver looks up the IPv4 addresses of a domain name. It is an interface for
 // the same reason Runner is: the package must build and test on any platform,
 // against fixed answers, without touching the host's resolver.
+//
+// Implementations must be safe for concurrent use — resolveFQDNs looks every
+// name up at once, so that a list of names costs one round trip of wall time
+// rather than N.
 type Resolver interface {
 	LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error)
 }
@@ -165,10 +170,29 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 
-	for _, name := range names {
-		addrs, err := m.resolver.LookupIPv4(ctx, name)
-		if err == nil && len(addrs) > 0 {
-			res.byName[name] = elementsFor(addrs)
+	// Concurrently, because resolveTimeout budgets the whole pass rather than
+	// each name: sequentially, a handful of names behind a slow resolver would
+	// exhaust it and report every name after the first few as unresolvable. Each
+	// goroutine owns one slot, so no locking is needed.
+	answers := make([]struct {
+		addrs []netip.Addr
+		err   error
+	}, len(names))
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			answers[i].addrs, answers[i].err = m.resolver.LookupIPv4(ctx, name)
+		}()
+	}
+	wg.Wait()
+
+	// Folded back in list order, not completion order, so the warnings and the
+	// error message name things in the order the operator wrote them.
+	for i, name := range names {
+		if answers[i].err == nil && len(answers[i].addrs) > 0 {
+			res.byName[name] = elementsFor(answers[i].addrs)
 			res.fresh = true
 			cache[name] = dnsCacheEntry{IPs: res.byName[name], ResolvedAt: time.Now().UTC()}
 			continue
