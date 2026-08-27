@@ -8,8 +8,10 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/bll/consensus"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
@@ -29,16 +31,56 @@ var installCmd = &cobra.Command{
 			flagHapiAppSecret = scope + "-hapi-app-keys"
 		}
 
+		imageRepo := flagImageRepo
+		imageTag := flagImageTag
+		ledgerId := flagLedgerId
+		chainId := flagChainId
+
+		if flagDeploymentPkgDir != "" {
+			if !cmd.Flags().Changed("image-repo") || !cmd.Flags().Changed("image-tag") {
+				repo, tag, err := consensus.ResolveImageFromManifest(flagDeploymentPkgDir)
+				if err != nil {
+					return errorx.ExternalError.Wrap(err, "resolving image from deployment package")
+				}
+				if !cmd.Flags().Changed("image-repo") {
+					imageRepo = repo
+				}
+				if !cmd.Flags().Changed("image-tag") {
+					imageTag = tag
+				}
+			}
+
+			if !cmd.Flags().Changed("ledger-id") || !cmd.Flags().Changed("chain-id") {
+				lid, cid, err := consensus.ResolveLedgerAndChain(flagDeploymentPkgDir)
+				if err != nil {
+					return errorx.ExternalError.Wrap(err, "resolving ledger/chain from deployment package")
+				}
+				if !cmd.Flags().Changed("ledger-id") && lid != "" {
+					ledgerId = lid
+				}
+				if !cmd.Flags().Changed("chain-id") && cid != "" {
+					chainId = cid
+				}
+			}
+		}
+
+		if imageRepo == "" || imageTag == "" {
+			return errorx.IllegalArgument.New("--image-repo and --image-tag are required when --deployment-package-dir is not provided")
+		}
+		if ledgerId == "" {
+			return errorx.IllegalArgument.New("--ledger-id is required when --deployment-package-dir is not provided")
+		}
+
 		inputs := models.ConsensusNodeInputs{
 			Namespace:            flagNamespace,
 			OrbitName:            flagNamespace,
 			NodeId:               flagNodeId,
 			AccountId:            flagAccountId,
 			Weight:               flagWeight,
-			LedgerId:             flagLedgerId,
-			ChainId:              flagChainId,
-			ConsensusImageRepo:   flagImageRepo,
-			ConsensusImageTag:    flagImageTag,
+			LedgerId:             ledgerId,
+			ChainId:              chainId,
+			ConsensusImageRepo:   imageRepo,
+			ConsensusImageTag:    imageTag,
 			DeploymentPackageDir: flagDeploymentPkgDir,
 			GrpcTlsSecret:        flagGrpcTlsSecret,
 			SigningSecret:        flagSigningSecret,
