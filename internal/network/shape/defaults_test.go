@@ -86,6 +86,9 @@ func TestMergeExistingConfig_FreshInstall(t *testing.T) {
 	if classByName(t, classes, "partner").CreatedAt.IsZero() {
 		t.Error("partner created_at is zero on a fresh install")
 	}
+	if dev.DefaultClass != "reserve-egress" {
+		t.Errorf("device default class = %q, want the profile reserve-egress", dev.DefaultClass)
+	}
 }
 
 // TestMergeExistingConfig_UnchangedTrunkPreservesTuning is the #1037 regression
@@ -288,5 +291,183 @@ func TestMergeExistingConfig_IngressPreservesTuning(t *testing.T) {
 
 	if got := classByName(t, classes, "publisher").Rate; got != "700mbit" {
 		t.Errorf("publisher rate = %q, want the tuned 700mbit", got)
+	}
+}
+
+// TestMergeExistingConfig_PreservesDefaultClass: an operator pointed unmatched
+// egress traffic at a non-standard class, then ran a bare reconfigure. The
+// recorded default must survive rather than revert to reserve-egress.
+func TestMergeExistingConfig_PreservesDefaultClass(t *testing.T) {
+	existingDev, existingClasses := egressRegistry(t, "1gbit")
+	existingDev.DefaultClass = "public"
+
+	dev, classes, err := defaultEgressConfig("1gbit")
+	if err != nil {
+		t.Fatalf("defaultEgressConfig: %v", err)
+	}
+	mergeExistingConfig(dev, classes, existingDev, existingClasses)
+
+	if dev.DefaultClass != "public" {
+		t.Errorf("device default class = %q, want the recorded public", dev.DefaultClass)
+	}
+}
+
+// TestMergeExistingConfig_ChangedTrunkKeepsDefaultClass: a trunk-rate change
+// rebalances class bandwidth, it does not un-choose the default class — the two
+// are orthogonal operator decisions.
+func TestMergeExistingConfig_ChangedTrunkKeepsDefaultClass(t *testing.T) {
+	existingDev, existingClasses := egressRegistry(t, "1gbit")
+	existingDev.DefaultClass = "public"
+
+	dev, classes, err := defaultEgressConfig("500mbit")
+	if err != nil {
+		t.Fatalf("defaultEgressConfig: %v", err)
+	}
+	mergeExistingConfig(dev, classes, existingDev, existingClasses)
+
+	if dev.DefaultClass != "public" {
+		t.Errorf("device default class = %q, want the recorded public despite the trunk change", dev.DefaultClass)
+	}
+	if got := classByName(t, classes, "partner").Rate; got != "200mbit" {
+		t.Errorf("partner rate = %q, want 200mbit (40%% of the new trunk)", got)
+	}
+}
+
+// TestMergeExistingConfig_InvalidDefaultClassFallsBack: a recorded default the
+// provision does not write — the other direction's class, an unknown name, an
+// empty legacy field — falls back to the profile value, leaving a boot script
+// whose `htb default` has a class behind it.
+func TestMergeExistingConfig_InvalidDefaultClassFallsBack(t *testing.T) {
+	tests := []struct {
+		name     string
+		dir      string
+		recorded string
+	}{
+		{"egress: other direction's class", DirEgress, "publisher"},
+		{"egress: unknown class", DirEgress, "bogus"},
+		{"egress: empty legacy field", DirEgress, ""},
+		{"ingress: other direction's class", DirIngress, "reserve-egress"},
+		{"ingress: unknown class", DirIngress, "bogus"},
+		{"ingress: empty legacy field", DirIngress, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			build, want := defaultEgressConfig, "reserve-egress"
+			if tt.dir == DirIngress {
+				build, want = defaultIngressConfig, "reserve-ingress"
+			}
+
+			existingDev, existingClasses, err := build("1gbit")
+			if err != nil {
+				t.Fatalf("build existing: %v", err)
+			}
+			existingDev.DefaultClass = tt.recorded
+
+			dev, classes, err := build("1gbit")
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			mergeExistingConfig(dev, classes, existingDev, existingClasses)
+
+			if dev.DefaultClass != want {
+				t.Errorf("device default class = %q, want the profile %s", dev.DefaultClass, want)
+			}
+			if tt.dir != DirEgress {
+				return // ingress renders no boot script; the daemon replays it per pod
+			}
+			rendered, err := renderTcEgressScriptFromConfig("enp0s1", dev, classes)
+			if err != nil {
+				t.Fatalf("boot script render failed after the fallback: %v", err)
+			}
+			if !strings.Contains(rendered, "htb default 60") {
+				t.Errorf("boot script does not fall back to the profile default:\n%s", rendered)
+			}
+			if strings.Contains(rendered, "htb default 10") {
+				t.Errorf("boot script kept the dangling ingress minor:\n%s", rendered)
+			}
+		})
+	}
+}
+
+// TestMergeExistingConfig_DefaultClassDroppedFromProfile pins the guard on set
+// membership rather than validateDefaultClass: a class dropped from the profile
+// but left in classInfoMap still validates for the direction, yet nothing
+// writes it, so the boot script would carry a minor with nothing behind it.
+func TestMergeExistingConfig_DefaultClassDroppedFromProfile(t *testing.T) {
+	existingDev, existingClasses := egressRegistry(t, "1gbit")
+	existingDev.DefaultClass = "public"
+
+	dev, classes, err := defaultEgressConfig("1gbit")
+	if err != nil {
+		t.Fatalf("defaultEgressConfig: %v", err)
+	}
+	// Stand in for a release that drops public from egressProfile: the name is
+	// still known and still an egress class, so validateDefaultClass accepts it.
+	if err := validateDefaultClass("public", DirEgress); err != nil {
+		t.Fatalf("premise broken, public no longer validates for egress: %v", err)
+	}
+	pruned := make([]*ClassConfig, 0, len(classes))
+	for _, c := range classes {
+		if c.Name != "public" {
+			pruned = append(pruned, c)
+		}
+	}
+
+	mergeExistingConfig(dev, pruned, existingDev, existingClasses)
+
+	if dev.DefaultClass != "reserve-egress" {
+		t.Errorf("device default class = %q, want the profile reserve-egress: public is no longer provisioned", dev.DefaultClass)
+	}
+	rendered, err := renderTcEgressScriptFromConfig("enp0s1", dev, pruned)
+	if err != nil {
+		t.Fatalf("renderTcEgressScriptFromConfig: %v", err)
+	}
+	if strings.Contains(rendered, "htb default 50") {
+		t.Errorf("boot script points at a class it does not create:\n%s", rendered)
+	}
+}
+
+// TestMergeExistingConfig_IngressPreservesDefaultClass verifies ingress gets the
+// same protection through the shared provisionDefaults.
+func TestMergeExistingConfig_IngressPreservesDefaultClass(t *testing.T) {
+	existingDev, existingClasses, err := defaultIngressConfig("1gbit")
+	if err != nil {
+		t.Fatalf("defaultIngressConfig: %v", err)
+	}
+	existingDev.DefaultClass = "publisher"
+
+	dev, classes, err := defaultIngressConfig("1gbit")
+	if err != nil {
+		t.Fatalf("defaultIngressConfig: %v", err)
+	}
+	mergeExistingConfig(dev, classes, existingDev, existingClasses)
+
+	if dev.DefaultClass != "publisher" {
+		t.Errorf("device default class = %q, want the recorded publisher", dev.DefaultClass)
+	}
+}
+
+// TestMergeExistingConfig_BootScriptKeepsDefaultClass covers the boot-persistent
+// half: the rendered script must point at the recorded default's minor.
+func TestMergeExistingConfig_BootScriptKeepsDefaultClass(t *testing.T) {
+	existingDev, existingClasses := egressRegistry(t, "1gbit")
+	existingDev.DefaultClass = "public"
+
+	dev, classes, err := defaultEgressConfig("1gbit")
+	if err != nil {
+		t.Fatalf("defaultEgressConfig: %v", err)
+	}
+	mergeExistingConfig(dev, classes, existingDev, existingClasses)
+
+	rendered, err := renderTcEgressScriptFromConfig("enp0s1", dev, classes)
+	if err != nil {
+		t.Fatalf("renderTcEgressScriptFromConfig: %v", err)
+	}
+	// minor 50 is public; 60 is the profile default reserve-egress.
+	if !strings.Contains(rendered, "htb default 50") {
+		t.Errorf("boot script does not direct unmatched traffic at the recorded default:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "htb default 60") {
+		t.Errorf("boot script reverted the default class to the profile value:\n%s", rendered)
 	}
 }

@@ -95,6 +95,10 @@ func buildDefaultConfig(p defaultProfile, trunkRate string) (*DeviceConfig, []*C
 //
 //   - CreatedAt is carried over for every record that already exists — a
 //     re-provision updates the registry, it does not recreate it.
+//   - The device's default class is operator-owned: a recorded one survives,
+//     whatever the trunk rate does. One this provision no longer writes falls
+//     back to the profile value with a warning — kept, it would either fail the
+//     render or name a class the boot script never creates.
 //   - When the requested trunk rate is the same bandwidth as the one already
 //     recorded on the device, each class keeps its recorded rate/ceil/prio
 //     instead of being reset to the profile proportions. This is what makes
@@ -115,6 +119,17 @@ func mergeExistingConfig(dev *DeviceConfig, classes []*ClassConfig, existingDev 
 	}
 	if !existingDev.CreatedAt.IsZero() {
 		dev.CreatedAt = existingDev.CreatedAt
+	}
+	if existingDev.DefaultClass != "" {
+		if hasClassNamed(classes, existingDev.DefaultClass) {
+			dev.DefaultClass = existingDev.DefaultClass
+		} else {
+			logx.As().Warn().
+				Str("dir", dev.Dir).
+				Str("recorded", existingDev.DefaultClass).
+				Str("fallback", dev.DefaultClass).
+				Msg("recorded default class is not one of this device's classes; falling back to the profile default")
+		}
 	}
 	keepClassRates := sameBandwidth(existingDev.Rate, dev.Rate)
 	if keepClassRates {
@@ -146,6 +161,7 @@ func mergeExistingConfig(dev *DeviceConfig, classes []*ClassConfig, existingDev 
 	logx.As().Debug().
 		Str("dir", dev.Dir).
 		Str("trunkRate", dev.Rate).
+		Str("defaultClass", dev.DefaultClass).
 		Bool("preservedClassRates", keepClassRates).
 		Msg("folded existing shape registry records into re-provisioned defaults")
 }
@@ -166,6 +182,18 @@ func loadExistingConfig(dir string) (*DeviceConfig, []*ClassConfig, error) {
 		return nil, nil, err
 	}
 	return dev, classes, nil
+}
+
+// hasClassNamed reports whether classes contains a class of that name. The merge
+// gates the recorded default class on this rather than validateDefaultClass,
+// which still accepts a class dropped from the direction's profile.
+func hasClassNamed(classes []*ClassConfig, name string) bool {
+	for _, c := range classes {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // sameBandwidth reports whether two tc-style rate strings denote the same
