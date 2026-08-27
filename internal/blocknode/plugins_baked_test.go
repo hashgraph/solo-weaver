@@ -5,6 +5,7 @@ package blocknode
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -126,6 +127,53 @@ func TestInjectPluginsConfig_NoOverrideLeavesDefault(t *testing.T) {
 	out, err := m.injectPluginsConfig(in)
 	require.NoError(t, err)
 	assert.Equal(t, string(in), string(out), "default list must be left intact")
+}
+
+// ── renderDefaultValues: base template plugin default follows the version boundary ──
+//
+// Regression test for the gap left by #1021: that fix taught PluginListForPreset
+// (the --plugin-preset path) about the verification -> block-verification rename,
+// but the base template's own plugins.names default (used whenever no preset/
+// --plugins override applies) still hardcoded the old "verification" name. A
+// no-preset install/upgrade at chart >= 0.41.0 then requested a Maven artifact
+// the image no longer registers, and the resolve-plugins init container
+// crash-looped forever regardless of --timeout.
+func TestRenderDefaultValues_PluginNamesFollowVersionBoundary(t *testing.T) {
+	for _, profile := range []string{models.ProfileLocal, models.ProfileMainnet} {
+		t.Run(profile, func(t *testing.T) {
+			t.Run("chart 0.41.0 resolves block-verification, not verification", func(t *testing.T) {
+				m := &Manager{
+					blockNodeInputs: models.BlockNodeInputs{ChartVersion: "0.41.0"},
+					logger:          testLogger(),
+				}
+				out, err := m.renderDefaultValues(profile)
+				require.NoError(t, err)
+
+				var vals map[string]interface{}
+				require.NoError(t, yaml.Unmarshal(out, &vals))
+				names := vals["plugins"].(map[string]interface{})["names"].(string)
+
+				assertNoPluginNamed(t, names, "verification", profile, "0.41.0")
+				assert.Contains(t, names, "block-verification")
+			})
+
+			t.Run("chart below the boundary still gets verification", func(t *testing.T) {
+				m := &Manager{
+					blockNodeInputs: models.BlockNodeInputs{ChartVersion: "0.38.1"},
+					logger:          testLogger(),
+				}
+				out, err := m.renderDefaultValues(profile)
+				require.NoError(t, err)
+
+				var vals map[string]interface{}
+				require.NoError(t, yaml.Unmarshal(out, &vals))
+				names := vals["plugins"].(map[string]interface{})["names"].(string)
+
+				assert.NotContains(t, names, "block-verification")
+				assert.Contains(t, strings.Split(names, ","), "verification")
+			})
+		})
+	}
 }
 
 // ── Two-layer merge: prove the CHART ends up seeing an empty plugins.names ──────

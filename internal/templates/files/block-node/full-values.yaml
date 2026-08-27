@@ -89,7 +89,7 @@ blockNode:
 
 # Top-level plugins configuration for the block node chart.
 plugins:
-  names: "facility-messaging,block-access-service,health,server-status,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill"
+  names: "{{ .DefaultPluginNames }}"
   # image for resolving and downloading the above plugins, should have java 21+ and maven
   mavenImage: "maven:3-eclipse-temurin-25-alpine"
   # Third-party plugins with full Maven coordinates (groupId:artifactId:version).
