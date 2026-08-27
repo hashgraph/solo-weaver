@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,19 +97,27 @@ func sanitizeDetail(msg string) string {
 	return msg
 }
 
-// newFileOnlyLogger creates a zerolog.Logger that writes only to a log file
-// (no ConsoleWriter). Used by SuppressConsoleLogging.
-func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	fileWriter := &lumberjack.Logger{
+// newLogFileWriter returns the rotating log-file writer for cfg, or io.Discard
+// when cfg.FileLogging is false.
+func newLogFileWriter(cfg logx.LoggingConfig) io.Writer {
+	if !cfg.FileLogging {
+		return io.Discard
+	}
+	return &lumberjack.Logger{
 		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
 		MaxSize:    cfg.MaxSize,
 		MaxBackups: cfg.MaxBackups,
 		MaxAge:     cfg.MaxAge,
 		Compress:   cfg.Compress,
 	}
+}
 
+// newFileOnlyLogger creates a zerolog.Logger that writes only to the log file
+// (no ConsoleWriter). Used by SuppressConsoleLogging. With file logging
+// disabled events are discarded — the TUI owns the console in this mode.
+func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 	pid := os.Getpid()
-	return zerolog.New(fileWriter).With().
+	return zerolog.New(newLogFileWriter(cfg)).With().
 		Timestamp().
 		Int("pid", pid).
 		Str("version", version.Get().Version).
@@ -121,16 +130,8 @@ func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 // is used — i.e. stdout becomes an NDJSON stream. Used by SetJSONConsoleLogging
 // for --output json.
 func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	fileWriter := &lumberjack.Logger{
-		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
-		MaxSize:    cfg.MaxSize,
-		MaxBackups: cfg.MaxBackups,
-		MaxAge:     cfg.MaxAge,
-		Compress:   cfg.Compress,
-	}
-
 	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(os.Stdout, fileWriter)
+	mw := zerolog.MultiLevelWriter(os.Stdout, newLogFileWriter(cfg))
 	return zerolog.New(mw).With().
 		Timestamp().
 		Int("pid", pid).
@@ -153,18 +154,10 @@ func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
 // exists so piped, non-interactive runs of long workflows still show progress;
 // dropping the lines would blind them.
 func newStderrConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	fileWriter := &lumberjack.Logger{
-		Filename:   filepath.Join(cfg.Directory, cfg.Filename),
-		MaxSize:    cfg.MaxSize,
-		MaxBackups: cfg.MaxBackups,
-		MaxAge:     cfg.MaxAge,
-		Compress:   cfg.Compress,
-	}
-
 	console := zerolog.ConsoleWriter{Out: os.Stderr}
 
 	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(console, fileWriter)
+	mw := zerolog.MultiLevelWriter(console, newLogFileWriter(cfg))
 	return zerolog.New(mw).With().
 		Timestamp().
 		Int("pid", pid).

@@ -42,6 +42,10 @@ var (
 		Use:   "solo-provisioner-daemon",
 		Short: "Long-running daemon for Solo Provisioner host-level work",
 		Long:  "Long-lived foreground process started by the solo-provisioner-daemon.service systemd unit.",
+		// main() renders errors via doctor.CheckErr; no cobra error print or
+		// usage dump.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagVersion {
 				out, err := renderVersion(flagOutputFormat)
@@ -129,6 +133,14 @@ var (
 )
 
 func init() {
+	// Bad invocations keep cobra's error + usage output despite the silence
+	// flags; the error prints first so captured stderr leads with the cause.
+	rootCmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		c.PrintErrln(c.ErrPrefix(), err.Error())
+		c.Println(c.UsageString())
+		return err
+	})
+
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "Path to daemon.yaml (overrides the default /opt/solo/weaver/config/daemon.yaml)")
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Set log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVersion, "version", "v", false, "Print version and exit")

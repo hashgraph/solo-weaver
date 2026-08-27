@@ -52,6 +52,10 @@ var (
 		Use:   "solo-provisioner",
 		Short: "A user friendly tool to provision Hedera network components",
 		Long:  "Solo Provisioner - A user friendly tool to provision Hedera network components",
+		// main.go renders errors via doctor.CheckErr; no cobra error print or
+		// usage dump.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return common.RunPersistentPreRun(cmd, args)
 		},
@@ -87,6 +91,14 @@ func init() {
 	// Hardware checks override flag - hidden to discourage casual use
 	common.FlagSkipHardwareChecks().SetVarP(rootCmd, &flagSkipHardwareChecks, false)
 	_ = rootCmd.PersistentFlags().MarkHidden(common.FlagSkipHardwareChecks().Name)
+
+	// Bad invocations keep cobra's error + usage output despite the silence
+	// flags; the error prints first so captured stderr leads with the cause.
+	rootCmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		c.PrintErrln(c.ErrPrefix(), err.Error())
+		c.Println(c.UsageString())
+		return err
+	})
 
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false
@@ -199,7 +211,8 @@ func initConfig(ctx context.Context) {
 		logConfig.Level = flagLogLevel
 	}
 
-	// Always enable file logging regardless of config so every run produces a log file
+	// Enable file logging regardless of config; the appendability probe below
+	// drops it when the log file is not writable.
 	logConfig.FileLogging = true
 	if logConfig.Directory == "" {
 		logConfig.Directory = models.Paths().LogsDir
@@ -235,6 +248,14 @@ func initConfig(ctx context.Context) {
 	} else if statErr == nil && gidErr == nil {
 		_ = os.Chown(logFilePath, 0, svcGID)
 		_ = os.Chmod(logFilePath, models.DefaultFilePerm)
+	}
+	// An unprivileged run cannot append to the root-owned log file; lumberjack's
+	// fallback would rotate it aside (#1035). Probe appendability and drop file
+	// logging instead.
+	if f, appendErr := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0); appendErr == nil {
+		_ = f.Close()
+	} else {
+		logConfig.FileLogging = false
 	}
 	if logConfig.MaxSize == 0 {
 		logConfig.MaxSize = 50 // 50 MB

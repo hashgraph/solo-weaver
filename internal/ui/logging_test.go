@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestNewJSONConsoleLogger_EmitsJSON(t *testing.T) {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
 
-	cfg := logx.LoggingConfig{Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
+	cfg := logx.LoggingConfig{FileLogging: true, Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
 
 	// Capture stdout: newJSONConsoleLogger binds os.Stdout at construction, so
 	// swap it before building the logger, then restore before reading.
@@ -57,7 +58,7 @@ func TestNewStderrConsoleLogger_WritesToStderrNotStdout(t *testing.T) {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
 
-	cfg := logx.LoggingConfig{Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
+	cfg := logx.LoggingConfig{FileLogging: true, Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
 
 	// Both streams are swapped, so a line landing on the wrong one is visible
 	// rather than merely absent. The ConsoleWriter binds its Out at construction,
@@ -92,7 +93,7 @@ func TestNewStderrConsoleLogger_AlsoWritesTheLogFile(t *testing.T) {
 	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
 
 	dir := t.TempDir()
-	cfg := logx.LoggingConfig{Directory: dir, Filename: "test.log", MaxSize: 1}
+	cfg := logx.LoggingConfig{FileLogging: true, Directory: dir, Filename: "test.log", MaxSize: 1}
 
 	origErr := os.Stderr
 	_, wErr, err := os.Pipe()
@@ -107,6 +108,36 @@ func TestNewStderrConsoleLogger_AlsoWritesTheLogFile(t *testing.T) {
 	data, err := os.ReadFile(dir + "/test.log")
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "to-the-file")
+}
+
+// With FileLogging false, no logger may touch the log file.
+func TestFileLoggingDisabled_WritesNoFile(t *testing.T) {
+	origLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
+
+	dir := t.TempDir()
+	cfg := logx.LoggingConfig{Directory: dir, Filename: "test.log", MaxSize: 1} // FileLogging deliberately false
+
+	// The console halves bind os.Stdout/os.Stderr at construction; send them to
+	// /dev/null so the test output stays clean.
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
+	origOut, origErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = devNull, devNull
+	loggers := []zerolog.Logger{
+		newJSONConsoleLogger(cfg),
+		newStderrConsoleLogger(cfg),
+		newFileOnlyLogger(cfg),
+	}
+	os.Stdout, os.Stderr = origOut, origErr
+
+	for _, logger := range loggers {
+		logger.Info().Msg("must-not-hit-disk")
+	}
+
+	require.NoFileExists(t, filepath.Join(dir, "test.log"))
 }
 
 func TestSanitizeDetail_TruncatesLongMessages(t *testing.T) {

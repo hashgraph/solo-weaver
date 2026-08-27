@@ -27,7 +27,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/automa-saga/daemonkit"
 )
@@ -35,6 +37,10 @@ import (
 // cliBinName is the solo-provisioner CLI binary's file name. The daemon execs
 // the sibling CLI installed alongside its own binary.
 const cliBinName = "solo-provisioner"
+
+// maxInlineStderr caps the child stderr execMessage inlines into a single
+// journal field (#1035).
+const maxInlineStderr = 512
 
 // sudoBinCandidates are the absolute locations we look for the system sudo
 // binary, in order. We never exec a bare "sudo" off PATH so a caller cannot
@@ -319,14 +325,33 @@ func unprivilegedExecMessage(cliBin string, args []string, err error) string {
 
 // execMessage builds the human-readable failure message for a prefix (the sudo+
 // CLI or the bare CLI) and argv, preferring the CLI's stderr (available on a
-// non-zero exit) over the raw exec error.
+// non-zero exit) over the raw exec error. The inlined stderr is bounded by
+// maxInlineStderr.
 func execMessage(prefix string, args []string, err error) string {
 	base := prefix + " " + strings.Join(args, " ") + " failed"
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
-			return base + ": " + stderr
+			return base + ": " + truncateStderr(stderr, maxInlineStderr)
 		}
 	}
 	return base + ": " + err.Error()
+}
+
+// truncateStderr returns s unchanged when it fits within limit bytes; otherwise
+// it cuts at the last rune boundary within limit and appends a marker with the
+// kept/total byte counts.
+func truncateStderr(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	// Binary (non-UTF-8) stderr has no rune boundary to back up to; cut at the limit.
+	if limit-cut >= utf8.UTFMax {
+		cut = limit
+	}
+	return s[:cut] + " ... [stderr truncated at " + strconv.Itoa(cut) + "/" + strconv.Itoa(len(s)) + " bytes]"
 }
