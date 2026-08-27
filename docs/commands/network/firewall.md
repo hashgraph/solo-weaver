@@ -32,6 +32,7 @@ Membership (the addresses and ports inside a rule) is always editable from the C
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | The config currently applied |
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | The generation before it |
 | `/etc/solo-provisioner/network-weaver-host-firewall.nft` | The rendered ruleset replayed at boot |
+| `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | What each `mgmt` domain name last resolved to |
 
 Every mutation applies to the live kernel in one atomic `nft -f` transaction and rewrites both
 the `.nft` and the `.yaml` it was rendered from.
@@ -382,6 +383,89 @@ Both write the enable decision into the host's runtime state
   result straight out of the persisted YAML, so an urgent `add --name mgmt --cidr …` is not
   reverted by the next reconfigure.
 
+## Domain names in the `mgmt` allowlist
+
+`--mgmt-cidrs` takes fully-qualified domain names as well as addresses, mixed freely:
+
+```bash
+sudo solo-provisioner network firewall create \
+  --mgmt-cidrs 10.0.0.0/8,jump.corp.example.com \
+  --mgmt-ports 22
+```
+
+Each name is resolved to its A records and expanded to one `/32` per address before the
+ruleset is rendered, so `@mgmt_addrs` only ever holds literals. The config keeps the name:
+
+```bash
+sudo solo-provisioner network firewall show --output yaml   # jump.corp.example.com
+sudo nft list set inet weaver-host-firewall mgmt_addrs      # 192.0.2.7
+```
+
+**Only `mgmt` takes names.** `--blocked-cidrs`, `--pod-cidr`, `--in-cluster-*`, named allow
+rules, and every `network policy` flag stay address-only — a DNS answer must not be able to
+change what the block list drops or which pods reach host services.
+
+### What counts as a name
+
+| Input | Read as |
+|---|---|
+| `10.0.0.0/8` | Address — anything containing `/` |
+| `10.0.0.1` | Address, and **rejected**: supply the mask, `10.0.0.1/32` |
+| `jump.corp.example.com` | Name |
+| `jump.corp.example.com.` | Name — the trailing root dot is accepted and dropped |
+| `localhost` | **Rejected** — see below |
+
+Names are case-insensitive, so `Jump.Example.COM.` and `jump.example.com` are one entry, and
+`remove` matches across spellings.
+
+A bare hostname with no dot is rejected on purpose. It would resolve through the host's search
+domains, so the same config would admit different sources on different machines. IPv6 / AAAA
+records are not supported yet.
+
+### Keeping the addresses current
+
+Installing a name also installs `solo-provisioner-network-dns-refresh.timer`, which runs
+`refresh-dns` a minute after boot and every five minutes after that. Removing the last name
+removes the timer, and so does `delete --all`.
+
+```bash
+systemctl list-timers solo-provisioner-network-dns-refresh.timer
+sudo solo-provisioner network firewall refresh-dns   # or force it now
+```
+
+`refresh-dns` re-resolves every name and rewrites the ruleset **only when an address actually
+changed**, so a routine run costs one DNS query and no reload. That is the difference from
+`reapply`, which always reloads because its job is to re-assert a table something else
+disturbed — at which point the files on disk are already correct and only the kernel diverged.
+
+The interval is fixed rather than driven by the record's TTL. Five minutes sits inside the
+30–300s band these records normally use.
+
+### When resolution fails
+
+Per name, never all-or-nothing — one unreachable host does not freeze the others:
+
+| Situation | Behaviour |
+|---|---|
+| Name resolves | Addresses updated, cached in `…dns.json` |
+| Name stops resolving, was cached | **Last-known addresses kept**, warning logged |
+| Name has never resolved, on `create`/`add`/`set` | **Command fails.** Almost always a typo |
+| Name has never resolved, on `refresh-dns` | Contributes nothing, warning logged |
+| No name resolves and there are no addresses | **Refused.** An empty `@mgmt_addrs` under the default-drop input chain drops every new SSH connection, and there is no `--force` past it |
+
+The cache is a fallback, never the source of truth. Deleting it costs the last-known addresses
+and nothing else.
+
+> **DNS is part of your trust boundary now.** Whoever controls the answer for a name in this
+> list controls who can reach SSH on this host. On a high-value node, prefer an address, or
+> pin the name in `/etc/hosts` so the answer cannot be changed remotely. Note also that
+> resolution happens **on this host** — under split-horizon DNS it may see a different answer
+> than your workstation does.
+>
+> A reboot replays the last rendered `.nft`, so the host comes up admitting the addresses from
+> the last successful resolution until the timer first fires. That is deliberate: a boot that
+> depends on DNS is a boot that can lock you out.
+
 ## `reapply` — re-assert the persisted config
 
 Re-renders and re-applies what is on disk without changing it. It takes no arguments — it
@@ -402,6 +486,9 @@ Use it after something else on the host disturbed the table, or after recovering
 
 There is deliberately no way to point `reapply` at a file. To apply a file, that is
 `create --from-file <path> --force`.
+
+To pick up a changed DNS answer, that is `refresh-dns` — `reapply` re-resolves too, but it
+reloads the kernel whether anything changed or not.
 
 ### Recovering a corrupt config
 

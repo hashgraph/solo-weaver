@@ -27,20 +27,28 @@ type Manager struct {
 	// current one. Derived from configPath rather than injected, so a Manager
 	// wired to temp paths in a test retains alongside its own config without
 	// having to know the convention.
-	prevConfigPath  string
-	lockPath        string
-	applyViaService func(ctx context.Context) error
+	prevConfigPath string
+	// dnsCachePath holds the last successful answer for each FQDN in the
+	// management allowlist. Derived from configPath for the same reason
+	// prevConfigPath is.
+	dnsCachePath     string
+	lockPath         string
+	resolver         Resolver
+	applyViaService  func(ctx context.Context) error
+	syncRefreshTimer func(ctx context.Context, wanted bool) error
 }
 
 // Config customises a Manager. The zero value is not useful; prefer NewManager.
 // Tests inject a fake Runner, temp paths, and a no-op service func so the
 // package builds and runs on any platform.
 type Config struct {
-	Runner          Runner
-	NftPath         string
-	ConfigPath      string
-	LockPath        string
-	ApplyViaService func(ctx context.Context) error
+	Runner           Runner
+	Resolver         Resolver
+	NftPath          string
+	ConfigPath       string
+	LockPath         string
+	ApplyViaService  func(ctx context.Context) error
+	SyncRefreshTimer func(ctx context.Context, wanted bool) error
 }
 
 // NewManager returns a Manager wired to the live kernel and the production
@@ -53,14 +61,19 @@ func NewManager() *Manager {
 // its production default.
 func NewManagerWithConfig(cfg Config) *Manager {
 	m := &Manager{
-		runner:          cfg.Runner,
-		nftPath:         cfg.NftPath,
-		configPath:      cfg.ConfigPath,
-		lockPath:        cfg.LockPath,
-		applyViaService: cfg.ApplyViaService,
+		runner:           cfg.Runner,
+		resolver:         cfg.Resolver,
+		nftPath:          cfg.NftPath,
+		configPath:       cfg.ConfigPath,
+		lockPath:         cfg.LockPath,
+		applyViaService:  cfg.ApplyViaService,
+		syncRefreshTimer: cfg.SyncRefreshTimer,
 	}
 	if m.runner == nil {
 		m.runner = NewExecRunner()
+	}
+	if m.resolver == nil {
+		m.resolver = NewNetResolver()
 	}
 	if m.nftPath == "" {
 		m.nftPath = HostNftPath
@@ -69,11 +82,15 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		m.configPath = HostConfigPath
 	}
 	m.prevConfigPath = m.configPath + HostConfigPrevSuffix
+	m.dnsCachePath = dnsCachePathFor(m.configPath)
 	if m.lockPath == "" {
 		m.lockPath = LockPath
 	}
 	if m.applyViaService == nil {
 		m.applyViaService = defaultApplyViaService
+	}
+	if m.syncRefreshTimer == nil {
+		m.syncRefreshTimer = SyncDNSRefreshTimer
 	}
 	return m
 }
@@ -96,7 +113,7 @@ func (m *Manager) Create(ctx context.Context, t *Table, force bool) (bool, error
 			return nil
 		}
 		changed = true
-		return m.applyAndPersist(ctx, t)
+		return m.applyAndPersist(ctx, t, applyOpts{})
 	})
 	return changed, err
 }
@@ -110,7 +127,7 @@ func (m *Manager) Apply(ctx context.Context, t *Table) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
-	return m.withLock(func() error { return m.applyAndPersist(ctx, t) })
+	return m.withLock(func() error { return m.applyAndPersist(ctx, t, applyOpts{}) })
 }
 
 // CreateRule declares a named allow rule, so a rule can be brought into
@@ -156,7 +173,7 @@ func (m *Manager) CreateRule(ctx context.Context, r Rule, force bool) (bool, err
 			return err
 		}
 		changed = true
-		return m.applyAndPersist(ctx, t)
+		return m.applyAndPersist(ctx, t, applyOpts{})
 	})
 	return changed, err
 }
@@ -305,10 +322,15 @@ func (m *Manager) Delete(ctx context.Context) error {
 				return err
 			}
 		}
-		// The retained generation goes with them: left behind, a later `create` on
-		// this host would inherit a "previous" config belonging to a table that no
-		// longer exists.
-		for _, p := range []string{m.nftPath, m.configPath, m.prevConfigPath} {
+		// A table that no longer exists has nothing to refresh.
+		if err := m.syncRefreshTimer(ctx, false); err != nil {
+			return err
+		}
+		// The retained generation and the resolution cache go with them: left
+		// behind, a later `create` on this host would inherit a "previous" config —
+		// or a set of last-known addresses — belonging to a table that no longer
+		// exists.
+		for _, p := range []string{m.nftPath, m.configPath, m.prevConfigPath, m.dnsCachePath} {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				return errorx.ExternalError.Wrap(err, "failed to remove %s", p)
 			}
@@ -333,9 +355,43 @@ func (m *Manager) Delete(ctx context.Context) error {
 // management allowlist would be a lock-out. Validation is likewise load()'s,
 // which parses through ParseConfig and so runs Table.Validate.
 func (m *Manager) Reapply(ctx context.Context) error {
-	// A no-op mutation: the lock-out guard compares before against after and so
-	// can never fire here, even on a table whose allowlist is already empty.
-	return m.mutate(ctx, false, func(*Table) error { return nil })
+	// Not routed through mutate: the lock-out guard compares before against after
+	// and so could never fire on a no-op anyway, and this path needs an option
+	// mutate does not carry.
+	//
+	// It never short-circuits on an unchanged render. Re-asserting a table that
+	// something else flushed is the entire point of the verb, and in exactly that
+	// case the on-disk artifacts still match what is rendered — the kernel is
+	// what diverged. RefreshDNS is the variant that may skip.
+	//
+	// Unresolvable names are tolerated because this is also the recovery verb: a
+	// name that stopped resolving must not be what stands between an operator and
+	// re-asserting their firewall.
+	return m.withLock(func() error {
+		t, err := m.load()
+		if err != nil {
+			return err
+		}
+		return m.applyAndPersist(ctx, t, applyOpts{tolerateUnresolved: true})
+	})
+}
+
+// RefreshDNS re-resolves the management allowlist's domain names and re-applies
+// only if their addresses changed. It is what the refresh timer runs.
+//
+// Separate from Reapply because the two want opposite things from an unchanged
+// render: Reapply must reload the kernel regardless, since that is how a
+// third-party flush is repaired; this runs every few minutes and must not, or it
+// would reload the ruleset — and with it the shared oneshot's workload-policy
+// replay — 288 times a day to write bytes that were already there.
+func (m *Manager) RefreshDNS(ctx context.Context) error {
+	return m.withLock(func() error {
+		t, err := m.load()
+		if err != nil {
+			return err
+		}
+		return m.applyAndPersist(ctx, t, applyOpts{tolerateUnresolved: true, skipIfUnchanged: true})
+	})
 }
 
 // mutate loads the current table from disk, applies fn, then re-applies and
@@ -362,7 +418,7 @@ func (m *Manager) mutate(ctx context.Context, force bool, fn func(*Table) error)
 		if err := checkMgmtLockout(t, cidrsBefore, portsBefore, force); err != nil {
 			return err
 		}
-		return m.applyAndPersist(ctx, t)
+		return m.applyAndPersist(ctx, t, applyOpts{})
 	})
 }
 
@@ -420,6 +476,34 @@ func (m *Manager) mutateRule(ctx context.Context, name string, force bool, fn fu
 	})
 }
 
+// applyOpts tunes one apply. The zero value is the interactive-operator
+// behaviour: fail loudly on anything unresolvable, and always write.
+type applyOpts struct {
+	// tolerateUnresolved downgrades "this name has never resolved" from an error
+	// to a warning. Set only by the unattended refresh path: a timer that hard-
+	// fails on a decommissioned name left in the config would stop refreshing
+	// every other name too. An operator typing the name gets the error, because
+	// for them it is almost always a typo.
+	tolerateUnresolved bool
+	// skipIfUnchanged returns without dry-running, writing or restarting when the
+	// rendered artifacts already match what is on disk. Set by the refresh path,
+	// which runs every few minutes and would otherwise reload the ruleset — and
+	// with it the shared oneshot's workload-policy replay — on every tick.
+	skipIfUnchanged bool
+}
+
+// artifactsMatch reports whether both on-disk artifacts already hold exactly
+// what was just rendered. A read failure counts as "does not match", so an
+// unreadable artifact is rewritten rather than silently left stale.
+func (m *Manager) artifactsMatch(block, cfg string) bool {
+	onDiskNft, err := os.ReadFile(m.nftPath)
+	if err != nil || string(onDiskNft) != block {
+		return false
+	}
+	onDiskCfg, err := os.ReadFile(m.configPath)
+	return err == nil && string(onDiskCfg) == cfg
+}
+
 // applyAndPersist dry-runs the rendered ruleset, then atomically rewrites the
 // declarative config and the nft artifact, then restarts the systemd service via
 // DBus so the kernel picks up the new rules. The rendered file contains the
@@ -437,8 +521,33 @@ func (m *Manager) mutateRule(ctx context.Context, name string, force bool, fn fu
 // operator's intent recorded and the kernel merely stale, which the next apply
 // fixes. The reverse order would lose the intent while leaving the ruleset live,
 // and there would be nothing left to re-derive it from.
-func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
-	block, err := t.Render()
+func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts) error {
+	// Resolve first, then render a copy: the YAML below must record the names the
+	// operator wrote, while the nft document must carry only literals.
+	res := m.resolveFQDNs(ctx, t)
+	if len(res.missing) > 0 && !opts.tolerateUnresolved {
+		return errx.Decorate(
+			errorx.IllegalArgument.New(
+				"cannot resolve management allowlist %v, and no previously-resolved addresses are on record for them. "+
+					"Nothing was changed", res.missing),
+			reasons.InvalidArgument,
+			"Check name resolution on this host: `getent hosts "+firstOr(res.missing, "<name>")+"`",
+			"Supply an address instead of a name: `--mgmt-cidrs <cidr>`")
+	}
+	if len(res.missing) > 0 {
+		logx.As().Warn().Strs("fqdns", res.missing).Msg(
+			"management allowlist entries have never resolved and contribute no addresses to @mgmt_addrs")
+	}
+
+	rt, err := t.expandFQDNs(res.byName)
+	if err != nil {
+		return err
+	}
+	if err := checkResolvedMgmt(t, rt, res.missing); err != nil {
+		return err
+	}
+
+	block, err := rt.Render()
 	if err != nil {
 		return err
 	}
@@ -454,7 +563,7 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 
 	// The management accept renders even with empty sets, so applying a table
 	// with either half empty drops every new SSH connection to this host.
-	if len(t.Mgmt.CIDRs) == 0 || len(t.Mgmt.Ports) == 0 {
+	if len(rt.Mgmt.CIDRs) == 0 || len(rt.Mgmt.Ports) == 0 {
 		logx.As().Warn().Msg(
 			"the management allow rule matches nothing: its address or port list is empty and the input chain is " +
 				"policy drop, so new SSH connections to this host are dropped — your current session survives on " +
@@ -465,6 +574,13 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	cfg, err := FileConfigFromTable(t).Marshal()
 	if err != nil {
 		return err
+	}
+
+	if opts.skipIfUnchanged && m.artifactsMatch(block, string(cfg)) {
+		logx.As().Debug().Msg("host firewall artifacts already match the rendered table; nothing to apply")
+		// Still converge the timer: this is the path the timer's own runs take,
+		// so it is the only chance to notice the units were removed by hand.
+		return m.syncRefreshTimer(ctx, len(res.byName) > 0)
 	}
 
 	if err := m.check(ctx, block); err != nil {
@@ -478,6 +594,13 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table) error {
 	}
 
 	if err := atomicWriteFile(m.nftPath, block, 0o644); err != nil {
+		return err
+	}
+
+	// After the artifacts, before the kernel: the timer only ever re-runs what is
+	// already on disk, so installing it against a config that was never written
+	// would schedule a refresh of the wrong table.
+	if err := m.syncRefreshTimer(ctx, len(res.byName) > 0); err != nil {
 		return err
 	}
 
@@ -591,7 +714,7 @@ func (m *Manager) load() (*Table, error) {
 		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.nftPath)
 	}
 	logx.As().Info().Str("path", m.nftPath).Msg(
-		"no host firewall config file; recovering the reserved blocks from the rendered ruleset — named allow rules are not recoverable and must be re-declared with `network firewall create-allow-rule` and then re-populated with `network firewall add`")
+		"no host firewall config file; recovering the reserved blocks from the rendered ruleset — named allow rules are not recoverable and must be re-declared with `network firewall create-allow-rule` and then re-populated with `network firewall add`, and any management FQDN comes back as the addresses it last resolved to rather than the name")
 	return Parse(string(nft))
 }
 

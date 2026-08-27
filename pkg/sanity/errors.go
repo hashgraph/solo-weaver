@@ -22,6 +22,7 @@ const (
 	hintStorageSize = "Use a Kubernetes quantity greater than zero with unit Gi, Mi or Ti, e.g. 500Gi."
 	hintCIDR        = "Use CIDR notation with an explicit prefix length, e.g. 10.0.0.0/8."
 	hintIPv4CIDR    = "Use an IPv4 CIDR, e.g. 10.0.0.0/8 — IPv6 is not supported here."
+	hintFQDN        = "Use a fully-qualified domain name with at least one dot, e.g. jump.corp.example.com."
 	hintPort        = "Use a TCP/UDP port number between 1 and 65535."
 	hintInputFile   = "Check the path and that the file exists and is a regular file."
 

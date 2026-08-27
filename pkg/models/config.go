@@ -88,8 +88,10 @@ type HostConfig struct {
 // nft ruleset. CIDRs and ports are checked through pkg/sanity so a malformed
 // token can never reach the atomic nft transaction.
 func (c *HostConfig) Validate() error {
+	// The management allowlist also takes FQDNs, resolved to A records before the
+	// ruleset is rendered. Every other list here stays literal-only.
 	for _, cidr := range c.ManagementCIDRs {
-		if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+		if err := sanity.ValidateMgmtEntry(cidr); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid host managementCidr: %s", cidr)
 		}
 	}

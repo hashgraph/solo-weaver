@@ -20,3 +20,6 @@ func defaultApplyViaService(_ context.Context) error {
 
 // EnsureNetworkNftUnit is a no-op on non-Linux platforms.
 func EnsureNetworkNftUnit(_ context.Context) error { return nil }
+
+// SyncDNSRefreshTimer is a no-op on non-Linux platforms.
+func SyncDNSRefreshTimer(_ context.Context, _ bool) error { return nil }

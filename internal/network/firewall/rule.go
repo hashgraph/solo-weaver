@@ -124,10 +124,15 @@ func (r *Rule) Validate() error {
 	}
 
 	cidrFlag, portFlag := r.flagNames()
-	for _, c := range r.CIDRs {
-		if err := sanity.ValidateCIDR(c); err != nil {
+	for i, c := range r.CIDRs {
+		if err := r.validateEntry(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid %s %q", cidrFlag, c)
 		}
+		// Normalise here as well as in the mutators: a rule loaded from
+		// --from-file or the persisted YAML never passes through AddCIDRs or
+		// SetCIDRs, and an un-normalised name would compare unequal to the same
+		// name typed on the CLI.
+		r.CIDRs[i] = normalizeEntry(c)
 	}
 	for _, p := range r.Ports {
 		if err := validatePortSpec(p); err != nil {
@@ -215,14 +220,48 @@ func (r *Rule) flagNames() (cidrFlag, portFlag string) {
 	}
 }
 
+// acceptsFQDN reports whether this rule's address list may hold domain names as
+// well as CIDR literals. Only the management allowlist does: it is the one list
+// an operator maintains by hand, for hosts they reach interactively and often
+// know only by name. Every other rule — the block list, the in-cluster pod CIDR,
+// and operator allow rules — stays literal-only, so no resolver outage or DNS
+// answer can change what they match.
+func (r *Rule) acceptsFQDN() bool { return r.Name == RuleMgmt }
+
+// validateEntry checks one address-list entry for this rule. An entry holding a
+// '/' is a CIDR, and so is a maskless IP literal — routing the latter to
+// ValidateCIDR is what keeps it producing the "explicit prefix length" error
+// rather than being mistaken for a hostname and handed to the resolver.
+// Anything else is a domain name, accepted only where acceptsFQDN allows it.
+func (r *Rule) validateEntry(s string) error {
+	if !r.acceptsFQDN() || !sanity.IsFQDNEntry(s) {
+		return sanity.ValidateCIDR(s)
+	}
+	return sanity.ValidateFQDN(s)
+}
+
+// normalizeEntry canonicalises one address-list entry. CIDRs pass through
+// untouched; a domain name is lowercased and loses its trailing root dot.
+// DNS names are case-insensitive and `example.com.` names the same host as
+// `example.com`, but Contains, sortedDedupe and without all compare exact
+// strings — so without this the same host could occupy three slots in one list
+// and `remove` could silently match none of them.
+func normalizeEntry(s string) string {
+	if !sanity.IsFQDNEntry(s) {
+		return s
+	}
+	return strings.ToLower(strings.TrimSuffix(s, "."))
+}
+
 // AddCIDRs adds CIDRs to the rule, ignoring ones already present. The list is
 // kept sorted so a render is stable regardless of the order entries arrived in.
 func (r *Rule) AddCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
-		if err := sanity.ValidateCIDR(c); err != nil {
+		if err := r.validateEntry(c); err != nil {
 			cidrFlag, _ := r.flagNames()
 			return errorx.IllegalArgument.Wrap(err, "invalid %s %q", cidrFlag, c)
 		}
+		c = normalizeEntry(c)
 		if !sanity.Contains(c, r.CIDRs) {
 			r.CIDRs = append(r.CIDRs, c)
 		}
@@ -232,20 +271,28 @@ func (r *Rule) AddCIDRs(cidrs []string) error {
 }
 
 // RemoveCIDRs drops CIDRs from the rule. Removing an absent entry is a no-op.
+// Entries are normalised first so `remove --cidr Jump.Example.COM.` matches the
+// stored `jump.example.com` rather than silently removing nothing.
 func (r *Rule) RemoveCIDRs(cidrs []string) {
-	r.CIDRs = without(r.CIDRs, cidrs)
+	drop := make([]string, len(cidrs))
+	for i, c := range cidrs {
+		drop[i] = normalizeEntry(c)
+	}
+	r.CIDRs = without(r.CIDRs, drop)
 }
 
 // SetCIDRs atomically replaces the rule's full address list. An empty
 // (non-nil) slice clears it.
 func (r *Rule) SetCIDRs(cidrs []string) error {
-	for _, c := range cidrs {
-		if err := sanity.ValidateCIDR(c); err != nil {
+	out := make([]string, len(cidrs))
+	for i, c := range cidrs {
+		if err := r.validateEntry(c); err != nil {
 			cidrFlag, _ := r.flagNames()
 			return errorx.IllegalArgument.Wrap(err, "invalid %s %q", cidrFlag, c)
 		}
+		out[i] = normalizeEntry(c)
 	}
-	r.CIDRs = sortedDedupe(cidrs)
+	r.CIDRs = sortedDedupe(out)
 	return nil
 }
 
@@ -346,14 +393,20 @@ func sortPortSpecs(ports []string) {
 }
 
 // splitCIDRs partitions a validated mixed CIDR list into its IPv4 and IPv6
-// members, preserving order. Validate has already run, so a value that somehow
-// fails to classify is dropped from both lists rather than smuggled into the
-// wrong-family nft set (which nft would reject at apply time anyway).
-func splitCIDRs(cidrs []string) (v4, v6 []string) {
+// members, preserving order. Validate has already run, and every FQDN has been
+// expanded by then, so anything that fails to classify here is a bug — and is
+// reported as one rather than skipped.
+func splitCIDRs(cidrs []string) (v4, v6 []string, err error) {
 	for _, c := range cidrs {
-		isV6, err := sanity.CIDRIsIPv6(c)
-		if err != nil {
-			continue
+		isV6, cerr := sanity.CIDRIsIPv6(c)
+		if cerr != nil {
+			// Never skip. The only way to reach this with a non-CIDR entry is an
+			// FQDN that was not expanded to its resolved addresses first, and
+			// dropping it would render a set with no `elements` clause at all —
+			// a document nft accepts happily, and which under the input chain's
+			// default drop silently locks the host out.
+			return nil, nil, errorx.AssertionFailed.Wrap(cerr,
+				"cannot render %q as an address: it is neither a CIDR nor an expanded FQDN", c)
 		}
 		if isV6 {
 			v6 = append(v6, c)
@@ -361,7 +414,7 @@ func splitCIDRs(cidrs []string) (v4, v6 []string) {
 			v4 = append(v4, c)
 		}
 	}
-	return v4, v6
+	return v4, v6, nil
 }
 
 // without returns in with every element of drop removed, preserving order.

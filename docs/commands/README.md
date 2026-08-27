@@ -45,13 +45,14 @@ sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
 
 # NETWORK — HOST FIREWALL
-sudo solo-provisioner network firewall create [--mgmt-cidrs=<list>] [--from-file=<yaml>]
+sudo solo-provisioner network firewall create [--mgmt-cidrs=<cidr|fqdn,...>] [--from-file=<yaml>]
 sudo solo-provisioner network firewall create-allow-rule --name=<name> [--proto=tcp|udp] [--icmp-echo]
 sudo solo-provisioner network firewall add|remove --name=<name> [--cidr=<list>] [--port=<list>]
 sudo solo-provisioner network firewall set    --name=<name> [--cidrs=<list>] [--ports=<list>]
 sudo solo-provisioner network firewall show   [--name=<name>] [--output=yaml|commands]
 sudo solo-provisioner network firewall delete --name=<name> | --all
 sudo solo-provisioner network firewall reapply
+sudo solo-provisioner network firewall refresh-dns
 
 # NETWORK — WORKLOAD POLICY
 sudo solo-provisioner network policy create --name=<name> --stamp=<class>|--deny [--ports=<list>] [--cidrs=<list>]

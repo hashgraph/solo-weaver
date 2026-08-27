@@ -50,7 +50,10 @@ All sanitizers return `ErrInvalidName` when filtering leaves nothing.
 | `ValidateIdentifier` | `[A-Za-z0-9_-]`, non-empty | Namespace / release / profile names; anything that flows into Kubernetes object names. |
 | `ValidateUsername` | `[A-Za-z0-9_.-]`, non-empty, no `..`, no shell metachars | POSIX/Linux usernames (`SUDO_USER`, owner accounts). Permits `.` for `firstname.lastname` accounts. |
 | `ValidateOperationID` | `[A-Za-z0-9_.-]`, non-empty, no `..`, no shell metachars | Network-upgrade `operationId` (CR `spec.operationId`). Flows into `.bak` archive paths written as root. Permits `.` for dotted version strings (e.g. `upgrade-v0.76.0-20060102T150405Z`). |
-| `ValidateDNSName` | `[A-Za-z0-9.-]` matching RFC 952/1123 host pattern | Hostnames, FQDNs, cluster names derived from DNS. |
+| `ValidateDNSName` | `[A-Za-z0-9.-]` matching RFC 952/1123 host pattern | Loose hostname check with **no length or structure rules** — a dotless name, a trailing hyphen, a 300-char label and a 4000-char name all pass. Cluster names derived from DNS (see #443). Not a real FQDN check; use `ValidateFQDN` for anything that will be resolved. |
+| `ValidateFQDN` | RFC 1123 labels, allowlist `[A-Za-z0-9-]`, ≥1 dot, label ≤63, total ≤253, optional trailing root dot | A name that will actually be **resolved**. Rejects IP literals so a maskless address keeps producing `ValidateCIDR`'s "explicit prefix length" error, and rejects a dotless name so resolution cannot depend on the host's search domains. |
+| `IsFQDNEntry` | *(classifier, returns `bool`)* | The parse rule for a flag taking addresses **and** names: `/` means address, a parseable IP means address, anything else is a name. |
+| `ValidateMgmtEntry` | `ValidateIPv4CIDR` or `ValidateFQDN` | The host firewall's `mgmt` allowlist at the flag-shaped layer (CLI flag, `models.HostConfig`, TUI prompt). IPv4-only, like `ValidateIPv4CIDR`. The firewall package's rule layer is dual-stack and dispatches to `ValidateCIDR` instead. |
 | `ValidateHexToken` | `[0-9a-fA-F]`, length ≤ 4096 | Teleport join tokens and similar hex secrets. |
 | `ValidateHostPort` | hostname or hostname:port; no path components, no shell metachars | `host:port` style endpoints. Use `ValidateURL` for full URLs. |
 | `ValidateChartReference` | OCI URL / classic `repo/chart` / local path | Helm chart references. **Critical** for the block-node `Chart` field. |
@@ -67,7 +70,9 @@ Match by what the string represents in the real world, not by what it looks like
 - **Network-upgrade operationId** (CR `spec.operationId`, embedded in `.bak` paths) → `ValidateOperationID`
 - **Kernel module name** → `SanitizeModuleName` (current callers want the sanitized form for the modprobe call)
 - **Helm chart reference** → `ValidateChartReference`
-- **Hostname / FQDN / cluster DNS name** → `ValidateDNSName`
+- **Cluster name derived from DNS** (loose, may be dotless) → `ValidateDNSName`
+- **Domain name that will be resolved** → `ValidateFQDN`
+- **Host-firewall management allowlist entry** (CIDR *or* name) → `ValidateMgmtEntry`
 - **host:port endpoint** → `ValidateHostPort`
 - **Hex token / shared secret** → `ValidateHexToken`
 - **Filesystem path from a user** → `SanitizePath` (when you'll use the cleaned form) or `ValidateInputFile` (when you need the file to exist and be in an allowed root)
@@ -153,6 +158,13 @@ into a single regex unless you also change the error messages.
 - **Issue #600**: `Username` rejected `firstname.lastname` accounts (e.g.
   `nana.ec`). Fixed by permitting `.` in the username charset and reaffirming
   the existing `..` traversal check.
+- **Issue #1094**: `--mgmt-cidrs` gained FQDN support. `ValidateDNSName` was the
+  obvious candidate and was the wrong one — its `hostPattern` has no length or
+  structure rules at all, and tightening it would have broken the cluster-name
+  callers that need dotless values (#443). A separate `ValidateFQDN` was added
+  instead, per hard rule 1. Its charset is an **allowlist**, not a
+  `shellMetachars` denylist: that set does not cover `_ ! # % ' " \`, every one
+  of which would otherwise have reached the resolver and the nft renderer.
 - **Issue #602**: split the package into `Sanitize*` vs `Validate*` by behavior;
   dropped the `Filename`/`ModuleName`-as-aliases-of-`Identifier` shortcut so each
   domain can evolve independently; renamed `Username` → `ValidateUsername` to

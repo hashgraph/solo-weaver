@@ -25,6 +25,13 @@ import (
 // must be re-declared with `network firewall create-allow-rule` and then
 // re-populated with `network firewall add`.
 //
+// Domain names are lost here too, and worse than the allow rules are: the
+// rendered artifact only ever holds resolved addresses, so a management entry
+// authored as a name comes back as the `/32`s it last pointed at. The next
+// mutation then persists those into the config as the new source of truth,
+// replacing the name with a frozen snapshot. Recovering the config from
+// HostConfigPrevPath, when one exists, keeps the names.
+//
 // Both the current and the pre-allow-rules renderings are accepted, since an
 // upgraded host still has the old artifact on disk until its first mutation.
 func Parse(content string) (*Table, error) {

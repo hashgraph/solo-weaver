@@ -159,7 +159,7 @@ func init() {
 	setCmd.Flags().StringVar(&flagProto, "proto", "", "L4 protocol the rule's ports match: tcp or udp (allow rules only; empty restores the tcp default)")
 	setCmd.Flags().BoolVar(&flagICMPEcho, "icmp-echo", false, "Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only)")
 
-	setCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Full management allowlist (comma-separated; replaces the existing list)")
+	setCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Full management allowlist: IPv4 CIDRs and/or FQDNs (comma-separated; replaces the existing list)")
 	setCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Full operator block list (comma-separated; replaces the existing list)")
 	setCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", nil, "Full in-cluster host-service port list (comma-separated; replaces the existing list)")
 }
