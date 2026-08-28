@@ -28,7 +28,6 @@ type ConsensusNodeInputs struct {
 
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
 	SigningSecret string `json:"signingSecret,omitempty"`
-	HapiAppSecret string `json:"hapiAppSecret,omitempty"`
 
 	UpgradeOperator bool `json:"upgradeOperator,omitempty"`
 

@@ -252,7 +252,6 @@ type ConsensusNodeState struct {
 	DeploymentPkg string                     `yaml:"deploymentPackageDir,omitempty" json:"deploymentPackageDir,omitempty"`
 	GrpcTlsSecret string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
 	SigningSecret string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
-	HapiAppSecret string                     `yaml:"hapiAppSecret,omitempty" json:"hapiAppSecret,omitempty"`
 	ConfigHashes  map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
 	LastSync      htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
 }

@@ -208,7 +208,6 @@ func TestCreateConsensusCapsule_MatchesOperatorContract(t *testing.T) {
 		ConsensusImageTag:  "0.74.2",
 		GrpcTlsSecret:      "node0-grpc-tls-keys",
 		SigningSecret:      "node0-gossip-keys",
-		HapiAppSecret:      "node0-hapi-app-keys",
 	}
 
 	step, err := CreateConsensusCapsule(in, fake.provider()).Build()

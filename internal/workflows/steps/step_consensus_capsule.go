@@ -364,7 +364,6 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 					NodeId:                           inputs.NodeId,
 					AccountId:                        inputs.AccountId,
 					Weight:                           inputs.Weight,
-					HapiAppSecretsName:               inputs.HapiAppSecret,
 					Log4j2ConfigRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyLog4j2),
 					SettingsConfigRef:                models.ConsensusConfigCRName(scope, models.ConfigKeySettings),
 					ApplicationPropertiesRef:         models.ConsensusConfigCRName(scope, models.ConfigKeyAppProperties),

@@ -21,10 +21,11 @@ const PrecheckConsensusSecretsStepId = "precheck-consensus-secrets"
 func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs) automa.Builder {
 	return automa.NewStepBuilder().WithId(PrecheckConsensusSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// A consensus node needs exactly two secrets: gossip signing keys and
+			// the gRPC TLS key/cert.
 			secrets := map[string]string{
 				"--grpc-tls-secret": inputs.GrpcTlsSecret,
 				"--signing-secret":  inputs.SigningSecret,
-				"--hapi-app-secret": inputs.HapiAppSecret,
 			}
 
 			kc, err := kube.NewClient()

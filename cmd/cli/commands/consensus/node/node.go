@@ -21,7 +21,6 @@ var (
 	flagDeploymentPkgDir string
 	flagGrpcTlsSecret    string
 	flagSigningSecret    string
-	flagHapiAppSecret    string
 	flagUpgradeOperator  bool
 	flagProfile          string
 	flagReadyTimeout     time.Duration
@@ -46,7 +45,6 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
-	nodeCmd.PersistentFlags().StringVar(&flagHapiAppSecret, "hapi-app-secret", "", "Name of K8s Secret containing hedera.crt and hedera.key for HAPI")
 	nodeCmd.PersistentFlags().BoolVar(&flagUpgradeOperator, "upgrade-operator", false, "Upgrade solo-operator if installed version differs from the expected version")
 	nodeCmd.PersistentFlags().DurationVar(&flagReadyTimeout, "ready-timeout", 5*time.Minute, "How long to wait for the consensus node to become Running/Active after the CR is created (0 disables the wait)")
 	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
