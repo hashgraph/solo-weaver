@@ -66,6 +66,13 @@ func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 
 			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
 			if err != nil {
+				if errorx.IsOfType(err, helm.ErrChecksumMismatch) {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						err,
+						reasons.PreconditionNotMet,
+						"Confirm the chart is pulled from the official registry over a trusted network — a proxy rewriting responses can change the digest",
+						"If it persists the pinned checksum is stale (the chart was re-published at the same version) — regenerate it with `task chart-checksums` and update pkg/software/infrastructure-catalog.yaml, or report it to the solo-weaver maintainers")))
+				}
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
