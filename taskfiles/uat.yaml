@@ -50,6 +50,60 @@ tasks:
         echo '✓ Applied:'
         kubectl -n "$NS" get secret -l app=consensus-node
 
+  uat:consensus:ghcr-creds:
+    desc: "Inside VM: create a ghcr.io image-pull secret so consensus pods can pull the private UC sidecar image, attach it to the namespace's default ServiceAccount, and restart any ImagePullBackOff consensus pods. Select namespace with NS= (default hiero-network-1). Requires GITHUB_USER and GITHUB_ACCESS_TOKEN (set them in a root .env file; see .env.example)."
+    vars:
+      NS: '{{.NS | default "hiero-network-1"}}'
+      SECRET_NAME: '{{.SECRET_NAME | default "ghcr-creds"}}'
+    cmds:
+      - |
+        set -e
+        NS='{{.NS}}'; SECRET_NAME='{{.SECRET_NAME}}'
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
+
+        kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "▶ Creating docker-registry secret '$SECRET_NAME' for ghcr.io in namespace $NS ..."
+        kubectl -n "$NS" create secret docker-registry "$SECRET_NAME" \
+          --docker-server=ghcr.io \
+          --docker-username="$GITHUB_USER" \
+          --docker-password="$GITHUB_ACCESS_TOKEN" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        # The solo-operator runs each consensus pod under its own per-node
+        # ServiceAccount (hiero-network-1-consensus-<N>-sa), not "default", so we
+        # patch every consensus SA in the namespace plus "default" as a fallback.
+        # Note: these SAs are operator-created and may be re-reconciled, which can
+        # drop the patch — re-run this task after a reconcile if pulls start failing.
+        echo "▶ Attaching '$SECRET_NAME' to consensus ServiceAccounts in $NS ..."
+        SAS=$(kubectl -n "$NS" get sa -o name | grep -E 'consensus' || true)
+        SAS="$SAS serviceaccount/default"
+        for sa in $SAS; do
+          kubectl -n "$NS" patch "$sa" \
+            -p "{\"imagePullSecrets\":[{\"name\":\"$SECRET_NAME\"}]}" 2>/dev/null \
+            && echo "   patched $sa" || echo "   skipped $sa (not found)"
+        done
+
+        # The SA patch only affects newly-created pods, so recreate any consensus
+        # pods currently stuck pulling images so they pick up the pull secret.
+        echo "▶ Restarting consensus pods stuck on image pull (if any) ..."
+        STUCK=$(kubectl -n "$NS" get pods \
+          -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.state.waiting.reason}{"|"}{end}{"\t"}{$.metadata.name}{"\n"}{end}' 2>/dev/null \
+          | grep -E 'ImagePullBackOff|ErrImagePull' | awk '{print $NF}' | sort -u || true)
+        if [ -n "$STUCK" ]; then
+          for pod in $STUCK; do
+            echo "   deleting $pod"
+            kubectl -n "$NS" delete pod "$pod"
+          done
+        else
+          echo "   none found"
+        fi
+
+        echo ''
+        echo "✓ ghcr.io pull secret ready in $NS:"
+        kubectl -n "$NS" get secret "$SECRET_NAME"
+
   uat:setup:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
     interactive: true

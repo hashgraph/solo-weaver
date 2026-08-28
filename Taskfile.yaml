@@ -3,6 +3,10 @@
 version: 3
 silent: false
 output: prefixed
+
+# Optional local secrets (not committed; see .env.example). Provides
+# GITHUB_USER / GITHUB_ACCESS_TOKEN to tasks like uat:consensus:ghcr-creds.
+dotenv: ['.env']
 vars:
   OS: [ linux ]
   ARCH: [ amd64, arm64 ]
