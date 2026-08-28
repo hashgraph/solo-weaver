@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -126,7 +127,9 @@ func (h *InstallHandler) BuildWorkflow(
 			"Re-run install once the cluster is up — it fails fast if any prerequisite (operator, secrets) is still missing, without changing the cluster")
 	}
 
-	stepList := []automa.Builder{
+	// Group the steps into named phases so the TUI renders the collapsed
+	// phase + progress bar (like cluster install) rather than a flat step list.
+	preflight := phaseWorkflow("consensus-preflight", "Preflight Checks",
 		// The solo-operator is owned by `kube cluster install` (soloOperator.enabled),
 		// not installed here — consensus install is a pure consumer. These prechecks
 		// are the hard guard that the operator is present and the right version.
@@ -134,6 +137,9 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
+	)
+
+	deploy := phaseWorkflow("consensus-node-setup", "Consensus Node Setup",
 		steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),
 		steps.EnsureConfigCRs(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
@@ -142,11 +148,30 @@ func (h *InstallHandler) BuildWorkflow(
 		// unblocked out-of-band by `consensus network genesis`, and Manual nodes stay
 		// Stopped until `consensus node start`. Live readiness is `node status`' job.
 		steps.ReportConsensusCapsuleStatus(ins, steps.DefaultCapsuleKubeProvider),
-	}
+	)
 
-	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(stepList...)
+	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(preflight, deploy)
 
 	return wb, nil
+}
+
+// phaseWorkflow wraps a group of steps as a named TUI phase — emitting
+// PhaseStart/PhaseCompletion/PhaseFailure so the collapsed phase + progress bar
+// renders (mirroring internal/workflows/cluster.go's phase workflows).
+func phaseWorkflow(id, name string, builders ...automa.Builder) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId(id).
+		Steps(builders...).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().PhaseStart(ctx, stp, name)
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseFailure(ctx, stp, rpt, name)
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().PhaseCompletion(ctx, stp, rpt, name)
+		})
 }
 
 // HandleIntent delegates to the shared BaseHandler orchestration.
