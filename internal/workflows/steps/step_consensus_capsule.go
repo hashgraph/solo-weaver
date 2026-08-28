@@ -243,7 +243,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 						errorx.IllegalState.Wrap(err, "failed to apply %s %s", e.kind, e.crName),
 						reasons.PreconditionNotMet,
 						"Verify cluster connectivity and that your kubeconfig has RBAC to create/update solo-operator config CRs",
-						"Check the solo-operator is running: solo-provisioner consensus node install --upgrade-operator")
+						"Check the solo-operator is installed and running (it is provisioned by 'kube cluster install' with soloOperator.enabled)")
 				}
 				return nil
 			}

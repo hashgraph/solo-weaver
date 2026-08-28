@@ -34,12 +34,7 @@ func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
 		return nil, errorx.IllegalArgument.New("expected ConsensusRuntime to be *rsl.ConsensusNodeRuntimeResolver but got %T", runtime.ConsensusRuntime)
 	}
 
-	mr, ok := runtime.MachineRuntime.(*rsl.MachineRuntimeResolver)
-	if !ok {
-		return nil, errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", runtime.MachineRuntime)
-	}
-
-	installHandler, err := NewInstallHandler(base, cr, mr)
+	installHandler, err := NewInstallHandler(base, cr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create InstallHandler")
 	}
