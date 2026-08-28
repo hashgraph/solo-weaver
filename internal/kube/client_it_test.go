@@ -331,7 +331,14 @@ func TestWithCluster_WaitForContainer_Succeeds(t *testing.T) {
 	podName := "test-waitforcontainer-success"
 	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 
-	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 0", nil)
+	// Long-lived, because both waits below are for readiness and IsPodReady
+	// requires phase Running. A container that exits immediately is Ready for
+	// about a second and then Succeeded, at which point IsPodReady returns false
+	// forever -- so on a loaded runner, where scheduling and the image pull eat
+	// that window, the wait times out instead of observing the state it is
+	// asserting. Nothing here asserts the exit code; that is
+	// TestWithCluster_WaitForContainer_TerminatedNonZero's job.
+	podObj := createPodUnstructured(nsName, podName, "sleep 300", nil)
 	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 30*time.Second)
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 1*time.Minute)
 
@@ -354,8 +361,11 @@ func TestWithCluster_WaitForContainer_TerminatedNonZero(t *testing.T) {
 	podName := "test-waitforcontainer-fail"
 	podGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 
+	// Waits for the pod to exist, not to be Ready: this pod is meant to terminate,
+	// so its Ready window is the same ~1s race as above -- and readiness is not
+	// what this test asserts anyway. WaitForContainer below does the real wait.
 	podObj := createPodUnstructured(nsName, podName, "sleep 1; exit 2", nil)
-	createAndWait(t, c, podGVR, nsName, podObj, IsPodReady, 30*time.Second)
+	createAndWait(t, c, podGVR, nsName, podObj, IsPresent, 30*time.Second)
 	defer deleteAndWait(t, c, podGVR, nsName, podName, 1*time.Minute)
 
 	if err := c.WaitForContainer(ctx, nsName,
