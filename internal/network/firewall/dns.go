@@ -208,12 +208,17 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 
 	// Drop names the operator has since removed, so the file does not grow
 	// forever with hosts this firewall no longer mentions.
+	pruned := false
 	for name := range cache {
 		if _, ok := res.byName[name]; !ok {
 			delete(cache, name)
+			pruned = true
 		}
 	}
-	if res.fresh {
+	// Persist on a fresh answer OR a prune: a prune with the resolver down must
+	// still reach disk, or a name removed from the config during an outage
+	// lingers in the cache until the resolver happens to succeed again.
+	if res.fresh || pruned {
 		cache.save(m.dnsCachePath)
 	}
 

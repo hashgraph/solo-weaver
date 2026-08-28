@@ -112,8 +112,14 @@ func SyncDNSRefreshTimer(ctx context.Context, wanted bool) error {
 // removeDNSRefreshTimer stops, disables and deletes both units. Every step is
 // best-effort: this runs on the way to a successful apply, and a leftover unit
 // must not fail a firewall change.
+//
+// Skips only when NEITHER file is present. A crash between SyncDNSRefreshTimer's
+// two writes (service first, timer second), or a manual removal of just one
+// file, must not strand the other unit on disk forever.
 func removeDNSRefreshTimer(ctx context.Context) error {
-	if _, err := os.Stat(DNSRefreshTimerUnitPath); os.IsNotExist(err) {
+	_, errTimer := os.Stat(DNSRefreshTimerUnitPath)
+	_, errService := os.Stat(DNSRefreshServiceUnitPath)
+	if os.IsNotExist(errTimer) && os.IsNotExist(errService) {
 		return nil
 	}
 	if err := soos.StopService(ctx, DNSRefreshTimer); err != nil {
