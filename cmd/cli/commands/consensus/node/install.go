@@ -159,14 +159,22 @@ var installCmd = &cobra.Command{
 // the workflow TUI has closed and restored the terminal, so it persists in the
 // scrollback (unlike a transient step-detail line).
 func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string) {
-	genesisCmd := fmt.Sprintf("sudo solo-provisioner consensus network genesis --namespace %s", namespace)
-	if strings.TrimSpace(pkgDir) != "" {
-		genesisCmd += fmt.Sprintf(" --deployment-package-dir %s", pkgDir)
+	base := fmt.Sprintf("sudo solo-provisioner consensus network genesis --namespace %s", namespace)
+	pkg := strings.TrimSpace(pkgDir)
+	if pkg == "" {
+		pkg = "<deployment-package-dir>"
 	}
+
 	cmd.Println()
 	cmd.Println("Next steps:")
-	cmd.Println("  1. Generate the network genesis so the node(s) can leave genesis-init and start:")
-	cmd.Printf("       %s\n", genesisCmd)
+	cmd.Println("  1. Generate the network genesis so the node(s) can leave genesis-init and start.")
+	cmd.Println("     Choose one:")
+	cmd.Println("     a) Discovery (recommended for a fresh in-cluster network — operator writes cluster-DNS endpoints):")
+	cmd.Printf("          %s\n", base)
+	cmd.Println("     b) From a deployment package (mainnet/testnet/... — its genesis-network.json is applied verbatim):")
+	cmd.Printf("          %s --deployment-package-dir %s\n", base, pkg)
+	cmd.Println("     c) From a custom genesis file:")
+	cmd.Printf("          %s --genesis-file <path/to/genesis-network.json>\n", base)
 	cmd.Println("  2. Watch the node come up:")
 	cmd.Printf("       kubectl -n %s get consensuscapsules\n", namespace)
 	cmd.Println("     (A Manual start-policy node stays Stopped until 'consensus node start'.)")
