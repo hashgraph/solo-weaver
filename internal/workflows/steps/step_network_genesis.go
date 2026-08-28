@@ -119,9 +119,17 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 					return false, nil
 				}
 
+				// Pull the pods once so a not-yet-ready node's detail can show WHY
+				// (Pulling / ImagePullBackOff / PodInitializing / crash), instead of a
+				// bare phase. Best-effort: a list error just omits the annotation.
+				podList, _ := kc.List(ctx, kube.KindPod, namespace, kube.WaitOptions{})
+
 				// Only Auto-start nodes are expected to come up on their own after
 				// genesis. Manual-start nodes stay in Stopped until `consensus node
 				// start`, so they are excluded from the wait (reported, not blocked).
+				// A node is ready only at phase Active (pod Ready + platform ACTIVE);
+				// Running is transient (pod up, e.g. the uc sidecar started) and would
+				// be a false positive while the main container is still pulling.
 				autoTotal := 0
 				ready := 0
 				manual := 0
@@ -146,13 +154,18 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 					}
 
 					autoTotal++
-					details = append(details, fmt.Sprintf("%s=%s", name, phase))
+					detail := fmt.Sprintf("%s=%s", name, phase)
 					switch operatorv1alpha1.Phase(phase) {
-					case operatorv1alpha1.PhaseRunning, operatorv1alpha1.PhaseActive:
+					case operatorv1alpha1.PhaseActive:
 						ready++
 					case operatorv1alpha1.PhaseFailed:
 						failed = append(failed, name)
+					default:
+						if issues := podContainerIssues(podList, name); issues != "" {
+							detail += " [" + issues + "]"
+						}
 					}
+					details = append(details, detail)
 				}
 				sort.Strings(details)
 				notify.As().StepDetail(ctx, stp, fmt.Sprintf("auto nodes ready %d/%d (manual %d) — %s", ready, autoTotal, manual, strings.Join(details, " ")))
@@ -192,7 +205,7 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 					}
 					if time.Now().After(deadline) {
 						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-							errorx.IllegalState.New("timed out after %s waiting for all consensus nodes to become Running/Active", timeout),
+							errorx.IllegalState.New("timed out after %s waiting for all consensus nodes to become Active", timeout),
 							reasons.PreconditionNotMet,
 							fmt.Sprintf("Check node status: kubectl -n %s get consensuscapsules", namespace),
 							fmt.Sprintf("Inspect a stuck node's pod: kubectl -n %s get pods; kubectl -n %s describe pod <pod>", namespace, namespace),
@@ -203,15 +216,62 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 			}
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, fmt.Sprintf("Waiting for consensus nodes to be running (timeout %s)", timeout))
+			notify.As().StepStart(ctx, stp, fmt.Sprintf("Waiting for consensus nodes to become Active (timeout %s)", timeout))
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepFailure(ctx, stp, rpt, "Consensus nodes did not all become ready")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "All consensus nodes are running")
+			notify.As().StepCompletion(ctx, stp, rpt, "All consensus nodes are Active")
 		})
+}
+
+// podContainerIssues returns a compact summary of the not-healthy container states
+// for the pod(s) belonging to capsuleName (matched by name prefix, e.g. pod
+// "<capsule>-0" for capsule "<capsule>"). It reports init and main containers that
+// are waiting (Pulling, ImagePullBackOff, PodInitializing, …) or terminated with a
+// non-Completed reason, so a stuck node explains itself. Healthy/ready containers
+// are omitted. Returns "" when nothing noteworthy (or no pod) is found.
+func podContainerIssues(podList *unstructured.UnstructuredList, capsuleName string) string {
+	if podList == nil {
+		return ""
+	}
+	var parts []string
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if !strings.HasPrefix(pod.GetName(), capsuleName) {
+			continue
+		}
+		parts = append(parts, containerIssues(pod, "initContainerStatuses")...)
+		parts = append(parts, containerIssues(pod, "containerStatuses")...)
+	}
+	return strings.Join(parts, " ")
+}
+
+// containerIssues extracts "<container>:<reason>" for each container in the pod's
+// status.<field> that is waiting or terminated abnormally.
+func containerIssues(pod *unstructured.Unstructured, field string) []string {
+	statuses, found, _ := unstructured.NestedSlice(pod.Object, "status", field)
+	if !found {
+		return nil
+	}
+	var out []string
+	for _, s := range statuses {
+		m, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		cname, _, _ := unstructured.NestedString(m, "name")
+		if reason, ok, _ := unstructured.NestedString(m, "state", "waiting", "reason"); ok && reason != "" {
+			out = append(out, fmt.Sprintf("%s:%s", cname, reason))
+			continue
+		}
+		if reason, ok, _ := unstructured.NestedString(m, "state", "terminated", "reason"); ok && reason != "" && reason != "Completed" {
+			out = append(out, fmt.Sprintf("%s:%s", cname, reason))
+		}
+	}
+	return out
 }
 
 // WaitNetworkGenesisReady polls until the operator has produced the genesis

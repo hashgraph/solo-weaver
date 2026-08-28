@@ -50,13 +50,24 @@ func runNetworkReady(t *testing.T, fake *fakeCapsuleClient, timeout time.Duratio
 	return step.Execute(context.Background())
 }
 
-func TestWaitConsensusNetworkReady_AllRunning(t *testing.T) {
+func TestWaitConsensusNetworkReady_AllActive(t *testing.T) {
 	fake := &fakeCapsuleClient{listResult: capsuleList(map[string]string{
-		"orbit-consensus-0": "Running",
+		"orbit-consensus-0": "Active",
 		"orbit-consensus-1": "Active",
 	})}
 	rpt := runNetworkReady(t, fake, time.Second)
 	require.Equal(t, automa.StatusSuccess, rpt.Status)
+}
+
+// Running is transient (pod up, not yet platform-ACTIVE) and must NOT count as
+// ready — otherwise the wait falsely succeeds while the main container is still
+// pulling. With a short timeout the all-Running case fails.
+func TestWaitConsensusNetworkReady_RunningIsNotReady(t *testing.T) {
+	fake := &fakeCapsuleClient{listResult: capsuleList(map[string]string{
+		"orbit-consensus-0": "Running",
+	})}
+	rpt := runNetworkReady(t, fake, 50*time.Millisecond)
+	require.Equal(t, automa.StatusFailed, rpt.Status)
 }
 
 func TestWaitConsensusNetworkReady_FailsFastOnFailed(t *testing.T) {
@@ -80,7 +91,7 @@ func TestWaitConsensusNetworkReady_TimesOutWhilePending(t *testing.T) {
 // Auto node Running, readiness succeeds despite the Manual node being down.
 func TestWaitConsensusNetworkReady_SkipsManualNodes(t *testing.T) {
 	fake := &fakeCapsuleClient{listResult: capsuleListWithPolicy(map[string][2]string{
-		"orbit-consensus-0": {"Running", "Auto"},
+		"orbit-consensus-0": {"Active", "Auto"},
 		"orbit-consensus-1": {"Stopped", "Manual"},
 	})}
 	rpt := runNetworkReady(t, fake, time.Second)
