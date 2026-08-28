@@ -25,6 +25,26 @@ tasks:
         echo ''
         echo '✅ UAT Bootstrap: PASSED'
 
+  uat:consensus:secrets:
+    desc: "Inside VM: create sample consensus-node secrets (nodes 0-4, namespace hiero-network) so 'consensus node install' passes its secret precheck. Apply one node with NODE=node2."
+    vars:
+      NODE: '{{.NODE | default ""}}'
+    cmds:
+      - |
+        set -e
+        DIR=/mnt/solo-weaver/test/sample-secrets
+        kubectl create namespace hiero-network --dry-run=client -o yaml | kubectl apply -f -
+        if [ -n '{{.NODE}}' ]; then
+          echo "Applying sample secrets for {{.NODE}} ..."
+          kubectl apply -f "$DIR/{{.NODE}}.yaml"
+        else
+          echo "Applying sample secrets for all nodes (node0-node4) ..."
+          kubectl apply -f "$DIR/"
+        fi
+        echo ''
+        echo '✓ Applied:'
+        kubectl -n hiero-network get secret -l app=consensus-node
+
   uat:setup:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
     interactive: true
