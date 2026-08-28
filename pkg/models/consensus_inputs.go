@@ -11,15 +11,17 @@ import (
 // Consensus-node container defaults. Used as flag defaults and as the fallback
 // when an input field is left empty. The Java heap must be set explicitly; without
 // it the JVM defaults MaxHeapSize to 25% of the memory limit, which stalls the node
-// on startup.
+// on startup. Heap + direct memory must fit under the memory limit: these defaults
+// are a lean single/local-node baseline (1g heap + 512m direct fit under 2Gi);
+// production networks should raise them via flags.
 const (
 	ConsensusDefaultContainerName = "consensus-node"
-	ConsensusDefaultJavaHeapMin   = "1g"
-	ConsensusDefaultJavaHeapMax   = "3g"
-	ConsensusDefaultJavaOpts      = "-XX:+UseG1GC -XX:MaxDirectMemorySize=1500m --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true"
+	ConsensusDefaultJavaHeapMin   = "512m"
+	ConsensusDefaultJavaHeapMax   = "1g"
+	ConsensusDefaultJavaOpts      = "-XX:+UseG1GC -XX:MaxDirectMemorySize=512m --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true"
 	ConsensusDefaultCPULimit      = "2"
 	ConsensusDefaultCPURequest    = "250m"
-	ConsensusDefaultMemoryLimit   = "5Gi"
+	ConsensusDefaultMemoryLimit   = "2Gi"
 	ConsensusDefaultMemoryRequest = "1Gi"
 )
 
