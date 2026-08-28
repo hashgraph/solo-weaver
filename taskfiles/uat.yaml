@@ -26,24 +26,29 @@ tasks:
         echo '✅ UAT Bootstrap: PASSED'
 
   uat:consensus:secrets:
-    desc: "Inside VM: create sample consensus-node secrets (nodes 0-4, namespace hiero-network) so 'consensus node install' passes its secret precheck. Apply one node with NODE=node2."
+    desc: "Inside VM: create sample consensus-node secrets (nodes 0-4) so 'consensus node install' passes its secret precheck. Select namespace with NS= (default hiero-network-1) and a single node with NODE=node2."
     vars:
+      NS: '{{.NS | default "hiero-network-1"}}'
       NODE: '{{.NODE | default ""}}'
     cmds:
       - |
         set -e
         DIR=/mnt/solo-weaver/test/sample-secrets
-        kubectl create namespace hiero-network --dry-run=client -o yaml | kubectl apply -f -
-        if [ -n '{{.NODE}}' ]; then
-          echo "Applying sample secrets for {{.NODE}} ..."
-          kubectl apply -f "$DIR/{{.NODE}}.yaml"
+        NS='{{.NS}}'; NODE='{{.NODE}}'
+        kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+        # The sample manifests carry a fixed namespace; rewrite it to $NS on apply
+        # so the same files work for any orbit/namespace.
+        apply_one() { sed "s/namespace: hiero-network-1/namespace: $NS/" "$1" | kubectl apply -f -; }
+        if [ -n "$NODE" ]; then
+          echo "Applying sample secrets for $NODE in namespace $NS ..."
+          apply_one "$DIR/$NODE.yaml"
         else
-          echo "Applying sample secrets for all nodes (node0-node4) ..."
-          kubectl apply -f "$DIR/"
+          echo "Applying sample secrets for all nodes (node0-node4) in namespace $NS ..."
+          for f in "$DIR"/node*.yaml; do apply_one "$f"; done
         fi
         echo ''
         echo '✓ Applied:'
-        kubectl -n hiero-network get secret -l app=consensus-node
+        kubectl -n "$NS" get secret -l app=consensus-node
 
   uat:setup:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"

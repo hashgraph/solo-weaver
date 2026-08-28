@@ -32,7 +32,7 @@ var (
 )
 
 func init() {
-	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "hiero-network", "Kubernetes namespace (also used as the Orbit CR name)")
+	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "hiero-network-1", "Kubernetes namespace (also used as the Orbit CR name). Deploy multiple networks in one cluster by using a distinct namespace per orbit (hiero-network-1, hiero-network-2, ...)")
 	nodeCmd.PersistentFlags().Int64Var(&flagNodeId, "node-id", 0, "Consensus node ID (0-based)")
 	nodeCmd.PersistentFlags().StringVar(&flagAccountId, "account-id", "0.0.3", "Node account ID (e.g. 0.0.3)")
 	nodeCmd.PersistentFlags().IntVar(&flagWeight, "weight", 500, "Consensus weight for this node")

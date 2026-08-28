@@ -37,7 +37,9 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 ) (*models.UserInputs[models.ConsensusNodeInputs], error) {
 	l := logx.As()
 
-	scope := models.ConsensusNodeScope(inputs.Custom.NodeId)
+	// Orbit-qualified key for the local state/reality maps so the same nodeId in
+	// different orbits does not collide (see models.ConsensusNodeStateKey).
+	stateKey := models.ConsensusNodeStateKey(inputs.Custom.Namespace, inputs.Custom.NodeId)
 
 	// Seed sources: user inputs, deployment package, and per-node state/reality.
 	// State comes from persisted state.yaml; Reality from the cluster (post-RefreshState).
@@ -45,8 +47,8 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	h.runtime.WithDeploymentPackage(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId)
 
 	persisted := h.runtime.PersistedNodes()
-	if ps, ok := persisted[scope]; ok {
-		h.runtime.SetStateForNode(scope, ps)
+	if ps, ok := persisted[stateKey]; ok {
+		h.runtime.SetStateForNode(stateKey, ps)
 	}
 
 	realityNodes, err := h.runtime.CurrentState()
@@ -56,8 +58,8 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 			reasons.PreconditionNotMet,
 			"Verify the cluster is reachable (kubectl get nodes) and the solo-operator CRDs are installed")
 	}
-	if rs, ok := realityNodes[scope]; ok {
-		h.runtime.SetRealityForNode(scope, rs)
+	if rs, ok := realityNodes[stateKey]; ok {
+		h.runtime.SetRealityForNode(stateKey, rs)
 	}
 
 	// Resolve the identity scalars. DefaultSelector never errors, so .Get() is
@@ -160,7 +162,7 @@ func (h *InstallHandler) HandleIntent(
 func patchConsensusNodeState() func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
 	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
 		ins := effInputs.Custom
-		scope := models.ConsensusNodeScope(ins.NodeId)
+		stateKey := models.ConsensusNodeStateKey(ins.Namespace, ins.NodeId)
 
 		if full.ConsensusNodes == nil {
 			full.ConsensusNodes = make(map[string]state.ConsensusNodeState)
@@ -199,7 +201,7 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 		addHash(models.ConfigKeyThrottles, ins.ConfigThrottles)
 		addHash(models.ConfigKeyBlockNodes, ins.ConfigBlockNodes)
 
-		full.ConsensusNodes[scope] = state.ConsensusNodeState{
+		full.ConsensusNodes[stateKey] = state.ConsensusNodeState{
 			Namespace:     ins.Namespace,
 			OrbitName:     ins.OrbitName,
 			NodeId:        ins.NodeId,
@@ -217,7 +219,7 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 			LastSync:      now,
 		}
 
-		logx.As().Info().Str("scope", scope).Msg("Persisted consensus node state")
+		logx.As().Info().Str("stateKey", stateKey).Msg("Persisted consensus node state")
 		return nil
 	}
 }

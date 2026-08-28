@@ -79,9 +79,22 @@ const (
 	ConfigSourceEmbedded = "embedded"
 )
 
-// ConsensusNodeScope returns the canonical scope key for a consensus node (e.g. "node0").
+// ConsensusNodeScope returns the node-local scope for a consensus node (e.g.
+// "node0"). Use this for names of resources that live inside the node's
+// namespace (secrets, config CR refs, secret key filenames) — the namespace
+// already disambiguates them across orbits, so they stay node-local.
 func ConsensusNodeScope(nodeId int64) string {
 	return fmt.Sprintf("node%d", nodeId)
+}
+
+// ConsensusNodeStateKey returns the orbit-qualified key for solo-weaver's local
+// state and reality maps (e.g. "hiero-network-1/node0"). Because the same
+// nodeId can be deployed into multiple orbits in one cluster, the local state
+// key must include the namespace/orbit — a bare "node0" would collide across
+// orbits and overwrite entries in state.yaml. This is NOT a cluster resource
+// name; it never appears on any Kubernetes object.
+func ConsensusNodeStateKey(namespace string, nodeId int64) string {
+	return fmt.Sprintf("%s/%s", namespace, ConsensusNodeScope(nodeId))
 }
 
 // ConsensusCapsuleName returns the CR name for a ConsensusCapsule (e.g. "myorbit-consensus-0").

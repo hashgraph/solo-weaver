@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Sample consensus-node secrets for node1 — manual testing ONLY.
-# Test key material (self-signed, non-production); namespace hiero-network.
+# Test key material (self-signed, non-production); namespace hiero-network-1.
 # Apply with: task uat:consensus:secrets   (or kubectl apply -f this file)
 kind: Secret
 apiVersion: v1
 metadata:
   name: node1-gossip-keys
-  namespace: hiero-network
+  namespace: hiero-network-1
   labels:
     app: consensus-node
     consensus-capsule: node1
@@ -22,7 +22,7 @@ kind: Secret
 apiVersion: v1
 metadata:
   name: node1-grpc-tls-keys
-  namespace: hiero-network
+  namespace: hiero-network-1
   labels:
     app: consensus-node
     consensus-capsule: node1
@@ -38,7 +38,7 @@ kind: Secret
 apiVersion: v1
 metadata:
   name: node1-hapi-app-keys
-  namespace: hiero-network
+  namespace: hiero-network-1
   labels:
     app: consensus-node
     consensus-capsule: node1
