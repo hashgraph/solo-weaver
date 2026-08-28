@@ -368,6 +368,10 @@ func CheckErr(ctx context.Context, err error) {
 	// Full stacktrace to the log file only, with the reason and hints as
 	// structured fields so the log alone carries the remediation steps.
 	ev := logx.As().Error()
+	// Stamp the build so a log line alone identifies which binary produced the
+	// error (a stale binary is a common source of confusing failures).
+	bi := version.Get()
+	ev = ev.Str("version", bi.Version).Str("commit", bi.ShortCommit(12))
 	if reason, ok := errx.ReasonOf(err); ok {
 		ev = ev.Str("reason", reason.String())
 	}
@@ -413,6 +417,7 @@ func checkErrCompact(resp *ErrorDiagnosis) {
 	if logfile != "" {
 		fmt.Fprintf(os.Stderr, "\n  %sSee logs:%s %s\n", Cyan, Reset, logfile)
 	}
+	fmt.Fprintf(os.Stderr, "  %sBuild:%s %s (commit %s)\n", Gray, Reset, resp.Version, version.Info{Commit: resp.Commit}.ShortCommit(12))
 	fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics%s\n", Gray, Reset)
 }
 
