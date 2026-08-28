@@ -85,8 +85,45 @@ tasks:
       - "go clean -cache -testcache"
   
   vendor:
+    desc: "Populate vendor/ from go.mod (skipped when vendor/ is already in sync)"
+    # Skip when vendor/modules.txt is newer than both go.mod and go.sum, i.e.
+    # nothing has changed since the last vendoring. This keeps the VM build fully
+    # offline: the host (which has GitHub creds for the private solo-operator
+    # module) populates vendor/, `task vm:sync` rsyncs it into the VM, and the VM
+    # reuses it instead of re-running `go mod vendor` — which would fail with
+    # "terminal prompts disabled" because the VM has no credentials. A go.mod or
+    # go.sum edit bumps its mtime ahead of modules.txt and re-triggers vendoring
+    # (do it on the host, where creds exist).
+    #
+    # TODO(solo-operator-public): once github.com/hashgraph/solo-operator is
+    # public, module fetches no longer need auth — narrow GOPRIVATE (drop the
+    # github.com/hashgraph/* scope from CI: zxc-*.yaml) so the module is verified
+    # via proxy.golang.org / sum.golang.org again. This guard stays useful as a
+    # build-speed optimization regardless.
+    status:
+      - test vendor/modules.txt -nt go.mod
+      - test vendor/modules.txt -nt go.sum
     cmds:
-      - "go mod vendor"
+      # Reached only when vendor/ is stale (status above failed), so `go mod
+      # vendor` is about to fetch the private github.com/hashgraph/solo-operator
+      # module over the network. Probe git credentials first and fail fast with
+      # actionable guidance — otherwise the VM build dies with the opaque
+      # "fatal: could not read Username for 'https://github.com'" from go.
+      - cmd: |
+          set -e
+          if ! GIT_TERMINAL_PROMPT=0 git ls-remote -q https://github.com/hashgraph/solo-operator HEAD >/dev/null 2>&1; then
+            echo "✗ vendor/ is out of sync and github.com/hashgraph/solo-operator is unreachable with the current git credentials." >&2
+            echo "" >&2
+            echo "  This usually means you are building inside the UTM VM, which has no GitHub credentials." >&2
+            echo "  Do ONE of the following:" >&2
+            echo "    1. (recommended) Run 'task vendor' on the HOST, then 'task vm:sync', then rebuild in the VM." >&2
+            echo "       vm:sync rsyncs vendor/ into the VM, so the VM build then stays offline." >&2
+            echo "    2. Configure a PAT inside the VM:" >&2
+            echo "         go env -w GOPRIVATE=github.com/hashgraph/*" >&2
+            echo "         git config --global url.\"https://<PAT>@github.com/\".insteadOf \"https://github.com/\"" >&2
+            exit 1
+          fi
+          go mod vendor
 
   chart-checksums:
     desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Requires 'helm' on PATH."

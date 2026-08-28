@@ -673,6 +673,11 @@ tasks:
     interactive: true
     deps:
       - "vm:start"
+      # Refresh vendor/ on the HOST (which has GitHub creds) before entering the
+      # VM. The 'vendor' status guard makes this a no-op when already in sync.
+      # NOTE: vm:ssh does not auto-sync — run `task vm:sync` to rsync the fresh
+      # vendor/ into the VM so the in-VM `task build` stays offline.
+      - "vendor"
     cmds:
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)
