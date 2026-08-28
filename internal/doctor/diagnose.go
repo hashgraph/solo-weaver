@@ -368,10 +368,8 @@ func CheckErr(ctx context.Context, err error) {
 	// Full stacktrace to the log file only, with the reason and hints as
 	// structured fields so the log alone carries the remediation steps.
 	ev := logx.As().Error()
-	// Stamp the build so a log line alone identifies which binary produced the
-	// error (a stale binary is a common source of confusing failures).
-	bi := version.Get()
-	ev = ev.Str("version", bi.Version).Str("commit", bi.ShortCommit(12))
+	// build_version/build_commit are already global fields on every log line (set
+	// in the CLI/daemon logger init), so the error line is self-identifying.
 	if reason, ok := errx.ReasonOf(err); ok {
 		ev = ev.Str("reason", reason.String())
 	}

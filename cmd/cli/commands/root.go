@@ -317,6 +317,15 @@ func initConfig(ctx context.Context) {
 		ui.SuppressConsoleLogging(logConfig)
 	}
 
+	// Stamp the build identity onto every log line (matching the UC / solo-operator)
+	// so operators can tell which provisioner build produced a given log. Image tags
+	// and the version string can be placeholders, so build_commit is the reliable
+	// discriminator; build_version aids released builds.
+	logx.SetLogger(logx.As().With().
+		Str("build_version", version.Version).
+		Str("build_commit", version.Commit).
+		Logger())
+
 	// Activate proxy after logging is initialized so the activation log
 	// respects TUI suppression and goes to the log file instead of stdout.
 	activateProxy(ctx)
