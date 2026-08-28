@@ -66,7 +66,13 @@ var genesisCmd = &cobra.Command{
 			steps.EnsureNetworkGenesis(flagNamespace, orbit, genesisJSON, steps.DefaultCapsuleKubeProvider),
 		}
 		if flagReadyTimeout > 0 {
-			stepList = append(stepList, steps.WaitNetworkGenesisReady(flagNamespace, steps.DefaultCapsuleKubeProvider, flagReadyTimeout))
+			// After genesis unblocks the network, confirm the nodes actually come
+			// up — otherwise a fresh install's readiness wait is skipped (no genesis
+			// yet) and nothing verifies the nodes reach Running.
+			stepList = append(stepList,
+				steps.WaitNetworkGenesisReady(flagNamespace, steps.DefaultCapsuleKubeProvider, flagReadyTimeout),
+				steps.WaitConsensusNetworkReady(flagNamespace, steps.DefaultCapsuleKubeProvider, flagReadyTimeout),
+			)
 		}
 		wb := automa.NewWorkflowBuilder().WithId("consensus-network-genesis").Steps(stepList...)
 
