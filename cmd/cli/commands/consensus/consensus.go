@@ -5,6 +5,7 @@ package consensus
 import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/migration"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/network"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/node"
 	"github.com/spf13/cobra"
 )
@@ -19,6 +20,7 @@ var consensusCmd = &cobra.Command{
 func init() {
 	consensusCmd.AddCommand(migration.GetCmd())
 	consensusCmd.AddCommand(node.GetCmd())
+	consensusCmd.AddCommand(network.GetCmd())
 }
 
 // GetCmd returns the consensus command group.
