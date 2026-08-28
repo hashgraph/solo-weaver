@@ -15,6 +15,21 @@ NIC="{{.NIC}}"
 tc qdisc del dev "$NIC" root 2>/dev/null || true
 {{- else}}
 
+# The egress device may be a netplan-created bond/bridge/VLAN that appears only
+# once the network is up, so wait for it rather than fail the replay (#980). This
+# loop is the whole retry: the unit has no restart policy. Exit 75 (EX_TEMPFAIL)
+# marks "the device never appeared" apart from a tc failure.
+WAIT_SECS="${SHAPER_DEVICE_WAIT_SECS:-0}"
+WAITED=0
+while [ ! -e /sys/class/net/"$NIC" ]; do
+	if [ "$WAITED" -ge "$WAIT_SECS" ]; then
+		echo "device $NIC does not exist after ${WAITED}s" >&2
+		exit 75
+	fi
+	sleep 1
+	WAITED=$(( WAITED + 1 ))
+done
+
 {{- if lt .SpeedMbit 0}}
 {{- /* All tc rates are explicit strings; SPEED variable is not used. */}}
 {{- else}}

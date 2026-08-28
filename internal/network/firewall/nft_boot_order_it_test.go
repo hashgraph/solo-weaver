@@ -87,11 +87,9 @@ func writeDoc(t *testing.T, dir, name, content string) string {
 }
 
 // Test_NetworkNftBootOrder_Integration is the load-order half of #982: with the
-// real nft binary, loading after the manager keeps the weaver table.
-//
-// The second subtest is the negative control: loading before the manager must
-// lose the table. Without it, the first subtest would also pass against a
-// `flush ruleset` that does nothing, proving nothing about the ordering.
+// real nft binary, loading after the manager keeps the weaver table. The second
+// subtest is the negative control — without it the first would also pass against
+// a `flush ruleset` that does nothing.
 func Test_NetworkNftBootOrder_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")

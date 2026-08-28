@@ -16,9 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeUfwUnit stands in for the real ufw.service. The step probes by unit name,
-// so any unit systemd can enable and start is enough — and this avoids installing
-// a real firewall that would take over the VM's networking.
+// fakeUfwUnit stands in for the real ufw.service: the step probes by unit name,
+// so this avoids installing a firewall that would take over the VM's networking.
 const fakeUfwUnit = `[Unit]
 Description=Fake ufw for #982 preflight integration test
 
@@ -105,10 +104,23 @@ func runFirewallManagersStep(t *testing.T) *automa.Report {
 	return step.Execute(context.Background())
 }
 
+// ufwFindings drops the host's own nftables.service finding, which these ufw
+// subtests neither control nor may change. It has its own subtest below.
+func ufwFindings(rpt *automa.Report) map[string]string {
+	findings := map[string]string{}
+	for unit, state := range rpt.Metadata {
+		if unit == "nftables.service" {
+			continue
+		}
+		findings[unit] = state
+	}
+	return findings
+}
+
 // Test_CheckFirewallManagers_Integration exercises the #982 preflight against
-// real systemd. The three subtests go together: report the manager when it is on,
-// stay silent when it is off, and stay silent when it is on with no ruleset. A
-// detector that always warns, or never warns, fails one of them.
+// real systemd. The three subtests go together — report when the manager is on,
+// stay silent when it is off or loads no ruleset — so a detector that always or
+// never warns fails one of them.
 func Test_CheckFirewallManagers_Integration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("This test requires root privileges")
@@ -138,7 +150,7 @@ func Test_CheckFirewallManagers_Integration(t *testing.T) {
 		report := runFirewallManagersStep(t)
 
 		require.NoError(t, report.Error)
-		require.Empty(t, report.Metadata,
+		require.Empty(t, ufwFindings(report),
 			"a host with no active firewall manager must produce no finding")
 	})
 
@@ -152,6 +164,27 @@ func Test_CheckFirewallManagers_Integration(t *testing.T) {
 		report := runFirewallManagersStep(t)
 
 		require.NoError(t, report.Error)
-		require.Empty(t, report.Metadata)
+		require.Empty(t, ufwFindings(report))
+	})
+
+	// nftables.service carries a different risk: it destroys the weaver tables
+	// instead of out-voting them, and only when its ruleset actually flushes.
+	t.Run("nftables.service is reported only when its ruleset flushes", func(t *testing.T) {
+		enabled, enabledErr := soos.IsServiceEnabled(ctx, "nftables.service")
+		running, runningErr := soos.IsServiceRunning(ctx, "nftables.service")
+		if enabledErr != nil || runningErr != nil || (!enabled && !running) {
+			t.Skip("host has no active nftables.service")
+		}
+
+		flushes, known := nftConfFlushesRuleset()
+		report := runFirewallManagersStep(t)
+		require.NoError(t, report.Error)
+
+		if !known || flushes {
+			require.Equal(t, describeUnitState(enabled, running), report.Metadata["nftables.service"])
+			return
+		}
+		require.NotContains(t, report.Metadata, "nftables.service",
+			"a ruleset that does not flush leaves the weaver tables alone")
 	})
 }

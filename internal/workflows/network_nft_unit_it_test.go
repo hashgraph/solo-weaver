@@ -7,12 +7,9 @@ package workflows
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	soos "github.com/hashgraph/solo-weaver/pkg/os"
@@ -40,83 +37,11 @@ ExecStart=/bin/true
 WantedBy=multi-user.target
 `
 
-// systemdAnalyzeCandidates are absolute paths only, never a bare
-// "systemd-analyze" off PATH (see docs/dev/security-model.md).
-var systemdAnalyzeCandidates = []string{"/usr/bin/systemd-analyze", "/bin/systemd-analyze"}
-
-func requireRootForUnitTests(t *testing.T) {
-	t.Helper()
-	if os.Geteuid() != 0 {
-		t.Skip("This test requires root privileges")
-	}
-}
-
-// backupNetworkNftUnit snapshots the installed unit and its enablement and
-// restores both afterwards, so a run on a real host changes nothing.
-func backupNetworkNftUnit(t *testing.T) {
-	t.Helper()
-	ctx := context.Background()
-	path := firewall.NetworkNftServiceUnitPath
-
-	original, readErr := os.ReadFile(path)
-	existed := readErr == nil
-	if !existed {
-		require.True(t, os.IsNotExist(readErr), "could not read %s: %v", path, readErr)
-	}
-	wasEnabled, _ := soos.IsServiceEnabled(ctx, firewall.NetworkNftService)
-
-	t.Cleanup(func() {
-		restoreCtx := context.Background()
-		if existed {
-			_ = os.WriteFile(path, original, 0o644)
-		} else {
-			_ = os.Remove(path)
-		}
-		_ = soos.DaemonReload(restoreCtx)
-		switch {
-		case existed && wasEnabled:
-			_ = soos.EnableService(restoreCtx, firewall.NetworkNftService)
-		case !wasEnabled:
-			_ = soos.DisableService(restoreCtx, firewall.NetworkNftService)
-		}
-	})
-}
-
-// unitOrdering returns the After= and Before= lists systemd itself parsed from
-// the installed unit. Asking systemd is the point: a misspelled or misplaced
-// directive is dropped here, while a string match on the file would still pass.
-func unitOrdering(t *testing.T, unit string) (after, before []string) {
-	t.Helper()
-	ctx := context.Background()
-
-	conn, err := dbus.NewSystemConnectionContext(ctx)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	// Force systemd to load the unit; an unloaded unit exposes no properties.
-	_, err = conn.ListUnitsByNamesContext(ctx, []string{unit})
-	require.NoError(t, err)
-
-	props, err := conn.GetUnitPropertiesContext(ctx, unit)
-	require.NoError(t, err)
-
-	return stringList(t, props, "After"), stringList(t, props, "Before")
-}
-
-func stringList(t *testing.T, props map[string]any, key string) []string {
-	t.Helper()
-	value, ok := props[key]
-	require.True(t, ok, "unit property %q is absent", key)
-	list, ok := value.([]string)
-	require.True(t, ok, "unit property %q is %T, not a string list", key, value)
-	return list
-}
-
 // Test_NetworkNftUnitOrdering_Integration pins the #982 boot ordering as systemd
 // resolves it, not as the template spells it.
 func Test_NetworkNftUnitOrdering_Integration(t *testing.T) {
 	requireRootForUnitTests(t)
-	backupNetworkNftUnit(t)
+	backupUnit(t, firewall.NetworkNftServiceUnitPath, firewall.NetworkNftService)
 
 	require.NoError(t, firewall.EnsureNetworkNftUnit(context.Background()))
 
@@ -149,16 +74,11 @@ func Test_NetworkNftUnitOrdering_Integration(t *testing.T) {
 // since map iteration is not stable.
 var firewallManagerUnits = []string{"nftables.service", "ufw.service", "firewalld.service"}
 
-// managerStubs mirror the ordering the real firewall managers declare, for the
-// satisfiability check below. An absent unit resolves to a systemd stub with no
-// dependencies, which nothing can cycle against — so without stubs the check
-// would pass vacuously on exactly the hosts it is meant to cover (every CI VM).
-//
-// Only the [Unit] ordering is mirrored, since that is all a cycle can be made of.
-// firewalld keeps default dependencies while the others disable them, as the real
-// units do: that puts it after basic.target, and After= a unit that late plus
-// Before=network-pre.target is the pair that would cycle if one were reachable
-// from the other.
+// managerStubs mirror the [Unit] ordering the real firewall managers declare,
+// for the satisfiability check below. Without them an absent manager resolves to
+// a dependency-free systemd stub, and the check passes vacuously on exactly the
+// hosts it covers (every CI VM). firewalld keeps default dependencies as the real
+// unit does, since that is what puts it late enough to cycle.
 var managerStubs = map[string]string{
 	"nftables.service": `[Unit]
 Description=Stub nftables.service (#982 ordering verification)
@@ -266,27 +186,13 @@ func installCycleCanary(t *testing.T) {
 	})
 }
 
-// verifyOrdering runs `systemd-analyze verify` over the given units and returns
-// its output lowercased. The exit status is ignored: verify warns about unrelated
-// things on a real host, so only the cycle diagnostic is read.
-func verifyOrdering(t *testing.T, bin string, units ...string) string {
-	t.Helper()
-	out, _ := exec.CommandContext(context.Background(), bin,
-		append([]string{"verify"}, units...)...).CombinedOutput()
-	return strings.ToLower(string(out))
-}
-
 // Test_NetworkNftUnitIsSatisfiable_Integration checks the parsed ordering is
-// actually reachable. An unsatisfiable one shows up as a cycle, and systemd
-// breaks cycles by dropping a job — leaving the loader silently unstarted.
-//
-// Every unit must be named on the same command line: verify builds a start
-// transaction for exactly the units it is given, and ordering pulls nothing else
-// in, so verifying the loader alone can never see a cycle. The canary pins that,
-// and the managers have to exist as units too (see managerStubs).
+// reachable: systemd breaks a cycle by dropping a job, leaving the loader
+// silently unstarted. Every unit must be named on the same command line, since
+// verify only orders the units it is given — the canary pins that.
 func Test_NetworkNftUnitIsSatisfiable_Integration(t *testing.T) {
 	requireRootForUnitTests(t)
-	backupNetworkNftUnit(t)
+	backupUnit(t, firewall.NetworkNftServiceUnitPath, firewall.NetworkNftService)
 	installManagerStubs(t)
 	installCycleCanary(t)
 
@@ -320,7 +226,7 @@ func Test_NetworkNftUnitIsSatisfiable_Integration(t *testing.T) {
 // so the startup migration is the only thing that can converge it.
 func Test_NetworkNftUnitMigration_Integration(t *testing.T) {
 	requireRootForUnitTests(t)
-	backupNetworkNftUnit(t)
+	backupUnit(t, firewall.NetworkNftServiceUnitPath, firewall.NetworkNftService)
 
 	ctx := context.Background()
 	path := firewall.NetworkNftServiceUnitPath
@@ -368,7 +274,7 @@ func Test_NetworkNftUnitMigration_Integration(t *testing.T) {
 		require.NoError(t, soos.DaemonReload(ctx))
 		require.NoError(t, soos.EnableService(ctx, firewall.NetworkNftService))
 
-		needsConverge, err := firewall.NetworkNftUnitNeedsConverge(ctx)
+		needsConverge, err := firewall.NetworkNftUnitNeedsConverge()
 		require.NoError(t, err)
 		require.False(t, needsConverge)
 
@@ -377,9 +283,8 @@ func Test_NetworkNftUnitMigration_Integration(t *testing.T) {
 		require.False(t, applies, "the migration must not re-fire on a converged host")
 	})
 
-	// The failure a byte compare cannot see, against real systemd: the unit on
-	// disk is the embedded copy and disabled. Before #982 the probe called this
-	// "converged" and the host rebooted with no weaver tables.
+	// The failure a byte compare cannot see: the embedded copy on disk, disabled.
+	// Before #982 the probe called that converged and the tables never came back.
 	t.Run("a current but disabled unit is re-enabled", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, embedded, 0o644))
 		require.NoError(t, soos.DaemonReload(ctx))
@@ -389,7 +294,7 @@ func Test_NetworkNftUnitMigration_Integration(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, enabled, "precondition: systemd must be holding the unit disabled")
 
-		needsConverge, err := firewall.NetworkNftUnitNeedsConverge(ctx)
+		needsConverge, err := firewall.NetworkNftUnitNeedsConverge()
 		require.NoError(t, err)
 		require.True(t, needsConverge, "a byte-current unit that will not run at boot is drift")
 

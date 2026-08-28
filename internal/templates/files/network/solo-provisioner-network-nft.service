@@ -4,11 +4,9 @@ Documentation=https://github.com/hashgraph/solo-weaver
 DefaultDependencies=no
 # Load AFTER the host firewall managers: stock /etc/nftables.conf starts with
 # `flush ruleset`, so going first would let it wipe the weaver tables on every
-# boot. Going last puts our tables on top and they survive the flush. After= is
-# inert unless systemd actually starts that unit, so hosts without a firewall
-# manager are unaffected.
-# Before=network-pre.target puts the rules in place before any interface comes
-# up; both orderings stay satisfiable (systemd-analyze verify) (#982).
+# boot. After= is inert unless systemd starts that unit, so hosts without a
+# firewall manager are unaffected. Before=network-pre.target puts the rules in
+# place before any interface comes up (#982).
 Wants=network-pre.target
 After=local-fs.target nftables.service ufw.service firewalld.service
 Before=network-pre.target solo-provisioner-daemon.service

@@ -43,9 +43,10 @@ func TcEgressServiceTeardown() *automa.StepBuilder {
 				return automa.FailureReport(stp, automa.WithError(
 					errorx.Decorate(err, "failed to remove the bandwidth-shaper boot service").
 						WithProperty(models.ErrPropertyResolution, []string{
+							// Script first, mirroring RemoveTcEgressUnit's removal order.
+							"Remove the boot script: rm " + shape.TcEgressScriptPath,
 							"Disable manually: systemctl disable " + shape.TcEgressService,
 							"Remove the unit file: rm " + shape.TcEgressServiceUnitPath,
-							"Remove the boot script: rm " + shape.TcEgressScriptPath,
 							"Then reload systemd: systemctl daemon-reload",
 						})))
 			}
