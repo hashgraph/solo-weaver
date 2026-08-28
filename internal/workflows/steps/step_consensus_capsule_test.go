@@ -9,9 +9,11 @@ import (
 
 	"github.com/automa-saga/automa"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -22,6 +24,7 @@ type fakeCapsuleClient struct {
 	existing    map[string]string
 	applied     []string
 	appliedObjs []runtime.Object
+	listResult  *unstructured.UnstructuredList
 }
 
 func (f *fakeCapsuleClient) ResourceExists(_ context.Context, _, _, _, name string) (bool, error) {
@@ -38,6 +41,13 @@ func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) er
 	f.applied = append(f.applied, name)
 	f.appliedObjs = append(f.appliedObjs, obj)
 	return nil
+}
+
+func (f *fakeCapsuleClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	if f.listResult != nil {
+		return f.listResult, nil
+	}
+	return &unstructured.UnstructuredList{}, nil
 }
 
 func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {

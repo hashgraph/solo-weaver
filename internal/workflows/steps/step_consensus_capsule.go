@@ -18,6 +18,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -39,6 +40,7 @@ type CapsuleKubeClient interface {
 	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
+	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 }
 
 // CapsuleKubeProvider resolves a CapsuleKubeClient at step-execution time,
