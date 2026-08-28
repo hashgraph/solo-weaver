@@ -114,6 +114,14 @@ var installCmd = &cobra.Command{
 				SigningSecret:        flagSigningSecret,
 				Profile:              flagProfile,
 				SkipHardwareChecks:   skipHardwareChecks,
+				ContainerName:        flagContainerName,
+				JavaHeapMin:          flagJavaHeapMin,
+				JavaHeapMax:          flagJavaHeapMax,
+				JavaOpts:             flagJavaOpts,
+				CPULimit:             flagCPULimit,
+				CPURequest:           flagCPURequest,
+				MemoryLimit:          flagMemoryLimit,
+				MemoryRequest:        flagMemoryRequest,
 			},
 		}
 

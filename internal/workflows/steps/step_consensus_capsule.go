@@ -16,6 +16,8 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -347,6 +349,14 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			// last segment as the image name.
 			imageRepository, imageName := splitConsensusImage(inputs.ConsensusImageRepo)
 
+			// Resolve container sizing/JVM from inputs, falling back to defaults.
+			resources, err := buildConsensusResources(inputs)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					err, reasons.InvalidArgument,
+					"Provide valid Kubernetes quantities for --cpu-limit/--cpu-request/--memory-limit/--memory-request (e.g. 2, 250m, 5Gi, 1Gi)")))
+			}
+
 			capsule := &operatorv1alpha1.ConsensusCapsule{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
@@ -375,11 +385,16 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 					PodProperties: operatorv1alpha1.ConsensusPodProperties{
 						Containers: operatorv1alpha1.ConsensusContainers{
 							ConsensusNode: operatorv1alpha1.ConsensusNodeContainer{
+								Name: valueOrDefault(inputs.ContainerName, models.ConsensusDefaultContainerName),
 								SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
 									Repository: imageRepository,
 									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
 								},
+								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
+								JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
+								JavaOpts:    valueOrDefault(inputs.JavaOpts, models.ConsensusDefaultJavaOpts),
+								Resources:   resources,
 							},
 							// The UC (Update Coordinator) sidecar is mandatory: it is the
 							// sole writer of status.platformStatus, so the operator rejects
@@ -514,4 +529,48 @@ func splitConsensusImage(full string) (repository, imageName string) {
 		return full[:i], full[i+1:]
 	}
 	return "", full
+}
+
+// valueOrDefault returns v when non-empty (after trimming), otherwise def.
+func valueOrDefault(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
+}
+
+// buildConsensusResources parses the consensus-node container's CPU/memory limits
+// and requests from inputs (falling back to the ConsensusDefault* values), returning
+// an error on any invalid quantity so install fails with an actionable message
+// rather than applying a malformed CR.
+func buildConsensusResources(inputs models.ConsensusNodeInputs) (*corev1.ResourceRequirements, error) {
+	parse := func(value, def, flag string) (resource.Quantity, error) {
+		q, err := resource.ParseQuantity(valueOrDefault(value, def))
+		if err != nil {
+			return resource.Quantity{}, errorx.IllegalArgument.Wrap(err, "invalid quantity %q for %s", valueOrDefault(value, def), flag)
+		}
+		return q, nil
+	}
+
+	cpuLimit, err := parse(inputs.CPULimit, models.ConsensusDefaultCPULimit, "--cpu-limit")
+	if err != nil {
+		return nil, err
+	}
+	memLimit, err := parse(inputs.MemoryLimit, models.ConsensusDefaultMemoryLimit, "--memory-limit")
+	if err != nil {
+		return nil, err
+	}
+	cpuRequest, err := parse(inputs.CPURequest, models.ConsensusDefaultCPURequest, "--cpu-request")
+	if err != nil {
+		return nil, err
+	}
+	memRequest, err := parse(inputs.MemoryRequest, models.ConsensusDefaultMemoryRequest, "--memory-request")
+	if err != nil {
+		return nil, err
+	}
+
+	return &corev1.ResourceRequirements{
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpuLimit, corev1.ResourceMemory: memLimit},
+		Requests: corev1.ResourceList{corev1.ResourceCPU: cpuRequest, corev1.ResourceMemory: memRequest},
+	}, nil
 }
