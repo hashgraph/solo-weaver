@@ -27,12 +27,23 @@ func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
 // (what Kubernetes itself needs), not any per-workload sizing. Per-workload preflight
 // belongs to the node install commands (e.g. block node install), which run
 // NodeSetupWorkflow before composing KubernetesSetupWorkflow themselves.
-func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
+// profile selects the preflight hardware floor: when non-empty, a workload-sized
+// check for (nodeType, profile) runs instead of the workload-agnostic substrate
+// floor — so `kube cluster install --profile mainnet --node-type consensus`
+// validates the host against that workload. Both are optional (empty profile keeps
+// the substrate-only floor). installOperator additionally installs the
+// solo-operator (and its CRDs) even when config.SoloOperator.Enabled is false —
+// e.g. `--node-type consensus`, whose nodes require the operator.
+func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime, profile, nodeType string, installOperator bool) *automa.WorkflowBuilder {
+	preflight := SubstrateSetupWorkflow(skipHardwareChecks)
+	if profile != "" {
+		preflight = NodeSetupWorkflow(nodeType, profile, "", skipHardwareChecks)
+	}
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
 		Steps(
-			SubstrateSetupWorkflow(skipHardwareChecks),
-			KubernetesSetupWorkflow(mr),
+			preflight,
+			KubernetesSetupWorkflow(mr, installOperator),
 			// Record the CLI version so a fresh cluster has a state.yaml; without it the next invocation synthesises the 0.0.0 baseline and re-runs historical startup migrations.
 			steps.RecordProvisionerVersion(),
 		)
@@ -42,7 +53,7 @@ func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime)
 // Rendered as the "Kubernetes Setup" phase in the TUI. It is node-type-agnostic and is
 // composed both by InstallClusterWorkflow (cluster install) and by node install handlers
 // (e.g. block node install) after their own workload preflight + system setup.
-func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
+func KubernetesSetupWorkflow(mr software.MachineRuntime, installOperator ...bool) *automa.WorkflowBuilder {
 	wfSteps := []automa.Builder{
 		// setup env for k8s
 		steps.DisableSwap(),
@@ -78,7 +89,8 @@ func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 		steps.DeployMetricsServer(nil),
 	}
 
-	if config.Get().SoloOperator.Enabled {
+	forceOperator := len(installOperator) > 0 && installOperator[0]
+	if config.Get().SoloOperator.Enabled || forceOperator {
 		wfSteps = append(wfSteps, steps.InstallSoloOperator())
 	}
 

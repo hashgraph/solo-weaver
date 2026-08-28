@@ -53,7 +53,7 @@ func FlagNodeType() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "node-type",
 		ShortName:   "n",
-		Description: fmt.Sprintf("Type of node to deploy %s", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
+		Description: fmt.Sprintf("Comma-separated component(s) that will run on this cluster %s — drives dependency (CRD/operator) install; with --profile, sizes the host (single type only)", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
 		Default:     models.NodeTypeBlock,
 	}
 }

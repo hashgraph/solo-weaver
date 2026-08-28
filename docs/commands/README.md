@@ -146,12 +146,20 @@ sudo solo-provisioner kube cluster install --rollback-on-error
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the
   block-node workflow instead — see
   [Networking switches](block-node.md#networking-two-independent-switches).
-- **No workload sizing.** Cluster install validates only what Kubernetes itself needs to run,
-  so it takes **no `--profile` and no `--node-type`**. Workload-sized hardware validation
-  happens later, at `block node check` / `block node install`.
+- **`--node-type` declares the workloads; `--profile` sizes them.** `--node-type` is a
+  comma-separated list of the components that will run on this cluster (e.g.
+  `consensus`, `block`) and drives dependency installation — any operator-based component
+  installs the **solo-operator** (and its CRDs). `--profile` validates the host against a
+  workload's hardware floor. Both are optional, with different scopes:
+  - `--node-type` may stand alone → install dependencies only (substrate hardware floor).
+  - `--profile` **requires** `--node-type` (you cannot size a floor without a workload), and
+    currently a **single** `--node-type` (multi-type sizing is not yet supported).
 
-> `--profile` and `--node-type` are still accepted as hidden flags so old scripts do not
-> break, but the values are **ignored** and a notice is printed. Remove them.
+> `--node-type=consensus` installs the solo-operator (and CRDs) that consensus nodes require —
+> run cluster install this way before `consensus node install`. The solo-operator is a single
+> cluster-scoped operator bundling every component's CRDs, so one install serves all
+> namespaces/components. `--profile mainnet --node-type consensus` also validates a mainnet
+> consensus host.
 
 ### Uninstall
 
