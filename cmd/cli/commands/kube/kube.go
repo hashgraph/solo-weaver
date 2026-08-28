@@ -9,10 +9,9 @@ import (
 )
 
 var (
-	// flagProfile backs the deprecated --profile flag. Cluster install is now
-	// workload-agnostic (it validates only the Kubernetes substrate floor), so the
-	// value is ignored. The flag is kept hidden for backward compatibility so that
-	// existing invocations/scripts do not break; see install.go for the ignore notice.
+	// flagProfile backs the optional --profile flag. On cluster install it sizes the
+	// preflight hardware floor to the intended workload (see install.go); omitted, the
+	// substrate-only floor is used.
 	flagProfile string
 
 	kubeCmd = &cobra.Command{
@@ -24,10 +23,9 @@ var (
 )
 
 func init() {
-	// Deprecated: --profile no longer affects cluster install (substrate-only floor).
-	// Kept hidden + persistent for backward compatibility; per-workload sizing lives
-	// on the block node commands.
-	common.FlagProfile().SetVarPHidden(kubeCmd, &flagProfile, false)
+	// --profile optionally sizes the cluster-install preflight hardware floor to the
+	// intended workload. Persistent so cluster subcommands inherit it.
+	common.FlagProfile().SetVarP(kubeCmd, &flagProfile, false)
 	kubeCmd.AddCommand(cluster.GetCmd())
 }
 
