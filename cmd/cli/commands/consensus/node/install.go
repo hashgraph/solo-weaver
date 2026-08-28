@@ -115,7 +115,6 @@ var installCmd = &cobra.Command{
 				UpgradeOperator:      flagUpgradeOperator,
 				Profile:              flagProfile,
 				SkipHardwareChecks:   skipHardwareChecks,
-				ReadyTimeout:         flagReadyTimeout,
 			},
 		}
 
@@ -139,8 +138,31 @@ var installCmd = &cobra.Command{
 			Int64("nodeId", inputs.Custom.NodeId).
 			Msg("Successfully installed consensus node")
 
+		// The node's ConsensusCapsule is created but does not start on its own: a
+		// fresh network stays in genesis-init until the network genesis is generated
+		// (and Manual-start nodes wait for `node start`). The status step's live hint
+		// is transient in the TUI, so print the durable next steps here.
+		printConsensusInstallNextSteps(cmd, flagNamespace, flagDeploymentPkgDir)
+
 		return nil
 	},
+}
+
+// printConsensusInstallNextSteps writes the post-install guidance to stdout after
+// the workflow TUI has closed and restored the terminal, so it persists in the
+// scrollback (unlike a transient step-detail line).
+func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string) {
+	genesisCmd := fmt.Sprintf("sudo solo-provisioner consensus network genesis --namespace %s", namespace)
+	if strings.TrimSpace(pkgDir) != "" {
+		genesisCmd += fmt.Sprintf(" --deployment-package-dir %s", pkgDir)
+	}
+	cmd.Println()
+	cmd.Println("Next steps:")
+	cmd.Println("  1. Generate the network genesis so the node(s) can leave genesis-init and start:")
+	cmd.Printf("       %s\n", genesisCmd)
+	cmd.Println("  2. Watch the node come up:")
+	cmd.Printf("       kubectl -n %s get consensuscapsules\n", namespace)
+	cmd.Println("     (A Manual start-policy node stays Stopped until 'consensus node start'.)")
 }
 
 // promptForMissingFlags presents an interactive wizard for the core consensus

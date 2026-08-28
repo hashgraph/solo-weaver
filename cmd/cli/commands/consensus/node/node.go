@@ -3,8 +3,6 @@
 package node
 
 import (
-	"time"
-
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/spf13/cobra"
 )
@@ -23,7 +21,6 @@ var (
 	flagSigningSecret    string
 	flagUpgradeOperator  bool
 	flagProfile          string
-	flagReadyTimeout     time.Duration
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -46,7 +43,6 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
 	nodeCmd.PersistentFlags().BoolVar(&flagUpgradeOperator, "upgrade-operator", false, "Upgrade solo-operator if installed version differs from the expected version")
-	nodeCmd.PersistentFlags().DurationVar(&flagReadyTimeout, "ready-timeout", 5*time.Minute, "How long to wait for the consensus node to become Running/Active after the CR is created (0 disables the wait)")
 	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
 	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)
 	nodeCmd.AddCommand(installCmd)
