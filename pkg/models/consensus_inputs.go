@@ -78,6 +78,37 @@ const (
 	ConfigKeyBlockNodes          = "block-nodes"
 )
 
+// consensusConfigCRSuffix maps each config key to the canonical name suffix the
+// solo-operator expects. The config CR, the ConfigMap the operator derives from
+// it, and the ConsensusCapsule *Ref that points at it all share this exact name
+// (verified against the solo-operator docs/example). This is the single source
+// of truth so EnsureConfigCRs and the capsule refs can never drift apart — a
+// mismatch leaves the capsule stuck (referenced ConfigMap "not found").
+//
+// Note simple-fee-schedules is intentionally singular "fee" here even though the
+// ConfigKey is "simple-fees-schedules": the operator/example use the singular
+// form for the resource name.
+var consensusConfigCRSuffix = map[string]string{
+	ConfigKeyLog4j2:              "log4j2",
+	ConfigKeySettings:            "settings",
+	ConfigKeyAppProperties:       "application-properties",
+	ConfigKeyAppOverride:         "application-override-properties",
+	ConfigKeyApiPermission:       "api-permission-properties",
+	ConfigKeyBootstrap:           "bootstrap-properties",
+	ConfigKeyNodeProperties:      "node-properties",
+	ConfigKeyFeeSchedules:        "fee-schedules",
+	ConfigKeySimpleFeesSchedules: "simple-fee-schedules",
+	ConfigKeyThrottles:           "throttles",
+	ConfigKeyBlockNodes:          "block-nodes",
+}
+
+// ConsensusConfigCRName returns the config CR / managed ConfigMap / capsule ref
+// name for a config key on a node, e.g.
+// ConsensusConfigCRName("node0", ConfigKeyAppProperties) == "node0-application-properties".
+func ConsensusConfigCRName(scope, configKey string) string {
+	return fmt.Sprintf("%s-%s", scope, consensusConfigCRSuffix[configKey])
+}
+
 // Config content sources, stored in ConfigSources and ConfigHashEntry.Source.
 const (
 	ConfigSourcePackage  = "deployment-package"
