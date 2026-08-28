@@ -28,8 +28,6 @@ type ConsensusNodeInputs struct {
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
 	SigningSecret string `json:"signingSecret,omitempty"`
 
-	UpgradeOperator bool `json:"upgradeOperator,omitempty"`
-
 	// Profile is the deployment profile (local/testnet/mainnet/...) used to size
 	// the host hardware floor when this install bootstraps the cluster.
 	Profile string `json:"profile,omitempty"`

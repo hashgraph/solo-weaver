@@ -13,11 +13,9 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
-	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
-	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -26,7 +24,6 @@ import (
 type InstallHandler struct {
 	bll.BaseHandler[models.ConsensusNodeInputs]
 	runtime *rsl.ConsensusNodeRuntimeResolver
-	mr      software.MachineRuntime
 }
 
 // PrepareEffectiveInputs resolves the winning value for each field from the
@@ -113,28 +110,27 @@ func (h *InstallHandler) BuildWorkflow(
 ) (*automa.WorkflowBuilder, error) {
 	ins := inputs.Custom
 
-	// The consensus node is deployed via solo-operator CRs into a running
-	// Kubernetes cluster. When no cluster exists yet, bootstrap it first —
-	// mirroring block node install — so a fresh host reaches a running consensus
-	// node in one command. When a cluster is already present, skip straight to
-	// the operator/CR steps.
-	var stepList []automa.Builder
+	// Unlike block node install, consensus node install does NOT bootstrap the
+	// cluster. A consensus node needs prerequisites that are set up out-of-band
+	// after the cluster (and solo-operator) exist — per-node secrets (gossip,
+	// gRPC TLS), private-registry pull secrets, and the network genesis — so a
+	// prepared cluster is a hard precondition here. Fail fast, with a checklist,
+	// rather than silently standing up infrastructure mid-install.
 	if !currentState.ClusterState.Created {
-		stepList = append(stepList,
-			// Consensus-sized preflight (hardware floor for the resolved profile)
-			// plus system setup, then stand up Kubernetes.
-			workflows.NodeSetupWorkflow(models.NodeTypeConsensus, ins.Profile, "", ins.SkipHardwareChecks),
-			workflows.KubernetesSetupWorkflow(h.mr),
-		)
+		return nil, errx.Decorate(
+			errorx.IllegalState.New("consensus node install requires an already-installed Kubernetes cluster with the solo-operator"),
+			reasons.PreconditionNotMet,
+			"Install the cluster with the solo-operator first: sudo solo-provisioner kube cluster install --profile "+ins.Profile+" (with soloOperator.enabled in the config)",
+			"Then create the per-node secrets (gossip signing + gRPC TLS) in the namespace",
+			"If the images are in a private registry, create the pull secret and attach it to the node ServiceAccounts",
+			"Re-run install once the cluster is up — it fails fast if any prerequisite (operator, secrets) is still missing, without changing the cluster")
 	}
 
-	stepList = append(stepList,
-		// Secret references depend only on the cluster (not the operator), so check
-		// them first — this fails fast on missing secrets before the ~21s operator
-		// install and operator prechecks. In the bootstrap case it runs right after
-		// the cluster comes up (the earliest point a cluster query is meaningful).
+	stepList := []automa.Builder{
+		// The solo-operator is owned by `kube cluster install` (soloOperator.enabled),
+		// not installed here — consensus install is a pure consumer. These prechecks
+		// are the hard guard that the operator is present and the right version.
 		steps.PrecheckConsensusSecrets(ins),
-		steps.InstallSoloOperator(ins.UpgradeOperator),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
@@ -146,7 +142,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// unblocked out-of-band by `consensus network genesis`, and Manual nodes stay
 		// Stopped until `consensus node start`. Live readiness is `node status`' job.
 		steps.ReportConsensusCapsuleStatus(ins, steps.DefaultCapsuleKubeProvider),
-	)
+	}
 
 	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(stepList...)
 
@@ -232,7 +228,6 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 func NewInstallHandler(
 	base bll.BaseHandler[models.ConsensusNodeInputs],
 	runtime *rsl.ConsensusNodeRuntimeResolver,
-	mr software.MachineRuntime,
 ) (*InstallHandler, error) {
-	return &InstallHandler{BaseHandler: base, runtime: runtime, mr: mr}, nil
+	return &InstallHandler{BaseHandler: base, runtime: runtime}, nil
 }
