@@ -127,11 +127,15 @@ func (h *InstallHandler) BuildWorkflow(
 	}
 
 	stepList = append(stepList,
+		// Secret references depend only on the cluster (not the operator), so check
+		// them first — this fails fast on missing secrets before the ~21s operator
+		// install and operator prechecks. In the bootstrap case it runs right after
+		// the cluster comes up (the earliest point a cluster query is meaningful).
+		steps.PrecheckConsensusSecrets(ins),
 		steps.InstallSoloOperator(ins.UpgradeOperator),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
-		steps.PrecheckConsensusSecrets(ins),
 		steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),
 		steps.EnsureConfigCRs(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
