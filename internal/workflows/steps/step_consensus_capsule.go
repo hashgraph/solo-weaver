@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -23,7 +24,12 @@ const (
 	EnsureOrbitStepId            = "ensure-orbit"
 	EnsureConfigCRsStepId        = "ensure-config-crs"
 	CreateConsensusCapsuleStepId = "create-consensus-capsule"
+	WaitCapsuleReadyStepId       = "wait-consensus-capsule-ready"
 )
+
+// capsuleReadyPollInterval is how often WaitConsensusCapsuleReady re-reads the
+// ConsensusCapsule status while waiting for it to become Running/Active.
+const capsuleReadyPollInterval = 5 * time.Second
 
 // CapsuleKubeClient is the subset of *kube.Client used by the consensus capsule
 // steps. Depending on this narrow interface (rather than *kube.Client) lets the
@@ -423,5 +429,100 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "ConsensusCapsule created")
+		})
+}
+
+// WaitConsensusCapsuleReady polls the ConsensusCapsule's status.phase until it
+// reaches Running (pod up) or Active (pod Ready + platform ACTIVE), fails fast if
+// the operator reports Failed, and errors out after timeout. Each poll is
+// surfaced to the operator via StepDetail (phase + live platformStatus) so they
+// can see the node progress (Pending → Running → Active) instead of a silent wait.
+func WaitConsensusCapsuleReady(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider, timeout time.Duration) automa.Builder {
+	return automa.NewStepBuilder().WithId(WaitCapsuleReadyStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			kc, err := provider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
+
+			deadline := time.Now().Add(timeout)
+			ticker := time.NewTicker(capsuleReadyPollInterval)
+			defer ticker.Stop()
+
+			// phaseFor reads status.phase (+ platformStatus for the detail line) and
+			// reports it to the operator. An empty/absent phase is treated as Pending.
+			checkOnce := func() (done bool, rpt *automa.Report) {
+				phase, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "status", "phase")
+				if err != nil {
+					// Transient read error (e.g. status not yet populated); keep polling.
+					notify.As().StepDetail(ctx, stp, fmt.Sprintf("node %d: waiting for status…", inputs.NodeId))
+					return false, nil
+				}
+				platform, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "status", "platformStatus")
+
+				shown := phase
+				if shown == "" {
+					shown = string(operatorv1alpha1.PhasePending)
+				}
+				detail := fmt.Sprintf("node %d: phase=%s", inputs.NodeId, shown)
+				if platform != "" {
+					detail += fmt.Sprintf(" platform=%s", platform)
+				}
+				notify.As().StepDetail(ctx, stp, detail)
+
+				switch operatorv1alpha1.Phase(phase) {
+				case operatorv1alpha1.PhaseRunning, operatorv1alpha1.PhaseActive:
+					return true, automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
+						"phase":          phase,
+						"platformStatus": platform,
+					}))
+				case operatorv1alpha1.PhaseFailed:
+					return true, automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("ConsensusCapsule %q reached phase Failed (platformStatus=%q)", capsuleName, platform),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Inspect the capsule: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName),
+						"Check the solo-operator logs and the consensus node pod logs in that namespace")))
+				default:
+					return false, nil
+				}
+			}
+
+			// Initial immediate check so a capsule that is already Running returns fast.
+			if done, rpt := checkOnce(); done {
+				return rpt
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(ctx.Err(), "cancelled while waiting for ConsensusCapsule %q to become ready", capsuleName),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Inspect the capsule: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName))))
+				case <-ticker.C:
+					if done, rpt := checkOnce(); done {
+						return rpt
+					}
+					if time.Now().After(deadline) {
+						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+							errorx.IllegalState.New("timed out after %s waiting for ConsensusCapsule %q to become Running/Active", timeout, capsuleName),
+							reasons.PreconditionNotMet,
+							fmt.Sprintf("Inspect the capsule: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName),
+							"Check the solo-operator logs and the pod status; increase --ready-timeout if the node just needs more time (e.g. image pull, event replay)")))
+					}
+				}
+			}
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, fmt.Sprintf("Waiting for consensus node %d to be running (timeout %s)", inputs.NodeId, timeout))
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Consensus node did not become ready")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node is running")
 		})
 }

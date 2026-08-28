@@ -143,6 +143,14 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
 	)
 
+	// Verify the node actually comes up rather than reporting success the moment
+	// the CR is applied. Skipped when --ready-timeout=0.
+	if ins.ReadyTimeout > 0 {
+		stepList = append(stepList,
+			steps.WaitConsensusCapsuleReady(ins, steps.DefaultCapsuleKubeProvider, ins.ReadyTimeout),
+		)
+	}
+
 	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(stepList...)
 
 	return wb, nil

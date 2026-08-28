@@ -117,6 +117,7 @@ var installCmd = &cobra.Command{
 				UpgradeOperator:      flagUpgradeOperator,
 				Profile:              flagProfile,
 				SkipHardwareChecks:   skipHardwareChecks,
+				ReadyTimeout:         flagReadyTimeout,
 			},
 		}
 
