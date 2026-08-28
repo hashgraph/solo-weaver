@@ -4,6 +4,7 @@ package reality
 
 import (
 	"context"
+	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -79,10 +80,20 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 		updated := ns
 		updated.LastSync = htime.Now()
 
-		if repo, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
+		// ImageRepo is the full "registry/path/name". The operator stores it split
+		// across softwareVersion.repository (registry/path) and .imageName (name), so
+		// reassemble both — reading repository alone drops the name and, because
+		// Reality outranks the deployment-package Config, each idempotent re-run would
+		// otherwise feed a shorter path back in (gcr.io/hedera-registry/consensus-node
+		// → gcr.io/hedera-registry → gcr.io), corrupting the image reference.
+		repo, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
 			ns.Namespace, capsuleName,
-			"spec", "podProperties", "containers", "consensusNode", "softwareVersion", "repository"); err == nil && repo != "" {
-			updated.ImageRepo = repo
+			"spec", "podProperties", "containers", "consensusNode", "softwareVersion", "repository")
+		imageName, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
+			ns.Namespace, capsuleName,
+			"spec", "podProperties", "containers", "consensusNode", "softwareVersion", "imageName")
+		if full := joinImageRef(repo, imageName); full != "" {
+			updated.ImageRepo = full
 		}
 		if tag, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
 			ns.Namespace, capsuleName,
@@ -116,4 +127,21 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 	}
 
 	return result, nil
+}
+
+// joinImageRef reassembles the full "registry/path/name" image reference from the
+// operator's split repository (registry/path) and imageName (name) fields. It is
+// the inverse of the split done in step_consensus_capsule.go's splitConsensusImage,
+// so reading a capsule and re-applying it round-trips losslessly.
+func joinImageRef(repository, imageName string) string {
+	repository = strings.TrimSpace(repository)
+	imageName = strings.TrimSpace(imageName)
+	switch {
+	case repository == "":
+		return imageName
+	case imageName == "":
+		return repository
+	default:
+		return repository + "/" + imageName
+	}
 }

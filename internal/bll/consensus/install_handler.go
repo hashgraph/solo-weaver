@@ -141,15 +141,12 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),
 		steps.EnsureConfigCRs(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
+		// Report the node's current status (non-blocking) so the operator sees the
+		// phase and next step. Install does not wait for Running: a fresh network is
+		// unblocked out-of-band by `consensus network genesis`, and Manual nodes stay
+		// Stopped until `consensus node start`. Live readiness is `node status`' job.
+		steps.ReportConsensusCapsuleStatus(ins, steps.DefaultCapsuleKubeProvider),
 	)
-
-	// Verify the node actually comes up rather than reporting success the moment
-	// the CR is applied. Skipped when --ready-timeout=0.
-	if ins.ReadyTimeout > 0 {
-		stepList = append(stepList,
-			steps.WaitConsensusCapsuleReady(ins, steps.DefaultCapsuleKubeProvider, ins.ReadyTimeout),
-		)
-	}
 
 	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(stepList...)
 

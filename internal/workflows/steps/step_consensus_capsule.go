@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -26,12 +25,8 @@ const (
 	EnsureOrbitStepId            = "ensure-orbit"
 	EnsureConfigCRsStepId        = "ensure-config-crs"
 	CreateConsensusCapsuleStepId = "create-consensus-capsule"
-	WaitCapsuleReadyStepId       = "wait-consensus-capsule-ready"
+	ReportCapsuleStatusStepId    = "report-consensus-capsule-status"
 )
-
-// capsuleReadyPollInterval is how often WaitConsensusCapsuleReady re-reads the
-// ConsensusCapsule status while waiting for it to become Running/Active.
-const capsuleReadyPollInterval = 5 * time.Second
 
 // CapsuleKubeClient is the subset of *kube.Client used by the consensus capsule
 // steps. Depending on this narrow interface (rather than *kube.Client) lets the
@@ -447,108 +442,63 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 		})
 }
 
-// WaitConsensusCapsuleReady polls the ConsensusCapsule's status.phase until it
-// reaches Running (pod up) or Active (pod Ready + platform ACTIVE), fails fast if
-// the operator reports Failed, and errors out after timeout. Each poll is
-// surfaced to the operator via StepDetail (phase + live platformStatus) so they
-// can see the node progress (Pending → Running → Active) instead of a silent wait.
-func WaitConsensusCapsuleReady(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider, timeout time.Duration) automa.Builder {
-	return automa.NewStepBuilder().WithId(WaitCapsuleReadyStepId).
+// ReportConsensusCapsuleStatus reads the ConsensusCapsule's current status once
+// and reports it — it does NOT wait or block. Install provisions the CR; whether
+// the node then reaches Running depends on the network genesis (fresh networks are
+// unblocked out-of-band by `consensus network genesis`) and the start policy
+// (Manual nodes stay Stopped until `consensus node start`), so blocking here would
+// wrongly time out. The step surfaces the phase plus the right next-step hint and
+// always succeeds — a live readiness check is the job of `consensus node status`.
+func ReportConsensusCapsuleStatus(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(ReportCapsuleStatusStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				// Reporting is best-effort; a read failure must not fail install.
+				notify.As().StepDetail(ctx, stp, fmt.Sprintf("node %d: status unavailable (%v)", inputs.NodeId, err))
+				return automa.StepSuccessReport(stp.Id())
 			}
 
 			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
-			// A node can only become ready once the network genesis exists. On a
-			// fresh network the genesis ConfigMap is absent until `consensus network
-			// genesis` runs, so don't wait here — the node would sit in genesis-init
-			// forever. Report the node as installed-and-awaiting-genesis instead.
-			if genesisExists, _ := kc.ResourceExists(ctx, "v1", "ConfigMap", inputs.Namespace, NetworkGenesisConfigMapName); !genesisExists {
-				notify.As().StepDetail(ctx, stp,
-					fmt.Sprintf("node %d: awaiting network genesis — run 'solo-provisioner consensus network genesis --namespace %s'", inputs.NodeId, inputs.Namespace))
-				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"awaitingGenesis": "true"}))
+			phase, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "status", "phase")
+			if phase == "" {
+				phase = string(operatorv1alpha1.PhasePending)
+			}
+			policy, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "spec", "startPolicy")
+			if policy == "" {
+				policy = string(operatorv1alpha1.StartPolicyAuto) // CRD default is Auto
+			}
+			genesisExists, _ := kc.ResourceExists(ctx, "v1", "ConfigMap", inputs.Namespace, NetworkGenesisConfigMapName)
+
+			// Pick the most actionable next step for the operator.
+			var hint string
+			switch {
+			case !genesisExists:
+				hint = fmt.Sprintf("awaiting network genesis — run 'solo-provisioner consensus network genesis --namespace %s'", inputs.Namespace)
+			case operatorv1alpha1.StartPolicy(policy) == operatorv1alpha1.StartPolicyManual:
+				hint = "Manual start policy — run 'solo-provisioner consensus node start' to start it"
+			case operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseRunning || operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseActive:
+				hint = "running"
+			case operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseFailed:
+				hint = fmt.Sprintf("Failed — inspect: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName)
+			default:
+				hint = "starting — track with 'solo-provisioner consensus node status'"
 			}
 
-			deadline := time.Now().Add(timeout)
-			ticker := time.NewTicker(capsuleReadyPollInterval)
-			defer ticker.Stop()
-
-			// phaseFor reads status.phase (+ platformStatus for the detail line) and
-			// reports it to the operator. An empty/absent phase is treated as Pending.
-			checkOnce := func() (done bool, rpt *automa.Report) {
-				phase, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "status", "phase")
-				if err != nil {
-					// Transient read error (e.g. status not yet populated); keep polling.
-					notify.As().StepDetail(ctx, stp, fmt.Sprintf("node %d: waiting for status…", inputs.NodeId))
-					return false, nil
-				}
-				platform, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "status", "platformStatus")
-
-				shown := phase
-				if shown == "" {
-					shown = string(operatorv1alpha1.PhasePending)
-				}
-				detail := fmt.Sprintf("node %d: phase=%s", inputs.NodeId, shown)
-				if platform != "" {
-					detail += fmt.Sprintf(" platform=%s", platform)
-				}
-				notify.As().StepDetail(ctx, stp, detail)
-
-				switch operatorv1alpha1.Phase(phase) {
-				case operatorv1alpha1.PhaseRunning, operatorv1alpha1.PhaseActive:
-					return true, automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
-						"phase":          phase,
-						"platformStatus": platform,
-					}))
-				case operatorv1alpha1.PhaseFailed:
-					return true, automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.New("ConsensusCapsule %q reached phase Failed (platformStatus=%q)", capsuleName, platform),
-						reasons.PreconditionNotMet,
-						fmt.Sprintf("Inspect the capsule: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName),
-						"Check the solo-operator logs and the consensus node pod logs in that namespace")))
-				default:
-					return false, nil
-				}
-			}
-
-			// Initial immediate check so a capsule that is already Running returns fast.
-			if done, rpt := checkOnce(); done {
-				return rpt
-			}
-			for {
-				select {
-				case <-ctx.Done():
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.Wrap(ctx.Err(), "cancelled while waiting for ConsensusCapsule %q to become ready", capsuleName),
-						reasons.PreconditionNotMet,
-						fmt.Sprintf("Inspect the capsule: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName))))
-				case <-ticker.C:
-					if done, rpt := checkOnce(); done {
-						return rpt
-					}
-					if time.Now().After(deadline) {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-							errorx.IllegalState.New("timed out after %s waiting for ConsensusCapsule %q to become Running/Active", timeout, capsuleName),
-							reasons.PreconditionNotMet,
-							fmt.Sprintf("Inspect the capsule: kubectl -n %s describe consensuscapsule %s", inputs.Namespace, capsuleName),
-							"Check the solo-operator logs and the pod status; increase --ready-timeout if the node just needs more time (e.g. image pull, event replay)")))
-					}
-				}
-			}
+			notify.As().StepDetail(ctx, stp, fmt.Sprintf("node %d: phase=%s (%s)", inputs.NodeId, phase, hint))
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
+				"phase":       phase,
+				"startPolicy": policy,
+			}))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, fmt.Sprintf("Waiting for consensus node %d to be running (timeout %s)", inputs.NodeId, timeout))
+			notify.As().StepStart(ctx, stp, fmt.Sprintf("Recording consensus node %d status (not started yet — see next steps)", inputs.NodeId))
 			return ctx, nil
 		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Consensus node did not become ready")
-		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node is running")
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node status recorded")
 		})
 }
 
