@@ -53,15 +53,14 @@ var installCmd = &cobra.Command{
 		}
 
 		// Derive per-node secret defaults from the (possibly prompted) node ID.
+		// A consensus node needs exactly two secrets: gossip signing keys and the
+		// gRPC TLS key/cert.
 		scope := models.ConsensusNodeScope(flagNodeId)
 		if flagGrpcTlsSecret == "" {
 			flagGrpcTlsSecret = scope + "-grpc-tls-keys"
 		}
 		if flagSigningSecret == "" {
 			flagSigningSecret = scope + "-gossip-keys"
-		}
-		if flagHapiAppSecret == "" {
-			flagHapiAppSecret = scope + "-hapi-app-keys"
 		}
 
 		// --profile sizes the host hardware floor when this install has to
@@ -113,7 +112,6 @@ var installCmd = &cobra.Command{
 				DeploymentPackageDir: flagDeploymentPkgDir,
 				GrpcTlsSecret:        flagGrpcTlsSecret,
 				SigningSecret:        flagSigningSecret,
-				HapiAppSecret:        flagHapiAppSecret,
 				UpgradeOperator:      flagUpgradeOperator,
 				Profile:              flagProfile,
 				SkipHardwareChecks:   skipHardwareChecks,

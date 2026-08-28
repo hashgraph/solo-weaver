@@ -222,7 +222,6 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 			DeploymentPkg: ins.DeploymentPackageDir,
 			GrpcTlsSecret: ins.GrpcTlsSecret,
 			SigningSecret: ins.SigningSecret,
-			HapiAppSecret: ins.HapiAppSecret,
 			ConfigHashes:  configHashes,
 			LastSync:      now,
 		}
