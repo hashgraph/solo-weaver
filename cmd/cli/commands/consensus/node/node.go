@@ -21,6 +21,7 @@ var (
 	flagSigningSecret    string
 	flagHapiAppSecret    string
 	flagUpgradeOperator  bool
+	flagProfile          string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -44,6 +45,8 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
 	nodeCmd.PersistentFlags().StringVar(&flagHapiAppSecret, "hapi-app-secret", "", "Name of K8s Secret containing hedera.crt and hedera.key for HAPI")
 	nodeCmd.PersistentFlags().BoolVar(&flagUpgradeOperator, "upgrade-operator", false, "Upgrade solo-operator if installed version differs from the expected version")
+	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
+	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)
 	nodeCmd.AddCommand(installCmd)
 }
 

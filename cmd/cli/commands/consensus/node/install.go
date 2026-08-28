@@ -3,12 +3,15 @@
 package node
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
@@ -50,6 +53,23 @@ var installCmd = &cobra.Command{
 				reasons.Internal)
 		}
 
+		// --profile sizes the host hardware floor when this install has to
+		// bootstrap the cluster (no existing cluster). It is validated here and
+		// ignored when a cluster already exists.
+		if flagProfile != "" && !hardware.IsValidProfile(flagProfile) {
+			return errx.Decorate(
+				errorx.IllegalArgument.New("unsupported profile: %q", flagProfile),
+				reasons.InvalidArgument,
+				fmt.Sprintf("Pass one of the supported profiles via --profile: %v", models.SupportedProfiles()))
+		}
+
+		skipHardwareChecks, err := common.FlagSkipHardwareChecks().Value(cmd, args)
+		if err != nil {
+			return errx.Decorate(
+				errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagSkipHardwareChecks().Name),
+				reasons.Internal)
+		}
+
 		intent := models.Intent{
 			Action: models.ActionInstall,
 			Target: models.TargetConsensusNode,
@@ -75,6 +95,8 @@ var installCmd = &cobra.Command{
 				SigningSecret:        flagSigningSecret,
 				HapiAppSecret:        flagHapiAppSecret,
 				UpgradeOperator:      flagUpgradeOperator,
+				Profile:              flagProfile,
+				SkipHardwareChecks:   skipHardwareChecks,
 			},
 		}
 

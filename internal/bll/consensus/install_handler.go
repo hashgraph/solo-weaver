@@ -13,9 +13,11 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -24,6 +26,7 @@ import (
 type InstallHandler struct {
 	bll.BaseHandler[models.ConsensusNodeInputs]
 	runtime *rsl.ConsensusNodeRuntimeResolver
+	mr      software.MachineRuntime
 }
 
 // PrepareEffectiveInputs resolves the winning value for each field from the
@@ -108,17 +111,33 @@ func (h *InstallHandler) BuildWorkflow(
 ) (*automa.WorkflowBuilder, error) {
 	ins := inputs.Custom
 
-	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").
-		Steps(
-			steps.InstallSoloOperator(ins.UpgradeOperator),
-			steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
-			steps.PrecheckOperatorRunning(),
-			steps.PrecheckOperatorVersion(),
-			steps.PrecheckConsensusSecrets(ins),
-			steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),
-			steps.EnsureConfigCRs(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
-			steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
+	// The consensus node is deployed via solo-operator CRs into a running
+	// Kubernetes cluster. When no cluster exists yet, bootstrap it first —
+	// mirroring block node install — so a fresh host reaches a running consensus
+	// node in one command. When a cluster is already present, skip straight to
+	// the operator/CR steps.
+	var stepList []automa.Builder
+	if !currentState.ClusterState.Created {
+		stepList = append(stepList,
+			// Consensus-sized preflight (hardware floor for the resolved profile)
+			// plus system setup, then stand up Kubernetes.
+			workflows.NodeSetupWorkflow(models.NodeTypeConsensus, ins.Profile, "", ins.SkipHardwareChecks),
+			workflows.KubernetesSetupWorkflow(h.mr),
 		)
+	}
+
+	stepList = append(stepList,
+		steps.InstallSoloOperator(ins.UpgradeOperator),
+		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
+		steps.PrecheckOperatorRunning(),
+		steps.PrecheckOperatorVersion(),
+		steps.PrecheckConsensusSecrets(ins),
+		steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),
+		steps.EnsureConfigCRs(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
+		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
+	)
+
+	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(stepList...)
 
 	return wb, nil
 }
@@ -203,6 +222,7 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 func NewInstallHandler(
 	base bll.BaseHandler[models.ConsensusNodeInputs],
 	runtime *rsl.ConsensusNodeRuntimeResolver,
+	mr software.MachineRuntime,
 ) (*InstallHandler, error) {
-	return &InstallHandler{BaseHandler: base, runtime: runtime}, nil
+	return &InstallHandler{BaseHandler: base, runtime: runtime, mr: mr}, nil
 }
