@@ -365,6 +365,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									ImageTag:   inputs.ConsensusImageTag,
 								},
 							},
+							// The UC (Update Coordinator) sidecar is mandatory: it is the
+							// sole writer of status.platformStatus, so the operator rejects
+							// a capsule that does not enable it (UCSidecarRequired).
+							UC: &operatorv1alpha1.UcSidecar{Enabled: true},
 						},
 					},
 				},
