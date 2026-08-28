@@ -239,8 +239,8 @@ value instead. All such by-value mirrors must stay in sync.
 
 Two oneshot units replay the persisted state at boot. Only the nft loader is
 ordered **before** the daemon, because the daemon owns nft set membership and
-must not start against a missing table. The bandwidth shaper is deliberately
-unordered against the daemon — see below.
+must not start against a missing table; the bandwidth shaper is deliberately
+unordered against it — see below.
 
 ### solo-provisioner-network-nft.service (nftables loader)
 
@@ -281,59 +281,52 @@ unit, so hosts with no firewall manager are unaffected.
 
 **How a unit change reaches an existing host.** The unit file is written only by
 a mutation (`network firewall` / `network policy`, or the install/reconfigure
-workflow). An upgraded host runs no mutation — it only receives a new binary — so
-a change to the embedded unit would never arrive. The startup migration built by
-`NewNetworkNftUnitMigration` (`internal/workflows/migration_network_unit.go`,
-registered under `migration.ScopeStartup`) closes that gap: ahead of every
-command that runs the global pre-run checks — and explicitly on the
-`solo-provisioner install` upgrade path, which skips that pre-run — it compares
-the installed unit against the embedded copy and rewrites it when they differ.
+workflow). An already-provisioned host that is upgraded runs no such mutation —
+it only receives a new binary — so a change to the embedded unit would never
+arrive. The startup migration built by `NewNetworkNftUnitMigration`
+(`internal/workflows/migration_network_unit.go`, registered under
+`migration.ScopeStartup`) closes that gap: before every command that runs the
+global pre-run checks, and explicitly on the `solo-provisioner install` upgrade
+path, it compares the installed unit against the embedded copy and rewrites it
+when they differ.
 
-Content alone is not enough. A unit that matches the embedded copy byte-for-byte
-but is **disabled** is still the #982 failure — systemd never starts it, so the
-tables do not come back after a reboot — and a byte diff cannot see that. Both
-sides therefore check enablement as well: `NetworkNftUnitNeedsConverge`
-(`internal/network/firewall/unit_drift.go`) probes it, and `EnsureNetworkNftUnit`
-re-enables on its unchanged-content fast path. Both are required, because the
-migration runs `Execute` only when the probe reports drift — an enable living
-only in `Execute` would never be reached on the host that needs it. The shared
-implementation is `internal/network/unitconv` (`NeedsConverge` / `EnsureUnit`),
-used by the shaper unit too.
+The comparison is not content-only. A unit that matches the embedded copy
+byte-for-byte but is **disabled** is still the #982 failure — systemd never
+starts it, so the tables do not come back after a reboot — and a byte diff
+cannot see that. `NetworkNftUnitNeedsConverge`
+(`internal/network/firewall/unit_drift.go`) therefore also queries enablement,
+and `EnsureNetworkNftUnit` re-enables on its unchanged-content fast path. Both
+halves are required: the migration only runs `Execute` when the probe reports
+drift, so an enable that lives only in `Execute` would never be reached on the
+host that needs it. The query is filesystem-only — `unitconv.EnabledAtBoot`
+lstats the `multi-user.target.wants` symlink rather than opening a DBus
+connection — so it stays cheap enough to run ahead of every root command; the
+authoritative enable stays in `Execute`. Both halves live in
+`internal/network/unitconv` (`NeedsConverge` / `EnsureUnit`), shared with the
+shaper unit below. `version` and the shaper worker verbs the daemon delegates
+(`block node tc-attach`, `reconcile-shaper`) opt out of the pre-run
+(`SkipGlobalChecks`) and never reach it. The daemon's other delegated verb,
+`network policy set`, does *not* opt out: it runs the pre-run as root under
+`sudo -n`, so it reaches the migration inside the daemon unit's mount namespace,
+where `ProtectSystem=strict` leaves `/usr/lib` read-only. The write fails there
+and is warned about rather than returned (see below), so the poll loop keeps
+working and the unit converges on the next privileged invocation outside that
+namespace — in practice the `solo-provisioner install` upgrade run itself. It is
+gated on that drift rather than on a CLI version boundary, so every future unit
+change is delivered by the same migration with no new boundary to remember. It
+never restarts the unit — a restart would replay the workload-policy artifact
+and revert a healthy policy table's live sets to that artifact's membership
+snapshot; the new ordering takes effect at the next boot.
 
-The probe is filesystem-only, since it runs ahead of every root command:
-`unitconv.EnabledAtBoot` reads the wants symlink instead of opening a DBus
-connection. It only has to be cheap — the authoritative check stays in `Execute`
-(`unitconv.EnableIfDisabled`), so a false "disabled" costs one warn-only enable
-pass. Being pure filesystem work it needs no build tag; only the write-and-enable
-side sits behind the `service_linux.go` / `service_other.go` split, because
-`pkg/os` does not build on darwin.
-
-The drift gate is host state, so it never closes on its own. Two guard rails keep
-a host that cannot converge from being wedged by it:
-
-- **A non-root caller skips entirely.** The write lands under `/usr/lib`, so an
-  unprivileged invocation could only fail.
-- **A write failure warns, it does not return.** Otherwise a host whose
-  `/usr/lib` write cannot succeed would fail the pre-run of *every* command on
-  it, indefinitely. (A version-gated migration cannot reach that state, because
-  its boundary closes.) The loud failure still exists on the mutation path:
-  `EnsureNetworkNftUnit`, called by `network firewall` / `network policy`,
-  returns its error.
-
-That second rail is what makes the daemon's `network policy set` delegation safe.
-It runs the pre-run as root under `sudo -n`, so it reaches the migration inside
-the daemon unit's mount namespace, where `ProtectSystem=strict` leaves
-`/usr/lib` read-only: the write fails, is warned about, and the unit converges on
-the next privileged invocation outside that namespace — in practice the
-`solo-provisioner install` upgrade run. `version` and the delegated shaper verbs
-(`block node tc-attach`, `reconcile-shaper`) opt out of the pre-run with
-`SkipGlobalChecks` and never reach the migration at all.
-
-The migration never restarts the unit: a restart would replay the
-workload-policy artifact and revert a healthy policy table's live sets to that
-artifact's membership snapshot. The new ordering takes effect at the next boot.
-Gating on drift rather than on a CLI version boundary means every future unit
-change is delivered by this same migration, with no new boundary to remember.
+Because that gate is host state, it never closes on its own, which makes two
+guard rails load-bearing. The migration **skips entirely for a non-root caller**
+(the write lands under `/usr/lib`, so an unprivileged invocation could only
+fail), and a **write failure is warned about, not returned**. Without either, a
+host whose `/usr/lib` write cannot succeed would fail the pre-run of *every*
+command run on it, indefinitely — a version-gated migration cannot get into that
+state because its boundary closes. The loud failure still exists, on the mutation
+path: `EnsureNetworkNftUnit`, called by `network firewall` / `network policy`,
+returns its error.
 
 ### solo-provisioner-bandwidth-shaper.service (tc HTB loader)
 
@@ -363,52 +356,39 @@ root qdisc and rebuilds the `$EGRESS` HTB root + trunk + one leaf class/leaf-qdi
 per configured tc class, auto-detecting the link speed and falling back to 1000
 Mbit/s.
 
-**Why it runs after the network, not before it.** The egress interface is often a
-netplan/systemd-networkd bond, bridge or VLAN, which does not exist until the
-network is configured. The pre-#980 `After=network-pre.target`
-`Before=network.target` ordering ran `tc` against a device that was not there yet,
-failed, and — being a `oneshot` with no `Restart=` — never tried again: the NIC
-stayed unshaped for the whole boot. `Wants=` is what makes the new ordering bite,
-since `After=` alone is inert unless something else pulls
-`network-online.target` into the transaction; `Before=network.target` had to go,
-since it would now be a cycle.
-
-**Why nothing is ordered after it.** `Before=solo-provisioner-daemon.service`
-went with the same change. Ordering is transitive, so keeping it would make every
-daemon start wait on `systemd-networkd-wait-online` — ~120s on a host with a
-non-optional unplugged link, exactly the multi-NIC netplan host this fix targets.
-It bought nothing in return: the daemon's own `tc` work is the per-pod `$VETH`
-hierarchy, never the `$EGRESS` root, so the two cannot race either way.
+**Why it runs after the network, not before it (#980).** The egress interface is
+often a netplan/systemd-networkd bond, bridge or VLAN, which does not exist until
+the network is configured. The previous `After=network-pre.target`
+`Before=network.target` ordering ran `tc` against a device that was not there
+yet, failed, and — being a `oneshot` with no `Restart=` — never tried again: the
+NIC stayed unshaped for the whole boot. `Wants=` is what makes the new ordering
+bite, since `After=` alone is inert unless something else pulls
+`network-online.target` into the transaction. `Before=network.target` had to go
+(it would now be a cycle), and `Before=solo-provisioner-daemon.service` went with
+it: ordering is transitive, so keeping it would make every daemon start wait on
+`systemd-networkd-wait-online` — ~120s on a host with a non-optional unplugged
+link, exactly the multi-NIC netplan host this fix targets. Nothing is lost by
+dropping it, because the daemon's own `tc` work is the per-pod `$VETH` hierarchy,
+never the `$EGRESS` root, so the two cannot race either way.
 
 **How a late device is covered.** `SHAPER_DEVICE_WAIT_SECS` gives the script a
 bounded poll on `/sys/class/net/<nic>` before its first `tc` call. The unit sets
 it, so a manual run of the script fails fast instead of blocking. A device that
-appears later than the budget stays unshaped until the next converge.
+appears later than the budget stays unshaped until the next converge, and the
+script exits 75 (`EX_TEMPFAIL`) to say so — a diagnostic, not a retry trigger.
 
-That loop is the *whole* retry, because no restart policy is usable here:
-
-- `RestartForceExitStatus=` would scope a retry to the late-device case, but is
-  only acted upon for `Type=oneshot` from systemd 256
-  ([systemd#31148](https://github.com/systemd/systemd/issues/31148)) — Ubuntu
-  22.04 ships 249 and Debian 12 ships 252, where it parses and does nothing.
-- An unscoped `Restart=on-failure` does work there, but would rebuild the root
-  qdisc every `RestartSec=` forever on a config `tc` keeps rejecting.
-
-The remaining directives follow from that. `TimeoutStartSec=60s` is the only
-bound on a wait that hangs, since `Type=oneshot` disables the start timeout by
-default. `StartLimitIntervalSec=0` because with no restart policy the only starts
-systemd could count are an operator's. The 30s budget is paid *synchronously*
-twice — `multi-user.target` waits for the start job, and `ApplyTcEgressScript`
-blocks on the restart — so `TestTcEgressUnit_RetryDirectives` caps it at 45s and
-pins `TimeoutStartSec=` above it. Exit 75 (`EX_TEMPFAIL`) is a diagnostic, not a
-trigger: it tells an operator the device never appeared, as opposed to `tc`
-rejecting the hierarchy.
-
-`shape.DeviceMissingExitCode` and `shape.DeviceWaitEnvVar` declare that status
-and variable name once, but the templates spell the literals out, so the unit
-tests and the integration suites (`Test_Shaper*_Integration`) are what keep
-constants, templates and real systemd behaviour in step. None of them reboot, so
-confirming the hierarchy after a real boot stays manual UAT.
+That poll is the *whole* retry, because no restart policy is usable here:
+`RestartForceExitStatus=` would scope a retry to the late-device case but is only
+acted upon for `Type=oneshot` from systemd 256
+([systemd#31148](https://github.com/systemd/systemd/issues/31148)) — Ubuntu 22.04
+ships 249 and Debian 12 ships 252 — and an unscoped `Restart=on-failure` would
+rebuild the root qdisc every `RestartSec=` forever on a config `tc` keeps
+rejecting. `TimeoutStartSec=60s` is therefore the only bound on a wait that
+hangs, since `Type=oneshot` disables the start timeout by default; it sits above
+the 30s budget, which is paid *synchronously* twice — `multi-user.target` waits
+for the start job, and `ApplyTcEgressScript` blocks on the restart.
+`StartLimitIntervalSec=0` because with no restart policy the only starts systemd
+could count are an operator's.
 
 The teardown render (`Unshape`) deliberately has **no** wait loop: a host whose
 NIC is already gone needs the unshape to succeed trivially. `ConditionPathExists=`
@@ -420,32 +400,21 @@ code: the startup migration built by `NewNetworkShaperUnitMigration`
 when it drifts, and never restarts it, so the live HTB hierarchy survives and the
 new ordering applies at the next boot. `TcEgressUnitNeedsConverge`
 (`internal/network/shape/unit_drift.go`) gates the missing-unit case on a
-persisted boot script, so a host that never shaped traffic gets no unit. It
-converges the **unit** only — the script is re-rendered by a mutation
-(`network shape …`, `block node install`), so on a host that runs none the fix
-reduces to the ordering change, which is the part that addresses #980.
-
-**Why teardown removes the boot script first.** The script is the guard, so
-removing the unit first would leave a partial teardown that the next root command
-reads as "persisted hierarchy with no unit" — silently reinstalling and
-re-enabling what the operator just removed. Script-first makes every partial
-failure safe: a failed script removal returns before touching the unit, and a
-byte-current unit with no script is kept inert by `ConditionPathExists=`.
-`Test_RemoveTcEgressUnit_Integration`
-(`internal/network/shape/service_teardown_it_test.go`) covers the property that
-order buys: after a teardown, and after a partial one that left an orphaned
-script, `TcEgressUnitNeedsConverge` must read false.
+persisted boot script, so a host that never shaped traffic gets no unit. Teardown
+removes that script **before** the unit, because the script is the guard:
+unit-first would leave a partial teardown that the next root command reads as
+"persisted hierarchy with no unit" and silently reinstalls.
 
 ### solo-provisioner-daemon.service
 
 The long-lived daemon (`Type=notify`, `Restart=always`, `ExecStart=/opt/solo/
-weaver/bin/solo-provisioner-daemon`). Its only ordering is
-`After=network.target`; the edges that matter are declared by the oneshots. The
-nft loader declares `Before=solo-provisioner-daemon.service`, so both tables and
-their persisted set elements exist before the daemon's first `ApplySets`. The
-bandwidth shaper declares nothing against the daemon and in practice starts after
-it, which is safe and deliberate (see above). At runtime the daemon fills in the
-parts that are deliberately **not** persisted (see below).
+weaver/bin/solo-provisioner-daemon`). It is ordered `After=network.target`, and
+the nft loader declares `Before=solo-provisioner-daemon.service`, so the tables
+and their persisted set elements exist before the daemon's first `ApplySets`. The
+bandwidth shaper declares no edge against the daemon — the daemon's `tc` work
+never touches the `$EGRESS` root, so no order between them can race (see above).
+Its job at runtime is to fill in the parts that are deliberately **not** persisted
+(see below).
 
 ## What survives a reboot — and what the daemon rebuilds
 
