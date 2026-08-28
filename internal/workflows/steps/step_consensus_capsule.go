@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -343,6 +344,12 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			scope := models.ConsensusNodeScope(inputs.NodeId)
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
+			// The operator requires a non-empty imageName and assembles the image as
+			// repository/imageName:tag (see solo-operator docs/example). The resolved
+			// ConsensusImageRepo is the full "registry/path/name", so split off the
+			// last segment as the image name.
+			imageRepository, imageName := splitConsensusImage(inputs.ConsensusImageRepo)
+
 			capsule := &operatorv1alpha1.ConsensusCapsule{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
@@ -373,7 +380,8 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 						Containers: operatorv1alpha1.ConsensusContainers{
 							ConsensusNode: operatorv1alpha1.ConsensusNodeContainer{
 								SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
-									Repository: inputs.ConsensusImageRepo,
+									Repository: imageRepository,
+									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
 								},
 							},
@@ -531,4 +539,18 @@ func WaitConsensusCapsuleReady(inputs models.ConsensusNodeInputs, provider Capsu
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node is running")
 		})
+}
+
+// splitConsensusImage splits a full image reference "registry/path/name" into
+// the operator's separate repository (registry + path) and imageName (the last
+// path segment). The solo-operator requires a non-empty imageName and assembles
+// the container image as repository/imageName:tag (see solo-operator
+// docs/example/node0/consensus-capsule.yaml). When the reference has no slash the
+// whole value is treated as the image name with an empty repository.
+func splitConsensusImage(full string) (repository, imageName string) {
+	full = strings.TrimSpace(full)
+	if i := strings.LastIndex(full, "/"); i != -1 {
+		return full[:i], full[i+1:]
+	}
+	return "", full
 }

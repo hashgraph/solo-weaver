@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,8 +19,9 @@ import (
 // apply policy without a cluster. `existing` maps CR name -> deployed content;
 // `applied` records the CR names passed to ApplyTyped, in order.
 type fakeCapsuleClient struct {
-	existing map[string]string
-	applied  []string
+	existing    map[string]string
+	applied     []string
+	appliedObjs []runtime.Object
 }
 
 func (f *fakeCapsuleClient) ResourceExists(_ context.Context, _, _, _, name string) (bool, error) {
@@ -34,6 +36,7 @@ func (f *fakeCapsuleClient) GetResourceNestedString(_ context.Context, _, _, _, 
 func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) error {
 	name := obj.(interface{ GetName() string }).GetName()
 	f.applied = append(f.applied, name)
+	f.appliedObjs = append(f.appliedObjs, obj)
 	return nil
 }
 
@@ -174,4 +177,93 @@ func TestEnsureConfigCRs_EmptyContent_Fails(t *testing.T) {
 	require.Equal(t, automa.StatusFailed, report.Status)
 	require.Error(t, report.Error)
 	assert.Contains(t, strings.ToLower(report.Error.Error()), "empty")
+}
+
+// findCapsule returns the ConsensusCapsule applied by the step, failing if none.
+func findCapsule(t *testing.T, objs []runtime.Object) *operatorv1alpha1.ConsensusCapsule {
+	t.Helper()
+	for _, o := range objs {
+		if c, ok := o.(*operatorv1alpha1.ConsensusCapsule); ok {
+			return c
+		}
+	}
+	t.Fatal("no ConsensusCapsule was applied")
+	return nil
+}
+
+// TestCreateConsensusCapsule_MatchesOperatorContract pins the capsule spec to the
+// solo-operator contract verified against docs/example: the mandatory UC sidecar
+// is enabled, the image is split into repository/imageName/tag, and every config
+// *Ref uses the canonical config-CR name. These are the exact fields whose drift
+// left the capsule stuck (UCSidecarRequired / ConfigMap-not-found / ImageRequired).
+func TestCreateConsensusCapsule_MatchesOperatorContract(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             0,
+		AccountId:          "0.0.3",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		GrpcTlsSecret:      "node0-grpc-tls-keys",
+		SigningSecret:      "node0-gossip-keys",
+		HapiAppSecret:      "node0-hapi-app-keys",
+	}
+
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
+
+	capsule := findCapsule(t, fake.appliedObjs)
+
+	// Mandatory UC sidecar (UCSidecarRequired otherwise).
+	require.NotNil(t, capsule.Spec.PodProperties.Containers.UC)
+	assert.True(t, capsule.Spec.PodProperties.Containers.UC.Enabled, "uc sidecar must be enabled")
+
+	// Image must be split repository/imageName:tag (ImageRequired otherwise).
+	sv := capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersion
+	require.NotNil(t, sv)
+	assert.Equal(t, "gcr.io/hedera-registry", sv.Repository)
+	assert.Equal(t, "consensus-node", sv.ImageName)
+	assert.Equal(t, "0.74.2", sv.ImageTag)
+
+	// Every config *Ref must use the canonical config-CR name (ConfigMap-not-found
+	// otherwise). These literals are the names from solo-operator docs/example.
+	scope := models.ConsensusNodeScope(in.NodeId)
+	cases := []struct {
+		field string
+		key   string
+		want  string
+		got   string
+	}{
+		{"Log4j2ConfigRef", models.ConfigKeyLog4j2, "node0-log4j2", capsule.Spec.Log4j2ConfigRef},
+		{"SettingsConfigRef", models.ConfigKeySettings, "node0-settings", capsule.Spec.SettingsConfigRef},
+		{"ApplicationPropertiesRef", models.ConfigKeyAppProperties, "node0-application-properties", capsule.Spec.ApplicationPropertiesRef},
+		{"ApplicationOverridePropertiesRef", models.ConfigKeyAppOverride, "node0-application-override-properties", capsule.Spec.ApplicationOverridePropertiesRef},
+		{"ApiPermissionPropertiesRef", models.ConfigKeyApiPermission, "node0-api-permission-properties", capsule.Spec.ApiPermissionPropertiesRef},
+		{"BootstrapPropertiesRef", models.ConfigKeyBootstrap, "node0-bootstrap-properties", capsule.Spec.BootstrapPropertiesRef},
+		{"NodePropertiesRef", models.ConfigKeyNodeProperties, "node0-node-properties", capsule.Spec.NodePropertiesRef},
+		{"FeeSchedulesRef", models.ConfigKeyFeeSchedules, "node0-fee-schedules", capsule.Spec.FeeSchedulesRef},
+		{"SimpleFeesSchedulesRef", models.ConfigKeySimpleFeesSchedules, "node0-simple-fee-schedules", capsule.Spec.SimpleFeesSchedulesRef},
+		{"ThrottlesConfigRef", models.ConfigKeyThrottles, "node0-throttles", capsule.Spec.ThrottlesConfigRef},
+		{"BlockNodesConfigRef", models.ConfigKeyBlockNodes, "node0-block-nodes", capsule.Spec.BlockNodesConfigRef},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, c.got, "%s must equal the canonical example name", c.field)
+		assert.Equal(t, models.ConsensusConfigCRName(scope, c.key), c.got,
+			"%s must equal ConsensusConfigCRName so EnsureConfigCRs and the capsule ref never drift", c.field)
+	}
+}
+
+func TestSplitConsensusImage(t *testing.T) {
+	repo, name := splitConsensusImage("gcr.io/hedera-registry/consensus-node")
+	assert.Equal(t, "gcr.io/hedera-registry", repo)
+	assert.Equal(t, "consensus-node", name)
+
+	// No slash: whole value is the image name, empty repository.
+	repo, name = splitConsensusImage("consensus-node")
+	assert.Equal(t, "", repo)
+	assert.Equal(t, "consensus-node", name)
 }
