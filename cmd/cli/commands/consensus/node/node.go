@@ -4,6 +4,7 @@ package node
 
 import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +21,14 @@ var (
 	flagGrpcTlsSecret    string
 	flagSigningSecret    string
 	flagProfile          string
+	flagContainerName    string
+	flagJavaHeapMin      string
+	flagJavaHeapMax      string
+	flagJavaOpts         string
+	flagCPULimit         string
+	flagCPURequest       string
+	flagMemoryLimit      string
+	flagMemoryRequest    string
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -41,6 +50,18 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
+
+	// Consensus-node container sizing + JVM tuning. Defaults are a working baseline;
+	// the explicit Java heap is required or the node stalls on startup.
+	nodeCmd.PersistentFlags().StringVar(&flagContainerName, "container-name", models.ConsensusDefaultContainerName, "Consensus-node container name")
+	nodeCmd.PersistentFlags().StringVar(&flagJavaHeapMin, "java-heap-min", models.ConsensusDefaultJavaHeapMin, "JVM minimum heap (-Xms) for the consensus node")
+	nodeCmd.PersistentFlags().StringVar(&flagJavaHeapMax, "java-heap-max", models.ConsensusDefaultJavaHeapMax, "JVM maximum heap (-Xmx) for the consensus node")
+	nodeCmd.PersistentFlags().StringVar(&flagJavaOpts, "java-opts", models.ConsensusDefaultJavaOpts, "Additional JVM options for the consensus node")
+	nodeCmd.PersistentFlags().StringVar(&flagCPULimit, "cpu-limit", models.ConsensusDefaultCPULimit, "Consensus-node CPU limit (Kubernetes quantity, e.g. 2)")
+	nodeCmd.PersistentFlags().StringVar(&flagCPURequest, "cpu-request", models.ConsensusDefaultCPURequest, "Consensus-node CPU request (e.g. 250m)")
+	nodeCmd.PersistentFlags().StringVar(&flagMemoryLimit, "memory-limit", models.ConsensusDefaultMemoryLimit, "Consensus-node memory limit (e.g. 5Gi)")
+	nodeCmd.PersistentFlags().StringVar(&flagMemoryRequest, "memory-request", models.ConsensusDefaultMemoryRequest, "Consensus-node memory request (e.g. 1Gi)")
+
 	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
 	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)
 	nodeCmd.AddCommand(installCmd)

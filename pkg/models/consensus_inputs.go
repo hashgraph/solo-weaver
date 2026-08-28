@@ -8,6 +8,21 @@ import (
 	"github.com/joomcode/errorx"
 )
 
+// Consensus-node container defaults. Used as flag defaults and as the fallback
+// when an input field is left empty. The Java heap must be set explicitly; without
+// it the JVM defaults MaxHeapSize to 25% of the memory limit, which stalls the node
+// on startup.
+const (
+	ConsensusDefaultContainerName = "consensus-node"
+	ConsensusDefaultJavaHeapMin   = "1g"
+	ConsensusDefaultJavaHeapMax   = "3g"
+	ConsensusDefaultJavaOpts      = "-XX:+UseG1GC -XX:MaxDirectMemorySize=1500m --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true"
+	ConsensusDefaultCPULimit      = "2"
+	ConsensusDefaultCPURequest    = "250m"
+	ConsensusDefaultMemoryLimit   = "5Gi"
+	ConsensusDefaultMemoryRequest = "1Gi"
+)
+
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
 // via the solo-operator's ConsensusCapsule CRD.
 type ConsensusNodeInputs struct {
@@ -27,6 +42,19 @@ type ConsensusNodeInputs struct {
 
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
 	SigningSecret string `json:"signingSecret,omitempty"`
+
+	// Consensus-node container sizing + JVM tuning. Empty values fall back to the
+	// ConsensusDefault* constants (mirroring the solo-operator reference example).
+	// The explicit Java heap is essential — without -Xmx the 0.74 node stalls on
+	// startup with a GC death-spiral (solo-operator#1223).
+	ContainerName string `json:"containerName,omitempty"`
+	JavaHeapMin   string `json:"javaHeapMin,omitempty"`
+	JavaHeapMax   string `json:"javaHeapMax,omitempty"`
+	JavaOpts      string `json:"javaOpts,omitempty"`
+	CPULimit      string `json:"cpuLimit,omitempty"`
+	CPURequest    string `json:"cpuRequest,omitempty"`
+	MemoryLimit   string `json:"memoryLimit,omitempty"`
+	MemoryRequest string `json:"memoryRequest,omitempty"`
 
 	// Profile is the deployment profile (local/testnet/mainnet/...) used to size
 	// the host hardware floor when this install bootstraps the cluster.

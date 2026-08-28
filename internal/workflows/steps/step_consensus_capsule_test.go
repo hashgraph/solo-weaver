@@ -238,6 +238,19 @@ func TestCreateConsensusCapsule_MatchesOperatorContract(t *testing.T) {
 	assert.Equal(t, "consensus-node", sv.ImageName)
 	assert.Equal(t, "0.74.2", sv.ImageTag)
 
+	// Explicit Java heap + resources must be set — without them the 0.74 node
+	// stalls on startup. Unset inputs fall back to the ConsensusDefault* values.
+	cn := capsule.Spec.PodProperties.Containers.ConsensusNode
+	assert.Equal(t, models.ConsensusDefaultContainerName, cn.Name)
+	assert.Equal(t, models.ConsensusDefaultJavaHeapMin, cn.JavaHeapMin)
+	assert.Equal(t, models.ConsensusDefaultJavaHeapMax, cn.JavaHeapMax)
+	assert.Equal(t, models.ConsensusDefaultJavaOpts, cn.JavaOpts)
+	require.NotNil(t, cn.Resources)
+	assert.Equal(t, models.ConsensusDefaultCPULimit, cn.Resources.Limits.Cpu().String())
+	assert.Equal(t, models.ConsensusDefaultMemoryLimit, cn.Resources.Limits.Memory().String())
+	assert.Equal(t, models.ConsensusDefaultCPURequest, cn.Resources.Requests.Cpu().String())
+	assert.Equal(t, models.ConsensusDefaultMemoryRequest, cn.Resources.Requests.Memory().String())
+
 	// Every config *Ref must use the canonical config-CR name (ConfigMap-not-found
 	// otherwise). These literals are the names from solo-operator docs/example.
 	scope := models.ConsensusNodeScope(in.NodeId)
