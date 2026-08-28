@@ -461,6 +461,16 @@ func WaitConsensusCapsuleReady(inputs models.ConsensusNodeInputs, provider Capsu
 			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
+			// A node can only become ready once the network genesis exists. On a
+			// fresh network the genesis ConfigMap is absent until `consensus network
+			// genesis` runs, so don't wait here — the node would sit in genesis-init
+			// forever. Report the node as installed-and-awaiting-genesis instead.
+			if genesisExists, _ := kc.ResourceExists(ctx, "v1", "ConfigMap", inputs.Namespace, NetworkGenesisConfigMapName); !genesisExists {
+				notify.As().StepDetail(ctx, stp,
+					fmt.Sprintf("node %d: awaiting network genesis — run 'solo-provisioner consensus network genesis --namespace %s'", inputs.NodeId, inputs.Namespace))
+				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"awaitingGenesis": "true"}))
+			}
+
 			deadline := time.Now().Add(timeout)
 			ticker := time.NewTicker(capsuleReadyPollInterval)
 			defer ticker.Stop()
