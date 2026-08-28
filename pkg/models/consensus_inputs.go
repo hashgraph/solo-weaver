@@ -4,6 +4,7 @@ package models
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/joomcode/errorx"
 )
@@ -37,6 +38,10 @@ type ConsensusNodeInputs struct {
 
 	// SkipHardwareChecks bypasses the preflight hardware floor during cluster bootstrap.
 	SkipHardwareChecks bool `json:"-"`
+
+	// ReadyTimeout bounds how long install waits for the ConsensusCapsule to reach
+	// Running/Active after the CR is created. Zero disables the readiness wait.
+	ReadyTimeout time.Duration `json:"-"`
 
 	// Resolved config file contents (populated by BLL, not by CLI flags)
 	ConfigLog4j2                string `json:"-"`
