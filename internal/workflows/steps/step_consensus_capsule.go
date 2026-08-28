@@ -229,6 +229,12 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 					}},
 			}
 
+			// Derive every CR name from the shared source of truth so the config CR
+			// names always match the capsule's *Ref names (see ConsensusConfigCRName).
+			for i := range entries {
+				entries[i].crName = models.ConsensusConfigCRName(scope, entries[i].key)
+			}
+
 			l := logx.As()
 			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 
@@ -352,17 +358,17 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 					AccountId:                        inputs.AccountId,
 					Weight:                           inputs.Weight,
 					HapiAppSecretsName:               inputs.HapiAppSecret,
-					Log4j2ConfigRef:                  fmt.Sprintf("%s-log4j2", scope),
-					SettingsConfigRef:                fmt.Sprintf("%s-settings", scope),
-					ApplicationPropertiesRef:         fmt.Sprintf("%s-appprops", scope),
-					ApplicationOverridePropertiesRef: fmt.Sprintf("%s-appoverride", scope),
-					ApiPermissionPropertiesRef:       fmt.Sprintf("%s-apiperm", scope),
-					BootstrapPropertiesRef:           fmt.Sprintf("%s-bootstrap", scope),
-					NodePropertiesRef:                fmt.Sprintf("%s-nodeprops", scope),
-					FeeSchedulesRef:                  fmt.Sprintf("%s-feeschedules", scope),
-					SimpleFeesSchedulesRef:           fmt.Sprintf("%s-simplefeesschedules", scope),
-					ThrottlesConfigRef:               fmt.Sprintf("%s-throttles", scope),
-					BlockNodesConfigRef:              fmt.Sprintf("%s-blocknodes", scope),
+					Log4j2ConfigRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyLog4j2),
+					SettingsConfigRef:                models.ConsensusConfigCRName(scope, models.ConfigKeySettings),
+					ApplicationPropertiesRef:         models.ConsensusConfigCRName(scope, models.ConfigKeyAppProperties),
+					ApplicationOverridePropertiesRef: models.ConsensusConfigCRName(scope, models.ConfigKeyAppOverride),
+					ApiPermissionPropertiesRef:       models.ConsensusConfigCRName(scope, models.ConfigKeyApiPermission),
+					BootstrapPropertiesRef:           models.ConsensusConfigCRName(scope, models.ConfigKeyBootstrap),
+					NodePropertiesRef:                models.ConsensusConfigCRName(scope, models.ConfigKeyNodeProperties),
+					FeeSchedulesRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyFeeSchedules),
+					SimpleFeesSchedulesRef:           models.ConsensusConfigCRName(scope, models.ConfigKeySimpleFeesSchedules),
+					ThrottlesConfigRef:               models.ConsensusConfigCRName(scope, models.ConfigKeyThrottles),
+					BlockNodesConfigRef:              models.ConsensusConfigCRName(scope, models.ConfigKeyBlockNodes),
 					PodProperties: operatorv1alpha1.ConsensusPodProperties{
 						Containers: operatorv1alpha1.ConsensusContainers{
 							ConsensusNode: operatorv1alpha1.ConsensusNodeContainer{
