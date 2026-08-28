@@ -8,12 +8,14 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -46,7 +48,10 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 
 	realityNodes, err := h.runtime.CurrentState()
 	if err != nil {
-		return nil, errorx.IllegalState.Wrap(err, "failed to read current consensus node state")
+		return nil, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "failed to read current consensus node state"),
+			reasons.PreconditionNotMet,
+			"Verify the cluster is reachable (kubectl get nodes) and the solo-operator CRDs are installed")
 	}
 	if rs, ok := realityNodes[scope]; ok {
 		h.runtime.SetRealityForNode(scope, rs)
@@ -67,12 +72,20 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 
 	// Validate required fields after resolution
 	if custom.ConsensusImageRepo == "" || custom.ConsensusImageTag == "" {
-		return nil, errorx.IllegalArgument.New(
-			"image-repo and image-tag could not be resolved — provide --image-repo/--image-tag or --deployment-package-dir")
+		return nil, errx.Decorate(
+			errorx.IllegalArgument.New(
+				"image-repo and image-tag could not be resolved — provide --image-repo/--image-tag or --deployment-package-dir"),
+			reasons.InvalidArgument,
+			"Provide both --image-repo and --image-tag",
+			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
 	}
 	if custom.LedgerId == "" {
-		return nil, errorx.IllegalArgument.New(
-			"ledger-id could not be resolved — provide --ledger-id or --deployment-package-dir")
+		return nil, errx.Decorate(
+			errorx.IllegalArgument.New(
+				"ledger-id could not be resolved — provide --ledger-id or --deployment-package-dir"),
+			reasons.InvalidArgument,
+			"Provide --ledger-id (e.g. 0x00 for mainnet)",
+			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
 	}
 
 	// Apply namespace=orbit convention

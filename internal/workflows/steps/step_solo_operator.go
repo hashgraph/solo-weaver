@@ -6,9 +6,11 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -48,10 +50,12 @@ func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 				}
 
 				if !upgrade {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalState.New(
 							"solo-operator version mismatch: installed %s, expected %s — re-run with --upgrade-operator to upgrade",
-							installedVersion, spec.Version)))
+							installedVersion, spec.Version),
+						reasons.PreconditionNotMet,
+						"Re-run with --upgrade-operator to upgrade solo-operator to the expected version")))
 				}
 
 				l.Info().

@@ -3,9 +3,11 @@
 package consensus
 
 import (
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -44,6 +46,9 @@ func (h *Handlers) ForAction(action models.ActionType) (bll.IntentHandler[models
 	case models.ActionInstall:
 		return h.install, nil
 	default:
-		return nil, errorx.IllegalArgument.New("unsupported action %q for consensus node", action)
+		return nil, errx.Decorate(
+			errorx.IllegalArgument.New("unsupported action %q for consensus node", action),
+			reasons.InvalidArgument,
+			"Supported actions for consensus node: install")
 	}
 }
