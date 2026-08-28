@@ -31,6 +31,13 @@ type ConsensusNodeInputs struct {
 
 	UpgradeOperator bool `json:"upgradeOperator,omitempty"`
 
+	// Profile is the deployment profile (local/testnet/mainnet/...) used to size
+	// the host hardware floor when this install bootstraps the cluster.
+	Profile string `json:"profile,omitempty"`
+
+	// SkipHardwareChecks bypasses the preflight hardware floor during cluster bootstrap.
+	SkipHardwareChecks bool `json:"-"`
+
 	// Resolved config file contents (populated by BLL, not by CLI flags)
 	ConfigLog4j2                string `json:"-"`
 	ConfigSettings              string `json:"-"`

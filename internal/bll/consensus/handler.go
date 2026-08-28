@@ -18,7 +18,9 @@ type Handlers struct {
 
 // NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
 func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
-	base, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode)
+	base, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode,
+		bll.WithProfileExtractor(func(i models.ConsensusNodeInputs) string { return i.Profile }),
+	)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create BaseHandler")
 	}
@@ -32,7 +34,12 @@ func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
 		return nil, errorx.IllegalArgument.New("expected ConsensusRuntime to be *rsl.ConsensusNodeRuntimeResolver but got %T", runtime.ConsensusRuntime)
 	}
 
-	installHandler, err := NewInstallHandler(base, cr)
+	mr, ok := runtime.MachineRuntime.(*rsl.MachineRuntimeResolver)
+	if !ok {
+		return nil, errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", runtime.MachineRuntime)
+	}
+
+	installHandler, err := NewInstallHandler(base, cr, mr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create InstallHandler")
 	}
