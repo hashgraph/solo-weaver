@@ -25,6 +25,25 @@ tasks:
         echo ''
         echo '✅ UAT Bootstrap: PASSED'
 
+  uat:rebuild:
+    desc: "Inside VM: incrementally rebuild the CLI + daemon for this VM's arch (no cache wipe) and self-install. The manual edit→test loop; use instead of 'task build' (which wipes the Go cache) + uat:bootstrap."
+    interactive: true
+    cmds:
+      - |
+        set -e
+        UNAME_ARCH=$(uname -m)
+        case "$UNAME_ARCH" in
+          x86_64)  ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+          *) echo "FAIL: unsupported architecture '$UNAME_ARCH'."; exit 1 ;;
+        esac
+        cd /mnt/solo-weaver
+        echo "▶ Building CLI + daemon for linux/${ARCH} (incremental)"
+        # build:cli depends on build:daemon and stamps its digest, so this
+        # rebuilds both. No dependency on 'clean', so the Go cache is reused.
+        task build:cli GOOS=linux GOARCH=${ARCH}
+      - task: uat:bootstrap
+
   uat:consensus:secrets:
     desc: "Inside VM: create sample consensus-node secrets (nodes 0-4) so 'consensus node install' passes its secret precheck. Select namespace with NS= (default hiero-network-1) and a single node with NODE=node2."
     vars:

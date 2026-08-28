@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/alloy"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/block"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
@@ -99,6 +100,19 @@ func init() {
 		c.Println(c.UsageString())
 		return err
 	})
+
+	// Stamp the running binary's build metadata into every command's help and
+	// usage output (the latter is also what SetFlagErrorFunc dumps on a bad flag),
+	// so a stale binary is obvious from `--help` or an error without needing a
+	// separate `version` invocation. Templates set on the root are inherited by
+	// all subcommands.
+	// Append only to the usage template — Cobra's help template embeds the usage
+	// template, so `--help` shows it once, and flag-error dumps (which print the
+	// usage string directly) show it once too. Appending to both would duplicate
+	// the footer on `--help`.
+	buildInfo := version.Get()
+	buildFooter := fmt.Sprintf("\nBuild:  %s (commit %s)\n", buildInfo.Version, buildInfo.ShortCommit(12))
+	rootCmd.SetUsageTemplate(rootCmd.UsageTemplate() + buildFooter)
 
 	// disable command sorting to keep the order of commands as added
 	cobra.EnableCommandSorting = false
