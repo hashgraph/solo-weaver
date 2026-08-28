@@ -92,7 +92,7 @@ func ConsensusNodeInputPrompts(flagNamespace, nodeIdTarget, flagAccountId, flagP
 		{
 			FlagName:       "deployment-package-dir",
 			Title:          "Deployment Package Directory",
-			Description:    "Path to an extracted HIP-1494 deployment package (leave blank to use flags/embedded defaults)",
+			Description:    "Path to an extracted HIP-1494 deployment package (leave blank to enter image/ledger details manually)",
 			Placeholder:    *flagPkgDir,
 			EffectiveValue: *flagPkgDir,
 			Target:         flagPkgDir,
@@ -103,6 +103,70 @@ func ConsensusNodeInputPrompts(flagNamespace, nodeIdTarget, flagAccountId, flagP
 				_, err := sanity.SanitizePath(s)
 				return err
 			},
+		},
+	}
+}
+
+// ConsensusNodeIdentityInputPrompts returns the prompts for the node identity
+// that would otherwise be extracted from a deployment package: image repo/tag,
+// ledger ID, and (optional) chain ID. The caller presents these only when no
+// --deployment-package-dir was supplied, so an operator without a package can
+// still install without hunting for the right flags.
+//
+//   - flagImageRepo/flagImageTag: required image coordinates
+//   - flagLedgerId:               required hex ledger identity (e.g. 0x00)
+//   - flagChainId:                optional decimal EVM chain ID
+func ConsensusNodeIdentityInputPrompts(flagImageRepo, flagImageTag, flagLedgerId, flagChainId *string) []InputPrompt {
+	return []InputPrompt{
+		{
+			FlagName:       "image-repo",
+			Title:          "Consensus Node Image Repository",
+			Description:    "Container image repository for the consensus node",
+			Placeholder:    *flagImageRepo,
+			EffectiveValue: *flagImageRepo,
+			Target:         flagImageRepo,
+			Validate: func(s string) error {
+				if s == "" {
+					return errorx.IllegalArgument.New("image repository cannot be empty (or pass --deployment-package-dir)")
+				}
+				return nil
+			},
+		},
+		{
+			FlagName:       "image-tag",
+			Title:          "Consensus Node Image Tag",
+			Description:    "Container image tag for the consensus node",
+			Placeholder:    *flagImageTag,
+			EffectiveValue: *flagImageTag,
+			Target:         flagImageTag,
+			Validate: func(s string) error {
+				if s == "" {
+					return errorx.IllegalArgument.New("image tag cannot be empty (or pass --deployment-package-dir)")
+				}
+				return nil
+			},
+		},
+		{
+			FlagName:       "ledger-id",
+			Title:          "Ledger ID",
+			Description:    "Hex ledger identity (e.g. 0x00 for mainnet, 0x01 for local/dev)",
+			Placeholder:    *flagLedgerId,
+			EffectiveValue: *flagLedgerId,
+			Target:         flagLedgerId,
+			Validate: func(s string) error {
+				if s == "" {
+					return errorx.IllegalArgument.New("ledger ID cannot be empty (or pass --deployment-package-dir)")
+				}
+				return nil
+			},
+		},
+		{
+			FlagName:       "chain-id",
+			Title:          "Chain ID",
+			Description:    "Decimal EVM chain ID (optional, e.g. 295 for mainnet, 298 for local/dev)",
+			Placeholder:    *flagChainId,
+			EffectiveValue: *flagChainId,
+			Target:         flagChainId,
 		},
 	}
 }

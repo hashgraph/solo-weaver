@@ -175,6 +175,18 @@ func promptForMissingFlags(cmd *cobra.Command, force bool) error {
 		flagNodeId = n
 	}
 
+	// Without a deployment package, the image/ledger identity it would supply must
+	// come from flags — so prompt for whatever the operator did not pass on the CLI
+	// rather than dead-ending later with "image-repo/image-tag could not be resolved".
+	if strings.TrimSpace(flagDeploymentPkgDir) == "" {
+		w2 := prompt.NewWizard()
+		prompt.AddInputPrompts(w2, cmd,
+			prompt.ConsensusNodeIdentityInputPrompts(&flagImageRepo, &flagImageTag, &flagLedgerId, &flagChainId), cv)
+		if err := w2.Run(); err != nil {
+			return err
+		}
+	}
+
 	cv.Print("Selected values:")
 	return nil
 }
