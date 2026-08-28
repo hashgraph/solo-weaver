@@ -7,9 +7,11 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -55,8 +57,10 @@ func PrecheckOperatorCRDs(crdNames ...string) automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := kube.NewClient()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster")))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			logx.As().Info().Msg("Cluster reachable")
@@ -66,12 +70,16 @@ func PrecheckOperatorCRDs(crdNames ...string) automa.Builder {
 				fqdn := name + "." + kube.SoloOperatorGroup
 				exists, err := kc.ResourceExists(ctx, crdApiVersion, "CustomResourceDefinition", "", fqdn)
 				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.Wrap(err, "failed to check CRD %s", fqdn)))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to check CRD %s", fqdn),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read CustomResourceDefinitions")))
 				}
 				if !exists {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.New("CRD %s not found — is solo-operator installed?", fqdn)))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("CRD %s not found — is solo-operator installed?", fqdn),
+						reasons.NotInstalled,
+						"Install solo-operator first (re-run with --upgrade-operator or install the operator), then retry")))
 				}
 			}
 
@@ -97,31 +105,39 @@ func PrecheckOperatorRunning() automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := kube.NewClient()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster")))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			exists, err := kc.ResourceExists(ctx, "apps/v1", "Deployment",
 				operatorNamespace, operatorDeploymentName)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.IllegalState.Wrap(err, "failed to check operator deployment")))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to check operator deployment"),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that your kubeconfig has RBAC to read Deployments")))
 			}
 			if !exists {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.New(
 						"solo-operator deployment %s/%s not found — run 'solo-provisioner operator install' first",
-						operatorNamespace, operatorDeploymentName)))
+						operatorNamespace, operatorDeploymentName),
+					reasons.NotInstalled,
+					"Install and start solo-operator (run 'solo-provisioner operator install'), then retry")))
 			}
 
 			available, found, err := kc.GetResourceNestedInt64(ctx, "apps/v1", "Deployment",
 				operatorNamespace, operatorDeploymentName,
 				"status", "availableReplicas")
 			if err != nil || !found || available < 1 {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.New(
 						"solo-operator deployment %s/%s has no available replicas",
-						operatorNamespace, operatorDeploymentName)))
+						operatorNamespace, operatorDeploymentName),
+					reasons.NotInstalled,
+					fmt.Sprintf("Check why the operator is not running: kubectl -n %s rollout status deploy/%s", operatorNamespace, operatorDeploymentName))))
 			}
 
 			logx.As().Info().
@@ -156,18 +172,22 @@ func PrecheckOperatorVersion() automa.Builder {
 
 			rel, err := hm.GetRelease(operatorReleaseName, operatorNamespace)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.IllegalState.Wrap(err, "failed to get solo-operator Helm release")))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to get solo-operator Helm release"),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that solo-operator is installed via Helm")))
 			}
 
 			installedVersion := rel.Chart.Metadata.Version
 			expectedVersion := spec.Version
 
 			if installedVersion != expectedVersion {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.New(
 						"solo-operator version mismatch: installed %s, expected %s — upgrade the operator before proceeding",
-						installedVersion, expectedVersion)))
+						installedVersion, expectedVersion),
+					reasons.PreconditionNotMet,
+					"Re-run with --upgrade-operator to upgrade solo-operator to the expected version")))
 			}
 
 			logx.As().Info().

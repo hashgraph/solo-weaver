@@ -7,11 +7,13 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -227,21 +229,29 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 			apply := func(e configEntry) error {
 				obj := e.builder(scope, e.content, inputs.OrbitName, inputs.Namespace, e.crName)
 				if err := kc.ApplyTyped(ctx, obj); err != nil {
-					return errorx.IllegalState.Wrap(err, "failed to apply %s %s", e.kind, e.crName)
+					return errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to apply %s %s", e.kind, e.crName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to create/update solo-operator config CRs",
+						"Check the solo-operator is running: solo-provisioner consensus node install --upgrade-operator")
 				}
 				return nil
 			}
 
 			for _, e := range entries {
 				if e.content == "" {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.New("config content for %s is empty — check deployment package or embedded defaults", e.kind)))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("config content for %s is empty — check deployment package or embedded defaults", e.kind),
+						reasons.InvalidArgument,
+						"Verify --deployment-package-dir contains the expected config file for this kind, or omit it to use embedded defaults")))
 				}
 
 				exists, err := kc.ResourceExists(ctx, apiVersion, e.kind, inputs.Namespace, e.crName)
 				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.Wrap(err, "failed to check %s %s", e.kind, e.crName)))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to check %s %s", e.kind, e.crName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read solo-operator config CRs")))
 				}
 
 				if !exists {
@@ -254,8 +264,10 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 
 				deployed, err := kc.GetResourceNestedString(ctx, apiVersion, e.kind, inputs.Namespace, e.crName, "spec", "content")
 				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.Wrap(err, "failed to read deployed %s %s", e.kind, e.crName)))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to read deployed %s %s", e.kind, e.crName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read solo-operator config CRs")))
 				}
 
 				if deployed == e.content {
@@ -276,11 +288,14 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				}
 
 				if !force {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalArgument.New(
 							"refusing to overwrite deployed config %q with embedded defaults — "+
 								"re-run with --deployment-package-dir to keep it, or --force to reset to defaults",
-							e.crName)))
+							e.crName),
+						reasons.InvalidArgument,
+						"Re-run with --deployment-package-dir to keep the deployed config",
+						"Or pass --force to reset this config CR to embedded defaults")))
 				}
 
 				if err := apply(e); err != nil {

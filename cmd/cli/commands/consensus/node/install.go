@@ -4,10 +4,13 @@ package node
 
 import (
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -35,12 +38,16 @@ var installCmd = &cobra.Command{
 
 		handler, err := cnbll.NewHandlerFactory(sr.Runtime)
 		if err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to initialise consensus-node intent handler")
+			return errx.Decorate(
+				errorx.IllegalState.Wrap(err, "failed to initialise consensus-node intent handler"),
+				reasons.Internal)
 		}
 
 		force, err := common.FlagForce().Value(cmd, args)
 		if err != nil {
-			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagForce().Name)
+			return errx.Decorate(
+				errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagForce().Name),
+				reasons.Internal)
 		}
 
 		intent := models.Intent{
@@ -50,8 +57,9 @@ var installCmd = &cobra.Command{
 
 		inputs := models.UserInputs[models.ConsensusNodeInputs]{
 			Common: models.CommonInputs{
-				NodeType: models.NodeTypeConsensus,
-				Force:    force,
+				NodeType:         models.NodeTypeConsensus,
+				Force:            force,
+				ExecutionOptions: *workflows.DefaultWorkflowExecutionOptions(),
 			},
 			Custom: models.ConsensusNodeInputs{
 				Namespace:            flagNamespace,

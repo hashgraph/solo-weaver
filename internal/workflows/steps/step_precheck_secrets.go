@@ -7,10 +7,12 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -33,14 +35,18 @@ func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs) automa.Builder 
 			for flag, name := range secrets {
 				exists, err := kc.ResourceExists(ctx, "v1", "Secret", inputs.Namespace, name)
 				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
-						errorx.IllegalState.Wrap(err, "failed to check Secret %s", name)))
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to check Secret %s", name),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read Secrets")))
 				}
 				if !exists {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalState.New(
 							"Secret %q (from %s) not found in namespace %s — create it before installing",
-							name, flag, inputs.Namespace)))
+							name, flag, inputs.Namespace),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Create the required Kubernetes Secret %q in namespace %s (e.g. via 'solo-provisioner eso secret create') before installing", name, inputs.Namespace))))
 				}
 				logx.As().Info().Str("secret", name).Str("flag", flag).Msg("Secret exists")
 			}
