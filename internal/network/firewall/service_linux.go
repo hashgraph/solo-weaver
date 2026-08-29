@@ -43,7 +43,9 @@ func EnsureNetworkNftUnit(ctx context.Context) error {
 	}
 
 	if current, err := os.ReadFile(NetworkNftServiceUnitPath); err == nil && bytes.Equal(current, content) {
-		return nil // already installed and current — fast path
+		// Bytes are current, but a disabled unit still won't run at boot (#982),
+		// so the fast path cannot stop at the content compare.
+		return enableIfDisabled(ctx)
 	}
 
 	if err := writeEmbedded(content, NetworkNftServiceUnitPath); err != nil {
@@ -52,6 +54,33 @@ func EnsureNetworkNftUnit(ctx context.Context) error {
 	if err := soos.DaemonReload(ctx); err != nil {
 		return err
 	}
+	if err := soos.EnableService(ctx, NetworkNftService); err != nil {
+		logx.As().Warn().Err(err).Str("service", NetworkNftService).Msg("could not enable service at boot")
+	}
+	return nil
+}
+
+// unitEnabledAtBoot reports whether systemd will start the loader unit at boot.
+func unitEnabledAtBoot(ctx context.Context) (bool, error) {
+	return soos.IsServiceEnabled(ctx, NetworkNftService)
+}
+
+// enableIfDisabled re-enables the loader unit if systemd would not start it at
+// boot. Problems are only warned about: the unit file itself is fine, and the
+// drift probe reports the host again on the next invocation.
+func enableIfDisabled(ctx context.Context) error {
+	enabled, err := unitEnabledAtBoot(ctx)
+	if err != nil {
+		logx.As().Warn().Err(err).Str("service", NetworkNftService).
+			Msg("could not read whether the service is enabled at boot")
+		return nil
+	}
+	if enabled {
+		return nil
+	}
+
+	logx.As().Info().Str("service", NetworkNftService).
+		Msg("loader unit is current but disabled; enabling it so the tables survive a reboot")
 	if err := soos.EnableService(ctx, NetworkNftService); err != nil {
 		logx.As().Warn().Err(err).Str("service", NetworkNftService).Msg("could not enable service at boot")
 	}

@@ -23,3 +23,7 @@ func EnsureNetworkNftUnit(_ context.Context) error { return nil }
 
 // SyncDNSRefreshTimer is a no-op on non-Linux platforms.
 func SyncDNSRefreshTimer(_ context.Context, _ bool) error { return nil }
+
+// unitEnabledAtBoot always answers "enabled" on non-Linux: there is no systemd
+// to enable. The split keeps the drift probe portable, since pkg/os is Linux-only.
+func unitEnabledAtBoot(_ context.Context) (bool, error) { return true, nil }

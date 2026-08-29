@@ -168,27 +168,27 @@ tasks:
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 
-        echo -e '\n▶ Upgrade to latest (v0.40.0) using updated chartVersion in config'
+        echo -e '\n▶ Upgrade to latest (v0.41.0) using updated chartVersion in config'
         sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 
 
-        echo -e '\n▶ Verify upgrade to latest (v0.40.0)'
+        echo -e '\n▶ Verify upgrade to latest (v0.41.0)'
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
-        [ "$CHART_VER" = "0.40.0" ] || { echo "FAIL: expected chart version 0.40.0, got $CHART_VER"; exit 1; }
+        [ "$CHART_VER" = "0.41.0" ] || { echo "FAIL: expected chart version 0.41.0, got $CHART_VER"; exit 1; }
         echo '   Container images:'
         kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{" "}{end}{"\n"}{end}'
 
-        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.40.0'
+        echo -e '\n▶ Verify MetalLB annotation present after upgrade to v0.41.0'
         ANNOTATION=$(kubectl get svc block-node-block-node-server -n block-node -o jsonpath='{.metadata.annotations.metallb\.io/address-pool}')
-        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.40.0 upgrade, got: '$ANNOTATION'"; exit 1; }
+        [ "$ANNOTATION" = "public-address-pool" ] || { echo "FAIL: metallb annotation missing after v0.41.0 upgrade, got: '$ANNOTATION'"; exit 1; }
         echo "   metallb.io/address-pool: $ANNOTATION ✓"
 
 
-        echo -e '\n▶ Verify application-state PVC is created after upgrade to 0.40.0'
+        echo -e '\n▶ Verify application-state PVC is created after upgrade to 0.41.0'
         PHASE=$(kubectl get pvc -n block-node application-state-storage-pvc -o jsonpath='{.status.phase}' 2>/dev/null || echo "MISSING")
-        [ "$PHASE" = "Bound" ] || { echo "FAIL: expected application-state-storage-pvc to be Bound at chart 0.40.0, got: $PHASE"; exit 1; }
+        [ "$PHASE" = "Bound" ] || { echo "FAIL: expected application-state-storage-pvc to be Bound at chart 0.41.0, got: $PHASE"; exit 1; }
         echo "   ✓ application-state-storage-pvc (Bound)"
 
 
@@ -576,7 +576,7 @@ tasks:
         #   0.39.1  verification → block-verification
         # Update if the current release for either bracket changes.
         POST_35_VERSION=0.35.1
-        POST_391_VERSION=0.40.0
+        POST_391_VERSION=0.41.0
         CONFIG=/mnt/solo-weaver/test/config/config_with_proxy.yaml
         NS=block-node
 

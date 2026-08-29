@@ -108,6 +108,12 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		}
 	}
 
+	// The base template's plugins.names default must go through the same
+	// version-boundary registry as an explicit --plugin-preset (PluginListForPreset),
+	// or a no-preset install/upgrade keeps requesting plugin names the target chart
+	// version no longer registers (e.g. "verification", removed in chart 0.41.0).
+	defaultPluginNames := PluginListForPreset(PresetTier1LFH, m.blockNodeInputs.ChartVersion)
+
 	valuesTemplatePath := ValuesPath
 	if profile == models.ProfileLocal {
 		valuesTemplatePath = NanoValuesPath
@@ -129,6 +135,7 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		IncludePlugins          bool
 		IncludeApplicationState bool
 		HealthPort              string
+		DefaultPluginNames      string
 	}{
 		IncludeVerification:     includeVerification,
 		IncludePlugins:          includePlugins,
@@ -137,7 +144,8 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		// the port solo-weaver drops off-node (bn-health) and dials for statusz always
 		// matches the port the BN listens on, even if the upstream chart default
 		// changes underneath us.
-		HealthPort: DefaultBlockNodeHealthPort,
+		HealthPort:         DefaultBlockNodeHealthPort,
+		DefaultPluginNames: defaultPluginNames,
 	})
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to render block node values template")
