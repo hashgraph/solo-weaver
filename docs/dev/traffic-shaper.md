@@ -507,12 +507,15 @@ content flag without its gate flag is rejected. `reconfigure` seeds each gate
 from the persisted decision, so a no-flag reconfigure never silently tears a
 plane down.
 
-### FQDNs in the management allowlist
+### FQDNs in mgmt and allow rules
 
-`--mgmt-cidrs` accepts fully-qualified domain names alongside IPv4 CIDRs; every
-other address flag on either plane stays literal-only. The parse rule is that an
-entry containing `/` is an address and anything else is a name, which is
-unambiguous because a maskless IP is already rejected.
+`--mgmt-cidrs`, and `--cidr`/`--cidrs` on a declared allow rule, accept fully-qualified domain
+names alongside IPv4 CIDRs (`Rule.acceptsFQDN`); every other address flag on either plane
+stays literal-only — the block list and the in-cluster pod CIDR because a resolver outage or a
+DNS answer must never change what they match, `network policy` because its plane is
+kernel-authoritative rather than YAML-authoritative (see below). The parse rule is that an
+entry containing `/` is an address and anything else is a name, which is unambiguous because a
+maskless IP is already rejected.
 
 The mechanism is deliberately small, and rests on the fact that the YAML is this
 table's source of truth:
@@ -563,10 +566,16 @@ from which name. Not a source of truth; a missing or corrupt file degrades to
 
 If resolution would leave `mgmt_addrs` empty the apply is refused outright, with
 no `--force` — distinct from `checkMgmtLockout`, which compares a mutation's
-before and after and so cannot see this case.
+before and after and so cannot see this case. An allow rule left empty by
+resolution is not refused the same way: `Rule.mustResolveToSomething` is what
+draws that line, true only for `mgmt`, so `checkResolvedRule` treats every
+other FQDN-accepting rule as a warning (`Table.IncompleteAllowRules`, evaluated
+against the resolved table) rather than a hard failure — losing SSH access
+invisibly is a different order of risk than losing one rule's traffic.
 
-**Trust boundary.** Whoever controls the answer for a name in this list controls
-who can reach SSH on the node. Resolution also happens on the node, so
+**Trust boundary.** Whoever controls the answer for a name in `mgmt` controls
+who can reach SSH on the node; a name in an allow rule controls who can reach
+whatever that rule admits. Resolution also happens on the node, so
 split-horizon DNS can differ from what the operator sees. Both are called out in
 `docs/commands/network/firewall.md`; prefer a literal or an `/etc/hosts` pin on
 high-value nodes.

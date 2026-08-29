@@ -139,15 +139,54 @@ type resolution struct {
 	missing []string
 }
 
-// fqdnEntries returns the distinct FQDN entries in the table's address lists, in
-// list order. Only the management rule can hold them; see Rule.acceptsFQDN.
+// fqdnEntries returns the distinct FQDN entries across every rule that accepts
+// them — mgmt, then each declared allow rule in its stored (name-sorted)
+// order. See Rule.acceptsFQDN.
 func (t *Table) fqdnEntries() []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, c := range t.Mgmt.CIDRs {
-		if sanity.IsFQDNEntry(c) && !seen[c] {
-			seen[c] = true
+	collect := func(r *Rule) {
+		if !r.acceptsFQDN() {
+			return
+		}
+		for _, c := range r.CIDRs {
+			if sanity.IsFQDNEntry(c) && !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	collect(&t.Mgmt)
+	for i := range t.Allow {
+		collect(&t.Allow[i])
+	}
+	return out
+}
+
+// ruleFQDNs returns the FQDN entries within one rule's own CIDR list — used to
+// scope a table-wide missing/stale list down to the names a specific rule's
+// error or warning should mention, rather than every failed name table-wide.
+func ruleFQDNs(r *Rule) []string {
+	var out []string
+	for _, c := range r.CIDRs {
+		if sanity.IsFQDNEntry(c) {
 			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// intersect returns the elements of names that also appear in missing,
+// preserving missing's order — the order resolveFQDNs discovered them in.
+func intersect(names, missing []string) []string {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	var out []string
+	for _, m := range missing {
+		if set[m] {
+			out = append(out, m)
 		}
 	}
 	return out
@@ -224,7 +263,7 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 
 	if len(res.stale) > 0 {
 		logx.As().Warn().Strs("fqdns", res.stale).Msg(
-			"could not resolve these management allowlist entries; keeping their last-known addresses")
+			"could not resolve these host firewall entries; keeping their last-known addresses")
 	}
 	return res
 }
@@ -255,8 +294,9 @@ func elementsFor(addrs []netip.Addr) []string {
 	return out
 }
 
-// expandFQDNs returns a copy of the table with every FQDN replaced by its
-// resolved addresses, leaving the receiver untouched.
+// expandFQDNs returns a copy of the table with every FQDN, in mgmt and in
+// every allow rule that accepts them, replaced by its resolved addresses,
+// leaving the receiver untouched.
 //
 // A copy, not an in-place rewrite, because the two outputs of an apply need
 // different views of the same table: the YAML records what the operator wrote
@@ -265,50 +305,74 @@ func elementsFor(addrs []netip.Addr) []string {
 // impossible to emit a document containing a bare name — which matters, because
 // nft would then resolve it itself at load time, silently bypassing this
 // resolver, the cache fallback, and the never-empty rule below.
+//
+// out.Allow is re-sliced onto a fresh backing array before any element is
+// mutated: `out := *t` shares Allow's backing array with the receiver, so
+// writing through out.Allow[i] without this would corrupt CIDRs the caller
+// still holds a reference to.
 func (t *Table) expandFQDNs(byName map[string][]string) (*Table, error) {
 	if len(byName) == 0 {
 		return t, nil
 	}
 
 	out := *t
-	cidrs := make([]string, 0, len(t.Mgmt.CIDRs))
-	for _, c := range t.Mgmt.CIDRs {
-		if !sanity.IsFQDNEntry(c) {
-			cidrs = append(cidrs, c)
-			continue
+	out.Allow = append([]Rule(nil), t.Allow...)
+
+	expand := func(r *Rule) error {
+		if !r.acceptsFQDN() {
+			return nil
 		}
-		elements, ok := byName[c]
-		if !ok {
-			return nil, errorx.AssertionFailed.New(
-				"%q was not resolved before rendering; refusing to render an address list that omits it", c)
+		cidrs := make([]string, 0, len(r.CIDRs))
+		for _, c := range r.CIDRs {
+			if !sanity.IsFQDNEntry(c) {
+				cidrs = append(cidrs, c)
+				continue
+			}
+			elements, ok := byName[c]
+			if !ok {
+				return errorx.AssertionFailed.New(
+					"%q was not resolved before rendering; refusing to render an address list that omits it", c)
+			}
+			cidrs = append(cidrs, elements...)
 		}
-		cidrs = append(cidrs, elements...)
+		r.CIDRs = sortedDedupe(cidrs)
+		return nil
 	}
-	out.Mgmt.CIDRs = sortedDedupe(cidrs)
+
+	if err := expand(&out.Mgmt); err != nil {
+		return nil, err
+	}
+	for i := range out.Allow {
+		if err := expand(&out.Allow[i]); err != nil {
+			return nil, err
+		}
+	}
 	return &out, nil
 }
 
-// checkResolvedMgmt refuses to render a management allowlist that the operator
-// populated but resolution emptied.
+// checkResolvedRule refuses to render a rule that was populated (with at least
+// one entry) but that resolution left holding nothing to match, when the rule
+// says an empty result is unacceptable (Rule.mustResolveToSomething). Refusal
+// is a property of the rule itself, not of this function — mgmt is a caller
+// like any other, not a special case in this body.
 //
-// Distinct from checkMgmtLockout, which compares a mutation's before and after:
-// this catches an allowlist that is entirely domain names when none of them
-// resolve and none has ever been cached. The rendered rule would be
-// `saddr @mgmt_addrs ... accept` against an empty set, which matches no packet
-// and, under the input chain's default drop, takes every new SSH connection with
-// it. There is no --force past this: an empty allowlist is a lock-out however it
-// was arrived at.
-func checkResolvedMgmt(t, resolved *Table, missing []string) error {
-	if len(t.Mgmt.CIDRs) == 0 || len(resolved.Mgmt.CIDRs) > 0 {
+// Distinct from checkMgmtLockout, which compares an explicit mutation's before
+// and after: this catches a rule that is entirely domain names when none of
+// them resolve and none has ever been cached. There is no --force past this:
+// an empty result is a lock-out however it was arrived at.
+func checkResolvedRule(before, after *Rule, missing []string) error {
+	if len(before.CIDRs) == 0 || len(after.CIDRs) > 0 || !before.mustResolveToSomething() {
 		return nil
 	}
+	ownMissing := intersect(ruleFQDNs(before), missing)
 	return errx.Decorate(
 		errorx.IllegalState.New(
-			"the management allowlist holds only domain names and none of them resolved (%v), so @mgmt_addrs would "+
-				"render empty and this host would drop every new SSH connection. Nothing was changed", missing),
+			"%q holds only domain names and none of them resolved (%v), so @%s would render empty — which, under "+
+				"this host's default-drop policy, silently withdraws everything the rule was meant to admit. "+
+				"Nothing was changed", before.Name, ownMissing, addrSetName(before.Name)),
 		reasons.PreconditionNotMet,
-		"Check name resolution on this host: `getent hosts "+firstOr(missing, "<name>")+"`",
-		"Add a literal address alongside the names: `solo-provisioner network firewall add --name mgmt --cidr <cidr>`")
+		"Check name resolution on this host: `getent hosts "+firstOr(ownMissing, "<name>")+"`",
+		"Add a literal address alongside the names: `solo-provisioner network firewall add --name "+before.Name+" --cidr <cidr>`")
 }
 
 // firstOr returns the first element of s, or fallback when s is empty, so an

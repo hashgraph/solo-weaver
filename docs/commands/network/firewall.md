@@ -167,7 +167,7 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 | Field | Required | Notes |
 |---|---|---|
 | `name` | yes | Also the nft set name. `mgmt`, `blocked`, `in_cluster` are reserved |
-| `cidrs` | yes | IPv4 and IPv6 in one list; each entry routes to `@<name>` or `@<name>6` by family |
+| `cidrs` | yes | IPv4, IPv6, and domain names in one list; each entry routes to `@<name>` or `@<name>6` by family — see [Domain names in `mgmt` and allow rules](#domain-names-in-mgmt-and-allow-rules) |
 | `ports` | yes\* | Single ports and inclusive ranges (`2379-2380`). \*Optional when `icmp_echo` is set |
 | `proto` | no | `tcp` (default) or `udp`. nft has no combined match, so a service on both is two rules |
 | `icmp_echo` | no | Unmetered `echo-request`, rendered above the rate meter |
@@ -383,27 +383,34 @@ Both write the enable decision into the host's runtime state
   result straight out of the persisted YAML, so an urgent `add --name mgmt --cidr …` is not
   reverted by the next reconfigure.
 
-## Domain names in the `mgmt` allowlist
+## Domain names in `mgmt` and allow rules
 
-`--mgmt-cidrs` takes fully-qualified domain names as well as addresses, mixed freely:
+`--mgmt-cidrs`, and `--cidr`/`--cidrs` on a declared allow rule, take fully-qualified domain
+names as well as addresses, mixed freely:
 
 ```bash
 sudo solo-provisioner network firewall create \
   --mgmt-cidrs 10.0.0.0/8,jump.corp.example.com \
   --mgmt-ports 22
+
+sudo solo-provisioner network firewall create-allow-rule --name monitoring
+sudo solo-provisioner network firewall add --name monitoring \
+  --cidr probe.corp.example.com --port 9100
 ```
 
 Each name is resolved to its A records and expanded to one `/32` per address before the
-ruleset is rendered, so `@mgmt_addrs` only ever holds literals. The config keeps the name:
+ruleset is rendered, so the rule's address set only ever holds literals. The config keeps the
+name:
 
 ```bash
-sudo solo-provisioner network firewall show --output yaml   # jump.corp.example.com
+sudo solo-provisioner network firewall show --output yaml   # jump.corp.example.com, probe.corp.example.com
 sudo nft list set inet weaver-host-firewall mgmt_addrs      # 192.0.2.7
+sudo nft list set inet weaver-host-firewall monitoring      # 198.51.100.9
 ```
 
-**Only `mgmt` takes names.** `--blocked-cidrs`, `--pod-cidr`, `--in-cluster-*`, named allow
-rules, and every `network policy` flag stay address-only — a DNS answer must not be able to
-change what the block list drops or which pods reach host services.
+**`mgmt` and allow rules take names; nothing else does.** `--blocked-cidrs`, `--pod-cidr`,
+`--in-cluster-*`, and every `network policy` flag stay address-only — a DNS answer must not be
+able to change what the block list drops or which pods reach host services.
 
 ### What counts as a name
 
@@ -480,15 +487,17 @@ Per name, never all-or-nothing — one unreachable host does not freeze the othe
 |---|---|
 | Name resolves | Addresses updated, cached in `…dns.json` |
 | Name stops resolving, was cached | **Last-known addresses kept**, warning logged |
-| Name has never resolved, on `create`/`add`/`set` | **Command fails.** Almost always a typo |
+| Name has never resolved, on `create`/`create-allow-rule`/`add`/`set` | **Command fails.** Almost always a typo — this applies to `mgmt` and allow rules alike |
 | Name has never resolved, on `refresh-dns` | Contributes nothing, warning logged |
-| No name resolves and there are no addresses | **Refused.** An empty `@mgmt_addrs` under the default-drop input chain drops every new SSH connection, and there is no `--force` past it |
+| `mgmt` resolves to no addresses at all | **Refused.** An empty `@mgmt_addrs` under the default-drop input chain drops every new SSH connection, and there is no `--force` past it |
+| An allow rule resolves to no addresses at all | Renders no accept rule, warning logged — unlike `mgmt`, this costs one rule's traffic, not administrative access to the host |
 
 The cache is a fallback, never the source of truth. Deleting it costs the last-known addresses
 and nothing else.
 
-> **DNS is part of your trust boundary now.** Whoever controls the answer for a name in this
-> list controls who can reach SSH on this host. On a high-value node, prefer an address, or
+> **DNS is part of your trust boundary now.** Whoever controls the answer for a name in `mgmt`
+> controls who can reach SSH on this host; a name in an allow rule controls who can reach
+> whatever that rule admits. On a high-value node, prefer an address, or
 > pin the name in `/etc/hosts` so the answer cannot be changed remotely. Note also that
 > resolution happens **on this host** — under split-horizon DNS it may see a different answer
 > than your workstation does.

@@ -90,7 +90,7 @@ func registerTargetFlags(cmd *cobra.Command, verb string) {
 	cmd.Flags().StringVar(&flagName, "name", "",
 		"Rule to modify: a reserved block (mgmt, blocked, in_cluster) or a named allow rule")
 	cmd.Flags().StringSliceVar(&flagCIDRs, "cidr", nil,
-		"CIDR(s) to "+verb+" (comma-separated or repeated)")
+		"CIDR(s) or, on mgmt and allow rules, domain name(s) to "+verb+" (comma-separated or repeated)")
 	cmd.Flags().StringSliceVar(&flagPorts, "port", nil,
 		"Port(s) to "+verb+"; a single port (6443) or an inclusive range (2379-2380) (comma-separated or repeated)")
 }

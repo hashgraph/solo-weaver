@@ -189,7 +189,7 @@ func TestFQDN_AllNamesUnresolvableIsRefusedEvenOnRefresh(t *testing.T) {
 
 	err := m.RefreshDNS(context.Background())
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "drop every new SSH connection")
+	require.Contains(t, err.Error(), "would render empty")
 	require.Equal(t, 1, applies, "the refusal must happen before anything is applied")
 }
 
@@ -337,7 +337,7 @@ func TestFQDN_NormalisationCollapsesCaseAndTrailingDot(t *testing.T) {
 	require.Empty(t, tbl.Mgmt.CIDRs)
 }
 
-func TestFQDN_OnlyTheMgmtRuleAcceptsNames(t *testing.T) {
+func TestFQDN_BlockedAndInClusterRejectNames(t *testing.T) {
 	tbl := NewTable()
 
 	require.NoError(t, tbl.Mgmt.AddCIDRs([]string{"jump.corp.example.com"}))
@@ -346,9 +346,102 @@ func TestFQDN_OnlyTheMgmtRuleAcceptsNames(t *testing.T) {
 	// which pods reach host services.
 	require.Error(t, tbl.Blocked.AddCIDRs([]string{"bad.corp.example.com"}))
 	require.Error(t, tbl.InCluster.AddCIDRs([]string{"pods.corp.example.com"}))
+}
 
+func TestFQDN_AllowRuleAcceptsNames(t *testing.T) {
+	// An operator-declared allow rule is the same shape as mgmt — a source list x
+	// port list x proto accept — and shares the same reason to accept a name: an
+	// operator maintaining it by hand, for a host they often know only by name.
 	allow := Rule{Name: "monitoring"}
-	require.Error(t, allow.AddCIDRs([]string{"probe.corp.example.com"}))
+	require.NoError(t, allow.AddCIDRs([]string{"probe.corp.example.com"}))
+	require.Equal(t, []string{"probe.corp.example.com"}, allow.CIDRs)
+}
+
+func TestFQDN_AllowRuleNameResolvesThroughApply(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"probe.corp.example.com": {"198.51.100.9"}}}
+	applies := 0
+	m, nftPath, timerWants := newDNSTestManager(t, r, res, &applies)
+
+	require.NoError(t, m.Apply(context.Background(), sampleTable()))
+	_, err := m.CreateRule(context.Background(), Rule{Name: "monitoring", Proto: ProtoTCP}, false)
+	require.NoError(t, err)
+	require.NoError(t, m.Add(context.Background(), "monitoring", []string{"probe.corp.example.com"}, []string{"9100"}))
+
+	nft := readNft(t, nftPath)
+	require.Contains(t, nft, "198.51.100.9/32", "the allow rule's name must resolve into its own set")
+	require.NotContains(t, nft, "probe.corp.example.com")
+
+	cfg := readFile(t, m.configPath)
+	require.Contains(t, cfg, "probe.corp.example.com", "the persisted intent keeps the name")
+
+	require.Equal(t, []bool{false, false, true}, *timerWants,
+		"sampleTable and CreateRule hold no names yet; Add introduces the first one")
+}
+
+func TestFQDN_AllowRuleUnresolvedIsWarnedNotRefused(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"probe.corp.example.com": {"198.51.100.9"}}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	require.NoError(t, m.Apply(context.Background(), sampleTable()))
+	_, err := m.CreateRule(context.Background(), Rule{Name: "monitoring", Proto: ProtoTCP}, false)
+	require.NoError(t, err)
+	require.NoError(t, m.Add(context.Background(), "monitoring", []string{"probe.corp.example.com"}, []string{"9100"}))
+
+	// The name stops resolving and its cache entry is lost. Unlike mgmt, an allow
+	// rule resolving to nothing is not a hard refusal — even on the tolerant
+	// refresh path, it just renders as incomplete, same as any other allow rule
+	// that has not been fully populated yet.
+	res.setAnswers(map[string][]string{})
+	require.NoError(t, os.Remove(m.dnsCachePath))
+	require.NoError(t, m.RefreshDNS(context.Background()))
+
+	// The set declarations always render (empty), but the accept rule that would
+	// admit traffic through them is gated on non-empty CIDRs and does not.
+	nft := readNft(t, nftPath)
+	require.NotContains(t, nft, "@monitoring tcp dport @monitoring_ports accept",
+		"an allow rule with no resolved addresses admits nothing")
+
+	cfg := readFile(t, m.configPath)
+	require.Contains(t, cfg, "probe.corp.example.com", "the persisted intent still keeps the name")
+}
+
+func TestFQDN_MgmtStillHardRefusesWhileAllowRuleOnlyWarns(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{
+		"jump.corp.example.com":  {"192.0.2.7"},
+		"probe.corp.example.com": {"198.51.100.9"},
+	}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, tbl.UpsertAllow(Rule{Name: "monitoring", CIDRs: []string{"probe.corp.example.com"}, Ports: []string{"9100"}}))
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// Both names stop resolving and their cache entries are lost. mgmt resolving
+	// to nothing refuses the whole refresh; an allow rule resolving to nothing on
+	// its own would not have — mustResolveToSomething is what draws that line,
+	// and mgmt hitting it first (before the Allow loop runs) is what this pins.
+	res.setAnswers(map[string][]string{})
+	require.NoError(t, os.Remove(m.dnsCachePath))
+
+	err := m.RefreshDNS(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "\"mgmt\"")
+}
+
+func TestFQDN_EnumerationOrderIsMgmtThenAllowRulesByName(t *testing.T) {
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, tbl.UpsertAllow(Rule{Name: "zzz-rule", CIDRs: []string{"z.corp.example.com"}, Ports: []string{"1"}}))
+	require.NoError(t, tbl.UpsertAllow(Rule{Name: "aaa-rule", CIDRs: []string{"a.corp.example.com"}, Ports: []string{"1"}}))
+
+	require.Equal(t, []string{"jump.corp.example.com", "a.corp.example.com", "z.corp.example.com"}, tbl.fqdnEntries(),
+		"mgmt first, then allow rules in their stored name-sorted order")
 }
 
 func TestFQDN_MasklessIPStillAsksForAPrefixLength(t *testing.T) {

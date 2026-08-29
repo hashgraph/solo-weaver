@@ -528,23 +528,28 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 	if len(res.missing) > 0 && !opts.tolerateUnresolved {
 		return errx.Decorate(
 			errorx.IllegalArgument.New(
-				"cannot resolve management allowlist %v, and no previously-resolved addresses are on record for them. "+
+				"cannot resolve %v, and no previously-resolved addresses are on record for them. "+
 					"Nothing was changed", res.missing),
 			reasons.InvalidArgument,
 			"Check name resolution on this host: `getent hosts "+firstOr(res.missing, "<name>")+"`",
-			"Supply an address instead of a name: `--mgmt-cidrs <cidr>`")
+			"Supply an address instead of a name: `network firewall set --name <rule> --cidrs <cidr,...>`")
 	}
 	if len(res.missing) > 0 {
 		logx.As().Warn().Strs("fqdns", res.missing).Msg(
-			"management allowlist entries have never resolved and contribute no addresses to @mgmt_addrs")
+			"these host firewall entries have never resolved and contribute no addresses to their rule")
 	}
 
 	rt, err := t.expandFQDNs(res.byName)
 	if err != nil {
 		return err
 	}
-	if err := checkResolvedMgmt(t, rt, res.missing); err != nil {
+	if err := checkResolvedRule(&t.Mgmt, &rt.Mgmt, res.missing); err != nil {
 		return err
+	}
+	for i := range t.Allow {
+		if err := checkResolvedRule(&t.Allow[i], &rt.Allow[i], res.missing); err != nil {
+			return err
+		}
 	}
 
 	block, err := rt.Render()
@@ -555,8 +560,10 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 	// Declaring a rule before populating it is supported, so this is not an
 	// error — but a rule that grants nothing is indistinguishable from a
 	// finished one in `show`, and a half-run declare sequence is the likeliest
-	// way to end up here.
-	if names := t.IncompleteAllowRules(); len(names) > 0 {
+	// way to end up here. Checked against rt, not t: a rule holding only an
+	// FQDN that failed to resolve reads as populated in t (the name is still
+	// there) but empty in rt, and it is the rendered emptiness that matters.
+	if names := rt.IncompleteAllowRules(); len(names) > 0 {
 		logx.As().Warn().Strs("rules", names).Msg(
 			"allow rule(s) render nothing yet: each needs at least one CIDR and either a port or icmp_echo — populate with `network firewall add --name <rule> --cidr <cidr> --port <port>`")
 	}

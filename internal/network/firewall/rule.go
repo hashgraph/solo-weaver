@@ -221,12 +221,24 @@ func (r *Rule) flagNames() (cidrFlag, portFlag string) {
 }
 
 // acceptsFQDN reports whether this rule's address list may hold domain names as
-// well as CIDR literals. Only the management allowlist does: it is the one list
-// an operator maintains by hand, for hosts they reach interactively and often
-// know only by name. Every other rule — the block list, the in-cluster pod CIDR,
-// and operator allow rules — stays literal-only, so no resolver outage or DNS
-// answer can change what they match.
-func (r *Rule) acceptsFQDN() bool { return r.Name == RuleMgmt }
+// well as CIDR literals. mgmt and every operator-declared allow rule do: both
+// are lists an operator maintains by hand, for hosts they often know only by
+// name, and both render a uniform "source set x port set x proto" accept. The
+// block list and the in-cluster pod CIDR stay literal-only — the block list
+// because a resolution failure must never silently stop blocking (see
+// mustResolveToSomething), and the pod CIDR because it is auto-detected, not
+// operator-typed.
+func (r *Rule) acceptsFQDN() bool { return r.Name == RuleMgmt || !IsReserved(r.Name) }
+
+// mustResolveToSomething reports whether an address list that was populated but
+// resolved to nothing is a hard refusal rather than a warning. True only for
+// mgmt: it is the one rule whose emptiness locks the operator out of new
+// connections under the input chain's default drop, invisibly — the current
+// session survives on the established-connection accept and shows nothing
+// wrong. An allow rule left empty by a resolution failure just stops one
+// service being reachable, which Table.IncompleteAllowRules already warns
+// about once it is evaluated against the resolved table.
+func (r *Rule) mustResolveToSomething() bool { return r.Name == RuleMgmt }
 
 // validateEntry checks one address-list entry for this rule. An entry holding a
 // '/' is a CIDR, and so is a maskless IP literal — routing the latter to
