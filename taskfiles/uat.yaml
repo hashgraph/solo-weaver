@@ -70,7 +70,7 @@ tasks:
         kubectl -n "$NS" get secret -l app=consensus-node
 
   uat:consensus:ghcr-creds:
-    desc: "Inside VM: create a ghcr.io image-pull secret so consensus pods can pull the private UC sidecar image, attach it to the namespace's default ServiceAccount, and restart any ImagePullBackOff consensus pods. Select namespace with NS= (default hiero-network-1). Requires GITHUB_USER and GITHUB_ACCESS_TOKEN (set them in a root .env file; see .env.example)."
+    desc: "Inside VM: create a ghcr.io image-pull secret and attach it to the operator's per-node consensus ServiceAccounts, then restart stuck pods so they can pull the private UC image. RUN AFTER 'consensus node install' — the per-node SAs do not exist until the operator reconciles the capsule; running it earlier only patches the unused 'default' SA. Select namespace with NS= (default hiero-network-1). Requires GITHUB_USER and GITHUB_ACCESS_TOKEN (set them in a root .env file; see .env.example)."
     vars:
       NS: '{{.NS | default "hiero-network-1"}}'
       SECRET_NAME: '{{.SECRET_NAME | default "ghcr-creds"}}'
@@ -91,12 +91,23 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
 
         # The solo-operator runs each consensus pod under its own per-node
-        # ServiceAccount (hiero-network-1-consensus-<N>-sa), not "default", so we
-        # patch every consensus SA in the namespace plus "default" as a fallback.
+        # ServiceAccount (hiero-network-1-consensus-<N>-sa), not "default". Those SAs
+        # only exist once the operator has reconciled the capsule (i.e. after
+        # 'consensus node install'), so wait for them before patching — otherwise we
+        # would patch only the unused "default" SA and pulls would still fail.
+        echo "▶ Waiting for the operator's per-node consensus ServiceAccounts in $NS (up to 60s) ..."
+        SAS=""
+        for _ in $(seq 1 30); do
+          SAS=$(kubectl -n "$NS" get sa -o name 2>/dev/null | grep -E 'consensus' || true)
+          [ -n "$SAS" ] && break
+          sleep 2
+        done
+        if [ -z "$SAS" ]; then
+          echo "   ⚠ no per-node consensus ServiceAccounts found — run 'consensus node install' first, then re-run this task."
+        fi
         # Note: these SAs are operator-created and may be re-reconciled, which can
-        # drop the patch — re-run this task after a reconcile if pulls start failing.
+        # drop the patch — re-run this task if pulls start failing after a reconcile.
         echo "▶ Attaching '$SECRET_NAME' to consensus ServiceAccounts in $NS ..."
-        SAS=$(kubectl -n "$NS" get sa -o name | grep -E 'consensus' || true)
         SAS="$SAS serviceaccount/default"
         for sa in $SAS; do
           kubectl -n "$NS" patch "$sa" \
