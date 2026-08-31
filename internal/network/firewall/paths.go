@@ -37,18 +37,10 @@ const (
 	// could leave a host reachable by nobody.
 	HostConfigPath = "/etc/solo-provisioner/network-weaver-host-firewall.yaml"
 
-	// DNSCachePath records what each FQDN in the management allowlist last
-	// resolved to. It sits beside the config rather than under /run because its
-	// whole purpose is to survive a reboot: a host that comes up while its
-	// resolver is unreachable must still know which addresses its allowlist
-	// admitted yesterday.
-	//
-	// Not a source of truth — the YAML is. Losing this file costs the per-name
-	// fallback, nothing else.
-	DNSCachePath = "/etc/solo-provisioner/network-weaver-host-firewall.dns.json"
-
 	// DNSCacheSuffix replaces the config's own extension to name the cache; see
-	// dnsCachePathFor.
+	// dnsCachePathFor. The production cache path is dnsCachePathFor(HostConfigPath),
+	// not a second hand-written constant here — a duplicate spelling could drift
+	// from HostConfigPath silently if that one ever changed.
 	DNSCacheSuffix = ".dns.json"
 
 	// HostConfigPrevSuffix is appended to HostConfigPath to name the retained

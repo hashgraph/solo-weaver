@@ -135,7 +135,14 @@ func SyncDNSRefreshTimer(ctx context.Context, wanted bool) error {
 			"could not enable the DNS refresh timer; management allowlist names will not follow address changes until it is enabled")
 		return nil
 	}
-	return soos.StartService(ctx, DNSRefreshTimer)
+	// Warn-only, for the same reason EnableService is: the caller is
+	// applyAndPersist, already past both artifact writes, and a failure here
+	// must not be mistaken for a failure to apply the firewall itself.
+	if err := soos.StartService(ctx, DNSRefreshTimer); err != nil {
+		logx.As().Warn().Err(err).Str("unit", DNSRefreshTimer).Msg(
+			"could not start the DNS refresh timer; management allowlist names will not follow address changes until it is restarted")
+	}
+	return nil
 }
 
 // removeDNSRefreshTimer stops, disables and deletes both units. Every step is

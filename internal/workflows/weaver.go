@@ -31,7 +31,10 @@ func NewSelfInstallWorkflow() *automa.WorkflowBuilder {
 //
 // Order matters twice. The cluster check comes first so a refusal costs nothing.
 // RemoveNetworkConfig runs before NftServiceTeardown because that step keeps the
-// shared unit while the host-firewall .nft file is present.
+// shared unit while the host-firewall .nft file is present. DNSRefreshServiceTeardown
+// carries no such dependency — it only ever touches its own two unit files, never
+// the config directory — so its position here is for grouping with the other
+// boot-unit teardowns, not correctness.
 //
 // Live kernel state (loaded nft tables, tc qdiscs) is out of scope; it does not
 // survive a reboot once the boot-replay inputs above are gone.
@@ -44,6 +47,7 @@ func NewSelfUninstallWorkflow() *automa.WorkflowBuilder {
 		steps.RemoveDaemonBinaryStep(paths),
 		steps.RemoveNetworkConfig(),
 		steps.NftServiceTeardown(),
+		steps.DNSRefreshServiceTeardown(),
 		steps.TcEgressServiceTeardown(),
 		steps.RemoveSudoersStep(),
 		steps.UninstallWeaver(paths.BinDir),
