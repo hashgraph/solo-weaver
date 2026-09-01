@@ -37,6 +37,12 @@ const (
 	// could leave a host reachable by nobody.
 	HostConfigPath = "/etc/solo-provisioner/network-weaver-host-firewall.yaml"
 
+	// DNSCacheSuffix replaces the config's own extension to name the cache; see
+	// dnsCachePathFor. The production cache path is dnsCachePathFor(HostConfigPath),
+	// not a second hand-written constant here — a duplicate spelling could drift
+	// from HostConfigPath silently if that one ever changed.
+	DNSCacheSuffix = ".dns.json"
+
 	// HostConfigPrevSuffix is appended to HostConfigPath to name the retained
 	// previous generation of the config. Derived by suffix rather than declared
 	// as an independent path so the two can never be pointed at different
@@ -76,6 +82,36 @@ const (
 	// networkNftServiceTemplate is the embedded unit file rendered and written on
 	// first mutation.
 	networkNftServiceTemplate = "files/network/solo-provisioner-network-nft.service"
+
+	// DNSRefreshTimer re-runs `network firewall reapply` on a fixed interval so a
+	// management allowlist that names hosts follows them when their addresses
+	// rotate.
+	//
+	// A timer rather than a loop in solo-provisioner-daemon: this table is
+	// node-level and exists on hosts that run no block node at all, while the
+	// daemon's shaping monitor idles until it discovers a block-node pod — a
+	// refresh hosted there would not run on the hosts that need it. The daemon
+	// also acquires the shared apply lock non-blocking, so that it always yields
+	// to an operator command; a blocking, resolver-latency-bound apply in that
+	// loop would cost it reconcile ticks.
+	//
+	// Installed only while the persisted config actually holds a name, and
+	// removed when the last one goes away — a literal-only allowlist has nothing
+	// to refresh and should carry no timer.
+	DNSRefreshTimer = "solo-provisioner-network-dns-refresh.timer"
+
+	// DNSRefreshService is the oneshot the timer triggers.
+	DNSRefreshService = "solo-provisioner-network-dns-refresh.service"
+
+	// DNSRefreshTimerUnitPath and DNSRefreshServiceUnitPath are where the two
+	// units are installed so systemd can discover them.
+	DNSRefreshTimerUnitPath   = "/usr/lib/systemd/system/" + DNSRefreshTimer
+	DNSRefreshServiceUnitPath = "/usr/lib/systemd/system/" + DNSRefreshService
+
+	// dnsRefreshTimerTemplate and dnsRefreshServiceTemplate are the embedded unit
+	// files written when the timer is first needed.
+	dnsRefreshTimerTemplate   = "files/network/solo-provisioner-network-dns-refresh.timer"
+	dnsRefreshServiceTemplate = "files/network/solo-provisioner-network-dns-refresh.service"
 
 	// LockDir holds the cross-command apply lock. It lives on tmpfs (/run) so it
 	// is auto-cleared on reboot and leaves nothing behind on uninstall.

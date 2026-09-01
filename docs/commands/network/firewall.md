@@ -32,6 +32,7 @@ Membership (the addresses and ports inside a rule) is always editable from the C
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | The config currently applied |
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | The generation before it |
 | `/etc/solo-provisioner/network-weaver-host-firewall.nft` | The rendered ruleset replayed at boot |
+| `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | What each `mgmt` domain name last resolved to |
 
 Every mutation applies to the live kernel in one atomic `nft -f` transaction and rewrites both
 the `.nft` and the `.yaml` it was rendered from.
@@ -166,7 +167,7 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 | Field | Required | Notes |
 |---|---|---|
 | `name` | yes | Also the nft set name. `mgmt`, `blocked`, `in_cluster` are reserved |
-| `cidrs` | yes | IPv4 and IPv6 in one list; each entry routes to `@<name>` or `@<name>6` by family |
+| `cidrs` | yes | IPv4, IPv6, and domain names in one list; each entry routes to `@<name>` or `@<name>6` by family — see [Domain names in `mgmt` and allow rules](#domain-names-in-mgmt-and-allow-rules) |
 | `ports` | yes\* | Single ports and inclusive ranges (`2379-2380`). \*Optional when `icmp_echo` is set |
 | `proto` | no | `tcp` (default) or `udp`. nft has no combined match, so a service on both is two rules |
 | `icmp_echo` | no | Unmetered `echo-request`, rendered above the rate meter |
@@ -382,6 +383,129 @@ Both write the enable decision into the host's runtime state
   result straight out of the persisted YAML, so an urgent `add --name mgmt --cidr …` is not
   reverted by the next reconfigure.
 
+## Domain names in `mgmt` and allow rules
+
+`--mgmt-cidrs`, and `--cidr`/`--cidrs` on a declared allow rule, take fully-qualified domain
+names as well as addresses, mixed freely:
+
+```bash
+sudo solo-provisioner network firewall create \
+  --mgmt-cidrs 10.0.0.0/8,jump.corp.example.com \
+  --mgmt-ports 22
+
+sudo solo-provisioner network firewall create-allow-rule --name monitoring
+sudo solo-provisioner network firewall add --name monitoring \
+  --cidr probe.corp.example.com --port 9100
+```
+
+Each name is resolved to its A records and expanded to one `/32` per address before the
+ruleset is rendered, so the rule's address set only ever holds literals. The config keeps the
+name:
+
+```bash
+sudo solo-provisioner network firewall show --output yaml   # jump.corp.example.com, probe.corp.example.com
+sudo nft list set inet weaver-host-firewall mgmt_addrs      # 192.0.2.7
+sudo nft list set inet weaver-host-firewall monitoring      # 198.51.100.9
+```
+
+**`mgmt` and allow rules take names; nothing else does.** `--blocked-cidrs`, `--pod-cidr`,
+`--in-cluster-*`, and every `network policy` flag stay address-only — a DNS answer must not be
+able to change what the block list drops or which pods reach host services.
+
+### What counts as a name
+
+| Input | Read as |
+|---|---|
+| `10.0.0.0/8` | Address — anything containing `/` |
+| `10.0.0.1` | Address, and **rejected**: supply the mask, `10.0.0.1/32` |
+| `jump.corp.example.com` | Name |
+| `jump.corp.example.com.` | Name — the trailing root dot is accepted and dropped |
+| `localhost` | **Rejected** — see below |
+
+Names are case-insensitive, so `Jump.Example.COM.` and `jump.example.com` are one entry, and
+`remove` matches across spellings.
+
+A bare hostname with no dot is rejected on purpose. It would resolve through the host's search
+domains, so the same config would admit different sources on different machines. IPv6 / AAAA
+records are not supported yet.
+
+### Keeping the addresses current
+
+Installing a name also installs `solo-provisioner-network-dns-refresh.timer`, which runs
+`refresh-dns` a minute after boot and every five minutes after that. Removing the last name
+removes the timer, and so does `delete --all`.
+
+```bash
+systemctl list-timers solo-provisioner-network-dns-refresh.timer
+sudo solo-provisioner network firewall refresh-dns   # or force it now
+```
+
+`refresh-dns` re-resolves every name and rewrites the ruleset **only when an address actually
+changed**, so a routine run costs one DNS query and no reload. That is the difference from
+`reapply`, which always reloads because its job is to re-assert a table something else
+disturbed — at which point the files on disk are already correct and only the kernel diverged.
+
+The interval is fixed rather than driven by the record's TTL. Five minutes sits inside the
+30–300s band these records normally use.
+
+### Where resolution happens
+
+Names are resolved **by this node**, through its own `/etc/resolv.conf`, by the CLI running
+as root in the host network namespace. No extra configuration: if `getent hosts <name>` works
+on the node, so does the allowlist entry.
+
+```bash
+getent hosts jump.corp.example.com    # if this resolves, the firewall entry will too
+```
+
+Two consequences worth knowing:
+
+- **This is not cluster DNS.** The lookup does not go through CoreDNS, so a
+  `*.svc.cluster.local` name will not resolve here. That is the right behaviour for a
+  management allowlist — the hosts in it are outside the cluster by definition.
+- **An `/etc/hosts` entry is honoured**, and pinning a name there is the recommended
+  mitigation for a high-value node, since it takes the answer out of a remote party's hands.
+
+All names are looked up at once rather than one after another, and the whole pass shares a
+two-second budget. A slow resolver therefore costs one round trip regardless of how many
+names are in the list.
+
+> **`arm64` caveat.** The `linux/amd64` build is compiled natively and can use the system
+> resolver (libc/NSS); the `linux/arm64` build is cross-compiled with cgo disabled and so
+> uses Go's own resolver, which reads `/etc/hosts` and `/etc/resolv.conf` directly. Ordinary
+> DNS and `systemd-resolved` behave identically on both — Debian and Ubuntu point
+> `resolv.conf` at the `127.0.0.53` stub, which speaks DNS. The difference only shows up for
+> a name resolvable *solely* through an NSS module, such as LDAP-backed hosts or mDNS
+> `.local`: those work on `amd64` and may not on `arm64`. Use an address or an `/etc/hosts`
+> entry for such a name.
+
+### When resolution fails
+
+Per name, never all-or-nothing — one unreachable host does not freeze the others:
+
+| Situation | Behaviour |
+|---|---|
+| Name resolves | Addresses updated, cached in `…dns.json` |
+| Name stops resolving, was cached | **Last-known addresses kept**, warning logged |
+| Name has never resolved, on `create`/`create-allow-rule`/`add`/`set` | **Command fails.** Almost always a typo — this applies to `mgmt` and allow rules alike |
+| Name has never resolved, on `refresh-dns` | Contributes nothing, warning logged |
+| `mgmt` resolves to no addresses at all | **Refused.** An empty `@mgmt_addrs` under the default-drop input chain drops every new SSH connection, and there is no `--force` past it |
+| An allow rule resolves to no addresses at all | Renders no accept rule, warning logged — unlike `mgmt`, this costs one rule's traffic, not administrative access to the host |
+
+The cache is a fallback, never the source of truth. Deleting it costs the last-known addresses
+and nothing else.
+
+> **DNS is part of your trust boundary now.** Whoever controls the answer for a name in `mgmt`
+> controls who can reach SSH on this host; a name in an allow rule controls who can reach
+> whatever that rule admits. On a high-value node, prefer an address, or
+> pin the name in `/etc/hosts` so the answer cannot be changed remotely. Note also that
+> resolution happens **on this host** — under split-horizon DNS it may see a different answer
+> than your workstation does.
+>
+> A reboot replays the last rendered `.nft`, so the host comes up admitting the addresses from
+> the last successful resolution until the timer first fires. That is deliberate: a boot that
+> depends on DNS is a boot that can lock you out.
+
 ## `reapply` — re-assert the persisted config
 
 Re-renders and re-applies what is on disk without changing it. It takes no arguments — it
@@ -402,6 +526,9 @@ Use it after something else on the host disturbed the table, or after recovering
 
 There is deliberately no way to point `reapply` at a file. To apply a file, that is
 `create --from-file <path> --force`.
+
+To pick up a changed DNS answer, that is `refresh-dns` — `reapply` re-resolves too, but it
+reloads the kernel whether anything changed or not.
 
 ### Recovering a corrupt config
 

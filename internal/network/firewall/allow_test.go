@@ -568,6 +568,27 @@ func TestManager_ApplyIsDeclarativeForAllowOnly(t *testing.T) {
 	require.Contains(t, doc, "set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 10250 }; }")
 }
 
+// TestFromFile_AllowRuleAcceptsAnFQDN covers the `create --from-file` path: an
+// allow rule's cidrs go through the same Table.UpsertAllow -> Rule.Validate as
+// the CLI's `create-allow-rule` + `add`, so a name in the file needs no
+// separate plumbing to be accepted.
+func TestFromFile_AllowRuleAcceptsAnFQDN(t *testing.T) {
+	cfg, err := ParseConfig([]byte(
+		"version: 1\n" +
+			"mgmt:\n  cidrs: [\"10.0.0.0/8\"]\n  ports: [\"22\"]\n" +
+			"blocked:\n  cidrs: []\n" +
+			"in_cluster:\n  cidrs: []\n" +
+			"allow:\n  - name: monitoring\n    cidrs: [\"probe.corp.example.com\"]\n    ports: [\"9100\"]\n"))
+	require.NoError(t, err)
+
+	tbl, err := cfg.Table()
+	require.NoError(t, err)
+
+	r, ok := tbl.Rule("monitoring")
+	require.True(t, ok)
+	require.Equal(t, []string{"probe.corp.example.com"}, r.CIDRs)
+}
+
 // TestManager_ConfigRoundTripsThroughDisk is the operator-facing round-trip:
 // `show --output yaml` piped back into `create --from-file` changes nothing.
 func TestManager_ConfigRoundTripsThroughDisk(t *testing.T) {

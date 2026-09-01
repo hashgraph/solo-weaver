@@ -136,7 +136,7 @@ func applyDetectedPodCIDR(cmd *cobra.Command, t *fw.Table) {
 }
 
 func init() {
-	createCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Management/SSH allowlist CIDRs (comma-separated or repeated)")
+	createCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Management/SSH allowlist: IPv4 CIDRs and/or FQDNs (comma-separated or repeated)")
 	createCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Operator-curated block list CIDRs, dropped before any other rule (comma-separated or repeated)")
 	createCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", fw.DefaultInClusterPorts, "Host-service ports reachable from the pod CIDR")
 	createCmd.Flags().IntSliceVar(&flagMgmtPorts, "mgmt-ports", []int{fw.DefaultSSHPort}, "Management/SSH TCP port(s) accepted from the allowlist (comma-separated or repeated)")

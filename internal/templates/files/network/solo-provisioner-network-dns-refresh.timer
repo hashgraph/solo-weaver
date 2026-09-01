@@ -1,0 +1,22 @@
+[Unit]
+Description=Solo Provisioner Host Firewall DNS Refresh Timer
+Documentation=https://github.com/hashgraph/solo-weaver
+
+[Timer]
+# The boot artifact carries the addresses resolved when the ruleset was last
+# written, so a host that comes up after its jump host rotated is admitting the
+# wrong address until this first fires. One minute is the window that gap is
+# open; it is not shortened further because the resolver may not be reachable
+# the instant the network comes up.
+OnBootSec=1min
+OnUnitActiveSec=5min
+# A fixed interval rather than the answer's TTL: net.Resolver does not report
+# one. Five minutes sits inside the 30s-300s band these records normally use.
+AccuracySec=30s
+# Catch up after the machine was off or suspended past an interval, so a host
+# that has been down for a day re-resolves immediately instead of waiting out a
+# full period with stale addresses.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

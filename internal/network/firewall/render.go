@@ -50,13 +50,27 @@ func (t *Table) Render() (string, error) {
 		return "", err
 	}
 
-	data := renderData{
-		Mgmt:      flattenRule(&t.Mgmt),
-		Blocked:   flattenRule(&t.Blocked),
-		InCluster: flattenRule(&t.InCluster),
+	data := renderData{}
+	for _, f := range []struct {
+		rule *Rule
+		dst  *ruleRender
+	}{
+		{&t.Mgmt, &data.Mgmt},
+		{&t.Blocked, &data.Blocked},
+		{&t.InCluster, &data.InCluster},
+	} {
+		flat, err := flattenRule(f.rule)
+		if err != nil {
+			return "", err
+		}
+		*f.dst = flat
 	}
 	for i := range t.Allow {
-		data.Allow = append(data.Allow, flattenRule(&t.Allow[i]))
+		flat, err := flattenRule(&t.Allow[i])
+		if err != nil {
+			return "", err
+		}
+		data.Allow = append(data.Allow, flat)
 	}
 
 	rendered, err := templates.Render(hostNftTemplate, data)
@@ -69,9 +83,13 @@ func (t *Table) Render() (string, error) {
 
 // flattenRule converts a validated Rule into its template view, splitting the
 // address list by family and joining each list into an nft `elements = { … }`
-// body.
-func flattenRule(r *Rule) ruleRender {
-	v4, v6 := splitCIDRs(r.CIDRs)
+// body. It errors on an address that is not a CIDR — see splitCIDRs for why an
+// unexpanded FQDN must not be skipped.
+func flattenRule(r *Rule) (ruleRender, error) {
+	v4, v6, err := splitCIDRs(r.CIDRs)
+	if err != nil {
+		return ruleRender{}, err
+	}
 	return ruleRender{
 		Name:         r.Name,
 		AddrSet:      addrSetName(r.Name),
@@ -85,7 +103,7 @@ func flattenRule(r *Rule) ruleRender {
 		HasV6:        len(v6) > 0,
 		HasPorts:     len(r.Ports) > 0,
 		ICMPEcho:     r.ICMPEcho,
-	}
+	}, nil
 }
 
 // atomicWriteFile writes content to path via a temp file in the same directory

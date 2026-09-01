@@ -773,6 +773,124 @@ func CIDRIsIPv6(s string) (bool, error) {
 	return ip.To4() == nil, nil
 }
 
+// DNS length ceilings from RFC 1035 §2.3.4, measured on the name with any
+// trailing root dot removed.
+const (
+	maxFQDNLength     = 253
+	maxDNSLabelLength = 63
+)
+
+// isValidDNSLabelChar checks if a byte is valid inside a single DNS label. The
+// set is the RFC 1123 preferred syntax — letters, digits and hyphen — and it is
+// an allowlist rather than a metacharacter denylist because shellMetachars does
+// not cover '_', '!', '#', '%', quotes or backslash, any of which would
+// otherwise reach the resolver and the nft renderer.
+func isValidDNSLabelChar(b byte) bool {
+	return ('a' <= b && b <= 'z') ||
+		('A' <= b && b <= 'Z') ||
+		('0' <= b && b <= '9') ||
+		b == '-'
+}
+
+// IsFQDNEntry reports whether an address-list entry is shaped like a domain
+// name rather than a CIDR or a bare IP literal. It is the parse rule that lets
+// one flag accept both without ambiguity: a CIDR always carries '/', and a
+// maskless IP is classified here as an address so it keeps producing
+// ValidateCIDR's "explicit prefix length" error instead of being handed to a
+// resolver. Whether the name is well-formed is ValidateFQDN's job.
+func IsFQDNEntry(s string) bool {
+	return s != "" && !strings.Contains(s, "/") && net.ParseIP(s) == nil
+}
+
+// ValidateMgmtEntry rejects any string that is not usable in the host
+// firewall's management allowlist: an IPv4 CIDR, or an FQDN that is resolved to
+// its A records before the nft ruleset is rendered.
+//
+// It is the flag-shaped boundary check — the CLI flag, models.HostConfig, and
+// the TUI prompt — and so is IPv4-only for the same reason ValidateIPv4CIDR is.
+// The firewall package's own rule layer is dual-stack and validates through
+// ValidateCIDR instead.
+func ValidateMgmtEntry(s string) error {
+	if IsFQDNEntry(s) {
+		return ValidateFQDN(s)
+	}
+	return ValidateIPv4CIDR(s)
+}
+
+// ValidateFQDN rejects any string that is not a fully-qualified domain name.
+// It is the boundary check for hostnames supplied to the `inet weaver-host-firewall`
+// management allowlist, which are resolved to A records and rendered into the
+// mgmt_addrs nft set.
+//
+// A bare hostname is rejected: at least one dot is required. Without that,
+// resolution would depend on the host's search domains rather than on what the
+// operator wrote, so the same config would admit different sources on different
+// machines.
+//
+// An IP literal is rejected here so that a maskless address keeps producing
+// ValidateCIDR's "explicit prefix length" error rather than being mistaken for
+// a hostname and sent to the resolver. An all-numeric final label is rejected
+// for the same reason — it is a mistyped address, never a real TLD.
+//
+// This is deliberately stricter than ValidateDNSName, which is a bare character
+// check with no length or structure rules and whose callers (cluster names) must
+// keep accepting dotless values.
+func ValidateFQDN(s string) error {
+	if s == "" {
+		return invalidArgf(hintFQDN, "FQDN cannot be empty")
+	}
+
+	// A single trailing dot is the root label and is accepted, but every length
+	// and structure rule below applies to the name without it.
+	name := strings.TrimSuffix(s, ".")
+	if name == "" {
+		return invalidArgf(hintFQDN, "invalid FQDN %q: name is only a root dot", s)
+	}
+
+	if strings.Contains(name, "..") {
+		return invalidArgf(hintFQDN, "invalid FQDN %q: contains an empty label", s)
+	}
+
+	if len(name) > maxFQDNLength {
+		return invalidArgf(hintFQDN, "invalid FQDN %q: %d bytes exceeds the %d-byte maximum", s, len(name), maxFQDNLength)
+	}
+
+	if net.ParseIP(name) != nil {
+		return invalidArgf(hintCIDR, "invalid CIDR: %s", s)
+	}
+
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 {
+		return invalidArgf(hintFQDN,
+			"invalid FQDN %q: a bare hostname would resolve differently depending on the host's search domains", s)
+	}
+
+	for _, label := range labels {
+		// Catches a leading or trailing empty label (".example.com",
+		// "example.com..") that the ".." substring check above cannot see.
+		if label == "" {
+			return invalidArgf(hintFQDN, "invalid FQDN %q: contains an empty label", s)
+		}
+		if len(label) > maxDNSLabelLength {
+			return invalidArgf(hintFQDN, "invalid FQDN %q: label %q exceeds %d bytes", s, label, maxDNSLabelLength)
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return invalidArgf(hintFQDN, "invalid FQDN %q: label %q starts or ends with a hyphen", s, label)
+		}
+		for i := 0; i < len(label); i++ {
+			if !isValidDNSLabelChar(label[i]) {
+				return invalidArgf(hintFQDN, "FQDN contains invalid characters: %s", s)
+			}
+		}
+	}
+
+	if tld := labels[len(labels)-1]; strings.IndexFunc(tld, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
+		return invalidArgf(hintFQDN, "invalid FQDN %q: final label %q is all digits, which no top-level domain is", s, tld)
+	}
+
+	return nil
+}
+
 // ValidatePort rejects any string that is not a valid TCP/UDP port number in
 // the range 1–65535. It is the boundary check for `--in-cluster-port` values
 // before they are rendered into the `inet weaver-host-firewall` nftables ruleset.

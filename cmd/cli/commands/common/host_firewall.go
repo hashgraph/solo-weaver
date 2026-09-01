@@ -58,7 +58,9 @@ func ValidateHostFirewallFlags(cmd *cobra.Command) error {
 	if cmd.Flags().Changed(FlagNameMgmtCIDRs) {
 		cidrs, _ := cmd.Flags().GetStringSlice(FlagNameMgmtCIDRs)
 		for _, cidr := range normalizeCIDRs(cidrs) {
-			if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
+			// The management allowlist is the one list that also takes domain
+			// names; every other CIDR flag here stays literal-only.
+			if err := sanity.ValidateMgmtEntry(cidr); err != nil {
 				return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", FlagNameMgmtCIDRs, cidr)
 			}
 		}
@@ -89,7 +91,8 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 			"Opt-in (default: false) so existing non-interactive callers are unaffected; enable explicitly for "+
 			"hosts you want this tool to manage the firewall on.")
 	cmd.Flags().StringSlice(FlagNameMgmtCIDRs, nil,
-		"SSH/management allowlist CIDRs for the node host firewall (comma-separated or repeated). Empty skips the host firewall.")
+		"SSH/management allowlist for the node host firewall: IPv4 CIDRs and/or FQDNs (comma-separated or repeated). "+
+			"An FQDN is resolved to its A records and re-resolved on a timer. Empty skips the host firewall.")
 	cmd.Flags().StringSlice(FlagNameBlockedCIDRs, nil,
 		"Operator-curated block list CIDRs for the node host firewall, dropped before any other rule including "+
 			"established connections (comma-separated or repeated). Distinct from the BN workload plane's "+
@@ -358,7 +361,7 @@ func mergeLiveHostFirewall(ctx context.Context, cfg models.HostConfig) models.Ho
 // (persisted state, then the built-in default) supplies that field.
 func hostConfigFromTable(t *firewall.Table) models.HostConfig {
 	cfg := models.HostConfig{
-		ManagementCIDRs: ipv4Only(t.Mgmt.CIDRs, ruleDescMgmt),
+		ManagementCIDRs: ipv4OrFQDN(t.Mgmt.CIDRs, ruleDescMgmt),
 		BlockedCIDRs:    ipv4Only(t.Blocked.CIDRs, ruleDescBlocked),
 		InClusterPorts:  plainPorts(t.InCluster.Ports, ruleDescInCluster),
 	}
@@ -383,6 +386,33 @@ const (
 	ruleDescBlocked   = "block-list"
 	ruleDescInCluster = "in-cluster"
 )
+
+// ipv4OrFQDN is ipv4Only for the management block, which additionally carries
+// domain names.
+//
+// It exists because ipv4Only would drop them, and dropping them here is not a
+// failure to seed — it is data loss. The seeded list flows into
+// ResolveHostFirewallConfig, then into NetworkFirewallCreate, which assigns it
+// over t.Mgmt.CIDRs and persists the result: one `block node reconfigure` would
+// rewrite the operator's names out of the source of truth. An all-FQDN list
+// fares worse still, seeding empty and making the firewall step skip entirely.
+func ipv4OrFQDN(cidrs []string, desc string) []string {
+	var out, skipped []string
+	for _, c := range cidrs {
+		if err := sanity.ValidateMgmtEntry(strings.TrimSpace(c)); err != nil {
+			skipped = append(skipped, c)
+			continue
+		}
+		out = append(out, c)
+	}
+	if len(skipped) > 0 {
+		logx.As().Warn().Strs("cidrs", skipped).Msg(
+			"the live host firewall's " + desc + " block holds entries the flag-shaped config cannot express " +
+				"(IPv6 addresses); they are not seeded and a re-render would drop them — re-apply them afterwards " +
+				"with `network firewall set --name mgmt --cidrs ...`")
+	}
+	return out
+}
 
 // ipv4Only keeps the CIDRs models.HostConfig can hold and warns about the rest.
 // The flag-shaped config validates every CIDR as IPv4, so carrying an IPv6

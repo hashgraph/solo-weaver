@@ -24,7 +24,7 @@ func validateMgmtCIDRs(s string) error {
 		if c == "" {
 			continue
 		}
-		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+		if err := sanity.ValidateMgmtEntry(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid management CIDR %q", c)
 		}
 	}

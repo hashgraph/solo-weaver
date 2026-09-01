@@ -549,6 +549,7 @@ asked first**, then traffic shaping:
   are not part of install: they are declared afterwards with
   `network firewall create-allow-rule` (or `create --from-file` for the whole
   table), and a later `reconfigure` preserves them.
+  `--mgmt-cidrs` alone also accepts FQDNs — see below.
 - `--traffic-shaping-enabled` — the single switch that wires up **all three**
   shaping pieces: the workload policy plane (`inet weaver-workload-policy`), the
   tc HTB hierarchies, and the traffic-shaper daemon. Only when this is accepted
@@ -562,6 +563,82 @@ content flag without its gate flag is rejected. `reconfigure` seeds each gate
 from the persisted decision, so a no-flag reconfigure never silently tears a
 plane down.
 
+### FQDNs in mgmt and allow rules
+
+`--mgmt-cidrs`, and `--cidr`/`--cidrs` on a declared allow rule, accept fully-qualified domain
+names alongside IPv4 CIDRs (`Rule.acceptsFQDN`); every other address flag on either plane
+stays literal-only — the block list and the in-cluster pod CIDR because a resolver outage or a
+DNS answer must never change what they match, `network policy` because its plane is
+kernel-authoritative rather than YAML-authoritative (see below). The parse rule is that an
+entry containing `/` is an address and anything else is a name, which is unambiguous because a
+maskless IP is already rejected.
+
+The mechanism is deliberately small, and rests on the fact that the YAML is this
+table's source of truth:
+
+- Names are stored verbatim in `Rule.CIDRs`, so **re-rendering is re-resolving**
+  and no separate mapping has to be kept in sync.
+- Resolution happens into a *copy* of the table (`Table.expandFQDNs`), which is
+  then rendered; the original is what gets marshalled to YAML. That is what keeps
+  the name in the config and only literals in the `.nft`, by construction rather
+  than by a guard — and it matters, because `nft` resolves a bare name itself at
+  ruleset-load time, which would bypass the resolver, the cache and the
+  never-empty rule below.
+- `splitCIDRs` errors on anything that is not a CIDR. Skipping it instead would
+  render `set mgmt_addrs { … }` with no `elements` clause, which `nft -c -f`
+  accepts and which drops every new SSH connection.
+
+`solo-provisioner-network-dns-refresh.timer` runs `network firewall refresh-dns`
+a minute after boot and every five minutes after, and is installed only while the
+config holds at least one name. A fixed interval, not the record TTL: stdlib
+`net.Resolver` does not report one.
+
+Lookups go through the node's own `/etc/resolv.conf` — host netns, as root, not
+cluster DNS. They run concurrently under a single two-second budget for the whole
+pass, so a slow resolver costs one round trip rather than N; sequentially, a
+handful of names behind a slow server would exhaust the budget and report
+perfectly reachable names as unresolvable. `Resolver` implementations must
+therefore be safe for concurrent use. Results are folded back in list order, not
+completion order, so warnings and the operator-facing error name things in the
+order they were written.
+
+Note the two release binaries can differ here: `linux/amd64` is built natively
+and may use libc/NSS, while `linux/arm64` is cross-compiled with cgo disabled and
+uses Go's own resolver. Plain DNS and the systemd-resolved stub behave the same on
+both; a name resolvable only through an NSS module (LDAP, mDNS) does not.
+
+It is a timer rather than a loop in the daemon because this table is node-level
+and exists on hosts with no block node, while the shaping monitor idles until it
+discovers a BN pod — and because the daemon takes the shared apply lock
+non-blocking so it always yields to an operator, which a resolver-latency-bound
+apply in that loop would undermine.
+
+`…-host-firewall.dns.json` records what each name last resolved to. It exists
+purely for **per-name attribution**: "keep the last-known addresses on failure"
+is only well defined when every name fails together, and when one name fails
+while another rotates, a merged `mgmt_addrs` set cannot say which member came
+from which name. Not a source of truth; a missing or corrupt file degrades to
+"no last-known addresses".
+
+If resolution would leave `mgmt_addrs` empty the apply is refused outright, with
+no `--force` — distinct from `checkMgmtLockout`, which compares a mutation's
+before and after and so cannot see this case. An allow rule left empty by
+resolution is not refused the same way: `Rule.mustResolveToSomething` is what
+draws that line, true only for `mgmt`, so `checkResolvedRule` treats every
+other FQDN-accepting rule as a warning (`Table.IncompleteAllowRules`, evaluated
+against the resolved table) rather than a hard failure — losing SSH access
+invisibly is a different order of risk than losing one rule's traffic.
+
+**Trust boundary.** Whoever controls the answer for a name in `mgmt` controls
+who can reach SSH on the node; a name in an allow rule controls who can reach
+whatever that rule admits. Resolution also happens on the node, so
+split-horizon DNS can differ from what the operator sees. Both are called out in
+`docs/commands/network/firewall.md`; prefer a literal or an `/etc/hosts` pin on
+high-value nodes.
+
+Out of scope for now: IPv6/AAAA, TTL-aware polling, and names anywhere on the
+workload policy plane.
+
 ### Adjusting a live node with the `network` commands
 
 The three `network` sub-scopes drive each plane directly; every mutation live-
@@ -569,7 +646,7 @@ applies and then persists (see below), so they are safe to run by hand on a
 provisioned node.
 
 - **`network firewall`** (`create`/`create-allow-rule`/`add`/`remove`/`set`/
-  `show`/`reapply`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
+  `show`/`reapply`/`refresh-dns`/`delete`) — the host firewall. `create` takes `--mgmt-cidrs`,
   `--blocked-cidrs`, `--in-cluster-ports`, `--mgmt-ports`, `--pod-cidr`, or
   `--from-file` for the whole table; `create-allow-rule` declares one named allow
   rule (`--name`, `--proto`, `--icmp-echo`);

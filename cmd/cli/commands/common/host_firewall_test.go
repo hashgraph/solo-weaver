@@ -181,3 +181,53 @@ func TestHostConfigFromTable_SkipsWhatHostConfigCannotHold(t *testing.T) {
 	assert.Equal(t, []int{4244, 6443}, got.InClusterPorts, "only plain-integer specs are carried")
 	assert.NoError(t, got.Validate(), "the projection must always be a valid HostConfig")
 }
+
+// TestHostConfigFromTable_CarriesMgmtFQDNs pins the one exception to the
+// IPv4-only projection above: the management block also holds domain names, and
+// dropping them here is not a failure to seed but data loss. The seeded list
+// flows into NetworkFirewallCreate, which assigns it over t.Mgmt.CIDRs and
+// persists the result — so a single `block node reconfigure` would rewrite the
+// operator's names out of the source of truth.
+func TestHostConfigFromTable_CarriesMgmtFQDNs(t *testing.T) {
+	tbl := firewall.NewTable()
+	tbl.Mgmt.CIDRs = []string{"192.168.50.0/24", "jump.corp.example.com", "2001:db8::/32"}
+	tbl.Mgmt.Ports = []string{"22"}
+	tbl.Blocked.CIDRs = []string{"203.0.113.0/24"}
+
+	got := hostConfigFromTable(tbl)
+
+	assert.Equal(t, []string{"192.168.50.0/24", "jump.corp.example.com"}, got.ManagementCIDRs,
+		"the name survives the projection; only the IPv6 member is dropped")
+	assert.NoError(t, got.Validate(), "the projection must always be a valid HostConfig")
+}
+
+// TestHostConfigFromTable_AllFQDNMgmtDoesNotSeedEmpty guards the worse variant of
+// the same bug: an allowlist that is entirely names used to project to an empty
+// list, which made every seed tier empty and left NetworkFirewallCreate skipping
+// with "no management CIDRs configured" — silently ending reconciliation of the
+// operator's firewall.
+func TestHostConfigFromTable_AllFQDNMgmtDoesNotSeedEmpty(t *testing.T) {
+	tbl := firewall.NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com", "mon.corp.example.com"}
+	tbl.Mgmt.Ports = []string{"22"}
+
+	got := hostConfigFromTable(tbl)
+
+	assert.Len(t, got.ManagementCIDRs, 2)
+	assert.NoError(t, got.Validate())
+}
+
+// TestHostConfigFromTable_OnlyMgmtTakesFQDNs confirms the other blocks stayed
+// literal-only: a resolver answer must never be able to change what the block
+// list drops or which pods reach host services.
+func TestHostConfigFromTable_OnlyMgmtTakesFQDNs(t *testing.T) {
+	tbl := firewall.NewTable()
+	tbl.Blocked.CIDRs = []string{"203.0.113.0/24", "bad.corp.example.com"}
+	tbl.InCluster.CIDRs = []string{"pods.corp.example.com"}
+
+	got := hostConfigFromTable(tbl)
+
+	assert.Equal(t, []string{"203.0.113.0/24"}, got.BlockedCIDRs, "a name in the block list is dropped")
+	assert.Empty(t, got.PodCIDR, "a name is not usable as the pod CIDR")
+	assert.NoError(t, got.Validate())
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=Solo Provisioner Host Firewall DNS Refresh
+Documentation=https://github.com/hashgraph/solo-weaver
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+# `refresh-dns` re-resolves every FQDN in the management allowlist and rewrites the
+# ruleset only when the resolved membership actually changed, so a run that
+# finds nothing new costs one DNS round trip and no nft reload. A resolver that
+# is down is not an error here: the last-known addresses are kept and the run
+# still succeeds, which is why this has no failure escalation.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# Not conditional on the config holding an FQDN — the timer is only installed
+# when it does. If the last name is removed the unit is disabled and deleted, so
+# this never runs against a literal-only allowlist.
+ExecStart=/usr/local/bin/solo-provisioner network firewall refresh-dns

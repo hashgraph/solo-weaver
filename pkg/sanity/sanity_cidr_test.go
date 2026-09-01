@@ -3,6 +3,7 @@
 package sanity
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -100,6 +101,114 @@ func TestSanity_ValidatePort(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidatePort(tc.port)
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSanity_ValidateFQDN(t *testing.T) {
+	testCases := []struct {
+		name        string
+		fqdn        string
+		expectError bool
+	}{
+		// Valid
+		{name: "two labels", fqdn: "example.com", expectError: false},
+		{name: "three labels", fqdn: "jump.corp.example.com", expectError: false},
+		{name: "trailing root dot", fqdn: "jump.corp.example.com.", expectError: false},
+		{name: "internal hyphen", fqdn: "jump-01.corp.example.com", expectError: false},
+		{name: "digits in label", fqdn: "node1.example.com", expectError: false},
+		{name: "uppercase", fqdn: "Jump.Example.COM", expectError: false},
+		{name: "63-byte label", fqdn: strings.Repeat("a", 63) + ".example.com", expectError: false},
+
+		// Structure
+		{name: "empty", fqdn: "", expectError: true},
+		{name: "root dot only", fqdn: ".", expectError: true},
+		// A bare hostname would resolve differently per host search domain.
+		{name: "dotless hostname", fqdn: "localhost", expectError: true},
+		{name: "empty label", fqdn: "jump..example.com", expectError: true},
+		{name: "leading dot", fqdn: ".example.com", expectError: true},
+		{name: "double trailing dot", fqdn: "example.com..", expectError: true},
+		{name: "leading hyphen", fqdn: "-jump.example.com", expectError: true},
+		{name: "trailing hyphen", fqdn: "jump-.example.com", expectError: true},
+		{name: "64-byte label", fqdn: strings.Repeat("a", 64) + ".example.com", expectError: true},
+		{name: "254-byte name", fqdn: strings.Repeat("a.", 127) + "example.com", expectError: true},
+
+		// An IP must keep producing ValidateCIDR's "explicit prefix length" error
+		// rather than being handed to a resolver.
+		{name: "bare IPv4", fqdn: "10.0.0.1", expectError: true},
+		{name: "bare IPv6", fqdn: "2001:db8::1", expectError: true},
+		{name: "all-digit final label", fqdn: "999.1.2.3", expectError: true},
+
+		// Character set. shellMetachars does not cover several of these, which is
+		// why the validator is an allowlist rather than a denylist.
+		{name: "underscore", fqdn: "jump_host.example.com", expectError: true},
+		{name: "space", fqdn: "jump host.example.com", expectError: true},
+		{name: "slash", fqdn: "jump.example.com/32", expectError: true},
+		{name: "colon", fqdn: "jump.example.com:22", expectError: true},
+		{name: "at sign", fqdn: "root@jump.example.com", expectError: true},
+		{name: "percent", fqdn: "jump%00.example.com", expectError: true},
+		{name: "hash", fqdn: "jump#.example.com", expectError: true},
+		{name: "bang", fqdn: "jump!.example.com", expectError: true},
+		{name: "single quote", fqdn: "jump'.example.com", expectError: true},
+		{name: "double quote", fqdn: "jump\".example.com", expectError: true},
+		{name: "backslash", fqdn: "jump\\.example.com", expectError: true},
+		{name: "non-ASCII homograph", fqdn: "jumр.example.com", expectError: true},
+
+		// Injection and traversal.
+		{name: "shell metachar", fqdn: "example.com;reboot", expectError: true},
+		{name: "command substitution", fqdn: "example.com$(id)", expectError: true},
+		{name: "backtick", fqdn: "example.com`id`", expectError: true},
+		{name: "nft injection", fqdn: "example.com }; drop; set x {", expectError: true},
+		{name: "path traversal", fqdn: "../../etc/passwd", expectError: true},
+		{name: "sql-ish", fqdn: "example.com' OR '1'='1", expectError: true},
+
+		// Control bytes.
+		{name: "nul", fqdn: "example.com\x00", expectError: true},
+		{name: "newline", fqdn: "example.com\n", expectError: true},
+		{name: "carriage return", fqdn: "example.com\r", expectError: true},
+		{name: "tab", fqdn: "example.com\t", expectError: true},
+		{name: "bell", fqdn: "example.com\x07", expectError: true},
+		{name: "escape", fqdn: "example.com\x1b", expectError: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateFQDN(tc.fqdn)
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSanity_ValidateMgmtEntry(t *testing.T) {
+	testCases := []struct {
+		name        string
+		entry       string
+		expectError bool
+	}{
+		{name: "ipv4 cidr", entry: "10.0.0.0/8", expectError: false},
+		{name: "single host cidr", entry: "192.0.2.7/32", expectError: false},
+		{name: "fqdn", entry: "jump.corp.example.com", expectError: false},
+
+		{name: "empty", entry: "", expectError: true},
+		// The flag-shaped layer is IPv4-only, matching ValidateIPv4CIDR.
+		{name: "ipv6 cidr", entry: "2001:db8::/32", expectError: true},
+		{name: "maskless ipv4", entry: "10.0.0.1", expectError: true},
+		{name: "dotless hostname", entry: "localhost", expectError: true},
+		{name: "fqdn with mask", entry: "jump.example.com/32", expectError: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMgmtEntry(tc.entry)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {

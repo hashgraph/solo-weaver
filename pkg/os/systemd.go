@@ -231,13 +231,17 @@ func IsServiceRunning(ctx context.Context, name string) (bool, error) {
 	return props["ActiveState"] == "active", nil
 }
 
-// ensureServiceSuffix ensures the service name has the .service suffix.
-// If the name already has the suffix, it returns it unchanged.
+// ensureServiceSuffix defaults a bare unit name to .service, for callers that
+// pass e.g. "foo" instead of "foo.service". A name that already carries any
+// systemd unit-type suffix is left unchanged — unconditionally appending
+// .service would turn a valid "foo.timer" into the nonexistent
+// "foo.timer.service", silently breaking enable/start/stop/disable for every
+// non-.service unit type.
 func ensureServiceSuffix(name string) string {
-	if !strings.HasSuffix(name, ".service") {
-		return name + ".service"
+	if strings.Contains(name, ".") {
+		return name
 	}
-	return name
+	return name + ".service"
 }
 
 // MaskUnit masks the specified unit, preventing systemd from activating it.
