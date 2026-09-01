@@ -37,12 +37,16 @@ vars:
 
 tasks:
   network:all:
-    desc: "End-to-end: build, self-install the provisioner on the BN VM, then up + seed-statusz + bn-deploy"
+    desc: "End-to-end: build, sync + self-install the provisioner on the BN VM, then up + seed-statusz + bn-deploy"
     cmds:
-      # 1. Build the host + linux binaries (visible in the BN VM via the /mnt/solo-weaver mount).
+      # 1. Build the linux binaries.
       - task: build
-      # 2. Self-install the provisioner on the BN VM (puts `solo-provisioner` on PATH for bn-deploy).
       - task: vm:start
+      # 2. Sync the tree into the BN VM. /mnt/solo-weaver is an rsync target, not a
+      #    live share, so without this step the self-install below would pick up
+      #    whatever was last synced — possibly a stale binary — and report success.
+      - task: vm:sync
+      # 3. Self-install the provisioner on the BN VM (puts `solo-provisioner` on PATH for bn-deploy).
       - |
         set -eu
         BN_IP="$({{.GET_VM_IP}} get_vm_ip)"
@@ -50,13 +54,22 @@ tasks:
         echo "Self-installing solo-provisioner on the BN VM ($BN_IP)..."
         ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP \
           "cd /mnt/solo-weaver && sudo bin/solo-provisioner-linux-{{.NET_DAEMON_ARCH}} install"
-        # Verify by effect: a failed install can leave a 0-byte binary that runs and exits 0
-        # (so every later command silently no-ops). `version` (which prints to STDERR) must
-        # return a real version, so capture 2>&1.
-        VER="$(ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP "solo-provisioner version 2>&1" | head -1)"
-        [ -z "$VER" ] && { echo "❌ self-install failed: 'solo-provisioner version' returned nothing (installed binary may be 0 bytes — check the BN VM's /etc/passwd for NUL corruption, then re-run)"; exit 1; }
-        echo "✓ provisioner installed on the BN VM: $VER"
-      # 3-5. Bring up the peers VM, seed the statusz roster, deploy the BN with shaping + firewall.
+        # Verify by effect: `install` is a verbatim copy, so the installed binary must be
+        # byte-identical to the one step 1 built. Comparing digests also covers the failed
+        # install that leaves a 0-byte or truncated binary (which runs and exits 0, so
+        # every later command silently no-ops) and an install of the wrong arch. The
+        # remote `p=… &&` guard matters: a bare sha256sum with no argument reads stdin
+        # and hangs over ssh.
+        WANT="$(bash "{{.ROOT_DIR}}/scripts/daemon-digest.sh" "bin/solo-provisioner-linux-{{.NET_DAEMON_ARCH}}")"
+        GOT="$(ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} {{.VM_USER}}@$BN_IP \
+          'p="$(command -v solo-provisioner)" && sha256sum "$(readlink -f "$p")"' 2>/dev/null | cut -d' ' -f1 || true)"
+        if [ "$GOT" != "$WANT" ]; then
+          echo "❌ the installed binary is not the one this run built: want $WANT, got '${GOT:-nothing}'."
+          echo "   Did vm:sync or the self-install fail? Re-run 'task vm:sync' and retry."
+          exit 1
+        fi
+        echo "✓ provisioner installed on the BN VM (sha256 $WANT)"
+      # 4-6. Bring up the peers VM, seed the statusz roster, deploy the BN with shaping + firewall.
       - task: network:up
       - task: network:seed-statusz
       - task: network:bn-deploy
@@ -292,8 +305,8 @@ tasks:
       - |
         set -eu
         PEERS="{{.NET_PEERS_VM}}"
-        # Bridged LAN IP via the shared resolver (skips docker0 / loopback / link-local).
-        peers_ip() { bash scripts/network/peers-ip.sh "$PEERS"; }
+        # Bridged LAN IP via the shared resolver (the guest address on a host subnet).
+        peers_ip() { bash "{{.ROOT_DIR}}/scripts/network/peers-ip.sh" "$PEERS"; }
 
         # The peers VM must exist (created by network:up) — utmctl status fails otherwise.
         STATUS="$(utmctl status "$PEERS" 2>/dev/null || true)"

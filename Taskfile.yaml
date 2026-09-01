@@ -39,9 +39,11 @@ vars:
   #SSH_OPTS: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none -o ProxyCommand="nc --apple-no-connectx %h %p"'
   SSH_OPTS: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none'
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
+  # Resolve the VM's bridged LAN IP via peers-ip.sh — the single resolver, which
+  # picks the guest address on one of the host's own subnets (see its header).
   GET_VM_IP: |
     get_vm_ip() {
-    utmctl ip-address "{{.VM_NAME}}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1
+    bash "{{.ROOT_DIR}}/scripts/network/peers-ip.sh" "{{.VM_NAME}}"
     }
 
 
