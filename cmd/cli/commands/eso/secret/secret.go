@@ -7,6 +7,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Shared by create and delete, which both address an ExternalSecret by name.
+var (
+	flagSecretName      string
+	flagSecretNamespace string
+)
+
 var secretCmd = &cobra.Command{
 	Use:   "secret",
 	Short: "Manage External Secrets Operator secrets",
@@ -16,6 +22,7 @@ var secretCmd = &cobra.Command{
 
 func init() {
 	secretCmd.AddCommand(createCmd)
+	secretCmd.AddCommand(deleteCmd)
 }
 
 func GetCmd() *cobra.Command {

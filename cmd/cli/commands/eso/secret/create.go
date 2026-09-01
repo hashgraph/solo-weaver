@@ -16,8 +16,6 @@ import (
 
 var (
 	flagSecretStore           string
-	flagSecretName            string
-	flagSecretNamespace       string
 	flagSecretRefreshInterval string
 	flagSecretSet             []string
 )
