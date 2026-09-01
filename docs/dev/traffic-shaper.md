@@ -549,7 +549,7 @@ asked first**, then traffic shaping:
   are not part of install: they are declared afterwards with
   `network firewall create-allow-rule` (or `create --from-file` for the whole
   table), and a later `reconfigure` preserves them.
-  `--mgmt-cidrs` alone also accepts FQDNs — see below.
+  `--mgmt-cidrs` and `--blocked-cidrs` also accept FQDNs — see below.
 - `--traffic-shaping-enabled` — the single switch that wires up **all three**
   shaping pieces: the workload policy plane (`inet weaver-workload-policy`), the
   tc HTB hierarchies, and the traffic-shaper daemon. Only when this is accepted
@@ -563,15 +563,15 @@ content flag without its gate flag is rejected. `reconfigure` seeds each gate
 from the persisted decision, so a no-flag reconfigure never silently tears a
 plane down.
 
-### FQDNs in mgmt and allow rules
+### FQDNs in host-firewall address lists
 
-`--mgmt-cidrs`, and `--cidr`/`--cidrs` on a declared allow rule, accept fully-qualified domain
-names alongside IPv4 CIDRs (`Rule.acceptsFQDN`); every other address flag on either plane
-stays literal-only — the block list and the in-cluster pod CIDR because a resolver outage or a
-DNS answer must never change what they match, `network policy` because its plane is
-kernel-authoritative rather than YAML-authoritative (see below). The parse rule is that an
-entry containing `/` is an address and anything else is a name, which is unambiguous because a
-maskless IP is already rejected.
+Every host-firewall rule but `in_cluster` accepts fully-qualified domain names alongside IPv4
+CIDRs (`Rule.acceptsFQDN`): `--mgmt-cidrs`, `--blocked-cidrs`, and `--cidr`/`--cidrs` on any
+rule an operator maintains by hand. `in_cluster` stays literal-only because its address list
+is auto-detected from the node's `.spec.podCIDR` rather than typed, and every `network policy`
+flag stays literal-only because that plane is kernel-authoritative rather than
+YAML-authoritative (see below). The parse rule is that an entry containing `/` is an address
+and anything else is a name, which is unambiguous because a maskless IP is already rejected.
 
 The mechanism is deliberately small, and rests on the fact that the YAML is this
 table's source of truth:
@@ -629,10 +629,36 @@ other FQDN-accepting rule as a warning (`Table.IncompleteAllowRules`, evaluated
 against the resolved table) rather than a hard failure — losing SSH access
 invisibly is a different order of risk than losing one rule's traffic.
 
+**The block list inverts the direction of failure**, which is why it carries a
+second, stricter predicate (`Rule.unresolvedFailsOpen`, true only for `blocked`)
+rather than riding on the one above. Everywhere else, an unresolved name
+subtracts from what the host admits; there, it subtracts from what the host
+denies. So `checkFailOpenRules` refuses on *any* missing name in the rule, not
+only when the rule would render empty — one entry of fifty going missing is
+already a host that is reachable again — and it runs ahead of, and ignores,
+`applyOpts.tolerateUnresolved`. Tolerance exists so a resolver outage cannot
+stand between an operator and re-asserting their firewall, and so the
+five-minute timer does not fail on a blip; both arguments are about losing
+access, and here the same event grants it. Refusing writes nothing, so the live
+ruleset keeps denying what it already denied.
+
+That costs a `refresh-dns` unit that can enter `failed`, which was the argument
+against making this strict everywhere. The cache is what makes it affordable: a
+name that has resolved even once is held indefinitely, so a transient outage
+produces a *stale* name rather than a *missing* one. `missing` on a block-list
+name means it has never resolved, or the cache file was lost — a genuinely
+broken state, and one the timer clears by itself on the next good tick. The
+accepted cost on the other side is a permanently stale block-list entry: a host
+that moved is still denied at its old address and not at its new one, warned
+about on each refresh (`resolveFQDNs`).
+
 **Trust boundary.** Whoever controls the answer for a name in `mgmt` controls
 who can reach SSH on the node; a name in an allow rule controls who can reach
-whatever that rule admits. Resolution also happens on the node, so
-split-horizon DNS can differ from what the operator sees. Both are called out in
+whatever that rule admits; and whoever can make a name in `blocked` stop
+resolving decides when the node stops dropping their traffic — a lower bar than
+forging an answer, which is why that direction is refused rather than warned
+about. Resolution also happens on the node, so split-horizon DNS can differ from
+what the operator sees. All of it is called out in
 `docs/commands/network/firewall.md`; prefer a literal or an `/etc/hosts` pin on
 high-value nodes.
 

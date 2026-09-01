@@ -32,7 +32,7 @@ Membership (the addresses and ports inside a rule) is always editable from the C
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | The config currently applied |
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | The generation before it |
 | `/etc/solo-provisioner/network-weaver-host-firewall.nft` | The rendered ruleset replayed at boot |
-| `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | What each `mgmt` domain name last resolved to |
+| `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | What each domain name last resolved to |
 
 Every mutation applies to the live kernel in one atomic `nft -f` transaction and rewrites both
 the `.nft` and the `.yaml` it was rendered from.
@@ -55,8 +55,8 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 
 | Flag | What it does | Default |
 |---|---|---|
-| `--mgmt-cidrs` | Management/SSH allowlist CIDRs. Comma-separated or repeated | none |
-| `--blocked-cidrs` | Block list CIDRs, dropped before any other rule | none |
+| `--mgmt-cidrs` | Management/SSH allowlist CIDRs and/or domain names. Comma-separated or repeated | none |
+| `--blocked-cidrs` | Block list CIDRs and/or domain names, dropped before any other rule | none |
 | `--in-cluster-ports` | Host-service ports reachable from the pod CIDR | `6443,4244,7472,10250` |
 | `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated (`mgmt.ports`) | `22` |
 | `--pod-cidr` | Pod CIDR allowed to reach the in-cluster ports | auto-detected |
@@ -167,7 +167,7 @@ sudo solo-provisioner network firewall create --from-file rules.yaml --force
 | Field | Required | Notes |
 |---|---|---|
 | `name` | yes | Also the nft set name. `mgmt`, `blocked`, `in_cluster` are reserved |
-| `cidrs` | yes | IPv4, IPv6, and domain names in one list; each entry routes to `@<name>` or `@<name>6` by family — see [Domain names in `mgmt` and allow rules](#domain-names-in-mgmt-and-allow-rules) |
+| `cidrs` | yes | IPv4, IPv6, and domain names in one list; each entry routes to `@<name>` or `@<name>6` by family — see [Domain names in address lists](#domain-names-in-address-lists) |
 | `ports` | yes\* | Single ports and inclusive ranges (`2379-2380`). \*Optional when `icmp_echo` is set |
 | `proto` | no | `tcp` (default) or `udp`. nft has no combined match, so a service on both is two rules |
 | `icmp_echo` | no | Unmetered `echo-request`, rendered above the rate meter |
@@ -383,15 +383,16 @@ Both write the enable decision into the host's runtime state
   result straight out of the persisted YAML, so an urgent `add --name mgmt --cidr …` is not
   reverted by the next reconfigure.
 
-## Domain names in `mgmt` and allow rules
+## Domain names in address lists
 
-`--mgmt-cidrs`, and `--cidr`/`--cidrs` on a declared allow rule, take fully-qualified domain
-names as well as addresses, mixed freely:
+`--mgmt-cidrs`, `--blocked-cidrs`, and `--cidr`/`--cidrs` on any of those or on a declared
+allow rule, take fully-qualified domain names as well as addresses, mixed freely:
 
 ```bash
 sudo solo-provisioner network firewall create \
   --mgmt-cidrs 10.0.0.0/8,jump.corp.example.com \
-  --mgmt-ports 22
+  --mgmt-ports 22 \
+  --blocked-cidrs 203.0.113.0/24,bad.corp.example.com
 
 sudo solo-provisioner network firewall create-allow-rule --name monitoring
 sudo solo-provisioner network firewall add --name monitoring \
@@ -403,14 +404,20 @@ ruleset is rendered, so the rule's address set only ever holds literals. The con
 name:
 
 ```bash
-sudo solo-provisioner network firewall show --output yaml   # jump.corp.example.com, probe.corp.example.com
+sudo solo-provisioner network firewall show --output yaml   # jump.corp.example.com, bad.corp.example.com
 sudo nft list set inet weaver-host-firewall mgmt_addrs      # 192.0.2.7
+sudo nft list set inet weaver-host-firewall blocked_addrs   # 203.0.113.0/24, 198.51.100.4
 sudo nft list set inet weaver-host-firewall monitoring      # 198.51.100.9
 ```
 
-**`mgmt` and allow rules take names; nothing else does.** `--blocked-cidrs`, `--pod-cidr`,
-`--in-cluster-*`, and every `network policy` flag stay address-only — a DNS answer must not be
-able to change what the block list drops or which pods reach host services.
+**Every rule but `in_cluster` takes names.** `--pod-cidr` and `--in-cluster-*` stay
+address-only — that list is auto-detected from the node's `.spec.podCIDR` rather than typed,
+so there is no name to accept. Every `network policy` flag stays address-only too: that plane
+reads its membership back out of the kernel, so a name written there would be overwritten by
+resolved addresses on the next apply.
+
+The block list takes names on the same terms as the rest, but **fails differently** — see
+[The block list fails the other way](#the-block-list-fails-the-other-way).
 
 ### What counts as a name
 
@@ -487,17 +494,19 @@ Per name, never all-or-nothing — one unreachable host does not freeze the othe
 |---|---|
 | Name resolves | Addresses updated, cached in `…dns.json` |
 | Name stops resolving, was cached | **Last-known addresses kept**, warning logged |
-| Name has never resolved, on `create`/`create-allow-rule`/`add`/`set` | **Command fails.** Almost always a typo — this applies to `mgmt` and allow rules alike |
-| Name has never resolved, on `refresh-dns` | Contributes nothing, warning logged |
+| Name has never resolved, on `create`/`create-allow-rule`/`add`/`set` | **Command fails.** Almost always a typo — this applies to every rule |
+| Name has never resolved, on `refresh-dns` | Contributes nothing, warning logged — **except in `blocked`**, which fails instead |
 | `mgmt` resolves to no addresses at all | **Refused.** An empty `@mgmt_addrs` under the default-drop input chain drops every new SSH connection, and there is no `--force` past it |
 | An allow rule resolves to no addresses at all | Renders no accept rule, warning logged — unlike `mgmt`, this costs one rule's traffic, not administrative access to the host |
+| Any `blocked` name resolves to nothing, on any verb | **Refused**, even if the rest of the block list is fine — see below |
 
 The cache is a fallback, never the source of truth. Deleting it costs the last-known addresses
 and nothing else.
 
 > **DNS is part of your trust boundary now.** Whoever controls the answer for a name in `mgmt`
 > controls who can reach SSH on this host; a name in an allow rule controls who can reach
-> whatever that rule admits. On a high-value node, prefer an address, or
+> whatever that rule admits; and whoever can make a name in `blocked` *stop* resolving decides
+> when this host stops dropping their traffic. On a high-value node, prefer an address, or
 > pin the name in `/etc/hosts` so the answer cannot be changed remotely. Note also that
 > resolution happens **on this host** — under split-horizon DNS it may see a different answer
 > than your workstation does.
@@ -505,6 +514,53 @@ and nothing else.
 > A reboot replays the last rendered `.nft`, so the host comes up admitting the addresses from
 > the last successful resolution until the timer first fires. That is deliberate: a boot that
 > depends on DNS is a boot that can lock you out.
+
+### The block list fails the other way
+
+Losing a name from `mgmt` or an allow rule takes access away: something stops working, and
+you find out. Losing a name from `blocked` hands access back — the host it named is reachable
+again, the ruleset looks healthy, and nothing you would think to check has changed. It is also
+the cheaper thing to arrange: subverting the allowlist takes a forged DNS answer, subverting
+the block list takes only letting a record lapse.
+
+So the block list carries a stricter rule than everything else in this table:
+
+- **A `blocked` name must resolve once, at the moment you add it.** That is the same
+  create/add/set gate every other name faces.
+- **After that, its addresses are cached and kept indefinitely.** A resolver outage changes
+  nothing — the entry keeps denying what it last denied.
+- **A `blocked` name with no answer and no cached one fails every verb**, including
+  `refresh-dns` and `reapply`, and even when it is one entry out of fifty. Nothing is written,
+  so the live ruleset keeps enforcing the addresses it already has.
+
+In practice you reach the third case only by removing `…dns.json` while a name is
+unresolvable, or by hand-editing a never-resolved name into the config. When you do,
+`refresh-dns` fails and its unit shows up in `systemctl --failed`:
+
+```
+$ sudo solo-provisioner network firewall refresh-dns
+Error: [bad.corp.example.com] in "blocked" resolved to no address and none is on record, so
+rendering would drop them from @blocked_addrs and silently stop blocking the hosts they name.
+Nothing was changed
+```
+
+Fix the resolution, or drop the entry:
+
+```bash
+sudo solo-provisioner network firewall remove --name blocked --cidr bad.corp.example.com
+```
+
+The timer keeps firing either way, so the failure clears itself on the next tick once the name
+resolves again. There is no `--force`: forcing here would mean rendering a block list that
+blocks less than you wrote, which is the failure this is guarding against.
+
+One consequence worth knowing: because resolution covers the whole table, an unresolvable
+`blocked` name also blocks *unrelated* edits — an `add --name mgmt` will refuse until you fix
+or remove it. The error names the offending entry.
+
+A stale entry is the accepted cost of this design. A `blocked` name whose host has since moved
+keeps denying the old address and does not cover the new one, indefinitely, with a warning on
+each refresh. That is the trade for never silently denying nothing.
 
 ## `reapply` — re-assert the persisted config
 

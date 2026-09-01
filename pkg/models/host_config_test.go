@@ -66,6 +66,23 @@ func TestHostConfig_Validate(t *testing.T) {
 			name: "empty mgmt ports is allowed (means default)",
 			cfg:  HostConfig{MgmtPorts: nil},
 		},
+		{
+			name: "domain names in the allowlist and the block list",
+			cfg: HostConfig{
+				ManagementCIDRs: []string{"10.0.0.0/8", "jump.corp.example.com"},
+				BlockedCIDRs:    []string{"203.0.113.0/24", "bad.corp.example.com"},
+			},
+		},
+		{
+			name:    "dotless hostname in the block list rejected",
+			cfg:     HostConfig{BlockedCIDRs: []string{"localhost"}},
+			wantErr: true,
+		},
+		{
+			name:    "IPv6 blocked CIDR rejected",
+			cfg:     HostConfig{BlockedCIDRs: []string{"2001:db8::/32"}},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

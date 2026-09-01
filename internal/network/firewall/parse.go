@@ -25,14 +25,17 @@ import (
 // must be re-declared with `network firewall create-allow-rule` and then
 // re-populated with `network firewall add`.
 //
-// Domain names in mgmt are lost here too, and worse than in the allow rules
-// that already carry them: the rendered artifact only ever holds resolved
-// addresses, so a mgmt entry authored as a name comes back as the `/32`s it
-// last pointed at. The next mutation then persists those into the config as
-// the new source of truth, replacing the name with a frozen snapshot. An allow
-// rule's own name is not similarly frozen — it is simply gone, along with the
-// rest of that rule, per the paragraph above. Recovering the config from
-// HostConfigPrevPath, when one exists, keeps the names either way.
+// Domain names in mgmt and in the block list are lost here too, and worse than
+// in the allow rules that already carry them: the rendered artifact only ever
+// holds resolved addresses, so an entry authored as a name comes back as the
+// `/32`s it last pointed at. The next mutation then persists those into the
+// config as the new source of truth, replacing the name with a frozen snapshot.
+// For the block list that snapshot is also the one thing that keeps the entry
+// enforcing anything, since a name it can no longer see is a name it can no
+// longer refuse to lose (Rule.unresolvedFailsOpen). An allow rule's own name is
+// not similarly frozen — it is simply gone, along with the rest of that rule,
+// per the paragraph above. Recovering the config from HostConfigPrevPath, when
+// one exists, keeps the names either way.
 //
 // Both the current and the pre-allow-rules renderings are accepted, since an
 // upgraded host still has the old artifact on disk until its first mutation.

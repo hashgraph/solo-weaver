@@ -221,14 +221,12 @@ func (r *Rule) flagNames() (cidrFlag, portFlag string) {
 }
 
 // acceptsFQDN reports whether this rule's address list may hold domain names as
-// well as CIDR literals. mgmt and every operator-declared allow rule do: both
-// are lists an operator maintains by hand, for hosts they often know only by
-// name, and both render a uniform "source set x port set x proto" accept. The
-// block list and the in-cluster pod CIDR stay literal-only — the block list
-// because a resolution failure must never silently stop blocking (see
-// mustResolveToSomething), and the pod CIDR because it is auto-detected, not
-// operator-typed.
-func (r *Rule) acceptsFQDN() bool { return r.Name == RuleMgmt || !IsReserved(r.Name) }
+// well as CIDR literals. Every list an operator maintains by hand does — mgmt,
+// the block list, and each declared allow rule — because the hosts in them are
+// often known by name rather than by address. Only the in-cluster pod CIDR
+// stays literal-only: it is auto-detected from the node's .spec.podCIDR, not
+// typed, so there is no name to accept.
+func (r *Rule) acceptsFQDN() bool { return r.Name != RuleInCluster }
 
 // mustResolveToSomething reports whether an address list that was populated but
 // resolved to nothing is a hard refusal rather than a warning. True only for
@@ -239,6 +237,25 @@ func (r *Rule) acceptsFQDN() bool { return r.Name == RuleMgmt || !IsReserved(r.N
 // service being reachable, which Table.IncompleteAllowRules already warns
 // about once it is evaluated against the resolved table.
 func (r *Rule) mustResolveToSomething() bool { return r.Name == RuleMgmt }
+
+// unresolvedFailsOpen reports whether losing one name from this rule's address
+// list widens what the host permits. True only for the block list, and it is
+// the reason the block list carries a stricter policy than every other rule
+// here (#1099).
+//
+// The direction of failure inverts between an allowlist and a blocklist. A name
+// that stops resolving in mgmt or an allow rule subtracts from what is
+// admitted: access is lost, an operator notices within seconds, and tolerating
+// it on the unattended refresh path is what keeps a resolver outage from
+// breaking an already-working firewall. The same name in the block list
+// subtracts from what is *denied* — the host it named is quietly reachable
+// again, and nothing about the running system looks wrong. It is also the
+// cheaper thing for an attacker to arrange: subverting mgmt takes a forged
+// answer, subverting this takes only letting a record lapse.
+//
+// So a block-list name that resolves to nothing is refused on every path,
+// including refresh-dns, rather than warned about. See Manager.applyAndPersist.
+func (r *Rule) unresolvedFailsOpen() bool { return r.Name == RuleBlocked }
 
 // validateEntry checks one address-list entry for this rule. An entry holding a
 // '/' is a CIDR, and so is a maskless IP literal — routing the latter to

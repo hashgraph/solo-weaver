@@ -337,14 +337,15 @@ func TestFQDN_NormalisationCollapsesCaseAndTrailingDot(t *testing.T) {
 	require.Empty(t, tbl.Mgmt.CIDRs)
 }
 
-func TestFQDN_BlockedAndInClusterRejectNames(t *testing.T) {
+func TestFQDN_OnlyInClusterRejectsNames(t *testing.T) {
 	tbl := NewTable()
 
+	// Every list an operator maintains by hand takes names.
 	require.NoError(t, tbl.Mgmt.AddCIDRs([]string{"jump.corp.example.com"}))
+	require.NoError(t, tbl.Blocked.AddCIDRs([]string{"bad.corp.example.com"}))
 
-	// A resolver outage must never be able to change what the block list drops or
-	// which pods reach host services.
-	require.Error(t, tbl.Blocked.AddCIDRs([]string{"bad.corp.example.com"}))
+	// The pod CIDR is auto-detected from the node rather than typed, so there is
+	// no name for it to accept.
 	require.Error(t, tbl.InCluster.AddCIDRs([]string{"pods.corp.example.com"}))
 }
 
@@ -434,14 +435,17 @@ func TestFQDN_MgmtStillHardRefusesWhileAllowRuleOnlyWarns(t *testing.T) {
 	require.Contains(t, err.Error(), "\"mgmt\"")
 }
 
-func TestFQDN_EnumerationOrderIsMgmtThenAllowRulesByName(t *testing.T) {
+func TestFQDN_EnumerationFollowsRenderOrder(t *testing.T) {
 	tbl := NewTable()
 	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	tbl.Blocked.CIDRs = []string{"bad.corp.example.com"}
 	require.NoError(t, tbl.UpsertAllow(Rule{Name: "zzz-rule", CIDRs: []string{"z.corp.example.com"}, Ports: []string{"1"}}))
 	require.NoError(t, tbl.UpsertAllow(Rule{Name: "aaa-rule", CIDRs: []string{"a.corp.example.com"}, Ports: []string{"1"}}))
 
-	require.Equal(t, []string{"jump.corp.example.com", "a.corp.example.com", "z.corp.example.com"}, tbl.fqdnEntries(),
-		"mgmt first, then allow rules in their stored name-sorted order")
+	require.Equal(t,
+		[]string{"jump.corp.example.com", "bad.corp.example.com", "a.corp.example.com", "z.corp.example.com"},
+		tbl.fqdnEntries(),
+		"Table.rules order: mgmt, blocked, in_cluster, then allow rules by name")
 }
 
 func TestFQDN_MasklessIPStillAsksForAPrefixLength(t *testing.T) {
@@ -480,25 +484,26 @@ func TestFQDN_ConfigRoundTripKeepsTheName(t *testing.T) {
 	require.Equal(t, tbl.Mgmt.CIDRs, back.Mgmt.CIDRs)
 }
 
-func TestFQDN_FromFileRejectsNamesOutsideMgmt(t *testing.T) {
+func TestFQDN_FromFileAcceptsNamesOutsideInCluster(t *testing.T) {
 	// The reserved rule names are assigned by NewTable before Validate runs, so
-	// the mgmt-only dispatch is live on the --from-file path too.
-	withMgmt := func(mgmt, blocked string) []byte {
+	// the per-rule dispatch is live on the --from-file path too.
+	withEntries := func(mgmt, blocked, inCluster string) []byte {
 		return []byte("version: 1\n" +
 			"mgmt:\n  cidrs:\n    - " + mgmt + "\n  ports:\n    - \"22\"\n" +
 			"blocked:\n  cidrs:\n    - " + blocked + "\n" +
-			"in_cluster:\n  cidrs: []\n")
+			"in_cluster:\n  cidrs:\n    - " + inCluster + "\n")
 	}
 
-	cfg, err := ParseConfig(withMgmt("jump.corp.example.com", "203.0.113.0/24"))
+	cfg, err := ParseConfig(withEntries("jump.corp.example.com", "bad.corp.example.com", "10.4.0.0/14"))
 	require.NoError(t, err)
 	tbl, err := cfg.Table()
 	require.NoError(t, err)
 	require.Equal(t, []string{"jump.corp.example.com"}, tbl.Mgmt.CIDRs)
+	require.Equal(t, []string{"bad.corp.example.com"}, tbl.Blocked.CIDRs)
 
-	_, err = ParseConfig(withMgmt("10.0.0.0/8", "bad.corp.example.com"))
-	require.Error(t, err, "a name in the block list must be rejected on the file path too")
-	require.Contains(t, err.Error(), "bad.corp.example.com")
+	_, err = ParseConfig(withEntries("10.0.0.0/8", "203.0.113.0/24", "pods.corp.example.com"))
+	require.Error(t, err, "a name in the pod CIDR must be rejected on the file path too")
+	require.Contains(t, err.Error(), "pods.corp.example.com")
 }
 
 func TestFQDN_NamesAreResolvedConcurrently(t *testing.T) {
@@ -616,4 +621,145 @@ func TestFQDN_SurvivesUnrelatedMutations(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, reloaded.Mgmt.CIDRs, "jump.corp.example.com")
 	require.NotContains(t, reloaded.Mgmt.CIDRs, "192.0.2.7/32")
+}
+
+// blockedFQDNTable is a block list mixing a literal with a name, so a test can
+// show that losing the name is refused even while the rule still renders
+// something.
+func blockedFQDNTable() *Table {
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"10.0.0.0/8"}
+	tbl.Blocked.CIDRs = []string{"203.0.113.0/24", "bad.corp.example.com"}
+	tbl.InCluster.CIDRs = []string{"10.4.0.0/24"}
+	return tbl
+}
+
+func TestFQDN_BlockedNameResolvesThroughApply(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"bad.corp.example.com": {"198.51.100.4"}}}
+	applies := 0
+	m, nftPath, timerWants := newDNSTestManager(t, r, res, &applies)
+
+	require.NoError(t, m.Apply(context.Background(), blockedFQDNTable()))
+
+	nft := readNft(t, nftPath)
+	require.Contains(t, nft, "198.51.100.4/32", "the resolved address must reach @blocked_addrs")
+	require.Contains(t, nft, "203.0.113.0/24", "and the literal alongside it must survive")
+	require.NotContains(t, nft, "bad.corp.example.com", "nft must never see the name itself")
+
+	require.Contains(t, readFile(t, m.configPath), "bad.corp.example.com", "the config keeps the name")
+	require.Equal(t, []bool{true}, *timerWants, "a name anywhere in the table installs the refresh timer")
+}
+
+func TestFQDN_BlockedUnresolvedIsRefusedOnTheTolerantPaths(t *testing.T) {
+	// The core of #1099. Everywhere else an unresolved name withdraws access and
+	// the tolerant paths let it through so a resolver outage cannot stop an
+	// operator re-asserting their firewall. Here the same event *grants* access,
+	// so there is no path on which a warning is enough.
+	for _, tc := range []struct {
+		name string
+		run  func(*Manager) error
+	}{
+		{name: "refresh-dns", run: func(m *Manager) error { return m.RefreshDNS(context.Background()) }},
+		{name: "reapply", run: func(m *Manager) error { return m.Reapply(context.Background()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRunner{}
+			res := &fakeResolver{answers: map[string][]string{"bad.corp.example.com": {"198.51.100.4"}}}
+			applies := 0
+			m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+			require.NoError(t, m.Apply(context.Background(), blockedFQDNTable()))
+			nftBefore := readNft(t, nftPath)
+
+			// Never-resolved, not merely stale: the answer is gone and so is the
+			// cache that would have covered for it.
+			res.setAnswers(map[string][]string{})
+			require.NoError(t, os.Remove(m.dnsCachePath))
+
+			err := tc.run(m)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "bad.corp.example.com")
+			require.Contains(t, err.Error(), "\"blocked\"")
+
+			// Refusing writes nothing, which is what keeps the host denying the
+			// address it was already denying.
+			require.Equal(t, 1, applies)
+			require.Equal(t, nftBefore, readNft(t, nftPath))
+		})
+	}
+}
+
+func TestFQDN_BlockedRefusesWhileTheRuleStillRendersSomething(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"bad.corp.example.com": {"198.51.100.4"}}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	require.NoError(t, m.Apply(context.Background(), blockedFQDNTable()))
+	res.setAnswers(map[string][]string{})
+	require.NoError(t, os.Remove(m.dnsCachePath))
+
+	// checkResolvedRule waits for a rule to render empty; that is the wrong
+	// threshold for a block list, where the literal alongside the name keeps the
+	// rule looking healthy while the host the name pointed at is reachable again.
+	err := m.RefreshDNS(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bad.corp.example.com")
+	require.Equal(t, 1, applies)
+}
+
+func TestFQDN_BlockedKeepsCachedAddressesThroughAResolverOutage(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"bad.corp.example.com": {"198.51.100.4"}}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	require.NoError(t, m.Apply(context.Background(), blockedFQDNTable()))
+
+	// The cache is what makes the refusal above affordable: a name that has
+	// resolved even once rides out an outage as *stale* rather than *missing*,
+	// so the timer does not fail on a blip.
+	res.setAnswers(map[string][]string{})
+	require.NoError(t, m.RefreshDNS(context.Background()))
+
+	require.Contains(t, readNft(t, nftPath), "198.51.100.4/32",
+		"a cached block-list entry must keep denying its last-known address")
+}
+
+func TestFQDN_BlockedUnresolvedAlsoRefusesUnrelatedMutations(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"bad.corp.example.com": {"198.51.100.4"}}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	require.NoError(t, m.Apply(context.Background(), blockedFQDNTable()))
+	res.setAnswers(map[string][]string{})
+	require.NoError(t, os.Remove(m.dnsCachePath))
+
+	// Resolution covers the whole table, so an unresolvable block-list entry
+	// stands in the way of edits that have nothing to do with it. The error has
+	// to name the entry, or the operator has no way to see why.
+	err := m.Add(context.Background(), RuleMgmt, []string{"192.168.0.0/16"}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bad.corp.example.com")
+
+	// And removing the offending entry is the documented way out.
+	require.NoError(t, m.Remove(context.Background(), RuleBlocked, []string{"bad.corp.example.com"}, nil, false))
+}
+
+func TestFQDN_TimerFollowsBlockListNamesToo(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"bad.corp.example.com": {"198.51.100.4"}}}
+	applies := 0
+	m, _, timerWants := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"10.0.0.0/8"}
+	tbl.Blocked.CIDRs = []string{"bad.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	require.Equal(t, []bool{true}, *timerWants, "the last name may live in the block list")
+
+	require.NoError(t, m.Set(context.Background(), RuleBlocked, []string{"203.0.113.0/24"}, nil, false))
+	require.Equal(t, []bool{true, false}, *timerWants, "and removing it must take the timer with it")
 }

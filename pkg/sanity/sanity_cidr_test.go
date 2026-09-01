@@ -188,7 +188,7 @@ func TestSanity_ValidateFQDN(t *testing.T) {
 	}
 }
 
-func TestSanity_ValidateMgmtEntry(t *testing.T) {
+func TestSanity_ValidateIPv4CIDROrFQDN(t *testing.T) {
 	testCases := []struct {
 		name        string
 		entry       string
@@ -208,7 +208,7 @@ func TestSanity_ValidateMgmtEntry(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateMgmtEntry(tc.entry)
+			err := ValidateIPv4CIDROrFQDN(tc.entry)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {

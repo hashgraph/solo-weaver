@@ -140,14 +140,16 @@ type resolution struct {
 }
 
 // fqdnEntries returns the distinct FQDN entries across every rule that accepts
-// them — mgmt, then each declared allow rule in its stored (name-sorted)
-// order. See Rule.acceptsFQDN.
+// them, in render order. See Rule.acceptsFQDN.
+//
+// Driven off Table.rules rather than naming the fields it walks, so widening
+// acceptsFQDN is the only edit a newly name-accepting rule needs.
 func (t *Table) fqdnEntries() []string {
 	var out []string
 	seen := map[string]bool{}
-	collect := func(r *Rule) {
+	for _, r := range t.rules() {
 		if !r.acceptsFQDN() {
-			return
+			continue
 		}
 		for _, c := range r.CIDRs {
 			if sanity.IsFQDNEntry(c) && !seen[c] {
@@ -155,10 +157,6 @@ func (t *Table) fqdnEntries() []string {
 				out = append(out, c)
 			}
 		}
-	}
-	collect(&t.Mgmt)
-	for i := range t.Allow {
-		collect(&t.Allow[i])
 	}
 	return out
 }
@@ -264,6 +262,20 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 	if len(res.stale) > 0 {
 		logx.As().Warn().Strs("fqdns", res.stale).Msg(
 			"could not resolve these host firewall entries; keeping their last-known addresses")
+		// Called out separately for the rules where holding a stale answer is a
+		// gap rather than a safe default: the entry still denies the address it
+		// last named, so if the host has moved, its current address is not
+		// covered and nothing else says so.
+		for _, r := range t.rules() {
+			if !r.unresolvedFailsOpen() {
+				continue
+			}
+			if own := intersect(ruleFQDNs(r), res.stale); len(own) > 0 {
+				logx.As().Warn().Strs("fqdns", own).Str("rule", r.Name).Msg(
+					"these entries are still enforced at their last-known addresses; if the hosts they name have " +
+						"moved since, their current addresses are not covered")
+			}
+		}
 	}
 	return res
 }
@@ -294,9 +306,9 @@ func elementsFor(addrs []netip.Addr) []string {
 	return out
 }
 
-// expandFQDNs returns a copy of the table with every FQDN, in mgmt and in
-// every allow rule that accepts them, replaced by its resolved addresses,
-// leaving the receiver untouched.
+// expandFQDNs returns a copy of the table with every FQDN, in every rule that
+// accepts them, replaced by its resolved addresses, leaving the receiver
+// untouched.
 //
 // A copy, not an in-place rewrite, because the two outputs of an apply need
 // different views of the same table: the YAML records what the operator wrote
@@ -318,9 +330,9 @@ func (t *Table) expandFQDNs(byName map[string][]string) (*Table, error) {
 	out := *t
 	out.Allow = append([]Rule(nil), t.Allow...)
 
-	expand := func(r *Rule) error {
+	for _, r := range out.rules() {
 		if !r.acceptsFQDN() {
-			return nil
+			continue
 		}
 		cidrs := make([]string, 0, len(r.CIDRs))
 		for _, c := range r.CIDRs {
@@ -330,22 +342,14 @@ func (t *Table) expandFQDNs(byName map[string][]string) (*Table, error) {
 			}
 			elements, ok := byName[c]
 			if !ok {
-				return errorx.AssertionFailed.New(
+				return nil, errorx.AssertionFailed.New(
 					"%q was not resolved before rendering; refusing to render an address list that omits it", c)
 			}
 			cidrs = append(cidrs, elements...)
 		}
+		// A fresh slice, never an in-place write: the shallow copy above shares
+		// every rule's CIDRs backing array with the receiver.
 		r.CIDRs = sortedDedupe(cidrs)
-		return nil
-	}
-
-	if err := expand(&out.Mgmt); err != nil {
-		return nil, err
-	}
-	for i := range out.Allow {
-		if err := expand(&out.Allow[i]); err != nil {
-			return nil, err
-		}
 	}
 	return &out, nil
 }
@@ -373,6 +377,48 @@ func checkResolvedRule(before, after *Rule, missing []string) error {
 		reasons.PreconditionNotMet,
 		"Check name resolution on this host: `getent hosts "+firstOr(ownMissing, "<name>")+"`",
 		"Add a literal address alongside the names: `solo-provisioner network firewall add --name "+before.Name+" --cidr <cidr>`")
+}
+
+// checkFailOpenRules refuses to render whenever a rule that fails open has a
+// name resolution could not answer at all — neither freshly nor from the cache.
+//
+// Unlike checkResolvedRule this does not wait for the rule to render empty. One
+// name out of ten going missing from the block list is already the failure: that
+// host is reachable again, and the other nine entries make the rule look healthy.
+//
+// It also ignores applyOpts.tolerateUnresolved, which is what separates this
+// from every other unresolved-name path. Tolerance exists so that a resolver
+// outage cannot stop an operator re-asserting their firewall, and so that the
+// five-minute timer does not fail on a blip — but both of those arguments are
+// about *losing access*, and here the same event grants it. Refusing writes
+// nothing, so the live ruleset keeps dropping what it was dropping; that is the
+// safe direction.
+//
+// A name that has resolved even once is cached indefinitely, so on a working
+// host this fires only for a name that has never resolved (a typo, caught at
+// add time) or after the cache file has been lost.
+func checkFailOpenRules(t *Table, missing []string) error {
+	if len(missing) == 0 {
+		return nil
+	}
+	for _, r := range t.rules() {
+		if !r.unresolvedFailsOpen() {
+			continue
+		}
+		own := intersect(ruleFQDNs(r), missing)
+		if len(own) == 0 {
+			continue
+		}
+		return errx.Decorate(
+			errorx.IllegalState.New(
+				"%v in %q resolved to no address and none is on record, so rendering would drop them from @%s and "+
+					"silently stop blocking the hosts they name. Nothing was changed", own, r.Name, addrSetName(r.Name)),
+			reasons.PreconditionNotMet,
+			"Check name resolution on this host: `getent hosts "+firstOr(own, "<name>")+"`",
+			"Remove the entry if the host is gone: `solo-provisioner network firewall remove --name "+r.Name+
+				" --cidr "+firstOr(own, "<name>")+"`")
+	}
+	return nil
 }
 
 // firstOr returns the first element of s, or fallback when s is empty, so an

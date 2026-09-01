@@ -45,7 +45,7 @@ sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
 
 # NETWORK — HOST FIREWALL
-sudo solo-provisioner network firewall create [--mgmt-cidrs=<cidr|fqdn,...>] [--from-file=<yaml>]
+sudo solo-provisioner network firewall create [--mgmt-cidrs=<cidr|fqdn,...>] [--blocked-cidrs=<cidr|fqdn,...>] [--from-file=<yaml>]
 sudo solo-provisioner network firewall create-allow-rule --name=<name> [--proto=tcp|udp] [--icmp-echo]
 sudo solo-provisioner network firewall add|remove --name=<name> [--cidr=<list>] [--port=<list>]
 sudo solo-provisioner network firewall set    --name=<name> [--cidrs=<list>] [--ports=<list>]
