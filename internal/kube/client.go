@@ -502,6 +502,41 @@ func (c *Client) ResourceExists(ctx context.Context, apiVersion, kind, namespace
 	return true, nil
 }
 
+// DeleteResource deletes a resource by apiVersion/kind/namespace/name and reports
+// whether it deleted anything (false = the resource did not exist).
+// For cluster-scoped resources, pass empty string for namespace. For namespaced
+// kinds an empty namespace is rejected, NOT defaulted to "default".
+// The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1").
+func (c *Client) DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error) {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return false, errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		// ResourceExists defaults an empty namespace to "default"; a delete must not.
+		// A caller that forgot to set the namespace means "I don't know where", not
+		// "remove it from default".
+		if namespace == "" {
+			return false, errorx.IllegalArgument.New("namespace is required to delete %s/%s", kind, name)
+		}
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	policy := metav1.DeletePropagationBackground
+	if err := dr.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, errorx.InternalError.Wrap(err, "failed to delete %s/%s", kind, name)
+	}
+	return true, nil
+}
+
 // GetResourceNestedString retrieves a nested string value from a Kubernetes resource.
 // For cluster-scoped resources, pass empty string for namespace.
 // The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1beta1").

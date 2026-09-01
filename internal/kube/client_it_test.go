@@ -1110,6 +1110,100 @@ func TestWithCluster_ResourceExists_ConfigMap(t *testing.T) {
 	}
 }
 
+// TestWithCluster_DeleteResource_ConfigMap covers the full DeleteResource contract
+// on a core kind: it deletes, reports what it did, and is idempotent.
+func TestWithCluster_DeleteResource_ConfigMap(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	nsName := fmt.Sprintf("test-deleteresource-cm-%d", time.Now().UnixNano())
+
+	ns := createUnstructured("Namespace", "v1", "", nsName, nil)
+	nsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+	if _, err := c.Dyn.Resource(nsGVR).Create(ctx, ns, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.Dyn.Resource(nsGVR).Delete(context.Background(), nsName, metav1.DeleteOptions{})
+	})
+
+	cmName := "test-configmap"
+	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+	cm := createUnstructured("ConfigMap", "v1", nsName, cmName, map[string]interface{}{
+		"data": map[string]interface{}{"key": "value"},
+	})
+	if _, err := c.Dyn.Resource(cmGVR).Namespace(nsName).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("failed to create ConfigMap: %v", err)
+	}
+
+	// Deleting an existing resource reports true and actually removes it.
+	deleted, err := c.DeleteResource(ctx, "v1", "ConfigMap", nsName, cmName)
+	if err != nil {
+		t.Fatalf("DeleteResource failed: %v", err)
+	}
+	if !deleted {
+		t.Fatalf("expected DeleteResource to report the ConfigMap as deleted")
+	}
+
+	exists, err := c.ResourceExists(ctx, "v1", "ConfigMap", nsName, cmName)
+	if err != nil {
+		t.Fatalf("ResourceExists failed: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected ConfigMap to be gone after DeleteResource")
+	}
+
+	// Re-deleting is a clean no-op, not an error.
+	deleted, err = c.DeleteResource(ctx, "v1", "ConfigMap", nsName, cmName)
+	if err != nil {
+		t.Fatalf("DeleteResource on an already-deleted resource failed: %v", err)
+	}
+	if deleted {
+		t.Fatalf("expected DeleteResource to report nothing deleted on re-delete")
+	}
+
+	// A name that never existed behaves the same way.
+	deleted, err = c.DeleteResource(ctx, "v1", "ConfigMap", nsName, "never-existed")
+	if err != nil {
+		t.Fatalf("DeleteResource on a missing resource failed: %v", err)
+	}
+	if deleted {
+		t.Fatalf("expected DeleteResource to report nothing deleted for a missing name")
+	}
+}
+
+// TestWithCluster_DeleteResource_MissingNamespace pins the behaviour the CLI relies
+// on: a resource in a namespace that does not exist reads as not-found, so callers
+// render a skip rather than an error.
+func TestWithCluster_DeleteResource_MissingNamespace(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	nsName := fmt.Sprintf("test-deleteresource-missing-ns-%d", time.Now().UnixNano())
+
+	deleted, err := c.DeleteResource(ctx, "v1", "ConfigMap", nsName, "whatever")
+	if err != nil {
+		t.Fatalf("DeleteResource in a missing namespace failed: %v", err)
+	}
+	if deleted {
+		t.Fatalf("expected DeleteResource to report nothing deleted in a missing namespace")
+	}
+}
+
+// TestWithCluster_DeleteResource_UnknownKind covers the path an absent CRD takes:
+// the REST mapping fails, which is what surfaces "the operator is not installed".
+func TestWithCluster_DeleteResource_UnknownKind(t *testing.T) {
+	t.Parallel()
+	c := mustClient(t)
+	ctx := context.Background()
+
+	if _, err := c.DeleteResource(ctx, "does.not.exist/v1", "Nope", "default", "whatever"); err == nil {
+		t.Fatalf("expected DeleteResource to fail for an unmapped kind")
+	}
+}
+
 // TestGetResourceNestedString_ConfigMap tests GetResourceNestedString with a ConfigMap
 func TestWithCluster_GetResourceNestedString_ConfigMap(t *testing.T) {
 	t.Parallel()
