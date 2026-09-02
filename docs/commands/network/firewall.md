@@ -519,16 +519,16 @@ and nothing else.
 
 Losing a name from `mgmt` or an allow rule takes access away: something stops working, and
 you find out. Losing a name from `blocked` hands access back — the host it named is reachable
-again, the ruleset looks healthy, and nothing you would think to check has changed. It is also
-the cheaper thing to arrange: subverting the allowlist takes a forged DNS answer, subverting
-the block list takes only letting a record lapse.
+again, the ruleset looks healthy, and nothing you would think to check has changed.
 
-So the block list carries a stricter rule than everything else in this table:
+So the block list carries a stricter rule than everything else in this table, aimed squarely
+at the case where an entry would quietly contribute nothing:
 
 - **A `blocked` name must resolve once, at the moment you add it.** That is the same
   create/add/set gate every other name faces.
 - **After that, its addresses are cached and kept indefinitely.** A resolver outage changes
-  nothing — the entry keeps denying what it last denied.
+  nothing — the entry keeps denying what it last denied. That is what stops a blip breaking
+  the rule; it is also what leaves a withdrawn record pinned, see below.
 - **A `blocked` name with no answer and no cached one fails every verb**, including
   `refresh-dns` and `reapply`, and even when it is one entry out of fifty. Nothing is written,
   so the live ruleset keeps enforcing the addresses it already has.
@@ -558,9 +558,28 @@ One consequence worth knowing: because resolution covers the whole table, an unr
 `blocked` name also blocks *unrelated* edits — an `add --name mgmt` will refuse until you fix
 or remove it. The error names the offending entry.
 
-A stale entry is the accepted cost of this design. A `blocked` name whose host has since moved
-keeps denying the old address and does not cover the new one, indefinitely, with a warning on
-each refresh. That is the trade for never silently denying nothing.
+### What a name here does and does not cover
+
+An nft set holds addresses, so a name in this list means *the addresses it resolved to at the
+last successful refresh* — never the name itself. Two consequences, and they are different
+from each other:
+
+- **Ordinary rotation is followed.** While the name still resolves, every refresh replaces
+  that entry's addresses. A host that moves is blocked at its new address within five minutes,
+  or one minute after a boot, and stops being blocked at the old one in the same write.
+- **A withdrawn record is not.** If the name stops resolving at all — NXDOMAIN, or the
+  resolver is unreachable — the cached addresses are held until it resolves again or you
+  remove the entry, with a warning on each refresh. A host that both moves *and* drops its
+  record is reachable again.
+
+The refusal described above does not change the second case, and no failure policy could:
+refusing writes nothing, so the kernel keeps exactly the same cached addresses it would have
+kept anyway. What the refusal buys is that an entry can never silently *vanish* — not that it
+stays accurate.
+
+So treat a name here as a convenience for hosts you know by name and expect to be stable. It
+is not a control against someone who runs their own DNS and would rather not be blocked; for
+that, block by address, or block at the DNS layer where the name is what gets matched.
 
 ## `reapply` — re-assert the persisted config
 

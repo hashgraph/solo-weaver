@@ -639,26 +639,42 @@ already a host that is reachable again — and it runs ahead of, and ignores,
 `applyOpts.tolerateUnresolved`. Tolerance exists so a resolver outage cannot
 stand between an operator and re-asserting their firewall, and so the
 five-minute timer does not fail on a blip; both arguments are about losing
-access, and here the same event grants it. Refusing writes nothing, so the live
-ruleset keeps denying what it already denied.
+access, and here the same event grants it.
 
 That costs a `refresh-dns` unit that can enter `failed`, which was the argument
 against making this strict everywhere. The cache is what makes it affordable: a
 name that has resolved even once is held indefinitely, so a transient outage
 produces a *stale* name rather than a *missing* one. `missing` on a block-list
 name means it has never resolved, or the cache file was lost — a genuinely
-broken state, and one the timer clears by itself on the next good tick. The
-accepted cost on the other side is a permanently stale block-list entry: a host
-that moved is still denied at its old address and not at its new one, warned
-about on each refresh (`resolveFQDNs`).
+broken state, and one the timer clears by itself on the next good tick.
+
+**Be precise about what the refusal buys, because it is narrower than it looks.**
+Refusing writes nothing, so the kernel keeps the addresses it already had —
+which is exactly what the tolerant path would have rendered from the cache. All
+three candidate policies (refuse everywhere, refuse only here, warn like `mgmt`)
+therefore leave *identical* rules loaded; they differ in exit code and log level,
+not in what the host enforces. What this one prevents is an entry silently
+disappearing from the set. It does nothing to keep an entry accurate, and no
+failure policy could: a set holds addresses, so a name only ever means "what it
+resolved to last time".
+
+That leaves one real gap, worth knowing when reading the operator docs alongside
+this. Ordinary rotation is covered — while the name resolves, each refresh
+replaces its addresses, so a moved host is denied at its new address within five
+minutes and stops being denied at the old one in the same write. A *withdrawn*
+record is not: resolution fails, the cache pins the old addresses, and a host
+that both moves and drops its record is reachable again. Closing that would take
+TTL-aware polling (stdlib reports no TTL), accumulating addresses rather than
+replacing them (unbounded, and recycled cloud IPs make it actively harmful), or
+matching the name instead of the address — a different plane entirely.
 
 **Trust boundary.** Whoever controls the answer for a name in `mgmt` controls
-who can reach SSH on the node; a name in an allow rule controls who can reach
-whatever that rule admits; and whoever can make a name in `blocked` stop
-resolving decides when the node stops dropping their traffic — a lower bar than
-forging an answer, which is why that direction is refused rather than warned
-about. Resolution also happens on the node, so split-horizon DNS can differ from
-what the operator sees. All of it is called out in
+who can reach SSH on the node, and a name in an allow rule controls who can
+reach whatever that rule admits. The block list is the weaker direction:
+whoever can make a name stop resolving, and move, decides when the node stops
+dropping their traffic — and the refusal above does not prevent that, per the
+gap noted above. Resolution also happens on the node, so split-horizon DNS can
+differ from what the operator sees. All of it is called out in
 `docs/commands/network/firewall.md`; prefer a literal or an `/etc/hosts` pin on
 high-value nodes.
 

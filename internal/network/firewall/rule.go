@@ -239,9 +239,8 @@ func (r *Rule) acceptsFQDN() bool { return r.Name != RuleInCluster }
 func (r *Rule) mustResolveToSomething() bool { return r.Name == RuleMgmt }
 
 // unresolvedFailsOpen reports whether losing one name from this rule's address
-// list widens what the host permits. True only for the block list, and it is
-// the reason the block list carries a stricter policy than every other rule
-// here (#1099).
+// list widens what the host permits. True only for the block list, which is why
+// that list carries a stricter policy than every other rule here.
 //
 // The direction of failure inverts between an allowlist and a blocklist. A name
 // that stops resolving in mgmt or an allow rule subtracts from what is
@@ -249,12 +248,16 @@ func (r *Rule) mustResolveToSomething() bool { return r.Name == RuleMgmt }
 // it on the unattended refresh path is what keeps a resolver outage from
 // breaking an already-working firewall. The same name in the block list
 // subtracts from what is *denied* — the host it named is quietly reachable
-// again, and nothing about the running system looks wrong. It is also the
-// cheaper thing for an attacker to arrange: subverting mgmt takes a forged
-// answer, subverting this takes only letting a record lapse.
+// again, and nothing about the running system looks wrong. So a block-list name
+// that resolves to nothing is refused on every path, including refresh-dns.
 //
-// So a block-list name that resolves to nothing is refused on every path,
-// including refresh-dns, rather than warned about. See Manager.applyAndPersist.
+// Scope, because it is narrower than it looks: this stops an entry silently
+// disappearing from the set, not an entry going out of date. Refusing writes
+// nothing, so the kernel keeps the addresses the tolerant path would have
+// rendered from the cache anyway — every candidate policy leaves the same rules
+// loaded. A name whose record is withdrawn stays pinned to its last-known
+// addresses either way; only ordinary rotation, where the name still resolves,
+// is actually tracked. See Manager.applyAndPersist.
 func (r *Rule) unresolvedFailsOpen() bool { return r.Name == RuleBlocked }
 
 // validateEntry checks one address-list entry for this rule. An entry holding a
