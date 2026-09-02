@@ -133,14 +133,14 @@ func TeardownESOSecret(name, namespace string) *automa.WorkflowBuilder {
 		deleteESOSecret(name, namespace),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Deleting ExternalSecret")
+			notify.As().StepStart(ctx, stp, "Removing ExternalSecret")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete ExternalSecret")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove ExternalSecret")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "ExternalSecret deleted successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "ExternalSecret removed successfully")
 		})
 }
 

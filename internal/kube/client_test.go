@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/joomcode/errorx"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -724,6 +725,33 @@ func TestDeleteResource_TargetsOnlyTheNamedResource(t *testing.T) {
 		if !exists {
 			t.Fatalf("DeleteResource removed %s/%s, which it should not have touched", s.namespace, s.name)
 		}
+	}
+}
+
+// TestDeleteResource_APIFailureIsExternalError pins the namespace choice: a failed
+// Kubernetes API call is an external dependency failure, not an internal bug, so
+// doctor classifies and styles it accordingly.
+func TestDeleteResource_APIFailureIsExternalError(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, externalSecretAPIResources(), newExternalSecret("grafana-alloy", "grafana-alloy-secrets"))
+
+	dyn, ok := c.Dyn.(*dynamicfake.FakeDynamicClient)
+	if !ok {
+		t.Fatalf("expected the fake dynamic client, got %T", c.Dyn)
+	}
+	dyn.PrependReactor("delete", "externalsecrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, kerrors.NewInternalError(errors.New("etcd unavailable"))
+	})
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "grafana-alloy-secrets")
+	if err == nil {
+		t.Fatalf("expected DeleteResource to surface the API failure")
+	}
+	if deleted {
+		t.Fatalf("expected deleted=false when the API call fails")
+	}
+	if !errorx.IsOfType(err, errorx.ExternalError) {
+		t.Fatalf("expected an ExternalError for a Kubernetes API failure, got %v", err)
 	}
 }
 

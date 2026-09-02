@@ -532,7 +532,7 @@ func (c *Client) DeleteResource(ctx context.Context, apiVersion, kind, namespace
 		if kerrors.IsNotFound(err) {
 			return false, nil
 		}
-		return false, errorx.InternalError.Wrap(err, "failed to delete %s/%s", kind, name)
+		return false, errorx.ExternalError.Wrap(err, "failed to delete %s/%s", kind, name)
 	}
 	return true, nil
 }
