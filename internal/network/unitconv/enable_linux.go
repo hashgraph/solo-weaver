@@ -12,9 +12,10 @@ import (
 )
 
 // EnableIfDisabled re-enables service if systemd would not start it at boot.
+// Reads the same probe NeedsConverge gates on, so the two cannot disagree.
 // Failures only warn; the drift probe reports the host again next time.
 func EnableIfDisabled(ctx context.Context, service string) error {
-	enabled, err := soos.IsServiceEnabled(ctx, service)
+	enabled, err := EnabledAtBoot(service)
 	if err != nil {
 		logx.As().Warn().Err(err).Str("service", service).
 			Msg("could not read whether the service is enabled at boot")

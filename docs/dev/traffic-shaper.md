@@ -300,8 +300,10 @@ halves are required: the migration only runs `Execute` when the probe reports
 drift, so an enable that lives only in `Execute` would never be reached on the
 host that needs it. The query is filesystem-only — `unitconv.EnabledAtBoot`
 lstats the `multi-user.target.wants` symlink rather than opening a DBus
-connection — so it stays cheap enough to run ahead of every root command; the
-authoritative enable stays in `Execute`. Both halves live in
+connection — so it stays cheap enough to run ahead of every root command, and
+`EnsureUnit`'s fast path reads the same probe, so the gate that admits a host
+and the gate that clears it cannot disagree. The authoritative write
+(`systemctl enable`) stays in `Execute`. Both halves live in
 `internal/network/unitconv` (`NeedsConverge` / `EnsureUnit`), shared with the
 shaper unit below. `version` and the shaper worker verbs the daemon delegates
 (`block node tc-attach`, `reconcile-shaper`) opt out of the pre-run

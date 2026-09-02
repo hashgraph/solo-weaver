@@ -129,7 +129,8 @@ func nftConfFlushesRulesetAt(path string) (bool, bool) {
 }
 
 // nftablesFlushRisk reports whether nftables.service can destroy the weaver
-// tables: it must be active and its ruleset must flush. Unknown counts as risky.
+// tables: it must be enabled at boot or running, and its ruleset must flush.
+// Unknown counts as risky.
 func nftablesFlushRisk(ctx context.Context, probe firewallUnitState, nftFlushes nftFlushState) (string, bool) {
 	enabled, running, err := probe(ctx, nftablesService)
 	if err != nil {
@@ -142,7 +143,8 @@ func nftablesFlushRisk(ctx context.Context, probe firewallUnitState, nftFlushes 
 	}
 	if flushes, known := nftFlushes(); known && !flushes {
 		logx.As().Debug().Str("unit", nftablesService).
-			Msg("nftables.service is active but " + nftablesConfPath + " does not flush the ruleset")
+			Str("state", describeUnitState(enabled, running)).
+			Msg("nftables.service is present but " + nftablesConfPath + " does not flush the ruleset")
 		return "", false
 	}
 	return describeUnitState(enabled, running), true
