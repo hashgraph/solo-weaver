@@ -58,6 +58,7 @@ func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 		steps.SetupKubectl(mr),
 		steps.SetupHelm(mr), // required by MetalLB setup, so we install it earlier
 		steps.SetupK9s(mr),
+		steps.SetupShellCompletion(),
 
 		// CRI-O
 		steps.SetupCrio(mr),
