@@ -39,12 +39,14 @@ type setApplier interface {
 // digests it (no privilege, no nft), while Apply additionally reads the live nft
 // sets, diffs, and writes only the changed policies (root).
 //
-// The three collaborators are seams so the orchestration is testable off-host:
-// fetcher reads statusz, lister reads live nft membership, applier writes it.
+// The four collaborators are seams so the orchestration is testable off-host:
+// fetcher reads statusz, resolver turns the domain names statusz reports into
+// addresses, lister reads live nft membership, applier writes it.
 type Reconciler struct {
-	fetcher endpointFetcher
-	lister  elementLister
-	applier setApplier
+	fetcher  endpointFetcher
+	resolver Resolver
+	lister   elementLister
+	applier  setApplier
 }
 
 // NewReconciler wires the production Reconciler: statusz is read over HTTP from
@@ -52,9 +54,10 @@ type Reconciler struct {
 // written via the network policy Manager.
 func NewReconciler(statuszURL string) *Reconciler {
 	return &Reconciler{
-		fetcher: NewStatuszClient(statuszURL),
-		lister:  policy.NewExecRunner(),
-		applier: policy.NewManager(),
+		fetcher:  NewStatuszClient(statuszURL),
+		resolver: NewNetResolver(),
+		lister:   policy.NewExecRunner(),
+		applier:  policy.NewManager(),
 	}
 }
 
@@ -175,11 +178,17 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
-// fetchEndpoints reads both statusz endpoints, buckets them into the desired
-// per-category membership view, and returns the raw inbound NetworkData too:
-// listener-port derivation reads local.port straight off the inbound endpoints
-// (which the membership bucketize discards), so the port pass needs the raw
-// inbound payload rather than the bucketized view.
+// fetchEndpoints reads both statusz endpoints, resolves any domain names in
+// them to addresses, buckets the result into the desired per-category membership
+// view, and returns the resolved inbound NetworkData too: listener-port
+// derivation reads local.port straight off the inbound endpoints (which the
+// membership bucketize discards), so the port pass needs the payload rather than
+// the bucketized view.
+//
+// Resolution happens here, ahead of both bucketize and the port pass, so every
+// consumer downstream sees addresses only. That is what keeps it out of Check's
+// compound-element conversion and out of the apply's CIDR validation, neither of
+// which tolerates a name.
 func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
@@ -189,6 +198,7 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, Net
 	if err != nil {
 		return nil, NetworkData{}, err
 	}
+	inbound, outbound = r.resolveRemotes(ctx, inbound, outbound)
 	return bucketizeEndpoints(inbound, outbound), inbound, nil
 }
 
