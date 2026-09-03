@@ -17,6 +17,10 @@ func ufwConfigured(enabled, known bool) ufwEnabledState {
 	return func() (bool, bool) { return enabled, known }
 }
 
+func nftConfigured(flushes, known bool) nftFlushState {
+	return func() (bool, bool) { return flushes, known }
+}
+
 func executeFirewallManagersStep(t *testing.T, probe firewallUnitState) *automa.Report {
 	t.Helper()
 	return executeFirewallManagersStepWithUfw(t, probe, ufwConfigured(true, true))
@@ -24,9 +28,23 @@ func executeFirewallManagersStep(t *testing.T, probe firewallUnitState) *automa.
 
 func executeFirewallManagersStepWithUfw(t *testing.T, probe firewallUnitState, ufw ufwEnabledState) *automa.Report {
 	t.Helper()
-	step, err := checkFirewallManagersStep(probe, ufw).Build()
+	return executeFirewallManagersStepWith(t, probe, ufw, nftConfigured(true, true))
+}
+
+func executeFirewallManagersStepWithNft(t *testing.T, probe firewallUnitState, nft nftFlushState) *automa.Report {
+	t.Helper()
+	return executeFirewallManagersStepWith(t, probe, ufwConfigured(true, true), nft)
+}
+
+func executeFirewallManagersStepWith(t *testing.T, probe firewallUnitState, ufw ufwEnabledState, nft nftFlushState) *automa.Report {
+	t.Helper()
+	step, err := checkFirewallManagersStep(probe, ufw, nft).Build()
 	require.NoError(t, err)
 	return step.Execute(context.Background())
+}
+
+func nftablesActiveOnly(_ context.Context, unit string) (bool, bool, error) {
+	return unit == "nftables.service", unit == "nftables.service", nil
 }
 
 func ufwActiveOnly(_ context.Context, unit string) (bool, bool, error) {
@@ -90,7 +108,7 @@ func TestCheckFirewallManagersStep_ReportsUfwWhenConfUnreadable(t *testing.T) {
 // TestCheckFirewallManagersStep_ReExecuteDoesNotAccumulate: a step built once
 // and run twice must report the same conflict once, not twice.
 func TestCheckFirewallManagersStep_ReExecuteDoesNotAccumulate(t *testing.T) {
-	step, err := checkFirewallManagersStep(ufwActiveOnly, ufwConfigured(true, true)).Build()
+	step, err := checkFirewallManagersStep(ufwActiveOnly, ufwConfigured(true, true), nftConfigured(true, true)).Build()
 	require.NoError(t, err)
 
 	first := reportedConflicts(step.Execute(context.Background()))
@@ -204,12 +222,89 @@ func TestUfwConfPath(t *testing.T) {
 	require.Equal(t, "/etc/ufw/ufw.conf", ufwConfPath)
 }
 
-// TestConflictingFirewallManagers pins the probed set. nftables.service is left
-// out on purpose: the loader is ordered after it, so the two coexist and warning
-// about it would fire on every host that merely has it installed (#982).
+// TestConflictingFirewallManagers pins the set warned about for competing rules;
+// nftables.service is probed separately.
 func TestConflictingFirewallManagers(t *testing.T) {
 	require.Equal(t, []string{"ufw.service", "firewalld.service"}, conflictingFirewallManagers)
 	require.NotContains(t, conflictingFirewallManagers, "nftables.service")
+}
+
+// TestReportedUnitOrder pins that every probed unit is summarized. A finding
+// missing from this list still logs but silently vanishes from the step summary.
+func TestReportedUnitOrder(t *testing.T) {
+	require.Equal(t, []string{"ufw.service", "firewalld.service", "nftables.service"}, reportedUnitOrder)
+}
+
+// TestNftablesConfPath pins the file nftables.service itself loads; a typo here
+// silently turns the check into "state unknown".
+func TestNftablesConfPath(t *testing.T) {
+	require.Equal(t, "/etc/nftables.conf", nftablesConfPath)
+}
+
+func TestCheckFirewallManagersStep_ReportsNftablesWithFlushingRuleset(t *testing.T) {
+	// Stock Debian/Ubuntu: /etc/nftables.conf opens with `flush ruleset`.
+	report := executeFirewallManagersStepWithNft(t, nftablesActiveOnly, nftConfigured(true, true))
+	require.NoError(t, report.Error)
+	require.Equal(t, automa.StatusSuccess, report.Status)
+	require.Equal(t, "enabled, running", report.Metadata["nftables.service"])
+	require.Equal(t, []string{"nftables.service (enabled, running)"}, reportedConflicts(report))
+}
+
+func TestCheckFirewallManagersStep_IgnoresNftablesWithoutFlush(t *testing.T) {
+	// A ruleset that adds without flushing leaves the weaver tables alone.
+	report := executeFirewallManagersStepWithNft(t, nftablesActiveOnly, nftConfigured(false, true))
+	require.NoError(t, report.Error)
+	require.Empty(t, report.Metadata)
+}
+
+func TestCheckFirewallManagersStep_ReportsNftablesWhenConfUnreadable(t *testing.T) {
+	// Unknown ruleset state falls back to warning: the risk can't be ruled out.
+	report := executeFirewallManagersStepWithNft(t, nftablesActiveOnly, nftConfigured(false, false))
+	require.NoError(t, report.Error)
+	require.Equal(t, "enabled, running", report.Metadata["nftables.service"])
+}
+
+func TestCheckFirewallManagersStep_IgnoresInactiveNftables(t *testing.T) {
+	// Not enabled and not running: systemd never loads that ruleset.
+	report := executeFirewallManagersStepWithNft(t, func(context.Context, string) (bool, bool, error) {
+		return false, false, nil
+	}, nftConfigured(true, true))
+	require.NoError(t, report.Error)
+	require.Empty(t, report.Metadata)
+}
+
+func TestNftConfFlushesRulesetAt(t *testing.T) {
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "nftables.conf")
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+
+	t.Run("stock conf flushes", func(t *testing.T) {
+		flushes, known := nftConfFlushesRulesetAt(write(t,
+			"#!/usr/sbin/nft -f\n\nflush ruleset\n\ntable inet filter {\n}\n"))
+		require.True(t, known)
+		require.True(t, flushes)
+	})
+
+	t.Run("a commented flush does not count", func(t *testing.T) {
+		flushes, known := nftConfFlushesRulesetAt(write(t, "# flush ruleset\ntable inet filter {\n}\n"))
+		require.True(t, known)
+		require.False(t, flushes)
+	})
+
+	t.Run("no flush at all", func(t *testing.T) {
+		flushes, known := nftConfFlushesRulesetAt(write(t, "table inet filter {\n}\n"))
+		require.True(t, known)
+		require.False(t, flushes)
+	})
+
+	t.Run("a missing file is unknown", func(t *testing.T) {
+		flushes, known := nftConfFlushesRulesetAt(filepath.Join(t.TempDir(), "absent.conf"))
+		require.False(t, known)
+		require.False(t, flushes)
+	})
 }
 
 func TestUfwRulesetEnabled_MissingConfIsUnknown(t *testing.T) {

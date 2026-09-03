@@ -237,9 +237,10 @@ value instead. All such by-value mirrors must stay in sync.
 
 ## systemd units
 
-Two oneshot units replay the persisted state at boot, both ordered **before** the
-daemon so the kernel is already in its baseline shape when the daemon starts
-reconciling.
+Two oneshot units replay the persisted state at boot. Only the nft loader is
+ordered **before** the daemon, because the daemon owns nft set membership and
+must not start against a missing table; the bandwidth shaper is deliberately
+unordered against it — see below.
 
 ### solo-provisioner-network-nft.service (nftables loader)
 
@@ -282,8 +283,8 @@ unit, so hosts with no firewall manager are unaffected.
 a mutation (`network firewall` / `network policy`, or the install/reconfigure
 workflow). An already-provisioned host that is upgraded runs no such mutation —
 it only receives a new binary — so a change to the embedded unit would never
-arrive. `NetworkNftUnitMigration`
-(`internal/workflows/migration_network_nft_unit.go`, registered under
+arrive. The startup migration built by `NewNetworkNftUnitMigration`
+(`internal/workflows/migration_network_unit.go`, registered under
 `migration.ScopeStartup`) closes that gap: before every command that runs the
 global pre-run checks, and explicitly on the `solo-provisioner install` upgrade
 path, it compares the installed unit against the embedded copy and rewrites it
@@ -297,11 +298,14 @@ cannot see that. `NetworkNftUnitNeedsConverge`
 and `EnsureNetworkNftUnit` re-enables on its unchanged-content fast path. Both
 halves are required: the migration only runs `Execute` when the probe reports
 drift, so an enable that lives only in `Execute` would never be reached on the
-host that needs it. The enablement query runs only once the unit is known to be
-present and current, so a host with no unit never opens a DBus connection to
-decide. The probe lives in a file with no build tag; the query itself is behind
-the `service_linux.go` / `service_other.go` split, because `pkg/os` does not
-build on darwin. `version` and the shaper worker verbs the daemon delegates
+host that needs it. The query is filesystem-only — `unitconv.EnabledAtBoot`
+lstats the `multi-user.target.wants` symlink rather than opening a DBus
+connection — so it stays cheap enough to run ahead of every root command, and
+`EnsureUnit`'s fast path reads the same probe, so the gate that admits a host
+and the gate that clears it cannot disagree. The authoritative write
+(`systemctl enable`) stays in `Execute`. Both halves live in
+`internal/network/unitconv` (`NeedsConverge` / `EnsureUnit`), shared with the
+shaper unit below. `version` and the shaper worker verbs the daemon delegates
 (`block node tc-attach`, `reconcile-shaper`) opt out of the pre-run
 (`SkipGlobalChecks`) and never reach it. The daemon's other delegated verb,
 `network policy set`, does *not* opt out: it runs the pre-run as root under
@@ -333,13 +337,16 @@ Rendered from
 
 ```ini
 [Unit]
-DefaultDependencies=no
-After=network-pre.target
-Before=network.target solo-provisioner-daemon.service
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+Environment=SHAPER_DEVICE_WAIT_SECS=30
+TimeoutStartSec=60s
 ExecStart=/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh
 
 [Install]
@@ -351,12 +358,65 @@ root qdisc and rebuilds the `$EGRESS` HTB root + trunk + one leaf class/leaf-qdi
 per configured tc class, auto-detecting the link speed and falling back to 1000
 Mbit/s.
 
+**Why it runs after the network, not before it (#980).** The egress interface is
+often a netplan/systemd-networkd bond, bridge or VLAN, which does not exist until
+the network is configured. The previous `After=network-pre.target`
+`Before=network.target` ordering ran `tc` against a device that was not there
+yet, failed, and — being a `oneshot` with no `Restart=` — never tried again: the
+NIC stayed unshaped for the whole boot. `Wants=` is what makes the new ordering
+bite, since `After=` alone is inert unless something else pulls
+`network-online.target` into the transaction. `Before=network.target` had to go
+(it would now be a cycle), and `Before=solo-provisioner-daemon.service` went with
+it: ordering is transitive, so keeping it would make every daemon start wait on
+`systemd-networkd-wait-online` — ~120s on a host with a non-optional unplugged
+link, exactly the multi-NIC netplan host this fix targets. Nothing is lost by
+dropping it, because the daemon's own `tc` work is the per-pod `$VETH` hierarchy,
+never the `$EGRESS` root, so the two cannot race either way.
+
+**How a late device is covered.** `SHAPER_DEVICE_WAIT_SECS` gives the script a
+bounded poll on `/sys/class/net/<nic>` before its first `tc` call. The unit sets
+it, so a manual run of the script fails fast instead of blocking. A device that
+appears later than the budget stays unshaped until the next converge, and the
+script exits 75 (`EX_TEMPFAIL`) to say so — a diagnostic, not a retry trigger.
+
+That poll is the *whole* retry, because no restart policy is usable here:
+`RestartForceExitStatus=` would scope a retry to the late-device case but is only
+acted upon for `Type=oneshot` from systemd 256
+([systemd#31148](https://github.com/systemd/systemd/issues/31148)) — Ubuntu 22.04
+ships 249 and Debian 12 ships 252 — and an unscoped `Restart=on-failure` would
+rebuild the root qdisc every `RestartSec=` forever on a config `tc` keeps
+rejecting. `TimeoutStartSec=60s` is therefore the only bound on a wait that
+hangs, since `Type=oneshot` disables the start timeout by default; it sits above
+the 30s budget, which is paid *synchronously* twice — `multi-user.target` waits
+for the start job, and `ApplyTcEgressScript` blocks on the restart.
+`StartLimitIntervalSec=0` because with no restart policy the only starts systemd
+could count are an operator's.
+
+The teardown render (`Unshape`) deliberately has **no** wait loop: a host whose
+NIC is already gone needs the unshape to succeed trivially. `ConditionPathExists=`
+is the same guard one level up — a unit left behind with no script stays inactive.
+
+**How a unit change reaches an existing host.** Same gap as the nft loader, same
+code: the startup migration built by `NewNetworkShaperUnitMigration`
+(`internal/workflows/migration_network_unit.go`) rewrites and re-enables the unit
+when it drifts, and never restarts it, so the live HTB hierarchy survives and the
+new ordering applies at the next boot. `TcEgressUnitNeedsConverge`
+(`internal/network/shape/unit_drift.go`) gates the missing-unit case on a
+persisted boot script, so a host that never shaped traffic gets no unit. Teardown
+removes that script **before** the unit, because the script is the guard:
+unit-first would leave a partial teardown that the next root command reads as
+"persisted hierarchy with no unit" and silently reinstalls.
+
 ### solo-provisioner-daemon.service
 
 The long-lived daemon (`Type=notify`, `Restart=always`, `ExecStart=/opt/solo/
-weaver/bin/solo-provisioner-daemon`). It is ordered `After=network.target`, so it
-starts after both oneshots have replayed the baseline. Its job at runtime is to
-fill in the parts that are deliberately **not** persisted (see below).
+weaver/bin/solo-provisioner-daemon`). It is ordered `After=network.target`, and
+the nft loader declares `Before=solo-provisioner-daemon.service`, so the tables
+and their persisted set elements exist before the daemon's first `ApplySets`. The
+bandwidth shaper declares no edge against the daemon — the daemon's `tc` work
+never touches the `$EGRESS` root, so no order between them can race (see above).
+Its job at runtime is to fill in the parts that are deliberately **not** persisted
+(see below).
 
 ## What survives a reboot — and what the daemon rebuilds
 
@@ -528,7 +588,7 @@ weaver state when a third party removes it, and every such loss is silent:
 |---|---|---|
 | `nftables.service` starts or restarts (stock `/etc/nftables.conf` begins with `flush ruleset`); a `firewalld` reload; an operator's `nft -f` with a flush | Both weaver tables destroyed. Host firewall gone; policy plane gone, so nothing stamps `meta priority` and every flow falls to the HTB default class at wire speed — no error, no counter, no log | #981 (re-assert), #982 (unit ordering + install preflight) |
 | `netplan apply` recreating the egress device, a driver reload, a stray `tc qdisc del` | `$EGRESS` HTB hierarchy gone; no egress shaping | #981 |
-| Egress interface is a netplan-created bond, bridge, or VLAN | The boot-replay unit runs before systemd-networkd creates the device, fails, and never retries; the NIC stays unshaped for the whole boot | #980 |
+| Egress interface is a netplan-created bond, bridge, or VLAN | Fixed in #980: the unit runs `After=network-online.target` and the script polls `/sys/class/net` for `SHAPER_DEVICE_WAIT_SECS` before its first `tc` call. A device later than that budget stays unshaped until the next converge | #980 (fixed) |
 
 The daemon's hourly force-resync reconciles nft **set membership** and the per-pod `$VETH`
 hierarchy; it does not verify that the tables or the `$EGRESS` root qdisc still exist.

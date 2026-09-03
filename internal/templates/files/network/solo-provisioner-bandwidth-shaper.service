@@ -1,13 +1,28 @@
 [Unit]
 Description=Solo Provisioner Bandwidth Shaper (tc HTB egress)
 Documentation=https://github.com/hashgraph/solo-weaver
-DefaultDependencies=no
-After=network-pre.target
-Before=network.target solo-provisioner-daemon.service
+# A netplan-created bond/bridge/VLAN exists only once the links are up (#980).
+# Wants= is required: After= alone never pulls the target in. Nothing is ordered
+# against the daemon on purpose — it would inherit this wait for nothing.
+Wants=network-online.target
+After=network-online.target
+# No boot script means nothing to replay: stay inactive rather than fail.
+ConditionPathExists=/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh
+# Nothing restarts this unit, so a start limit could only refuse an operator.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# The retry for a late device is the script's wait loop, not a restart policy;
+# no usable policy exists here (see docs/dev/traffic-shaper.md).
+#
+# How long the script waits for the device. Unset outside the unit, so a manual
+# run fails fast instead of blocking.
+Environment=SHAPER_DEVICE_WAIT_SECS=30
+# Type=oneshot has no start timeout by default, so this is the only bound on a
+# hung wait. Must stay above the budget above.
+TimeoutStartSec=60s
 ExecStart=/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh
 
 [Install]

@@ -19,7 +19,7 @@ const (
 	TcEgressScriptPath = "/usr/local/sbin/solo-provisioner-bandwidth-shaper.sh"
 
 	// TcEgressService is the systemd oneshot unit that executes TcEgressScriptPath
-	// at boot, before solo-provisioner-daemon.service starts.
+	// once network-online.target is reached, unordered against the daemon (#980).
 	TcEgressService = "solo-provisioner-bandwidth-shaper.service"
 
 	// TcEgressServiceUnitPath is the absolute path where the unit file is
@@ -32,6 +32,14 @@ const (
 
 	// tcEgressServiceTemplate is the static embedded unit file.
 	tcEgressServiceTemplate = "files/network/solo-provisioner-bandwidth-shaper.service"
+
+	// DeviceWaitEnvVar names the device-wait budget the unit exports and the boot
+	// script reads (#980). The templates spell the literal out themselves.
+	DeviceWaitEnvVar = "SHAPER_DEVICE_WAIT_SECS"
+
+	// DeviceMissingExitCode is what the boot script exits with when the device
+	// never appeared (EX_TEMPFAIL), telling that case apart from a tc failure.
+	DeviceMissingExitCode = 75
 
 	// ShapeConfigDir is the root of the shape configuration tree persisted by
 	// the `network shape` CLI verb.
