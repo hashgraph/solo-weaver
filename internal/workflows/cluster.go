@@ -129,6 +129,9 @@ func UninstallClusterWorkflow() *automa.WorkflowBuilder {
 		// Remove configuration directories
 		steps.RemoveConfigDirectories(),
 
+		// Remove the kubectl/helm bash completion loaders
+		steps.RemoveShellCompletionLoaders(),
+
 		// Cleanup weaver files (preserving downloads)
 		steps.CleanupWeaverFiles(),
 	}
