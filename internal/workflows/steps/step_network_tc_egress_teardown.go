@@ -17,15 +17,23 @@ import (
 const TcEgressTeardownStepId = "bandwidth-shaper-teardown"
 
 // TcEgressTeardown removes the egress tc HTB hierarchy (device root + all egress
-// classes) and re-renders the boot script to its empty default, dropping the live
-// shaping on the physical NIC. It is the disable counterpart to TcEgressPersist,
-// wired into `block node reconfigure` when traffic shaping is turned off.
+// classes), dropping the live shaping on the physical NIC.
+//
+// unitWillBeRemoved distinguishes its two callers. `block node reconfigure
+// --traffic-shaping-enabled=false` (network_setup.go) passes false: it is the
+// disable counterpart to TcEgressPersist, and re-renders the boot script to its
+// empty default so the unit — which stays installed — doesn't resurrect the old
+// shape on reboot. `block node uninstall` (uninstall_handler.go) passes true: it
+// runs TcEgressServiceTeardown right after, which deletes that same unit and boot
+// script, so re-rendering the script and reconciling the unit here would be
+// wasted work — and an unnecessary systemd/D-Bus dependency on a path that has
+// nothing left to reconcile.
 //
 // It must run after NetworkPolicyDeleteAll: the policy plane's --stamp rules
 // reference these classes, and the underlying shape teardown assumes those
 // references are already gone. The teardown is idempotent — with no egress config
-// present it re-renders the empty script and succeeds.
-func TcEgressTeardown() *automa.StepBuilder {
+// present it succeeds without shaping anything.
+func TcEgressTeardown(unitWillBeRemoved bool) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcEgressTeardownStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Removing bandwidth-shaper HTB hierarchy")
@@ -38,7 +46,7 @@ func TcEgressTeardown() *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "bandwidth-shaper hierarchy removed")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if err := shape.NewManager().TeardownEgress(ctx); err != nil {
+			if err := shape.NewManager().TeardownEgress(ctx, unitWillBeRemoved); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
 					errorx.Decorate(err, "failed to tear down the bandwidth-shaper HTB hierarchy").
 						WithProperty(models.ErrPropertyResolution, []string{

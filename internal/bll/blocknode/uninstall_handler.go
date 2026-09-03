@@ -79,7 +79,7 @@ func (h *UninstallHandler) BuildWorkflow(
 		return append(out,
 			steps.NetworkPolicyDeleteAll(),
 			steps.NftServiceTeardown(),
-			steps.TcEgressTeardown(),
+			steps.TcEgressTeardown(true), // TcEgressServiceTeardown deletes the unit next; skip its reconcile
 			steps.TcEgressServiceTeardown(),
 			steps.TcIngressTeardown(),
 		)

@@ -451,7 +451,15 @@ func (m *Manager) DeleteDevice(ctx context.Context, dir string) error {
 // that reference these classes, so the per-object safety guards no longer apply.
 // It is idempotent — with no egress config present it re-renders the empty script
 // and returns nil.
-func (m *Manager) TeardownEgress(ctx context.Context) error {
+//
+// unitWillBeRemoved is true when the caller deletes the bandwidth-shaper unit and
+// boot script itself right after (block node uninstall, via TcEgressServiceTeardown):
+// re-rendering a script that's about to be removed, and reconciling+restarting a
+// unit that's about to be deleted, would be wasted work and an unnecessary D-Bus
+// dependency on the uninstall path. It is false for the `reconfigure
+// --traffic-shaping-enabled=false` caller, which keeps the unit installed with an
+// empty script so a reboot doesn't resurrect the old shape.
+func (m *Manager) TeardownEgress(ctx context.Context, unitWillBeRemoved bool) error {
 	return m.withLock(func() error {
 		classes, err := loadClassesForDir(DirEgress)
 		if err != nil {
@@ -464,6 +472,12 @@ func (m *Manager) TeardownEgress(ctx context.Context) error {
 		}
 		if err := removeDevice(DirEgress); err != nil {
 			return err
+		}
+		if unitWillBeRemoved {
+			if err := m.applyEgressScript(ctx, "", applyUnshapeDiscard); err != nil {
+				return errorx.Decorate(err, "egress shape config removed but live qdisc teardown failed")
+			}
+			return nil
 		}
 		// Re-render an unshape boot script (delete root qdisc, re-add nothing) and
 		// apply it so both the boot script and the live kernel hierarchy are reset
@@ -572,6 +586,16 @@ const (
 	// REMOVE it would be indirect. The unshape script keeps the NIC unshaped
 	// across reboots.
 	applyUnshape
+
+	// applyUnshapeDiscard drops the live HTB hierarchy exactly like applyUnshape,
+	// but skips the boot-script render/write and the systemd reconcile-and-restart
+	// entirely. Used by TeardownEgress when the caller is about to delete the
+	// bandwidth-shaper unit and boot script itself (block node uninstall, via
+	// TcEgressServiceTeardown right after): rendering a script that's about to be
+	// removed, and reconciling a unit that's about to be deleted, is wasted work —
+	// and the only reason an uninstall with traffic shaping never enabled could
+	// fail on an unrelated systemd/D-Bus hiccup.
+	applyUnshapeDiscard
 )
 
 // applyEgressScript (re-)renders the bandwidth-shaper boot script and reconciles it
@@ -588,8 +612,17 @@ func (m *Manager) applyEgressScript(ctx context.Context, nic string, mode egress
 	if nic == "" {
 		var err error
 		if nic, err = m.nicDetect(); err != nil {
-			return errorx.Decorate(err, "cannot re-render bandwidth-shaper script: egress NIC detection failed")
+			return errorx.Decorate(err, "cannot resolve bandwidth-shaper egress NIC: detection failed")
 		}
+	}
+
+	if mode == applyUnshapeDiscard {
+		// Neither the boot script nor the unit survive this call — the caller
+		// deletes both right after — so drop the live hierarchy directly and stop.
+		if err := m.tcRunner.QdiscDelRoot(ctx, nic); err != nil {
+			return errorx.Decorate(err, "failed to delete live bandwidth-shaper root qdisc on %s", nic)
+		}
+		return nil
 	}
 
 	// applyUnshape renders a teardown-only script; every other mode renders from
