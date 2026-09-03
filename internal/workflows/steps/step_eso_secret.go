@@ -4,22 +4,32 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
 const (
-	SetupESOSecretStepId  = "setup-eso-secret"
-	CreateESOSecretStepId = "create-eso-secret"
+	SetupESOSecretStepId    = "setup-eso-secret"
+	CreateESOSecretStepId   = "create-eso-secret"
+	TeardownESOSecretStepId = "teardown-eso-secret"
+	DeleteESOSecretStepId   = "delete-eso-secret"
 
 	esoExternalSecretTemplatePath = "files/eso/external-secret.yaml"
+
+	// The resource the delete step targets; matches the rendered template.
+	esoExternalSecretAPIVersion = "external-secrets.io/v1"
+	esoExternalSecretKind       = "ExternalSecret"
 )
 
 // esoSecretManifestFilePath is where the rendered ExternalSecret manifest is
@@ -112,5 +122,71 @@ func createESOSecret(opts ESOSecretOptions) automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "ExternalSecret applied successfully")
+		})
+}
+
+// TeardownESOSecret returns a workflow builder that deletes the named
+// ExternalSecret from the cluster. Kubernetes garbage-collects the Secret it
+// synced, because the manifest sets target.creationPolicy: Owner.
+func TeardownESOSecret(name, namespace string) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().WithId(TeardownESOSecretStepId).Steps(
+		deleteESOSecret(name, namespace),
+	).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Removing ExternalSecret")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to remove ExternalSecret")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "ExternalSecret removed successfully")
+		})
+}
+
+func deleteESOSecret(name, namespace string) automa.Builder {
+	return automa.NewStepBuilder().WithId(DeleteESOSecretStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			l := logx.As()
+			k, err := kube.NewClient()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to initialise Kubernetes client"),
+					reasons.PreconditionNotMet,
+					"Verify the cluster is reachable: kubectl cluster-info",
+					"Ensure the Kubernetes cluster is installed: solo-provisioner kube cluster install",
+				)))
+			}
+
+			deleted, err := k.DeleteResource(ctx, esoExternalSecretAPIVersion, esoExternalSecretKind, namespace, name)
+			if err != nil {
+				// NewClient never dials the API server, so an unreachable cluster first
+				// surfaces here, in discovery. Reachability leads the hints for that reason.
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to delete ExternalSecret %q in namespace %q", name, namespace),
+					reasons.PreconditionNotMet,
+					"Verify the cluster is reachable: kubectl cluster-info",
+					fmt.Sprintf("Check whether it exists: kubectl get externalsecret %s -n %s", name, namespace),
+					"Ensure the namespace exists: kubectl get namespace "+namespace,
+					`If the error mentions no matches for kind "ExternalSecret", the External Secrets Operator is not installed: solo-provisioner eso operator install`,
+				)))
+			}
+
+			if !deleted {
+				l.Info().Msg("ExternalSecret does not exist, skipping deletion")
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"deleted": "true"}))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Deleting ExternalSecret %s", name)
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to delete ExternalSecret")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "ExternalSecret deleted successfully")
 		})
 }

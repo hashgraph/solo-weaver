@@ -273,6 +273,41 @@ sudo solo-provisioner eso secret create \
 > exist.** The store points at your secrets backend (Vault, AWS, GCP, …). Setting it up is
 > cluster-operator configuration and is out of scope for this command.
 
+## `eso secret delete`
+
+Deletes an `ExternalSecret`. For ExternalSecrets created by `eso secret create`, the Kubernetes
+Secret goes with it: that manifest sets `creationPolicy: Owner`, so the Secret carries an
+`ownerReference` and Kubernetes garbage-collects it once its owner is gone. An ExternalSecret
+created outside this CLI without that policy is still deleted, but its Secret is left behind.
+
+```bash
+sudo solo-provisioner eso secret delete \
+  --name=grafana-alloy-secrets \
+  --namespace=grafana-alloy
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--name` | **Required.** Name of the resulting Kubernetes Secret (and the ExternalSecret) | — |
+| `--namespace` | **Required.** Namespace for both the ExternalSecret and the Kubernetes Secret | — |
+
+Verify both are gone:
+
+```bash
+sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl get externalsecret,secret -n grafana-alloy
+```
+
+> **Garbage collection is asynchronous.** The command returns as soon as the ExternalSecret is
+> deleted, so the Secret may briefly outlive it. Re-run the check if it still appears.
+
+Idempotent: if the ExternalSecret does not exist, the deletion is skipped and the command exits
+0. A namespace that does not exist is treated the same way — there is nothing to delete.
+
+> **One exception — uninstall the secrets before the operator.** If ESO has been uninstalled the
+> command *fails* rather than skipping: removing ESO removes its CRDs, so `ExternalSecret` is no
+> longer a kind the cluster recognises, and a kind that cannot be resolved is reported as an error
+> rather than silently treated as "already gone".
+
 ---
 
 ## See also

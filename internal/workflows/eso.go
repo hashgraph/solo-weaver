@@ -29,3 +29,9 @@ type ESOSecretOptions = steps.ESOSecretOptions
 func NewESOSecretCreateWorkflow(opts ESOSecretOptions) *automa.WorkflowBuilder {
 	return steps.SetupESOSecret(opts)
 }
+
+// NewESOSecretDeleteWorkflow creates a workflow that deletes an ExternalSecret
+// from the cluster. Kubernetes garbage-collects the Secret it synced.
+func NewESOSecretDeleteWorkflow(name, namespace string) *automa.WorkflowBuilder {
+	return steps.TeardownESOSecret(name, namespace)
+}

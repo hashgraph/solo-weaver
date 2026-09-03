@@ -79,6 +79,7 @@ sudo solo-provisioner teleport cluster uninstall
 sudo solo-provisioner eso operator install    [--namespace=<ns>]
 sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
 sudo solo-provisioner eso secret create       --store=<name> --name=<secret> --namespace=<ns> --set KEY=store/path[#field]
+sudo solo-provisioner eso secret delete       --name=<secret> --namespace=<ns>
 
 # ALLOY
 sudo solo-provisioner alloy cluster install   [--cluster-name=<name>] [--monitor-block-node]

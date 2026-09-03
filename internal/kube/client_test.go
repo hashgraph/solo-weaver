@@ -12,8 +12,17 @@ import (
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/testutil"
+	"github.com/joomcode/errorx"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery/cached/memory"
+	discoveryfake "k8s.io/client-go/discovery/fake"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/restmapper"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestParseManifests(t *testing.T) {
@@ -577,5 +586,218 @@ func TestClusterExists_ReturnsFalseImmediately_WhenKubeconfigEmpty(t *testing.T)
 	}
 	if exists {
 		t.Fatal("expected false for empty/unparseable kubeconfig")
+	}
+}
+
+// ---------------------------------------------------------------------
+// DeleteResource
+//
+// These run without a cluster: the real DeferredDiscoveryRESTMapper is
+// built over fake discovery, exactly as NewClient builds it over the real
+// discovery client, and the dynamic client is client-go's fake.
+// ---------------------------------------------------------------------
+
+var externalSecretGVR = schema.GroupVersionResource{
+	Group:    "external-secrets.io",
+	Version:  "v1",
+	Resource: "externalsecrets",
+}
+
+// externalSecretAPIResources is what discovery must advertise for the mapper to
+// resolve external-secrets.io/v1 ExternalSecret.
+func externalSecretAPIResources() []*metav1.APIResourceList {
+	return []*metav1.APIResourceList{
+		{
+			GroupVersion: "external-secrets.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "externalsecrets", SingularName: "externalsecret", Namespaced: true, Kind: "ExternalSecret"},
+			},
+		},
+	}
+}
+
+// coreOnlyAPIResources simulates a healthy cluster that simply has no ESO CRDs
+// installed. Discovery must advertise something: a mapper built over a totally
+// empty discovery client never settles, which no real cluster reproduces.
+func coreOnlyAPIResources() []*metav1.APIResourceList {
+	return []*metav1.APIResourceList{
+		{
+			GroupVersion: "v1",
+			APIResources: []metav1.APIResource{
+				{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap"},
+			},
+		},
+	}
+}
+
+func newExternalSecret(namespace, name string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion("external-secrets.io/v1")
+	u.SetKind("ExternalSecret")
+	u.SetNamespace(namespace)
+	u.SetName(name)
+	return u
+}
+
+// newFakeClient builds a Client backed by fake discovery and a fake dynamic
+// client. Pass coreOnlyAPIResources() to simulate a cluster without ESO.
+func newFakeClient(t *testing.T, resources []*metav1.APIResourceList, objs ...runtime.Object) *Client {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		externalSecretGVR: "ExternalSecretList",
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, objs...)
+	disco := &discoveryfake.FakeDiscovery{Fake: &k8stesting.Fake{Resources: resources}}
+
+	return &Client{
+		Dyn:    dyn,
+		Mapper: restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco)),
+	}
+}
+
+func TestDeleteResource_DeletesExistingResource(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, externalSecretAPIResources(), newExternalSecret("grafana-alloy", "grafana-alloy-secrets"))
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "grafana-alloy-secrets")
+	if err != nil {
+		t.Fatalf("DeleteResource returned an error: %v", err)
+	}
+	if !deleted {
+		t.Fatalf("expected deleted=true for an existing resource")
+	}
+
+	exists, err := c.ResourceExists(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "grafana-alloy-secrets")
+	if err != nil {
+		t.Fatalf("ResourceExists returned an error: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected the ExternalSecret to be gone after DeleteResource")
+	}
+}
+
+func TestDeleteResource_NotFoundIsNotAnError(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, externalSecretAPIResources())
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "missing")
+	if err != nil {
+		t.Fatalf("DeleteResource on a missing resource returned an error: %v", err)
+	}
+	if deleted {
+		t.Fatalf("expected deleted=false for a resource that does not exist")
+	}
+}
+
+// TestDeleteResource_TargetsOnlyTheNamedResource guards the argument order
+// through DeleteResource: name and namespace are adjacent same-type parameters,
+// and a swap would still delete something.
+func TestDeleteResource_TargetsOnlyTheNamedResource(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, externalSecretAPIResources(),
+		newExternalSecret("grafana-alloy", "target"),
+		newExternalSecret("grafana-alloy", "bystander"),
+		newExternalSecret("other-ns", "target"),
+	)
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "target")
+	if err != nil {
+		t.Fatalf("DeleteResource returned an error: %v", err)
+	}
+	if !deleted {
+		t.Fatalf("expected deleted=true")
+	}
+
+	survivors := []struct {
+		namespace string
+		name      string
+	}{
+		{"grafana-alloy", "bystander"},
+		{"other-ns", "target"},
+	}
+	for _, s := range survivors {
+		exists, err := c.ResourceExists(ctx, "external-secrets.io/v1", "ExternalSecret", s.namespace, s.name)
+		if err != nil {
+			t.Fatalf("ResourceExists(%s/%s) returned an error: %v", s.namespace, s.name, err)
+		}
+		if !exists {
+			t.Fatalf("DeleteResource removed %s/%s, which it should not have touched", s.namespace, s.name)
+		}
+	}
+}
+
+// TestDeleteResource_APIFailureIsExternalError pins the namespace choice: a failed
+// Kubernetes API call is an external dependency failure, not an internal bug, so
+// doctor classifies and styles it accordingly.
+func TestDeleteResource_APIFailureIsExternalError(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, externalSecretAPIResources(), newExternalSecret("grafana-alloy", "grafana-alloy-secrets"))
+
+	dyn, ok := c.Dyn.(*dynamicfake.FakeDynamicClient)
+	if !ok {
+		t.Fatalf("expected the fake dynamic client, got %T", c.Dyn)
+	}
+	dyn.PrependReactor("delete", "externalsecrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, kerrors.NewInternalError(errors.New("etcd unavailable"))
+	})
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "grafana-alloy-secrets")
+	if err == nil {
+		t.Fatalf("expected DeleteResource to surface the API failure")
+	}
+	if deleted {
+		t.Fatalf("expected deleted=false when the API call fails")
+	}
+	if !errorx.IsOfType(err, errorx.ExternalError) {
+		t.Fatalf("expected an ExternalError for a Kubernetes API failure, got %v", err)
+	}
+}
+
+// TestDeleteResource_RequiresNamespaceForNamespacedKind pins the deliberate
+// divergence from ResourceExists: an omitted namespace is an error, never a
+// silent delete out of "default".
+func TestDeleteResource_RequiresNamespaceForNamespacedKind(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, externalSecretAPIResources(), newExternalSecret("default", "grafana-alloy-secrets"))
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "", "grafana-alloy-secrets")
+	if err == nil {
+		t.Fatalf("expected DeleteResource to reject an empty namespace for a namespaced kind")
+	}
+	if deleted {
+		t.Fatalf("expected deleted=false when the namespace is missing")
+	}
+	if !errorx.IsOfType(err, errorx.IllegalArgument) {
+		t.Fatalf("expected an IllegalArgument error, got %v", err)
+	}
+
+	// The object in "default" must be untouched.
+	exists, err := c.ResourceExists(ctx, "external-secrets.io/v1", "ExternalSecret", "default", "grafana-alloy-secrets")
+	if err != nil {
+		t.Fatalf("ResourceExists returned an error: %v", err)
+	}
+	if !exists {
+		t.Fatalf("DeleteResource deleted from \"default\" despite refusing the call")
+	}
+}
+
+// TestDeleteResource_UnmappedKind covers the absent-CRD path: discovery cannot
+// resolve the kind, so the mapping fails as IllegalArgument. The step layer
+// turns this into the "install the operator" hint.
+func TestDeleteResource_UnmappedKind(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient(t, coreOnlyAPIResources())
+
+	deleted, err := c.DeleteResource(ctx, "external-secrets.io/v1", "ExternalSecret", "grafana-alloy", "grafana-alloy-secrets")
+	if err == nil {
+		t.Fatalf("expected DeleteResource to fail when the kind is not served")
+	}
+	if deleted {
+		t.Fatalf("expected deleted=false on a mapping failure")
+	}
+	if !errorx.IsOfType(err, errorx.IllegalArgument) {
+		t.Fatalf("expected an IllegalArgument error, got %v", err)
 	}
 }
