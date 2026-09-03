@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 )
 
@@ -213,29 +212,30 @@ func expandFQDNs(nd NetworkData, byName map[string][]string) NetworkData {
 }
 
 // resolveRemotes replaces every domain name in the two payloads with the
-// addresses it resolves to, returning resolved copies.
+// addresses it resolves to, returning resolved copies plus the names that
+// produced no answer.
 //
 // Both payloads go through one pass so a name reported on both the inbound and
 // outbound rosters costs a single lookup and cannot resolve two different ways
 // within a tick.
 //
 // It never fails. A name that does not resolve contributes nothing and its
-// endpoint is dropped with a warning, because the alternative — returning an
-// error — exits the worker non-zero, which faults the daemon's poll loop and
-// retries the same unresolvable name on a backoff forever.
-func (r *Reconciler) resolveRemotes(ctx context.Context, inbound, outbound NetworkData) (NetworkData, NetworkData) {
+// endpoint is dropped, because the alternative — returning an error — exits the
+// worker non-zero, which faults the daemon's poll loop and retries the same
+// unresolvable name on a backoff forever.
+//
+// The unresolved names are RETURNED rather than logged. Under --output json the
+// root command routes every log line to stdout as NDJSON, which is the same
+// stream the digest is written to and the daemon parses — so a log line here
+// makes the daemon's json.Unmarshal fail and faults the poll loop just as surely
+// as a non-zero exit would. The caller folds them into its result instead, where
+// they ride the one JSON document the contract allows.
+func (r *Reconciler) resolveRemotes(ctx context.Context, inbound, outbound NetworkData) (NetworkData, NetworkData, []string) {
 	names := remoteFQDNs(inbound, outbound)
 	if len(names) == 0 {
-		return inbound, outbound
+		return inbound, outbound, nil
 	}
 
 	res := resolveHosts(ctx, r.resolver, names)
-	if len(res.unresolved) > 0 {
-		logx.As().Warn().
-			Str("reason", "StatuszEndpointUnresolved").
-			Strs("fqdns", res.unresolved).
-			Msg("could not resolve these statusz remote addresses; their endpoints are not classified this tick")
-	}
-
-	return expandFQDNs(inbound, res.byName), expandFQDNs(outbound, res.byName)
+	return expandFQDNs(inbound, res.byName), expandFQDNs(outbound, res.byName), res.unresolved
 }

@@ -5,6 +5,7 @@ package node
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
@@ -41,6 +42,20 @@ var (
 	}
 )
 
+// printUnresolved reports the statusz names that produced no address, on the
+// human-readable path only — the JSON path already carries them as a field.
+//
+// They are printed rather than logged. Under --output json the root command
+// routes log lines to stdout as NDJSON, which is the stream this command's own
+// JSON document goes to and the daemon parses, so a log line here would break
+// the daemon's decode of the digest.
+func printUnresolved(cmd *cobra.Command, unresolved []string) {
+	if len(unresolved) == 0 {
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "unresolved: %s\n", strings.Join(unresolved, ", "))
+}
+
 // runReconcileCheck runs the unprivileged detect path: fetch statusz, digest the
 // desired membership, and print it.
 func runReconcileCheck(cmd *cobra.Command, r *shaper.Reconciler) error {
@@ -59,6 +74,7 @@ func runReconcileCheck(cmd *cobra.Command, r *shaper.Reconciler) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "desired-digest: %s\n", result.Digest)
+	printUnresolved(cmd, result.Unresolved)
 	return nil
 }
 
@@ -81,6 +97,7 @@ func runReconcileApply(cmd *cobra.Command, r *shaper.Reconciler) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "skipped:   %s\n", joinOrNone(result.Skipped))
 		fmt.Fprintf(cmd.OutOrStdout(), "unchanged: %s\n", joinOrNone(result.Unchanged))
 		fmt.Fprintf(cmd.OutOrStdout(), "digest:    %s\n", result.Digest)
+		printUnresolved(cmd, result.Unresolved)
 	}
 
 	logx.As().Info().

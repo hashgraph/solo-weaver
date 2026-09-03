@@ -71,6 +71,10 @@ type Result struct {
 	Skipped   []string `json:"skipped"`
 	Unchanged []string `json:"unchanged"`
 	Digest    string   `json:"digest"`
+	// Unresolved names statusz reported that produced no address this tick.
+	// Their endpoints contributed nothing, so a policy whose only member was one
+	// of them is now empty.
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 // CheckResult is the unprivileged detect path's output: the sha256 digest of the
@@ -83,6 +87,10 @@ type CheckResult struct {
 	Digest       string              `json:"desired-digest"`
 	Desired      map[string][]string `json:"desired"`
 	DesiredPorts map[string][]string `json:"desired-ports"`
+	// Unresolved carries the same meaning as Result.Unresolved. It is a field on
+	// the one JSON document rather than a log line because --output json puts log
+	// lines on stdout, where they would corrupt the digest the daemon parses.
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 // Check fetches both statusz endpoints, buckets them into the desired
@@ -91,7 +99,7 @@ type CheckResult struct {
 // reads no nft state and requires no privilege — it is the unprivileged detect
 // path.
 func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
-	ce, inbound, err := r.fetchEndpoints(ctx)
+	ce, inbound, unresolved, err := r.fetchEndpoints(ctx)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -104,6 +112,7 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 		Digest:       membershipDigest(combinedCanonical(canon, portsDesired)),
 		Desired:      canon,
 		DesiredPorts: portsDesired,
+		Unresolved:   unresolved,
 	}, nil
 }
 
@@ -118,7 +127,7 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 // by its policy name (`bn-publisher`), a listener-port set by its nft set name
 // (`bn-publisher_ports`) — alongside the digest, which covers both dimensions.
 func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
-	ce, inbound, err := r.fetchEndpoints(ctx)
+	ce, inbound, unresolved, err := r.fetchEndpoints(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -155,7 +164,7 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	}
 	sort.Strings(changed)
 
-	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed)}
+	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed), Unresolved: unresolved}
 
 	// ApplySets is called even with no deltas. Besides writing the kernel it also
 	// re-persists the on-disk artifact, and a converged node produces no deltas
@@ -189,17 +198,17 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 // consumer downstream sees addresses only. That is what keeps it out of Check's
 // compound-element conversion and out of the apply's CIDR validation, neither of
 // which tolerates a name.
-func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, error) {
+func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, []string, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
-		return nil, NetworkData{}, err
+		return nil, NetworkData{}, nil, err
 	}
 	outbound, err := r.fetcher.OutboundClients(ctx)
 	if err != nil {
-		return nil, NetworkData{}, err
+		return nil, NetworkData{}, nil, err
 	}
-	inbound, outbound = r.resolveRemotes(ctx, inbound, outbound)
-	return bucketizeEndpoints(inbound, outbound), inbound, nil
+	inbound, outbound, unresolved := r.resolveRemotes(ctx, inbound, outbound)
+	return bucketizeEndpoints(inbound, outbound), inbound, unresolved, nil
 }
 
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,

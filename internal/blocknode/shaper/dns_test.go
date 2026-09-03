@@ -5,6 +5,7 @@ package shaper
 import (
 	"context"
 	"net/netip"
+	"sync"
 	"testing"
 
 	"github.com/joomcode/errorx"
@@ -14,13 +15,20 @@ import (
 // fakeResolver answers from a fixed table. A name mapped to a nil slice is
 // treated as unresolvable, so a test can exercise the failure path without a
 // resolver outage.
+//
+// The mutex is required, not defensive: resolveHosts looks every name up at
+// once, so recording a call is a concurrent write. The Resolver contract calls
+// for concurrency safety and a fake that ignores it fails under -race.
 type fakeResolver struct {
+	mu      sync.Mutex
 	answers map[string][]string
 	calls   []string
 }
 
 func (f *fakeResolver) LookupIPv4(_ context.Context, host string) ([]netip.Addr, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, host)
+	f.mu.Unlock()
 	raw, ok := f.answers[host]
 	if !ok || len(raw) == 0 {
 		return nil, errorx.ExternalError.New("no such host: %s", host)
@@ -207,11 +215,12 @@ func TestResolveRemotes_ResolvesBothPayloadsInOnePass(t *testing.T) {
 
 	// The same name on both rosters must cost one lookup and cannot resolve two
 	// different ways within a tick.
-	inbound, outbound := rec.resolveRemotes(context.Background(),
+	inbound, outbound, unresolved := rec.resolveRemotes(context.Background(),
 		nd(conn("publisher", "peer.example.com", "*")),
 		nd(conn("partner", "peer.example.com", "50980")))
 
 	require.Equal(t, []string{"peer.example.com"}, r.calls)
+	require.Empty(t, unresolved)
 	require.Equal(t, nd(
 		conn("publisher", "10.1.0.1", "*"),
 		conn("publisher", "10.1.0.2", "*"),
@@ -228,10 +237,13 @@ func TestResolveRemotes_UnresolvableNameDoesNotFail(t *testing.T) {
 
 	// Returning an error here would exit the worker non-zero, which faults the
 	// daemon's poll loop and retries the same name on a backoff forever.
-	inbound, outbound := rec.resolveRemotes(context.Background(),
+	inbound, outbound, unresolved := rec.resolveRemotes(context.Background(),
 		nd(conn("publisher", "gone.example.com", "*"), conn("partner", "10.2.0.1", "*")),
 		nd())
 
 	require.Equal(t, nd(conn("partner", "10.2.0.1", "*")), inbound)
 	require.Empty(t, outbound.ActiveEndpoints)
+	// Returned, never logged: under --output json a log line lands on stdout and
+	// corrupts the digest document the daemon parses.
+	require.Equal(t, []string{"gone.example.com"}, unresolved)
 }
