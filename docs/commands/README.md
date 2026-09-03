@@ -127,6 +127,23 @@ solo-provisioner --help
 | kubectl | Kubernetes CLI |
 | k9s | Terminal Kubernetes UI |
 | Metrics Server | Resource metrics for pods and nodes |
+| bash-completion | Shell completion support for `kubectl` and `helm` (optional) |
+
+### Shell completion
+
+`kubectl` and `helm` get bash tab-completion set up alongside the binaries. Each gets a
+one-line loader at `/usr/local/share/bash-completion/completions/<tool>` that generates the
+completion script from the installed binary on first use, so it never goes stale when the
+pinned tool version changes and it costs nothing at shell startup.
+
+Completion needs a **login shell**. On Debian the bash-completion hook in `/etc/bash.bashrc`
+ships commented out, so `sudo -s` and `sudo bash` get no completion at all regardless of what
+is installed — use `sudo -i`, or log in fresh.
+
+Completion is a convenience, not a cluster requirement. If the `bash-completion` package
+cannot be installed, the cluster install carries on without it; the loaders are still written
+and begin working as soon as the package is present. Only bash is set up today, and
+`kube cluster uninstall` removes the loaders again.
 
 ```bash
 sudo solo-provisioner kube cluster install
