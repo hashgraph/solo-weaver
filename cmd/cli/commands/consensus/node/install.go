@@ -112,6 +112,7 @@ var installCmd = &cobra.Command{
 				DeploymentPackageDir: flagDeploymentPkgDir,
 				GrpcTlsSecret:        flagGrpcTlsSecret,
 				SigningSecret:        flagSigningSecret,
+				ImagePullSecret:      flagImagePullSecret,
 				Profile:              flagProfile,
 				SkipHardwareChecks:   skipHardwareChecks,
 				ContainerName:        flagContainerName,
