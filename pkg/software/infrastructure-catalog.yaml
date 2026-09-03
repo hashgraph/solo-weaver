@@ -404,11 +404,15 @@ cluster:
 
 - name: solo-operator
   type: oci
-  chart: 'oci://ghcr.io/hashgraph/charts/solo-operator'
+  # Private registry (v0.6.0+). The host must have ghcr credentials in Helm's
+  # registry config before install: `task registry:login:ghcr` (writes them from
+  # the root .env). Public charts also work with no login.
+  chart: 'oci://ghcr.io/hashgraph/solo-operator/solo-operator-chart'
   namespace: 'solo-operator'
   release: 'solo-operator'
-  default: "0.5.0"
+  default: "0.6.0"
   versions:
-    0.5.0:
+    0.6.0:
       algorithm: 'sha256'
-      checksum: '4368dee30cb22f0814a2710b3334ef1da7a84575a76b50374955faf5bbf71e1d'
+      # Private chart — regenerate with `task registry:login:ghcr && task chart-checksums`.
+      checksum: '4a221b9c9792efd0b04208e8c648f41a7b5e3d7aca3cb5fc03734d6410356c17'

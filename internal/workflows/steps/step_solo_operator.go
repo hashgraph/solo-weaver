@@ -4,6 +4,8 @@ package steps
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -17,6 +19,17 @@ import (
 const (
 	InstallSoloOperatorStepId = "install-solo-operator"
 )
+
+// ociRegistryHost extracts the registry host from an OCI chart reference
+// (e.g. "oci://ghcr.io/hashgraph/solo-operator/solo-operator-chart" -> "ghcr.io")
+// for use in login hints. Returns the whole ref if it has no host segment.
+func ociRegistryHost(chartRef string) string {
+	rest := strings.TrimPrefix(chartRef, "oci://")
+	if i := strings.IndexByte(rest, '/'); i != -1 {
+		return rest[:i]
+	}
+	return rest
+}
 
 func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 	upgrade := len(allowUpgrade) > 0 && allowUpgrade[0]
@@ -73,7 +86,15 @@ func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 						"Confirm the chart is pulled from the official registry over a trusted network — a proxy rewriting responses can change the digest",
 						"If it persists the pinned checksum is stale (the chart was re-published at the same version) — regenerate it with `task chart-checksums` and update pkg/software/infrastructure-catalog.yaml, or report it to the solo-weaver maintainers")))
 				}
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				// A pull failure on a private registry surfaces as an opaque auth/pull
+				// error; point the operator at the login step (public charts need none).
+				host := ociRegistryHost(spec.Chart)
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					err,
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("If %s is a private registry, authenticate first: helm registry login %s -u <user> -p <token>", host, host),
+					fmt.Sprintf("On 401/403 (denied), the token lacks access: it needs the read:packages scope and, for an SSO org, must be SSO-authorized to read %s's packages", host),
+					fmt.Sprintf("Verify network connectivity to %s and that chart %q version %q exists", host, spec.Chart, spec.Version))))
 			}
 
 			_, err = hm.DeployChart(
