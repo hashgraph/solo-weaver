@@ -85,20 +85,33 @@ func runReconcileApply(cmd *cobra.Command, r *shaper.Reconciler) error {
 	if err != nil {
 		return err
 	}
+	return renderApplyResult(cmd, result)
+}
 
+// renderApplyResult writes one apply summary, in whichever form the caller asked
+// for. Split out of runReconcileApply so the JSON form can be exercised without
+// a live nft table.
+//
+// The log line sits INSIDE the human-readable branch. Under --output json the
+// root command routes log lines to stdout as NDJSON, so logging here as well
+// would append a second document to the one this function just wrote and leave
+// the combined stream unparseable. Nothing is lost by the omission: the JSON
+// document already carries every field the log line does, and more.
+func renderApplyResult(cmd *cobra.Command, result shaper.Result) error {
 	if common.OutputIsJSON() {
 		out, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
 			return errorx.InternalError.Wrap(err, "marshal reconcile-shaper result")
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), string(out))
-	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "applied:   %s\n", joinOrNone(result.Applied))
-		fmt.Fprintf(cmd.OutOrStdout(), "skipped:   %s\n", joinOrNone(result.Skipped))
-		fmt.Fprintf(cmd.OutOrStdout(), "unchanged: %s\n", joinOrNone(result.Unchanged))
-		fmt.Fprintf(cmd.OutOrStdout(), "digest:    %s\n", result.Digest)
-		printUnresolved(cmd, result.Unresolved)
+		return nil
 	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "applied:   %s\n", joinOrNone(result.Applied))
+	fmt.Fprintf(cmd.OutOrStdout(), "skipped:   %s\n", joinOrNone(result.Skipped))
+	fmt.Fprintf(cmd.OutOrStdout(), "unchanged: %s\n", joinOrNone(result.Unchanged))
+	fmt.Fprintf(cmd.OutOrStdout(), "digest:    %s\n", result.Digest)
+	printUnresolved(cmd, result.Unresolved)
 
 	logx.As().Info().
 		Strs("applied", result.Applied).
